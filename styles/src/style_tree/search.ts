@@ -31,7 +31,7 @@ export default function search(): any {
         text: text(theme.highest, "mono", "default"),
         border: border(theme.highest),
         margin: {
-            right: 9,
+            right: SEARCH_ROW_SPACING,
         },
         padding: {
             top: 4,
@@ -48,7 +48,7 @@ export default function search(): any {
     }
 
     return {
-        padding: { top: 4, bottom: 4 },
+        padding: { top: 0, bottom: 0 },
 
         option_button: toggleable({
             base: interactive({
@@ -273,8 +273,8 @@ export default function search(): any {
                         bottom: 1,
                     },
                     padding: {
-                        left: 12,
-                        right: 12,
+                        left: 10,
+                        right: 10,
                     },
                     corner_radius: 6,
                 },
@@ -394,7 +394,7 @@ export default function search(): any {
                 }),
             },
         }),
-        search_bar_row_height: 34,
+        search_bar_row_height: 32,
         search_row_spacing: 8,
         option_button_height: 22,
         modes_container: {},

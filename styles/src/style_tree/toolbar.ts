@@ -6,15 +6,15 @@ export const toolbar = () => {
     const theme = useTheme()
 
     return {
-        height: 42,
+        height: 32,
+        padding: { left: 4, right: 4, top: 4, bottom: 4 },
         background: background(theme.highest),
         border: border(theme.highest, { bottom: true }),
-        item_spacing: 8,
+        item_spacing: 4,
         toggleable_tool: toggleable_icon_button({
-            margin: { left: 8 },
+            margin: { left: 4 },
             variant: "ghost",
             active_color: "accent",
         }),
-        padding: { left: 8, right: 8 },
     }
 }

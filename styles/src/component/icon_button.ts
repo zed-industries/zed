@@ -60,7 +60,7 @@ export function icon_button(
             corner_radius: 6,
             padding: padding,
             margin: m,
-            icon_width: 12,
+            icon_width: 14,
             icon_height: 14,
             button_width: size === Button.size.Small ? 16 : 20,
             button_height: 14,
