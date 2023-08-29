@@ -96,7 +96,7 @@ impl View for QuickActionBar {
             2,
             "icons/radix/magic-wand.svg",
             false,
-            ("Generate code".into(), Some(Box::new(InlineAssist))),
+            ("Inline Assist".into(), Some(Box::new(InlineAssist))),
             cx,
             move |this, cx| {
                 if let Some(workspace) = this.workspace.upgrade(cx) {
