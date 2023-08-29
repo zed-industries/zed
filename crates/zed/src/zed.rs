@@ -1706,6 +1706,8 @@ mod tests {
             .remove_file(Path::new("/root/a/file2"), Default::default())
             .await
             .unwrap();
+        cx.foreground().run_until_parked();
+
         workspace
             .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
             .await
