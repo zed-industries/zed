@@ -567,24 +567,37 @@ impl AssistantPanel {
             }
         }
 
-        let language_name = snapshot
-            .language_at(range.start)
-            .map(|language| language.name());
-        let language_name = language_name.as_deref().unwrap_or("");
+        let language = snapshot.language_at(range.start);
+        let language_name = if let Some(language) = language.as_ref() {
+            if Arc::ptr_eq(language, &language::PLAIN_TEXT) {
+                None
+            } else {
+                Some(language.name())
+            }
+        } else {
+            None
+        };
+        let language_name = language_name.as_deref();
         let model = settings::get::<AssistantSettings>(cx)
             .default_open_ai_model
             .clone();
 
         let mut prompt = String::new();
-        writeln!(prompt, "You're an expert {language_name} engineer.").unwrap();
+        if let Some(language_name) = language_name {
+            writeln!(prompt, "You're an expert {language_name} engineer.").unwrap();
+        }
         match pending_assist.kind {
             InlineAssistKind::Transform => {
                 writeln!(
                     prompt,
-                    "You're currently working inside an editor on this code:"
+                    "You're currently working inside an editor on this file:"
                 )
                 .unwrap();
-                writeln!(prompt, "```{language_name}").unwrap();
+                if let Some(language_name) = language_name {
+                    writeln!(prompt, "```{language_name}").unwrap();
+                } else {
+                    writeln!(prompt, "```").unwrap();
+                }
                 for chunk in snapshot.text_for_range(Anchor::min()..Anchor::max()) {
                     write!(prompt, "{chunk}").unwrap();
                 }
@@ -592,31 +605,39 @@ impl AssistantPanel {
 
                 writeln!(
                     prompt,
-                    "In particular, the user has selected the following code:"
+                    "In particular, the user has selected the following text:"
                 )
                 .unwrap();
-                writeln!(prompt, "```{language_name}").unwrap();
+                if let Some(language_name) = language_name {
+                    writeln!(prompt, "```{language_name}").unwrap();
+                } else {
+                    writeln!(prompt, "```").unwrap();
+                }
                 writeln!(prompt, "{normalized_selected_text}").unwrap();
                 writeln!(prompt, "```").unwrap();
                 writeln!(prompt).unwrap();
                 writeln!(
                     prompt,
-                    "Modify the selected code given the user prompt: {user_prompt}"
+                    "Modify the selected text given the user prompt: {user_prompt}"
                 )
                 .unwrap();
                 writeln!(
                     prompt,
-                    "You MUST reply only with the edited selected code, not the entire file."
+                    "You MUST reply only with the edited selected text, not the entire file."
                 )
                 .unwrap();
             }
             InlineAssistKind::Generate => {
                 writeln!(
                     prompt,
-                    "You're currently working inside an editor on this code:"
+                    "You're currently working inside an editor on this file:"
                 )
                 .unwrap();
-                writeln!(prompt, "```{language_name}").unwrap();
+                if let Some(language_name) = language_name {
+                    writeln!(prompt, "```{language_name}").unwrap();
+                } else {
+                    writeln!(prompt, "```").unwrap();
+                }
                 for chunk in snapshot.text_for_range(Anchor::min()..range.start) {
                     write!(prompt, "{chunk}").unwrap();
                 }
@@ -633,23 +654,21 @@ impl AssistantPanel {
                 .unwrap();
                 writeln!(
                     prompt,
-                    "Code can't be replaced, so assume your answer will be inserted at the cursor."
+                    "Text can't be replaced, so assume your answer will be inserted at the cursor."
                 )
                 .unwrap();
                 writeln!(
                     prompt,
-                    "Complete the code given the user prompt: {user_prompt}"
+                    "Complete the text given the user prompt: {user_prompt}"
                 )
                 .unwrap();
             }
         }
-        writeln!(prompt, "Your answer MUST always be valid {language_name}.").unwrap();
+        if let Some(language_name) = language_name {
+            writeln!(prompt, "Your answer MUST always be valid {language_name}.").unwrap();
+        }
         writeln!(prompt, "Always wrap your response in a Markdown codeblock.").unwrap();
-        writeln!(
-            prompt,
-            "Never make remarks about the output, always output just code."
-        )
-        .unwrap();
+        writeln!(prompt, "Never make remarks about the output.").unwrap();
 
         let mut request = OpenAIRequest {
             model: model.full_name().into(),

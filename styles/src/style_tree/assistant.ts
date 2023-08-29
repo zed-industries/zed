@@ -60,6 +60,7 @@ export default function assistant(): any {
             padding: { left: 12 },
         },
         inline: {
+            background: background(theme.highest),
             margin: { top: 3, bottom: 3 },
             border: border(theme.lowest, "on", {
                 top: true,
