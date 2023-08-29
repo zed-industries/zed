@@ -2,6 +2,7 @@ import { with_opacity } from "../theme/color"
 import { background, border, foreground, text } from "./components"
 import { interactive, toggleable } from "../element"
 import { useTheme } from "../theme"
+import { text_button } from "../component/text_button"
 
 const search_results = () => {
     const theme = useTheme()
@@ -162,49 +163,13 @@ export default function search(): any {
                 },
             },
         }),
+        // Search tool buttons
+        // HACK: This is not how disabled elements should be created
+        // Disabled elements should use a disabled state of an interactive element, not a toggleable element with the inactive state being disabled
         action_button: toggleable({
-            base: interactive({
-                base: {
-                    ...text(theme.highest, "mono", "disabled"),
-                    background: background(theme.highest, "disabled"),
-                    corner_radius: 6,
-                    border: border(theme.highest, "disabled"),
-                    padding: {
-                        // bottom: 2,
-                        left: 10,
-                        right: 10,
-                        // top: 2,
-                    },
-                    margin: {
-                        top: 1,
-                        bottom: 1,
-                        right: SEARCH_ROW_SPACING
-                    }
-                },
-                state: {
-                    hovered: {}
-                },
-            }),
             state: {
-                active: interactive({
-                    base: {
-                        ...text(theme.highest, "mono", "on"),
-                        background: background(theme.highest, "on"),
-                        border: border(theme.highest, "on"),
-                    },
-                    state: {
-                        hovered: {
-                            ...text(theme.highest, "mono", "on", "hovered"),
-                            background: background(theme.highest, "on", "hovered"),
-                            border: border(theme.highest, "on", "hovered"),
-                        },
-                        clicked: {
-                            ...text(theme.highest, "mono", "on", "pressed"),
-                            background: background(theme.highest, "on", "pressed"),
-                            border: border(theme.highest, "on", "pressed"),
-                        },
-                    },
-                })
+                inactive: text_button({ variant: "ghost", layer: theme.highest, disabled: true, margin: { right: SEARCH_ROW_SPACING } }),
+                active: text_button({ variant: "ghost", layer: theme.highest, margin: { right: SEARCH_ROW_SPACING } })
             }
         }),
         editor,
@@ -312,6 +277,8 @@ export default function search(): any {
             },
         }),
         // Next/Previous Match buttons
+        // HACK: This is not how disabled elements should be created
+        // Disabled elements should use a disabled state of an interactive element, not a toggleable element with the inactive state being disabled
         nav_button: toggleable({
             state: {
                 inactive: interactive({
