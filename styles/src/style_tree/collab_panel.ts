@@ -27,7 +27,7 @@ export default function contacts_panel(): any {
         color: foreground(layer, "on"),
         icon_width: 14,
         button_width: 16,
-        corner_radius: 8
+        corner_radius: 8,
     }
 
     const project_row = {
@@ -275,7 +275,7 @@ export default function contacts_panel(): any {
         list_empty_label_container: {
             margin: {
                 left: NAME_MARGIN,
-            }
+            },
         },
         list_empty_icon: {
             color: foreground(layer, "variant"),
@@ -289,7 +289,7 @@ export default function contacts_panel(): any {
                         top: SPACING / 2,
                         bottom: SPACING / 2,
                         left: SPACING,
-                        right: SPACING
+                        right: SPACING,
                     },
                 },
                 state: {
@@ -330,7 +330,7 @@ export default function contacts_panel(): any {
                 right: 4,
             },
             background: background(layer, "hovered"),
-            ...text(layer, "sans", "hovered", { size: "xs" })
+            ...text(layer, "sans", "hovered", { size: "xs" }),
         },
         contact_status_free: indicator({ layer, color: "positive" }),
         contact_status_busy: indicator({ layer, color: "negative" }),
@@ -404,7 +404,7 @@ export default function contacts_panel(): any {
         channel_editor: {
             padding: {
                 left: NAME_MARGIN,
-            }
-        }
+            },
+        },
     }
 }

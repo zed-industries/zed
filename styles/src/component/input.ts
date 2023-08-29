@@ -18,6 +18,6 @@ export const input = () => {
             bottom: 3,
             left: 12,
             right: 8,
-        }
+        },
     }
 }

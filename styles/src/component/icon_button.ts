@@ -11,10 +11,7 @@ export type Margin = {
 }
 
 interface IconButtonOptions {
-    layer?:
-    | Theme["lowest"]
-    | Theme["middle"]
-    | Theme["highest"]
+    layer?: Theme["lowest"] | Theme["middle"] | Theme["highest"]
     color?: keyof Theme["lowest"]
     margin?: Partial<Margin>
     variant?: Button.Variant
@@ -26,15 +23,20 @@ type ToggleableIconButtonOptions = IconButtonOptions & {
     active_layer?: Layer
 }
 
-export function icon_button({ color, margin, layer, variant, size }: IconButtonOptions = {
-    variant: Button.variant.Default,
-    size: Button.size.Medium,
-}) {
+export function icon_button(
+    { color, margin, layer, variant, size }: IconButtonOptions = {
+        variant: Button.variant.Default,
+        size: Button.size.Medium,
+    }
+) {
     const theme = useTheme()
 
     if (!color) color = "base"
 
-    const background_color = variant === Button.variant.Ghost ? null : background(layer ?? theme.lowest, color)
+    const background_color =
+        variant === Button.variant.Ghost
+            ? null
+            : background(layer ?? theme.lowest, color)
 
     const m = {
         top: margin?.top ?? 0,
@@ -77,7 +79,14 @@ export function icon_button({ color, margin, layer, variant, size }: IconButtonO
     })
 }
 
-export function toggleable_icon_button({ color, active_color, margin, variant, size, active_layer }: ToggleableIconButtonOptions) {
+export function toggleable_icon_button({
+    color,
+    active_color,
+    margin,
+    variant,
+    size,
+    active_layer,
+}: ToggleableIconButtonOptions) {
     if (!color) color = "base"
 
     return toggleable({
@@ -87,7 +96,7 @@ export function toggleable_icon_button({ color, active_color, margin, variant, s
                 color: active_color ? active_color : color,
                 margin,
                 layer: active_layer,
-                size
+                size,
             }),
         },
     })

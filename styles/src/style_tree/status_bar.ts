@@ -34,9 +34,11 @@ export default function status_bar(): any {
             ...text(layer, "mono", "base", { size: "xs" }),
         },
         active_language: text_button({
-            color: "base"
+            color: "base",
         }),
-        auto_update_progress_message: text(layer, "sans", "base", { size: "xs" }),
+        auto_update_progress_message: text(layer, "sans", "base", {
+            size: "xs",
+        }),
         auto_update_done_message: text(layer, "sans", "base", { size: "xs" }),
         lsp_status: interactive({
             base: {
@@ -125,7 +127,7 @@ export default function status_bar(): any {
                         },
                         clicked: {
                             background: background(layer, "pressed"),
-                        }
+                        },
                     },
                 }),
                 state: {
