@@ -1,6 +1,6 @@
 use crate::{
     history::SearchHistory,
-    mode::SearchMode,
+    mode::{SearchMode, Side},
     search_bar::{render_nav_button, render_option_button_icon, render_search_mode_button},
     ActivateRegexMode, CycleMode, NextHistoryQuery, PreviousHistoryQuery, SearchOptions,
     SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
@@ -1424,8 +1424,13 @@ impl View for ProjectSearchBar {
                 },
                 cx,
             );
+
             let search = _search.read(cx);
+            let is_semantic_available = SemanticIndex::enabled(cx);
             let is_semantic_disabled = search.semantic_state.is_none();
+            let icon_style = theme.search.editor_icon.clone();
+            let is_active = search.active_match_index.is_some();
+
             let render_option_button_icon = |path, option, cx: &mut ViewContext<Self>| {
                 crate::search_bar::render_option_button_icon(
                     self.is_option_enabled(option, cx),
@@ -1451,28 +1456,23 @@ impl View for ProjectSearchBar {
                 render_option_button_icon("icons/word_search_12.svg", SearchOptions::WHOLE_WORD, cx)
             });
 
-            let search = _search.read(cx);
-            let icon_style = theme.search.editor_icon.clone();
-
-            // Editor Functionality
-            let query = Flex::row()
-                .with_child(
-                    Svg::for_style(icon_style.icon)
-                        .contained()
-                        .with_style(icon_style.container),
+            let search_button_for_mode = |mode, side, cx: &mut ViewContext<ProjectSearchBar>| {
+                let is_active = if let Some(search) = self.active_project_search.as_ref() {
+                    let search = search.read(cx);
+                    search.current_mode == mode
+                } else {
+                    false
+                };
+                render_search_mode_button(
+                    mode,
+                    side,
+                    is_active,
+                    move |_, this, cx| {
+                        this.activate_search_mode(mode, cx);
+                    },
+                    cx,
                 )
-                .with_child(ChildView::new(&search.query_editor, cx).flex(1., true))
-                .with_child(
-                    Flex::row()
-                        .with_child(filter_button)
-                        .with_children(case_sensitive)
-                        .with_children(whole_word)
-                        .flex(1., false)
-                        .constrained()
-                        .contained(),
-                )
-                .align_children_center()
-                .flex(1., true);
+            };
 
             let search = _search.read(cx);
 
@@ -1490,50 +1490,6 @@ impl View for ProjectSearchBar {
                     theme.search.include_exclude_editor.input.container
                 };
 
-            let included_files_view = ChildView::new(&search.included_files_editor, cx)
-                .contained()
-                .flex(1., true);
-            let excluded_files_view = ChildView::new(&search.excluded_files_editor, cx)
-                .contained()
-                .flex(1., true);
-            let filters = search.filters_enabled.then(|| {
-                Flex::row()
-                    .with_child(
-                        included_files_view
-                            .contained()
-                            .with_style(include_container_style)
-                            .constrained()
-                            .with_height(theme.search.search_bar_row_height)
-                            .with_min_width(theme.search.include_exclude_editor.min_width)
-                            .with_max_width(theme.search.include_exclude_editor.max_width),
-                    )
-                    .with_child(
-                        excluded_files_view
-                            .contained()
-                            .with_style(exclude_container_style)
-                            .constrained()
-                            .with_height(theme.search.search_bar_row_height)
-                            .with_min_width(theme.search.include_exclude_editor.min_width)
-                            .with_max_width(theme.search.include_exclude_editor.max_width),
-                    )
-                    .contained()
-                    .with_padding_top(theme.workspace.toolbar.container.padding.bottom)
-            });
-
-            let editor_column = Flex::column()
-                .with_child(
-                    query
-                        .contained()
-                        .with_style(query_container_style)
-                        .constrained()
-                        .with_min_width(theme.search.editor.min_width)
-                        .with_max_width(theme.search.editor.max_width)
-                        .with_height(theme.search.search_bar_row_height)
-                        .flex(1., false),
-                )
-                .with_children(filters)
-                .flex(1., false);
-
             let matches = search.active_match_index.map(|match_ix| {
                 Label::new(
                     format!(
@@ -1548,25 +1504,81 @@ impl View for ProjectSearchBar {
                 .aligned()
             });
 
-            let search_button_for_mode = |mode, cx: &mut ViewContext<ProjectSearchBar>| {
-                let is_active = if let Some(search) = self.active_project_search.as_ref() {
-                    let search = search.read(cx);
-                    search.current_mode == mode
-                } else {
-                    false
-                };
-                render_search_mode_button(
-                    mode,
-                    is_active,
-                    move |_, this, cx| {
-                        this.activate_search_mode(mode, cx);
-                    },
-                    cx,
+            let query_column = Flex::column()
+                .with_spacing(theme.search.search_row_spacing)
+                .with_child(
+                    Flex::row()
+                        .with_child(
+                            Svg::for_style(icon_style.icon)
+                                .contained()
+                                .with_style(icon_style.container),
+                        )
+                        .with_child(ChildView::new(&search.query_editor, cx).flex(1., true))
+                        .with_child(
+                            Flex::row()
+                                .with_child(filter_button)
+                                .with_children(case_sensitive)
+                                .with_children(whole_word)
+                                .flex(1., false)
+                                .constrained()
+                                .contained(),
+                        )
+                        .align_children_center()
+                        .contained()
+                        .with_style(query_container_style)
+                        .constrained()
+                        .with_min_width(theme.search.editor.min_width)
+                        .with_max_width(theme.search.editor.max_width)
+                        .with_height(theme.search.search_bar_row_height)
+                        .flex(1., false),
                 )
-            };
-            let is_active = search.active_match_index.is_some();
-            let semantic_index = SemanticIndex::enabled(cx)
-                .then(|| search_button_for_mode(SearchMode::Semantic, cx));
+                .with_children(search.filters_enabled.then(|| {
+                    Flex::row()
+                        .with_child(
+                            ChildView::new(&search.included_files_editor, cx)
+                                .contained()
+                                .with_style(include_container_style)
+                                .constrained()
+                                .with_height(theme.search.search_bar_row_height)
+                                .flex(1., true),
+                        )
+                        .with_child(
+                            ChildView::new(&search.excluded_files_editor, cx)
+                                .contained()
+                                .with_style(exclude_container_style)
+                                .constrained()
+                                .with_height(theme.search.search_bar_row_height)
+                                .flex(1., true),
+                        )
+                        .constrained()
+                        .with_min_width(theme.search.editor.min_width)
+                        .with_max_width(theme.search.editor.max_width)
+                        .flex(1., false)
+                }))
+                .flex(1., false);
+
+            let mode_column =
+                Flex::row()
+                    .with_child(search_button_for_mode(
+                        SearchMode::Text,
+                        Some(Side::Left),
+                        cx,
+                    ))
+                    .with_child(search_button_for_mode(
+                        SearchMode::Regex,
+                        if is_semantic_available {
+                            None
+                        } else {
+                            Some(Side::Right)
+                        },
+                        cx,
+                    ))
+                    .with_children(is_semantic_available.then(|| {
+                        search_button_for_mode(SearchMode::Semantic, Some(Side::Right), cx)
+                    }))
+                    .contained()
+                    .with_style(theme.search.modes_container);
+
             let nav_button_for_direction = |label, direction, cx: &mut ViewContext<Self>| {
                 render_nav_button(
                     label,
@@ -1582,43 +1594,17 @@ impl View for ProjectSearchBar {
             };
 
             let nav_column = Flex::row()
+                .with_child(Flex::row().with_children(matches))
                 .with_child(nav_button_for_direction("<", Direction::Prev, cx))
                 .with_child(nav_button_for_direction(">", Direction::Next, cx))
-                .with_child(Flex::row().with_children(matches))
-                .constrained()
-                .with_height(theme.search.search_bar_row_height);
-
-            let mode_column = Flex::row()
-                .with_child(
-                    Flex::row()
-                        .with_child(search_button_for_mode(SearchMode::Text, cx))
-                        .with_children(semantic_index)
-                        .with_child(search_button_for_mode(SearchMode::Regex, cx))
-                        .contained()
-                        .with_style(theme.search.modes_container),
-                )
-                .with_child(super::search_bar::render_close_button(
-                    "Dismiss Project Search",
-                    &theme.search,
-                    cx,
-                    |_, this, cx| {
-                        if let Some(search) = this.active_project_search.as_mut() {
-                            search.update(cx, |_, cx| cx.emit(ViewEvent::Dismiss))
-                        }
-                    },
-                    None,
-                ))
                 .constrained()
                 .with_height(theme.search.search_bar_row_height)
-                .aligned()
-                .right()
-                .top()
                 .flex_float();
 
             Flex::row()
-                .with_child(editor_column)
-                .with_child(nav_column)
+                .with_child(query_column)
                 .with_child(mode_column)
+                .with_child(nav_column)
                 .contained()
                 .with_style(theme.search.container)
                 .into_any_named("project search")
@@ -1647,7 +1633,7 @@ impl ToolbarItemView for ProjectSearchBar {
             self.subscription = Some(cx.observe(&search, |_, _, cx| cx.notify()));
             self.active_project_search = Some(search);
             ToolbarItemLocation::PrimaryLeft {
-                flex: Some((1., false)),
+                flex: Some((1., true)),
             }
         } else {
             ToolbarItemLocation::Hidden
@@ -1655,13 +1641,12 @@ impl ToolbarItemView for ProjectSearchBar {
     }
 
     fn row_count(&self, cx: &ViewContext<Self>) -> usize {
-        self.active_project_search
-            .as_ref()
-            .map(|search| {
-                let offset = search.read(cx).filters_enabled as usize;
-                2 + offset
-            })
-            .unwrap_or_else(|| 2)
+        if let Some(search) = self.active_project_search.as_ref() {
+            if search.read(cx).filters_enabled {
+                return 2;
+            }
+        }
+        1
     }
 }
 

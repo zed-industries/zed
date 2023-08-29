@@ -129,7 +129,7 @@ export default function workspace(): any {
         status_bar: statusBar(),
         titlebar: titlebar(),
         toolbar: {
-            height: 34,
+            height: 42,
             background: background(theme.highest),
             border: border(theme.highest, { bottom: true }),
             item_spacing: 8,
@@ -138,7 +138,7 @@ export default function workspace(): any {
                 variant: "ghost",
                 active_color: "accent",
             }),
-            padding: { left: 8, right: 8, top: 4, bottom: 4 },
+            padding: { left: 8, right: 8 },
         },
         breadcrumb_height: 24,
         breadcrumbs: interactive({
