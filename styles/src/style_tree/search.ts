@@ -168,8 +168,8 @@ export default function search(): any {
         // Disabled elements should use a disabled state of an interactive element, not a toggleable element with the inactive state being disabled
         action_button: toggleable({
             state: {
-                inactive: text_button({ variant: "ghost", layer: theme.highest, disabled: true, margin: { right: SEARCH_ROW_SPACING } }),
-                active: text_button({ variant: "ghost", layer: theme.highest, margin: { right: SEARCH_ROW_SPACING } })
+                inactive: text_button({ variant: "ghost", layer: theme.highest, disabled: true, margin: { right: SEARCH_ROW_SPACING }, text_properties: { size: "sm" } }),
+                active: text_button({ variant: "ghost", layer: theme.highest, margin: { right: SEARCH_ROW_SPACING }, text_properties: { size: "sm" } })
             }
         }),
         editor,
@@ -183,9 +183,8 @@ export default function search(): any {
             border: border(theme.highest, "negative"),
         },
         match_index: {
-            ...text(theme.highest, "mono", "variant"),
+            ...text(theme.highest, "mono", { size: "sm" }),
             padding: {
-                left: 9,
                 right: SEARCH_ROW_SPACING,
             },
         },

@@ -261,8 +261,8 @@ impl View for BufferSearchBar {
             .with_height(theme.search.search_bar_row_height);
 
         let nav_column = Flex::row()
-            .with_child(Flex::row().with_children(match_count))
             .with_child(self.render_action_button("all", cx))
+            .with_child(Flex::row().with_children(match_count))
             .with_child(nav_button_for_direction("<", Direction::Prev, cx))
             .with_child(nav_button_for_direction(">", Direction::Next, cx))
             .constrained()
