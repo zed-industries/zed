@@ -2,8 +2,8 @@ use crate::{
     history::SearchHistory,
     mode::{next_mode, SearchMode},
     search_bar::{render_nav_button, render_search_mode_button},
-    CycleMode, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, SearchOptions, SelectAllMatches,
-    SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
+    CycleMode, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
+    SelectAllMatches, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
 };
 use collections::HashMap;
 use editor::Editor;
@@ -55,6 +55,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(BufferSearchBar::cycle_mode);
     cx.add_action(BufferSearchBar::cycle_mode_on_pane);
     cx.add_action(BufferSearchBar::replace_all);
+    cx.add_action(BufferSearchBar::replace_next);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
     add_toggle_option_action::<ToggleWholeWord>(SearchOptions::WHOLE_WORD, cx);
 }
@@ -74,6 +75,7 @@ fn add_toggle_option_action<A: Action>(option: SearchOptions, cx: &mut AppContex
 
 pub struct BufferSearchBar {
     query_editor: ViewHandle<Editor>,
+    replacement_editor: ViewHandle<Editor>,
     active_searchable_item: Option<Box<dyn SearchableItemHandle>>,
     active_match_index: Option<usize>,
     active_searchable_item_subscription: Option<Subscription>,
@@ -157,6 +159,9 @@ impl View for BufferSearchBar {
         };
         self.query_editor.update(cx, |editor, cx| {
             editor.set_placeholder_text(new_placeholder_text, cx);
+        });
+        self.replacement_editor.update(cx, |editor, cx| {
+            editor.set_placeholder_text("Replace with...", cx);
         });
         let search_button_for_mode = |mode, cx: &mut ViewContext<BufferSearchBar>| {
             let is_active = self.current_mode == mode;
@@ -247,9 +252,24 @@ impl View for BufferSearchBar {
             )
             .align_children_center()
             .flex(1., true);
+        let replacement = Flex::row()
+            .with_child(ChildView::new(&self.replacement_editor, cx).flex(1., true))
+            .align_children_center()
+            .flex(1., true);
+
         let editor_column = Flex::row()
             .with_child(
                 query
+                    .contained()
+                    .with_style(query_container_style)
+                    .constrained()
+                    .with_min_width(theme.search.editor.min_width)
+                    .with_max_width(theme.search.editor.max_width)
+                    .with_height(theme.search.search_bar_row_height)
+                    .flex(1., false),
+            )
+            .with_child(
+                replacement
                     .contained()
                     .with_style(query_container_style)
                     .constrained()
@@ -358,9 +378,18 @@ impl BufferSearchBar {
         });
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
-
+        let replacement_editor = cx.add_view(|cx| {
+            Editor::auto_height(
+                2,
+                Some(Arc::new(|theme| theme.search.editor.input.clone())),
+                cx,
+            )
+        });
+        // cx.subscribe(&replacement_editor, Self::on_query_editor_event)
+        //     .detach();
         Self {
             query_editor,
+            replacement_editor,
             active_searchable_item: None,
             active_searchable_item_subscription: None,
             active_match_index: None,
@@ -455,7 +484,9 @@ impl BufferSearchBar {
     pub fn query(&self, cx: &WindowContext) -> String {
         self.query_editor.read(cx).text(cx)
     }
-
+    pub fn replacement(&self, cx: &WindowContext) -> String {
+        self.replacement_editor.read(cx).text(cx)
+    }
     pub fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> Option<String> {
         self.active_searchable_item
             .as_ref()
@@ -713,7 +744,7 @@ impl BufferSearchBar {
                 let query: Arc<_> = if self.current_mode == SearchMode::Regex {
                     match SearchQuery::regex(
                         query,
-                        None,
+                        Some(self.replacement(cx)).filter(|s| !s.is_empty()),
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                         Vec::new(),
@@ -729,7 +760,7 @@ impl BufferSearchBar {
                 } else {
                     SearchQuery::text(
                         query,
-                        None,
+                        Some(self.replacement(cx)).filter(|s| !s.is_empty()),
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                         Vec::new(),
@@ -826,6 +857,24 @@ impl BufferSearchBar {
         }
         if should_propagate {
             cx.propagate_action();
+        }
+    }
+    fn replace_next(&mut self, _: &ReplaceNext, cx: &mut ViewContext<Self>) {
+        if !self.dismissed && self.active_search.is_some() {
+            if let Some(searchable_item) = self.active_searchable_item.as_ref() {
+                if let Some(query) = self.active_search.as_ref() {
+                    if let Some(matches) = self
+                        .searchable_items_with_matches
+                        .get(&searchable_item.downgrade())
+                    {
+                        for m in matches {
+                            searchable_item.replace(m, query, cx);
+                        }
+
+                        self.focus_editor(&FocusEditor, cx);
+                    }
+                }
+            }
         }
     }
     fn replace_all(&mut self, _: &ReplaceAll, cx: &mut ViewContext<Self>) {

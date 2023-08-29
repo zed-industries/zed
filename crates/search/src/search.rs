@@ -35,7 +35,8 @@ actions!(
         ActivateTextMode,
         ActivateSemanticMode,
         ActivateRegexMode,
-        ReplaceAll
+        ReplaceAll,
+        ReplaceNext
     ]
 );
 
