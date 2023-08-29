@@ -25,6 +25,7 @@ pub struct SearchOptions {
     pub case: bool,
     pub word: bool,
     pub regex: bool,
+    pub replacement: bool,
 }
 
 pub trait SearchableItem: Item {
@@ -35,6 +36,7 @@ pub trait SearchableItem: Item {
             case: true,
             word: true,
             regex: true,
+            replacement: true,
         }
     }
     fn to_search_event(
