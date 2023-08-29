@@ -986,7 +986,15 @@ impl SearchableItem for Editor {
         query: &SearchQuery,
         cx: &mut ViewContext<Self>,
     ) {
-        dbg!("Replacing in editor");
+        let text = self.buffer.read(cx);
+        let text = text.snapshot(cx);
+        let text = text.text_for_range(identifier.clone()).collect::<Vec<_>>();
+        // assert_eq!(text.len(), 1);
+        for txt in &text {
+            if let Some(replacement) = query.replacement(txt) {
+                self.edit([(identifier.clone(), Arc::from(&*replacement))], cx);
+            }
+        }
     }
     fn match_index_for_direction(
         &mut self,
