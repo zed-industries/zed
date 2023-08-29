@@ -44,7 +44,7 @@ use gpui::{
     elements::*,
     executor,
     fonts::{self, HighlightStyle, TextStyle},
-    geometry::vector::Vector2F,
+    geometry::vector::{vec2f, Vector2F},
     impl_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton},
@@ -858,21 +858,43 @@ impl CompletionsMenu {
             project
                 .read(cx)
                 .language_servers_for_buffer(self.buffer.read(cx), cx)
-                .map(|(adapter, server)| (server.server_id(), format!("{}: ", adapter.short_name)))
+                .filter(|(_, server)| server.capabilities().completion_provider.is_some())
+                .map(|(adapter, server)| (server.server_id(), adapter.short_name))
                 .collect::<Vec<_>>()
         });
-        let get_server_name = move |lookup_server_id: lsp::LanguageServerId| -> Option<String> {
-            language_servers
-                .iter()
-                .flatten()
-                .find_map(|(server_id, server_name)| {
-                    if *server_id == lookup_server_id {
-                        Some(server_name.clone())
-                    } else {
-                        None
-                    }
-                })
-        };
+        let needs_server_name = language_servers
+            .as_ref()
+            .map_or(false, |servers| servers.len() > 1);
+
+        let get_server_name =
+            move |lookup_server_id: lsp::LanguageServerId| -> Option<&'static str> {
+                language_servers
+                    .iter()
+                    .flatten()
+                    .find_map(|(server_id, server_name)| {
+                        if *server_id == lookup_server_id {
+                            Some(*server_name)
+                        } else {
+                            None
+                        }
+                    })
+            };
+
+        let widest_completion_ix = self
+            .matches
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, mat)| {
+                let completion = &self.completions[mat.candidate_id];
+                let mut len = completion.label.text.chars().count();
+
+                if let Some(server_name) = get_server_name(completion.server_id) {
+                    len += server_name.chars().count();
+                }
+
+                len
+            })
+            .map(|(ix, _)| ix);
 
         let completions = self.completions.clone();
         let matches = self.matches.clone();
@@ -917,14 +939,66 @@ impl CompletionsMenu {
 
                                 if let Some(server_name) = get_server_name(completion.server_id) {
                                     Flex::row()
-                                        .with_child(Text::new(server_name, style.text.clone()))
                                         .with_child(completion_label)
+                                        .with_children((|| {
+                                            if !needs_server_name {
+                                                return None;
+                                            }
+
+                                            let text_style = TextStyle {
+                                                color: style.autocomplete.server_name_color,
+                                                font_size: style.text.font_size
+                                                    * style.autocomplete.server_name_size_percent,
+                                                ..style.text.clone()
+                                            };
+
+                                            let label = Text::new(server_name, text_style)
+                                                .aligned()
+                                                .constrained()
+                                                .dynamically(move |constraint, _, _| {
+                                                    gpui::SizeConstraint {
+                                                        min: constraint.min,
+                                                        max: vec2f(
+                                                            constraint.max.x(),
+                                                            constraint.min.y(),
+                                                        ),
+                                                    }
+                                                });
+
+                                            if Some(item_ix) == widest_completion_ix {
+                                                Some(
+                                                    label
+                                                        .contained()
+                                                        .with_style(
+                                                            style
+                                                                .autocomplete
+                                                                .server_name_container,
+                                                        )
+                                                        .into_any(),
+                                                )
+                                            } else {
+                                                Some(label.flex_float().into_any())
+                                            }
+                                        })())
                                         .into_any()
                                 } else {
                                     completion_label.into_any()
                                 }
                                 .contained()
                                 .with_style(item_style)
+                                .constrained()
+                                .dynamically(
+                                    move |constraint, _, _| {
+                                        if Some(item_ix) == widest_completion_ix {
+                                            constraint
+                                        } else {
+                                            gpui::SizeConstraint {
+                                                min: constraint.min,
+                                                max: constraint.min,
+                                            }
+                                        }
+                                    },
+                                )
                             },
                         )
                         .with_cursor_style(CursorStyle::PointingHand)
@@ -941,19 +1015,7 @@ impl CompletionsMenu {
                 }
             },
         )
-        .with_width_from_item(
-            self.matches
-                .iter()
-                .enumerate()
-                .max_by_key(|(_, mat)| {
-                    self.completions[mat.candidate_id]
-                        .label
-                        .text
-                        .chars()
-                        .count()
-                })
-                .map(|(ix, _)| ix),
-        )
+        .with_width_from_item(widest_completion_ix)
         .contained()
         .with_style(container_style)
         .into_any()
