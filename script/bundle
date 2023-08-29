@@ -5,11 +5,29 @@ set -e
 build_flag="--release"
 target_dir="release"
 open_result=false
+local_only=false
+overwrite_local_app=false
+bundle_name=""
+
+# Function for displaying help info
+help_info() {
+  echo "
+Usage: ${0##*/} [options] [bundle_name]
+Build the application bundle.
+
+Options:
+  -d    Compile in debug mode and print the app bundle's path.
+  -l    Compile for local architecture only and copy bundle to /Applications.
+  -o    Open the resulting DMG or the app itself in local mode.
+  -f    Overwrite the local app bundle if it exists.
+  -h    Display this help and exit.
+  "
+}
 
 # If -o option is specified, the folder of the resulting dmg will be opened in finder
 # If -d is specified, Zed will be compiled in debug mode and the application's path printed
 # If -od or -do is specified Zed will be bundled in debug and the application will be run.
-while getopts 'od' flag
+while getopts 'dlfoh' flag
 do
     case "${flag}" in
         o) open_result=true;;
@@ -17,8 +35,20 @@ do
             build_flag="";
             target_dir="debug"
             ;;
+        l) local_only=true;;
+        f) overwrite_local_app=true;;
+        h)
+           help_info
+           exit 0
+           ;;
     esac
 done
+
+shift $((OPTIND-1))
+
+if [ "$1" ]; then
+    bundle_name=$1
+fi
 
 export ZED_BUNDLE=true
 export MACOSX_DEPLOYMENT_TARGET=10.15.7
@@ -33,14 +63,24 @@ rustup target add wasm32-wasi
 # Deal with versions of macOS that don't include libstdc++ headers
 export CXXFLAGS="-stdlib=libc++"
 
-echo "Compiling zed binary for aarch64-apple-darwin"
-cargo build ${build_flag} --package zed --target aarch64-apple-darwin
-echo "Compiling zed binary for x86_64-apple-darwin"
-cargo build ${build_flag} --package zed --target x86_64-apple-darwin
-echo "Compiling cli binary for aarch64-apple-darwin"
-cargo build ${build_flag} --package cli --target aarch64-apple-darwin
-echo "Compiling cli binary for x86_64-apple-darwin"
-cargo build ${build_flag} --package cli --target x86_64-apple-darwin
+version_info=$(rustc --version --verbose)
+host_line=$(echo "$version_info" | grep host)
+local_target_triple=${host_line#*: }
+
+if [ "$local_only" = true ]; then
+    echo "Building for local target only."
+    cargo build ${build_flag} --package zed
+    cargo build ${build_flag} --package cli
+else
+    echo "Compiling zed binary for aarch64-apple-darwin"
+    cargo build ${build_flag} --package zed --target aarch64-apple-darwin
+    echo "Compiling zed binary for x86_64-apple-darwin"
+    cargo build ${build_flag} --package zed --target x86_64-apple-darwin
+    echo "Compiling cli binary for aarch64-apple-darwin"
+    cargo build ${build_flag} --package cli --target aarch64-apple-darwin
+    echo "Compiling cli binary for x86_64-apple-darwin"
+    cargo build ${build_flag} --package cli --target x86_64-apple-darwin
+fi
 
 echo "Creating application bundle"
 pushd crates/zed
@@ -50,27 +90,34 @@ sed \
     -i .backup \
     "s/package.metadata.bundle-${channel}/package.metadata.bundle/" \
     Cargo.toml
-app_path=$(cargo bundle ${build_flag} --target x86_64-apple-darwin --select-workspace-root | xargs)
+
+if [ "$local_only" = true ]; then
+    app_path=$(cargo bundle ${build_flag} --select-workspace-root | xargs)
+else
+    app_path=$(cargo bundle ${build_flag} --target x86_64-apple-darwin --select-workspace-root | xargs)
+fi
 
 mv Cargo.toml.backup Cargo.toml
 popd
 echo "Bundled ${app_path}"
 
-echo "Creating fat binaries"
-lipo \
-    -create \
-    target/{x86_64-apple-darwin,aarch64-apple-darwin}/${target_dir}/Zed \
-    -output \
-    "${app_path}/Contents/MacOS/zed"
-lipo \
-    -create \
-    target/{x86_64-apple-darwin,aarch64-apple-darwin}/${target_dir}/cli \
-    -output \
-    "${app_path}/Contents/MacOS/cli"
+if [ "$local_only" = false ]; then
+    echo "Creating fat binaries"
+    lipo \
+        -create \
+        target/{x86_64-apple-darwin,aarch64-apple-darwin}/${target_dir}/Zed \
+        -output \
+        "${app_path}/Contents/MacOS/zed"
+    lipo \
+        -create \
+        target/{x86_64-apple-darwin,aarch64-apple-darwin}/${target_dir}/cli \
+        -output \
+        "${app_path}/Contents/MacOS/cli"
+fi
 
 echo "Copying WebRTC.framework into the frameworks folder"
 mkdir "${app_path}/Contents/Frameworks"
-cp -R target/x86_64-apple-darwin/${target_dir}/WebRTC.framework "${app_path}/Contents/Frameworks/"
+cp -R target/${local_target_triple}/${target_dir}/WebRTC.framework "${app_path}/Contents/Frameworks/"
 
 if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
     echo "Signing bundle with Apple-issued certificate"
@@ -99,31 +146,55 @@ if [ "$target_dir" = "debug" ]; then
     exit 0
 fi
 
-dmg_target_directory="target/${target_dir}"
-dmg_source_directory="${dmg_target_directory}/dmg"
-dmg_file_path="${dmg_target_directory}/Zed.dmg"
+if [ "$local_only" = true ]; then
+    # If bundle_name is not set or empty, use the basename of $app_path
+    if [ -z "$bundle_name" ]; then
+        bundle_name=$(basename "$app_path")
+    else
+        # If bundle_name doesn't end in .app, append it
+        if [[ "$bundle_name" != *.app ]]; then
+            bundle_name="$bundle_name.app"
+        fi
+    fi
 
-echo "Creating DMG"
-rm -rf ${dmg_source_directory}
-mkdir -p ${dmg_source_directory}
-mv "${app_path}" "${dmg_source_directory}"
+    if [ "$overwrite_local_app" = true ]; then
+        rm -rf "/Applications/$bundle_name"
+    fi
+    mv "$app_path" "/Applications/$bundle_name"
 
-ln -s /Applications ${dmg_source_directory}
-hdiutil create -volname Zed -srcfolder "${dmg_source_directory}" -ov -format UDZO "${dmg_file_path}"
-# If someone runs this bundle script locally, a symlink will be placed in `dmg_source_directory`.
-# This symlink causes CPU issues with Zed if the Zed codebase is the project being worked on, so we simply remove it for now.
-rm ${dmg_source_directory}/Applications
+    if [ "$open_result" = true ]; then
+        open "/Applications/$bundle_name"
+    else
+        echo "Installed application bundle:"
+        echo "/Applications/$bundle_name"
+    fi
+else
+    echo "Creating DMG"
+    dmg_target_directory="target/${target_dir}"
+    dmg_source_directory="${dmg_target_directory}/dmg"
+    dmg_file_path="${dmg_target_directory}/Zed.dmg"
 
-echo "Adding license agreement to DMG"
-npm install --global dmg-license minimist
-dmg-license script/eula/eula.json "${dmg_file_path}"
+    rm -rf ${dmg_source_directory}
+    mkdir -p ${dmg_source_directory}
+    mv "${app_path}" "${dmg_source_directory}"
 
-if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
-    echo "Notarizing DMG with Apple"
-    npm install -g notarize-cli
-    npx notarize-cli --file "${dmg_file_path}" --bundle-id dev.zed.Zed --username "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD"
-fi
+    ln -s /Applications ${dmg_source_directory}
+    hdiutil create -volname Zed -srcfolder "${dmg_source_directory}" -ov -format UDZO "${dmg_file_path}"
+    # If someone runs this bundle script locally, a symlink will be placed in `dmg_source_directory`.
+    # This symlink causes CPU issues with Zed if the Zed codebase is the project being worked on, so we simply remove it for now.
+    rm ${dmg_source_directory}/Applications
 
-if [ "$open_result" = true ]; then
-    open $dmg_target_directory
+    echo "Adding license agreement to DMG"
+    npm install --global dmg-license minimist
+    dmg-license script/eula/eula.json "${dmg_file_path}"
+
+    if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
+        echo "Notarizing DMG with Apple"
+        npm install -g notarize-cli
+        npx notarize-cli --file "${dmg_file_path}" --bundle-id dev.zed.Zed --username "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD"
+    fi
+
+    if [ "$open_result" = true ]; then
+        open $dmg_target_directory
+    fi
 fi
