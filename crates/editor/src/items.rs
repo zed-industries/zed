@@ -20,7 +20,6 @@ use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPat
 use rpc::proto::{self, update_view};
 use smallvec::SmallVec;
 use std::{
-    any::Any,
     borrow::Cow,
     cmp::{self, Ordering},
     fmt::Write,
