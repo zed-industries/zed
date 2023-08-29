@@ -77,10 +77,7 @@ export function icon_button({ color, margin, layer, variant, size }: IconButtonO
     })
 }
 
-export function toggleable_icon_button(
-    theme: Theme,
-    { color, active_color, margin, variant, size, active_layer }: ToggleableIconButtonOptions
-) {
+export function toggleable_icon_button({ color, active_color, margin, variant, size, active_layer }: ToggleableIconButtonOptions) {
     if (!color) color = "base"
 
     return toggleable({

@@ -10,7 +10,7 @@ export const toolbar = () => {
         background: background(theme.highest),
         border: border(theme.highest, { bottom: true }),
         item_spacing: 8,
-        toggleable_tool: toggleable_icon_button(theme, {
+        toggleable_tool: toggleable_icon_button({
             margin: { left: 8 },
             variant: "ghost",
             active_color: "accent",

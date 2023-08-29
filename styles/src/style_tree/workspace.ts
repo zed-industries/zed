@@ -12,7 +12,6 @@ import tabBar from "./tab_bar"
 import { interactive } from "../element"
 import { titlebar } from "./titlebar"
 import { useTheme } from "../theme"
-import { toggleable_icon_button } from "../component/icon_button"
 import { toolbar } from "./toolbar"
 
 export default function workspace(): any {

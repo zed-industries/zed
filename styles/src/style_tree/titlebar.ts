@@ -34,7 +34,7 @@ function call_controls() {
     }
 
     return {
-        toggle_microphone_button: toggleable_icon_button(theme, {
+        toggle_microphone_button: toggleable_icon_button({
             margin: {
                 ...margin_y,
                 left: space.group,
@@ -43,7 +43,7 @@ function call_controls() {
             active_color: "negative",
         }),
 
-        toggle_speakers_button: toggleable_icon_button(theme, {
+        toggle_speakers_button: toggleable_icon_button({
             margin: {
                 ...margin_y,
                 left: space.half_item,
@@ -51,7 +51,7 @@ function call_controls() {
             },
         }),
 
-        screen_share_button: toggleable_icon_button(theme, {
+        screen_share_button: toggleable_icon_button({
             margin: {
                 ...margin_y,
                 left: space.half_item,
@@ -263,7 +263,7 @@ export function titlebar(): any {
 
         ...call_controls(),
 
-        toggle_contacts_button: toggleable_icon_button(theme, {
+        toggle_contacts_button: toggleable_icon_button({
             margin: {
                 left: ITEM_SPACING,
             },

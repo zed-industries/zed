@@ -61,7 +61,7 @@ export default function contacts_panel(): any {
         width: 14,
     }
 
-    const header_icon_button = toggleable_icon_button(theme, {
+    const header_icon_button = toggleable_icon_button({
         variant: "ghost",
         size: "sm",
         active_layer: theme.lowest,
