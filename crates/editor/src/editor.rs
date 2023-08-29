@@ -1454,6 +1454,16 @@ impl Editor {
                 cx.observe(&display_map, Self::on_display_map_changed),
                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
                 cx.observe_global::<SettingsStore, _>(Self::settings_changed),
+                cx.observe_window_activation(|editor, active, cx| {
+                    editor.blink_manager.update(cx, |blink_manager, cx| {
+                        if active {
+                            blink_manager.enable(cx);
+                        } else {
+                            blink_manager.show_cursor(cx);
+                            blink_manager.disable(cx);
+                        }
+                    });
+                }),
             ],
         };
 
