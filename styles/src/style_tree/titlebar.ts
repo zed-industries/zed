@@ -41,6 +41,7 @@ function call_controls() {
                 right: space.half_item,
             },
             active_color: "negative",
+            active_background_color: "negative",
         }),
 
         toggle_speakers_button: toggleable_icon_button({
@@ -58,6 +59,7 @@ function call_controls() {
                 right: space.group,
             },
             active_color: "accent",
+            active_background_color: "accent",
         }),
 
         muted: foreground(theme.lowest, "negative"),
