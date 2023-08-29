@@ -2901,6 +2901,8 @@ impl Project {
             })
             .detach();
 
+        let language_server = language_server.initialize(initialization_options).await?;
+
         language_server
             .notify::<lsp::notification::DidChangeConfiguration>(
                 lsp::DidChangeConfigurationParams {
@@ -2909,9 +2911,7 @@ impl Project {
             )
             .ok();
 
-        Ok(Some(
-            language_server.initialize(initialization_options).await?,
-        ))
+        Ok(Some(language_server))
     }
 
     fn insert_newly_running_language_server(
