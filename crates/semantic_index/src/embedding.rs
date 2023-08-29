@@ -7,6 +7,7 @@ use isahc::http::StatusCode;
 use isahc::prelude::Configurable;
 use isahc::{AsyncBody, Response};
 use lazy_static::lazy_static;
+use parse_duration::parse;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::sync::Arc;
@@ -84,10 +85,15 @@ impl OpenAIEmbeddings {
         span
     }
 
-    async fn send_request(&self, api_key: &str, spans: Vec<&str>) -> Result<Response<AsyncBody>> {
+    async fn send_request(
+        &self,
+        api_key: &str,
+        spans: Vec<&str>,
+        request_timeout: u64,
+    ) -> Result<Response<AsyncBody>> {
         let request = Request::post("https://api.openai.com/v1/embeddings")
             .redirect_policy(isahc::config::RedirectPolicy::Follow)
-            .timeout(Duration::from_secs(4))
+            .timeout(Duration::from_secs(request_timeout))
             .header("Content-Type", "application/json")
             .header("Authorization", format!("Bearer {}", api_key))
             .body(
@@ -114,45 +120,23 @@ impl EmbeddingProvider for OpenAIEmbeddings {
             .ok_or_else(|| anyhow!("no api key"))?;
 
         let mut request_number = 0;
+        let mut request_timeout: u64 = 10;
         let mut truncated = false;
         let mut response: Response<AsyncBody>;
         let mut spans: Vec<String> = spans.iter().map(|x| x.to_string()).collect();
         while request_number < MAX_RETRIES {
             response = self
-                .send_request(api_key, spans.iter().map(|x| &**x).collect())
+                .send_request(
+                    api_key,
+                    spans.iter().map(|x| &**x).collect(),
+                    request_timeout,
+                )
                 .await?;
             request_number += 1;
 
-            if request_number + 1 == MAX_RETRIES && response.status() != StatusCode::OK {
-                return Err(anyhow!(
-                    "openai max retries, error: {:?}",
-                    &response.status()
-                ));
-            }
-
             match response.status() {
-                StatusCode::TOO_MANY_REQUESTS => {
-                    let delay = Duration::from_secs(BACKOFF_SECONDS[request_number - 1] as u64);
-                    log::trace!(
-                        "open ai rate limiting, delaying request by {:?} seconds",
-                        delay.as_secs()
-                    );
-                    self.executor.timer(delay).await;
-                }
-                StatusCode::BAD_REQUEST => {
-                    // Only truncate if it hasnt been truncated before
-                    if !truncated {
-                        for span in spans.iter_mut() {
-                            *span = Self::truncate(span.clone());
-                        }
-                        truncated = true;
-                    } else {
-                        // If failing once already truncated, log the error and break the loop
-                        let mut body = String::new();
-                        response.body_mut().read_to_string(&mut body).await?;
-                        log::trace!("open ai bad request: {:?} {:?}", &response.status(), body);
-                        break;
-                    }
+                StatusCode::REQUEST_TIMEOUT => {
+                    request_timeout += 5;
                 }
                 StatusCode::OK => {
                     let mut body = String::new();
@@ -163,18 +147,60 @@ impl EmbeddingProvider for OpenAIEmbeddings {
                         "openai embedding completed. tokens: {:?}",
                         response.usage.total_tokens
                     );
+
                     return Ok(response
                         .data
                         .into_iter()
                         .map(|embedding| embedding.embedding)
                         .collect());
                 }
+                StatusCode::TOO_MANY_REQUESTS => {
+                    let mut body = String::new();
+                    response.body_mut().read_to_string(&mut body).await?;
+
+                    let delay_duration = {
+                        let delay = Duration::from_secs(BACKOFF_SECONDS[request_number - 1] as u64);
+                        if let Some(time_to_reset) =
+                            response.headers().get("x-ratelimit-reset-tokens")
+                        {
+                            if let Ok(time_str) = time_to_reset.to_str() {
+                                parse(time_str).unwrap_or(delay)
+                            } else {
+                                delay
+                            }
+                        } else {
+                            delay
+                        }
+                    };
+
+                    log::trace!(
+                        "openai rate limiting: waiting {:?} until lifted",
+                        &delay_duration
+                    );
+
+                    self.executor.timer(delay_duration).await;
+                }
                 _ => {
-                    return Err(anyhow!("openai embedding failed {}", response.status()));
+                    // TODO: Move this to parsing step
+                    // Only truncate if it hasnt been truncated before
+                    if !truncated {
+                        for span in spans.iter_mut() {
+                            *span = Self::truncate(span.clone());
+                        }
+                        truncated = true;
+                    } else {
+                        // If failing once already truncated, log the error and break the loop
+                        let mut body = String::new();
+                        response.body_mut().read_to_string(&mut body).await?;
+                        return Err(anyhow!(
+                            "open ai bad request: {:?} {:?}",
+                            &response.status(),
+                            body
+                        ));
+                    }
                 }
             }
         }
-
-        Err(anyhow!("openai embedding failed"))
+        Err(anyhow!("openai max retries"))
     }
 }
