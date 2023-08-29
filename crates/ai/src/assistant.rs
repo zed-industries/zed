@@ -581,9 +581,6 @@ impl AssistantPanel {
             None
         };
         let language_name = language_name.as_deref();
-        let model = settings::get::<AssistantSettings>(cx)
-            .default_open_ai_model
-            .clone();
 
         let mut prompt = String::new();
         if let Some(language_name) = language_name {
@@ -673,25 +670,30 @@ impl AssistantPanel {
         writeln!(prompt, "Always wrap your response in a Markdown codeblock.").unwrap();
         writeln!(prompt, "Never make remarks about the output.").unwrap();
 
-        let mut request = OpenAIRequest {
-            model: model.full_name().into(),
-            messages: Vec::new(),
-            stream: true,
-        };
+        let mut messages = Vec::new();
+        let mut model = settings::get::<AssistantSettings>(cx)
+            .default_open_ai_model
+            .clone();
         if let Some(conversation) = conversation {
             let conversation = conversation.read(cx);
             let buffer = conversation.buffer.read(cx);
-            request.messages.extend(
+            messages.extend(
                 conversation
                     .messages(cx)
                     .map(|message| message.to_open_ai_message(buffer)),
             );
+            model = conversation.model.clone();
         }
 
-        request.messages.push(RequestMessage {
+        messages.push(RequestMessage {
             role: Role::User,
             content: prompt,
         });
+        let request = OpenAIRequest {
+            model: model.full_name().into(),
+            messages,
+            stream: true,
+        };
         let response = stream_completion(api_key, cx.background().clone(), request);
         let editor = editor.downgrade();
 
