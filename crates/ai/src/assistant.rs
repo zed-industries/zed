@@ -399,6 +399,11 @@ impl AssistantPanel {
             InlineAssistantEvent::Dismissed => {
                 self.hide_inline_assist(assist_id, cx);
             }
+            InlineAssistantEvent::IncludeConversationToggled {
+                include_conversation,
+            } => {
+                self.include_conversation_in_next_inline_assist = *include_conversation;
+            }
         }
     }
 
@@ -488,8 +493,6 @@ impl AssistantPanel {
         include_conversation: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        self.include_conversation_in_next_inline_assist = include_conversation;
-
         let api_key = if let Some(api_key) = self.api_key.borrow().clone() {
             api_key
         } else {
@@ -2833,6 +2836,9 @@ enum InlineAssistantEvent {
     },
     Canceled,
     Dismissed,
+    IncludeConversationToggled {
+        include_conversation: bool,
+    },
 }
 
 #[derive(Copy, Clone)]
@@ -2955,6 +2961,9 @@ impl InlineAssistant {
         cx: &mut ViewContext<Self>,
     ) {
         self.include_conversation = !self.include_conversation;
+        cx.emit(InlineAssistantEvent::IncludeConversationToggled {
+            include_conversation: self.include_conversation,
+        });
         cx.notify();
     }
 }
