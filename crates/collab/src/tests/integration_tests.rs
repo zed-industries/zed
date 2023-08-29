@@ -5321,7 +5321,7 @@ async fn test_collaborating_with_code_actions(
         .unwrap();
 
     let mut fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server
+    let mut requests = fake_language_server
         .handle_request::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri,
@@ -5330,9 +5330,9 @@ async fn test_collaborating_with_code_actions(
             assert_eq!(params.range.start, lsp::Position::new(0, 0));
             assert_eq!(params.range.end, lsp::Position::new(0, 0));
             Ok(None)
-        })
-        .next()
-        .await;
+        });
+    deterministic.advance_clock(editor::CODE_ACTIONS_DEBOUNCE_TIMEOUT * 2);
+    requests.next().await;
 
     // Move cursor to a location that contains code actions.
     editor_b.update(cx_b, |editor, cx| {
@@ -5342,7 +5342,7 @@ async fn test_collaborating_with_code_actions(
         cx.focus(&editor_b);
     });
 
-    fake_language_server
+    let mut requests = fake_language_server
         .handle_request::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri,
@@ -5394,9 +5394,9 @@ async fn test_collaborating_with_code_actions(
                     ..Default::default()
                 },
             )]))
-        })
-        .next()
-        .await;
+        });
+    deterministic.advance_clock(editor::CODE_ACTIONS_DEBOUNCE_TIMEOUT * 2);
+    requests.next().await;
 
     // Toggle code actions and wait for them to display.
     editor_b.update(cx_b, |editor, cx| {
@@ -7864,6 +7864,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     client_a.language_registry().add(Arc::clone(&language));
     client_b.language_registry().add(language);
 
+    // Client A opens a project.
     client_a
         .fs()
         .insert_tree(
@@ -7884,6 +7885,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .await
         .unwrap();
 
+    // Client B joins the project
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
     active_call_b
         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
@@ -7893,6 +7895,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
     cx_a.foreground().start_waiting();
 
+    // The host opens a rust file.
     let _buffer_a = project_a
         .update(cx_a, |project, cx| {
             project.open_local_buffer("/a/main.rs", cx)
@@ -7900,7 +7903,6 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .await
         .unwrap();
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    let next_call_id = Arc::new(AtomicU32::new(0));
     let editor_a = workspace_a
         .update(cx_a, |workspace, cx| {
             workspace.open_path((worktree_id, "main.rs"), None, true, cx)
@@ -7909,6 +7911,9 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
+
+    // Set up the language server to return an additional inlay hint on each request.
+    let next_call_id = Arc::new(AtomicU32::new(0));
     fake_language_server
         .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
             let task_next_call_id = Arc::clone(&next_call_id);
@@ -7917,33 +7922,28 @@ async fn test_mutual_editor_inlay_hint_cache_update(
                     params.text_document.uri,
                     lsp::Url::from_file_path("/a/main.rs").unwrap(),
                 );
-                let mut current_call_id = Arc::clone(&task_next_call_id).fetch_add(1, SeqCst);
-                let mut new_hints = Vec::with_capacity(current_call_id as usize);
-                loop {
-                    new_hints.push(lsp::InlayHint {
-                        position: lsp::Position::new(0, current_call_id),
-                        label: lsp::InlayHintLabel::String(current_call_id.to_string()),
-                        kind: None,
-                        text_edits: None,
-                        tooltip: None,
-                        padding_left: None,
-                        padding_right: None,
-                        data: None,
-                    });
-                    if current_call_id == 0 {
-                        break;
-                    }
-                    current_call_id -= 1;
-                }
-                Ok(Some(new_hints))
+                let call_count = task_next_call_id.fetch_add(1, SeqCst);
+                Ok(Some(
+                    (0..=call_count)
+                        .map(|ix| lsp::InlayHint {
+                            position: lsp::Position::new(0, ix),
+                            label: lsp::InlayHintLabel::String(ix.to_string()),
+                            kind: None,
+                            text_edits: None,
+                            tooltip: None,
+                            padding_left: None,
+                            padding_right: None,
+                            data: None,
+                        })
+                        .collect(),
+                ))
             }
         })
         .next()
         .await
         .unwrap();
 
-    cx_a.foreground().finish_waiting();
-    cx_a.foreground().run_until_parked();
+    deterministic.run_until_parked();
 
     let mut edits_made = 1;
     editor_a.update(cx_a, |editor, _| {
@@ -7969,7 +7969,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .downcast::<Editor>()
         .unwrap();
 
-    cx_b.foreground().run_until_parked();
+    deterministic.run_until_parked();
     editor_b.update(cx_b, |editor, _| {
         assert_eq!(
             vec!["0".to_string(), "1".to_string()],
@@ -7990,18 +7990,9 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         cx.focus(&editor_b);
         edits_made += 1;
     });
-    cx_a.foreground().run_until_parked();
-    cx_b.foreground().run_until_parked();
+
+    deterministic.run_until_parked();
     editor_a.update(cx_a, |editor, _| {
-        assert_eq!(
-            vec!["0".to_string(), "1".to_string(), "2".to_string()],
-            extract_hint_labels(editor),
-            "Host should get hints from the 1st edit and 1st LSP query"
-        );
-        let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(inlay_cache.version(), edits_made);
-    });
-    editor_b.update(cx_b, |editor, _| {
         assert_eq!(
             vec![
                 "0".to_string(),
@@ -8015,6 +8006,15 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(inlay_cache.version(), edits_made);
     });
+    editor_b.update(cx_b, |editor, _| {
+        assert_eq!(
+            vec!["0".to_string(), "1".to_string(), "2".to_string(),],
+            extract_hint_labels(editor),
+            "Guest should get hints the 1st edit and 2nd LSP query"
+        );
+        let inlay_cache = editor.inlay_hint_cache();
+        assert_eq!(inlay_cache.version(), edits_made);
+    });
 
     editor_a.update(cx_a, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
@@ -8022,8 +8022,8 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         cx.focus(&editor_a);
         edits_made += 1;
     });
-    cx_a.foreground().run_until_parked();
-    cx_b.foreground().run_until_parked();
+
+    deterministic.run_until_parked();
     editor_a.update(cx_a, |editor, _| {
         assert_eq!(
             vec![
@@ -8062,8 +8062,8 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .await
         .expect("inlay refresh request failed");
     edits_made += 1;
-    cx_a.foreground().run_until_parked();
-    cx_b.foreground().run_until_parked();
+
+    deterministic.run_until_parked();
     editor_a.update(cx_a, |editor, _| {
         assert_eq!(
             vec![
