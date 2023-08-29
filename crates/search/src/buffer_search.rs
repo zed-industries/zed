@@ -252,10 +252,19 @@ impl View for BufferSearchBar {
             )
             .align_children_center()
             .flex(1., true);
-        let replacement = Flex::row()
-            .with_child(ChildView::new(&self.replacement_editor, cx).flex(1., true))
-            .align_children_center()
-            .flex(1., true);
+        let replacement = supported_options.replacement.then(|| {
+            Flex::row()
+                .with_child(ChildView::new(&self.replacement_editor, cx).flex(1., true))
+                .align_children_center()
+                .flex(1., true)
+                .contained()
+                .with_style(query_container_style)
+                .constrained()
+                .with_min_width(theme.search.editor.min_width)
+                .with_max_width(theme.search.editor.max_width)
+                .with_height(theme.search.search_bar_row_height)
+                .flex(1., false)
+        });
 
         let editor_column = Flex::row()
             .with_child(
@@ -268,16 +277,7 @@ impl View for BufferSearchBar {
                     .with_height(theme.search.search_bar_row_height)
                     .flex(1., false),
             )
-            .with_child(
-                replacement
-                    .contained()
-                    .with_style(query_container_style)
-                    .constrained()
-                    .with_min_width(theme.search.editor.min_width)
-                    .with_max_width(theme.search.editor.max_width)
-                    .with_height(theme.search.search_bar_row_height)
-                    .flex(1., false),
-            )
+            .with_children(replacement)
             .contained()
             .constrained()
             .with_height(theme.search.search_bar_row_height)
