@@ -52,6 +52,7 @@ pub trait SearchableItem: Item {
         cx: &mut ViewContext<Self>,
     );
     fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>);
+    fn replace(&mut self, _: &Self::Match, _: &SearchQuery, _: &mut ViewContext<Self>) {}
     fn match_index_for_direction(
         &mut self,
         matches: &Vec<Self::Match>,
@@ -103,6 +104,7 @@ pub trait SearchableItemHandle: ItemHandle {
         cx: &mut WindowContext,
     );
     fn select_matches(&self, matches: &Vec<Box<dyn Any + Send>>, cx: &mut WindowContext);
+    fn replace(&self, _: &Box<dyn Any + Send>, _: &SearchQuery, _: &mut WindowContext);
     fn match_index_for_direction(
         &self,
         matches: &Vec<Box<dyn Any + Send>>,
@@ -208,6 +210,11 @@ impl<T: SearchableItem> SearchableItemHandle for ViewHandle<T> {
     ) -> Option<usize> {
         let matches = downcast_matches(matches);
         self.update(cx, |this, cx| this.active_match_index(matches, cx))
+    }
+
+    fn replace(&self, matches: &Box<dyn Any + Send>, query: &SearchQuery, cx: &mut WindowContext) {
+        let matches = matches.downcast_ref().unwrap();
+        self.update(cx, |this, cx| this.replace(matches, query, cx))
     }
 }
 

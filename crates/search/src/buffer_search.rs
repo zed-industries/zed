@@ -77,6 +77,7 @@ pub struct BufferSearchBar {
     active_searchable_item: Option<Box<dyn SearchableItemHandle>>,
     active_match_index: Option<usize>,
     active_searchable_item_subscription: Option<Subscription>,
+    active_search: Option<Arc<SearchQuery>>,
     searchable_items_with_matches:
         HashMap<Box<dyn WeakSearchableItemHandle>, Vec<Box<dyn Any + Send>>>,
     pending_search: Option<Task<()>>,
@@ -371,6 +372,7 @@ impl BufferSearchBar {
             dismissed: true,
             search_history: SearchHistory::default(),
             current_mode: SearchMode::default(),
+            active_search: None,
         }
     }
 
@@ -700,6 +702,7 @@ impl BufferSearchBar {
         let (done_tx, done_rx) = oneshot::channel();
         let query = self.query(cx);
         self.pending_search.take();
+
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
             if query.is_empty() {
                 self.active_match_index.take();
@@ -710,6 +713,7 @@ impl BufferSearchBar {
                 let query: Arc<_> = if self.current_mode == SearchMode::Regex {
                     match SearchQuery::regex(
                         query,
+                        None,
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                         Vec::new(),
@@ -725,6 +729,7 @@ impl BufferSearchBar {
                 } else {
                     SearchQuery::text(
                         query,
+                        None,
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                         Vec::new(),
@@ -732,7 +737,7 @@ impl BufferSearchBar {
                     )
                 }
                 .into();
-
+                self.active_search = Some(query.clone());
                 let query_text = query.as_str().to_string();
                 let matches = active_searchable_item.find_matches(query, cx);
 
@@ -824,14 +829,19 @@ impl BufferSearchBar {
         }
     }
     fn replace_all(&mut self, _: &ReplaceAll, cx: &mut ViewContext<Self>) {
-        if !self.dismissed && self.active_match_index.is_some() {
+        if !self.dismissed && self.active_search.is_some() {
             if let Some(searchable_item) = self.active_searchable_item.as_ref() {
-                if let Some(matches) = self
-                    .searchable_items_with_matches
-                    .get(&searchable_item.downgrade())
-                {
-                    searchable_item.select_matches(matches, cx);
-                    self.focus_editor(&FocusEditor, cx);
+                if let Some(query) = self.active_search.as_ref() {
+                    if let Some(matches) = self
+                        .searchable_items_with_matches
+                        .get(&searchable_item.downgrade())
+                    {
+                        for m in matches {
+                            searchable_item.replace(m, query, cx);
+                        }
+
+                        self.focus_editor(&FocusEditor, cx);
+                    }
                 }
             }
         }

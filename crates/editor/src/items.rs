@@ -16,10 +16,11 @@ use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
     SelectionGoal,
 };
-use project::{FormatTrigger, Item as _, Project, ProjectPath};
+use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view};
 use smallvec::SmallVec;
 use std::{
+    any::Any,
     borrow::Cow,
     cmp::{self, Ordering},
     fmt::Write,
@@ -979,7 +980,14 @@ impl SearchableItem for Editor {
         }
         self.change_selections(None, cx, |s| s.select_ranges(ranges));
     }
-
+    fn replace(
+        &mut self,
+        identifier: &Self::Match,
+        query: &SearchQuery,
+        cx: &mut ViewContext<Self>,
+    ) {
+        dbg!("Replacing in editor");
+    }
     fn match_index_for_direction(
         &mut self,
         matches: &Vec<Range<Anchor>>,
