@@ -2,9 +2,23 @@ import { with_opacity } from "../theme/color"
 import { background, border, foreground, text } from "./components"
 import { interactive, toggleable } from "../element"
 import { useTheme } from "../theme"
+import { text_button } from "../component/text_button"
+
+const search_results = () => {
+    const theme = useTheme()
+
+    return {
+        // TODO: Add an activeMatchBackground on the rust side to differentiate between active and inactive
+        match_background: with_opacity(
+            foreground(theme.highest, "accent"),
+            0.4
+        ),
+    }
+}
 
 export default function search(): any {
     const theme = useTheme()
+    const SEARCH_ROW_SPACING = 12
 
     // Search input
     const editor = {
@@ -34,12 +48,8 @@ export default function search(): any {
     }
 
     return {
-        padding: { top: 16, bottom: 16, left: 16, right: 16 },
-        // TODO: Add an activeMatchBackground on the rust side to differentiate between active and inactive
-        match_background: with_opacity(
-            foreground(theme.highest, "accent"),
-            0.4
-        ),
+        padding: { top: 4, bottom: 4 },
+
         option_button: toggleable({
             base: interactive({
                 base: {
@@ -153,47 +163,13 @@ export default function search(): any {
                 },
             },
         }),
+        // Search tool buttons
+        // HACK: This is not how disabled elements should be created
+        // Disabled elements should use a disabled state of an interactive element, not a toggleable element with the inactive state being disabled
         action_button: toggleable({
-            base: interactive({
-                base: {
-                    ...text(theme.highest, "mono", "disabled"),
-                    background: background(theme.highest, "disabled"),
-                    corner_radius: 6,
-                    border: border(theme.highest, "disabled"),
-                    padding: {
-                        // bottom: 2,
-                        left: 10,
-                        right: 10,
-                        // top: 2,
-                    },
-                    margin: {
-                        right: 9,
-                    }
-                },
-                state: {
-                    hovered: {}
-                },
-            }),
             state: {
-                active: interactive({
-                    base: {
-                        ...text(theme.highest, "mono", "on"),
-                        background: background(theme.highest, "on"),
-                        border: border(theme.highest, "on"),
-                    },
-                    state: {
-                        hovered: {
-                            ...text(theme.highest, "mono", "on", "hovered"),
-                            background: background(theme.highest, "on", "hovered"),
-                            border: border(theme.highest, "on", "hovered"),
-                        },
-                        clicked: {
-                            ...text(theme.highest, "mono", "on", "pressed"),
-                            background: background(theme.highest, "on", "pressed"),
-                            border: border(theme.highest, "on", "pressed"),
-                        },
-                    },
-                })
+                inactive: text_button({ variant: "ghost", layer: theme.highest, disabled: true, margin: { right: SEARCH_ROW_SPACING }, text_properties: { size: "sm" } }),
+                active: text_button({ variant: "ghost", layer: theme.highest, margin: { right: SEARCH_ROW_SPACING }, text_properties: { size: "sm" } })
             }
         }),
         editor,
@@ -207,15 +183,15 @@ export default function search(): any {
             border: border(theme.highest, "negative"),
         },
         match_index: {
-            ...text(theme.highest, "mono", "variant"),
+            ...text(theme.highest, "mono", { size: "sm" }),
             padding: {
-                left: 9,
+                right: SEARCH_ROW_SPACING,
             },
         },
         option_button_group: {
             padding: {
-                left: 12,
-                right: 12,
+                left: SEARCH_ROW_SPACING,
+                right: SEARCH_ROW_SPACING,
             },
         },
         include_exclude_inputs: {
@@ -232,52 +208,26 @@ export default function search(): any {
             ...text(theme.highest, "mono", "variant"),
             size: 13,
         },
-        dismiss_button: interactive({
-            base: {
-                color: foreground(theme.highest, "variant"),
-                icon_width: 14,
-                button_width: 32,
-                corner_radius: 6,
-                padding: {
-                    // // top: 10,
-                    // bottom: 10,
-                    left: 10,
-                    right: 10,
-                },
-
-                background: background(theme.highest, "variant"),
-
-                border: border(theme.highest, "on"),
-            },
-            state: {
-                hovered: {
-                    color: foreground(theme.highest, "hovered"),
-                    background: background(theme.highest, "variant", "hovered")
-                },
-                clicked: {
-                    color: foreground(theme.highest, "pressed"),
-                    background: background(theme.highest, "variant", "pressed")
-                },
-            },
-        }),
+        // Input Icon
         editor_icon: {
             icon: {
-                color: foreground(theme.highest, "variant"),
-                asset: "icons/magnifying_glass_12.svg",
+                color: foreground(theme.highest, "disabled"),
+                asset: "icons/magnifying_glass.svg",
                 dimensions: {
-                    width: 12,
-                    height: 12,
+                    width: 14,
+                    height: 14,
                 }
             },
             container: {
-                margin: { right: 6 },
-                padding: { left: 2, right: 2 },
+                margin: { right: 4 },
+                padding: { left: 1, right: 1 },
             }
         },
+        // Toggle group buttons - Text | Regex | Semantic
         mode_button: toggleable({
             base: interactive({
                 base: {
-                    ...text(theme.highest, "mono", "variant"),
+                    ...text(theme.highest, "mono", "variant", { size: "sm" }),
                     background: background(theme.highest, "variant"),
 
                     border: {
@@ -285,21 +235,24 @@ export default function search(): any {
                         left: false,
                         right: false
                     },
-
+                    margin: {
+                        top: 1,
+                        bottom: 1,
+                    },
                     padding: {
-                        left: 10,
-                        right: 10,
+                        left: 12,
+                        right: 12,
                     },
                     corner_radius: 6,
                 },
                 state: {
                     hovered: {
-                        ...text(theme.highest, "mono", "variant", "hovered"),
+                        ...text(theme.highest, "mono", "variant", "hovered", { size: "sm" }),
                         background: background(theme.highest, "variant", "hovered"),
                         border: border(theme.highest, "on", "hovered"),
                     },
                     clicked: {
-                        ...text(theme.highest, "mono", "variant", "pressed"),
+                        ...text(theme.highest, "mono", "variant", "pressed", { size: "sm" }),
                         background: background(theme.highest, "variant", "pressed"),
                         border: border(theme.highest, "on", "pressed"),
                     },
@@ -308,20 +261,23 @@ export default function search(): any {
             state: {
                 active: {
                     default: {
-                        ...text(theme.highest, "mono", "on"),
+                        ...text(theme.highest, "mono", "on", { size: "sm" }),
                         background: background(theme.highest, "on")
                     },
                     hovered: {
-                        ...text(theme.highest, "mono", "on", "hovered"),
+                        ...text(theme.highest, "mono", "on", "hovered", { size: "sm" }),
                         background: background(theme.highest, "on", "hovered")
                     },
                     clicked: {
-                        ...text(theme.highest, "mono", "on", "pressed"),
+                        ...text(theme.highest, "mono", "on", "pressed", { size: "sm" }),
                         background: background(theme.highest, "on", "pressed")
                     },
                 },
             },
         }),
+        // Next/Previous Match buttons
+        // HACK: This is not how disabled elements should be created
+        // Disabled elements should use a disabled state of an interactive element, not a toggleable element with the inactive state being disabled
         nav_button: toggleable({
             state: {
                 inactive: interactive({
@@ -334,7 +290,10 @@ export default function search(): any {
                             left: false,
                             right: false,
                         },
-
+                        margin: {
+                            top: 1,
+                            bottom: 1,
+                        },
                         padding: {
                             left: 10,
                             right: 10,
@@ -354,7 +313,10 @@ export default function search(): any {
                             left: false,
                             right: false,
                         },
-
+                        margin: {
+                            top: 1,
+                            bottom: 1,
+                        },
                         padding: {
                             left: 10,
                             right: 10,
@@ -375,13 +337,10 @@ export default function search(): any {
                 })
             }
         }),
-        search_bar_row_height: 32,
+        search_bar_row_height: 34,
+        search_row_spacing: 8,
         option_button_height: 22,
-        modes_container: {
-            margin: {
-                right: 9
-            }
-        }
-
+        modes_container: {},
+        ...search_results()
     }
 }

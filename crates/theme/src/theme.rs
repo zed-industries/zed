@@ -437,11 +437,11 @@ pub struct Search {
     pub match_index: ContainedText,
     pub major_results_status: TextStyle,
     pub minor_results_status: TextStyle,
-    pub dismiss_button: Interactive<IconButton>,
     pub editor_icon: IconStyle,
     pub mode_button: Toggleable<Interactive<ContainedText>>,
     pub nav_button: Toggleable<Interactive<ContainedLabel>>,
     pub search_bar_row_height: f32,
+    pub search_row_spacing: f32,
     pub option_button_height: f32,
     pub modes_container: ContainerStyle,
 }

@@ -150,9 +150,10 @@ impl ToolbarItemView for QuickActionBar {
                                 cx.notify();
                             }
                         }));
+                    ToolbarItemLocation::PrimaryRight { flex: None }
+                } else {
+                    ToolbarItemLocation::Hidden
                 }
-
-                ToolbarItemLocation::PrimaryRight { flex: None }
             }
             None => {
                 self.active_item = None;
