@@ -25,6 +25,7 @@ pub struct SearchOptions {
     pub case: bool,
     pub word: bool,
     pub regex: bool,
+    /// Specifies whether the item supports search & replace.
     pub replacement: bool,
 }
 
