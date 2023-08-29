@@ -82,9 +82,9 @@ pub struct StreamingDiff {
 
 impl StreamingDiff {
     const INSERTION_SCORE: f64 = -1.;
-    const DELETION_SCORE: f64 = -5.;
-    const EQUALITY_BASE: f64 = 2.;
-    const MAX_EQUALITY_EXPONENT: i32 = 20;
+    const DELETION_SCORE: f64 = -20.;
+    const EQUALITY_BASE: f64 = 1.8;
+    const MAX_EQUALITY_EXPONENT: i32 = 16;
 
     pub fn new(old: String) -> Self {
         let old = old.chars().collect::<Vec<_>>();
