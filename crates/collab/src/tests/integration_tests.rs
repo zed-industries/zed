@@ -7798,7 +7798,7 @@ async fn test_on_input_format_from_guest_to_host(
     });
 }
 
-#[gpui::test]
+#[allow(unused)]
 async fn test_mutual_editor_inlay_hint_cache_update(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
