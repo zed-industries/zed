@@ -13,6 +13,7 @@ import { interactive } from "../element"
 import { titlebar } from "./titlebar"
 import { useTheme } from "../theme"
 import { toggleable_icon_button } from "../component/icon_button"
+import { toolbar } from "./toolbar"
 
 export default function workspace(): any {
     const theme = useTheme()
@@ -128,18 +129,7 @@ export default function workspace(): any {
         },
         status_bar: statusBar(),
         titlebar: titlebar(),
-        toolbar: {
-            height: 42,
-            background: background(theme.highest),
-            border: border(theme.highest, { bottom: true }),
-            item_spacing: 8,
-            toggleable_tool: toggleable_icon_button(theme, {
-                margin: { left: 8 },
-                variant: "ghost",
-                active_color: "accent",
-            }),
-            padding: { left: 8, right: 8 },
-        },
+        toolbar: toolbar(),
         breadcrumb_height: 24,
         breadcrumbs: interactive({
             base: {
