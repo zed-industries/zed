@@ -164,7 +164,21 @@ impl SearchQuery {
             ))
         }
     }
-
+    pub fn with_replacement(mut self, new_replacement: Option<String>) -> Self {
+        match self {
+            Self::Text {
+                ref mut replacement,
+                ..
+            }
+            | Self::Regex {
+                ref mut replacement,
+                ..
+            } => {
+                *replacement = new_replacement;
+                self
+            }
+        }
+    }
     pub fn to_proto(&self, project_id: u64) -> proto::SearchProject {
         proto::SearchProject {
             project_id,

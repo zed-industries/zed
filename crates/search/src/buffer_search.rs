@@ -867,8 +867,11 @@ impl BufferSearchBar {
                         .searchable_items_with_matches
                         .get(&searchable_item.downgrade())
                     {
-                        for m in matches {
-                            searchable_item.replace(m, query, cx);
+                        if let Some(active_index) = self.active_match_index {
+                            let query = query.as_ref().clone().with_replacement(
+                                Some(self.replacement(cx)).filter(|rep| !rep.is_empty()),
+                            );
+                            searchable_item.replace(&matches[active_index], &query, cx);
                         }
 
                         self.focus_editor(&FocusEditor, cx);
@@ -885,8 +888,11 @@ impl BufferSearchBar {
                         .searchable_items_with_matches
                         .get(&searchable_item.downgrade())
                     {
+                        let query = query.as_ref().clone().with_replacement(
+                            Some(self.replacement(cx)).filter(|rep| !rep.is_empty()),
+                        );
                         for m in matches {
-                            searchable_item.replace(m, query, cx);
+                            searchable_item.replace(m, &query, cx);
                         }
 
                         self.focus_editor(&FocusEditor, cx);
