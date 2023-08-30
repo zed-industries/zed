@@ -78,15 +78,13 @@ impl EmbeddingProvider for DummyEmbeddings {
         let token_count = tokens.len();
         let output = if token_count > OPENAI_INPUT_LIMIT {
             tokens.truncate(OPENAI_INPUT_LIMIT);
-            OPENAI_BPE_TOKENIZER
-                .decode(tokens)
-                .ok()
-                .unwrap_or_else(|| span.to_string())
+            let new_input = OPENAI_BPE_TOKENIZER.decode(tokens.clone());
+            new_input.ok().unwrap_or_else(|| span.to_string())
         } else {
             span.to_string()
         };
 
-        (output, token_count)
+        (output, tokens.len())
     }
 }
 
@@ -120,7 +118,7 @@ impl OpenAIEmbeddings {
 #[async_trait]
 impl EmbeddingProvider for OpenAIEmbeddings {
     fn max_tokens_per_batch(&self) -> usize {
-        OPENAI_INPUT_LIMIT
+        50000
     }
 
     fn truncate(&self, span: &str) -> (String, usize) {

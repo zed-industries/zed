@@ -105,9 +105,11 @@ impl EmbeddingQueue {
             for fragment in &batch {
                 let file = fragment.file.lock();
                 spans.extend(
-                    file.documents[fragment.document_range.clone()]
-                        .iter()
-                        .map(|d| d.content.clone()),
+                    {
+                        file.documents[fragment.document_range.clone()]
+                            .iter()
+                            .map(|d| d.content.clone())
+                        }
                 );
             }
 
