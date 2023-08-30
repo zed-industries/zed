@@ -3216,7 +3216,8 @@ fn strip_markdown_codeblock(
 
         let text = if starts_with_fenced_code_block {
             buffer
-                .strip_suffix("\n```")
+                .strip_suffix("\n```\n")
+                .or_else(|| buffer.strip_suffix("\n```"))
                 .or_else(|| buffer.strip_suffix("\n``"))
                 .or_else(|| buffer.strip_suffix("\n`"))
                 .or_else(|| buffer.strip_suffix('\n'))
@@ -3631,6 +3632,13 @@ mod tests {
         );
         assert_eq!(
             strip_markdown_codeblock(chunks("```\nLorem ipsum dolor\n```", 2))
+                .map(|chunk| chunk.unwrap())
+                .collect::<String>()
+                .await,
+            "Lorem ipsum dolor"
+        );
+        assert_eq!(
+            strip_markdown_codeblock(chunks("```\nLorem ipsum dolor\n```\n", 2))
                 .map(|chunk| chunk.unwrap())
                 .collect::<String>()
                 .await,
