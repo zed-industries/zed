@@ -3463,7 +3463,6 @@ pub struct LayoutContext<'a, 'b, 'c, V> {
     pub view_context: &'c mut ViewContext<'a, 'b, V>,
     new_parents: &'c mut HashMap<usize, usize>,
     views_to_notify_if_ancestors_change: &'c mut HashMap<usize, SmallVec<[usize; 2]>>,
-    text_style_stack: Vec<TextStyle>,
     pub refreshing: bool,
 }
 
@@ -3478,7 +3477,6 @@ impl<'a, 'b, 'c, V> LayoutContext<'a, 'b, 'c, V> {
             view_context,
             new_parents,
             views_to_notify_if_ancestors_change,
-            text_style_stack: Vec::new(),
             refreshing,
         }
     }
@@ -3544,18 +3542,19 @@ impl<'a, 'b, 'c, V> LayoutContext<'a, 'b, 'c, V> {
 
 impl<'a, 'b, 'c, V> RenderContext<'a, 'b, V> for LayoutContext<'a, 'b, 'c, V> {
     fn text_style(&self) -> TextStyle {
-        self.text_style_stack
+        self.window
+            .text_style_stack
             .last()
             .cloned()
             .unwrap_or(TextStyle::default(&self.font_cache))
     }
 
     fn push_text_style(&mut self, style: TextStyle) {
-        self.text_style_stack.push(style);
+        self.window.text_style_stack.push(style);
     }
 
     fn pop_text_style(&mut self) {
-        self.text_style_stack.pop();
+        self.window.text_style_stack.pop();
     }
 
     fn as_view_context(&mut self) -> &mut ViewContext<'a, 'b, V> {
