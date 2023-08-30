@@ -56,7 +56,7 @@ pub fn impl_into_element(
     where_clause: &Option<&WhereClause>,
 ) -> proc_macro2::TokenStream {
     quote! {
-        impl #impl_generics playground::element::IntoElement<#view_type_name> for #type_name #type_generics
+        impl #impl_generics gpui2::element::IntoElement<#view_type_name> for #type_name #type_generics
         #where_clause
         {
             type Element = Self;

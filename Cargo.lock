@@ -3166,6 +3166,22 @@ dependencies = [
 [[package]]
 name = "gpui2"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "derive_more",
+ "gpui",
+ "gpui2_macros",
+ "log",
+ "parking_lot 0.11.2",
+ "refineable",
+ "rust-embed",
+ "serde",
+ "settings",
+ "simplelog",
+ "smallvec",
+ "theme",
+ "util",
+]
 
 [[package]]
 name = "gpui2_macros"
