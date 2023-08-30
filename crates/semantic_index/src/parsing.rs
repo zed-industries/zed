@@ -72,8 +72,7 @@ impl CodeContextRetriever {
         let mut sha1 = Sha1::new();
         sha1.update(&document_span);
 
-        let token_count = self.embedding_provider.count_tokens(&document_span);
-        let document_span = self.embedding_provider.truncate(&document_span);
+        let (document_span, token_count) = self.embedding_provider.truncate(&document_span);
 
         Ok(vec![Document {
             range: 0..content.len(),
@@ -93,8 +92,7 @@ impl CodeContextRetriever {
         let mut sha1 = Sha1::new();
         sha1.update(&document_span);
 
-        let token_count = self.embedding_provider.count_tokens(&document_span);
-        let document_span = self.embedding_provider.truncate(&document_span);
+        let (document_span, token_count) = self.embedding_provider.truncate(&document_span);
 
         Ok(vec![Document {
             range: 0..content.len(),
@@ -183,8 +181,8 @@ impl CodeContextRetriever {
                 .replace("<language>", language_name.as_ref())
                 .replace("item", &document.content);
 
-            let token_count = self.embedding_provider.count_tokens(&document_content);
-            let document_content = self.embedding_provider.truncate(&document_content);
+            let (document_content, token_count) =
+                self.embedding_provider.truncate(&document_content);
 
             document.content = document_content;
             document.token_count = token_count;
