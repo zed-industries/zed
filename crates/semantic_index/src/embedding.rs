@@ -54,6 +54,8 @@ struct OpenAIEmbeddingUsage {
 #[async_trait]
 pub trait EmbeddingProvider: Sync + Send {
     async fn embed_batch(&self, spans: Vec<&str>) -> Result<Vec<Vec<f32>>>;
+    fn count_tokens(&self, span: &str) -> usize;
+    // fn truncate(&self, span: &str) -> Result<&str>;
 }
 
 pub struct DummyEmbeddings {}
@@ -65,6 +67,12 @@ impl EmbeddingProvider for DummyEmbeddings {
         // the model we will likely be starting with.
         let dummy_vec = vec![0.32 as f32; 1536];
         return Ok(vec![dummy_vec; spans.len()]);
+    }
+
+    fn count_tokens(&self, span: &str) -> usize {
+        // For Dummy Providers, we are going to use OpenAI tokenization for ease
+        let tokens = OPENAI_BPE_TOKENIZER.encode_with_special_tokens(span);
+        tokens.len()
     }
 }
 
@@ -111,6 +119,12 @@ impl OpenAIEmbeddings {
 
 #[async_trait]
 impl EmbeddingProvider for OpenAIEmbeddings {
+    fn count_tokens(&self, span: &str) -> usize {
+        // For Dummy Providers, we are going to use OpenAI tokenization for ease
+        let tokens = OPENAI_BPE_TOKENIZER.encode_with_special_tokens(span);
+        tokens.len()
+    }
+
     async fn embed_batch(&self, spans: Vec<&str>) -> Result<Vec<Vec<f32>>> {
         const BACKOFF_SECONDS: [usize; 4] = [3, 5, 15, 45];
         const MAX_RETRIES: usize = 4;

@@ -332,8 +332,9 @@ impl SemanticIndex {
                 let parsing_files_rx = parsing_files_rx.clone();
                 let batch_files_tx = batch_files_tx.clone();
                 let db_update_tx = db_update_tx.clone();
+                let embedding_provider = embedding_provider.clone();
                 _parsing_files_tasks.push(cx.background().spawn(async move {
-                    let mut retriever = CodeContextRetriever::new();
+                    let mut retriever = CodeContextRetriever::new(embedding_provider.clone());
                     while let Ok(pending_file) = parsing_files_rx.recv().await {
                         Self::parse_file(
                             &fs,
