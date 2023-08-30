@@ -624,10 +624,11 @@ impl<'a> WindowContext<'a> {
                     }
                 }
 
-                if self
-                    .window
-                    .platform_window
-                    .is_topmost_for_position(*position)
+                if pressed_button.is_none()
+                    && self
+                        .window
+                        .platform_window
+                        .is_topmost_for_position(*position)
                 {
                     self.platform().set_cursor_style(style_to_assign);
                 }
@@ -791,6 +792,11 @@ impl<'a> WindowContext<'a> {
                             if clicked_region_ids.contains(&mouse_region.id()) {
                                 if mouse_region.bounds.contains_point(self.mouse_position()) {
                                     valid_regions.push(mouse_region.clone());
+                                } else {
+                                    // Let the view know that it hasn't been clicked anymore
+                                    if mouse_region.notify_on_click {
+                                        notified_views.insert(mouse_region.id().view_id());
+                                    }
                                 }
                             }
                         }

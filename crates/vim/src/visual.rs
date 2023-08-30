@@ -51,8 +51,15 @@ pub fn init(cx: &mut AppContext) {
 pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
-            if vim.state().mode == Mode::VisualBlock && !matches!(motion, Motion::EndOfLine) {
-                let is_up_or_down = matches!(motion, Motion::Up | Motion::Down);
+            if vim.state().mode == Mode::VisualBlock
+                && !matches!(
+                    motion,
+                    Motion::EndOfLine {
+                        display_lines: false
+                    }
+                )
+            {
+                let is_up_or_down = matches!(motion, Motion::Up { .. } | Motion::Down { .. });
                 visual_block_motion(is_up_or_down, editor, cx, |map, point, goal| {
                     motion.move_point(map, point, goal, times)
                 })
@@ -77,7 +84,10 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
                         }
 
                         let Some((new_head, goal)) =
-                        motion.move_point(map, current_head, selection.goal, times) else { return };
+                            motion.move_point(map, current_head, selection.goal, times)
+                        else {
+                            return;
+                        };
 
                         selection.set_head(new_head, goal);
 
@@ -123,16 +133,21 @@ pub fn visual_block_motion(
         let map = &s.display_map();
         let mut head = s.newest_anchor().head().to_display_point(map);
         let mut tail = s.oldest_anchor().tail().to_display_point(map);
-        let mut goal = s.newest_anchor().goal;
+
+        let (start, end) = match s.newest_anchor().goal {
+            SelectionGoal::ColumnRange { start, end } if preserve_goal => (start, end),
+            SelectionGoal::Column(start) if preserve_goal => (start, start + 1),
+            _ => (tail.column(), head.column()),
+        };
+        let goal = SelectionGoal::ColumnRange { start, end };
 
         let was_reversed = tail.column() > head.column();
-
         if !was_reversed && !preserve_goal {
             head = movement::saturating_left(map, head);
         }
 
         let Some((new_head, _)) = move_selection(&map, head, goal) else {
-            return
+            return;
         };
         head = new_head;
 
@@ -145,13 +160,6 @@ pub fn visual_block_motion(
         if !is_reversed && !preserve_goal {
             head = movement::saturating_right(map, head)
         }
-
-        let (start, end) = match goal {
-            SelectionGoal::ColumnRange { start, end } if preserve_goal => (start, end),
-            SelectionGoal::Column(start) if preserve_goal => (start, start + 1),
-            _ => (tail.column(), head.column()),
-        };
-        goal = SelectionGoal::ColumnRange { start, end };
 
         let columns = if is_reversed {
             head.column()..tail.column()
@@ -391,7 +399,7 @@ mod test {
             the lazy dog"
         })
         .await;
-        let cursor = cx.update_editor(|editor, _| editor.pixel_position_of_cursor());
+        let cursor = cx.update_editor(|editor, cx| editor.pixel_position_of_cursor(cx));
 
         // entering visual mode should select the character
         // under cursor
@@ -400,7 +408,7 @@ mod test {
             fox jumps over
             the lazy dog"})
             .await;
-        cx.update_editor(|editor, _| assert_eq!(cursor, editor.pixel_position_of_cursor()));
+        cx.update_editor(|editor, cx| assert_eq!(cursor, editor.pixel_position_of_cursor(cx)));
 
         // forwards motions should extend the selection
         cx.simulate_shared_keystrokes(["w", "j"]).await;
@@ -430,7 +438,7 @@ mod test {
             b
             "})
             .await;
-        let cursor = cx.update_editor(|editor, _| editor.pixel_position_of_cursor());
+        let cursor = cx.update_editor(|editor, cx| editor.pixel_position_of_cursor(cx));
         cx.simulate_shared_keystrokes(["v"]).await;
         cx.assert_shared_state(indoc! {"
             a
@@ -438,7 +446,7 @@ mod test {
             ˇ»b
         "})
             .await;
-        cx.update_editor(|editor, _| assert_eq!(cursor, editor.pixel_position_of_cursor()));
+        cx.update_editor(|editor, cx| assert_eq!(cursor, editor.pixel_position_of_cursor(cx)));
 
         // toggles off again
         cx.simulate_shared_keystrokes(["v"]).await;
@@ -510,7 +518,7 @@ mod test {
             b
             ˇ"})
             .await;
-        let cursor = cx.update_editor(|editor, _| editor.pixel_position_of_cursor());
+        let cursor = cx.update_editor(|editor, cx| editor.pixel_position_of_cursor(cx));
         cx.simulate_shared_keystrokes(["shift-v"]).await;
         cx.assert_shared_state(indoc! {"
             a
@@ -518,7 +526,7 @@ mod test {
             ˇ"})
             .await;
         assert_eq!(cx.mode(), cx.neovim_mode().await);
-        cx.update_editor(|editor, _| assert_eq!(cursor, editor.pixel_position_of_cursor()));
+        cx.update_editor(|editor, cx| assert_eq!(cursor, editor.pixel_position_of_cursor(cx)));
         cx.simulate_shared_keystrokes(["x"]).await;
         cx.assert_shared_state(indoc! {"
             a
@@ -563,38 +571,41 @@ mod test {
 
     #[gpui::test]
     async fn test_visual_line_delete(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx)
-            .await
-            .binding(["shift-v", "x"]);
-        cx.assert(indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
                 The quˇick brown
                 fox jumps over
                 the lazy dog"})
             .await;
+        cx.simulate_shared_keystrokes(["shift-v", "x"]).await;
+        cx.assert_state_matches().await;
+
         // Test pasting code copied on delete
         cx.simulate_shared_keystroke("p").await;
         cx.assert_state_matches().await;
 
-        cx.assert_all(indoc! {"
+        cx.set_shared_state(indoc! {"
                 The quick brown
-                fox juˇmps over
-                the laˇzy dog"})
-            .await;
-        let mut cx = cx.binding(["shift-v", "j", "x"]);
-        cx.assert(indoc! {"
-                The quˇick brown
                 fox jumps over
-                the lazy dog"})
-            .await;
-        // Test pasting code copied on delete
-        cx.simulate_shared_keystroke("p").await;
-        cx.assert_state_matches().await;
-
-        cx.assert_all(indoc! {"
-                The quick brown
-                fox juˇmps over
                 the laˇzy dog"})
             .await;
+        cx.simulate_shared_keystrokes(["shift-v", "x"]).await;
+        cx.assert_state_matches().await;
+        cx.assert_shared_clipboard("the lazy dog\n").await;
+
+        for marked_text in cx.each_marked_position(indoc! {"
+                        The quˇick brown
+                        fox jumps over
+                        the lazy dog"})
+        {
+            cx.set_shared_state(&marked_text).await;
+            cx.simulate_shared_keystrokes(["shift-v", "j", "x"]).await;
+            cx.assert_state_matches().await;
+            // Test pasting code copied on delete
+            cx.simulate_shared_keystroke("p").await;
+            cx.assert_state_matches().await;
+        }
 
         cx.set_shared_state(indoc! {"
             The ˇlong line
@@ -608,86 +619,57 @@ mod test {
 
     #[gpui::test]
     async fn test_visual_yank(cx: &mut gpui::TestAppContext) {
-        let cx = VimTestContext::new(cx, true).await;
-        let mut cx = cx.binding(["v", "w", "y"]);
-        cx.assert("The quick ˇbrown", "The quick ˇbrown");
-        cx.assert_clipboard_content(Some("brown"));
-        let mut cx = cx.binding(["v", "w", "j", "y"]);
-        cx.assert(
-            indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("The quick ˇbrown").await;
+        cx.simulate_shared_keystrokes(["v", "w", "y"]).await;
+        cx.assert_shared_state("The quick ˇbrown").await;
+        cx.assert_shared_clipboard("brown").await;
+
+        cx.set_shared_state(indoc! {"
                 The ˇquick brown
                 fox jumps over
-                the lazy dog"},
-            indoc! {"
-                The ˇquick brown
-                fox jumps over
-                the lazy dog"},
-        );
-        cx.assert_clipboard_content(Some(indoc! {"
-            quick brown
-            fox jumps o"}));
-        cx.assert(
-            indoc! {"
-                The quick brown
-                fox jumps over
-                the ˇlazy dog"},
-            indoc! {"
-                The quick brown
-                fox jumps over
-                the ˇlazy dog"},
-        );
-        cx.assert_clipboard_content(Some("lazy d"));
-        cx.assert(
-            indoc! {"
-                The quick brown
-                fox jumps ˇover
-                the lazy dog"},
-            indoc! {"
-                The quick brown
-                fox jumps ˇover
-                the lazy dog"},
-        );
-        cx.assert_clipboard_content(Some(indoc! {"
-                over
-                t"}));
+                the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes(["v", "w", "j", "y"]).await;
+        cx.assert_shared_state(indoc! {"
+                    The ˇquick brown
+                    fox jumps over
+                    the lazy dog"})
+            .await;
+        cx.assert_shared_clipboard(indoc! {"
+                quick brown
+                fox jumps o"})
+            .await;
+
+        cx.set_shared_state(indoc! {"
+                    The quick brown
+                    fox jumps over
+                    the ˇlazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes(["v", "w", "j", "y"]).await;
+        cx.assert_shared_state(indoc! {"
+                    The quick brown
+                    fox jumps over
+                    the ˇlazy dog"})
+            .await;
+        cx.assert_shared_clipboard("lazy d").await;
+        cx.simulate_shared_keystrokes(["shift-v", "y"]).await;
+        cx.assert_shared_clipboard("the lazy dog\n").await;
+
         let mut cx = cx.binding(["v", "b", "k", "y"]);
-        cx.assert(
-            indoc! {"
-                The ˇquick brown
-                fox jumps over
-                the lazy dog"},
-            indoc! {"
-                ˇThe quick brown
-                fox jumps over
-                the lazy dog"},
-        );
+        cx.set_shared_state(indoc! {"
+                    The ˇquick brown
+                    fox jumps over
+                    the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes(["v", "b", "k", "y"]).await;
+        cx.assert_shared_state(indoc! {"
+                    ˇThe quick brown
+                    fox jumps over
+                    the lazy dog"})
+            .await;
         cx.assert_clipboard_content(Some("The q"));
-        cx.assert(
-            indoc! {"
-                The quick brown
-                fox jumps over
-                the ˇlazy dog"},
-            indoc! {"
-                The quick brown
-                ˇfox jumps over
-                the lazy dog"},
-        );
-        cx.assert_clipboard_content(Some(indoc! {"
-            fox jumps over
-            the l"}));
-        cx.assert(
-            indoc! {"
-                The quick brown
-                fox jumps ˇover
-                the lazy dog"},
-            indoc! {"
-                The ˇquick brown
-                fox jumps over
-                the lazy dog"},
-        );
-        cx.assert_clipboard_content(Some(indoc! {"
-            quick brown
-            fox jumps o"}));
     }
 
     #[gpui::test]
@@ -811,6 +793,26 @@ mod test {
             jumo over the
 
             lazy dog
+            "
+        })
+        .await;
+
+        //https://github.com/zed-industries/community/issues/1950
+        cx.set_shared_state(indoc! {
+            "Theˇ quick brown
+
+            fox jumps over
+            the lazy dog
+            "
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["l", "ctrl-v", "j", "j"])
+            .await;
+        cx.assert_shared_state(indoc! {
+            "The «qˇ»uick brown
+
+            fox «jˇ»umps over
+            the lazy dog
             "
         })
         .await;

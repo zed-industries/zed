@@ -16,7 +16,7 @@ gpui = { path = "../gpui" }
 picker = { path = "../picker" }
 theme = { path = "../theme" }
 settings = { path = "../settings" }
-staff_mode = { path = "../staff_mode" }
+feature_flags = { path = "../feature_flags" }
 workspace = { path = "../workspace" }
 util = { path = "../util" }
 log.workspace = true

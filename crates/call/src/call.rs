@@ -7,9 +7,8 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use audio::Audio;
 use call_settings::CallSettings;
-use client::{
-    proto, ChannelId, ClickhouseEvent, Client, TelemetrySettings, TypedEnvelope, User, UserStore,
-};
+use channel::ChannelId;
+use client::{proto, ClickhouseEvent, Client, TelemetrySettings, TypedEnvelope, User, UserStore};
 use collections::HashSet;
 use futures::{future::Shared, FutureExt};
 use postage::watch;

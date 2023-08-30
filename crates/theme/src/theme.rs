@@ -3,7 +3,7 @@ mod theme_registry;
 mod theme_settings;
 pub mod ui;
 
-use components::ToggleIconButtonStyle;
+use components::{action_button::ButtonStyle, disclosure::DisclosureStyle, ToggleIconButtonStyle};
 use gpui::{
     color::Color,
     elements::{ContainerStyle, ImageStyle, LabelStyle, Shadow, SvgStyle, TooltipStyle},
@@ -14,7 +14,7 @@ use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
 use settings::SettingsStore;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, ops::Deref, sync::Arc};
 use ui::{CheckboxStyle, CopilotCTAButton, IconStyle, ModalStyle};
 
 pub use theme_registry::*;
@@ -66,6 +66,7 @@ pub struct Theme {
     pub feedback: FeedbackStyle,
     pub welcome: WelcomeStyle,
     pub titlebar: Titlebar,
+    pub component_test: ComponentTest,
 }
 
 #[derive(Deserialize, Default, Clone, JsonSchema)]
@@ -221,6 +222,7 @@ pub struct CopilotAuthAuthorized {
 pub struct CollabPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
+    pub disclosure: DisclosureStyle<()>,
     pub list_empty_state: Toggleable<Interactive<ContainedText>>,
     pub list_empty_icon: Icon,
     pub list_empty_label_container: ContainerStyle,
@@ -257,6 +259,13 @@ pub struct CollabPanel {
     pub section_icon_size: f32,
     pub calling_indicator: ContainedText,
     pub face_overlap: f32,
+}
+
+#[derive(Deserialize, Default, JsonSchema)]
+pub struct ComponentTest {
+    pub button: Interactive<ButtonStyle<TextStyle>>,
+    pub toggle: Toggleable<Interactive<ButtonStyle<TextStyle>>>,
+    pub disclosure: DisclosureStyle<TextStyle>,
 }
 
 #[derive(Deserialize, Default, JsonSchema)]
@@ -428,11 +437,11 @@ pub struct Search {
     pub match_index: ContainedText,
     pub major_results_status: TextStyle,
     pub minor_results_status: TextStyle,
-    pub dismiss_button: Interactive<IconButton>,
     pub editor_icon: IconStyle,
     pub mode_button: Toggleable<Interactive<ContainedText>>,
     pub nav_button: Toggleable<Interactive<ContainedLabel>>,
     pub search_bar_row_height: f32,
+    pub search_row_spacing: f32,
     pub option_button_height: f32,
     pub modes_container: ContainerStyle,
 }
@@ -747,6 +756,7 @@ pub struct Editor {
     pub line_number: Color,
     pub line_number_active: Color,
     pub guest_selections: Vec<SelectionStyle>,
+    pub absent_selection: SelectionStyle,
     pub syntax: Arc<SyntaxTheme>,
     pub hint: HighlightStyle,
     pub suggestion: HighlightStyle,
@@ -890,6 +900,14 @@ pub struct Interactive<T> {
     pub disabled: Option<T>,
 }
 
+impl<T> Deref for Interactive<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.default
+    }
+}
+
 impl Interactive<()> {
     pub fn new_blank() -> Self {
         Self {
@@ -905,6 +923,14 @@ impl Interactive<()> {
 pub struct Toggleable<T> {
     active: T,
     inactive: T,
+}
+
+impl<T> Deref for Toggleable<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inactive
+    }
 }
 
 impl Toggleable<()> {

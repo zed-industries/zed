@@ -1,7 +1,6 @@
 mod neovim_backed_binding_test_context;
 mod neovim_backed_test_context;
 mod neovim_connection;
-mod vim_binding_test_context;
 mod vim_test_context;
 
 use std::sync::Arc;
@@ -10,7 +9,6 @@ use command_palette::CommandPalette;
 use editor::DisplayPoint;
 pub use neovim_backed_binding_test_context::*;
 pub use neovim_backed_test_context::*;
-pub use vim_binding_test_context::*;
 pub use vim_test_context::*;
 
 use indoc::indoc;
@@ -286,4 +284,219 @@ async fn test_word_characters(cx: &mut gpui::TestAppContext) {
     "},
         Mode::Visual,
     )
+}
+
+#[gpui::test]
+async fn test_wrapped_lines(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_wrap(12).await;
+    // tests line wrap as follows:
+    //  1: twelve char
+    //     twelve char
+    //  2: twelve char
+    cx.set_shared_state(indoc! { "
+        tˇwelve char twelve char
+        twelve char
+    "})
+        .await;
+    cx.simulate_shared_keystrokes(["j"]).await;
+    cx.assert_shared_state(indoc! { "
+        twelve char twelve char
+        tˇwelve char
+    "})
+        .await;
+    cx.simulate_shared_keystrokes(["k"]).await;
+    cx.assert_shared_state(indoc! { "
+        tˇwelve char twelve char
+        twelve char
+    "})
+        .await;
+    cx.simulate_shared_keystrokes(["g", "j"]).await;
+    cx.assert_shared_state(indoc! { "
+        twelve char tˇwelve char
+        twelve char
+    "})
+        .await;
+    cx.simulate_shared_keystrokes(["g", "j"]).await;
+    cx.assert_shared_state(indoc! { "
+        twelve char twelve char
+        tˇwelve char
+    "})
+        .await;
+
+    cx.simulate_shared_keystrokes(["g", "k"]).await;
+    cx.assert_shared_state(indoc! { "
+        twelve char tˇwelve char
+        twelve char
+    "})
+        .await;
+
+    cx.simulate_shared_keystrokes(["g", "^"]).await;
+    cx.assert_shared_state(indoc! { "
+        twelve char ˇtwelve char
+        twelve char
+    "})
+        .await;
+
+    cx.simulate_shared_keystrokes(["^"]).await;
+    cx.assert_shared_state(indoc! { "
+        ˇtwelve char twelve char
+        twelve char
+    "})
+        .await;
+
+    cx.simulate_shared_keystrokes(["g", "$"]).await;
+    cx.assert_shared_state(indoc! { "
+        twelve charˇ twelve char
+        twelve char
+    "})
+        .await;
+    cx.simulate_shared_keystrokes(["$"]).await;
+    cx.assert_shared_state(indoc! { "
+        twelve char twelve chaˇr
+        twelve char
+    "})
+        .await;
+
+    cx.set_shared_state(indoc! { "
+        tˇwelve char twelve char
+        twelve char
+    "})
+        .await;
+    cx.simulate_shared_keystrokes(["enter"]).await;
+    cx.assert_shared_state(indoc! { "
+            twelve char twelve char
+            ˇtwelve char
+        "})
+        .await;
+
+    cx.set_shared_state(indoc! { "
+        twelve char
+        tˇwelve char twelve char
+        twelve char
+    "})
+        .await;
+    cx.simulate_shared_keystrokes(["o", "o", "escape"]).await;
+    cx.assert_shared_state(indoc! { "
+        twelve char
+        twelve char twelve char
+        ˇo
+        twelve char
+    "})
+        .await;
+
+    cx.set_shared_state(indoc! { "
+        twelve char
+        tˇwelve char twelve char
+        twelve char
+    "})
+        .await;
+    cx.simulate_shared_keystrokes(["shift-a", "a", "escape"])
+        .await;
+    cx.assert_shared_state(indoc! { "
+        twelve char
+        twelve char twelve charˇa
+        twelve char
+    "})
+        .await;
+    cx.simulate_shared_keystrokes(["shift-i", "i", "escape"])
+        .await;
+    cx.assert_shared_state(indoc! { "
+        twelve char
+        ˇitwelve char twelve chara
+        twelve char
+    "})
+        .await;
+    cx.simulate_shared_keystrokes(["shift-d"]).await;
+    cx.assert_shared_state(indoc! { "
+        twelve char
+        ˇ
+        twelve char
+    "})
+        .await;
+
+    cx.set_shared_state(indoc! { "
+        twelve char
+        twelve char tˇwelve char
+        twelve char
+    "})
+        .await;
+    cx.simulate_shared_keystrokes(["shift-o", "o", "escape"])
+        .await;
+    cx.assert_shared_state(indoc! { "
+        twelve char
+        ˇo
+        twelve char twelve char
+        twelve char
+    "})
+        .await;
+}
+
+#[gpui::test]
+async fn test_folds(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+    cx.set_neovim_option("foldmethod=manual").await;
+
+    cx.set_shared_state(indoc! { "
+        fn boop() {
+          ˇbarp()
+          bazp()
+        }
+    "})
+        .await;
+    cx.simulate_shared_keystrokes(["shift-v", "j", "z", "f"])
+        .await;
+
+    // visual display is now:
+    // fn boop () {
+    //  [FOLDED]
+    // }
+
+    // TODO: this should not be needed but currently zf does not
+    // return to normal mode.
+    cx.simulate_shared_keystrokes(["escape"]).await;
+
+    // skip over fold downward
+    cx.simulate_shared_keystrokes(["g", "g"]).await;
+    cx.assert_shared_state(indoc! { "
+        ˇfn boop() {
+          barp()
+          bazp()
+        }
+    "})
+        .await;
+
+    cx.simulate_shared_keystrokes(["j", "j"]).await;
+    cx.assert_shared_state(indoc! { "
+        fn boop() {
+          barp()
+          bazp()
+        ˇ}
+    "})
+        .await;
+
+    // skip over fold upward
+    cx.simulate_shared_keystrokes(["2", "k"]).await;
+    cx.assert_shared_state(indoc! { "
+        ˇfn boop() {
+          barp()
+          bazp()
+        }
+    "})
+        .await;
+
+    // yank the fold
+    cx.simulate_shared_keystrokes(["down", "y", "y"]).await;
+    cx.assert_shared_clipboard("  barp()\n  bazp()\n").await;
+
+    // re-open
+    cx.simulate_shared_keystrokes(["z", "o"]).await;
+    cx.assert_shared_state(indoc! { "
+        fn boop() {
+        ˇ  barp()
+          bazp()
+        }
+    "})
+        .await;
 }

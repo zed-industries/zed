@@ -89,7 +89,9 @@ impl LspAdapter for PythonLspAdapter {
         // to allow our own fuzzy score to be used to break ties.
         //
         // see https://github.com/microsoft/pyright/blob/95ef4e103b9b2f129c9320427e51b73ea7cf78bd/packages/pyright-internal/src/languageService/completionProvider.ts#LL2873
-        let Some(sort_text) = &mut item.sort_text else { return };
+        let Some(sort_text) = &mut item.sort_text else {
+            return;
+        };
         let mut parts = sort_text.split('.');
         let Some(first) = parts.next() else { return };
         let Some(second) = parts.next() else { return };
@@ -208,7 +210,7 @@ mod tests {
         });
 
         cx.add_model(|cx| {
-            let mut buffer = Buffer::new(0, "", cx).with_language(language, cx);
+            let mut buffer = Buffer::new(0, cx.model_id() as u64, "").with_language(language, cx);
             let append = |buffer: &mut Buffer, text: &str, cx: &mut ModelContext<Buffer>| {
                 let ix = buffer.len();
                 buffer.edit([(ix..ix, text)], Some(AutoindentMode::EachLine), cx);

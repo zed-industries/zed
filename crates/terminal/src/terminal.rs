@@ -1,5 +1,6 @@
 pub mod mappings;
 pub use alacritty_terminal;
+pub mod terminal_settings;
 
 use alacritty_terminal::{
     ansi::{ClearMode, Handler},
@@ -7,7 +8,7 @@ use alacritty_terminal::{
     event::{Event as AlacTermEvent, EventListener, Notify, WindowSize},
     event_loop::{EventLoop, Msg, Notifier},
     grid::{Dimensions, Scroll as AlacScroll},
-    index::{Column, Direction as AlacDirection, Line, Point},
+    index::{Boundary, Column, Direction as AlacDirection, Line, Point},
     selection::{Selection, SelectionRange, SelectionType},
     sync::FairMutex,
     term::{
@@ -31,8 +32,8 @@ use mappings::mouse::{
 };
 
 use procinfo::LocalProcessInfo;
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
 use util::truncate_and_trailoff;
 
 use std::{
@@ -48,7 +49,6 @@ use std::{
 use thiserror::Error;
 
 use gpui::{
-    fonts,
     geometry::vector::{vec2f, Vector2F},
     keymap_matcher::Keystroke,
     platform::{Modifiers, MouseButton, MouseMovedEvent, TouchPhase},
@@ -78,7 +78,7 @@ lazy_static! {
     // * use more strict regex for `file://` protocol matching: original regex has `file:` inside, but we want to avoid matching `some::file::module` strings.
     static ref URL_REGEX: RegexSearch = RegexSearch::new(r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#).unwrap();
 
-    static ref WORD_REGEX: RegexSearch = RegexSearch::new(r#"[\w.:/@\-~]+"#).unwrap();
+    static ref WORD_REGEX: RegexSearch = RegexSearch::new(r#"[\w.\[\]:/@\-~]+"#).unwrap();
 }
 
 ///Upward flowing events, for changing the title and such
@@ -132,122 +132,6 @@ impl EventListener for ZedListener {
 
 pub fn init(cx: &mut AppContext) {
     settings::register::<TerminalSettings>(cx);
-}
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum TerminalDockPosition {
-    Left,
-    Bottom,
-    Right,
-}
-
-#[derive(Deserialize)]
-pub struct TerminalSettings {
-    pub shell: Shell,
-    pub working_directory: WorkingDirectory,
-    font_size: Option<f32>,
-    pub font_family: Option<String>,
-    pub line_height: TerminalLineHeight,
-    pub font_features: Option<fonts::Features>,
-    pub env: HashMap<String, String>,
-    pub blinking: TerminalBlink,
-    pub alternate_scroll: AlternateScroll,
-    pub option_as_meta: bool,
-    pub copy_on_select: bool,
-    pub dock: TerminalDockPosition,
-    pub default_width: f32,
-    pub default_height: f32,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct TerminalSettingsContent {
-    pub shell: Option<Shell>,
-    pub working_directory: Option<WorkingDirectory>,
-    pub font_size: Option<f32>,
-    pub font_family: Option<String>,
-    pub line_height: Option<TerminalLineHeight>,
-    pub font_features: Option<fonts::Features>,
-    pub env: Option<HashMap<String, String>>,
-    pub blinking: Option<TerminalBlink>,
-    pub alternate_scroll: Option<AlternateScroll>,
-    pub option_as_meta: Option<bool>,
-    pub copy_on_select: Option<bool>,
-    pub dock: Option<TerminalDockPosition>,
-    pub default_width: Option<f32>,
-    pub default_height: Option<f32>,
-}
-
-impl TerminalSettings {
-    pub fn font_size(&self, cx: &AppContext) -> Option<f32> {
-        self.font_size
-            .map(|size| theme::adjusted_font_size(size, cx))
-    }
-}
-
-impl settings::Setting for TerminalSettings {
-    const KEY: Option<&'static str> = Some("terminal");
-
-    type FileContent = TerminalSettingsContent;
-
-    fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-        _: &AppContext,
-    ) -> Result<Self> {
-        Self::load_via_json_merge(default_value, user_values)
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum TerminalLineHeight {
-    #[default]
-    Comfortable,
-    Standard,
-    Custom(f32),
-}
-
-impl TerminalLineHeight {
-    pub fn value(&self) -> f32 {
-        match self {
-            TerminalLineHeight::Comfortable => 1.618,
-            TerminalLineHeight::Standard => 1.3,
-            TerminalLineHeight::Custom(line_height) => f32::max(*line_height, 1.),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum TerminalBlink {
-    Off,
-    TerminalControlled,
-    On,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Shell {
-    System,
-    Program(String),
-    WithArguments { program: String, args: Vec<String> },
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AlternateScroll {
-    On,
-    Off,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkingDirectory {
-    CurrentProjectDirectory,
-    FirstProjectDirectory,
-    AlwaysHome,
-    Always { directory: String },
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -840,14 +724,13 @@ impl Terminal {
                     self.last_content.size,
                     term.grid().display_offset(),
                 )
-                .grid_clamp(term, alacritty_terminal::index::Boundary::Grid);
+                .grid_clamp(term, Boundary::Grid);
 
                 let link = term.grid().index(point).hyperlink();
                 let found_word = if link.is_some() {
                     let mut min_index = point;
                     loop {
-                        let new_min_index =
-                            min_index.sub(term, alacritty_terminal::index::Boundary::Cursor, 1);
+                        let new_min_index = min_index.sub(term, Boundary::Cursor, 1);
                         if new_min_index == min_index {
                             break;
                         } else if term.grid().index(new_min_index).hyperlink() != link {
@@ -859,8 +742,7 @@ impl Terminal {
 
                     let mut max_index = point;
                     loop {
-                        let new_max_index =
-                            max_index.add(term, alacritty_terminal::index::Boundary::Cursor, 1);
+                        let new_max_index = max_index.add(term, Boundary::Cursor, 1);
                         if new_max_index == max_index {
                             break;
                         } else if term.grid().index(new_max_index).hyperlink() != link {
@@ -877,11 +759,34 @@ impl Terminal {
                 } else if let Some(word_match) = regex_match_at(term, point, &WORD_REGEX) {
                     let maybe_url_or_path =
                         term.bounds_to_string(*word_match.start(), *word_match.end());
+                    let original_match = word_match.clone();
+                    let (sanitized_match, sanitized_word) =
+                        if maybe_url_or_path.starts_with('[') && maybe_url_or_path.ends_with(']') {
+                            (
+                                Match::new(
+                                    word_match.start().add(term, Boundary::Cursor, 1),
+                                    word_match.end().sub(term, Boundary::Cursor, 1),
+                                ),
+                                maybe_url_or_path[1..maybe_url_or_path.len() - 1].to_owned(),
+                            )
+                        } else {
+                            (word_match, maybe_url_or_path)
+                        };
+
                     let is_url = match regex_match_at(term, point, &URL_REGEX) {
-                        Some(url_match) => url_match == word_match,
+                        Some(url_match) => {
+                            // `]` is a valid symbol in the `file://` URL, so the regex match will include it
+                            // consider that when ensuring that the URL match is the same as the original word
+                            if sanitized_match != original_match {
+                                url_match.start() == sanitized_match.start()
+                                    && url_match.end() == original_match.end()
+                            } else {
+                                url_match == sanitized_match
+                            }
+                        }
                         None => false,
                     };
-                    Some((maybe_url_or_path, is_url, word_match))
+                    Some((sanitized_word, is_url, sanitized_match))
                 } else {
                     None
                 };
@@ -1018,12 +923,24 @@ impl Terminal {
         self.pty_tx.notify(input.into_bytes());
     }
 
+    fn write_bytes_to_pty(&self, input: Vec<u8>) {
+        self.pty_tx.notify(input);
+    }
+
     pub fn input(&mut self, input: String) {
         self.events
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
 
         self.write_to_pty(input);
+    }
+
+    pub fn input_bytes(&mut self, input: Vec<u8>) {
+        self.events
+            .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
+        self.events.push_back(InternalEvent::SetSelection(None));
+
+        self.write_bytes_to_pty(input);
     }
 
     pub fn try_keystroke(&mut self, keystroke: &Keystroke, alt_is_meta: bool) -> bool {

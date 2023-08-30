@@ -3,7 +3,7 @@ authors = ["Nathan Sobo <nathansobo@gmail.com>"]
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.101.0"
+version = "0.102.0"
 publish = false
 
 [lib]
@@ -21,10 +21,12 @@ activity_indicator = { path = "../activity_indicator" }
 auto_update = { path = "../auto_update" }
 breadcrumbs = { path = "../breadcrumbs" }
 call = { path = "../call" }
+channel = { path = "../channel" }
 cli = { path = "../cli" }
 collab_ui = { path = "../collab_ui" }
 collections = { path = "../collections" }
 command_palette = { path = "../command_palette" }
+component_test = { path = "../component_test" }
 context_menu = { path = "../context_menu" }
 client = { path = "../client" }
 clock = { path = "../clock" }
@@ -58,7 +60,7 @@ quick_action_bar = { path = "../quick_action_bar" }
 recent_projects = { path = "../recent_projects" }
 rpc = { path = "../rpc" }
 settings = { path = "../settings" }
-staff_mode = { path = "../staff_mode" }
+feature_flags = { path = "../feature_flags" }
 sum_tree = { path = "../sum_tree" }
 text = { path = "../text" }
 terminal_view = { path = "../terminal_view" }
@@ -93,7 +95,7 @@ postage.workspace = true
 rand.workspace = true
 regex.workspace = true
 rsa = "0.4"
-rust-embed = { version = "6.8.1" }
+rust-embed.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true

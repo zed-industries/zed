@@ -110,6 +110,7 @@ fn value_to_integer(v: Value) -> Result<i32, ValueTypeErr> {
     }
 }
 
+id_type!(BufferId);
 id_type!(AccessTokenId);
 id_type!(ChannelId);
 id_type!(ChannelMemberId);
@@ -123,3 +124,5 @@ id_type!(ReplicaId);
 id_type!(ServerId);
 id_type!(SignupId);
 id_type!(UserId);
+id_type!(ChannelBufferCollaboratorId);
+id_type!(FlagId);

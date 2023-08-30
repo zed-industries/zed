@@ -1,6 +1,8 @@
 use crate::{
-    display_map::ToDisplayPoint, Anchor, AnchorRangeExt, DisplayPoint, Editor, EditorSettings,
-    EditorSnapshot, EditorStyle, RangeToAnchorExt,
+    display_map::{InlayOffset, ToDisplayPoint},
+    link_go_to_definition::{DocumentRange, InlayRange},
+    Anchor, AnchorRangeExt, DisplayPoint, Editor, EditorSettings, EditorSnapshot, EditorStyle,
+    ExcerptId, RangeToAnchorExt,
 };
 use futures::FutureExt;
 use gpui::{
@@ -11,7 +13,7 @@ use gpui::{
     AnyElement, AppContext, CursorRegion, Element, ModelHandle, MouseRegion, Task, ViewContext,
 };
 use language::{Bias, DiagnosticEntry, DiagnosticSeverity, Language, LanguageRegistry};
-use project::{HoverBlock, HoverBlockKind, Project};
+use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart, Project};
 use std::{ops::Range, sync::Arc, time::Duration};
 use util::TryFutureExt;
 
@@ -43,6 +45,106 @@ pub fn hover_at(editor: &mut Editor, point: Option<DisplayPoint>, cx: &mut ViewC
         } else {
             hide_hover(editor, cx);
         }
+    }
+}
+
+pub struct InlayHover {
+    pub excerpt: ExcerptId,
+    pub triggered_from: InlayOffset,
+    pub range: InlayRange,
+    pub tooltip: HoverBlock,
+}
+
+pub fn find_hovered_hint_part(
+    label_parts: Vec<InlayHintLabelPart>,
+    hint_range: Range<InlayOffset>,
+    hovered_offset: InlayOffset,
+) -> Option<(InlayHintLabelPart, Range<InlayOffset>)> {
+    if hovered_offset >= hint_range.start && hovered_offset <= hint_range.end {
+        let mut hovered_character = (hovered_offset - hint_range.start).0;
+        let mut part_start = hint_range.start;
+        for part in label_parts {
+            let part_len = part.value.chars().count();
+            if hovered_character > part_len {
+                hovered_character -= part_len;
+                part_start.0 += part_len;
+            } else {
+                let part_end = InlayOffset(part_start.0 + part_len);
+                return Some((part, part_start..part_end));
+            }
+        }
+    }
+    None
+}
+
+pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut ViewContext<Editor>) {
+    if settings::get::<EditorSettings>(cx).hover_popover_enabled {
+        if editor.pending_rename.is_some() {
+            return;
+        }
+
+        let Some(project) = editor.project.clone() else {
+            return;
+        };
+
+        if let Some(InfoPopover { symbol_range, .. }) = &editor.hover_state.info_popover {
+            if let DocumentRange::Inlay(range) = symbol_range {
+                if (range.highlight_start..range.highlight_end)
+                    .contains(&inlay_hover.triggered_from)
+                {
+                    // Hover triggered from same location as last time. Don't show again.
+                    return;
+                }
+            }
+            hide_hover(editor, cx);
+        }
+
+        let snapshot = editor.snapshot(cx);
+        // Don't request again if the location is the same as the previous request
+        if let Some(triggered_from) = editor.hover_state.triggered_from {
+            if inlay_hover.triggered_from
+                == snapshot
+                    .display_snapshot
+                    .anchor_to_inlay_offset(triggered_from)
+            {
+                return;
+            }
+        }
+
+        let task = cx.spawn(|this, mut cx| {
+            async move {
+                cx.background()
+                    .timer(Duration::from_millis(HOVER_DELAY_MILLIS))
+                    .await;
+                this.update(&mut cx, |this, _| {
+                    this.hover_state.diagnostic_popover = None;
+                })?;
+
+                let hover_popover = InfoPopover {
+                    project: project.clone(),
+                    symbol_range: DocumentRange::Inlay(inlay_hover.range),
+                    blocks: vec![inlay_hover.tooltip],
+                    language: None,
+                    rendered_content: None,
+                };
+
+                this.update(&mut cx, |this, cx| {
+                    // Highlight the selected symbol using a background highlight
+                    this.highlight_inlay_background::<HoverState>(
+                        vec![inlay_hover.range],
+                        |theme| theme.editor.hover_popover.highlight,
+                        cx,
+                    );
+                    this.hover_state.info_popover = Some(hover_popover);
+                    cx.notify();
+                })?;
+
+                anyhow::Ok(())
+            }
+            .log_err()
+        });
+
+        editor.hover_state.info_task = Some(task);
     }
 }
 
@@ -110,8 +212,13 @@ fn show_hover(
     if !ignore_timeout {
         if let Some(InfoPopover { symbol_range, .. }) = &editor.hover_state.info_popover {
             if symbol_range
-                .to_offset(&snapshot.buffer_snapshot)
-                .contains(&multibuffer_offset)
+                .as_text_range()
+                .map(|range| {
+                    range
+                        .to_offset(&snapshot.buffer_snapshot)
+                        .contains(&multibuffer_offset)
+                })
+                .unwrap_or(false)
             {
                 // Hover triggered from same location as last time. Don't show again.
                 return;
@@ -219,7 +326,7 @@ fn show_hover(
 
                 Some(InfoPopover {
                     project: project.clone(),
-                    symbol_range: range,
+                    symbol_range: DocumentRange::Text(range),
                     blocks: hover_result.contents,
                     language: hover_result.language,
                     rendered_content: None,
@@ -227,10 +334,13 @@ fn show_hover(
             });
 
             this.update(&mut cx, |this, cx| {
-                if let Some(hover_popover) = hover_popover.as_ref() {
+                if let Some(symbol_range) = hover_popover
+                    .as_ref()
+                    .and_then(|hover_popover| hover_popover.symbol_range.as_text_range())
+                {
                     // Highlight the selected symbol using a background highlight
                     this.highlight_background::<HoverState>(
-                        vec![hover_popover.symbol_range.clone()],
+                        vec![symbol_range],
                         |theme| theme.editor.hover_popover.highlight,
                         cx,
                     );
@@ -497,7 +607,10 @@ impl HoverState {
             .or_else(|| {
                 self.info_popover
                     .as_ref()
-                    .map(|info_popover| &info_popover.symbol_range.start)
+                    .map(|info_popover| match &info_popover.symbol_range {
+                        DocumentRange::Text(range) => &range.start,
+                        DocumentRange::Inlay(range) => &range.inlay_position,
+                    })
             })?;
         let point = anchor.to_display_point(&snapshot.display_snapshot);
 
@@ -522,7 +635,7 @@ impl HoverState {
 #[derive(Debug, Clone)]
 pub struct InfoPopover {
     pub project: ModelHandle<Project>,
-    pub symbol_range: Range<Anchor>,
+    symbol_range: DocumentRange,
     pub blocks: Vec<HoverBlock>,
     language: Option<Arc<Language>>,
     rendered_content: Option<RenderedInfo>,
@@ -692,10 +805,17 @@ impl DiagnosticPopover {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{editor_tests::init_test, test::editor_lsp_test_context::EditorLspTestContext};
+    use crate::{
+        editor_tests::init_test,
+        element::PointForPosition,
+        inlay_hint_cache::tests::{cached_hint_labels, visible_hint_labels},
+        link_go_to_definition::update_inlay_link_and_hover_points,
+        test::editor_lsp_test_context::EditorLspTestContext,
+    };
+    use collections::BTreeSet;
     use gpui::fonts::Weight;
     use indoc::indoc;
-    use language::{Diagnostic, DiagnosticSet};
+    use language::{language_settings::InlayHintSettings, Diagnostic, DiagnosticSet};
     use lsp::LanguageServerId;
     use project::{HoverBlock, HoverBlockKind};
     use smol::stream::StreamExt;
@@ -1129,6 +1249,329 @@ mod tests {
             }
 
             editor
+        });
+    }
+
+    #[gpui::test]
+    async fn test_hover_inlay_label_parts(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettings {
+                enabled: true,
+                show_type_hints: true,
+                show_parameter_hints: true,
+                show_other_hints: true,
+            })
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                inlay_hint_provider: Some(lsp::OneOf::Right(
+                    lsp::InlayHintServerCapabilities::Options(lsp::InlayHintOptions {
+                        resolve_provider: Some(true),
+                        ..Default::default()
+                    }),
+                )),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            struct TestStruct;
+
+            // ==================
+
+            struct TestNewType<T>(T);
+
+            fn main() {
+                let variableˇ = TestNewType(TestStruct);
+            }
+        "});
+
+        let hint_start_offset = cx.ranges(indoc! {"
+            struct TestStruct;
+
+            // ==================
+
+            struct TestNewType<T>(T);
+
+            fn main() {
+                let variableˇ = TestNewType(TestStruct);
+            }
+        "})[0]
+            .start;
+        let hint_position = cx.to_lsp(hint_start_offset);
+        let new_type_target_range = cx.lsp_range(indoc! {"
+            struct TestStruct;
+
+            // ==================
+
+            struct «TestNewType»<T>(T);
+
+            fn main() {
+                let variable = TestNewType(TestStruct);
+            }
+        "});
+        let struct_target_range = cx.lsp_range(indoc! {"
+            struct «TestStruct»;
+
+            // ==================
+
+            struct TestNewType<T>(T);
+
+            fn main() {
+                let variable = TestNewType(TestStruct);
+            }
+        "});
+
+        let uri = cx.buffer_lsp_url.clone();
+        let new_type_label = "TestNewType";
+        let struct_label = "TestStruct";
+        let entire_hint_label = ": TestNewType<TestStruct>";
+        let closure_uri = uri.clone();
+        cx.lsp
+            .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+                let task_uri = closure_uri.clone();
+                async move {
+                    assert_eq!(params.text_document.uri, task_uri);
+                    Ok(Some(vec![lsp::InlayHint {
+                        position: hint_position,
+                        label: lsp::InlayHintLabel::LabelParts(vec![lsp::InlayHintLabelPart {
+                            value: entire_hint_label.to_string(),
+                            ..Default::default()
+                        }]),
+                        kind: Some(lsp::InlayHintKind::TYPE),
+                        text_edits: None,
+                        tooltip: None,
+                        padding_left: Some(false),
+                        padding_right: Some(false),
+                        data: None,
+                    }]))
+                }
+            })
+            .next()
+            .await;
+        cx.foreground().run_until_parked();
+        cx.update_editor(|editor, cx| {
+            let expected_layers = vec![entire_hint_label.to_string()];
+            assert_eq!(expected_layers, cached_hint_labels(editor));
+            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
+        });
+
+        let inlay_range = cx
+            .ranges(indoc! {"
+                struct TestStruct;
+
+                // ==================
+
+                struct TestNewType<T>(T);
+
+                fn main() {
+                    let variable« »= TestNewType(TestStruct);
+                }
+        "})
+            .get(0)
+            .cloned()
+            .unwrap();
+        let new_type_hint_part_hover_position = cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            let previous_valid = inlay_range.start.to_display_point(&snapshot);
+            let next_valid = inlay_range.end.to_display_point(&snapshot);
+            assert_eq!(previous_valid.row(), next_valid.row());
+            assert!(previous_valid.column() < next_valid.column());
+            let exact_unclipped = DisplayPoint::new(
+                previous_valid.row(),
+                previous_valid.column()
+                    + (entire_hint_label.find(new_type_label).unwrap() + new_type_label.len() / 2)
+                        as u32,
+            );
+            PointForPosition {
+                previous_valid,
+                next_valid,
+                exact_unclipped,
+                column_overshoot_after_line_end: 0,
+            }
+        });
+        cx.update_editor(|editor, cx| {
+            update_inlay_link_and_hover_points(
+                &editor.snapshot(cx),
+                new_type_hint_part_hover_position,
+                editor,
+                true,
+                false,
+                cx,
+            );
+        });
+
+        let resolve_closure_uri = uri.clone();
+        cx.lsp
+            .handle_request::<lsp::request::InlayHintResolveRequest, _, _>(
+                move |mut hint_to_resolve, _| {
+                    let mut resolved_hint_positions = BTreeSet::new();
+                    let task_uri = resolve_closure_uri.clone();
+                    async move {
+                        let inserted = resolved_hint_positions.insert(hint_to_resolve.position);
+                        assert!(inserted, "Hint {hint_to_resolve:?} was resolved twice");
+
+                        // `: TestNewType<TestStruct>`
+                        hint_to_resolve.label = lsp::InlayHintLabel::LabelParts(vec![
+                            lsp::InlayHintLabelPart {
+                                value: ": ".to_string(),
+                                ..Default::default()
+                            },
+                            lsp::InlayHintLabelPart {
+                                value: new_type_label.to_string(),
+                                location: Some(lsp::Location {
+                                    uri: task_uri.clone(),
+                                    range: new_type_target_range,
+                                }),
+                                tooltip: Some(lsp::InlayHintLabelPartTooltip::String(format!(
+                                    "A tooltip for `{new_type_label}`"
+                                ))),
+                                ..Default::default()
+                            },
+                            lsp::InlayHintLabelPart {
+                                value: "<".to_string(),
+                                ..Default::default()
+                            },
+                            lsp::InlayHintLabelPart {
+                                value: struct_label.to_string(),
+                                location: Some(lsp::Location {
+                                    uri: task_uri,
+                                    range: struct_target_range,
+                                }),
+                                tooltip: Some(lsp::InlayHintLabelPartTooltip::MarkupContent(
+                                    lsp::MarkupContent {
+                                        kind: lsp::MarkupKind::Markdown,
+                                        value: format!("A tooltip for `{struct_label}`"),
+                                    },
+                                )),
+                                ..Default::default()
+                            },
+                            lsp::InlayHintLabelPart {
+                                value: ">".to_string(),
+                                ..Default::default()
+                            },
+                        ]);
+
+                        Ok(hint_to_resolve)
+                    }
+                },
+            )
+            .next()
+            .await;
+        cx.foreground().run_until_parked();
+
+        cx.update_editor(|editor, cx| {
+            update_inlay_link_and_hover_points(
+                &editor.snapshot(cx),
+                new_type_hint_part_hover_position,
+                editor,
+                true,
+                false,
+                cx,
+            );
+        });
+        cx.foreground()
+            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+        cx.foreground().run_until_parked();
+        cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            let hover_state = &editor.hover_state;
+            assert!(hover_state.diagnostic_popover.is_none() && hover_state.info_popover.is_some());
+            let popover = hover_state.info_popover.as_ref().unwrap();
+            let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
+            let entire_inlay_start = snapshot.display_point_to_inlay_offset(
+                inlay_range.start.to_display_point(&snapshot),
+                Bias::Left,
+            );
+
+            let expected_new_type_label_start = InlayOffset(entire_inlay_start.0 + ": ".len());
+            assert_eq!(
+                popover.symbol_range,
+                DocumentRange::Inlay(InlayRange {
+                    inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
+                    highlight_start: expected_new_type_label_start,
+                    highlight_end: InlayOffset(
+                        expected_new_type_label_start.0 + new_type_label.len()
+                    ),
+                }),
+                "Popover range should match the new type label part"
+            );
+            assert_eq!(
+                popover
+                    .rendered_content
+                    .as_ref()
+                    .expect("should have label text for new type hint")
+                    .text,
+                format!("A tooltip for `{new_type_label}`"),
+                "Rendered text should not anyhow alter backticks"
+            );
+        });
+
+        let struct_hint_part_hover_position = cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            let previous_valid = inlay_range.start.to_display_point(&snapshot);
+            let next_valid = inlay_range.end.to_display_point(&snapshot);
+            assert_eq!(previous_valid.row(), next_valid.row());
+            assert!(previous_valid.column() < next_valid.column());
+            let exact_unclipped = DisplayPoint::new(
+                previous_valid.row(),
+                previous_valid.column()
+                    + (entire_hint_label.find(struct_label).unwrap() + struct_label.len() / 2)
+                        as u32,
+            );
+            PointForPosition {
+                previous_valid,
+                next_valid,
+                exact_unclipped,
+                column_overshoot_after_line_end: 0,
+            }
+        });
+        cx.update_editor(|editor, cx| {
+            update_inlay_link_and_hover_points(
+                &editor.snapshot(cx),
+                struct_hint_part_hover_position,
+                editor,
+                true,
+                false,
+                cx,
+            );
+        });
+        cx.foreground()
+            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+        cx.foreground().run_until_parked();
+        cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            let hover_state = &editor.hover_state;
+            assert!(hover_state.diagnostic_popover.is_none() && hover_state.info_popover.is_some());
+            let popover = hover_state.info_popover.as_ref().unwrap();
+            let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
+            let entire_inlay_start = snapshot.display_point_to_inlay_offset(
+                inlay_range.start.to_display_point(&snapshot),
+                Bias::Left,
+            );
+            let expected_struct_label_start =
+                InlayOffset(entire_inlay_start.0 + ": ".len() + new_type_label.len() + "<".len());
+            assert_eq!(
+                popover.symbol_range,
+                DocumentRange::Inlay(InlayRange {
+                    inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
+                    highlight_start: expected_struct_label_start,
+                    highlight_end: InlayOffset(expected_struct_label_start.0 + struct_label.len()),
+                }),
+                "Popover range should match the struct label part"
+            );
+            assert_eq!(
+                popover
+                    .rendered_content
+                    .as_ref()
+                    .expect("should have label text for struct hint")
+                    .text,
+                format!("A tooltip for {struct_label}"),
+                "Rendered markdown element should remove backticks from text"
+            );
         });
     }
 }

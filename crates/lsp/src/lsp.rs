@@ -77,7 +77,7 @@ pub enum Subscription {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Request<'a, T> {
+pub struct Request<'a, T> {
     jsonrpc: &'static str,
     id: usize,
     method: &'a str,
@@ -435,7 +435,13 @@ impl LanguageServer {
                     }),
                     inlay_hint: Some(InlayHintClientCapabilities {
                         resolve_support: Some(InlayHintResolveClientCapabilities {
-                            properties: vec!["textEdits".to_string(), "tooltip".to_string()],
+                            properties: vec![
+                                "textEdits".to_string(),
+                                "tooltip".to_string(),
+                                "label.tooltip".to_string(),
+                                "label.location".to_string(),
+                                "label.command".to_string(),
+                            ],
                         }),
                         dynamic_registration: Some(false),
                     }),

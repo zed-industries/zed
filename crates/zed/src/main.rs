@@ -3,13 +3,12 @@
 
 use anyhow::{anyhow, Context, Result};
 use backtrace::Backtrace;
+use channel::ChannelStore;
 use cli::{
     ipc::{self, IpcSender},
     CliRequest, CliResponse, IpcHandshake, FORCE_CLI_MODE_ENV_VAR_NAME,
 };
-use client::{
-    self, ChannelStore, TelemetrySettings, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN,
-};
+use client::{self, TelemetrySettings, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use futures::{
@@ -32,7 +31,7 @@ use std::{
     env,
     ffi::OsStr,
     fs::OpenOptions,
-    io::Write as _,
+    io::{IsTerminal, Write as _},
     os::unix::prelude::OsStrExt,
     panic,
     path::{Path, PathBuf},
@@ -54,8 +53,6 @@ use uuid::Uuid;
 use welcome::{show_welcome_experience, FIRST_OPEN};
 
 use fs::RealFs;
-#[cfg(debug_assertions)]
-use staff_mode::StaffMode;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
 use workspace::AppState;
 use zed::{
@@ -123,7 +120,10 @@ fn main() {
         cx.set_global(*RELEASE_CHANNEL);
 
         #[cfg(debug_assertions)]
-        cx.set_global(StaffMode(true));
+        {
+            use feature_flags::FeatureFlagAppExt;
+            cx.set_staff(true);
+        }
 
         let mut store = SettingsStore::default();
         store
@@ -159,6 +159,7 @@ fn main() {
         outline::init(cx);
         project_symbols::init(cx);
         project_panel::init(Assets, cx);
+        channel::init(&client);
         diagnostics::init(cx);
         search::init(cx);
         semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
@@ -166,6 +167,7 @@ fn main() {
         terminal_view::init(cx);
         copilot::init(http.clone(), node_runtime, cx);
         ai::init(cx);
+        component_test::init(cx);
 
         cx.spawn(|cx| watch_themes(fs.clone(), cx)).detach();
         cx.spawn(|_| watch_languages(fs.clone(), languages.clone()))
@@ -633,8 +635,7 @@ async fn load_login_shell_environment() -> Result<()> {
 }
 
 fn stdout_is_a_pty() -> bool {
-    std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none()
-        && unsafe { libc::isatty(libc::STDOUT_FILENO as i32) != 0 }
+    std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none() && std::io::stdout().is_terminal()
 }
 
 fn collect_path_args() -> Vec<PathBuf> {

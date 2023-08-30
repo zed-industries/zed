@@ -9,7 +9,7 @@ use gpui::{
 use project::Fs;
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
-use terminal::{TerminalDockPosition, TerminalSettings};
+use terminal::terminal_settings::{TerminalDockPosition, TerminalSettings};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel},

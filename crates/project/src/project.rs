@@ -11,7 +11,7 @@ mod project_tests;
 mod worktree_tests;
 
 use anyhow::{anyhow, Context, Result};
-use client::{proto, Client, TypedEnvelope, UserStore};
+use client::{proto, Client, TypedEnvelope, UserId, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use copilot::Copilot;
@@ -26,8 +26,8 @@ use futures::{
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui::{
-    AnyModelHandle, AppContext, AsyncAppContext, BorrowAppContext, Entity, ModelContext,
-    ModelHandle, Task, WeakModelHandle,
+    executor::Background, AnyModelHandle, AppContext, AsyncAppContext, BorrowAppContext, Entity,
+    ModelContext, ModelHandle, Task, WeakModelHandle,
 };
 use itertools::Itertools;
 use language::{
@@ -37,11 +37,11 @@ use language::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
         serialize_anchor, serialize_version,
     },
-    range_from_lsp, range_to_lsp, Bias, Buffer, CachedLspAdapter, CodeAction, CodeLabel,
-    Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Event as BufferEvent, File as _,
-    Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapterDelegate, OffsetRangeExt,
-    Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot, ToOffset,
-    ToPointUtf16, Transaction, Unclipped,
+    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeAction,
+    CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Event as BufferEvent,
+    File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapterDelegate,
+    OffsetRangeExt, Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot,
+    ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use log::error;
 use lsp::{
@@ -57,8 +57,8 @@ use serde::Serialize;
 use settings::SettingsStore;
 use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
+use smol::channel::{Receiver, Sender};
 use std::{
-    cell::RefCell,
     cmp::{self, Ordering},
     convert::TryInto,
     hash::Hash,
@@ -67,7 +67,6 @@ use std::{
     ops::Range,
     path::{self, Component, Path, PathBuf},
     process::Stdio,
-    rc::Rc,
     str,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -250,6 +249,7 @@ enum ProjectClientState {
 pub struct Collaborator {
     pub peer_id: proto::PeerId,
     pub replica_id: ReplicaId,
+    pub user_id: UserId,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -281,6 +281,7 @@ pub enum Event {
         old_peer_id: proto::PeerId,
         new_peer_id: proto::PeerId,
     },
+    CollaboratorJoined(proto::PeerId),
     CollaboratorLeft(proto::PeerId),
     RefreshInlayHints,
 }
@@ -331,15 +332,22 @@ pub struct Location {
     pub range: Range<language::Anchor>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlayHint {
-    pub buffer_id: u64,
     pub position: language::Anchor,
     pub label: InlayHintLabel,
     pub kind: Option<InlayHintKind>,
     pub padding_left: bool,
     pub padding_right: bool,
     pub tooltip: Option<InlayHintTooltip>,
+    pub resolve_state: ResolveState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolveState {
+    Resolved,
+    CanResolve(LanguageServerId, Option<lsp::LSPAny>),
+    Resolving,
 }
 
 impl InlayHint {
@@ -351,34 +359,34 @@ impl InlayHint {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InlayHintLabel {
     String(String),
     LabelParts(Vec<InlayHintLabelPart>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlayHintLabelPart {
     pub value: String,
     pub tooltip: Option<InlayHintLabelPartTooltip>,
-    pub location: Option<Location>,
+    pub location: Option<(LanguageServerId, lsp::Location)>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InlayHintTooltip {
     String(String),
     MarkupContent(MarkupContent),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InlayHintLabelPartTooltip {
     String(String),
     MarkupContent(MarkupContent),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarkupContent {
-    pub kind: String,
+    pub kind: HoverBlockKind,
     pub value: String,
 }
 
@@ -412,7 +420,7 @@ pub struct HoverBlock {
     pub kind: HoverBlockKind,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HoverBlockKind {
     PlainText,
     Markdown,
@@ -516,6 +524,28 @@ impl FormatTrigger {
         }
     }
 }
+#[derive(Clone, Debug, PartialEq)]
+enum SearchMatchCandidate {
+    OpenBuffer {
+        buffer: ModelHandle<Buffer>,
+        // This might be an unnamed file without representation on filesystem
+        path: Option<Arc<Path>>,
+    },
+    Path {
+        worktree_id: WorktreeId,
+        path: Arc<Path>,
+    },
+}
+
+type SearchMatchCandidateIndex = usize;
+impl SearchMatchCandidate {
+    fn path(&self) -> Option<Arc<Path>> {
+        match self {
+            SearchMatchCandidate::OpenBuffer { path, .. } => path.clone(),
+            SearchMatchCandidate::Path { path, .. } => Some(path.clone()),
+        }
+    }
+}
 
 impl Project {
     pub fn init_settings(cx: &mut AppContext) {
@@ -549,6 +579,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_apply_code_action);
         client.add_model_request_handler(Self::handle_on_type_formatting);
         client.add_model_request_handler(Self::handle_inlay_hints);
+        client.add_model_request_handler(Self::handle_resolve_inlay_hint);
         client.add_model_request_handler(Self::handle_refresh_inlay_hints);
         client.add_model_request_handler(Self::handle_reload_buffers);
         client.add_model_request_handler(Self::handle_synchronize_buffers);
@@ -1537,9 +1568,9 @@ impl Project {
         if self.is_remote() {
             return Err(anyhow!("creating buffers as a guest is not supported yet"));
         }
-
+        let id = post_inc(&mut self.next_buffer_id);
         let buffer = cx.add_model(|cx| {
-            Buffer::new(self.replica_id(), text, cx)
+            Buffer::new(self.replica_id(), id, text)
                 .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx)
         });
         self.register_buffer(&buffer, cx)?;
@@ -1677,7 +1708,7 @@ impl Project {
     }
 
     /// LanguageServerName is owned, because it is inserted into a map
-    fn open_local_buffer_via_lsp(
+    pub fn open_local_buffer_via_lsp(
         &mut self,
         abs_path: lsp::Url,
         language_server_id: LanguageServerId,
@@ -4967,7 +4998,7 @@ impl Project {
         buffer_handle: ModelHandle<Buffer>,
         range: Range<T>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<InlayHint>>> {
+    ) -> Task<anyhow::Result<Vec<InlayHint>>> {
         let buffer = buffer_handle.read(cx);
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
         let range_start = range.start;
@@ -5017,192 +5048,79 @@ impl Project {
         }
     }
 
+    pub fn resolve_inlay_hint(
+        &self,
+        hint: InlayHint,
+        buffer_handle: ModelHandle<Buffer>,
+        server_id: LanguageServerId,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<anyhow::Result<InlayHint>> {
+        if self.is_local() {
+            let buffer = buffer_handle.read(cx);
+            let (_, lang_server) = if let Some((adapter, server)) =
+                self.language_server_for_buffer(buffer, server_id, cx)
+            {
+                (adapter.clone(), server.clone())
+            } else {
+                return Task::ready(Ok(hint));
+            };
+            if !InlayHints::can_resolve_inlays(lang_server.capabilities()) {
+                return Task::ready(Ok(hint));
+            }
+
+            let buffer_snapshot = buffer.snapshot();
+            cx.spawn(|_, mut cx| async move {
+                let resolve_task = lang_server.request::<lsp::request::InlayHintResolveRequest>(
+                    InlayHints::project_to_lsp_hint(hint, &buffer_snapshot),
+                );
+                let resolved_hint = resolve_task
+                    .await
+                    .context("inlay hint resolve LSP request")?;
+                let resolved_hint = InlayHints::lsp_to_project_hint(
+                    resolved_hint,
+                    &buffer_handle,
+                    server_id,
+                    ResolveState::Resolved,
+                    false,
+                    &mut cx,
+                )
+                .await?;
+                Ok(resolved_hint)
+            })
+        } else if let Some(project_id) = self.remote_id() {
+            let client = self.client.clone();
+            let request = proto::ResolveInlayHint {
+                project_id,
+                buffer_id: buffer_handle.read(cx).remote_id(),
+                language_server_id: server_id.0 as u64,
+                hint: Some(InlayHints::project_to_proto_hint(hint.clone())),
+            };
+            cx.spawn(|_, _| async move {
+                let response = client
+                    .request(request)
+                    .await
+                    .context("inlay hints proto request")?;
+                match response.hint {
+                    Some(resolved_hint) => InlayHints::proto_to_project_hint(resolved_hint)
+                        .context("inlay hints proto resolve response conversion"),
+                    None => Ok(hint),
+                }
+            })
+        } else {
+            Task::ready(Err(anyhow!("project does not have a remote id")))
+        }
+    }
+
     #[allow(clippy::type_complexity)]
     pub fn search(
         &self,
         query: SearchQuery,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<HashMap<ModelHandle<Buffer>, Vec<Range<Anchor>>>>> {
+    ) -> Receiver<(ModelHandle<Buffer>, Vec<Range<Anchor>>)> {
         if self.is_local() {
-            let snapshots = self
-                .visible_worktrees(cx)
-                .filter_map(|tree| {
-                    let tree = tree.read(cx).as_local()?;
-                    Some(tree.snapshot())
-                })
-                .collect::<Vec<_>>();
-
-            let background = cx.background().clone();
-            let path_count: usize = snapshots.iter().map(|s| s.visible_file_count()).sum();
-            if path_count == 0 {
-                return Task::ready(Ok(Default::default()));
-            }
-            let workers = background.num_cpus().min(path_count);
-            let (matching_paths_tx, mut matching_paths_rx) = smol::channel::bounded(1024);
-            cx.background()
-                .spawn({
-                    let fs = self.fs.clone();
-                    let background = cx.background().clone();
-                    let query = query.clone();
-                    async move {
-                        let fs = &fs;
-                        let query = &query;
-                        let matching_paths_tx = &matching_paths_tx;
-                        let paths_per_worker = (path_count + workers - 1) / workers;
-                        let snapshots = &snapshots;
-                        background
-                            .scoped(|scope| {
-                                for worker_ix in 0..workers {
-                                    let worker_start_ix = worker_ix * paths_per_worker;
-                                    let worker_end_ix = worker_start_ix + paths_per_worker;
-                                    scope.spawn(async move {
-                                        let mut snapshot_start_ix = 0;
-                                        let mut abs_path = PathBuf::new();
-                                        for snapshot in snapshots {
-                                            let snapshot_end_ix =
-                                                snapshot_start_ix + snapshot.visible_file_count();
-                                            if worker_end_ix <= snapshot_start_ix {
-                                                break;
-                                            } else if worker_start_ix > snapshot_end_ix {
-                                                snapshot_start_ix = snapshot_end_ix;
-                                                continue;
-                                            } else {
-                                                let start_in_snapshot = worker_start_ix
-                                                    .saturating_sub(snapshot_start_ix);
-                                                let end_in_snapshot =
-                                                    cmp::min(worker_end_ix, snapshot_end_ix)
-                                                        - snapshot_start_ix;
-
-                                                for entry in snapshot
-                                                    .files(false, start_in_snapshot)
-                                                    .take(end_in_snapshot - start_in_snapshot)
-                                                {
-                                                    if matching_paths_tx.is_closed() {
-                                                        break;
-                                                    }
-                                                    let matches = if query
-                                                        .file_matches(Some(&entry.path))
-                                                    {
-                                                        abs_path.clear();
-                                                        abs_path.push(&snapshot.abs_path());
-                                                        abs_path.push(&entry.path);
-                                                        if let Some(file) =
-                                                            fs.open_sync(&abs_path).await.log_err()
-                                                        {
-                                                            query.detect(file).unwrap_or(false)
-                                                        } else {
-                                                            false
-                                                        }
-                                                    } else {
-                                                        false
-                                                    };
-
-                                                    if matches {
-                                                        let project_path =
-                                                            (snapshot.id(), entry.path.clone());
-                                                        if matching_paths_tx
-                                                            .send(project_path)
-                                                            .await
-                                                            .is_err()
-                                                        {
-                                                            break;
-                                                        }
-                                                    }
-                                                }
-
-                                                snapshot_start_ix = snapshot_end_ix;
-                                            }
-                                        }
-                                    });
-                                }
-                            })
-                            .await;
-                    }
-                })
-                .detach();
-
-            let (buffers_tx, buffers_rx) = smol::channel::bounded(1024);
-            let open_buffers = self
-                .opened_buffers
-                .values()
-                .filter_map(|b| b.upgrade(cx))
-                .collect::<HashSet<_>>();
-            cx.spawn(|this, cx| async move {
-                for buffer in &open_buffers {
-                    let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-                    buffers_tx.send((buffer.clone(), snapshot)).await?;
-                }
-
-                let open_buffers = Rc::new(RefCell::new(open_buffers));
-                while let Some(project_path) = matching_paths_rx.next().await {
-                    if buffers_tx.is_closed() {
-                        break;
-                    }
-
-                    let this = this.clone();
-                    let open_buffers = open_buffers.clone();
-                    let buffers_tx = buffers_tx.clone();
-                    cx.spawn(|mut cx| async move {
-                        if let Some(buffer) = this
-                            .update(&mut cx, |this, cx| this.open_buffer(project_path, cx))
-                            .await
-                            .log_err()
-                        {
-                            if open_buffers.borrow_mut().insert(buffer.clone()) {
-                                let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-                                buffers_tx.send((buffer, snapshot)).await?;
-                            }
-                        }
-
-                        Ok::<_, anyhow::Error>(())
-                    })
-                    .detach();
-                }
-
-                Ok::<_, anyhow::Error>(())
-            })
-            .detach_and_log_err(cx);
-
-            let background = cx.background().clone();
-            cx.background().spawn(async move {
-                let query = &query;
-                let mut matched_buffers = Vec::new();
-                for _ in 0..workers {
-                    matched_buffers.push(HashMap::default());
-                }
-                background
-                    .scoped(|scope| {
-                        for worker_matched_buffers in matched_buffers.iter_mut() {
-                            let mut buffers_rx = buffers_rx.clone();
-                            scope.spawn(async move {
-                                while let Some((buffer, snapshot)) = buffers_rx.next().await {
-                                    let buffer_matches = if query.file_matches(
-                                        snapshot.file().map(|file| file.path().as_ref()),
-                                    ) {
-                                        query
-                                            .search(&snapshot, None)
-                                            .await
-                                            .iter()
-                                            .map(|range| {
-                                                snapshot.anchor_before(range.start)
-                                                    ..snapshot.anchor_after(range.end)
-                                            })
-                                            .collect()
-                                    } else {
-                                        Vec::new()
-                                    };
-                                    if !buffer_matches.is_empty() {
-                                        worker_matched_buffers
-                                            .insert(buffer.clone(), buffer_matches);
-                                    }
-                                }
-                            });
-                        }
-                    })
-                    .await;
-                Ok(matched_buffers.into_iter().flatten().collect())
-            })
+            self.search_local(query, cx)
         } else if let Some(project_id) = self.remote_id() {
+            let (tx, rx) = smol::channel::unbounded();
             let request = self.client.request(query.to_proto(project_id));
             cx.spawn(|this, mut cx| async move {
                 let response = request.await?;
@@ -5226,11 +5144,301 @@ impl Project {
                         .or_insert(Vec::new())
                         .push(start..end)
                 }
-                Ok(result)
+                for (buffer, ranges) in result {
+                    let _ = tx.send((buffer, ranges)).await;
+                }
+                Result::<(), anyhow::Error>::Ok(())
             })
+            .detach_and_log_err(cx);
+            rx
         } else {
-            Task::ready(Ok(Default::default()))
+            unimplemented!();
         }
+    }
+
+    pub fn search_local(
+        &self,
+        query: SearchQuery,
+        cx: &mut ModelContext<Self>,
+    ) -> Receiver<(ModelHandle<Buffer>, Vec<Range<Anchor>>)> {
+        // Local search is split into several phases.
+        // TL;DR is that we do 2 passes; initial pass to pick files which contain at least one match
+        // and the second phase that finds positions of all the matches found in the candidate files.
+        // The Receiver obtained from this function returns matches sorted by buffer path. Files without a buffer path are reported first.
+        //
+        // It gets a bit hairy though, because we must account for files that do not have a persistent representation
+        // on FS. Namely, if you have an untitled buffer or unsaved changes in a buffer, we want to scan that too.
+        //
+        // 1. We initialize a queue of match candidates and feed all opened buffers into it (== unsaved files / untitled buffers).
+        //    Then, we go through a worktree and check for files that do match a predicate. If the file had an opened version, we skip the scan
+        //    of FS version for that file altogether - after all, what we have in memory is more up-to-date than what's in FS.
+        // 2. At this point, we have a list of all potentially matching buffers/files.
+        //    We sort that list by buffer path - this list is retained for later use.
+        //    We ensure that all buffers are now opened and available in project.
+        // 3. We run a scan over all the candidate buffers on multiple background threads.
+        //    We cannot assume that there will even be a match - while at least one match
+        //    is guaranteed for files obtained from FS, the buffers we got from memory (unsaved files/unnamed buffers) might not have a match at all.
+        //    There is also an auxilliary background thread responsible for result gathering.
+        //    This is where the sorted list of buffers comes into play to maintain sorted order; Whenever this background thread receives a notification (buffer has/doesn't have matches),
+        //    it keeps it around. It reports matches in sorted order, though it accepts them in unsorted order as well.
+        //    As soon as the match info on next position in sorted order becomes available, it reports it (if it's a match) or skips to the next
+        //    entry - which might already be available thanks to out-of-order processing.
+        //
+        // We could also report matches fully out-of-order, without maintaining a sorted list of matching paths.
+        // This however would mean that project search (that is the main user of this function) would have to do the sorting itself, on the go.
+        // This isn't as straightforward as running an insertion sort sadly, and would also mean that it would have to care about maintaining match index
+        // in face of constantly updating list of sorted matches.
+        // Meanwhile, this implementation offers index stability, since the matches are already reported in a sorted order.
+        let snapshots = self
+            .visible_worktrees(cx)
+            .filter_map(|tree| {
+                let tree = tree.read(cx).as_local()?;
+                Some(tree.snapshot())
+            })
+            .collect::<Vec<_>>();
+
+        let background = cx.background().clone();
+        let path_count: usize = snapshots.iter().map(|s| s.visible_file_count()).sum();
+        if path_count == 0 {
+            let (_, rx) = smol::channel::bounded(1024);
+            return rx;
+        }
+        let workers = background.num_cpus().min(path_count);
+        let (matching_paths_tx, matching_paths_rx) = smol::channel::bounded(1024);
+        let mut unnamed_files = vec![];
+        let opened_buffers = self
+            .opened_buffers
+            .iter()
+            .filter_map(|(_, b)| {
+                let buffer = b.upgrade(cx)?;
+                let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+                if let Some(path) = snapshot.file().map(|file| file.path()) {
+                    Some((path.clone(), (buffer, snapshot)))
+                } else {
+                    unnamed_files.push(buffer);
+                    None
+                }
+            })
+            .collect();
+        cx.background()
+            .spawn(Self::background_search(
+                unnamed_files,
+                opened_buffers,
+                cx.background().clone(),
+                self.fs.clone(),
+                workers,
+                query.clone(),
+                path_count,
+                snapshots,
+                matching_paths_tx,
+            ))
+            .detach();
+
+        let (buffers, buffers_rx) = Self::sort_candidates_and_open_buffers(matching_paths_rx, cx);
+        let background = cx.background().clone();
+        let (result_tx, result_rx) = smol::channel::bounded(1024);
+        cx.background()
+            .spawn(async move {
+                let Ok(buffers) = buffers.await else {
+                    return;
+                };
+
+                let buffers_len = buffers.len();
+                if buffers_len == 0 {
+                    return;
+                }
+                let query = &query;
+                let (finished_tx, mut finished_rx) = smol::channel::unbounded();
+                background
+                    .scoped(|scope| {
+                        #[derive(Clone)]
+                        struct FinishedStatus {
+                            entry: Option<(ModelHandle<Buffer>, Vec<Range<Anchor>>)>,
+                            buffer_index: SearchMatchCandidateIndex,
+                        }
+
+                        for _ in 0..workers {
+                            let finished_tx = finished_tx.clone();
+                            let mut buffers_rx = buffers_rx.clone();
+                            scope.spawn(async move {
+                                while let Some((entry, buffer_index)) = buffers_rx.next().await {
+                                    let buffer_matches = if let Some((_, snapshot)) = entry.as_ref()
+                                    {
+                                        if query.file_matches(
+                                            snapshot.file().map(|file| file.path().as_ref()),
+                                        ) {
+                                            query
+                                                .search(&snapshot, None)
+                                                .await
+                                                .iter()
+                                                .map(|range| {
+                                                    snapshot.anchor_before(range.start)
+                                                        ..snapshot.anchor_after(range.end)
+                                                })
+                                                .collect()
+                                        } else {
+                                            Vec::new()
+                                        }
+                                    } else {
+                                        Vec::new()
+                                    };
+
+                                    let status = if !buffer_matches.is_empty() {
+                                        let entry = if let Some((buffer, _)) = entry.as_ref() {
+                                            Some((buffer.clone(), buffer_matches))
+                                        } else {
+                                            None
+                                        };
+                                        FinishedStatus {
+                                            entry,
+                                            buffer_index,
+                                        }
+                                    } else {
+                                        FinishedStatus {
+                                            entry: None,
+                                            buffer_index,
+                                        }
+                                    };
+                                    if finished_tx.send(status).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            });
+                        }
+                        // Report sorted matches
+                        scope.spawn(async move {
+                            let mut current_index = 0;
+                            let mut scratch = vec![None; buffers_len];
+                            while let Some(status) = finished_rx.next().await {
+                                debug_assert!(
+                                    scratch[status.buffer_index].is_none(),
+                                    "Got match status of position {} twice",
+                                    status.buffer_index
+                                );
+                                let index = status.buffer_index;
+                                scratch[index] = Some(status);
+                                while current_index < buffers_len {
+                                    let Some(current_entry) = scratch[current_index].take() else {
+                                        // We intentionally **do not** increment `current_index` here. When next element arrives
+                                        // from `finished_rx`, we will inspect the same position again, hoping for it to be Some(_)
+                                        // this time.
+                                        break;
+                                    };
+                                    if let Some(entry) = current_entry.entry {
+                                        result_tx.send(entry).await.log_err();
+                                    }
+                                    current_index += 1;
+                                }
+                                if current_index == buffers_len {
+                                    break;
+                                }
+                            }
+                        });
+                    })
+                    .await;
+            })
+            .detach();
+        result_rx
+    }
+    /// Pick paths that might potentially contain a match of a given search query.
+    async fn background_search(
+        unnamed_buffers: Vec<ModelHandle<Buffer>>,
+        opened_buffers: HashMap<Arc<Path>, (ModelHandle<Buffer>, BufferSnapshot)>,
+        background: Arc<Background>,
+        fs: Arc<dyn Fs>,
+        workers: usize,
+        query: SearchQuery,
+        path_count: usize,
+        snapshots: Vec<LocalSnapshot>,
+        matching_paths_tx: Sender<SearchMatchCandidate>,
+    ) {
+        let fs = &fs;
+        let query = &query;
+        let matching_paths_tx = &matching_paths_tx;
+        let snapshots = &snapshots;
+        let paths_per_worker = (path_count + workers - 1) / workers;
+        for buffer in unnamed_buffers {
+            matching_paths_tx
+                .send(SearchMatchCandidate::OpenBuffer {
+                    buffer: buffer.clone(),
+                    path: None,
+                })
+                .await
+                .log_err();
+        }
+        for (path, (buffer, _)) in opened_buffers.iter() {
+            matching_paths_tx
+                .send(SearchMatchCandidate::OpenBuffer {
+                    buffer: buffer.clone(),
+                    path: Some(path.clone()),
+                })
+                .await
+                .log_err();
+        }
+        background
+            .scoped(|scope| {
+                for worker_ix in 0..workers {
+                    let worker_start_ix = worker_ix * paths_per_worker;
+                    let worker_end_ix = worker_start_ix + paths_per_worker;
+                    let unnamed_buffers = opened_buffers.clone();
+                    scope.spawn(async move {
+                        let mut snapshot_start_ix = 0;
+                        let mut abs_path = PathBuf::new();
+                        for snapshot in snapshots {
+                            let snapshot_end_ix = snapshot_start_ix + snapshot.visible_file_count();
+                            if worker_end_ix <= snapshot_start_ix {
+                                break;
+                            } else if worker_start_ix > snapshot_end_ix {
+                                snapshot_start_ix = snapshot_end_ix;
+                                continue;
+                            } else {
+                                let start_in_snapshot =
+                                    worker_start_ix.saturating_sub(snapshot_start_ix);
+                                let end_in_snapshot =
+                                    cmp::min(worker_end_ix, snapshot_end_ix) - snapshot_start_ix;
+
+                                for entry in snapshot
+                                    .files(false, start_in_snapshot)
+                                    .take(end_in_snapshot - start_in_snapshot)
+                                {
+                                    if matching_paths_tx.is_closed() {
+                                        break;
+                                    }
+                                    if unnamed_buffers.contains_key(&entry.path) {
+                                        continue;
+                                    }
+                                    let matches = if query.file_matches(Some(&entry.path)) {
+                                        abs_path.clear();
+                                        abs_path.push(&snapshot.abs_path());
+                                        abs_path.push(&entry.path);
+                                        if let Some(file) = fs.open_sync(&abs_path).await.log_err()
+                                        {
+                                            query.detect(file).unwrap_or(false)
+                                        } else {
+                                            false
+                                        }
+                                    } else {
+                                        false
+                                    };
+
+                                    if matches {
+                                        let project_path = SearchMatchCandidate::Path {
+                                            worktree_id: snapshot.id(),
+                                            path: entry.path.clone(),
+                                        };
+                                        if matching_paths_tx.send(project_path).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                snapshot_start_ix = snapshot_end_ix;
+                            }
+                        }
+                    });
+                }
+            })
+            .await;
     }
 
     // TODO: Wire this up to allow selecting a server?
@@ -5305,6 +5513,61 @@ impl Project {
             });
         }
         Task::ready(Ok(Default::default()))
+    }
+
+    fn sort_candidates_and_open_buffers(
+        mut matching_paths_rx: Receiver<SearchMatchCandidate>,
+        cx: &mut ModelContext<Self>,
+    ) -> (
+        futures::channel::oneshot::Receiver<Vec<SearchMatchCandidate>>,
+        Receiver<(
+            Option<(ModelHandle<Buffer>, BufferSnapshot)>,
+            SearchMatchCandidateIndex,
+        )>,
+    ) {
+        let (buffers_tx, buffers_rx) = smol::channel::bounded(1024);
+        let (sorted_buffers_tx, sorted_buffers_rx) = futures::channel::oneshot::channel();
+        cx.spawn(|this, cx| async move {
+            let mut buffers = vec![];
+            while let Some(entry) = matching_paths_rx.next().await {
+                buffers.push(entry);
+            }
+            buffers.sort_by_key(|candidate| candidate.path());
+            let matching_paths = buffers.clone();
+            let _ = sorted_buffers_tx.send(buffers);
+            for (index, candidate) in matching_paths.into_iter().enumerate() {
+                if buffers_tx.is_closed() {
+                    break;
+                }
+                let this = this.clone();
+                let buffers_tx = buffers_tx.clone();
+                cx.spawn(|mut cx| async move {
+                    let buffer = match candidate {
+                        SearchMatchCandidate::OpenBuffer { buffer, .. } => Some(buffer),
+                        SearchMatchCandidate::Path { worktree_id, path } => this
+                            .update(&mut cx, |this, cx| {
+                                this.open_buffer((worktree_id, path), cx)
+                            })
+                            .await
+                            .log_err(),
+                    };
+                    if let Some(buffer) = buffer {
+                        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+                        buffers_tx
+                            .send((Some((buffer, snapshot)), index))
+                            .await
+                            .log_err();
+                    } else {
+                        buffers_tx.send((None, index)).await.log_err();
+                    }
+
+                    Ok::<_, anyhow::Error>(())
+                })
+                .detach();
+            }
+        })
+        .detach();
+        (sorted_buffers_rx, buffers_rx)
     }
 
     pub fn find_or_create_local_worktree(
@@ -5930,6 +6193,7 @@ impl Project {
         let collaborator = Collaborator::from_proto(collaborator)?;
         this.update(&mut cx, |this, cx| {
             this.shared_buffers.remove(&collaborator.peer_id);
+            cx.emit(Event::CollaboratorJoined(collaborator.peer_id));
             this.collaborators
                 .insert(collaborator.peer_id, collaborator);
             cx.notify();
@@ -6813,6 +7077,40 @@ impl Project {
         }))
     }
 
+    async fn handle_resolve_inlay_hint(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::ResolveInlayHint>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ResolveInlayHintResponse> {
+        let proto_hint = envelope
+            .payload
+            .hint
+            .expect("incorrect protobuf resolve inlay hint message: missing the inlay hint");
+        let hint = InlayHints::proto_to_project_hint(proto_hint)
+            .context("resolved proto inlay hint conversion")?;
+        let buffer = this.update(&mut cx, |this, cx| {
+            this.opened_buffers
+                .get(&envelope.payload.buffer_id)
+                .and_then(|buffer| buffer.upgrade(cx))
+                .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
+        })?;
+        let response_hint = this
+            .update(&mut cx, |project, cx| {
+                project.resolve_inlay_hint(
+                    hint,
+                    buffer,
+                    LanguageServerId(envelope.payload.language_server_id as usize),
+                    cx,
+                )
+            })
+            .await
+            .context("inlay hints fetch")?;
+        Ok(proto::ResolveInlayHintResponse {
+            hint: Some(InlayHints::project_to_proto_hint(response_hint)),
+        })
+    }
+
     async fn handle_refresh_inlay_hints(
         this: ModelHandle<Self>,
         _: TypedEnvelope<proto::RefreshInlayHints>,
@@ -6891,17 +7189,17 @@ impl Project {
     ) -> Result<proto::SearchProjectResponse> {
         let peer_id = envelope.original_sender_id()?;
         let query = SearchQuery::from_proto(envelope.payload)?;
-        let result = this
-            .update(&mut cx, |this, cx| this.search(query, cx))
-            .await?;
+        let mut result = this.update(&mut cx, |this, cx| this.search(query, cx));
 
-        this.update(&mut cx, |this, cx| {
+        cx.spawn(|mut cx| async move {
             let mut locations = Vec::new();
-            for (buffer, ranges) in result {
+            while let Some((buffer, ranges)) = result.next().await {
                 for range in ranges {
                     let start = serialize_anchor(&range.start);
                     let end = serialize_anchor(&range.end);
-                    let buffer_id = this.create_buffer_for_peer(&buffer, peer_id, cx);
+                    let buffer_id = this.update(&mut cx, |this, cx| {
+                        this.create_buffer_for_peer(&buffer, peer_id, cx)
+                    });
                     locations.push(proto::Location {
                         buffer_id,
                         start: Some(start),
@@ -6911,6 +7209,7 @@ impl Project {
             }
             Ok(proto::SearchProjectResponse { locations })
         })
+        .await
     }
 
     async fn handle_open_buffer_for_symbol(
@@ -7576,7 +7875,7 @@ impl Project {
         self.language_servers_for_buffer(buffer, cx).next()
     }
 
-    fn language_server_for_buffer(
+    pub fn language_server_for_buffer(
         &self,
         buffer: &Buffer,
         server_id: LanguageServerId,
@@ -7756,6 +8055,7 @@ impl Collaborator {
         Ok(Self {
             peer_id: message.peer_id.ok_or_else(|| anyhow!("invalid peer id"))?,
             replica_id: message.replica_id as ReplicaId,
+            user_id: message.user_id as UserId,
         })
     }
 }

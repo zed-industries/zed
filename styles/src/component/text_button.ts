@@ -17,6 +17,7 @@ interface TextButtonOptions {
     variant?: Button.Variant
     color?: keyof Theme["lowest"]
     margin?: Partial<Margin>
+    disabled?: boolean
     text_properties?: TextProperties
 }
 
@@ -29,6 +30,7 @@ export function text_button({
     color,
     layer,
     margin,
+    disabled,
     text_properties,
 }: TextButtonOptions = {}) {
     const theme = useTheme()
@@ -65,13 +67,17 @@ export function text_button({
         state: {
             default: {
                 background: background_color,
-                color: foreground(layer ?? theme.lowest, color),
+                color:
+                    disabled
+                        ? foreground(layer ?? theme.lowest, "disabled")
+                        : foreground(layer ?? theme.lowest, color),
             },
-            hovered: {
-                background: background(layer ?? theme.lowest, color, "hovered"),
-                color: foreground(layer ?? theme.lowest, color, "hovered"),
-            },
-            clicked: {
+            hovered:
+                disabled ? {} : {
+                    background: background(layer ?? theme.lowest, color, "hovered"),
+                    color: foreground(layer ?? theme.lowest, color, "hovered"),
+                },
+            clicked: disabled ? {} : {
                 background: background(layer ?? theme.lowest, color, "pressed"),
                 color: foreground(layer ?? theme.lowest, color, "pressed"),
             },

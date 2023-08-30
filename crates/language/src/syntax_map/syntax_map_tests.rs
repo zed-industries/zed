@@ -932,8 +932,12 @@ fn check_interpolation(
         .zip(new_syntax_map.layers.iter())
     {
         assert_eq!(old_layer.range, new_layer.range);
-        let Some(old_tree) = old_layer.content.tree() else { continue };
-        let Some(new_tree) = new_layer.content.tree() else { continue };
+        let Some(old_tree) = old_layer.content.tree() else {
+            continue;
+        };
+        let Some(new_tree) = new_layer.content.tree() else {
+            continue;
+        };
         let old_start_byte = old_layer.range.start.to_offset(old_buffer);
         let new_start_byte = new_layer.range.start.to_offset(new_buffer);
         let old_start_point = old_layer.range.start.to_point(old_buffer).to_ts_point();

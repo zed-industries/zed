@@ -81,10 +81,7 @@ impl View for Toolbar {
 
                 ToolbarItemLocation::PrimaryLeft { flex } => {
                     primary_items_row_count = primary_items_row_count.max(item.row_count(cx));
-                    let left_item = ChildView::new(item.as_any(), cx)
-                        .aligned()
-                        .contained()
-                        .with_margin_right(spacing);
+                    let left_item = ChildView::new(item.as_any(), cx).aligned();
                     if let Some((flex, expanded)) = flex {
                         primary_left_items.push(left_item.flex(flex, expanded).into_any());
                     } else {
@@ -94,11 +91,7 @@ impl View for Toolbar {
 
                 ToolbarItemLocation::PrimaryRight { flex } => {
                     primary_items_row_count = primary_items_row_count.max(item.row_count(cx));
-                    let right_item = ChildView::new(item.as_any(), cx)
-                        .aligned()
-                        .contained()
-                        .with_margin_left(spacing)
-                        .flex_float();
+                    let right_item = ChildView::new(item.as_any(), cx).aligned().flex_float();
                     if let Some((flex, expanded)) = flex {
                         primary_right_items.push(right_item.flex(flex, expanded).into_any());
                     } else {
@@ -120,7 +113,7 @@ impl View for Toolbar {
         let container_style = theme.container;
         let height = theme.height * primary_items_row_count as f32;
 
-        let mut primary_items = Flex::row();
+        let mut primary_items = Flex::row().with_spacing(spacing);
         primary_items.extend(primary_left_items);
         primary_items.extend(primary_right_items);
 

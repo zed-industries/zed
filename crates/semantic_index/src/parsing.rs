@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Ok, Result};
 use language::{Grammar, Language};
+use sha1::{Digest, Sha1};
 use std::{
     cmp::{self, Reverse},
     collections::HashSet,
@@ -15,6 +16,7 @@ pub struct Document {
     pub range: Range<usize>,
     pub content: String,
     pub embedding: Vec<f32>,
+    pub sha1: [u8; 20],
 }
 
 const CODE_CONTEXT_TEMPLATE: &str =
@@ -63,11 +65,15 @@ impl CodeContextRetriever {
             .replace("<language>", language_name.as_ref())
             .replace("<item>", &content);
 
+        let mut sha1 = Sha1::new();
+        sha1.update(&document_span);
+
         Ok(vec![Document {
             range: 0..content.len(),
             content: document_span,
             embedding: Vec::new(),
             name: language_name.to_string(),
+            sha1: sha1.finalize().into(),
         }])
     }
 
@@ -76,11 +82,15 @@ impl CodeContextRetriever {
             .replace("<path>", relative_path.to_string_lossy().as_ref())
             .replace("<item>", &content);
 
+        let mut sha1 = Sha1::new();
+        sha1.update(&document_span);
+
         Ok(vec![Document {
             range: 0..content.len(),
             content: document_span,
             embedding: Vec::new(),
             name: "Markdown".to_string(),
+            sha1: sha1.finalize().into(),
         }])
     }
 
@@ -253,11 +263,15 @@ impl CodeContextRetriever {
                 );
             }
 
+            let mut sha1 = Sha1::new();
+            sha1.update(&document_content);
+
             documents.push(Document {
                 name,
                 content: document_content,
                 range: item_range.clone(),
                 embedding: vec![],
+                sha1: sha1.finalize().into(),
             })
         }
 

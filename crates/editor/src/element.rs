@@ -13,6 +13,7 @@ use crate::{
     },
     link_go_to_definition::{
         go_to_fetched_definition, go_to_fetched_type_definition, update_go_to_definition_link,
+        update_inlay_link_and_hover_points, GoToDefinitionTrigger,
     },
     mouse_context_menu, EditorSettings, EditorStyle, GutterHover, UnfoldAt,
 };
@@ -62,6 +63,7 @@ struct SelectionLayout {
     head: DisplayPoint,
     cursor_shape: CursorShape,
     is_newest: bool,
+    is_local: bool,
     range: Range<DisplayPoint>,
     active_rows: Range<u32>,
 }
@@ -73,6 +75,7 @@ impl SelectionLayout {
         cursor_shape: CursorShape,
         map: &DisplaySnapshot,
         is_newest: bool,
+        is_local: bool,
     ) -> Self {
         let point_selection = selection.map(|p| p.to_point(&map.buffer_snapshot));
         let display_selection = point_selection.map(|p| p.to_display_point(map));
@@ -109,6 +112,7 @@ impl SelectionLayout {
             head,
             cursor_shape,
             is_newest,
+            is_local,
             range,
             active_rows,
         }
@@ -284,13 +288,13 @@ impl EditorElement {
             return false;
         }
 
-        let (position, target_position) = position_map.point_for_position(text_bounds, position);
-
+        let point_for_position = position_map.point_for_position(text_bounds, position);
+        let position = point_for_position.previous_valid;
         if shift && alt {
             editor.select(
                 SelectPhase::BeginColumnar {
                     position,
-                    goal_column: target_position.column(),
+                    goal_column: point_for_position.exact_unclipped.column(),
                 },
                 cx,
             );
@@ -326,9 +330,13 @@ impl EditorElement {
         if !text_bounds.contains_point(position) {
             return false;
         }
-
-        let (point, _) = position_map.point_for_position(text_bounds, position);
-        mouse_context_menu::deploy_context_menu(editor, position, point, cx);
+        let point_for_position = position_map.point_for_position(text_bounds, position);
+        mouse_context_menu::deploy_context_menu(
+            editor,
+            position,
+            point_for_position.previous_valid,
+            cx,
+        );
         true
     }
 
@@ -350,17 +358,15 @@ impl EditorElement {
         }
 
         if !pending_nonempty_selections && cmd && text_bounds.contains_point(position) {
-            let (point, target_point) = position_map.point_for_position(text_bounds, position);
-
-            if point == target_point {
-                if shift {
-                    go_to_fetched_type_definition(editor, point, alt, cx);
-                } else {
-                    go_to_fetched_definition(editor, point, alt, cx);
-                }
-
-                return true;
+            let point = position_map.point_for_position(text_bounds, position);
+            let could_be_inlay = point.as_valid().is_none();
+            if shift || could_be_inlay {
+                go_to_fetched_type_definition(editor, point, alt, cx);
+            } else {
+                go_to_fetched_definition(editor, point, alt, cx);
             }
+
+            return true;
         }
 
         end_selection
@@ -380,17 +386,20 @@ impl EditorElement {
         // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
         // Don't trigger hover popover if mouse is hovering over context menu
         let point = if text_bounds.contains_point(position) {
-            let (point, target_point) = position_map.point_for_position(text_bounds, position);
-            if point == target_point {
-                Some(point)
-            } else {
-                None
-            }
+            position_map
+                .point_for_position(text_bounds, position)
+                .as_valid()
         } else {
             None
         };
 
-        update_go_to_definition_link(editor, point, cmd, shift, cx);
+        update_go_to_definition_link(
+            editor,
+            point.map(GoToDefinitionTrigger::Text),
+            cmd,
+            shift,
+            cx,
+        );
 
         if editor.has_pending_selection() {
             let mut scroll_delta = Vector2F::zero();
@@ -419,13 +428,12 @@ impl EditorElement {
                 ))
             }
 
-            let (position, target_position) =
-                position_map.point_for_position(text_bounds, position);
+            let point_for_position = position_map.point_for_position(text_bounds, position);
 
             editor.select(
                 SelectPhase::Update {
-                    position,
-                    goal_column: target_position.column(),
+                    position: point_for_position.previous_valid,
+                    goal_column: point_for_position.exact_unclipped.column(),
                     scroll_position: (position_map.snapshot.scroll_position() + scroll_delta)
                         .clamp(Vector2F::zero(), position_map.scroll_max),
                 },
@@ -452,10 +460,34 @@ impl EditorElement {
     ) -> bool {
         // This will be handled more correctly once https://github.com/zed-industries/zed/issues/1218 is completed
         // Don't trigger hover popover if mouse is hovering over context menu
-        let point = position_to_display_point(position, text_bounds, position_map);
-
-        update_go_to_definition_link(editor, point, cmd, shift, cx);
-        hover_at(editor, point, cx);
+        if text_bounds.contains_point(position) {
+            let point_for_position = position_map.point_for_position(text_bounds, position);
+            match point_for_position.as_valid() {
+                Some(point) => {
+                    update_go_to_definition_link(
+                        editor,
+                        Some(GoToDefinitionTrigger::Text(point)),
+                        cmd,
+                        shift,
+                        cx,
+                    );
+                    hover_at(editor, Some(point), cx);
+                }
+                None => {
+                    update_inlay_link_and_hover_points(
+                        &position_map.snapshot,
+                        point_for_position,
+                        editor,
+                        cmd,
+                        shift,
+                        cx,
+                    );
+                }
+            }
+        } else {
+            update_go_to_definition_link(editor, None, cmd, shift, cx);
+            hover_at(editor, None, cx);
+        }
 
         true
     }
@@ -763,7 +795,6 @@ impl EditorElement {
         cx: &mut PaintContext<Editor>,
     ) {
         let style = &self.style;
-        let local_replica_id = editor.replica_id(cx);
         let scroll_position = layout.position_map.snapshot.scroll_position();
         let start_row = layout.visible_display_row_range.start;
         let scroll_top = scroll_position.y() * layout.position_map.line_height;
@@ -852,15 +883,13 @@ impl EditorElement {
 
         for (replica_id, selections) in &layout.selections {
             let replica_id = *replica_id;
-            let selection_style = style.replica_selection_style(replica_id);
+            let selection_style = if let Some(replica_id) = replica_id {
+                style.replica_selection_style(replica_id)
+            } else {
+                &style.absent_selection
+            };
 
             for selection in selections {
-                if !selection.range.is_empty()
-                    && (replica_id == local_replica_id
-                        || Some(replica_id) == editor.leader_replica_id)
-                {
-                    invisible_display_ranges.push(selection.range.clone());
-                }
                 self.paint_highlighted_range(
                     scene,
                     selection.range.clone(),
@@ -874,7 +903,10 @@ impl EditorElement {
                     bounds,
                 );
 
-                if editor.show_local_cursors(cx) || replica_id != local_replica_id {
+                if selection.is_local && !selection.range.is_empty() {
+                    invisible_display_ranges.push(selection.range.clone());
+                }
+                if !selection.is_local || editor.show_local_cursors(cx) {
                     let cursor_position = selection.head;
                     if layout
                         .visible_display_row_range
@@ -906,7 +938,7 @@ impl EditorElement {
                                         &text,
                                         cursor_row_layout.font_size(),
                                         &[(
-                                            text.len(),
+                                            text.chars().count(),
                                             RunStyle {
                                                 font_id,
                                                 color: style.background,
@@ -1405,10 +1437,61 @@ impl EditorElement {
             .collect()
     }
 
+    fn calculate_relative_line_numbers(
+        &self,
+        snapshot: &EditorSnapshot,
+        rows: &Range<u32>,
+        relative_to: Option<u32>,
+    ) -> HashMap<u32, u32> {
+        let mut relative_rows: HashMap<u32, u32> = Default::default();
+        let Some(relative_to) = relative_to else {
+            return relative_rows;
+        };
+
+        let start = rows.start.min(relative_to);
+        let end = rows.end.max(relative_to);
+
+        let buffer_rows = snapshot
+            .buffer_rows(start)
+            .take(1 + (end - start) as usize)
+            .collect::<Vec<_>>();
+
+        let head_idx = relative_to - start;
+        let mut delta = 1;
+        let mut i = head_idx + 1;
+        while i < buffer_rows.len() as u32 {
+            if buffer_rows[i as usize].is_some() {
+                if rows.contains(&(i + start)) {
+                    relative_rows.insert(i + start, delta);
+                }
+                delta += 1;
+            }
+            i += 1;
+        }
+        delta = 1;
+        i = head_idx.min(buffer_rows.len() as u32 - 1);
+        while i > 0 && buffer_rows[i as usize].is_none() {
+            i -= 1;
+        }
+
+        while i > 0 {
+            i -= 1;
+            if buffer_rows[i as usize].is_some() {
+                if rows.contains(&(i + start)) {
+                    relative_rows.insert(i + start, delta);
+                }
+                delta += 1;
+            }
+        }
+
+        relative_rows
+    }
+
     fn layout_line_numbers(
         &self,
         rows: Range<u32>,
         active_rows: &BTreeMap<u32, bool>,
+        newest_selection_head: DisplayPoint,
         is_singleton: bool,
         snapshot: &EditorSnapshot,
         cx: &ViewContext<Editor>,
@@ -1421,6 +1504,15 @@ impl EditorElement {
         let mut line_number_layouts = Vec::with_capacity(rows.len());
         let mut fold_statuses = Vec::with_capacity(rows.len());
         let mut line_number = String::new();
+        let is_relative = settings::get::<EditorSettings>(cx).relative_line_numbers;
+        let relative_to = if is_relative {
+            Some(newest_selection_head.row())
+        } else {
+            None
+        };
+
+        let relative_rows = self.calculate_relative_line_numbers(&snapshot, &rows, relative_to);
+
         for (ix, row) in snapshot
             .buffer_rows(rows.start)
             .take((rows.end - rows.start) as usize)
@@ -1435,7 +1527,11 @@ impl EditorElement {
             if let Some(buffer_row) = row {
                 if include_line_numbers {
                     line_number.clear();
-                    write!(&mut line_number, "{}", buffer_row + 1).unwrap();
+                    let default_number = buffer_row + 1;
+                    let number = relative_rows
+                        .get(&(ix as u32 + rows.start))
+                        .unwrap_or(&default_number);
+                    write!(&mut line_number, "{}", number).unwrap();
                     line_number_layouts.push(Some(cx.text_layout_cache().layout_str(
                         &line_number,
                         style.text.font_size,
@@ -2079,14 +2175,11 @@ impl Element<Editor> for EditorElement {
                 scroll_height
                     .min(constraint.max_along(Axis::Vertical))
                     .max(constraint.min_along(Axis::Vertical))
+                    .max(line_height)
                     .min(line_height * max_lines as f32),
             )
         } else if let EditorMode::SingleLine = snapshot.mode {
-            size.set_y(
-                line_height
-                    .min(constraint.max_along(Axis::Vertical))
-                    .max(constraint.min_along(Axis::Vertical)),
-            )
+            size.set_y(line_height.max(constraint.min_along(Axis::Vertical)))
         } else if size.y().is_infinite() {
             size.set_y(scroll_height);
         }
@@ -2124,7 +2217,7 @@ impl Element<Editor> for EditorElement {
                 .anchor_before(DisplayPoint::new(end_row, 0).to_offset(&snapshot, Bias::Right))
         };
 
-        let mut selections: Vec<(ReplicaId, Vec<SelectionLayout>)> = Vec::new();
+        let mut selections: Vec<(Option<ReplicaId>, Vec<SelectionLayout>)> = Vec::new();
         let mut active_rows = BTreeMap::new();
         let mut fold_ranges = Vec::new();
         let is_singleton = editor.is_singleton(cx);
@@ -2155,8 +2248,14 @@ impl Element<Editor> for EditorElement {
             .buffer_snapshot
             .remote_selections_in_range(&(start_anchor..end_anchor))
         {
+            let replica_id = if let Some(mapping) = &editor.replica_id_mapping {
+                mapping.get(&replica_id).copied()
+            } else {
+                None
+            };
+
             // The local selections match the leader's selections.
-            if Some(replica_id) == editor.leader_replica_id {
+            if replica_id.is_some() && replica_id == editor.leader_replica_id {
                 continue;
             }
             remote_selections
@@ -2167,6 +2266,7 @@ impl Element<Editor> for EditorElement {
                     line_mode,
                     cursor_shape,
                     &snapshot.display_snapshot,
+                    false,
                     false,
                 ));
         }
@@ -2191,6 +2291,7 @@ impl Element<Editor> for EditorElement {
                     editor.cursor_shape,
                     &snapshot.display_snapshot,
                     is_newest,
+                    true,
                 );
                 if is_newest {
                     newest_selection_head = Some(layout.head);
@@ -2206,11 +2307,18 @@ impl Element<Editor> for EditorElement {
             }
 
             // Render the local selections in the leader's color when following.
-            let local_replica_id = editor
-                .leader_replica_id
-                .unwrap_or_else(|| editor.replica_id(cx));
+            let local_replica_id = if let Some(leader_replica_id) = editor.leader_replica_id {
+                leader_replica_id
+            } else {
+                let replica_id = editor.replica_id(cx);
+                if let Some(mapping) = &editor.replica_id_mapping {
+                    mapping.get(&replica_id).copied().unwrap_or(replica_id)
+                } else {
+                    replica_id
+                }
+            };
 
-            selections.push((local_replica_id, layouts));
+            selections.push((Some(local_replica_id), layouts));
         }
 
         let scrollbar_settings = &settings::get::<EditorSettings>(cx).scrollbar;
@@ -2244,9 +2352,23 @@ impl Element<Editor> for EditorElement {
             })
             .collect();
 
+        let head_for_relative = newest_selection_head.unwrap_or_else(|| {
+            let newest = editor.selections.newest::<Point>(cx);
+            SelectionLayout::new(
+                newest,
+                editor.selections.line_mode,
+                editor.cursor_shape,
+                &snapshot.display_snapshot,
+                true,
+                true,
+            )
+            .head
+        });
+
         let (line_number_layouts, fold_statuses) = self.layout_line_numbers(
             start_row..end_row,
             &active_rows,
+            head_for_relative,
             is_singleton,
             &snapshot,
             cx,
@@ -2591,7 +2713,7 @@ pub struct LayoutState {
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
     fold_ranges: Vec<(BufferRow, Range<DisplayPoint>, Color)>,
-    selections: Vec<(ReplicaId, Vec<SelectionLayout>)>,
+    selections: Vec<(Option<ReplicaId>, Vec<SelectionLayout>)>,
     scrollbar_row_range: Range<f32>,
     show_scrollbars: bool,
     is_singleton: bool,
@@ -2614,22 +2736,42 @@ struct PositionMap {
     snapshot: EditorSnapshot,
 }
 
+#[derive(Debug, Copy, Clone)]
+pub struct PointForPosition {
+    pub previous_valid: DisplayPoint,
+    pub next_valid: DisplayPoint,
+    pub exact_unclipped: DisplayPoint,
+    pub column_overshoot_after_line_end: u32,
+}
+
+impl PointForPosition {
+    #[cfg(test)]
+    pub fn valid(valid: DisplayPoint) -> Self {
+        Self {
+            previous_valid: valid,
+            next_valid: valid,
+            exact_unclipped: valid,
+            column_overshoot_after_line_end: 0,
+        }
+    }
+
+    pub fn as_valid(&self) -> Option<DisplayPoint> {
+        if self.previous_valid == self.exact_unclipped && self.next_valid == self.exact_unclipped {
+            Some(self.previous_valid)
+        } else {
+            None
+        }
+    }
+}
+
 impl PositionMap {
-    /// Returns two display points:
-    /// 1. The nearest *valid* position in the editor
-    /// 2. An unclipped, potentially *invalid* position that maps directly to
-    ///    the given pixel position.
-    fn point_for_position(
-        &self,
-        text_bounds: RectF,
-        position: Vector2F,
-    ) -> (DisplayPoint, DisplayPoint) {
+    fn point_for_position(&self, text_bounds: RectF, position: Vector2F) -> PointForPosition {
         let scroll_position = self.snapshot.scroll_position();
         let position = position - text_bounds.origin();
         let y = position.y().max(0.0).min(self.size.y());
         let x = position.x() + (scroll_position.x() * self.em_width);
         let row = (y / self.line_height + scroll_position.y()) as u32;
-        let (column, x_overshoot) = if let Some(line) = self
+        let (column, x_overshoot_after_line_end) = if let Some(line) = self
             .line_layouts
             .get(row as usize - scroll_position.y() as usize)
             .map(|line_with_spaces| &line_with_spaces.line)
@@ -2643,11 +2785,18 @@ impl PositionMap {
             (0, x)
         };
 
-        let mut target_point = DisplayPoint::new(row, column);
-        let point = self.snapshot.clip_point(target_point, Bias::Left);
-        *target_point.column_mut() += (x_overshoot / self.em_advance) as u32;
+        let mut exact_unclipped = DisplayPoint::new(row, column);
+        let previous_valid = self.snapshot.clip_point(exact_unclipped, Bias::Left);
+        let next_valid = self.snapshot.clip_point(exact_unclipped, Bias::Right);
 
-        (point, target_point)
+        let column_overshoot_after_line_end = (x_overshoot_after_line_end / self.em_advance) as u32;
+        *exact_unclipped.column_mut() += column_overshoot_after_line_end;
+        PointForPosition {
+            previous_valid,
+            next_valid,
+            exact_unclipped,
+            column_overshoot_after_line_end,
+        }
     }
 }
 
@@ -2901,23 +3050,6 @@ impl HighlightedRange {
     }
 }
 
-fn position_to_display_point(
-    position: Vector2F,
-    text_bounds: RectF,
-    position_map: &PositionMap,
-) -> Option<DisplayPoint> {
-    if text_bounds.contains_point(position) {
-        let (point, target_point) = position_map.point_for_position(text_bounds, position);
-        if point == target_point {
-            Some(point)
-        } else {
-            None
-        }
-    } else {
-        None
-    }
-}
-
 fn range_to_bounds(
     range: &Range<DisplayPoint>,
     content_origin: Vector2F,
@@ -2995,7 +3127,6 @@ mod tests {
     #[gpui::test]
     fn test_layout_line_numbers(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
-
         let editor = cx
             .add_window(|cx| {
                 let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
@@ -3007,10 +3138,50 @@ mod tests {
         let layouts = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             element
-                .layout_line_numbers(0..6, &Default::default(), false, &snapshot, cx)
+                .layout_line_numbers(
+                    0..6,
+                    &Default::default(),
+                    DisplayPoint::new(0, 0),
+                    false,
+                    &snapshot,
+                    cx,
+                )
                 .0
         });
         assert_eq!(layouts.len(), 6);
+
+        let relative_rows = editor.update(cx, |editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            element.calculate_relative_line_numbers(&snapshot, &(0..6), Some(3))
+        });
+        assert_eq!(relative_rows[&0], 3);
+        assert_eq!(relative_rows[&1], 2);
+        assert_eq!(relative_rows[&2], 1);
+        // current line has no relative number
+        assert_eq!(relative_rows[&4], 1);
+        assert_eq!(relative_rows[&5], 2);
+
+        // works if cursor is before screen
+        let relative_rows = editor.update(cx, |editor, cx| {
+            let snapshot = editor.snapshot(cx);
+
+            element.calculate_relative_line_numbers(&snapshot, &(3..6), Some(1))
+        });
+        assert_eq!(relative_rows.len(), 3);
+        assert_eq!(relative_rows[&3], 2);
+        assert_eq!(relative_rows[&4], 3);
+        assert_eq!(relative_rows[&5], 4);
+
+        // works if cursor is after screen
+        let relative_rows = editor.update(cx, |editor, cx| {
+            let snapshot = editor.snapshot(cx);
+
+            element.calculate_relative_line_numbers(&snapshot, &(0..3), Some(6))
+        });
+        assert_eq!(relative_rows.len(), 3);
+        assert_eq!(relative_rows[&0], 5);
+        assert_eq!(relative_rows[&1], 4);
+        assert_eq!(relative_rows[&2], 3);
     }
 
     #[gpui::test]

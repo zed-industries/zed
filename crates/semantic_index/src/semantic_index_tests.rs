@@ -86,6 +86,13 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
     .unwrap();
 
     let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
+
+    let _ = store
+        .update(cx, |store, cx| {
+            store.initialize_project(project.clone(), cx)
+        })
+        .await;
+
     let (file_count, outstanding_file_count) = store
         .update(cx, |store, cx| store.index_project(project.clone(), cx))
         .await

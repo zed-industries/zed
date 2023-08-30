@@ -1,5 +1,5 @@
 use crate::{
-    worktree::{Event, Snapshot, WorktreeHandle},
+    worktree::{Event, Snapshot, WorktreeModelHandle},
     Entry, EntryKind, PathChange, Worktree,
 };
 use anyhow::Result;

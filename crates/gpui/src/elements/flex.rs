@@ -22,6 +22,7 @@ pub struct Flex<V> {
     children: Vec<AnyElement<V>>,
     scroll_state: Option<(ElementStateHandle<Rc<ScrollState>>, usize)>,
     child_alignment: f32,
+    spacing: f32,
 }
 
 impl<V: 'static> Flex<V> {
@@ -31,6 +32,7 @@ impl<V: 'static> Flex<V> {
             children: Default::default(),
             scroll_state: None,
             child_alignment: -1.,
+            spacing: 0.,
         }
     }
 
@@ -48,6 +50,11 @@ impl<V: 'static> Flex<V> {
     /// flex column, children will be centered horizontally.
     pub fn align_children_center(mut self) -> Self {
         self.child_alignment = 0.;
+        self
+    }
+
+    pub fn with_spacing(mut self, spacing: f32) -> Self {
+        self.spacing = spacing;
         self
     }
 
@@ -81,7 +88,7 @@ impl<V: 'static> Flex<V> {
         cx: &mut LayoutContext<V>,
     ) {
         let cross_axis = self.axis.invert();
-        for child in &mut self.children {
+        for child in self.children.iter_mut() {
             if let Some(metadata) = child.metadata::<FlexParentData>() {
                 if let Some((flex, expanded)) = metadata.flex {
                     if expanded != layout_expanded {
@@ -132,12 +139,12 @@ impl<V: 'static> Element<V> for Flex<V> {
         cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let mut total_flex = None;
-        let mut fixed_space = 0.0;
+        let mut fixed_space = self.children.len().saturating_sub(1) as f32 * self.spacing;
         let mut contains_float = false;
 
         let cross_axis = self.axis.invert();
         let mut cross_axis_max: f32 = 0.0;
-        for child in &mut self.children {
+        for child in self.children.iter_mut() {
             let metadata = child.metadata::<FlexParentData>();
             contains_float |= metadata.map_or(false, |metadata| metadata.float);
 
@@ -315,7 +322,7 @@ impl<V: 'static> Element<V> for Flex<V> {
             }
         }
 
-        for child in &mut self.children {
+        for child in self.children.iter_mut() {
             if remaining_space > 0. {
                 if let Some(metadata) = child.metadata::<FlexParentData>() {
                     if metadata.float {
@@ -354,8 +361,8 @@ impl<V: 'static> Element<V> for Flex<V> {
             child.paint(scene, aligned_child_origin, visible_bounds, view, cx);
 
             match self.axis {
-                Axis::Horizontal => child_origin += vec2f(child.size().x(), 0.0),
-                Axis::Vertical => child_origin += vec2f(0.0, child.size().y()),
+                Axis::Horizontal => child_origin += vec2f(child.size().x() + self.spacing, 0.0),
+                Axis::Vertical => child_origin += vec2f(0.0, child.size().y() + self.spacing),
             }
         }
 
