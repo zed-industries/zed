@@ -16,7 +16,7 @@ use gpui::{
     },
     taffy,
 };
-use playground_macros::styleable_helpers;
+use gpui2_macros::styleable_helpers;
 use refineable::{Refineable, RefinementCascade};
 
 #[derive(Clone, Refineable)]

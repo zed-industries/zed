@@ -5,7 +5,7 @@ use crate::{
     themes::theme,
 };
 use gpui::{geometry::pixels, ViewContext};
-use playground_macros::Element;
+use gpui2_macros::Element;
 
 use crate as playground;
 #[derive(Element)]

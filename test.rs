@@ -17,10 +17,10 @@ use simplelog::SimpleLogger;
 use themes::{rose_pine, ThemeColors};
 use view::view;
 mod adapter {
+    use crate::element::AnyElement;
     use crate::element::{LayoutContext, PaintContext};
     use gpui::{geometry::rect::RectF, LayoutEngine};
     use util::ResultExt;
-    use crate::element::AnyElement;
     pub struct Adapter<V>(pub(crate) AnyElement<V>);
     impl<V: 'static> gpui::Element<V> for Adapter<V> {
         type LayoutState = Option<LayoutEngine>;
@@ -90,8 +90,8 @@ mod adapter {
 }
 mod color {
     #![allow(dead_code)]
-    use std::{num::ParseIntError, ops::Range};
     use smallvec::SmallVec;
+    use std::{num::ParseIntError, ops::Range};
     pub fn rgb<C: From<Rgba>>(hex: u32) -> C {
         let r = ((hex >> 16) & 0xFF) as f32 / 255.0;
         let g = ((hex >> 8) & 0xFF) as f32 / 255.0;
@@ -130,16 +130,7 @@ mod color {
     impl ::core::fmt::Debug for Rgba {
         fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
             ::core::fmt::Formatter::debug_struct_field4_finish(
-                f,
-                "Rgba",
-                "r",
-                &self.r,
-                "g",
-                &self.g,
-                "b",
-                &self.b,
-                "a",
-                &&self.a,
+                f, "Rgba", "r", &self.r, "g", &self.g, "b", &self.b, "a", &&self.a,
             )
         }
     }
@@ -185,7 +176,12 @@ mod color {
                 4 => (xm, m, cm),
                 _ => (cm, m, xm),
             };
-            Rgba { r, g, b, a: color.a }
+            Rgba {
+                r,
+                g,
+                b,
+                a: color.a,
+            }
         }
     }
     impl TryFrom<&'_ str> for Rgba {
@@ -239,16 +235,7 @@ mod color {
     impl ::core::fmt::Debug for Hsla {
         fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
             ::core::fmt::Formatter::debug_struct_field4_finish(
-                f,
-                "Hsla",
-                "h",
-                &self.h,
-                "s",
-                &self.s,
-                "l",
-                &self.l,
-                "a",
-                &&self.a,
+                f, "Hsla", "h", &self.h, "s", &self.s, "l", &self.l, "a", &&self.a,
             )
         }
     }
@@ -258,8 +245,7 @@ mod color {
     impl ::core::cmp::PartialEq for Hsla {
         #[inline]
         fn eq(&self, other: &Hsla) -> bool {
-            self.h == other.h && self.s == other.s && self.l == other.l
-                && self.a == other.a
+            self.h == other.h && self.s == other.s && self.l == other.l && self.a == other.a
         }
     }
     pub fn hsla(h: f32, s: f32, l: f32, a: f32) -> Hsla {
@@ -271,7 +257,12 @@ mod color {
         }
     }
     pub fn black() -> Hsla {
-        Hsla { h: 0., s: 0., l: 0., a: 1. }
+        Hsla {
+            h: 0.,
+            s: 0.,
+            l: 0.,
+            a: 1.,
+        }
     }
     impl From<Rgba> for Hsla {
         fn from(color: Rgba) -> Self {
@@ -298,7 +289,12 @@ mod color {
             } else {
                 ((r - g) / delta + 4.0) / 6.0
             };
-            Hsla { h, s, l, a: color.a }
+            Hsla {
+                h,
+                s,
+                l,
+                a: color.a,
+            }
         }
     }
     impl Hsla {
@@ -364,8 +360,7 @@ mod color {
             positions: SmallVec::new(),
         };
         let num_colors: f32 = scale.colors.len() as f32 - 1.0;
-        scale
-            .positions = (0..scale.colors.len())
+        scale.positions = (0..scale.colors.len())
             .map(|i| i as f32 / num_colors)
             .collect();
         scale
@@ -375,12 +370,10 @@ mod color {
             if true {
                 if !(0.0 <= t && t <= 1.0) {
                     {
-                        ::core::panicking::panic_fmt(
-                            format_args!(
-                                "t value {0} is out of range. Expected value in range 0.0 to 1.0",
-                                t,
-                            ),
-                        );
+                        ::core::panicking::panic_fmt(format_args!(
+                            "t value {0} is out of range. Expected value in range 0.0 to 1.0",
+                            t,
+                        ));
                     }
                 }
             }
@@ -412,10 +405,12 @@ mod color {
 mod components {
     use crate::{
         element::{Element, ElementMetadata},
-        frame, text::ArcCow, themes::rose_pine,
+        frame,
+        text::ArcCow,
+        themes::rose_pine,
     };
     use gpui::{platform::MouseButton, ViewContext};
-    use playground_macros::Element;
+    use gpui2_macros::Element;
     use std::{marker::PhantomData, rc::Rc};
     struct ButtonHandlers<V, D> {
         click: Option<Rc<dyn Fn(&mut V, &D, &mut ViewContext<V>)>>,
@@ -498,18 +493,11 @@ mod components {
             self.icon = Some(icon.into());
             self
         }
-        pub fn click(
-            self,
-            handler: impl Fn(&mut V, &D, &mut ViewContext<V>) + 'static,
-        ) -> Self {
+        pub fn click(self, handler: impl Fn(&mut V, &D, &mut ViewContext<V>) + 'static) -> Self {
             let data = self.data.clone();
-            Element::click(
-                self,
-                MouseButton::Left,
-                move |view, _, cx| {
-                    handler(view, data.as_ref(), cx);
-                },
-            )
+            Element::click(self, MouseButton::Left, move |view, _, cx| {
+                handler(view, data.as_ref(), cx);
+            })
         }
     }
     pub fn button<V>() -> Button<V, ()> {
@@ -523,11 +511,9 @@ mod components {
                 .children(self.label.clone());
             if let Some(handler) = self.handlers.click.clone() {
                 let data = self.data.clone();
-                button
-                    .mouse_down(
-                        MouseButton::Left,
-                        move |view, event, cx| { handler(view, data.as_ref(), cx) },
-                    )
+                button.mouse_down(MouseButton::Left, move |view, event, cx| {
+                    handler(view, data.as_ref(), cx)
+                })
             } else {
                 button
             }
@@ -535,8 +521,11 @@ mod components {
     }
 }
 mod element {
+    pub use crate::paint_context::PaintContext;
     use crate::{
-        adapter::Adapter, color::Hsla, hoverable::Hoverable,
+        adapter::Adapter,
+        color::Hsla,
+        hoverable::Hoverable,
         style::{Display, Fill, OptionalStyle, Overflow, Position},
     };
     use anyhow::Result;
@@ -546,12 +535,12 @@ mod element {
         platform::{MouseButton, MouseButtonEvent},
         EngineLayout, EventContext, RenderContext, ViewContext,
     };
-    use playground_macros::tailwind_lengths;
+    use gpui2_macros::tailwind_lengths;
     use std::{
         any::{Any, TypeId},
-        cell::Cell, rc::Rc,
+        cell::Cell,
+        rc::Rc,
     };
-    pub use crate::paint_context::PaintContext;
     pub use taffy::tree::NodeId;
     pub struct Layout<'a, E: ?Sized> {
         pub from_engine: EngineLayout,
@@ -627,33 +616,24 @@ mod element {
             Self: Sized,
         {
             let pressed: Rc<Cell<bool>> = Default::default();
-            self.mouse_down(
-                    button,
-                    {
-                        let pressed = pressed.clone();
-                        move |_, _, _| {
-                            pressed.set(true);
-                        }
-                    },
-                )
-                .mouse_up_outside(
-                    button,
-                    {
-                        let pressed = pressed.clone();
-                        move |_, _, _| {
-                            pressed.set(false);
-                        }
-                    },
-                )
-                .mouse_up(
-                    button,
-                    move |view, event, event_cx| {
-                        if pressed.get() {
-                            pressed.set(false);
-                            handler(view, event, event_cx);
-                        }
-                    },
-                )
+            self.mouse_down(button, {
+                let pressed = pressed.clone();
+                move |_, _, _| {
+                    pressed.set(true);
+                }
+            })
+            .mouse_up_outside(button, {
+                let pressed = pressed.clone();
+                move |_, _, _| {
+                    pressed.set(false);
+                }
+            })
+            .mouse_up(button, move |view, event, event_cx| {
+                if pressed.get() {
+                    pressed.set(false);
+                    handler(view, event, event_cx);
+                }
+            })
         }
         fn mouse_down(
             mut self,
@@ -663,17 +643,16 @@ mod element {
         where
             Self: Sized,
         {
-            self.handlers_mut()
-                .push(EventHandler {
-                    handler: Rc::new(move |view, event, event_cx| {
-                        let event = event.downcast_ref::<MouseButtonEvent>().unwrap();
-                        if event.button == button && event.is_down {
-                            handler(view, event, event_cx);
-                        }
-                    }),
-                    event_type: TypeId::of::<MouseButtonEvent>(),
-                    outside_bounds: false,
-                });
+            self.handlers_mut().push(EventHandler {
+                handler: Rc::new(move |view, event, event_cx| {
+                    let event = event.downcast_ref::<MouseButtonEvent>().unwrap();
+                    if event.button == button && event.is_down {
+                        handler(view, event, event_cx);
+                    }
+                }),
+                event_type: TypeId::of::<MouseButtonEvent>(),
+                outside_bounds: false,
+            });
             self
         }
         fn mouse_down_outside(
@@ -684,17 +663,16 @@ mod element {
         where
             Self: Sized,
         {
-            self.handlers_mut()
-                .push(EventHandler {
-                    handler: Rc::new(move |view, event, event_cx| {
-                        let event = event.downcast_ref::<MouseButtonEvent>().unwrap();
-                        if event.button == button && event.is_down {
-                            handler(view, event, event_cx);
-                        }
-                    }),
-                    event_type: TypeId::of::<MouseButtonEvent>(),
-                    outside_bounds: true,
-                });
+            self.handlers_mut().push(EventHandler {
+                handler: Rc::new(move |view, event, event_cx| {
+                    let event = event.downcast_ref::<MouseButtonEvent>().unwrap();
+                    if event.button == button && event.is_down {
+                        handler(view, event, event_cx);
+                    }
+                }),
+                event_type: TypeId::of::<MouseButtonEvent>(),
+                outside_bounds: true,
+            });
             self
         }
         fn mouse_up(
@@ -705,17 +683,16 @@ mod element {
         where
             Self: Sized,
         {
-            self.handlers_mut()
-                .push(EventHandler {
-                    handler: Rc::new(move |view, event, event_cx| {
-                        let event = event.downcast_ref::<MouseButtonEvent>().unwrap();
-                        if event.button == button && !event.is_down {
-                            handler(view, event, event_cx);
-                        }
-                    }),
-                    event_type: TypeId::of::<MouseButtonEvent>(),
-                    outside_bounds: false,
-                });
+            self.handlers_mut().push(EventHandler {
+                handler: Rc::new(move |view, event, event_cx| {
+                    let event = event.downcast_ref::<MouseButtonEvent>().unwrap();
+                    if event.button == button && !event.is_down {
+                        handler(view, event, event_cx);
+                    }
+                }),
+                event_type: TypeId::of::<MouseButtonEvent>(),
+                outside_bounds: false,
+            });
             self
         }
         fn mouse_up_outside(
@@ -726,17 +703,16 @@ mod element {
         where
             Self: Sized,
         {
-            self.handlers_mut()
-                .push(EventHandler {
-                    handler: Rc::new(move |view, event, event_cx| {
-                        let event = event.downcast_ref::<MouseButtonEvent>().unwrap();
-                        if event.button == button && !event.is_down {
-                            handler(view, event, event_cx);
-                        }
-                    }),
-                    event_type: TypeId::of::<MouseButtonEvent>(),
-                    outside_bounds: true,
-                });
+            self.handlers_mut().push(EventHandler {
+                handler: Rc::new(move |view, event, event_cx| {
+                    let event = event.downcast_ref::<MouseButtonEvent>().unwrap();
+                    if event.button == button && !event.is_down {
+                        handler(view, event, event_cx);
+                    }
+                }),
+                event_type: TypeId::of::<MouseButtonEvent>(),
+                outside_bounds: true,
+            });
             self
         }
         fn block(mut self) -> Self
@@ -764,9 +740,7 @@ mod element {
         where
             Self: Sized,
         {
-            self
-                .declared_style()
-                .overflow = OptionalPoint {
+            self.declared_style().overflow = OptionalPoint {
                 x: Some(Overflow::Visible),
                 y: Some(Overflow::Visible),
             };
@@ -776,9 +750,7 @@ mod element {
         where
             Self: Sized,
         {
-            self
-                .declared_style()
-                .overflow = OptionalPoint {
+            self.declared_style().overflow = OptionalPoint {
                 x: Some(Overflow::Hidden),
                 y: Some(Overflow::Hidden),
             };
@@ -788,9 +760,7 @@ mod element {
         where
             Self: Sized,
         {
-            self
-                .declared_style()
-                .overflow = OptionalPoint {
+            self.declared_style().overflow = OptionalPoint {
                 x: Some(Overflow::Scroll),
                 y: Some(Overflow::Scroll),
             };
@@ -4485,11 +4455,7 @@ mod element {
         layout: Option<(NodeId, Box<dyn Any>)>,
     }
     impl<V: 'static> AnyElement<V> {
-        pub fn layout(
-            &mut self,
-            view: &mut V,
-            cx: &mut LayoutContext<V>,
-        ) -> Result<NodeId> {
+        pub fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<NodeId> {
             let pushed_text_style = self.push_text_style(cx);
             let (node_id, layout) = self.element.layout(view, cx)?;
             self.layout = Some((node_id, layout));
@@ -4511,30 +4477,25 @@ mod element {
         }
         pub fn paint(&mut self, view: &mut V, cx: &mut PaintContext<V>) -> Result<()> {
             let pushed_text_style = self.push_text_style(cx);
-            let (layout_node_id, element_layout) = self
-                .layout
-                .as_mut()
-                .expect("paint called before layout");
+            let (layout_node_id, element_layout) =
+                self.layout.as_mut().expect("paint called before layout");
             let layout = Layout {
                 from_engine: cx
                     .layout_engine()
                     .unwrap()
                     .computed_layout(*layout_node_id)
-                    .expect(
-                        "you can currently only use playground elements within an adapter",
-                    ),
+                    .expect("you can currently only use playground elements within an adapter"),
                 from_element: element_layout.as_mut(),
             };
             let style = self.element.style();
             let fill_color = style.fill.flatten().and_then(|fill| fill.color());
             if let Some(fill_color) = fill_color {
-                cx.scene
-                    .push_quad(gpui::scene::Quad {
-                        bounds: layout.from_engine.bounds,
-                        background: Some(fill_color.into()),
-                        border: Default::default(),
-                        corner_radii: Default::default(),
-                    });
+                cx.scene.push_quad(gpui::scene::Quad {
+                    bounds: layout.from_engine.bounds,
+                    background: Some(fill_color.into()),
+                    border: Default::default(),
+                    corner_radii: Default::default(),
+                });
             }
             for event_handler in self.element.handlers_mut().iter().cloned() {
                 let EngineLayout { order, bounds } = layout.from_engine;
@@ -4547,10 +4508,7 @@ mod element {
                         bounds,
                         outside_bounds: event_handler.outside_bounds,
                         event_handler: Rc::new(move |view, event, window_cx, view_id| {
-                            let mut view_context = ViewContext::mutable(
-                                window_cx,
-                                view_id,
-                            );
+                            let mut view_context = ViewContext::mutable(window_cx, view_id);
                             let mut event_context = EventContext::new(&mut view_context);
                             view_event_handler(
                                 view.downcast_mut().unwrap(),
@@ -4607,14 +4565,14 @@ mod element {
 mod frame {
     use crate::{
         element::{
-            AnyElement, Element, EventHandler, IntoElement, Layout, LayoutContext,
-            NodeId, PaintContext,
+            AnyElement, Element, EventHandler, IntoElement, Layout, LayoutContext, NodeId,
+            PaintContext,
         },
         style::{OptionalStyle, Style},
     };
     use anyhow::{anyhow, Result};
     use gpui::LayoutNodeId;
-    use playground_macros::IntoElement;
+    use gpui2_macros::IntoElement;
     #[element_crate = "crate"]
     pub struct Frame<V: 'static> {
         style: OptionalStyle,
@@ -4656,12 +4614,13 @@ mod frame {
             let style: Style = self.style.into();
             let node_id = cx
                 .layout_engine()
-                .ok_or_else(|| ::anyhow::__private::must_use({
-                    let error = ::anyhow::__private::format_err(
-                        format_args!("no layout engine"),
-                    );
-                    error
-                }))?
+                .ok_or_else(|| {
+                    ::anyhow::__private::must_use({
+                        let error =
+                            ::anyhow::__private::format_err(format_args!("no layout engine"));
+                        error
+                    })
+                })?
                 .add_node(style.to_taffy(rem_size), child_layout_node_ids)?;
             Ok((node_id, ()))
         }
@@ -4687,18 +4646,23 @@ mod frame {
             I: IntoIterator<Item = E>,
             E: IntoElement<V>,
         {
-            self.children.extend(children.into_iter().map(|e| e.into_any_element()));
+            self.children
+                .extend(children.into_iter().map(|e| e.into_any_element()));
             self
         }
     }
 }
 mod hoverable {
-    use std::{cell::Cell, marker::PhantomData, rc::Rc};
+    use crate::{
+        element::Element,
+        style::{OptionalStyle, Style},
+    };
     use gpui::{
         geometry::{rect::RectF, vector::Vector2F},
-        scene::MouseMove, EngineLayout,
+        scene::MouseMove,
+        EngineLayout,
     };
-    use crate::{element::Element, style::{OptionalStyle, Style}};
+    use std::{cell::Cell, marker::PhantomData, rc::Rc};
     pub struct Hoverable<V, E> {
         hover_style: OptionalStyle,
         computed_style: Option<Style>,
@@ -4760,10 +4724,10 @@ mod hoverable {
     }
 }
 mod paint_context {
-    use std::{any::TypeId, rc::Rc};
     use derive_more::{Deref, DerefMut};
     use gpui::{geometry::rect::RectF, EventContext, RenderContext, ViewContext};
     pub use gpui::{LayoutContext, PaintContext as LegacyPaintContext};
+    use std::{any::TypeId, rc::Rc};
     pub use taffy::tree::NodeId;
     pub struct PaintContext<'a, 'b, 'c, 'd, V> {
         #[deref]
@@ -4833,13 +4797,12 @@ mod paint_context {
 mod style {
     use crate::color::Hsla;
     use gpui::geometry::{
-        DefinedLength, Edges, Length, OptionalEdges, OptionalPoint, OptionalSize, Point,
-        Size,
+        DefinedLength, Edges, Length, OptionalEdges, OptionalPoint, OptionalSize, Point, Size,
     };
     use optional::Optional;
     pub use taffy::style::{
-        AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap,
-        JustifyContent, Overflow, Position,
+        AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap, JustifyContent,
+        Overflow, Position,
     };
     pub struct Style {
         /// What layout strategy should be used?
@@ -5194,9 +5157,7 @@ mod style {
         #[inline]
         fn clone(&self) -> Fill {
             match self {
-                Fill::Color(__self_0) => {
-                    Fill::Color(::core::clone::Clone::clone(__self_0))
-                }
+                Fill::Color(__self_0) => Fill::Color(::core::clone::Clone::clone(__self_0)),
             }
         }
     }
@@ -5257,32 +5218,25 @@ mod text {
             let text = self.text.clone();
             let layout = Arc::new(Mutex::new(None));
             let style: Style = self.metadata.style.into();
-            let node_id = layout_engine
-                .add_measured_node(
-                    style.to_taffy(rem_size),
-                    {
-                        let layout = layout.clone();
-                        move |params| {
-                            let line_layout = fonts
-                                .layout_line(
-                                    text.as_ref(),
-                                    text_style.font_size,
-                                    &[(text.len(), text_style.to_run())],
-                                );
-                            let size = Size {
-                                width: line_layout.width,
-                                height: line_height,
-                            };
-                            layout
-                                .lock()
-                                .replace(TextLayout {
-                                    line_layout: Arc::new(line_layout),
-                                    line_height,
-                                });
-                            size
-                        }
-                    },
-                )?;
+            let node_id = layout_engine.add_measured_node(style.to_taffy(rem_size), {
+                let layout = layout.clone();
+                move |params| {
+                    let line_layout = fonts.layout_line(
+                        text.as_ref(),
+                        text_style.font_size,
+                        &[(text.len(), text_style.to_run())],
+                    );
+                    let size = Size {
+                        width: line_layout.width,
+                        height: line_height,
+                    };
+                    layout.lock().replace(TextLayout {
+                        line_layout: Arc::new(line_layout),
+                        line_height,
+                    });
+                    size
+                }
+            })?;
             Ok((node_id, layout))
         }
         fn paint<'a>(
@@ -5369,11 +5323,11 @@ mod themes {
     use crate::color::{Hsla, Lerp};
     use std::ops::Range;
     pub mod rose_pine {
-        use std::ops::Range;
         use crate::{
             color::{hsla, rgb, Hsla},
             ThemeColors,
         };
+        use std::ops::Range;
         pub struct RosePineThemes {
             pub default: RosePinePalette,
             pub dawn: RosePinePalette,
@@ -5426,7 +5380,7 @@ mod themes {
                     "highlight_med",
                     "highlight_high",
                 ];
-                let values: &[&dyn ::core::fmt::Debug] = &[
+                let values: &[&dyn::core::fmt::Debug] = &[
                     &self.base,
                     &self.surface,
                     &self.overlay,
@@ -5636,23 +5590,21 @@ mod view {
     }
 }
 fn main() {
-    SimpleLogger::init(LevelFilter::Info, Default::default())
-        .expect("could not initialize logger");
-    gpui::App::new(())
-        .unwrap()
-        .run(|cx| {
-            cx.add_window(
-                WindowOptions {
-                    bounds: gpui::platform::WindowBounds::Fixed(
-                        RectF::new(vec2f(0., 0.), vec2f(400., 300.)),
-                    ),
-                    center: true,
-                    ..Default::default()
-                },
-                |_| view(|_| playground(&rose_pine::moon())),
-            );
-            cx.platform().activate(true);
-        });
+    SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
+    gpui::App::new(()).unwrap().run(|cx| {
+        cx.add_window(
+            WindowOptions {
+                bounds: gpui::platform::WindowBounds::Fixed(RectF::new(
+                    vec2f(0., 0.),
+                    vec2f(400., 300.),
+                )),
+                center: true,
+                ..Default::default()
+            },
+            |_| view(|_| playground(&rose_pine::moon())),
+        );
+        cx.platform().activate(true);
+    });
 }
 fn playground<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
     frame()
@@ -5660,11 +5612,7 @@ fn playground<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
         .h_full()
         .w_half()
         .fill(theme.success(0.5))
-        .child(
-            button()
-                .label("Hello")
-                .click(|_, _, _| {
-                    ::std::io::_print(format_args!("click!\n"));
-                }),
-        )
+        .child(button().label("Hello").click(|_, _, _| {
+            ::std::io::_print(format_args!("click!\n"));
+        }))
 }

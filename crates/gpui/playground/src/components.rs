@@ -7,7 +7,7 @@ use crate::{
     // themes::Theme,
 };
 use gpui::{platform::MouseButton, ViewContext};
-use playground_macros::Element;
+use gpui2_macros::Element;
 use std::{marker::PhantomData, rc::Rc};
 
 struct ButtonHandlers<V, D> {
