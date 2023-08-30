@@ -1,10 +1,8 @@
-use std::{mem, ops::Range, path::PathBuf, sync::Arc, time::SystemTime};
-
-use gpui::AppContext;
+use crate::{embedding::EmbeddingProvider, parsing::Document, JobHandle};
+use gpui::executor::Background;
 use parking_lot::Mutex;
 use smol::channel;
-
-use crate::{embedding::EmbeddingProvider, parsing::Document, JobHandle};
+use std::{mem, ops::Range, path::PathBuf, sync::Arc, time::SystemTime};
 
 #[derive(Clone)]
 pub struct FileToEmbed {
@@ -38,6 +36,7 @@ impl PartialEq for FileToEmbed {
 pub struct EmbeddingQueue {
     embedding_provider: Arc<dyn EmbeddingProvider>,
     pending_batch: Vec<FileToEmbedFragment>,
+    executor: Arc<Background>,
     pending_batch_token_count: usize,
     finished_files_tx: channel::Sender<FileToEmbed>,
     finished_files_rx: channel::Receiver<FileToEmbed>,
@@ -49,10 +48,11 @@ pub struct FileToEmbedFragment {
 }
 
 impl EmbeddingQueue {
-    pub fn new(embedding_provider: Arc<dyn EmbeddingProvider>) -> Self {
+    pub fn new(embedding_provider: Arc<dyn EmbeddingProvider>, executor: Arc<Background>) -> Self {
         let (finished_files_tx, finished_files_rx) = channel::unbounded();
         Self {
             embedding_provider,
+            executor,
             pending_batch: Vec::new(),
             pending_batch_token_count: 0,
             finished_files_tx,
@@ -60,7 +60,12 @@ impl EmbeddingQueue {
         }
     }
 
-    pub fn push(&mut self, file: FileToEmbed, cx: &mut AppContext) {
+    pub fn push(&mut self, file: FileToEmbed) {
+        if file.documents.is_empty() {
+            self.finished_files_tx.try_send(file).unwrap();
+            return;
+        }
+
         let file = Arc::new(Mutex::new(file));
 
         self.pending_batch.push(FileToEmbedFragment {
@@ -73,7 +78,7 @@ impl EmbeddingQueue {
             let next_token_count = self.pending_batch_token_count + document.token_count;
             if next_token_count > self.embedding_provider.max_tokens_per_batch() {
                 let range_end = fragment_range.end;
-                self.flush(cx);
+                self.flush();
                 self.pending_batch.push(FileToEmbedFragment {
                     file: file.clone(),
                     document_range: range_end..range_end,
@@ -86,7 +91,7 @@ impl EmbeddingQueue {
         }
     }
 
-    pub fn flush(&mut self, cx: &mut AppContext) {
+    pub fn flush(&mut self) {
         let batch = mem::take(&mut self.pending_batch);
         self.pending_batch_token_count = 0;
         if batch.is_empty() {
@@ -95,7 +100,7 @@ impl EmbeddingQueue {
 
         let finished_files_tx = self.finished_files_tx.clone();
         let embedding_provider = self.embedding_provider.clone();
-        cx.background().spawn(async move {
+        self.executor.spawn(async move {
             let mut spans = Vec::new();
             for fragment in &batch {
                 let file = fragment.file.lock();

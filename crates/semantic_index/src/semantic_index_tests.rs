@@ -235,17 +235,15 @@ async fn test_embedding_batching(cx: &mut TestAppContext, mut rng: StdRng) {
         .collect::<Vec<_>>();
 
     let embedding_provider = Arc::new(FakeEmbeddingProvider::default());
-    let mut queue = EmbeddingQueue::new(embedding_provider.clone());
 
-    let finished_files = cx.update(|cx| {
-        for file in &files {
-            queue.push(file.clone(), cx);
-        }
-        queue.flush(cx);
-        queue.finished_files()
-    });
+    let mut queue = EmbeddingQueue::new(embedding_provider.clone(), cx.background());
+    for file in &files {
+        queue.push(file.clone());
+    }
+    queue.flush();
 
     cx.foreground().run_until_parked();
+    let finished_files = queue.finished_files();
     let mut embedded_files: Vec<_> = files
         .iter()
         .map(|_| finished_files.try_recv().expect("no finished file"))
