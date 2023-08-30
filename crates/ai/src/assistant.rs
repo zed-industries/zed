@@ -7,13 +7,13 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
-use collections::{hash_map, HashMap, HashSet};
+use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     display_map::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, ToDisplayPoint,
     },
     scroll::autoscroll::{Autoscroll, AutoscrollStrategy},
-    Anchor, Editor, MultiBufferSnapshot, ToOffset, ToPoint,
+    Anchor, Editor, MoveDown, MoveUp, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 use fs::Fs;
 use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
@@ -106,6 +106,8 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(InlineAssistant::confirm);
     cx.add_action(InlineAssistant::cancel);
     cx.add_action(InlineAssistant::toggle_include_conversation);
+    cx.add_action(InlineAssistant::move_up);
+    cx.add_action(InlineAssistant::move_down);
 }
 
 #[derive(Debug)]
@@ -139,10 +141,13 @@ pub struct AssistantPanel {
     pending_inline_assists: HashMap<usize, PendingInlineAssist>,
     pending_inline_assist_ids_by_editor: HashMap<WeakViewHandle<Editor>, Vec<usize>>,
     include_conversation_in_next_inline_assist: bool,
+    inline_prompt_history: VecDeque<String>,
     _watch_saved_conversations: Task<Result<()>>,
 }
 
 impl AssistantPanel {
+    const INLINE_PROMPT_HISTORY_MAX_LEN: usize = 20;
+
     pub fn load(
         workspace: WeakViewHandle<Workspace>,
         cx: AsyncAppContext,
@@ -206,6 +211,7 @@ impl AssistantPanel {
                         pending_inline_assists: Default::default(),
                         pending_inline_assist_ids_by_editor: Default::default(),
                         include_conversation_in_next_inline_assist: false,
+                        inline_prompt_history: Default::default(),
                         _watch_saved_conversations,
                     };
 
@@ -269,29 +275,16 @@ impl AssistantPanel {
         } else {
             InlineAssistKind::Transform
         };
-        let prompt_editor = cx.add_view(|cx| {
-            let mut editor = Editor::single_line(
-                Some(Arc::new(|theme| theme.assistant.inline.editor.clone())),
-                cx,
-            );
-            let placeholder = match assist_kind {
-                InlineAssistKind::Transform => "Enter transformation prompt…",
-                InlineAssistKind::Generate => "Enter generation prompt…",
-            };
-            editor.set_placeholder_text(placeholder, cx);
-            editor
-        });
         let measurements = Rc::new(Cell::new(BlockMeasurements::default()));
         let inline_assistant = cx.add_view(|cx| {
-            let assistant = InlineAssistant {
-                id: inline_assist_id,
-                prompt_editor,
-                confirmed: false,
-                has_focus: false,
-                include_conversation: self.include_conversation_in_next_inline_assist,
-                measurements: measurements.clone(),
-                error: None,
-            };
+            let assistant = InlineAssistant::new(
+                inline_assist_id,
+                assist_kind,
+                measurements.clone(),
+                self.include_conversation_in_next_inline_assist,
+                self.inline_prompt_history.clone(),
+                cx,
+            );
             cx.focus_self();
             assistant
         });
@@ -520,6 +513,10 @@ impl AssistantPanel {
             return;
         };
 
+        self.inline_prompt_history.push_back(user_prompt.into());
+        if self.inline_prompt_history.len() > Self::INLINE_PROMPT_HISTORY_MAX_LEN {
+            self.inline_prompt_history.pop_front();
+        }
         let range = pending_assist.range.clone();
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
         let selected_text = snapshot
@@ -2895,6 +2892,10 @@ struct InlineAssistant {
     include_conversation: bool,
     measurements: Rc<Cell<BlockMeasurements>>,
     error: Option<anyhow::Error>,
+    prompt_history: VecDeque<String>,
+    prompt_history_ix: Option<usize>,
+    pending_prompt: String,
+    _subscription: Subscription,
 }
 
 impl Entity for InlineAssistant {
@@ -2995,6 +2996,54 @@ impl View for InlineAssistant {
 }
 
 impl InlineAssistant {
+    fn new(
+        id: usize,
+        kind: InlineAssistKind,
+        measurements: Rc<Cell<BlockMeasurements>>,
+        include_conversation: bool,
+        prompt_history: VecDeque<String>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let prompt_editor = cx.add_view(|cx| {
+            let mut editor = Editor::single_line(
+                Some(Arc::new(|theme| theme.assistant.inline.editor.clone())),
+                cx,
+            );
+            let placeholder = match kind {
+                InlineAssistKind::Transform => "Enter transformation prompt…",
+                InlineAssistKind::Generate => "Enter generation prompt…",
+            };
+            editor.set_placeholder_text(placeholder, cx);
+            editor
+        });
+        let subscription = cx.subscribe(&prompt_editor, Self::handle_prompt_editor_events);
+        Self {
+            id,
+            prompt_editor,
+            confirmed: false,
+            has_focus: false,
+            include_conversation,
+            measurements,
+            error: None,
+            prompt_history,
+            prompt_history_ix: None,
+            pending_prompt: String::new(),
+            _subscription: subscription,
+        }
+    }
+
+    fn handle_prompt_editor_events(
+        &mut self,
+        _: ViewHandle<Editor>,
+        event: &editor::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let editor::Event::Edited = event {
+            self.pending_prompt = self.prompt_editor.read(cx).text(cx);
+            cx.notify();
+        }
+    }
+
     fn cancel(&mut self, _: &editor::Cancel, cx: &mut ViewContext<Self>) {
         cx.emit(InlineAssistantEvent::Canceled);
     }
@@ -3046,6 +3095,43 @@ impl InlineAssistant {
             );
         });
         cx.notify();
+    }
+
+    fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
+        if let Some(ix) = self.prompt_history_ix {
+            if ix > 0 {
+                self.prompt_history_ix = Some(ix - 1);
+                let prompt = self.prompt_history[ix - 1].clone();
+                self.set_prompt(&prompt, cx);
+            }
+        } else if !self.prompt_history.is_empty() {
+            self.prompt_history_ix = Some(self.prompt_history.len() - 1);
+            let prompt = self.prompt_history[self.prompt_history.len() - 1].clone();
+            self.set_prompt(&prompt, cx);
+        }
+    }
+
+    fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
+        if let Some(ix) = self.prompt_history_ix {
+            if ix < self.prompt_history.len() - 1 {
+                self.prompt_history_ix = Some(ix + 1);
+                let prompt = self.prompt_history[ix + 1].clone();
+                self.set_prompt(&prompt, cx);
+            } else {
+                self.prompt_history_ix = None;
+                let pending_prompt = self.pending_prompt.clone();
+                self.set_prompt(&pending_prompt, cx);
+            }
+        }
+    }
+
+    fn set_prompt(&mut self, prompt: &str, cx: &mut ViewContext<Self>) {
+        self.prompt_editor.update(cx, |editor, cx| {
+            editor.buffer().update(cx, |buffer, cx| {
+                let len = buffer.len(cx);
+                buffer.edit([(0..len, prompt)], None, cx);
+            });
+        });
     }
 }
 
