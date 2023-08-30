@@ -5176,9 +5176,12 @@ dependencies = [
  "parking_lot 0.11.2",
  "playground_macros",
  "refineable",
+ "rust-embed",
  "serde",
+ "settings",
  "simplelog",
  "smallvec",
+ "theme",
  "util",
 ]
 

@@ -9,59 +9,59 @@ use std::{collections::HashMap, fmt, marker::PhantomData};
 
 #[derive(Deserialize, Clone, Default, Debug)]
 pub struct Theme {
-    name: String,
-    is_light: bool,
-    lowest: Layer,
-    middle: Layer,
-    highest: Layer,
-    popover_shadow: Shadow,
-    modal_shadow: Shadow,
+    pub name: String,
+    pub is_light: bool,
+    pub lowest: Layer,
+    pub middle: Layer,
+    pub highest: Layer,
+    pub popover_shadow: Shadow,
+    pub modal_shadow: Shadow,
     #[serde(deserialize_with = "deserialize_player_colors")]
-    players: Vec<PlayerColors>,
+    pub players: Vec<PlayerColors>,
     #[serde(deserialize_with = "deserialize_syntax_colors")]
-    syntax: HashMap<String, Hsla>,
+    pub syntax: HashMap<String, Hsla>,
 }
 
 #[derive(Deserialize, Clone, Default, Debug)]
 pub struct Layer {
-    base: StyleSet,
-    variant: StyleSet,
-    on: StyleSet,
-    accent: StyleSet,
-    positive: StyleSet,
-    warning: StyleSet,
-    negative: StyleSet,
+    pub base: StyleSet,
+    pub variant: StyleSet,
+    pub on: StyleSet,
+    pub accent: StyleSet,
+    pub positive: StyleSet,
+    pub warning: StyleSet,
+    pub negative: StyleSet,
 }
 
 #[derive(Deserialize, Clone, Default, Debug)]
 pub struct StyleSet {
     #[serde(rename = "default")]
-    default: ContainerColors,
-    hovered: ContainerColors,
-    pressed: ContainerColors,
-    active: ContainerColors,
-    disabled: ContainerColors,
-    inverted: ContainerColors,
+    pub default: ContainerColors,
+    pub hovered: ContainerColors,
+    pub pressed: ContainerColors,
+    pub active: ContainerColors,
+    pub disabled: ContainerColors,
+    pub inverted: ContainerColors,
 }
 
 #[derive(Deserialize, Clone, Default, Debug)]
 pub struct ContainerColors {
-    background: Hsla,
-    foreground: Hsla,
-    border: Hsla,
+    pub background: Hsla,
+    pub foreground: Hsla,
+    pub border: Hsla,
 }
 
 #[derive(Deserialize, Clone, Default, Debug)]
 pub struct PlayerColors {
-    selection: Hsla,
-    cursor: Hsla,
+    pub selection: Hsla,
+    pub cursor: Hsla,
 }
 
 #[derive(Deserialize, Clone, Default, Debug)]
 pub struct Shadow {
-    blur: u8,
-    color: Hsla,
-    offset: Vec<u8>,
+    pub blur: u8,
+    pub color: Hsla,
+    pub offset: Vec<u8>,
 }
 
 pub fn theme<'a>(cx: &'a WindowContext) -> &'a Theme {
@@ -107,6 +107,11 @@ fn deserialize_syntax_colors<'de, D>(deserializer: D) -> Result<HashMap<String, 
 where
     D: serde::Deserializer<'de>,
 {
+    #[derive(Deserialize)]
+    struct ColorWrapper {
+        color: Hsla,
+    }
+
     struct SyntaxVisitor;
 
     impl<'de> Visitor<'de> for SyntaxVisitor {
@@ -122,8 +127,8 @@ where
         {
             let mut result = HashMap::new();
             while let Some(key) = map.next_key()? {
-                let hsla: Hsla = map.next_value()?; // Deserialize values as Hsla
-                result.insert(key, hsla);
+                let wrapper: ColorWrapper = map.next_value()?; // Deserialize values as Hsla
+                result.insert(key, wrapper.color);
             }
             Ok(result)
         }

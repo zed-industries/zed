@@ -32,6 +32,9 @@ function write_themes(themes: Theme[], output_directory: string) {
         setTheme(theme)
 
         const style_tree = app()
+        // Nathan: New elements will read directly from the theme colors.
+        // Adding this during the transition. Afterwards, we can port all themes to Rust.
+        style_tree.base_theme = theme
         const style_tree_json = JSON.stringify(style_tree, null, 2)
         const temp_path = path.join(temp_directory, `${theme.name}.json`)
         const out_path = path.join(

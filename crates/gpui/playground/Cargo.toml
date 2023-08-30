@@ -16,9 +16,12 @@ log.workspace = true
 playground_macros = { path = "../playground_macros" }
 parking_lot.workspace = true
 refineable.workspace = true
+rust-embed.workspace = true
 serde.workspace = true
+settings = { path = "../../settings" }
 simplelog = "0.9"
 smallvec.workspace = true
+theme = { path = "../../theme" }
 util = { path = "../../util" }
 
 [dev-dependencies]

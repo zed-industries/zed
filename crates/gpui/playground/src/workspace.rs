@@ -2,6 +2,7 @@ use crate::{
     div::div,
     element::{Element, IntoElement, ParentElement},
     style::StyleHelpers,
+    themes::theme,
 };
 use gpui::{geometry::pixels, ViewContext};
 use playground_macros::Element;
@@ -16,20 +17,22 @@ pub fn workspace<V: 'static>() -> impl Element<V> {
 
 impl WorkspaceElement {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
-        // let theme = &cx.theme::<Theme>().colors;
+        let theme = theme(cx);
         div()
             .full()
             .flex()
             .flex_col()
-            // .fill(theme.base(0.5))
+            .fill(theme.middle.base.default.background)
             .child(self.title_bar(cx))
             .child(self.stage(cx))
             .child(self.status_bar(cx))
     }
 
     fn title_bar<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
-        // let colors = &theme(cx).colors;
-        div().h(pixels(cx.titlebar_height())) //.fill(colors.base(0.))
+        let theme = theme(cx);
+        div()
+            .h(pixels(cx.titlebar_height()))
+            .fill(theme.lowest.base.default.background)
     }
 
     fn status_bar<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
