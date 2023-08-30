@@ -666,8 +666,7 @@ mod tests {
             });
 
             let mut list = List::new(state.clone());
-            let mut notify_views_if_parents_change = Default::default();
-            let mut layout_cx = LayoutContext::new(cx, &mut notify_views_if_parents_change, false);
+            let mut layout_cx = LayoutContext::new(cx, false);
             let (size, _) = list.layout(constraint, &mut view, &mut layout_cx);
             assert_eq!(size, vec2f(100., 40.));
             assert_eq!(
@@ -692,7 +691,7 @@ mod tests {
                 cx,
             );
 
-            let mut layout_cx = LayoutContext::new(cx, &mut notify_views_if_parents_change, false);
+            let mut layout_cx = LayoutContext::new(cx, false);
             let (_, logical_scroll_top) = list.layout(constraint, &mut view, &mut layout_cx);
             assert_eq!(
                 logical_scroll_top,
@@ -717,7 +716,7 @@ mod tests {
                 }
             );
 
-            let mut layout_cx = LayoutContext::new(cx, &mut notify_views_if_parents_change, false);
+            let mut layout_cx = LayoutContext::new(cx, false);
             let (size, logical_scroll_top) = list.layout(constraint, &mut view, &mut layout_cx);
             assert_eq!(size, vec2f(100., 40.));
             assert_eq!(
@@ -836,9 +835,7 @@ mod tests {
 
                 let mut list = List::new(state.clone());
                 let window_size = vec2f(width, height);
-                let mut notify_views_if_parents_change = Default::default();
-                let mut layout_cx =
-                    LayoutContext::new(cx, &mut notify_views_if_parents_change, false);
+                let mut layout_cx = LayoutContext::new(cx, false);
                 let (size, logical_scroll_top) = list.layout(
                     SizeConstraint::new(vec2f(0., 0.), window_size),
                     &mut view,

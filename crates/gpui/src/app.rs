@@ -3461,19 +3461,13 @@ pub trait RenderContext<'a, 'b, V> {
 pub struct LayoutContext<'a, 'b, 'c, V> {
     // Nathan: Making this is public while I work on playground.
     pub view_context: &'c mut ViewContext<'a, 'b, V>,
-    views_to_notify_if_ancestors_change: &'c mut HashMap<usize, SmallVec<[usize; 2]>>,
     pub refreshing: bool,
 }
 
 impl<'a, 'b, 'c, V> LayoutContext<'a, 'b, 'c, V> {
-    pub fn new(
-        view_context: &'c mut ViewContext<'a, 'b, V>,
-        views_to_notify_if_ancestors_change: &'c mut HashMap<usize, SmallVec<[usize; 2]>>,
-        refreshing: bool,
-    ) -> Self {
+    pub fn new(view_context: &'c mut ViewContext<'a, 'b, V>, refreshing: bool) -> Self {
         Self {
             view_context,
-            views_to_notify_if_ancestors_change,
             refreshing,
         }
     }
@@ -3520,7 +3514,8 @@ impl<'a, 'b, 'c, V> LayoutContext<'a, 'b, 'c, V> {
 
     fn notify_if_view_ancestors_change(&mut self, view_id: usize) {
         let self_view_id = self.view_id;
-        self.views_to_notify_if_ancestors_change
+        self.window
+            .views_to_notify_if_ancestors_change
             .entry(view_id)
             .or_default()
             .push(self_view_id);
@@ -6526,9 +6521,7 @@ mod tests {
         view_1.update(cx, |_, cx| {
             view_2.update(cx, |_, cx| {
                 // Sanity check
-                let mut notify_views_if_parents_change = Default::default();
-                let mut layout_cx =
-                    LayoutContext::new(cx, &mut notify_views_if_parents_change, false);
+                let mut layout_cx = LayoutContext::new(cx, false);
                 assert_eq!(
                     layout_cx
                         .keystrokes_for_action(view_1_id, &Action1)

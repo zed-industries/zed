@@ -57,6 +57,7 @@ pub struct Window {
     pub(crate) text_style_stack: Vec<TextStyle>,
     pub(crate) theme_stack: Vec<Box<dyn Any>>,
     pub(crate) new_parents: HashMap<usize, usize>,
+    pub(crate) views_to_notify_if_ancestors_change: HashMap<usize, SmallVec<[usize; 2]>>,
     titlebar_height: f32,
     appearance: Appearance,
     cursor_regions: Vec<CursorRegion>,
@@ -96,6 +97,7 @@ impl Window {
             text_style_stack: Vec::new(),
             theme_stack: Vec::new(),
             new_parents: HashMap::default(),
+            views_to_notify_if_ancestors_change: HashMap::default(),
             cursor_regions: Default::default(),
             mouse_regions: Default::default(),
             event_handlers: Default::default(),
@@ -1000,14 +1002,10 @@ impl<'a> WindowContext<'a> {
 
         let mut rendered_root = self.window.rendered_views.remove(&root_view_id).unwrap();
 
-        let mut views_to_notify_if_ancestors_change = HashMap::default();
-        rendered_root.layout(
-            SizeConstraint::new(window_size, window_size),
-            &mut views_to_notify_if_ancestors_change,
-            refreshing,
-            self,
-        )?;
+        rendered_root.layout(SizeConstraint::strict(window_size), refreshing, self)?;
 
+        let views_to_notify_if_ancestors_change =
+            mem::take(&mut self.window.views_to_notify_if_ancestors_change);
         for (view_id, view_ids_to_notify) in views_to_notify_if_ancestors_change {
             let mut current_view_id = view_id;
             loop {
@@ -1638,12 +1636,7 @@ impl<V: 'static> Element<V> for ChildView {
             let parent_id = cx.view_id();
             cx.window.new_parents.insert(self.view_id, parent_id);
             let size = rendered_view
-                .layout(
-                    constraint,
-                    cx.views_to_notify_if_ancestors_change,
-                    cx.refreshing,
-                    cx.view_context,
-                )
+                .layout(constraint, cx.refreshing, cx.view_context)
                 .log_err()
                 .unwrap_or(Vector2F::zero());
             cx.window.rendered_views.insert(self.view_id, rendered_view);
