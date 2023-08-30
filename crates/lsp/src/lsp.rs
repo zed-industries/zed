@@ -4,7 +4,7 @@ pub use lsp_types::*;
 
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
-use futures::{channel::oneshot, io::BufWriter, AsyncRead, AsyncWrite};
+use futures::{channel::oneshot, io::BufWriter, AsyncRead, AsyncWrite, FutureExt};
 use gpui::{executor, AsyncAppContext, Task};
 use parking_lot::Mutex;
 use postage::{barrier, prelude::Stream};
@@ -26,12 +26,14 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc, Weak,
     },
+    time::{Duration, Instant},
 };
 use std::{path::Path, process::Stdio};
 use util::{ResultExt, TryFutureExt};
 
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
+const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 
 type NotificationHandler = Box<dyn Send + FnMut(Option<usize>, &str, AsyncAppContext)>;
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
@@ -697,7 +699,7 @@ impl LanguageServer {
         outbound_tx: &channel::Sender<String>,
         executor: &Arc<executor::Background>,
         params: T::Params,
-    ) -> impl 'static + Future<Output = Result<T::Result>>
+    ) -> impl 'static + Future<Output = anyhow::Result<T::Result>>
     where
         T::Result: 'static + Send,
     {
@@ -738,10 +740,25 @@ impl LanguageServer {
             .try_send(message)
             .context("failed to write to language server's stdin");
 
+        let mut timeout = executor.timer(LSP_REQUEST_TIMEOUT).fuse();
+        let started = Instant::now();
         async move {
             handle_response?;
             send?;
-            rx.await?
+
+            let method = T::METHOD;
+            futures::select! {
+                response = rx.fuse() => {
+                    let elapsed = started.elapsed();
+                    log::trace!("Took {elapsed:?} to recieve response to {method:?} id {id}");
+                    response?
+                }
+
+                _ = timeout => {
+                    log::error!("Cancelled LSP request task for {method:?} id {id} which took over {LSP_REQUEST_TIMEOUT:?}");
+                    anyhow::bail!("LSP request timeout");
+                }
+            }
         }
     }
 
