@@ -1,10 +1,10 @@
 use crate::{
     div::div,
-    element::{Element, ParentElement},
+    element::{IntoElement, ParentElement},
     interactive::Interactive,
     style::StyleHelpers,
     text::ArcCow,
-    themes::rose_pine,
+    themes::Theme,
 };
 use gpui::{platform::MouseButton, ViewContext};
 use playground_macros::Element;
@@ -81,10 +81,11 @@ impl<V: 'static, D: 'static> Button<V, D> {
         &mut self,
         view: &mut V,
         cx: &mut ViewContext<V>,
-    ) -> impl Element<V> + Interactive<V> {
-        // TODO: Drive theme from the context
+    ) -> impl IntoElement<V> + Interactive<V> {
+        let colors = &cx.theme::<Theme>().colors;
+
         let button = div()
-            .fill(rose_pine::dawn().error(0.5))
+            .fill(colors.error(0.5))
             .h_4()
             .children(self.label.clone());
 

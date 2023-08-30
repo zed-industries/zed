@@ -69,7 +69,7 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
                 view: &mut V,
                 cx: &mut playground::element::LayoutContext<V>,
             ) -> anyhow::Result<(playground::element::LayoutId, Self::PaintState)> {
-                let mut rendered_element = self.render(view, cx).into_any();
+                let mut rendered_element = self.render(view, cx).into_element().into_any();
                 let layout_id = rendered_element.layout(view, cx)?;
                 Ok((layout_id, rendered_element))
             }

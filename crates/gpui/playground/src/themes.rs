@@ -13,7 +13,7 @@ pub struct Theme {
     pub colors: ThemeColors,
 }
 
-pub fn current_theme<'a>(cx: &'a WindowContext) -> &'a Theme {
+pub fn theme<'a>(cx: &'a WindowContext) -> &'a Theme {
     cx.theme::<Theme>()
 }
 
