@@ -8,7 +8,7 @@ use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
 use fs::{
     repository::{GitFileStatus, GitRepository, RepoPath},
-    Fs, LineEnding,
+    Fs,
 };
 use futures::{
     channel::{
@@ -27,7 +27,7 @@ use language::{
         deserialize_fingerprint, deserialize_version, serialize_fingerprint, serialize_line_ending,
         serialize_version,
     },
-    Buffer, DiagnosticEntry, File as _, PointUtf16, Rope, RopeFingerprint, Unclipped,
+    Buffer, DiagnosticEntry, File as _, LineEnding, PointUtf16, Rope, RopeFingerprint, Unclipped,
 };
 use lsp::LanguageServerId;
 use parking_lot::Mutex;

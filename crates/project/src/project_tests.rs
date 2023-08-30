@@ -1,11 +1,11 @@
 use crate::{search::PathMatcher, worktree::WorktreeModelHandle, Event, *};
-use fs::{FakeFs, LineEnding, RealFs};
+use fs::{FakeFs, RealFs};
 use futures::{future, StreamExt};
 use gpui::{executor::Deterministic, test::subscribe, AppContext};
 use language::{
     language_settings::{AllLanguageSettings, LanguageSettingsContent},
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
-    OffsetRangeExt, Point, ToPoint,
+    LineEnding, OffsetRangeExt, Point, ToPoint,
 };
 use lsp::Url;
 use parking_lot::Mutex;

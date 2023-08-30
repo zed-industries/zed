@@ -57,6 +57,7 @@ pub use diagnostic_set::DiagnosticEntry;
 pub use lsp::LanguageServerId;
 pub use outline::{Outline, OutlineItem};
 pub use syntax_map::{OwnedSyntaxLayerInfo, SyntaxLayerInfo};
+pub use text::LineEnding;
 pub use tree_sitter::{Parser, Tree};
 
 pub fn init(cx: &mut AppContext) {

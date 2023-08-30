@@ -6,7 +6,6 @@ use crate::{
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
-use fs::LineEnding;
 use futures::future;
 use gpui::{AppContext, AsyncAppContext, ModelHandle};
 use language::{
@@ -19,6 +18,7 @@ use language::{
 };
 use lsp::{DocumentHighlightKind, LanguageServer, LanguageServerId, OneOf, ServerCapabilities};
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
+use text::LineEnding;
 
 pub fn lsp_formatting_options(tab_size: u32) -> lsp::FormattingOptions {
     lsp::FormattingOptions {

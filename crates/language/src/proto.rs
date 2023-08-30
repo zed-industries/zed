@@ -20,17 +20,17 @@ pub fn deserialize_fingerprint(fingerprint: &str) -> Result<RopeFingerprint> {
         .map_err(|error| anyhow!("invalid fingerprint: {}", error))
 }
 
-pub fn deserialize_line_ending(message: proto::LineEnding) -> fs::LineEnding {
+pub fn deserialize_line_ending(message: proto::LineEnding) -> text::LineEnding {
     match message {
-        proto::LineEnding::Unix => fs::LineEnding::Unix,
-        proto::LineEnding::Windows => fs::LineEnding::Windows,
+        proto::LineEnding::Unix => text::LineEnding::Unix,
+        proto::LineEnding::Windows => text::LineEnding::Windows,
     }
 }
 
-pub fn serialize_line_ending(message: fs::LineEnding) -> proto::LineEnding {
+pub fn serialize_line_ending(message: text::LineEnding) -> proto::LineEnding {
     match message {
-        fs::LineEnding::Unix => proto::LineEnding::Unix,
-        fs::LineEnding::Windows => proto::LineEnding::Windows,
+        text::LineEnding::Unix => proto::LineEnding::Unix,
+        text::LineEnding::Windows => proto::LineEnding::Windows,
     }
 }
 

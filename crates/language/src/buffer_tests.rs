@@ -5,7 +5,6 @@ use crate::language_settings::{
 use super::*;
 use clock::ReplicaId;
 use collections::BTreeMap;
-use fs::LineEnding;
 use gpui::{AppContext, ModelHandle};
 use indoc::indoc;
 use proto::deserialize_operation;
@@ -20,6 +19,7 @@ use std::{
     time::{Duration, Instant},
 };
 use text::network::Network;
+use text::LineEnding;
 use unindent::Unindent as _;
 use util::{assert_set_eq, post_inc, test::marked_text_ranges, RandomCharIter};
 

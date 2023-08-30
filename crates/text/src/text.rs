@@ -14,17 +14,17 @@ pub use anchor::*;
 use anyhow::{anyhow, Result};
 pub use clock::ReplicaId;
 use collections::{HashMap, HashSet};
-use fs::LineEnding;
 use locator::Locator;
 use operation_queue::OperationQueue;
 pub use patch::Patch;
 use postage::{oneshot, prelude::*};
 
+use lazy_static::lazy_static;
+use regex::Regex;
 pub use rope::*;
 pub use selection::*;
-use util::ResultExt;
-
 use std::{
+    borrow::Cow,
     cmp::{self, Ordering, Reverse},
     future::Future,
     iter::Iterator,
@@ -37,9 +37,14 @@ pub use subscription::*;
 pub use sum_tree::Bias;
 use sum_tree::{FilterCursor, SumTree, TreeMap};
 use undo_map::UndoMap;
+use util::ResultExt;
 
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
+
+lazy_static! {
+    static ref LINE_SEPARATORS_REGEX: Regex = Regex::new("\r\n|\r|\u{2028}|\u{2029}").unwrap();
+}
 
 pub type TransactionId = clock::Local;
 
@@ -2669,5 +2674,61 @@ impl FromAnchor for PointUtf16 {
 impl FromAnchor for usize {
     fn from_anchor(anchor: &Anchor, snapshot: &BufferSnapshot) -> Self {
         snapshot.summary_for_anchor(anchor)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LineEnding {
+    Unix,
+    Windows,
+}
+
+impl Default for LineEnding {
+    fn default() -> Self {
+        #[cfg(unix)]
+        return Self::Unix;
+
+        #[cfg(not(unix))]
+        return Self::CRLF;
+    }
+}
+
+impl LineEnding {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LineEnding::Unix => "\n",
+            LineEnding::Windows => "\r\n",
+        }
+    }
+
+    pub fn detect(text: &str) -> Self {
+        let mut max_ix = cmp::min(text.len(), 1000);
+        while !text.is_char_boundary(max_ix) {
+            max_ix -= 1;
+        }
+
+        if let Some(ix) = text[..max_ix].find(&['\n']) {
+            if ix > 0 && text.as_bytes()[ix - 1] == b'\r' {
+                Self::Windows
+            } else {
+                Self::Unix
+            }
+        } else {
+            Self::default()
+        }
+    }
+
+    pub fn normalize(text: &mut String) {
+        if let Cow::Owned(replaced) = LINE_SEPARATORS_REGEX.replace_all(text, "\n") {
+            *text = replaced;
+        }
+    }
+
+    pub fn normalize_arc(text: Arc<str>) -> Arc<str> {
+        if let Cow::Owned(replaced) = LINE_SEPARATORS_REGEX.replace_all(&text, "\n") {
+            replaced.into()
+        } else {
+            text
+        }
     }
 }
