@@ -1,8 +1,8 @@
 use crate::{
     color::Hsla,
-    hoverable::{hoverable, Hoverable},
+    elements::hoverable::{hoverable, Hoverable},
+    elements::pressable::{pressable, Pressable},
     paint_context::PaintContext,
-    pressable::{pressable, Pressable},
 };
 pub use gpui::taffy::style::{
     AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap, JustifyContent,

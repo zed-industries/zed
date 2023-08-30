@@ -4484,7 +4484,7 @@ mod element {
                     .layout_engine()
                     .unwrap()
                     .computed_layout(*layout_node_id)
-                    .expect("you can currently only use playground elements within an adapter"),
+                    .expect("make sure you're using this within a gpui2 adapter element"),
                 from_element: element_layout.as_mut(),
             };
             let style = self.element.style();
@@ -5601,12 +5601,12 @@ fn main() {
                 center: true,
                 ..Default::default()
             },
-            |_| view(|_| playground(&rose_pine::moon())),
+            |_| view(|_| storybook(&rose_pine::moon())),
         );
         cx.platform().activate(true);
     });
 }
-fn playground<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
+fn storybook<V: 'static>(theme: &ThemeColors) -> impl Element<V> {
     frame()
         .text_color(black())
         .h_full()

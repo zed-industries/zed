@@ -25,10 +25,9 @@ impl<V: 'static> Element<V> for Text {
 
     fn layout(
         &mut self,
-        view: &mut V,
+        _view: &mut V,
         cx: &mut LayoutContext<V>,
     ) -> Result<(LayoutId, Self::PaintState)> {
-        let rem_size = cx.rem_pixels();
         let fonts = cx.platform().fonts();
         let text_style = cx.text_style();
         let line_height = cx.font_cache().line_height(text_style.font_size);
@@ -63,7 +62,7 @@ impl<V: 'static> Element<V> for Text {
 
     fn paint<'a>(
         &mut self,
-        view: &mut V,
+        _view: &mut V,
         layout: &Layout,
         paint_state: &mut Self::PaintState,
         cx: &mut PaintContext<V>,

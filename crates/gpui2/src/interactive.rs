@@ -21,7 +21,11 @@ pub trait Interactive<V: 'static> {
     {
         self.interaction_handlers()
             .mouse_down
-            .push(Rc::new(handler));
+            .push(Rc::new(move |view, event, cx| {
+                if event.button == button {
+                    handler(view, event, cx)
+                }
+            }));
         self
     }
 
@@ -33,7 +37,13 @@ pub trait Interactive<V: 'static> {
     where
         Self: Sized,
     {
-        self.interaction_handlers().mouse_up.push(Rc::new(handler));
+        self.interaction_handlers()
+            .mouse_up
+            .push(Rc::new(move |view, event, cx| {
+                if event.button == button {
+                    handler(view, event, cx)
+                }
+            }));
         self
     }
 
@@ -47,7 +57,11 @@ pub trait Interactive<V: 'static> {
     {
         self.interaction_handlers()
             .mouse_down_out
-            .push(Rc::new(handler));
+            .push(Rc::new(move |view, event, cx| {
+                if event.button == button {
+                    handler(view, event, cx)
+                }
+            }));
         self
     }
 
@@ -61,7 +75,11 @@ pub trait Interactive<V: 'static> {
     {
         self.interaction_handlers()
             .mouse_up_out
-            .push(Rc::new(handler));
+            .push(Rc::new(move |view, event, cx| {
+                if event.button == button {
+                    handler(view, event, cx)
+                }
+            }));
         self
     }
 

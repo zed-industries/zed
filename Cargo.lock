@@ -5195,26 +5195,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26072860ba924cbfa98ea39c8c19b4dd6a4a25423dbdf219c1eca91aa0cf6964"
 
 [[package]]
-name = "playground"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "derive_more",
- "gpui",
- "gpui2_macros",
- "log",
- "parking_lot 0.11.2",
- "refineable",
- "rust-embed",
- "serde",
- "settings",
- "simplelog",
- "smallvec",
- "theme",
- "util",
-]
-
-[[package]]
 name = "plist"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7319,6 +7299,21 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "storybook"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui2",
+ "log",
+ "rust-embed",
+ "serde",
+ "settings",
+ "simplelog",
+ "theme",
+ "util",
+]
 
 [[package]]
 name = "stringprep"

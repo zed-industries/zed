@@ -1,13 +1,7 @@
-use crate::{
-    div::div,
-    element::{IntoElement, ParentElement},
-    interactive::Interactive,
-    style::StyleHelpers,
-    text::ArcCow,
-    // themes::Theme,
+use gpui2::{
+    elements::div, elements::text::ArcCow, interactive::Interactive, platform::MouseButton,
+    style::StyleHelpers, Element, IntoElement, ParentElement, ViewContext,
 };
-use gpui::{platform::MouseButton, ViewContext};
-use gpui2_macros::Element;
 use std::{marker::PhantomData, rc::Rc};
 
 struct ButtonHandlers<V, D> {
@@ -20,7 +14,6 @@ impl<V, D> Default for ButtonHandlers<V, D> {
     }
 }
 
-use crate as gpui2;
 #[derive(Element)]
 pub struct Button<V: 'static, D: 'static> {
     handlers: ButtonHandlers<V, D>,

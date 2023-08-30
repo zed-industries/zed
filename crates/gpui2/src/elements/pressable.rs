@@ -68,7 +68,7 @@ impl<V: 'static, E: Element<V> + Styleable> Element<V> for Pressable<E> {
 
         let pressed = self.pressed.clone();
         let bounds = layout.bounds;
-        cx.on_event(layout.order, move |view, event: &MouseButtonEvent, cx| {
+        cx.on_event(layout.order, move |_view, event: &MouseButtonEvent, cx| {
             if event.is_down {
                 if bounds.contains_point(event.position) {
                     pressed.set(true);

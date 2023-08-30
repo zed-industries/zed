@@ -1,11 +1,12 @@
-use crate::{
+use gpui2::{
     color::Hsla,
     element::{Element, PaintContext},
     layout_context::LayoutContext,
+    serde_json, AppContext, WindowContext,
 };
-use gpui::WindowContext;
 use serde::{de::Visitor, Deserialize, Deserializer};
 use std::{collections::HashMap, fmt, marker::PhantomData};
+use theme::ThemeSettings;
 
 #[derive(Deserialize, Clone, Default, Debug)]
 pub struct Theme {
@@ -62,10 +63,6 @@ pub struct Shadow {
     pub blur: u8,
     pub color: Hsla,
     pub offset: Vec<u8>,
-}
-
-pub fn theme<'a>(cx: &'a WindowContext) -> &'a Theme {
-    cx.theme::<Theme>()
 }
 
 fn deserialize_player_colors<'de, D>(deserializer: D) -> Result<Vec<PlayerColors>, D::Error>
@@ -149,7 +146,7 @@ impl<V: 'static, E: Element<V>> Element<V> for Themed<V, E> {
         &mut self,
         view: &mut V,
         cx: &mut LayoutContext<V>,
-    ) -> anyhow::Result<(gpui::LayoutId, Self::PaintState)>
+    ) -> anyhow::Result<(gpui2::LayoutId, Self::PaintState)>
     where
         Self: Sized,
     {
@@ -162,7 +159,7 @@ impl<V: 'static, E: Element<V>> Element<V> for Themed<V, E> {
     fn paint(
         &mut self,
         view: &mut V,
-        layout: &gpui::Layout,
+        layout: &gpui2::Layout,
         state: &mut Self::PaintState,
         cx: &mut PaintContext<V>,
     ) where
@@ -172,4 +169,24 @@ impl<V: 'static, E: Element<V>> Element<V> for Themed<V, E> {
         self.child.paint(view, layout, state, cx);
         cx.pop_theme();
     }
+}
+
+fn preferred_theme<V: 'static>(cx: &AppContext) -> Theme {
+    settings::get::<ThemeSettings>(cx)
+        .theme
+        .deserialized_base_theme
+        .lock()
+        .get_or_insert_with(|| {
+            let theme: Theme =
+                serde_json::from_value(settings::get::<ThemeSettings>(cx).theme.base_theme.clone())
+                    .unwrap();
+            Box::new(theme)
+        })
+        .downcast_ref::<Theme>()
+        .unwrap()
+        .clone()
+}
+
+pub fn theme<'a>(cx: &'a WindowContext) -> &'a Theme {
+    cx.theme::<Theme>()
 }

@@ -2,7 +2,6 @@ use std::marker::PhantomData;
 
 pub use crate::layout_context::LayoutContext;
 pub use crate::paint_context::PaintContext;
-use crate::themes::{Theme, Themed};
 use anyhow::Result;
 use gpui::geometry::vector::Vector2F;
 pub use gpui::{Layout, LayoutId};
@@ -36,17 +35,6 @@ pub trait Element<V: 'static>: 'static {
             element: self,
             phase: ElementPhase::Init,
         }))
-    }
-
-    fn themed(self, theme: Theme) -> Themed<V, Self>
-    where
-        Self: Sized,
-    {
-        crate::themes::Themed {
-            child: self,
-            theme,
-            view_type: PhantomData,
-        }
     }
 }
 

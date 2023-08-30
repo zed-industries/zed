@@ -1,9 +1,9 @@
 use crate::{
     element::{AnyElement, Element, IntoElement, Layout, ParentElement},
-    interactive::{InteractionHandlers, Interactive},
     layout_context::LayoutContext,
     paint_context::PaintContext,
     style::{Style, StyleHelpers, Styleable},
+    InteractionHandlers, Interactive,
 };
 use anyhow::Result;
 use gpui::{LayoutId, RenderContext};
@@ -58,7 +58,7 @@ impl<V: 'static> Element<V> for Div<V> {
         &mut self,
         view: &mut V,
         layout: &Layout,
-        paint_state: &mut Self::PaintState,
+        _: &mut Self::PaintState,
         cx: &mut PaintContext<V>,
     ) where
         Self: Sized,

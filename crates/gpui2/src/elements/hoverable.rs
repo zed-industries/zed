@@ -6,40 +6,40 @@ use crate::{
     style::{Style, StyleHelpers, Styleable},
 };
 use anyhow::Result;
-use gpui::{platform::MouseButtonEvent, LayoutId};
+use gpui::{platform::MouseMovedEvent, LayoutId};
 use refineable::{CascadeSlot, Refineable, RefinementCascade};
 use smallvec::SmallVec;
 use std::{cell::Cell, rc::Rc};
 
-pub struct Pressable<E: Styleable> {
-    pressed: Rc<Cell<bool>>,
-    pressed_style: <E::Style as Refineable>::Refinement,
+pub struct Hoverable<E: Styleable> {
+    hovered: Rc<Cell<bool>>,
     cascade_slot: CascadeSlot,
+    hovered_style: <E::Style as Refineable>::Refinement,
     child: E,
 }
 
-pub fn pressable<E: Styleable>(mut child: E) -> Pressable<E> {
-    Pressable {
-        pressed: Rc::new(Cell::new(false)),
-        pressed_style: Default::default(),
+pub fn hoverable<E: Styleable>(mut child: E) -> Hoverable<E> {
+    Hoverable {
+        hovered: Rc::new(Cell::new(false)),
         cascade_slot: child.style_cascade().reserve(),
+        hovered_style: Default::default(),
         child,
     }
 }
 
-impl<E: Styleable> Styleable for Pressable<E> {
+impl<E: Styleable> Styleable for Hoverable<E> {
     type Style = E::Style;
 
-    fn declared_style(&mut self) -> &mut <Self::Style as Refineable>::Refinement {
-        &mut self.pressed_style
+    fn style_cascade(&mut self) -> &mut RefinementCascade<Self::Style> {
+        self.child.style_cascade()
     }
 
-    fn style_cascade(&mut self) -> &mut RefinementCascade<E::Style> {
-        self.child.style_cascade()
+    fn declared_style(&mut self) -> &mut <Self::Style as Refineable>::Refinement {
+        &mut self.hovered_style
     }
 }
 
-impl<V: 'static, E: Element<V> + Styleable> Element<V> for Pressable<E> {
+impl<V: 'static, E: Element<V> + Styleable> Element<V> for Hoverable<E> {
     type PaintState = E::PaintState;
 
     fn layout(
@@ -50,7 +50,7 @@ impl<V: 'static, E: Element<V> + Styleable> Element<V> for Pressable<E> {
     where
         Self: Sized,
     {
-        self.child.layout(view, cx)
+        Ok(self.child.layout(view, cx)?)
     }
 
     fn paint(
@@ -62,20 +62,17 @@ impl<V: 'static, E: Element<V> + Styleable> Element<V> for Pressable<E> {
     ) where
         Self: Sized,
     {
+        self.hovered
+            .set(layout.bounds.contains_point(cx.mouse_position()));
+
         let slot = self.cascade_slot;
-        let style = self.pressed.get().then_some(self.pressed_style.clone());
+        let style = self.hovered.get().then_some(self.hovered_style.clone());
         self.style_cascade().set(slot, style);
 
-        let pressed = self.pressed.clone();
+        let hovered = self.hovered.clone();
         let bounds = layout.bounds;
-        cx.on_event(layout.order, move |view, event: &MouseButtonEvent, cx| {
-            if event.is_down {
-                if bounds.contains_point(event.position) {
-                    pressed.set(true);
-                    cx.repaint();
-                }
-            } else if pressed.get() {
-                pressed.set(false);
+        cx.on_event(layout.order, move |_view, _: &MouseMovedEvent, cx| {
+            if bounds.contains_point(cx.mouse_position()) != hovered.get() {
                 cx.repaint();
             }
         });
@@ -84,21 +81,21 @@ impl<V: 'static, E: Element<V> + Styleable> Element<V> for Pressable<E> {
     }
 }
 
-impl<E: Styleable<Style = Style>> StyleHelpers for Pressable<E> {}
+impl<E: Styleable<Style = Style>> StyleHelpers for Hoverable<E> {}
 
-impl<V: 'static, E: Interactive<V> + Styleable> Interactive<V> for Pressable<E> {
+impl<V: 'static, E: Interactive<V> + Styleable> Interactive<V> for Hoverable<E> {
     fn interaction_handlers(&mut self) -> &mut InteractionHandlers<V> {
         self.child.interaction_handlers()
     }
 }
 
-impl<V: 'static, E: ParentElement<V> + Styleable> ParentElement<V> for Pressable<E> {
+impl<V: 'static, E: ParentElement<V> + Styleable> ParentElement<V> for Hoverable<E> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         self.child.children_mut()
     }
 }
 
-impl<V: 'static, E: Element<V> + Styleable> IntoElement<V> for Pressable<E> {
+impl<V: 'static, E: Element<V> + Styleable> IntoElement<V> for Hoverable<E> {
     type Element = Self;
 
     fn into_element(self) -> Self::Element {

@@ -3459,7 +3459,7 @@ pub trait RenderContext<'a, 'b, V> {
 }
 
 pub struct LayoutContext<'a, 'b, 'c, V> {
-    // Nathan: Making this is public while I work on playground.
+    // Nathan: Making this is public while I work on gpui2.
     pub view_context: &'c mut ViewContext<'a, 'b, V>,
     pub refreshing: bool,
 }

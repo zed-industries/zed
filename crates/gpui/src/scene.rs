@@ -31,7 +31,7 @@ pub struct SceneBuilder {
     scale_factor: f32,
     stacking_contexts: Vec<StackingContext>,
     active_stacking_context_stack: Vec<usize>,
-    /// Used by the playground crate.
+    /// Used by the gpui2 crate.
     pub event_handlers: Vec<EventHandler>,
     #[cfg(debug_assertions)]
     mouse_region_ids: HashSet<MouseRegionId>,

@@ -8,6 +8,9 @@ publish = false
 name = "gpui2"
 path = "src/gpui2.rs"
 
+[features]
+test-support = ["gpui/test-support"]
+
 [dependencies]
 anyhow.workspace = true
 derive_more.workspace = true

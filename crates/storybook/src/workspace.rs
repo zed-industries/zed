@@ -1,13 +1,9 @@
-use crate::{
-    div::div,
-    element::{Element, IntoElement, ParentElement},
-    style::StyleHelpers,
-    themes::theme,
+use crate::theme::theme;
+use gpui2::{
+    elements::div, geometry::pixels, style::StyleHelpers, Element, IntoElement, ParentElement,
+    ViewContext,
 };
-use gpui::{geometry::pixels, ViewContext};
-use gpui2_macros::Element;
 
-use crate as playground;
 #[derive(Element)]
 struct WorkspaceElement;
 

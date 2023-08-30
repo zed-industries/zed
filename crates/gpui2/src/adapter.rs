@@ -2,7 +2,7 @@ use crate::{layout_context::LayoutContext, paint_context::PaintContext};
 use gpui::{geometry::rect::RectF, LayoutEngine, LayoutId};
 use util::ResultExt;
 
-/// Makes a new, playground-style element into a legacy element.
+/// Makes a new, gpui2-style element into a legacy element.
 pub struct AdapterElement<V>(pub(crate) crate::element::AnyElement<V>);
 
 impl<V: 'static> gpui::Element<V> for AdapterElement<V> {
@@ -17,7 +17,6 @@ impl<V: 'static> gpui::Element<V> for AdapterElement<V> {
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
         cx.push_layout_engine(LayoutEngine::new());
 
-        let size = constraint.max;
         let mut cx = LayoutContext::new(cx);
         let layout_id = self.0.layout(view, &mut cx).log_err();
         if let Some(layout_id) = layout_id {
