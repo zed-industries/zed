@@ -56,6 +56,7 @@ pub struct Window {
     pub(crate) rendered_views: HashMap<usize, Box<dyn AnyRootElement>>,
     pub(crate) text_style_stack: Vec<TextStyle>,
     pub(crate) theme_stack: Vec<Box<dyn Any>>,
+    pub(crate) new_parents: HashMap<usize, usize>,
     titlebar_height: f32,
     appearance: Appearance,
     cursor_regions: Vec<CursorRegion>,
@@ -92,6 +93,9 @@ impl Window {
             is_fullscreen: false,
             platform_window,
             rendered_views: Default::default(),
+            text_style_stack: Vec::new(),
+            theme_stack: Vec::new(),
+            new_parents: HashMap::default(),
             cursor_regions: Default::default(),
             mouse_regions: Default::default(),
             event_handlers: Default::default(),
@@ -103,8 +107,6 @@ impl Window {
             clicked_region: None,
             titlebar_height,
             appearance,
-            text_style_stack: Vec::new(),
-            theme_stack: Vec::new(),
         };
 
         let mut window_context = WindowContext::mutable(cx, &mut window, handle);
@@ -998,11 +1000,9 @@ impl<'a> WindowContext<'a> {
 
         let mut rendered_root = self.window.rendered_views.remove(&root_view_id).unwrap();
 
-        let mut new_parents = HashMap::default();
         let mut views_to_notify_if_ancestors_change = HashMap::default();
         rendered_root.layout(
             SizeConstraint::new(window_size, window_size),
-            &mut new_parents,
             &mut views_to_notify_if_ancestors_change,
             refreshing,
             self,
@@ -1012,7 +1012,7 @@ impl<'a> WindowContext<'a> {
             let mut current_view_id = view_id;
             loop {
                 let old_parent_id = self.window.parents.get(&current_view_id);
-                let new_parent_id = new_parents.get(&current_view_id);
+                let new_parent_id = self.window.new_parents.get(&current_view_id);
                 if old_parent_id.is_none() && new_parent_id.is_none() {
                     break;
                 } else if old_parent_id == new_parent_id {
@@ -1027,6 +1027,7 @@ impl<'a> WindowContext<'a> {
             }
         }
 
+        let new_parents = mem::take(&mut self.window.new_parents);
         let old_parents = mem::replace(&mut self.window.parents, new_parents);
         self.window
             .rendered_views
@@ -1634,11 +1635,11 @@ impl<V: 'static> Element<V> for ChildView {
         cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         if let Some(mut rendered_view) = cx.window.rendered_views.remove(&self.view_id) {
-            cx.new_parents.insert(self.view_id, cx.view_id());
+            let parent_id = cx.view_id();
+            cx.window.new_parents.insert(self.view_id, parent_id);
             let size = rendered_view
                 .layout(
                     constraint,
-                    cx.new_parents,
                     cx.views_to_notify_if_ancestors_change,
                     cx.refreshing,
                     cx.view_context,

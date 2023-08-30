@@ -3461,7 +3461,6 @@ pub trait RenderContext<'a, 'b, V> {
 pub struct LayoutContext<'a, 'b, 'c, V> {
     // Nathan: Making this is public while I work on playground.
     pub view_context: &'c mut ViewContext<'a, 'b, V>,
-    new_parents: &'c mut HashMap<usize, usize>,
     views_to_notify_if_ancestors_change: &'c mut HashMap<usize, SmallVec<[usize; 2]>>,
     pub refreshing: bool,
 }
@@ -3469,13 +3468,11 @@ pub struct LayoutContext<'a, 'b, 'c, V> {
 impl<'a, 'b, 'c, V> LayoutContext<'a, 'b, 'c, V> {
     pub fn new(
         view_context: &'c mut ViewContext<'a, 'b, V>,
-        new_parents: &'c mut HashMap<usize, usize>,
         views_to_notify_if_ancestors_change: &'c mut HashMap<usize, SmallVec<[usize; 2]>>,
         refreshing: bool,
     ) -> Self {
         Self {
             view_context,
-            new_parents,
             views_to_notify_if_ancestors_change,
             refreshing,
         }
@@ -6529,14 +6526,9 @@ mod tests {
         view_1.update(cx, |_, cx| {
             view_2.update(cx, |_, cx| {
                 // Sanity check
-                let mut new_parents = Default::default();
                 let mut notify_views_if_parents_change = Default::default();
-                let mut layout_cx = LayoutContext::new(
-                    cx,
-                    &mut new_parents,
-                    &mut notify_views_if_parents_change,
-                    false,
-                );
+                let mut layout_cx =
+                    LayoutContext::new(cx, &mut notify_views_if_parents_change, false);
                 assert_eq!(
                     layout_cx
                         .keystrokes_for_action(view_1_id, &Action1)

@@ -649,7 +649,6 @@ pub trait AnyRootElement {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        new_parents: &mut HashMap<usize, usize>,
         views_to_notify_if_ancestors_change: &mut HashMap<usize, SmallVec<[usize; 2]>>,
         refreshing: bool,
         cx: &mut WindowContext,
@@ -674,7 +673,6 @@ impl<V: View> AnyRootElement for RootElement<V> {
     fn layout(
         &mut self,
         constraint: SizeConstraint,
-        new_parents: &mut HashMap<usize, usize>,
         views_to_notify_if_ancestors_change: &mut HashMap<usize, SmallVec<[usize; 2]>>,
         refreshing: bool,
         cx: &mut WindowContext,
@@ -684,12 +682,7 @@ impl<V: View> AnyRootElement for RootElement<V> {
             .upgrade(cx)
             .ok_or_else(|| anyhow!("layout called on a root element for a dropped view"))?;
         view.update(cx, |view, cx| {
-            let mut cx = LayoutContext::new(
-                cx,
-                new_parents,
-                views_to_notify_if_ancestors_change,
-                refreshing,
-            );
+            let mut cx = LayoutContext::new(cx, views_to_notify_if_ancestors_change, refreshing);
             Ok(self.element.layout(constraint, view, &mut cx))
         })
     }
