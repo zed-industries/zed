@@ -118,7 +118,6 @@ pub struct Titlebar {
     pub height: f32,
     pub menu: TitlebarMenu,
     pub project_menu_button: Toggleable<Interactive<ContainedText>>,
-    pub project_name_divider: ContainedText,
     pub git_menu_button: Toggleable<Interactive<ContainedText>>,
     pub item_spacing: f32,
     pub face_pile_spacing: f32,
