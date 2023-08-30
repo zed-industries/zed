@@ -2518,27 +2518,16 @@ impl View for CollabPanel {
                 .with_child(
                     Flex::column()
                         .with_child(
-                            Flex::row()
-                                .with_child(
-                                    ChildView::new(&self.filter_editor, cx)
-                                        .contained()
-                                        .with_style(theme.user_query_editor.container)
-                                        .flex(1.0, true),
-                                )
-                                .constrained()
-                                .with_width(self.size(cx)),
+                            Flex::row().with_child(
+                                ChildView::new(&self.filter_editor, cx)
+                                    .contained()
+                                    .with_style(theme.user_query_editor.container)
+                                    .flex(1.0, true),
+                            ),
                         )
-                        .with_child(
-                            List::new(self.list_state.clone())
-                                .constrained()
-                                .with_width(self.size(cx))
-                                .flex(1., true)
-                                .into_any(),
-                        )
+                        .with_child(List::new(self.list_state.clone()).flex(1., true).into_any())
                         .contained()
                         .with_style(theme.container)
-                        .constrained()
-                        .with_width(self.size(cx))
                         .into_any(),
                 )
                 .with_children(
