@@ -37,8 +37,21 @@ export const toolbar = () => {
         }),
         toggleable_text_tool: toggleable({
             state: {
-                inactive: text_button({ variant: "ghost", layer: theme.highest, disabled: true, margin: { right: 4 }, text_properties: { size: "sm" } }),
-                active: text_button({ variant: "ghost", layer: theme.highest, margin: { right: 4 }, text_properties: { size: "sm" } })
+                inactive: text_button({
+                    disabled: true,
+                    variant: "ghost",
+                    layer: theme.highest,
+                    margin: { left: 4 },
+                    text_properties: { size: "sm" },
+                    border: border(theme.middle),
+                }),
+                active: text_button({
+                    variant: "ghost",
+                    layer: theme.highest,
+                    margin: { left: 4 },
+                    text_properties: { size: "sm" },
+                    border: border(theme.middle),
+                }),
             }
         }),
     }

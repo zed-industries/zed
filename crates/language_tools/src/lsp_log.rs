@@ -583,6 +583,7 @@ impl View for LspLogToolbarItemView {
                 None
             }
         });
+        let server_selected = current_server.is_some();
 
         enum Menu {}
         let lsp_menu = Stack::new()
@@ -642,12 +643,14 @@ impl View for LspLogToolbarItemView {
                     .workspace
                     .toolbar
                     .toggleable_text_tool
-                    .active_state()
+                    .in_state(server_selected)
                     .style_for(state);
                 Label::new("Clear", style.text.clone())
                     .aligned()
                     .contained()
                     .with_style(style.container)
+                    .constrained()
+                    .with_height(theme.toolbar_dropdown_menu.row_height / 6.0 * 5.0)
             })
             .on_click(MouseButton::Left, move |_, this, cx| {
                 if let Some(log_view) = this.log_view.as_ref() {

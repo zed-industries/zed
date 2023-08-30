@@ -1,5 +1,6 @@
 import { interactive, toggleable } from "../element"
 import {
+    Border,
     TextProperties,
     background,
     foreground,
@@ -16,6 +17,7 @@ interface TextButtonOptions {
     margin?: Partial<Margin>
     disabled?: boolean
     text_properties?: TextProperties
+    border?: Border
 }
 
 type ToggleableTextButtonOptions = TextButtonOptions & {
@@ -29,6 +31,7 @@ export function text_button({
     margin,
     disabled,
     text_properties,
+    border,
 }: TextButtonOptions = {}) {
     const theme = useTheme()
     if (!color) color = "base"
@@ -66,6 +69,7 @@ export function text_button({
         },
         state: {
             default: {
+                border,
                 background: background_color,
                 color: disabled
                     ? foreground(layer ?? theme.lowest, "disabled")
@@ -74,6 +78,7 @@ export function text_button({
             hovered: disabled
                 ? {}
                 : {
+                    border,
                     background: background(
                         layer ?? theme.lowest,
                         color,
@@ -88,6 +93,7 @@ export function text_button({
             clicked: disabled
                 ? {}
                 : {
+                    border,
                     background: background(
                         layer ?? theme.lowest,
                         color,
