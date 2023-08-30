@@ -570,10 +570,12 @@ impl View for LspLogToolbarItemView {
         let Some(log_view) = self.log_view.as_ref() else {
             return Empty::new().into_any();
         };
-        let log_view = log_view.read(cx);
-        let menu_rows = log_view.menu_items(cx).unwrap_or_default();
+        let (menu_rows, current_server_id) = log_view.update(cx, |log_view, cx| {
+            let menu_rows = log_view.menu_items(cx).unwrap_or_default();
+            let current_server_id = log_view.current_server_id;
+            (menu_rows, current_server_id)
+        });
 
-        let current_server_id = log_view.current_server_id;
         let current_server = current_server_id.and_then(|current_server_id| {
             if let Ok(ix) = menu_rows.binary_search_by_key(&current_server_id, |e| e.server_id) {
                 Some(menu_rows[ix].clone())
@@ -583,8 +585,7 @@ impl View for LspLogToolbarItemView {
         });
 
         enum Menu {}
-
-        Stack::new()
+        let lsp_menu = Stack::new()
             .with_child(Self::render_language_server_menu_header(
                 current_server,
                 &theme,
@@ -631,8 +632,45 @@ impl View for LspLogToolbarItemView {
             })
             .aligned()
             .left()
-            .clipped()
-            .into_any()
+            .clipped();
+
+        enum LspCleanupButton {}
+        let log_cleanup_button =
+            MouseEventHandler::new::<LspCleanupButton, _>(1, cx, |state, cx| {
+                let theme = theme::current(cx).clone();
+                let style = theme
+                    .workspace
+                    .toolbar
+                    .toggleable_text_tool
+                    .active_state()
+                    .style_for(state);
+                Label::new("Clear", style.text.clone())
+                    .aligned()
+                    .contained()
+                    .with_style(style.container)
+            })
+            .on_click(MouseButton::Left, move |_, this, cx| {
+                if let Some(log_view) = this.log_view.as_ref() {
+                    log_view.update(cx, |log_view, cx| {
+                        log_view.editor.update(cx, |editor, cx| {
+                            editor.set_read_only(false);
+                            editor.clear(cx);
+                            editor.set_read_only(true);
+                        });
+                    })
+                }
+            })
+            .with_cursor_style(CursorStyle::PointingHand)
+            .aligned()
+            .right();
+
+        Flex::row()
+            .with_child(lsp_menu)
+            .with_child(log_cleanup_button)
+            .contained()
+            .aligned()
+            .left()
+            .into_any_named("lsp log controls")
     }
 }
 

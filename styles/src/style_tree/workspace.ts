@@ -19,6 +19,8 @@ export default function workspace(): any {
 
     const { is_light } = theme
 
+    const TOOLBAR_ITEM_SPACING = 8;
+
     return {
         background: background(theme.lowest),
         blank_pane: {
