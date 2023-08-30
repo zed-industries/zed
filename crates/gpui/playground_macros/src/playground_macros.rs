@@ -3,7 +3,6 @@ use proc_macro::TokenStream;
 mod derive_element;
 mod derive_into_element;
 mod styleable_helpers;
-mod tailwind_lengths;
 
 #[proc_macro]
 pub fn styleable_helpers(args: TokenStream) -> TokenStream {
@@ -18,9 +17,4 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(IntoElement, attributes(element_crate))]
 pub fn derive_into_element(input: TokenStream) -> TokenStream {
     derive_into_element::derive_into_element(input)
-}
-
-#[proc_macro_attribute]
-pub fn tailwind_lengths(attr: TokenStream, item: TokenStream) -> TokenStream {
-    tailwind_lengths::tailwind_lengths(attr, item)
 }
