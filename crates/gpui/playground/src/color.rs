@@ -1,8 +1,9 @@
 #![allow(dead_code)]
 
-use std::{num::ParseIntError, ops::Range};
-
+use serde::de::{self, Deserialize, Deserializer, Visitor};
 use smallvec::SmallVec;
+use std::fmt;
+use std::{num::ParseIntError, ops::Range};
 
 pub fn rgb<C: From<Rgba>>(hex: u32) -> C {
     let r = ((hex >> 16) & 0xFF) as f32 / 255.0;
@@ -17,6 +18,40 @@ pub struct Rgba {
     pub g: f32,
     pub b: f32,
     pub a: f32,
+}
+
+struct RgbaVisitor;
+
+impl<'de> Visitor<'de> for RgbaVisitor {
+    type Value = Rgba;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a string in the format #rrggbb or #rrggbbaa")
+    }
+
+    fn visit_str<E: de::Error>(self, value: &str) -> Result<Rgba, E> {
+        if value.len() == 7 || value.len() == 9 {
+            let r = u8::from_str_radix(&value[1..3], 16).unwrap() as f32 / 255.0;
+            let g = u8::from_str_radix(&value[3..5], 16).unwrap() as f32 / 255.0;
+            let b = u8::from_str_radix(&value[5..7], 16).unwrap() as f32 / 255.0;
+            let a = if value.len() == 9 {
+                u8::from_str_radix(&value[7..9], 16).unwrap() as f32 / 255.0
+            } else {
+                1.0
+            };
+            Ok(Rgba { r, g, b, a })
+        } else {
+            Err(E::custom(
+                "Bad format for RGBA. Expected #rrggbb or #rrggbbaa.",
+            ))
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Rgba {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_str(RgbaVisitor)
+    }
 }
 
 pub trait Lerp {
@@ -216,6 +251,19 @@ impl From<gpui::color::Color> for Hsla {
 impl Into<gpui::color::Color> for Hsla {
     fn into(self) -> gpui::color::Color {
         Rgba::from(self).into()
+    }
+}
+
+impl<'de> Deserialize<'de> for Hsla {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // First, deserialize it into Rgba
+        let rgba = Rgba::deserialize(deserializer)?;
+
+        // Then, use the From<Rgba> for Hsla implementation to convert it
+        Ok(Hsla::from(rgba))
     }
 }
 

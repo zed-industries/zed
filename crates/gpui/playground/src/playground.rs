@@ -1,12 +1,12 @@
 #![allow(dead_code, unused_variables)]
-use element::Element;
+use crate::element::Element;
 use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     platform::WindowOptions,
 };
 use log::LevelFilter;
 use simplelog::SimpleLogger;
-use themes::{rose_pine, Theme, ThemeColors};
+use themes::Theme;
 use view::view;
 use workspace::workspace;
 
@@ -39,13 +39,7 @@ fn main() {
                 center: true,
                 ..Default::default()
             },
-            |_| {
-                view(|cx| {
-                    playground(Theme {
-                        colors: rose_pine::dawn(),
-                    })
-                })
-            },
+            |_| view(|cx| playground(Theme::default())),
         );
         cx.platform().activate(true);
     });

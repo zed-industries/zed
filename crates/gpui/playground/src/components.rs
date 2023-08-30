@@ -4,7 +4,7 @@ use crate::{
     interactive::Interactive,
     style::StyleHelpers,
     text::ArcCow,
-    themes::Theme,
+    // themes::Theme,
 };
 use gpui::{platform::MouseButton, ViewContext};
 use playground_macros::Element;
@@ -82,10 +82,10 @@ impl<V: 'static, D: 'static> Button<V, D> {
         view: &mut V,
         cx: &mut ViewContext<V>,
     ) -> impl IntoElement<V> + Interactive<V> {
-        let colors = &cx.theme::<Theme>().colors;
+        // let colors = &cx.theme::<Theme>().colors;
 
         let button = div()
-            .fill(colors.error(0.5))
+            // .fill(colors.error(0.5))
             .h_4()
             .children(self.label.clone());
 

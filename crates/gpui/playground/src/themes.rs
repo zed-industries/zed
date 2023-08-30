@@ -1,107 +1,134 @@
 use crate::{
-    color::{Hsla, Lerp},
+    color::Hsla,
     element::{Element, PaintContext},
     layout_context::LayoutContext,
 };
-use gpui::{AppContext, WindowContext};
-use std::{marker::PhantomData, ops::Range};
+use gpui::WindowContext;
+use serde::{de::Visitor, Deserialize, Deserializer};
+use std::{collections::HashMap, fmt, marker::PhantomData};
 
-pub mod rose_pine;
-
-#[derive(Clone, Debug)]
+#[derive(Deserialize, Clone, Default, Debug)]
 pub struct Theme {
-    pub colors: ThemeColors,
+    name: String,
+    is_light: bool,
+    lowest: Layer,
+    middle: Layer,
+    highest: Layer,
+    popover_shadow: Shadow,
+    modal_shadow: Shadow,
+    #[serde(deserialize_with = "deserialize_player_colors")]
+    players: Vec<PlayerColors>,
+    #[serde(deserialize_with = "deserialize_syntax_colors")]
+    syntax: HashMap<String, Hsla>,
+}
+
+#[derive(Deserialize, Clone, Default, Debug)]
+pub struct Layer {
+    base: StyleSet,
+    variant: StyleSet,
+    on: StyleSet,
+    accent: StyleSet,
+    positive: StyleSet,
+    warning: StyleSet,
+    negative: StyleSet,
+}
+
+#[derive(Deserialize, Clone, Default, Debug)]
+pub struct StyleSet {
+    #[serde(rename = "default")]
+    default: ContainerColors,
+    hovered: ContainerColors,
+    pressed: ContainerColors,
+    active: ContainerColors,
+    disabled: ContainerColors,
+    inverted: ContainerColors,
+}
+
+#[derive(Deserialize, Clone, Default, Debug)]
+pub struct ContainerColors {
+    background: Hsla,
+    foreground: Hsla,
+    border: Hsla,
+}
+
+#[derive(Deserialize, Clone, Default, Debug)]
+pub struct PlayerColors {
+    selection: Hsla,
+    cursor: Hsla,
+}
+
+#[derive(Deserialize, Clone, Default, Debug)]
+pub struct Shadow {
+    blur: u8,
+    color: Hsla,
+    offset: Vec<u8>,
 }
 
 pub fn theme<'a>(cx: &'a WindowContext) -> &'a Theme {
     cx.theme::<Theme>()
 }
 
-#[derive(Clone, Debug)]
-pub struct ThemeColors {
-    pub base: Range<Hsla>,
-    pub surface: Range<Hsla>,
-    pub overlay: Range<Hsla>,
-    pub muted: Range<Hsla>,
-    pub subtle: Range<Hsla>,
-    pub text: Range<Hsla>,
-    pub highlight_low: Range<Hsla>,
-    pub highlight_med: Range<Hsla>,
-    pub highlight_high: Range<Hsla>,
-    pub success: Range<Hsla>,
-    pub warning: Range<Hsla>,
-    pub error: Range<Hsla>,
-    pub inserted: Range<Hsla>,
-    pub deleted: Range<Hsla>,
-    pub modified: Range<Hsla>,
+fn deserialize_player_colors<'de, D>(deserializer: D) -> Result<Vec<PlayerColors>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct PlayerArrayVisitor;
+
+    impl<'de> Visitor<'de> for PlayerArrayVisitor {
+        type Value = Vec<PlayerColors>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("an object with integer keys")
+        }
+
+        fn visit_map<A: serde::de::MapAccess<'de>>(
+            self,
+            mut map: A,
+        ) -> Result<Self::Value, A::Error> {
+            let mut players = Vec::with_capacity(8);
+            while let Some((key, value)) = map.next_entry::<usize, PlayerColors>()? {
+                if key < 8 {
+                    players.push(value);
+                } else {
+                    return Err(serde::de::Error::invalid_value(
+                        serde::de::Unexpected::Unsigned(key as u64),
+                        &"a key in range 0..7",
+                    ));
+                }
+            }
+            Ok(players)
+        }
+    }
+
+    deserializer.deserialize_map(PlayerArrayVisitor)
 }
 
-impl ThemeColors {
-    fn current(cx: &AppContext) -> &Self {
-        cx.global::<Vec<Self>>()
-            .last()
-            .expect("must call within a theme provider")
-    }
+fn deserialize_syntax_colors<'de, D>(deserializer: D) -> Result<HashMap<String, Hsla>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct SyntaxVisitor;
 
-    pub fn base(&self, level: f32) -> Hsla {
-        self.base.lerp(level)
-    }
+    impl<'de> Visitor<'de> for SyntaxVisitor {
+        type Value = HashMap<String, Hsla>;
 
-    pub fn surface(&self, level: f32) -> Hsla {
-        self.surface.lerp(level)
-    }
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a map with keys and objects with a single color field as values")
+        }
 
-    pub fn overlay(&self, level: f32) -> Hsla {
-        self.overlay.lerp(level)
+        fn visit_map<M>(self, mut map: M) -> Result<HashMap<String, Hsla>, M::Error>
+        where
+            M: serde::de::MapAccess<'de>,
+        {
+            let mut result = HashMap::new();
+            while let Some(key) = map.next_key()? {
+                let hsla: Hsla = map.next_value()?; // Deserialize values as Hsla
+                result.insert(key, hsla);
+            }
+            Ok(result)
+        }
     }
-
-    pub fn muted(&self, level: f32) -> Hsla {
-        self.muted.lerp(level)
-    }
-
-    pub fn subtle(&self, level: f32) -> Hsla {
-        self.subtle.lerp(level)
-    }
-
-    pub fn text(&self, level: f32) -> Hsla {
-        self.text.lerp(level)
-    }
-
-    pub fn highlight_low(&self, level: f32) -> Hsla {
-        self.highlight_low.lerp(level)
-    }
-
-    pub fn highlight_med(&self, level: f32) -> Hsla {
-        self.highlight_med.lerp(level)
-    }
-
-    pub fn highlight_high(&self, level: f32) -> Hsla {
-        self.highlight_high.lerp(level)
-    }
-
-    pub fn success(&self, level: f32) -> Hsla {
-        self.success.lerp(level)
-    }
-
-    pub fn warning(&self, level: f32) -> Hsla {
-        self.warning.lerp(level)
-    }
-
-    pub fn error(&self, level: f32) -> Hsla {
-        self.error.lerp(level)
-    }
-
-    pub fn inserted(&self, level: f32) -> Hsla {
-        self.inserted.lerp(level)
-    }
-
-    pub fn deleted(&self, level: f32) -> Hsla {
-        self.deleted.lerp(level)
-    }
-
-    pub fn modified(&self, level: f32) -> Hsla {
-        self.modified.lerp(level)
-    }
+    deserializer.deserialize_map(SyntaxVisitor)
 }
 
 pub struct Themed<V: 'static, E> {
