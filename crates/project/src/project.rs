@@ -4438,21 +4438,27 @@ impl Project {
         let position = position.to_point_utf16(buffer.read(cx));
         let server_ids: Vec<_> = self
             .language_servers_for_buffer(buffer.read(cx), cx)
+            .filter(|(_, server)| server.capabilities().completion_provider.is_some())
             .map(|(_, server)| server.server_id())
             .collect();
 
         let buffer = buffer.clone();
         cx.spawn(|this, mut cx| async move {
+            let mut tasks = Vec::with_capacity(server_ids.len());
+            this.update(&mut cx, |this, cx| {
+                for server_id in server_ids {
+                    tasks.push(this.request_lsp(
+                        buffer.clone(),
+                        server_id,
+                        GetCompletions { position },
+                        cx,
+                    ));
+                }
+            });
+
             let mut completions = Vec::new();
-
-            for server_id in server_ids {
-                let new_completions = this
-                    .update(&mut cx, |this, cx| {
-                        this.request_lsp(buffer.clone(), server_id, GetCompletions { position }, cx)
-                    })
-                    .await;
-
-                if let Ok(new_completions) = new_completions {
+            for task in tasks {
+                if let Ok(new_completions) = task.await {
                     completions.extend_from_slice(&new_completions);
                 }
             }
