@@ -102,14 +102,20 @@ dependencies = [
  "anyhow",
  "chrono",
  "collections",
+ "ctor",
  "editor",
+ "env_logger 0.9.3",
  "fs",
  "futures 0.3.28",
  "gpui",
+ "indoc",
  "isahc",
  "language",
+ "log",
  "menu",
+ "ordered-float",
  "project",
+ "rand 0.8.5",
  "regex",
  "schemars",
  "search",
@@ -5649,6 +5655,7 @@ dependencies = [
 name = "quick_action_bar"
 version = "0.1.0"
 dependencies = [
+ "ai",
  "editor",
  "gpui",
  "search",

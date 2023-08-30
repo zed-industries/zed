@@ -1,5 +1,5 @@
 import { text, border, background, foreground, TextStyle } from "./components"
-import { Interactive, interactive } from "../element"
+import { Interactive, interactive, toggleable } from "../element"
 import { tab_bar_button } from "../component/tab_bar_button"
 import { StyleSets, useTheme } from "../theme"
 
@@ -58,6 +58,85 @@ export default function assistant(): any {
         container: {
             background: background(theme.highest),
             padding: { left: 12 },
+        },
+        inline: {
+            background: background(theme.highest),
+            margin: { top: 3, bottom: 3 },
+            border: border(theme.lowest, "on", {
+                top: true,
+                bottom: true,
+                overlay: true,
+            }),
+            editor: {
+                text: text(theme.highest, "mono", "default", { size: "sm" }),
+                placeholder_text: text(theme.highest, "sans", "on", "disabled"),
+                selection: theme.players[0],
+            },
+            disabled_editor: {
+                text: text(theme.highest, "mono", "disabled", { size: "sm" }),
+                placeholder_text: text(theme.highest, "sans", "on", "disabled"),
+                selection: {
+                    cursor: text(theme.highest, "mono", "disabled").color,
+                    selection: theme.players[0].selection,
+                },
+            },
+            pending_edit_background: background(theme.highest, "positive"),
+            include_conversation: toggleable({
+                base: interactive({
+                    base: {
+                        icon_size: 12,
+                        color: foreground(theme.highest, "variant"),
+
+                        button_width: 12,
+                        background: background(theme.highest, "on"),
+                        corner_radius: 2,
+                        border: {
+                            width: 1., color: background(theme.highest, "on")
+                        },
+                        padding: {
+                            left: 4,
+                            right: 4,
+                            top: 4,
+                            bottom: 4,
+                        },
+                    },
+                    state: {
+                        hovered: {
+                            ...text(theme.highest, "mono", "variant", "hovered"),
+                            background: background(theme.highest, "on", "hovered"),
+                            border: {
+                                width: 1., color: background(theme.highest, "on", "hovered")
+                            },
+                        },
+                        clicked: {
+                            ...text(theme.highest, "mono", "variant", "pressed"),
+                            background: background(theme.highest, "on", "pressed"),
+                            border: {
+                                width: 1., color: background(theme.highest, "on", "pressed")
+                            },
+                        },
+                    },
+                }),
+                state: {
+                    active: {
+                        default: {
+                            icon_size: 12,
+                            button_width: 12,
+                            color: foreground(theme.highest, "variant"),
+                            background: background(theme.highest, "accent"),
+                            border: border(theme.highest, "accent"),
+                        },
+                        hovered: {
+                            background: background(theme.highest, "accent", "hovered"),
+                            border: border(theme.highest, "accent", "hovered"),
+                        },
+                        clicked: {
+                            background: background(theme.highest, "accent", "pressed"),
+                            border: border(theme.highest, "accent", "pressed"),
+                        },
+                    },
+                },
+            }),
         },
         message_header: {
             margin: { bottom: 4, top: 4 },

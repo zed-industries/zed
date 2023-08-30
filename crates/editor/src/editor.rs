@@ -1635,6 +1635,15 @@ impl Editor {
         self.read_only = read_only;
     }
 
+    pub fn set_field_editor_style(
+        &mut self,
+        style: Option<Arc<GetFieldEditorTheme>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.get_field_editor_theme = style;
+        cx.notify();
+    }
+
     pub fn replica_id_map(&self) -> Option<&HashMap<ReplicaId, ReplicaId>> {
         self.replica_id_mapping.as_ref()
     }
@@ -4989,6 +4998,9 @@ impl Editor {
             self.unmark_text(cx);
             self.refresh_copilot_suggestions(true, cx);
             cx.emit(Event::Edited);
+            cx.emit(Event::TransactionUndone {
+                transaction_id: tx_id,
+            });
         }
     }
 
@@ -8428,6 +8440,9 @@ pub enum Event {
         local: bool,
         autoscroll: bool,
     },
+    TransactionUndone {
+        transaction_id: TransactionId,
+    },
     Closed,
 }
 
@@ -8468,7 +8483,7 @@ impl View for Editor {
         "Editor"
     }
 
-    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
         if cx.is_self_focused() {
             let focused_event = EditorFocused(cx.handle());
             cx.emit(Event::Focused);
@@ -8476,7 +8491,7 @@ impl View for Editor {
         }
         if let Some(rename) = self.pending_rename.as_ref() {
             cx.focus(&rename.editor);
-        } else {
+        } else if cx.is_self_focused() || !focused.is::<Editor>() {
             if !self.focused {
                 self.blink_manager.update(cx, BlinkManager::enable);
             }

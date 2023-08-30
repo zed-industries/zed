@@ -530,7 +530,8 @@
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",
       "cmd-f8": "editor::GoToHunk",
-      "cmd-shift-f8": "editor::GoToPrevHunk"
+      "cmd-shift-f8": "editor::GoToPrevHunk",
+      "ctrl-enter": "assistant::InlineAssist"
     }
   },
   {

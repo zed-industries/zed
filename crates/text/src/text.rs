@@ -22,6 +22,7 @@ use postage::{oneshot, prelude::*};
 
 pub use rope::*;
 pub use selection::*;
+use util::ResultExt;
 
 use std::{
     cmp::{self, Ordering, Reverse},
@@ -263,7 +264,19 @@ impl History {
         }
     }
 
-    fn remove_from_undo(&mut self, transaction_id: TransactionId) -> &[HistoryEntry] {
+    fn remove_from_undo(&mut self, transaction_id: TransactionId) -> Option<&HistoryEntry> {
+        assert_eq!(self.transaction_depth, 0);
+
+        let entry_ix = self
+            .undo_stack
+            .iter()
+            .rposition(|entry| entry.transaction.id == transaction_id)?;
+        let entry = self.undo_stack.remove(entry_ix);
+        self.redo_stack.push(entry);
+        self.redo_stack.last()
+    }
+
+    fn remove_from_undo_until(&mut self, transaction_id: TransactionId) -> &[HistoryEntry] {
         assert_eq!(self.transaction_depth, 0);
 
         let redo_stack_start_len = self.redo_stack.len();
@@ -278,20 +291,43 @@ impl History {
         &self.redo_stack[redo_stack_start_len..]
     }
 
-    fn forget(&mut self, transaction_id: TransactionId) {
+    fn forget(&mut self, transaction_id: TransactionId) -> Option<Transaction> {
         assert_eq!(self.transaction_depth, 0);
         if let Some(entry_ix) = self
             .undo_stack
             .iter()
             .rposition(|entry| entry.transaction.id == transaction_id)
         {
-            self.undo_stack.remove(entry_ix);
+            Some(self.undo_stack.remove(entry_ix).transaction)
         } else if let Some(entry_ix) = self
             .redo_stack
             .iter()
             .rposition(|entry| entry.transaction.id == transaction_id)
         {
-            self.undo_stack.remove(entry_ix);
+            Some(self.redo_stack.remove(entry_ix).transaction)
+        } else {
+            None
+        }
+    }
+
+    fn transaction_mut(&mut self, transaction_id: TransactionId) -> Option<&mut Transaction> {
+        let entry = self
+            .undo_stack
+            .iter_mut()
+            .rfind(|entry| entry.transaction.id == transaction_id)
+            .or_else(|| {
+                self.redo_stack
+                    .iter_mut()
+                    .rfind(|entry| entry.transaction.id == transaction_id)
+            })?;
+        Some(&mut entry.transaction)
+    }
+
+    fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
+        if let Some(transaction) = self.forget(transaction) {
+            if let Some(destination) = self.transaction_mut(destination) {
+                destination.edit_ids.extend(transaction.edit_ids);
+            }
         }
     }
 
@@ -1183,11 +1219,20 @@ impl Buffer {
         }
     }
 
+    pub fn undo_transaction(&mut self, transaction_id: TransactionId) -> Option<Operation> {
+        let transaction = self
+            .history
+            .remove_from_undo(transaction_id)?
+            .transaction
+            .clone();
+        self.undo_or_redo(transaction).log_err()
+    }
+
     #[allow(clippy::needless_collect)]
     pub fn undo_to_transaction(&mut self, transaction_id: TransactionId) -> Vec<Operation> {
         let transactions = self
             .history
-            .remove_from_undo(transaction_id)
+            .remove_from_undo_until(transaction_id)
             .iter()
             .map(|entry| entry.transaction.clone())
             .collect::<Vec<_>>();
@@ -1200,6 +1245,10 @@ impl Buffer {
 
     pub fn forget_transaction(&mut self, transaction_id: TransactionId) {
         self.history.forget(transaction_id);
+    }
+
+    pub fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
+        self.history.merge_transactions(transaction, destination);
     }
 
     pub fn redo(&mut self) -> Option<(TransactionId, Operation)> {
