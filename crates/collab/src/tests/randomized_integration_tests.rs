@@ -762,7 +762,7 @@ async fn apply_client_operation(
 
                 client
                     .fs()
-                    .save(&path, &content.as_str().into(), fs::LineEnding::Unix)
+                    .save(&path, &content.as_str().into(), text::LineEnding::Unix)
                     .await
                     .unwrap();
             }

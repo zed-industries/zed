@@ -9,7 +9,7 @@ use editor::{
     test::editor_test_context::EditorTestContext, ConfirmCodeAction, ConfirmCompletion,
     ConfirmRename, Editor, ExcerptRange, MultiBuffer, Redo, Rename, ToggleCodeActions, Undo,
 };
-use fs::{repository::GitFileStatus, FakeFs, Fs as _, LineEnding, RemoveOptions};
+use fs::{repository::GitFileStatus, FakeFs, Fs as _, RemoveOptions};
 use futures::StreamExt as _;
 use gpui::{
     executor::Deterministic, geometry::vector::vec2f, test::EmptyView, AppContext, ModelHandle,
@@ -19,7 +19,7 @@ use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, Formatter, InlayHintSettings},
     tree_sitter_rust, Anchor, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
-    LanguageConfig, OffsetRangeExt, Point, Rope,
+    LanguageConfig, LineEnding, OffsetRangeExt, Point, Rope,
 };
 use live_kit_client::MacOSDisplay;
 use lsp::LanguageServerId;

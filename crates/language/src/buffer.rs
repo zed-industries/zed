@@ -15,7 +15,6 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 pub use clock::ReplicaId;
-use fs::LineEnding;
 use futures::FutureExt as _;
 use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, Task};
 use lsp::LanguageServerId;

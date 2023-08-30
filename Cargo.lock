@@ -2768,6 +2768,7 @@ dependencies = [
  "smol",
  "sum_tree",
  "tempfile",
+ "text",
  "time 0.3.27",
  "util",
 ]
@@ -7636,7 +7637,6 @@ dependencies = [
  "ctor",
  "digest 0.9.0",
  "env_logger 0.9.3",
- "fs",
  "gpui",
  "lazy_static",
  "log",
