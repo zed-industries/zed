@@ -247,42 +247,37 @@ impl CollabTitlebarItem {
         );
         if let Some(git_branch) = branch_prepended {
             ret = ret.with_child(
-                Flex::row()
-                    .with_child(
-                        Stack::new()
-                            .with_child(
-                                MouseEventHandler::new::<ToggleVcsMenu, _>(
-                                    0,
-                                    cx,
-                                    |mouse_state, cx| {
-                                        enum BranchPopoverTooltip {}
-                                        let style = git_style
-                                            .in_state(self.branch_popover.is_some())
-                                            .style_for(mouse_state);
-                                        Label::new(git_branch, style.text.clone())
-                                            .contained()
-                                            .with_style(style.container.clone())
-                                            .with_margin_right(item_spacing)
-                                            .aligned()
-                                            .left()
-                                            .with_tooltip::<BranchPopoverTooltip>(
-                                                0,
-                                                "Recent branches",
-                                                Some(Box::new(ToggleVcsMenu)),
-                                                theme.tooltip.clone(),
-                                                cx,
-                                            )
-                                            .into_any_named("title-project-branch")
-                                    },
-                                )
-                                .with_cursor_style(CursorStyle::PointingHand)
-                                .on_down(MouseButton::Left, move |_, this, cx| {
-                                    this.toggle_vcs_menu(&Default::default(), cx)
-                                })
-                                .on_click(MouseButton::Left, move |_, _, _| {}),
-                            )
-                            .with_children(self.render_branches_popover_host(&theme.titlebar, cx)),
-                    ),
+                Flex::row().with_child(
+                    Stack::new()
+                        .with_child(
+                            MouseEventHandler::new::<ToggleVcsMenu, _>(0, cx, |mouse_state, cx| {
+                                enum BranchPopoverTooltip {}
+                                let style = git_style
+                                    .in_state(self.branch_popover.is_some())
+                                    .style_for(mouse_state);
+                                Label::new(git_branch, style.text.clone())
+                                    .contained()
+                                    .with_style(style.container.clone())
+                                    .with_margin_right(item_spacing)
+                                    .aligned()
+                                    .left()
+                                    .with_tooltip::<BranchPopoverTooltip>(
+                                        0,
+                                        "Recent branches",
+                                        Some(Box::new(ToggleVcsMenu)),
+                                        theme.tooltip.clone(),
+                                        cx,
+                                    )
+                                    .into_any_named("title-project-branch")
+                            })
+                            .with_cursor_style(CursorStyle::PointingHand)
+                            .on_down(MouseButton::Left, move |_, this, cx| {
+                                this.toggle_vcs_menu(&Default::default(), cx)
+                            })
+                            .on_click(MouseButton::Left, move |_, _, _| {}),
+                        )
+                        .with_children(self.render_branches_popover_host(&theme.titlebar, cx)),
+                ),
             )
         }
         ret.into_any()
