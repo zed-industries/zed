@@ -712,7 +712,7 @@ impl AssistantPanel {
                     futures::pin_mut!(chunks);
                     let mut diff = StreamingDiff::new(selected_text.to_string());
 
-                    let indent_len;
+                    let mut indent_len;
                     let indent_text;
                     if let Some(base_indent) = base_indent {
                         indent_len = base_indent.len;
@@ -725,30 +725,43 @@ impl AssistantPanel {
                         indent_text = "";
                     };
 
-                    let mut autoindent = true;
-                    let mut first_chunk = true;
+                    let mut first_line_len = 0;
+                    let mut first_line_non_whitespace_char_ix = None;
+                    let mut first_line = true;
                     let mut new_text = String::new();
 
                     while let Some(chunk) = chunks.next().await {
                         let chunk = chunk?;
-                        if first_chunk && (chunk.starts_with(' ') || chunk.starts_with('\t')) {
-                            autoindent = false;
-                        }
-
-                        if first_chunk && autoindent {
-                            let first_line_indent =
-                                indent_len.saturating_sub(selection_start.column) as usize;
-                            new_text = indent_text.repeat(first_line_indent);
-                        }
 
                         let mut lines = chunk.split('\n');
-                        if let Some(first_line) = lines.next() {
-                            new_text.push_str(first_line);
+                        if let Some(mut line) = lines.next() {
+                            if first_line {
+                                if first_line_non_whitespace_char_ix.is_none() {
+                                    if let Some(mut char_ix) =
+                                        line.find(|ch: char| !ch.is_whitespace())
+                                    {
+                                        line = &line[char_ix..];
+                                        char_ix += first_line_len;
+                                        first_line_non_whitespace_char_ix = Some(char_ix);
+                                        let first_line_indent = char_ix
+                                            .saturating_sub(selection_start.column as usize)
+                                            as usize;
+                                        new_text.push_str(&indent_text.repeat(first_line_indent));
+                                        indent_len = indent_len.saturating_sub(char_ix as u32);
+                                    }
+                                }
+                                first_line_len += line.len();
+                            }
+
+                            if first_line_non_whitespace_char_ix.is_some() {
+                                new_text.push_str(line);
+                            }
                         }
 
                         for line in lines {
+                            first_line = false;
                             new_text.push('\n');
-                            if !line.is_empty() && autoindent {
+                            if !line.is_empty() {
                                 new_text.push_str(&indent_text.repeat(indent_len as usize));
                             }
                             new_text.push_str(line);
@@ -757,7 +770,6 @@ impl AssistantPanel {
                         let hunks = diff.push_new(&new_text);
                         hunks_tx.send(hunks).await?;
                         new_text.clear();
-                        first_chunk = false;
                     }
                     hunks_tx.send(diff.finish()).await?;
 
