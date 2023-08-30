@@ -1228,6 +1228,10 @@ impl EmbeddingProvider for FakeEmbeddingProvider {
         span.len()
     }
 
+    fn should_truncate(&self, span: &str) -> bool {
+        false
+    }
+
     async fn embed_batch(&self, spans: Vec<&str>) -> Result<Vec<Vec<f32>>> {
         self.embedding_count
             .fetch_add(spans.len(), atomic::Ordering::SeqCst);

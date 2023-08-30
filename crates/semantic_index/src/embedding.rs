@@ -55,6 +55,7 @@ struct OpenAIEmbeddingUsage {
 pub trait EmbeddingProvider: Sync + Send {
     async fn embed_batch(&self, spans: Vec<&str>) -> Result<Vec<Vec<f32>>>;
     fn count_tokens(&self, span: &str) -> usize;
+    fn should_truncate(&self, span: &str) -> bool;
     // fn truncate(&self, span: &str) -> Result<&str>;
 }
 
@@ -73,6 +74,20 @@ impl EmbeddingProvider for DummyEmbeddings {
         // For Dummy Providers, we are going to use OpenAI tokenization for ease
         let tokens = OPENAI_BPE_TOKENIZER.encode_with_special_tokens(span);
         tokens.len()
+    }
+
+    fn should_truncate(&self, span: &str) -> bool {
+        self.count_tokens(span) > OPENAI_INPUT_LIMIT
+
+        // let tokens = OPENAI_BPE_TOKENIZER.encode_with_special_tokens(span);
+        // let Ok(output) = {
+        //     if tokens.len() > OPENAI_INPUT_LIMIT {
+        //         tokens.truncate(OPENAI_INPUT_LIMIT);
+        //         OPENAI_BPE_TOKENIZER.decode(tokens)
+        //     } else {
+        //         Ok(span)
+        //     }
+        // };
     }
 }
 
@@ -123,6 +138,10 @@ impl EmbeddingProvider for OpenAIEmbeddings {
         // For Dummy Providers, we are going to use OpenAI tokenization for ease
         let tokens = OPENAI_BPE_TOKENIZER.encode_with_special_tokens(span);
         tokens.len()
+    }
+
+    fn should_truncate(&self, span: &str) -> bool {
+        self.count_tokens(span) > OPENAI_INPUT_LIMIT
     }
 
     async fn embed_batch(&self, spans: Vec<&str>) -> Result<Vec<Vec<f32>>> {
