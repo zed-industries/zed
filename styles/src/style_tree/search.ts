@@ -31,7 +31,7 @@ export default function search(): any {
         text: text(theme.highest, "mono", "default"),
         border: border(theme.highest),
         margin: {
-            right: 9,
+            right: SEARCH_ROW_SPACING,
         },
         padding: {
             top: 4,
@@ -48,7 +48,7 @@ export default function search(): any {
     }
 
     return {
-        padding: { top: 4, bottom: 4 },
+        padding: { top: 0, bottom: 0 },
 
         option_button: toggleable({
             base: interactive({
@@ -60,7 +60,8 @@ export default function search(): any {
                     corner_radius: 2,
                     margin: { right: 2 },
                     border: {
-                        width: 1., color: background(theme.highest, "on")
+                        width: 1,
+                        color: background(theme.highest, "on"),
                     },
                     padding: {
                         left: 4,
@@ -74,14 +75,16 @@ export default function search(): any {
                         ...text(theme.highest, "mono", "variant", "hovered"),
                         background: background(theme.highest, "on", "hovered"),
                         border: {
-                            width: 1., color: background(theme.highest, "on", "hovered")
+                            width: 1,
+                            color: background(theme.highest, "on", "hovered"),
                         },
                     },
                     clicked: {
                         ...text(theme.highest, "mono", "variant", "pressed"),
                         background: background(theme.highest, "on", "pressed"),
                         border: {
-                            width: 1., color: background(theme.highest, "on", "pressed")
+                            width: 1,
+                            color: background(theme.highest, "on", "pressed"),
                         },
                     },
                 },
@@ -96,11 +99,19 @@ export default function search(): any {
                         border: border(theme.highest, "accent"),
                     },
                     hovered: {
-                        background: background(theme.highest, "accent", "hovered"),
+                        background: background(
+                            theme.highest,
+                            "accent",
+                            "hovered"
+                        ),
                         border: border(theme.highest, "accent", "hovered"),
                     },
                     clicked: {
-                        background: background(theme.highest, "accent", "pressed"),
+                        background: background(
+                            theme.highest,
+                            "accent",
+                            "pressed"
+                        ),
                         border: border(theme.highest, "accent", "pressed"),
                     },
                 },
@@ -117,7 +128,8 @@ export default function search(): any {
                     corner_radius: 2,
                     margin: { right: 2 },
                     border: {
-                        width: 1., color: background(theme.highest, "on")
+                        width: 1,
+                        color: background(theme.highest, "on"),
                     },
                     padding: {
                         left: 4,
@@ -131,14 +143,16 @@ export default function search(): any {
                         ...text(theme.highest, "mono", "variant", "hovered"),
                         background: background(theme.highest, "on", "hovered"),
                         border: {
-                            width: 1., color: background(theme.highest, "on", "hovered")
+                            width: 1,
+                            color: background(theme.highest, "on", "hovered"),
                         },
                     },
                     clicked: {
                         ...text(theme.highest, "mono", "variant", "pressed"),
                         background: background(theme.highest, "on", "pressed"),
                         border: {
-                            width: 1., color: background(theme.highest, "on", "pressed")
+                            width: 1,
+                            color: background(theme.highest, "on", "pressed"),
                         },
                     },
                 },
@@ -153,11 +167,19 @@ export default function search(): any {
                         border: border(theme.highest, "accent"),
                     },
                     hovered: {
-                        background: background(theme.highest, "accent", "hovered"),
+                        background: background(
+                            theme.highest,
+                            "accent",
+                            "hovered"
+                        ),
                         border: border(theme.highest, "accent", "hovered"),
                     },
                     clicked: {
-                        background: background(theme.highest, "accent", "pressed"),
+                        background: background(
+                            theme.highest,
+                            "accent",
+                            "pressed"
+                        ),
                         border: border(theme.highest, "accent", "pressed"),
                     },
                 },
@@ -168,9 +190,20 @@ export default function search(): any {
         // Disabled elements should use a disabled state of an interactive element, not a toggleable element with the inactive state being disabled
         action_button: toggleable({
             state: {
-                inactive: text_button({ variant: "ghost", layer: theme.highest, disabled: true, margin: { right: SEARCH_ROW_SPACING }, text_properties: { size: "sm" } }),
-                active: text_button({ variant: "ghost", layer: theme.highest, margin: { right: SEARCH_ROW_SPACING }, text_properties: { size: "sm" } })
-            }
+                inactive: text_button({
+                    variant: "ghost",
+                    layer: theme.highest,
+                    disabled: true,
+                    margin: { right: SEARCH_ROW_SPACING },
+                    text_properties: { size: "sm" },
+                }),
+                active: text_button({
+                    variant: "ghost",
+                    layer: theme.highest,
+                    margin: { right: SEARCH_ROW_SPACING },
+                    text_properties: { size: "sm" },
+                }),
+            },
         }),
         editor,
         invalid_editor: {
@@ -216,12 +249,12 @@ export default function search(): any {
                 dimensions: {
                     width: 14,
                     height: 14,
-                }
+                },
             },
             container: {
                 margin: { right: 4 },
                 padding: { left: 1, right: 1 },
-            }
+            },
         },
         // Toggle group buttons - Text | Regex | Semantic
         mode_button: toggleable({
@@ -233,27 +266,39 @@ export default function search(): any {
                     border: {
                         ...border(theme.highest, "on"),
                         left: false,
-                        right: false
+                        right: false,
                     },
                     margin: {
                         top: 1,
                         bottom: 1,
                     },
                     padding: {
-                        left: 12,
-                        right: 12,
+                        left: 10,
+                        right: 10,
                     },
                     corner_radius: 6,
                 },
                 state: {
                     hovered: {
-                        ...text(theme.highest, "mono", "variant", "hovered", { size: "sm" }),
-                        background: background(theme.highest, "variant", "hovered"),
+                        ...text(theme.highest, "mono", "variant", "hovered", {
+                            size: "sm",
+                        }),
+                        background: background(
+                            theme.highest,
+                            "variant",
+                            "hovered"
+                        ),
                         border: border(theme.highest, "on", "hovered"),
                     },
                     clicked: {
-                        ...text(theme.highest, "mono", "variant", "pressed", { size: "sm" }),
-                        background: background(theme.highest, "variant", "pressed"),
+                        ...text(theme.highest, "mono", "variant", "pressed", {
+                            size: "sm",
+                        }),
+                        background: background(
+                            theme.highest,
+                            "variant",
+                            "pressed"
+                        ),
                         border: border(theme.highest, "on", "pressed"),
                     },
                 },
@@ -262,15 +307,19 @@ export default function search(): any {
                 active: {
                     default: {
                         ...text(theme.highest, "mono", "on", { size: "sm" }),
-                        background: background(theme.highest, "on")
+                        background: background(theme.highest, "on"),
                     },
                     hovered: {
-                        ...text(theme.highest, "mono", "on", "hovered", { size: "sm" }),
-                        background: background(theme.highest, "on", "hovered")
+                        ...text(theme.highest, "mono", "on", "hovered", {
+                            size: "sm",
+                        }),
+                        background: background(theme.highest, "on", "hovered"),
                     },
                     clicked: {
-                        ...text(theme.highest, "mono", "on", "pressed", { size: "sm" }),
-                        background: background(theme.highest, "on", "pressed")
+                        ...text(theme.highest, "mono", "on", "pressed", {
+                            size: "sm",
+                        }),
+                        background: background(theme.highest, "on", "pressed"),
                     },
                 },
             },
@@ -300,8 +349,8 @@ export default function search(): any {
                         },
                     },
                     state: {
-                        hovered: {}
-                    }
+                        hovered: {},
+                    },
                 }),
                 active: interactive({
                     base: {
@@ -325,22 +374,30 @@ export default function search(): any {
                     state: {
                         hovered: {
                             ...text(theme.highest, "mono", "on", "hovered"),
-                            background: background(theme.highest, "on", "hovered"),
+                            background: background(
+                                theme.highest,
+                                "on",
+                                "hovered"
+                            ),
                             border: border(theme.highest, "on", "hovered"),
                         },
                         clicked: {
                             ...text(theme.highest, "mono", "on", "pressed"),
-                            background: background(theme.highest, "on", "pressed"),
+                            background: background(
+                                theme.highest,
+                                "on",
+                                "pressed"
+                            ),
                             border: border(theme.highest, "on", "pressed"),
                         },
                     },
-                })
-            }
+                }),
+            },
         }),
-        search_bar_row_height: 34,
+        search_bar_row_height: 32,
         search_row_spacing: 8,
         option_button_height: 22,
         modes_container: {},
-        ...search_results()
+        ...search_results(),
     }
 }

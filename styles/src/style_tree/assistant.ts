@@ -8,50 +8,48 @@ type RoleCycleButton = TextStyle & {
 }
 // TODO: Replace these with zed types
 type RemainingTokens = TextStyle & {
-    background: string,
-    margin: { top: number, right: number },
+    background: string
+    margin: { top: number; right: number }
     padding: {
-        right: number,
-        left: number,
-        top: number,
-        bottom: number,
-    },
-    corner_radius: number,
+        right: number
+        left: number
+        top: number
+        bottom: number
+    }
+    corner_radius: number
 }
 
 export default function assistant(): any {
     const theme = useTheme()
 
-    const interactive_role = (color: StyleSets): Interactive<RoleCycleButton> => {
-        return (
-            interactive({
-                base: {
+    const interactive_role = (
+        color: StyleSets
+    ): Interactive<RoleCycleButton> => {
+        return interactive({
+            base: {
+                ...text(theme.highest, "sans", color, { size: "sm" }),
+            },
+            state: {
+                hovered: {
                     ...text(theme.highest, "sans", color, { size: "sm" }),
+                    background: background(theme.highest, color, "hovered"),
                 },
-                state: {
-                    hovered: {
-                        ...text(theme.highest, "sans", color, { size: "sm" }),
-                        background: background(theme.highest, color, "hovered"),
-                    },
-                    clicked: {
-                        ...text(theme.highest, "sans", color, { size: "sm" }),
-                        background: background(theme.highest, color, "pressed"),
-                    }
+                clicked: {
+                    ...text(theme.highest, "sans", color, { size: "sm" }),
+                    background: background(theme.highest, color, "pressed"),
                 },
-            })
-        )
+            },
+        })
     }
 
     const tokens_remaining = (color: StyleSets): RemainingTokens => {
-        return (
-            {
-                ...text(theme.highest, "mono", color, { size: "xs" }),
-                background: background(theme.highest, "on", "default"),
-                margin: { top: 12, right: 20 },
-                padding: { right: 4, left: 4, top: 1, bottom: 1 },
-                corner_radius: 6,
-            }
-        )
+        return {
+            ...text(theme.highest, "mono", color, { size: "xs" }),
+            background: background(theme.highest, "on", "default"),
+            margin: { top: 12, right: 20 },
+            padding: { right: 4, left: 4, top: 1, bottom: 1 },
+            corner_radius: 6,
+        }
     }
 
     return {
@@ -172,7 +170,10 @@ export default function assistant(): any {
                 base: {
                     background: background(theme.middle),
                     padding: { top: 4, bottom: 4 },
-                    border: border(theme.middle, "default", { top: true, overlay: true }),
+                    border: border(theme.middle, "default", {
+                        top: true,
+                        overlay: true,
+                    }),
                 },
                 state: {
                     hovered: {
@@ -180,7 +181,7 @@ export default function assistant(): any {
                     },
                     clicked: {
                         background: background(theme.middle, "pressed"),
-                    }
+                    },
                 },
             }),
             saved_at: {

@@ -64,17 +64,17 @@ export default function project_panel(): any {
         const unselected_default_style = merge(
             base_properties,
             unselected?.default ?? {},
-            {},
+            {}
         )
         const unselected_hovered_style = merge(
             base_properties,
             { background: background(theme.middle, "hovered") },
-            unselected?.hovered ?? {},
+            unselected?.hovered ?? {}
         )
         const unselected_clicked_style = merge(
             base_properties,
             { background: background(theme.middle, "pressed") },
-            unselected?.clicked ?? {},
+            unselected?.clicked ?? {}
         )
         const selected_default_style = merge(
             base_properties,
@@ -82,7 +82,7 @@ export default function project_panel(): any {
                 background: background(theme.lowest),
                 text: text(theme.lowest, "sans", { size: "sm" }),
             },
-            selected_style?.default ?? {},
+            selected_style?.default ?? {}
         )
         const selected_hovered_style = merge(
             base_properties,
@@ -90,7 +90,7 @@ export default function project_panel(): any {
                 background: background(theme.lowest, "hovered"),
                 text: text(theme.lowest, "sans", { size: "sm" }),
             },
-            selected_style?.hovered ?? {},
+            selected_style?.hovered ?? {}
         )
         const selected_clicked_style = merge(
             base_properties,
@@ -98,7 +98,7 @@ export default function project_panel(): any {
                 background: background(theme.lowest, "pressed"),
                 text: text(theme.lowest, "sans", { size: "sm" }),
             },
-            selected_style?.clicked ?? {},
+            selected_style?.clicked ?? {}
         )
 
         return toggleable({
@@ -175,7 +175,7 @@ export default function project_panel(): any {
                 default: {
                     icon_color: foreground(theme.middle, "variant"),
                 },
-            },
+            }
         ),
         cut_entry: entry(
             {
@@ -190,7 +190,7 @@ export default function project_panel(): any {
                         size: "sm",
                     }),
                 },
-            },
+            }
         ),
         filename_editor: {
             background: background(theme.middle, "on"),
