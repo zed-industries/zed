@@ -121,7 +121,7 @@ impl EmbeddingQueue {
                             &mut fragment.file.lock().documents[fragment.document_range.clone()]
                         {
                             if let Some(embedding) = embeddings.next() {
-                                document.embedding = embedding;
+                                document.embedding = Some(embedding);
                             } else {
                                 //
                                 log::error!("number of embeddings returned different from number of documents");
