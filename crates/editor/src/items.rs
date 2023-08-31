@@ -988,11 +988,15 @@ impl SearchableItem for Editor {
         let text = self.buffer.read(cx);
         let text = text.snapshot(cx);
         let text = text.text_for_range(identifier.clone()).collect::<Vec<_>>();
-        // assert_eq!(text.len(), 1);
-        for txt in &text {
-            if let Some(replacement) = query.replacement(txt) {
-                self.edit([(identifier.clone(), Arc::from(&*replacement))], cx);
-            }
+        let text: Cow<_> = if text.len() == 1 {
+            text.first().cloned().unwrap().into()
+        } else {
+            let joined_chunks = text.join("");
+            joined_chunks.into()
+        };
+
+        if let Some(replacement) = query.replacement(&text) {
+            self.edit([(identifier.clone(), Arc::from(&*replacement))], cx);
         }
     }
     fn match_index_for_direction(

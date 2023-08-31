@@ -1630,4 +1630,60 @@ mod tests {
             assert_eq!(search_bar.search_options, SearchOptions::NONE);
         });
     }
+    #[gpui::test]
+    async fn test_replace_simple(cx: &mut TestAppContext) {
+        let (editor, search_bar) = init_test(cx);
+
+        search_bar
+            .update(cx, |search_bar, cx| {
+                search_bar.search("expression", None, cx)
+            })
+            .await
+            .unwrap();
+
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.replacement_editor.update(cx, |editor, cx| {
+                // We use $1 here as initially we should be in Text mode, where `$1` should be treated literally.
+                editor.set_text("expr$1", cx);
+            });
+            search_bar.replace_all(&ReplaceAll, cx)
+        });
+        assert_eq!(
+            editor.read_with(cx, |this, cx| { this.text(cx) }),
+            r#"
+        A regular expr$1 (shortened as regex or regexp;[1] also referred to as
+        rational expr$1[2][3]) is a sequence of characters that specifies a search
+        pattern in text. Usually such patterns are used by string-searching algorithms
+        for "find" or "find and replace" operations on strings, or for input validation.
+        "#
+            .unindent()
+        );
+
+        // Search for word boundaries and replace just a single one.
+        search_bar
+            .update(cx, |search_bar, cx| {
+                search_bar.search("or", Some(SearchOptions::WHOLE_WORD), cx)
+            })
+            .await
+            .unwrap();
+
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.select_match(Direction::Prev, 1, cx);
+            search_bar.replacement_editor.update(cx, |editor, cx| {
+                editor.set_text("banana", cx);
+            });
+            search_bar.replace_next(&ReplaceNext, cx)
+        });
+        // Notice how the first or in the text (shORtened) is not replaced. Neither are the remaining hits of `or` in the text.
+        assert_eq!(
+            editor.read_with(cx, |this, cx| { this.text(cx) }),
+            r#"
+        A regular expr$1 (shortened as regex banana regexp;[1] also referred to as
+        rational expr$1[2][3]) is a sequence of characters that specifies a search
+        pattern in text. Usually such patterns are used by string-searching algorithms
+        for "find" or "find and replace" operations on strings, or for input validation.
+        "#
+            .unindent()
+        );
+    }
 }
