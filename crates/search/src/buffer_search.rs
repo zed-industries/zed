@@ -1668,7 +1668,6 @@ mod tests {
             .unwrap();
 
         search_bar.update(cx, |search_bar, cx| {
-            search_bar.select_match(Direction::Prev, 1, cx);
             search_bar.replacement_editor.update(cx, |editor, cx| {
                 editor.set_text("banana", cx);
             });
