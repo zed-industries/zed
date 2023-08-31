@@ -1324,17 +1324,17 @@ message Operation {
 
     message Edit {
         uint32 replica_id = 1;
-        uint32 lamport_timestamp = 3;
-        repeated VectorClockEntry version = 4;
-        repeated Range ranges = 5;
-        repeated string new_text = 6;
+        uint32 lamport_timestamp = 2;
+        repeated VectorClockEntry version = 3;
+        repeated Range ranges = 4;
+        repeated string new_text = 5;
     }
 
     message Undo {
         uint32 replica_id = 1;
-        uint32 lamport_timestamp = 3;
-        repeated VectorClockEntry version = 4;
-        repeated UndoCount counts = 5;
+        uint32 lamport_timestamp = 2;
+        repeated VectorClockEntry version = 3;
+        repeated UndoCount counts = 4;
     }
 
     message UpdateSelections {
