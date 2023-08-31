@@ -406,36 +406,30 @@ impl AssistantPanel {
         _: &editor::Cancel,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let panel = if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-            panel
-        } else {
-            return;
-        };
-        let editor = if let Some(editor) = workspace
-            .active_item(cx)
-            .and_then(|item| item.downcast::<Editor>())
-        {
-            editor
-        } else {
-            return;
-        };
-
-        let handled = panel.update(cx, |panel, cx| {
-            if let Some(assist_id) = panel
-                .pending_inline_assist_ids_by_editor
-                .get(&editor.downgrade())
-                .and_then(|assist_ids| assist_ids.last().copied())
+        if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+            if let Some(editor) = workspace
+                .active_item(cx)
+                .and_then(|item| item.downcast::<Editor>())
             {
-                panel.close_inline_assist(assist_id, true, cx);
-                true
-            } else {
-                false
+                let handled = panel.update(cx, |panel, cx| {
+                    if let Some(assist_id) = panel
+                        .pending_inline_assist_ids_by_editor
+                        .get(&editor.downgrade())
+                        .and_then(|assist_ids| assist_ids.last().copied())
+                    {
+                        panel.close_inline_assist(assist_id, true, cx);
+                        true
+                    } else {
+                        false
+                    }
+                });
+                if handled {
+                    return;
+                }
             }
-        });
-
-        if !handled {
-            cx.propagate_action();
         }
+
+        cx.propagate_action();
     }
 
     fn close_inline_assist(&mut self, assist_id: usize, undo: bool, cx: &mut ViewContext<Self>) {
