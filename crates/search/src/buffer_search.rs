@@ -745,13 +745,13 @@ impl BufferSearchBar {
                 let query: Arc<_> = if self.current_mode == SearchMode::Regex {
                     match SearchQuery::regex(
                         query,
-                        Some(self.replacement(cx)).filter(|s| !s.is_empty()),
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                         Vec::new(),
                         Vec::new(),
                     ) {
-                        Ok(query) => query,
+                        Ok(query) => query
+                            .with_replacement(Some(self.replacement(cx)).filter(|s| !s.is_empty())),
                         Err(_) => {
                             self.query_contains_error = true;
                             cx.notify();
@@ -761,12 +761,12 @@ impl BufferSearchBar {
                 } else {
                     SearchQuery::text(
                         query,
-                        Some(self.replacement(cx)).filter(|s| !s.is_empty()),
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                         Vec::new(),
                         Vec::new(),
                     )
+                    .with_replacement(Some(self.replacement(cx)).filter(|s| !s.is_empty()))
                 }
                 .into();
                 self.active_search = Some(query.clone());

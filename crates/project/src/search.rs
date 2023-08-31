@@ -80,7 +80,6 @@ impl PathMatcher {
 impl SearchQuery {
     pub fn text(
         query: impl ToString,
-        replacement: Option<String>,
         whole_word: bool,
         case_sensitive: bool,
         files_to_include: Vec<PathMatcher>,
@@ -98,7 +97,7 @@ impl SearchQuery {
         };
         Self::Text {
             search: Arc::new(search),
-            replacement,
+            replacement: None,
             whole_word,
             case_sensitive,
             inner,
@@ -107,7 +106,6 @@ impl SearchQuery {
 
     pub fn regex(
         query: impl ToString,
-        replacement: Option<String>,
         whole_word: bool,
         case_sensitive: bool,
         files_to_include: Vec<PathMatcher>,
@@ -135,7 +133,7 @@ impl SearchQuery {
         };
         Ok(Self::Regex {
             regex,
-            replacement,
+            replacement: None,
             multiline,
             whole_word,
             case_sensitive,
@@ -147,7 +145,6 @@ impl SearchQuery {
         if message.regex {
             Self::regex(
                 message.query,
-                None,
                 message.whole_word,
                 message.case_sensitive,
                 deserialize_path_matches(&message.files_to_include)?,
@@ -156,7 +153,6 @@ impl SearchQuery {
         } else {
             Ok(Self::text(
                 message.query,
-                None,
                 message.whole_word,
                 message.case_sensitive,
                 deserialize_path_matches(&message.files_to_include)?,

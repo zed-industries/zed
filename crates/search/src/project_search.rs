@@ -1009,7 +1009,6 @@ impl ProjectSearchView {
             SearchMode::Regex => {
                 match SearchQuery::regex(
                     text,
-                    None,
                     self.search_options.contains(SearchOptions::WHOLE_WORD),
                     self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                     included_files,
@@ -1028,7 +1027,6 @@ impl ProjectSearchView {
             }
             _ => Some(SearchQuery::text(
                 text,
-                None,
                 self.search_options.contains(SearchOptions::WHOLE_WORD),
                 self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                 included_files,
