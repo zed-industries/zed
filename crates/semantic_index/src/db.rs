@@ -1,4 +1,8 @@
-use crate::{embedding::Embedding, parsing::Document, SEMANTIC_INDEX_VERSION};
+use crate::{
+    embedding::Embedding,
+    parsing::{Document, DocumentDigest},
+    SEMANTIC_INDEX_VERSION,
+};
 use anyhow::{anyhow, Context, Result};
 use futures::channel::oneshot;
 use gpui::executor;
@@ -165,7 +169,7 @@ impl VectorDatabase {
                     end_byte INTEGER NOT NULL,
                     name VARCHAR NOT NULL,
                     embedding BLOB NOT NULL,
-                    sha1 BLOB NOT NULL,
+                    digest BLOB NOT NULL,
                     FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
                 )",
                 [],
@@ -225,14 +229,14 @@ impl VectorDatabase {
             // I imagine we can speed this up with a bulk insert of some kind.
             for document in documents {
                 db.execute(
-                    "INSERT INTO documents (file_id, start_byte, end_byte, name, embedding, sha1) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    "INSERT INTO documents (file_id, start_byte, end_byte, name, embedding, digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     params![
                         file_id,
                         document.range.start.to_string(),
                         document.range.end.to_string(),
                         document.name,
                         document.embedding,
-                        document.sha1
+                        document.digest
                     ],
                 )?;
            }

@@ -37,7 +37,7 @@ use util::{
 };
 use workspace::WorkspaceCreated;
 
-const SEMANTIC_INDEX_VERSION: usize = 7;
+const SEMANTIC_INDEX_VERSION: usize = 8;
 const BACKGROUND_INDEXING_DELAY: Duration = Duration::from_secs(600);
 
 pub fn init(

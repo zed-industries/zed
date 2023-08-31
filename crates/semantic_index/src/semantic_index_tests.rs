@@ -1,7 +1,7 @@
 use crate::{
     embedding::{DummyEmbeddings, Embedding, EmbeddingProvider},
     embedding_queue::EmbeddingQueue,
-    parsing::{subtract_ranges, CodeContextRetriever, Document, Sha1},
+    parsing::{subtract_ranges, CodeContextRetriever, Document, DocumentDigest},
     semantic_index_settings::SemanticIndexSettings,
     FileToEmbed, JobHandle, SearchResult, SemanticIndex,
 };
@@ -220,13 +220,13 @@ async fn test_embedding_batching(cx: &mut TestAppContext, mut rng: StdRng) {
                         .with_simple_text()
                         .take(content_len)
                         .collect::<String>();
-                    let sha1 = Sha1::from(content.as_str());
+                    let digest = DocumentDigest::from(content.as_str());
                     Document {
                         range: 0..10,
                         embedding: None,
                         name: format!("document {document_ix}"),
                         content,
-                        sha1,
+                        digest,
                         token_count: rng.gen_range(10..30),
                     }
                 })
