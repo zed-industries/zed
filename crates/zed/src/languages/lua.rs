@@ -6,7 +6,7 @@ use futures::{io::BufReader, StreamExt};
 use language::{LanguageServerName, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use smol::fs;
-use std::{any::Any, env::consts, ffi::OsString, path::PathBuf};
+use std::{any::Any, env::consts, path::PathBuf};
 use util::{
     async_iife,
     github::{latest_github_release, GitHubLspBinaryVersion},
@@ -15,13 +15,6 @@ use util::{
 
 #[derive(Copy, Clone)]
 pub struct LuaLspAdapter;
-
-fn server_binary_arguments() -> Vec<OsString> {
-    vec![
-        "--logpath=~/lua-language-server.log".into(),
-        "--loglevel=trace".into(),
-    ]
-}
 
 #[async_trait]
 impl super::LspAdapter for LuaLspAdapter {
@@ -83,7 +76,7 @@ impl super::LspAdapter for LuaLspAdapter {
         .await?;
         Ok(LanguageServerBinary {
             path: binary_path,
-            arguments: server_binary_arguments(),
+            arguments: Vec::new(),
         })
     }
 
@@ -127,7 +120,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
         if let Some(path) = last_binary_path {
             Ok(LanguageServerBinary {
                 path,
-                arguments: server_binary_arguments(),
+                arguments: Vec::new(),
             })
         } else {
             Err(anyhow!("no cached binary"))
