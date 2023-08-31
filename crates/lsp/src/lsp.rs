@@ -162,7 +162,7 @@ impl LanguageServer {
             server_id.clone(),
             stdin,
             stdout,
-            stderr,
+            Some(stderr),
             Some(server),
             root_path,
             code_action_kinds,
@@ -194,7 +194,7 @@ impl LanguageServer {
         server_id: LanguageServerId,
         stdin: Stdin,
         stdout: Stdout,
-        stderr: Stderr,
+        stderr: Option<Stderr>,
         server: Option<Child>,
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
@@ -228,8 +228,9 @@ impl LanguageServer {
             }
             .log_err()
         });
-        let stderr_input_task =
-            cx.spawn(|_| Self::handle_stderr(stderr, io_handlers.clone()).log_err());
+        let stderr_input_task = stderr
+            .map(|stderr| cx.spawn(|_| Self::handle_stderr(stderr, io_handlers.clone()).log_err()))
+            .unwrap_or_else(|| Task::Ready(Some(None)));
         let input_task = cx.spawn(|_| async move {
             let (stdout, stderr) = futures::join!(stdout_input_task, stderr_input_task);
             stdout.or(stderr)
@@ -889,16 +890,13 @@ impl LanguageServer {
     ) -> (Self, FakeLanguageServer) {
         let (stdin_writer, stdin_reader) = async_pipe::pipe();
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
-        // writers will be dropped after we exit, so readers will also be noop for the fake servers
-        let (_stderr_writer, stderr_reader) = async_pipe::pipe();
-        let (_stderr_writer_2, stderr_reader_2) = async_pipe::pipe();
         let (notifications_tx, notifications_rx) = channel::unbounded();
 
         let server = Self::new_internal(
             LanguageServerId(0),
             stdin_writer,
             stdout_reader,
-            stderr_reader,
+            None::<async_pipe::PipeReader>,
             None,
             Path::new("/"),
             None,
@@ -910,7 +908,7 @@ impl LanguageServer {
                 LanguageServerId(0),
                 stdout_writer,
                 stdin_reader,
-                stderr_reader_2,
+                None::<async_pipe::PipeReader>,
                 None,
                 Path::new("/"),
                 None,
