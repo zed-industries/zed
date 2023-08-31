@@ -21,10 +21,7 @@
         "experimentalDecorators": true,
         "strictPropertyInitialization": false,
         "skipLibCheck": true,
-        "useUnknownInCatchVariables": false,
-        "baseUrl": "."
+        "useUnknownInCatchVariables": false
     },
-    "exclude": [
-        "node_modules"
-    ]
+    "exclude": ["node_modules"]
 }

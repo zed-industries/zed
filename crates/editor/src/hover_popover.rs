@@ -57,8 +57,6 @@ pub struct InlayHover {
 
 pub fn find_hovered_hint_part(
     label_parts: Vec<InlayHintLabelPart>,
-    padding_left: bool,
-    padding_right: bool,
     hint_range: Range<InlayOffset>,
     hovered_offset: InlayOffset,
 ) -> Option<(InlayHintLabelPart, Range<InlayOffset>)> {
@@ -67,19 +65,11 @@ pub fn find_hovered_hint_part(
         let mut part_start = hint_range.start;
         for part in label_parts {
             let part_len = part.value.chars().count();
-            if hovered_character >= part_len {
+            if hovered_character > part_len {
                 hovered_character -= part_len;
                 part_start.0 += part_len;
             } else {
-                let mut part_end = InlayOffset(part_start.0 + part_len);
-                if padding_left {
-                    part_start.0 += 1;
-                    part_end.0 += 1;
-                }
-                if padding_right {
-                    part_start.0 += 1;
-                    part_end.0 += 1;
-                }
+                let part_end = InlayOffset(part_start.0 + part_len);
                 return Some((part, part_start..part_end));
             }
         }
@@ -1386,13 +1376,21 @@ mod tests {
             .unwrap();
         let new_type_hint_part_hover_position = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
+            let previous_valid = inlay_range.start.to_display_point(&snapshot);
+            let next_valid = inlay_range.end.to_display_point(&snapshot);
+            assert_eq!(previous_valid.row(), next_valid.row());
+            assert!(previous_valid.column() < next_valid.column());
+            let exact_unclipped = DisplayPoint::new(
+                previous_valid.row(),
+                previous_valid.column()
+                    + (entire_hint_label.find(new_type_label).unwrap() + new_type_label.len() / 2)
+                        as u32,
+            );
             PointForPosition {
-                previous_valid: inlay_range.start.to_display_point(&snapshot),
-                next_valid: inlay_range.end.to_display_point(&snapshot),
-                exact_unclipped: inlay_range.end.to_display_point(&snapshot),
-                column_overshoot_after_line_end: (entire_hint_label.find(new_type_label).unwrap()
-                    + new_type_label.len() / 2)
-                    as u32,
+                previous_valid,
+                next_valid,
+                exact_unclipped,
+                column_overshoot_after_line_end: 0,
             }
         });
         cx.update_editor(|editor, cx| {
@@ -1514,13 +1512,21 @@ mod tests {
 
         let struct_hint_part_hover_position = cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
+            let previous_valid = inlay_range.start.to_display_point(&snapshot);
+            let next_valid = inlay_range.end.to_display_point(&snapshot);
+            assert_eq!(previous_valid.row(), next_valid.row());
+            assert!(previous_valid.column() < next_valid.column());
+            let exact_unclipped = DisplayPoint::new(
+                previous_valid.row(),
+                previous_valid.column()
+                    + (entire_hint_label.find(struct_label).unwrap() + struct_label.len() / 2)
+                        as u32,
+            );
             PointForPosition {
-                previous_valid: inlay_range.start.to_display_point(&snapshot),
-                next_valid: inlay_range.end.to_display_point(&snapshot),
-                exact_unclipped: inlay_range.end.to_display_point(&snapshot),
-                column_overshoot_after_line_end: (entire_hint_label.find(struct_label).unwrap()
-                    + struct_label.len() / 2)
-                    as u32,
+                previous_valid,
+                next_valid,
+                exact_unclipped,
+                column_overshoot_after_line_end: 0,
             }
         });
         cx.update_editor(|editor, cx| {

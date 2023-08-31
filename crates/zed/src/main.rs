@@ -31,7 +31,7 @@ use std::{
     env,
     ffi::OsStr,
     fs::OpenOptions,
-    io::Write as _,
+    io::{IsTerminal, Write as _},
     os::unix::prelude::OsStrExt,
     panic,
     path::{Path, PathBuf},
@@ -639,8 +639,7 @@ async fn load_login_shell_environment() -> Result<()> {
 }
 
 fn stdout_is_a_pty() -> bool {
-    std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none()
-        && unsafe { libc::isatty(libc::STDOUT_FILENO as i32) != 0 }
+    std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none() && std::io::stdout().is_terminal()
 }
 
 fn collect_path_args() -> Vec<PathBuf> {

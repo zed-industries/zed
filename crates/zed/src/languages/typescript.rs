@@ -356,8 +356,9 @@ mod tests {
         "#
         .unindent();
 
-        let buffer =
-            cx.add_model(|cx| language::Buffer::new(0, text, cx).with_language(language, cx));
+        let buffer = cx.add_model(|cx| {
+            language::Buffer::new(0, cx.model_id() as u64, text).with_language(language, cx)
+        });
         let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
         assert_eq!(
             outline

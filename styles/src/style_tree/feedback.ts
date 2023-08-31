@@ -37,7 +37,7 @@ export default function feedback(): any {
                     ...text(theme.highest, "mono", "on", "disabled"),
                     background: background(theme.highest, "on", "disabled"),
                     border: border(theme.highest, "on", "disabled"),
-                }
+                },
             },
         }),
         button_margin: 8,

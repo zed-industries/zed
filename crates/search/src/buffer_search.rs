@@ -1,6 +1,6 @@
 use crate::{
     history::SearchHistory,
-    mode::{next_mode, SearchMode},
+    mode::{next_mode, SearchMode, Side},
     search_bar::{render_nav_button, render_search_mode_button},
     CycleMode, NextHistoryQuery, PreviousHistoryQuery, SearchOptions, SelectAllMatches,
     SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
@@ -156,11 +156,12 @@ impl View for BufferSearchBar {
         self.query_editor.update(cx, |editor, cx| {
             editor.set_placeholder_text(new_placeholder_text, cx);
         });
-        let search_button_for_mode = |mode, cx: &mut ViewContext<BufferSearchBar>| {
+        let search_button_for_mode = |mode, side, cx: &mut ViewContext<BufferSearchBar>| {
             let is_active = self.current_mode == mode;
 
             render_search_mode_button(
                 mode,
+                side,
                 is_active,
                 move |_, this, cx| {
                     this.activate_search_mode(mode, cx);
@@ -212,20 +213,11 @@ impl View for BufferSearchBar {
             )
         };
 
-        let icon_style = theme.search.editor_icon.clone();
-        let nav_column = Flex::row()
-            .with_child(self.render_action_button("Select All", cx))
-            .with_child(nav_button_for_direction("<", Direction::Prev, cx))
-            .with_child(nav_button_for_direction(">", Direction::Next, cx))
-            .with_child(Flex::row().with_children(match_count))
-            .constrained()
-            .with_height(theme.search.search_bar_row_height);
-
-        let query = Flex::row()
+        let query_column = Flex::row()
             .with_child(
-                Svg::for_style(icon_style.icon)
+                Svg::for_style(theme.search.editor_icon.clone().icon)
                     .contained()
-                    .with_style(icon_style.container),
+                    .with_style(theme.search.editor_icon.clone().container),
             )
             .with_child(ChildView::new(&self.query_editor, cx).flex(1., true))
             .with_child(
@@ -244,49 +236,45 @@ impl View for BufferSearchBar {
                     .contained(),
             )
             .align_children_center()
-            .flex(1., true);
-        let editor_column = Flex::row()
-            .with_child(
-                query
-                    .contained()
-                    .with_style(query_container_style)
-                    .constrained()
-                    .with_min_width(theme.search.editor.min_width)
-                    .with_max_width(theme.search.editor.max_width)
-                    .with_height(theme.search.search_bar_row_height)
-                    .flex(1., false),
-            )
             .contained()
+            .with_style(query_container_style)
             .constrained()
+            .with_min_width(theme.search.editor.min_width)
+            .with_max_width(theme.search.editor.max_width)
             .with_height(theme.search.search_bar_row_height)
             .flex(1., false);
+
         let mode_column = Flex::row()
-            .with_child(
-                Flex::row()
-                    .with_child(search_button_for_mode(SearchMode::Text, cx))
-                    .with_child(search_button_for_mode(SearchMode::Regex, cx))
-                    .contained()
-                    .with_style(theme.search.modes_container),
-            )
-            .with_child(super::search_bar::render_close_button(
-                "Dismiss Buffer Search",
-                &theme.search,
+            .with_child(search_button_for_mode(
+                SearchMode::Text,
+                Some(Side::Left),
                 cx,
-                |_, this, cx| this.dismiss(&Default::default(), cx),
-                Some(Box::new(Dismiss)),
             ))
+            .with_child(search_button_for_mode(
+                SearchMode::Regex,
+                Some(Side::Right),
+                cx,
+            ))
+            .contained()
+            .with_style(theme.search.modes_container)
+            .constrained()
+            .with_height(theme.search.search_bar_row_height);
+
+        let nav_column = Flex::row()
+            .with_child(self.render_action_button("all", cx))
+            .with_child(Flex::row().with_children(match_count))
+            .with_child(nav_button_for_direction("<", Direction::Prev, cx))
+            .with_child(nav_button_for_direction(">", Direction::Next, cx))
             .constrained()
             .with_height(theme.search.search_bar_row_height)
-            .aligned()
-            .right()
             .flex_float();
+
         Flex::row()
-            .with_child(editor_column)
-            .with_child(nav_column)
+            .with_child(query_column)
             .with_child(mode_column)
+            .with_child(nav_column)
             .contained()
             .with_style(theme.search.container)
-            .aligned()
             .into_any_named("search bar")
     }
 }
@@ -340,8 +328,9 @@ impl ToolbarItemView for BufferSearchBar {
             ToolbarItemLocation::Hidden
         }
     }
+
     fn row_count(&self, _: &ViewContext<Self>) -> usize {
-        2
+        1
     }
 }
 
@@ -837,6 +826,7 @@ mod tests {
         let buffer = cx.add_model(|cx| {
             Buffer::new(
                 0,
+                cx.model_id() as u64,
                 r#"
                 A regular expression (shortened as regex or regexp;[1] also referred to as
                 rational expression[2][3]) is a sequence of characters that specifies a search
@@ -844,7 +834,6 @@ mod tests {
                 for "find" or "find and replace" operations on strings, or for input validation.
                 "#
                 .unindent(),
-                cx,
             )
         });
         let window = cx.add_window(|_| EmptyView);
@@ -1225,7 +1214,7 @@ mod tests {
             expected_query_matches_count > 1,
             "Should pick a query with multiple results"
         );
-        let buffer = cx.add_model(|cx| Buffer::new(0, buffer_text, cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, buffer_text));
         let window = cx.add_window(|_| EmptyView);
         let editor = window.add_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
 
@@ -1412,7 +1401,7 @@ mod tests {
         for "find" or "find and replace" operations on strings, or for input validation.
         "#
         .unindent();
-        let buffer = cx.add_model(|cx| Buffer::new(0, buffer_text, cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, buffer_text));
         let window = cx.add_window(|_| EmptyView);
 
         let editor = window.add_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));

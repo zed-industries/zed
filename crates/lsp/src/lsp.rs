@@ -35,7 +35,14 @@ const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 
 type NotificationHandler = Box<dyn Send + FnMut(Option<usize>, &str, AsyncAppContext)>;
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
-type IoHandler = Box<dyn Send + FnMut(bool, &str)>;
+type IoHandler = Box<dyn Send + FnMut(IoKind, &str)>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum IoKind {
+    StdOut,
+    StdIn,
+    StdErr,
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct LanguageServerBinary {
@@ -144,16 +151,18 @@ impl LanguageServer {
             .args(binary.arguments)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()?;
 
         let stdin = server.stdin.take().unwrap();
-        let stout = server.stdout.take().unwrap();
+        let stdout = server.stdout.take().unwrap();
+        let stderr = server.stderr.take().unwrap();
         let mut server = Self::new_internal(
             server_id.clone(),
             stdin,
-            stout,
+            stdout,
+            Some(stderr),
             Some(server),
             root_path,
             code_action_kinds,
@@ -181,10 +190,11 @@ impl LanguageServer {
         Ok(server)
     }
 
-    fn new_internal<Stdin, Stdout, F>(
+    fn new_internal<Stdin, Stdout, Stderr, F>(
         server_id: LanguageServerId,
         stdin: Stdin,
         stdout: Stdout,
+        stderr: Option<Stderr>,
         server: Option<Child>,
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
@@ -194,7 +204,8 @@ impl LanguageServer {
     where
         Stdin: AsyncWrite + Unpin + Send + 'static,
         Stdout: AsyncRead + Unpin + Send + 'static,
-        F: FnMut(AnyNotification) + 'static + Send,
+        Stderr: AsyncRead + Unpin + Send + 'static,
+        F: FnMut(AnyNotification) + 'static + Send + Clone,
     {
         let (outbound_tx, outbound_rx) = channel::unbounded::<String>();
         let (output_done_tx, output_done_rx) = barrier::channel();
@@ -203,16 +214,26 @@ impl LanguageServer {
         let response_handlers =
             Arc::new(Mutex::new(Some(HashMap::<_, ResponseHandler>::default())));
         let io_handlers = Arc::new(Mutex::new(HashMap::default()));
-        let input_task = cx.spawn(|cx| {
-            Self::handle_input(
-                stdout,
-                on_unhandled_notification,
-                notification_handlers.clone(),
-                response_handlers.clone(),
-                io_handlers.clone(),
-                cx,
-            )
+
+        let stdout_input_task = cx.spawn(|cx| {
+            {
+                Self::handle_input(
+                    stdout,
+                    on_unhandled_notification.clone(),
+                    notification_handlers.clone(),
+                    response_handlers.clone(),
+                    io_handlers.clone(),
+                    cx,
+                )
+            }
             .log_err()
+        });
+        let stderr_input_task = stderr
+            .map(|stderr| cx.spawn(|_| Self::handle_stderr(stderr, io_handlers.clone()).log_err()))
+            .unwrap_or_else(|| Task::Ready(Some(None)));
+        let input_task = cx.spawn(|_| async move {
+            let (stdout, stderr) = futures::join!(stdout_input_task, stderr_input_task);
+            stdout.or(stderr)
         });
         let output_task = cx.background().spawn({
             Self::handle_output(
@@ -284,7 +305,7 @@ impl LanguageServer {
             if let Ok(message) = str::from_utf8(&buffer) {
                 log::trace!("incoming message:{}", message);
                 for handler in io_handlers.lock().values_mut() {
-                    handler(true, message);
+                    handler(IoKind::StdOut, message);
                 }
             }
 
@@ -327,6 +348,30 @@ impl LanguageServer {
         }
     }
 
+    async fn handle_stderr<Stderr>(
+        stderr: Stderr,
+        io_handlers: Arc<Mutex<HashMap<usize, IoHandler>>>,
+    ) -> anyhow::Result<()>
+    where
+        Stderr: AsyncRead + Unpin + Send + 'static,
+    {
+        let mut stderr = BufReader::new(stderr);
+        let mut buffer = Vec::new();
+        loop {
+            buffer.clear();
+            stderr.read_until(b'\n', &mut buffer).await?;
+            if let Ok(message) = str::from_utf8(&buffer) {
+                log::trace!("incoming stderr message:{message}");
+                for handler in io_handlers.lock().values_mut() {
+                    handler(IoKind::StdErr, message);
+                }
+            }
+
+            // Don't starve the main thread when receiving lots of messages at once.
+            smol::future::yield_now().await;
+        }
+    }
+
     async fn handle_output<Stdin>(
         stdin: Stdin,
         outbound_rx: channel::Receiver<String>,
@@ -348,7 +393,7 @@ impl LanguageServer {
         while let Ok(message) = outbound_rx.recv().await {
             log::trace!("outgoing message:{}", message);
             for handler in io_handlers.lock().values_mut() {
-                handler(false, &message);
+                handler(IoKind::StdIn, &message);
             }
 
             content_len_buffer.clear();
@@ -435,7 +480,13 @@ impl LanguageServer {
                     }),
                     inlay_hint: Some(InlayHintClientCapabilities {
                         resolve_support: Some(InlayHintResolveClientCapabilities {
-                            properties: vec!["textEdits".to_string(), "tooltip".to_string()],
+                            properties: vec![
+                                "textEdits".to_string(),
+                                "tooltip".to_string(),
+                                "label.tooltip".to_string(),
+                                "label.location".to_string(),
+                                "label.command".to_string(),
+                            ],
                         }),
                         dynamic_registration: Some(false),
                     }),
@@ -526,7 +577,7 @@ impl LanguageServer {
     #[must_use]
     pub fn on_io<F>(&self, f: F) -> Subscription
     where
-        F: 'static + Send + FnMut(bool, &str),
+        F: 'static + Send + FnMut(IoKind, &str),
     {
         let id = self.next_id.fetch_add(1, SeqCst);
         self.io_handlers.lock().insert(id, Box::new(f));
@@ -845,6 +896,7 @@ impl LanguageServer {
             LanguageServerId(0),
             stdin_writer,
             stdout_reader,
+            None::<async_pipe::PipeReader>,
             None,
             Path::new("/"),
             None,
@@ -856,6 +908,7 @@ impl LanguageServer {
                 LanguageServerId(0),
                 stdout_writer,
                 stdin_reader,
+                None::<async_pipe::PipeReader>,
                 None,
                 Path::new("/"),
                 None,

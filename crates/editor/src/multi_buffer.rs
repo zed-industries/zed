@@ -617,6 +617,42 @@ impl MultiBuffer {
         }
     }
 
+    pub fn merge_transactions(
+        &mut self,
+        transaction: TransactionId,
+        destination: TransactionId,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if let Some(buffer) = self.as_singleton() {
+            buffer.update(cx, |buffer, _| {
+                buffer.merge_transactions(transaction, destination)
+            });
+        } else {
+            if let Some(transaction) = self.history.forget(transaction) {
+                if let Some(destination) = self.history.transaction_mut(destination) {
+                    for (buffer_id, buffer_transaction_id) in transaction.buffer_transactions {
+                        if let Some(destination_buffer_transaction_id) =
+                            destination.buffer_transactions.get(&buffer_id)
+                        {
+                            if let Some(state) = self.buffers.borrow().get(&buffer_id) {
+                                state.buffer.update(cx, |buffer, _| {
+                                    buffer.merge_transactions(
+                                        buffer_transaction_id,
+                                        *destination_buffer_transaction_id,
+                                    )
+                                });
+                            }
+                        } else {
+                            destination
+                                .buffer_transactions
+                                .insert(buffer_id, buffer_transaction_id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub fn finalize_last_transaction(&mut self, cx: &mut ModelContext<Self>) {
         self.history.finalize_last_transaction();
         for BufferState { buffer, .. } in self.buffers.borrow().values() {
@@ -786,6 +822,20 @@ impl MultiBuffer {
         }
 
         None
+    }
+
+    pub fn undo_transaction(&mut self, transaction_id: TransactionId, cx: &mut ModelContext<Self>) {
+        if let Some(buffer) = self.as_singleton() {
+            buffer.update(cx, |buffer, cx| buffer.undo_transaction(transaction_id, cx));
+        } else if let Some(transaction) = self.history.remove_from_undo(transaction_id) {
+            for (buffer_id, transaction_id) in &transaction.buffer_transactions {
+                if let Some(BufferState { buffer, .. }) = self.buffers.borrow().get(buffer_id) {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.undo_transaction(*transaction_id, cx)
+                    });
+                }
+            }
+        }
     }
 
     pub fn stream_excerpts_with_context_lines(
@@ -1570,7 +1620,7 @@ impl MultiBuffer {
 #[cfg(any(test, feature = "test-support"))]
 impl MultiBuffer {
     pub fn build_simple(text: &str, cx: &mut gpui::AppContext) -> ModelHandle<Self> {
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, text));
         cx.add_model(|cx| Self::singleton(buffer, cx))
     }
 
@@ -1580,7 +1630,7 @@ impl MultiBuffer {
     ) -> ModelHandle<Self> {
         let multi = cx.add_model(|_| Self::new(0));
         for (text, ranges) in excerpts {
-            let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
+            let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, text));
             let excerpt_ranges = ranges.into_iter().map(|range| ExcerptRange {
                 context: range,
                 primary: None,
@@ -1672,7 +1722,7 @@ impl MultiBuffer {
             if excerpt_ids.is_empty() || (rng.gen() && excerpt_ids.len() < max_excerpts) {
                 let buffer_handle = if rng.gen() || self.buffers.borrow().is_empty() {
                     let text = RandomCharIter::new(&mut *rng).take(10).collect::<String>();
-                    buffers.push(cx.add_model(|cx| Buffer::new(0, text, cx)));
+                    buffers.push(cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, text)));
                     let buffer = buffers.last().unwrap().read(cx);
                     log::info!(
                         "Creating new buffer {} with text: {:?}",
@@ -2314,6 +2364,16 @@ impl MultiBufferSnapshot {
         } else {
             IndentSize::spaces(0)
         }
+    }
+
+    pub fn prev_non_blank_row(&self, mut row: u32) -> Option<u32> {
+        while row > 0 {
+            row -= 1;
+            if !self.is_line_blank(row) {
+                return Some(row);
+            }
+        }
+        None
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
@@ -3347,6 +3407,35 @@ impl History {
         }
     }
 
+    fn forget(&mut self, transaction_id: TransactionId) -> Option<Transaction> {
+        if let Some(ix) = self
+            .undo_stack
+            .iter()
+            .rposition(|transaction| transaction.id == transaction_id)
+        {
+            Some(self.undo_stack.remove(ix))
+        } else if let Some(ix) = self
+            .redo_stack
+            .iter()
+            .rposition(|transaction| transaction.id == transaction_id)
+        {
+            Some(self.redo_stack.remove(ix))
+        } else {
+            None
+        }
+    }
+
+    fn transaction_mut(&mut self, transaction_id: TransactionId) -> Option<&mut Transaction> {
+        self.undo_stack
+            .iter_mut()
+            .find(|transaction| transaction.id == transaction_id)
+            .or_else(|| {
+                self.redo_stack
+                    .iter_mut()
+                    .find(|transaction| transaction.id == transaction_id)
+            })
+    }
+
     fn pop_undo(&mut self) -> Option<&mut Transaction> {
         assert_eq!(self.transaction_depth, 0);
         if let Some(transaction) = self.undo_stack.pop() {
@@ -3365,6 +3454,16 @@ impl History {
         } else {
             None
         }
+    }
+
+    fn remove_from_undo(&mut self, transaction_id: TransactionId) -> Option<&Transaction> {
+        let ix = self
+            .undo_stack
+            .iter()
+            .rposition(|transaction| transaction.id == transaction_id)?;
+        let transaction = self.undo_stack.remove(ix);
+        self.redo_stack.push(transaction);
+        self.redo_stack.last()
     }
 
     fn group(&mut self) -> Option<TransactionId> {
@@ -4022,7 +4121,8 @@ mod tests {
 
     #[gpui::test]
     fn test_singleton(cx: &mut AppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'a'), cx));
+        let buffer =
+            cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, sample_text(6, 6, 'a')));
         let multibuffer = cx.add_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
         let snapshot = multibuffer.read(cx).snapshot(cx);
@@ -4049,7 +4149,7 @@ mod tests {
 
     #[gpui::test]
     fn test_remote(cx: &mut AppContext) {
-        let host_buffer = cx.add_model(|cx| Buffer::new(0, "a", cx));
+        let host_buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "a"));
         let guest_buffer = cx.add_model(|cx| {
             let state = host_buffer.read(cx).to_proto();
             let ops = cx
@@ -4080,8 +4180,10 @@ mod tests {
 
     #[gpui::test]
     fn test_excerpt_boundaries_and_clipping(cx: &mut AppContext) {
-        let buffer_1 = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'a'), cx));
-        let buffer_2 = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'g'), cx));
+        let buffer_1 =
+            cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, sample_text(6, 6, 'a')));
+        let buffer_2 =
+            cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, sample_text(6, 6, 'g')));
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
 
         let events = Rc::new(RefCell::new(Vec::<Event>::new()));
@@ -4314,8 +4416,10 @@ mod tests {
 
     #[gpui::test]
     fn test_excerpt_events(cx: &mut AppContext) {
-        let buffer_1 = cx.add_model(|cx| Buffer::new(0, sample_text(10, 3, 'a'), cx));
-        let buffer_2 = cx.add_model(|cx| Buffer::new(0, sample_text(10, 3, 'm'), cx));
+        let buffer_1 =
+            cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, sample_text(10, 3, 'a')));
+        let buffer_2 =
+            cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, sample_text(10, 3, 'm')));
 
         let leader_multibuffer = cx.add_model(|_| MultiBuffer::new(0));
         let follower_multibuffer = cx.add_model(|_| MultiBuffer::new(0));
@@ -4420,7 +4524,8 @@ mod tests {
 
     #[gpui::test]
     fn test_push_excerpts_with_context_lines(cx: &mut AppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(20, 3, 'a'), cx));
+        let buffer =
+            cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, sample_text(20, 3, 'a')));
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
         let anchor_ranges = multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.push_excerpts_with_context_lines(
@@ -4456,7 +4561,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_stream_excerpts_with_context_lines(cx: &mut TestAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(20, 3, 'a'), cx));
+        let buffer =
+            cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, sample_text(20, 3, 'a')));
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
         let anchor_ranges = multibuffer.update(cx, |multibuffer, cx| {
             let snapshot = buffer.read(cx);
@@ -4502,7 +4608,7 @@ mod tests {
 
     #[gpui::test]
     fn test_singleton_multibuffer_anchors(cx: &mut AppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "abcd", cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "abcd"));
         let multibuffer = cx.add_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
         let old_snapshot = multibuffer.read(cx).snapshot(cx);
         buffer.update(cx, |buffer, cx| {
@@ -4522,8 +4628,8 @@ mod tests {
 
     #[gpui::test]
     fn test_multibuffer_anchors(cx: &mut AppContext) {
-        let buffer_1 = cx.add_model(|cx| Buffer::new(0, "abcd", cx));
-        let buffer_2 = cx.add_model(|cx| Buffer::new(0, "efghi", cx));
+        let buffer_1 = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "abcd"));
+        let buffer_2 = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "efghi"));
         let multibuffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
             multibuffer.push_excerpts(
@@ -4580,8 +4686,8 @@ mod tests {
 
     #[gpui::test]
     fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut AppContext) {
-        let buffer_1 = cx.add_model(|cx| Buffer::new(0, "abcd", cx));
-        let buffer_2 = cx.add_model(|cx| Buffer::new(0, "ABCDEFGHIJKLMNOP", cx));
+        let buffer_1 = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "abcd"));
+        let buffer_2 = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "ABCDEFGHIJKLMNOP"));
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
 
         // Create an insertion id in buffer 1 that doesn't exist in buffer 2.
@@ -4976,7 +5082,9 @@ mod tests {
                         let base_text = util::RandomCharIter::new(&mut rng)
                             .take(10)
                             .collect::<String>();
-                        buffers.push(cx.add_model(|cx| Buffer::new(0, base_text, cx)));
+                        buffers.push(
+                            cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, base_text)),
+                        );
                         buffers.last().unwrap()
                     } else {
                         buffers.choose(&mut rng).unwrap()
@@ -5317,8 +5425,8 @@ mod tests {
     fn test_history(cx: &mut AppContext) {
         cx.set_global(SettingsStore::test(cx));
 
-        let buffer_1 = cx.add_model(|cx| Buffer::new(0, "1234", cx));
-        let buffer_2 = cx.add_model(|cx| Buffer::new(0, "5678", cx));
+        let buffer_1 = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "1234"));
+        let buffer_2 = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "5678"));
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
         let group_interval = multibuffer.read(cx).history.group_interval;
         multibuffer.update(cx, |multibuffer, cx| {

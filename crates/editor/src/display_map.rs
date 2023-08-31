@@ -30,6 +30,7 @@ pub use block_map::{
     BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock, TransformBlock,
 };
 
+pub use self::fold_map::FoldPoint;
 pub use self::inlay_map::{Inlay, InlayOffset, InlayPoint};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -310,7 +311,7 @@ impl DisplayMap {
 
 pub struct DisplaySnapshot {
     pub buffer_snapshot: MultiBufferSnapshot,
-    fold_snapshot: fold_map::FoldSnapshot,
+    pub fold_snapshot: fold_map::FoldSnapshot,
     inlay_snapshot: inlay_map::InlaySnapshot,
     tab_snapshot: tab_map::TabSnapshot,
     wrap_snapshot: wrap_map::WrapSnapshot,
@@ -436,6 +437,20 @@ impl DisplaySnapshot {
         let tab_point = self.wrap_snapshot.to_tab_point(wrap_point);
         let fold_point = self.tab_snapshot.to_fold_point(tab_point, bias).0;
         fold_point.to_inlay_point(&self.fold_snapshot)
+    }
+
+    pub fn display_point_to_fold_point(&self, point: DisplayPoint, bias: Bias) -> FoldPoint {
+        let block_point = point.0;
+        let wrap_point = self.block_snapshot.to_wrap_point(block_point);
+        let tab_point = self.wrap_snapshot.to_tab_point(wrap_point);
+        self.tab_snapshot.to_fold_point(tab_point, bias).0
+    }
+
+    pub fn fold_point_to_display_point(&self, fold_point: FoldPoint) -> DisplayPoint {
+        let tab_point = self.tab_snapshot.to_tab_point(fold_point);
+        let wrap_point = self.wrap_snapshot.tab_point_to_wrap_point(tab_point);
+        let block_point = self.block_snapshot.to_block_point(wrap_point);
+        DisplayPoint(block_point)
     }
 
     pub fn max_point(&self) -> DisplayPoint {
@@ -1362,7 +1377,8 @@ pub mod tests {
 
         cx.update(|cx| init_test(cx, |s| s.defaults.tab_size = Some(2.try_into().unwrap())));
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
+        let buffer = cx
+            .add_model(|cx| Buffer::new(0, cx.model_id() as u64, text).with_language(language, cx));
         buffer.condition(cx, |buf, _| !buf.is_parsing()).await;
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
 
@@ -1451,7 +1467,8 @@ pub mod tests {
 
         cx.update(|cx| init_test(cx, |_| {}));
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
+        let buffer = cx
+            .add_model(|cx| Buffer::new(0, cx.model_id() as u64, text).with_language(language, cx));
         buffer.condition(cx, |buf, _| !buf.is_parsing()).await;
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
 
@@ -1523,7 +1540,8 @@ pub mod tests {
 
         let (text, highlighted_ranges) = marked_text_ranges(r#"constˇ «a»: B = "c «d»""#, false);
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
+        let buffer = cx
+            .add_model(|cx| Buffer::new(0, cx.model_id() as u64, text).with_language(language, cx));
         buffer.condition(cx, |buf, _| !buf.is_parsing()).await;
 
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));

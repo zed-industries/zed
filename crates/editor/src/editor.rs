@@ -111,6 +111,8 @@ const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
+pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
+pub const DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
 pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -1271,7 +1273,7 @@ impl Editor {
         field_editor_style: Option<Arc<GetFieldEditorTheme>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, String::new()));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::SingleLine, buffer, None, field_editor_style, cx)
     }
@@ -1280,7 +1282,7 @@ impl Editor {
         field_editor_style: Option<Arc<GetFieldEditorTheme>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, String::new()));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::Full, buffer, None, field_editor_style, cx)
     }
@@ -1290,7 +1292,7 @@ impl Editor {
         field_editor_style: Option<Arc<GetFieldEditorTheme>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, String::new()));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(
             EditorMode::AutoHeight { max_lines },
@@ -1452,6 +1454,16 @@ impl Editor {
                 cx.observe(&display_map, Self::on_display_map_changed),
                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
                 cx.observe_global::<SettingsStore, _>(Self::settings_changed),
+                cx.observe_window_activation(|editor, active, cx| {
+                    editor.blink_manager.update(cx, |blink_manager, cx| {
+                        if active {
+                            blink_manager.enable(cx);
+                        } else {
+                            blink_manager.show_cursor(cx);
+                            blink_manager.disable(cx);
+                        }
+                    });
+                }),
             ],
         };
 
@@ -1621,6 +1633,15 @@ impl Editor {
 
     pub fn set_read_only(&mut self, read_only: bool) {
         self.read_only = read_only;
+    }
+
+    pub fn set_field_editor_style(
+        &mut self,
+        style: Option<Arc<GetFieldEditorTheme>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.get_field_editor_theme = style;
+        cx.notify();
     }
 
     pub fn replica_id_map(&self) -> Option<&HashMap<ReplicaId, ReplicaId>> {
@@ -2792,11 +2813,13 @@ impl Editor {
                 }
             }
             InlayHintRefreshReason::ExcerptsRemoved(excerpts_removed) => {
-                let InlaySplice {
+                if let Some(InlaySplice {
                     to_remove,
                     to_insert,
-                } = self.inlay_hint_cache.remove_excerpts(excerpts_removed);
-                self.splice_inlay_hints(to_remove, to_insert, cx);
+                }) = self.inlay_hint_cache.remove_excerpts(excerpts_removed)
+                {
+                    self.splice_inlay_hints(to_remove, to_insert, cx);
+                }
                 return;
             }
             InlayHintRefreshReason::NewLinesShown => (InvalidationStrategy::None, None),
@@ -3290,7 +3313,7 @@ impl Editor {
     }
 
     fn refresh_code_actions(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
-        let project = self.project.as_ref()?;
+        let project = self.project.clone()?;
         let buffer = self.buffer.read(cx);
         let newest_selection = self.selections.newest_anchor().clone();
         let (start_buffer, start) = buffer.text_anchor_for_position(newest_selection.start, cx)?;
@@ -3299,11 +3322,15 @@ impl Editor {
             return None;
         }
 
-        let actions = project.update(cx, |project, cx| {
-            project.code_actions(&start_buffer, start..end, cx)
-        });
         self.code_actions_task = Some(cx.spawn(|this, mut cx| async move {
-            let actions = actions.await;
+            cx.background().timer(CODE_ACTIONS_DEBOUNCE_TIMEOUT).await;
+
+            let actions = project
+                .update(&mut cx, |project, cx| {
+                    project.code_actions(&start_buffer, start..end, cx)
+                })
+                .await;
+
             this.update(&mut cx, |this, cx| {
                 this.available_code_actions = actions.log_err().and_then(|actions| {
                     if actions.is_empty() {
@@ -3324,7 +3351,7 @@ impl Editor {
             return None;
         }
 
-        let project = self.project.as_ref()?;
+        let project = self.project.clone()?;
         let buffer = self.buffer.read(cx);
         let newest_selection = self.selections.newest_anchor().clone();
         let cursor_position = newest_selection.head();
@@ -3335,12 +3362,19 @@ impl Editor {
             return None;
         }
 
-        let highlights = project.update(cx, |project, cx| {
-            project.document_highlights(&cursor_buffer, cursor_buffer_position, cx)
-        });
-
         self.document_highlights_task = Some(cx.spawn(|this, mut cx| async move {
-            if let Some(highlights) = highlights.await.log_err() {
+            cx.background()
+                .timer(DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT)
+                .await;
+
+            let highlights = project
+                .update(&mut cx, |project, cx| {
+                    project.document_highlights(&cursor_buffer, cursor_buffer_position, cx)
+                })
+                .await
+                .log_err();
+
+            if let Some(highlights) = highlights {
                 this.update(&mut cx, |this, cx| {
                     if this.pending_rename.is_some() {
                         return;
@@ -4964,6 +4998,9 @@ impl Editor {
             self.unmark_text(cx);
             self.refresh_copilot_suggestions(true, cx);
             cx.emit(Event::Edited);
+            cx.emit(Event::TransactionUndone {
+                transaction_id: tx_id,
+            });
         }
     }
 
@@ -7331,7 +7368,7 @@ impl Editor {
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-        let selections = self.selections.all::<Point>(cx);
+        let selections = self.selections.all_adjusted(cx);
         for selection in selections {
             let range = selection.range().sorted();
             let buffer_start_row = range.start.row;
@@ -7407,7 +7444,17 @@ impl Editor {
 
     pub fn fold_selected_ranges(&mut self, _: &FoldSelectedRanges, cx: &mut ViewContext<Self>) {
         let selections = self.selections.all::<Point>(cx);
-        let ranges = selections.into_iter().map(|s| s.start..s.end);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let line_mode = self.selections.line_mode;
+        let ranges = selections.into_iter().map(|s| {
+            if line_mode {
+                let start = Point::new(s.start.row, 0);
+                let end = Point::new(s.end.row, display_map.buffer_snapshot.line_len(s.end.row));
+                start..end
+            } else {
+                s.start..s.end
+            }
+        });
         self.fold_ranges(ranges, true, cx);
     }
 
@@ -8393,6 +8440,9 @@ pub enum Event {
         local: bool,
         autoscroll: bool,
     },
+    TransactionUndone {
+        transaction_id: TransactionId,
+    },
     Closed,
 }
 
@@ -8433,7 +8483,7 @@ impl View for Editor {
         "Editor"
     }
 
-    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
         if cx.is_self_focused() {
             let focused_event = EditorFocused(cx.handle());
             cx.emit(Event::Focused);
@@ -8441,7 +8491,7 @@ impl View for Editor {
         }
         if let Some(rename) = self.pending_rename.as_ref() {
             cx.focus(&rename.editor);
-        } else {
+        } else if cx.is_self_focused() || !focused.is::<Editor>() {
             if !self.focused {
                 self.blink_manager.update(cx, BlinkManager::enable);
             }

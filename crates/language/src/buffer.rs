@@ -15,7 +15,6 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 pub use clock::ReplicaId;
-use fs::LineEnding;
 use futures::FutureExt as _;
 use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, Task};
 use lsp::LanguageServerId;
@@ -347,13 +346,9 @@ impl CharKind {
 }
 
 impl Buffer {
-    pub fn new<T: Into<String>>(
-        replica_id: ReplicaId,
-        base_text: T,
-        cx: &mut ModelContext<Self>,
-    ) -> Self {
+    pub fn new<T: Into<String>>(replica_id: ReplicaId, id: u64, base_text: T) -> Self {
         Self::build(
-            TextBuffer::new(replica_id, cx.model_id() as u64, base_text.into()),
+            TextBuffer::new(replica_id, id, base_text.into()),
             None,
             None,
         )
@@ -1302,6 +1297,10 @@ impl Buffer {
         self.text.forget_transaction(transaction_id);
     }
 
+    pub fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
+        self.text.merge_transactions(transaction, destination);
+    }
+
     pub fn wait_for_edits(
         &mut self,
         edit_ids: impl IntoIterator<Item = clock::Local>,
@@ -1665,6 +1664,22 @@ impl Buffer {
             Some(transaction_id)
         } else {
             None
+        }
+    }
+
+    pub fn undo_transaction(
+        &mut self,
+        transaction_id: TransactionId,
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
+        let was_dirty = self.is_dirty();
+        let old_version = self.version.clone();
+        if let Some(operation) = self.text.undo_transaction(transaction_id) {
+            self.send_operation(Operation::Buffer(operation), cx);
+            self.did_edit(&old_version, was_dirty, cx);
+            true
+        } else {
+            false
         }
     }
 

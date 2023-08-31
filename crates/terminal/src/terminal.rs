@@ -8,7 +8,7 @@ use alacritty_terminal::{
     event::{Event as AlacTermEvent, EventListener, Notify, WindowSize},
     event_loop::{EventLoop, Msg, Notifier},
     grid::{Dimensions, Scroll as AlacScroll},
-    index::{Column, Direction as AlacDirection, Line, Point},
+    index::{Boundary, Column, Direction as AlacDirection, Line, Point},
     selection::{Selection, SelectionRange, SelectionType},
     sync::FairMutex,
     term::{
@@ -78,7 +78,7 @@ lazy_static! {
     // * use more strict regex for `file://` protocol matching: original regex has `file:` inside, but we want to avoid matching `some::file::module` strings.
     static ref URL_REGEX: RegexSearch = RegexSearch::new(r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#).unwrap();
 
-    static ref WORD_REGEX: RegexSearch = RegexSearch::new(r#"[\w.:/@\-~]+"#).unwrap();
+    static ref WORD_REGEX: RegexSearch = RegexSearch::new(r#"[\w.\[\]:/@\-~]+"#).unwrap();
 }
 
 ///Upward flowing events, for changing the title and such
@@ -724,14 +724,13 @@ impl Terminal {
                     self.last_content.size,
                     term.grid().display_offset(),
                 )
-                .grid_clamp(term, alacritty_terminal::index::Boundary::Grid);
+                .grid_clamp(term, Boundary::Grid);
 
                 let link = term.grid().index(point).hyperlink();
                 let found_word = if link.is_some() {
                     let mut min_index = point;
                     loop {
-                        let new_min_index =
-                            min_index.sub(term, alacritty_terminal::index::Boundary::Cursor, 1);
+                        let new_min_index = min_index.sub(term, Boundary::Cursor, 1);
                         if new_min_index == min_index {
                             break;
                         } else if term.grid().index(new_min_index).hyperlink() != link {
@@ -743,8 +742,7 @@ impl Terminal {
 
                     let mut max_index = point;
                     loop {
-                        let new_max_index =
-                            max_index.add(term, alacritty_terminal::index::Boundary::Cursor, 1);
+                        let new_max_index = max_index.add(term, Boundary::Cursor, 1);
                         if new_max_index == max_index {
                             break;
                         } else if term.grid().index(new_max_index).hyperlink() != link {
@@ -761,11 +759,34 @@ impl Terminal {
                 } else if let Some(word_match) = regex_match_at(term, point, &WORD_REGEX) {
                     let maybe_url_or_path =
                         term.bounds_to_string(*word_match.start(), *word_match.end());
+                    let original_match = word_match.clone();
+                    let (sanitized_match, sanitized_word) =
+                        if maybe_url_or_path.starts_with('[') && maybe_url_or_path.ends_with(']') {
+                            (
+                                Match::new(
+                                    word_match.start().add(term, Boundary::Cursor, 1),
+                                    word_match.end().sub(term, Boundary::Cursor, 1),
+                                ),
+                                maybe_url_or_path[1..maybe_url_or_path.len() - 1].to_owned(),
+                            )
+                        } else {
+                            (word_match, maybe_url_or_path)
+                        };
+
                     let is_url = match regex_match_at(term, point, &URL_REGEX) {
-                        Some(url_match) => url_match == word_match,
+                        Some(url_match) => {
+                            // `]` is a valid symbol in the `file://` URL, so the regex match will include it
+                            // consider that when ensuring that the URL match is the same as the original word
+                            if sanitized_match != original_match {
+                                url_match.start() == sanitized_match.start()
+                                    && url_match.end() == original_match.end()
+                            } else {
+                                url_match == sanitized_match
+                            }
+                        }
                         None => false,
                     };
-                    Some((maybe_url_or_path, is_url, word_match))
+                    Some((sanitized_word, is_url, sanitized_match))
                 } else {
                     None
                 };
