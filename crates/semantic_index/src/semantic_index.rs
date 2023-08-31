@@ -255,6 +255,7 @@ impl SemanticIndex {
                 let parsing_files_rx = parsing_files_rx.clone();
                 let embedding_provider = embedding_provider.clone();
                 let embedding_queue = embedding_queue.clone();
+                let db = db.clone();
                 _parsing_files_tasks.push(cx.background().spawn(async move {
                     let mut retriever = CodeContextRetriever::new(embedding_provider.clone());
                     while let Ok(pending_file) = parsing_files_rx.recv().await {
@@ -264,6 +265,7 @@ impl SemanticIndex {
                             &mut retriever,
                             &embedding_queue,
                             &parsing_files_rx,
+                            &db,
                         )
                         .await;
                     }
@@ -293,13 +295,14 @@ impl SemanticIndex {
         retriever: &mut CodeContextRetriever,
         embedding_queue: &Arc<Mutex<EmbeddingQueue>>,
         parsing_files_rx: &channel::Receiver<PendingFile>,
+        db: &VectorDatabase,
     ) {
         let Some(language) = pending_file.language else {
             return;
         };
 
         if let Some(content) = fs.load(&pending_file.absolute_path).await.log_err() {
-            if let Some(documents) = retriever
+            if let Some(mut documents) = retriever
                 .parse_file_with_template(&pending_file.relative_path, &content, language)
                 .log_err()
             {
@@ -309,22 +312,20 @@ impl SemanticIndex {
                     documents.len()
                 );
 
-                todo!();
-                // if let Some(embeddings) = db
-                //     .embeddings_for_documents(
-                //         pending_file.worktree_db_id,
-                //         pending_file.relative_path,
-                //         &documents,
-                //     )
-                //     .await
-                //     .log_err()
-                // {
-                //     for (document, embedding) in documents.iter_mut().zip(embeddings) {
-                //         if let Some(embedding) = embedding {
-                //             document.embedding = embedding;
-                //         }
-                //     }
-                // }
+                if let Some(sha_to_embeddings) = db
+                    .embeddings_for_file(
+                        pending_file.worktree_db_id,
+                        pending_file.relative_path.clone(),
+                    )
+                    .await
+                    .log_err()
+                {
+                    for document in documents.iter_mut() {
+                        if let Some(embedding) = sha_to_embeddings.get(&document.digest) {
+                            document.embedding = Some(embedding.to_owned());
+                        }
+                    }
+                }
 
                 embedding_queue.lock().push(FileToEmbed {
                     worktree_id: pending_file.worktree_db_id,
