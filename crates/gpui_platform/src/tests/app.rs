@@ -1,5 +1,6 @@
+use gpui::platform::Event;
+use gpui::LayoutContext;
 use gpui::{
-    Action,
     actions,
     elements::*,
     impl_actions,
@@ -9,10 +10,9 @@ use gpui::{
     text_layout::*,
     util::post_inc,
     window::ChildView,
-    AnyViewHandle, AnyWindowHandle, AppContext, Entity, ModelContext, ModelHandle, TestAppContext,
-    View, ViewContext, ViewHandle,
-};use gpui::LayoutContext;
-use gpui::platform::Event;
+    Action, AnyViewHandle, AnyWindowHandle, AppContext, Entity, ModelContext, ModelHandle,
+    TestAppContext, View, ViewContext, ViewHandle,
+};
 use itertools::Itertools;
 use postage::{sink::Sink, stream::Stream};
 use serde::Deserialize;

@@ -1,8 +1,8 @@
-use gpui::AppContext;
 use gpui::color::Color;
 use gpui::elements::{Label, LabelStyle};
 use gpui::fonts::{Properties as FontProperties, TextStyle, Weight};
 use gpui::text_layout::RunStyle;
+use gpui::AppContext;
 
 #[crate::test(self)]
 fn test_layout_label_with_highlights(cx: &mut AppContext) {
