@@ -14,8 +14,7 @@ use crate::{
     CodeLabel, LanguageScope, Outline,
 };
 use anyhow::{anyhow, Result};
-use clock::ReplicaId;
-use fs::LineEnding;
+pub use clock::ReplicaId;
 use futures::FutureExt as _;
 use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, Task};
 use lsp::LanguageServerId;
@@ -348,13 +347,17 @@ impl CharKind {
 }
 
 impl Buffer {
-    pub fn new<T: Into<String>>(
-        replica_id: ReplicaId,
-        base_text: T,
-        cx: &mut ModelContext<Self>,
-    ) -> Self {
+    pub fn new<T: Into<String>>(replica_id: ReplicaId, id: u64, base_text: T) -> Self {
         Self::build(
-            TextBuffer::new(replica_id, cx.model_id() as u64, base_text.into()),
+            TextBuffer::new(replica_id, id, base_text.into()),
+            None,
+            None,
+        )
+    }
+
+    pub fn remote(remote_id: u64, replica_id: ReplicaId, base_text: String) -> Self {
+        Self::build(
+            TextBuffer::new(replica_id, remote_id, base_text),
             None,
             None,
         )
@@ -1295,6 +1298,10 @@ impl Buffer {
         self.text.forget_transaction(transaction_id);
     }
 
+    pub fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
+        self.text.merge_transactions(transaction, destination);
+    }
+
     pub fn wait_for_edits(
         &mut self,
         edit_ids: impl IntoIterator<Item = clock::Local>,
@@ -1658,6 +1665,22 @@ impl Buffer {
             Some(transaction_id)
         } else {
             None
+        }
+    }
+
+    pub fn undo_transaction(
+        &mut self,
+        transaction_id: TransactionId,
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
+        let was_dirty = self.is_dirty();
+        let old_version = self.version.clone();
+        if let Some(operation) = self.text.undo_transaction(transaction_id) {
+            self.send_operation(Operation::Buffer(operation), cx);
+            self.did_edit(&old_version, was_dirty, cx);
+            true
+        } else {
+            false
         }
     }
 
@@ -2146,27 +2169,46 @@ impl BufferSnapshot {
 
     pub fn language_scope_at<D: ToOffset>(&self, position: D) -> Option<LanguageScope> {
         let offset = position.to_offset(self);
-        let mut range = 0..self.len();
-        let mut scope = self.language.clone().map(|language| LanguageScope {
-            language,
-            override_id: None,
-        });
+        let mut scope = None;
+        let mut smallest_range: Option<Range<usize>> = None;
 
         // Use the layer that has the smallest node intersecting the given point.
         for layer in self.syntax.layers_for_range(offset..offset, &self.text) {
             let mut cursor = layer.node().walk();
-            while cursor.goto_first_child_for_byte(offset).is_some() {}
-            let node_range = cursor.node().byte_range();
-            if node_range.to_inclusive().contains(&offset) && node_range.len() < range.len() {
-                range = node_range;
-                scope = Some(LanguageScope {
-                    language: layer.language.clone(),
-                    override_id: layer.override_id(offset, &self.text),
-                });
+
+            let mut range = None;
+            loop {
+                let child_range = cursor.node().byte_range();
+                if !child_range.to_inclusive().contains(&offset) {
+                    break;
+                }
+
+                range = Some(child_range);
+                if cursor.goto_first_child_for_byte(offset).is_none() {
+                    break;
+                }
+            }
+
+            if let Some(range) = range {
+                if smallest_range
+                    .as_ref()
+                    .map_or(true, |smallest_range| range.len() < smallest_range.len())
+                {
+                    smallest_range = Some(range);
+                    scope = Some(LanguageScope {
+                        language: layer.language.clone(),
+                        override_id: layer.override_id(offset, &self.text),
+                    });
+                }
             }
         }
 
-        scope
+        scope.or_else(|| {
+            self.language.clone().map(|language| LanguageScope {
+                language,
+                override_id: None,
+            })
+        })
     }
 
     pub fn surrounding_word<T: ToOffset>(&self, start: T) -> (Range<usize>, Option<CharKind>) {
@@ -2458,7 +2500,9 @@ impl BufferSnapshot {
 
                 matches.advance();
 
-                let Some((open, close)) = open.zip(close) else { continue };
+                let Some((open, close)) = open.zip(close) else {
+                    continue;
+                };
 
                 let bracket_range = open.start..=close.end;
                 if !bracket_range.overlaps(&range) {

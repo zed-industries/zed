@@ -19,7 +19,7 @@ use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
     persistence::DB,
-    Anchor, DisplayPoint, Editor, EditorMode, Event, InlayRefreshReason, MultiBufferSnapshot,
+    Anchor, DisplayPoint, Editor, EditorMode, Event, InlayHintRefreshReason, MultiBufferSnapshot,
     ToPoint,
 };
 
@@ -29,6 +29,7 @@ use self::{
 };
 
 pub const SCROLL_EVENT_SEPARATION: Duration = Duration::from_millis(28);
+pub const VERTICAL_SCROLL_MARGIN: f32 = 3.;
 const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Default)]
@@ -136,7 +137,7 @@ pub struct ScrollManager {
 impl ScrollManager {
     pub fn new() -> Self {
         ScrollManager {
-            vertical_scroll_margin: 3.0,
+            vertical_scroll_margin: VERTICAL_SCROLL_MARGIN,
             anchor: ScrollAnchor::new(),
             ongoing: OngoingScroll::new(),
             autoscroll_request: None,
@@ -301,7 +302,7 @@ impl Editor {
             cx.spawn(|editor, mut cx| async move {
                 editor
                     .update(&mut cx, |editor, cx| {
-                        editor.refresh_inlays(InlayRefreshReason::NewLinesShown, cx)
+                        editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx)
                     })
                     .ok()
             })
@@ -333,7 +334,7 @@ impl Editor {
             cx,
         );
 
-        self.refresh_inlays(InlayRefreshReason::NewLinesShown, cx);
+        self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
     }
 
     pub fn scroll_position(&self, cx: &mut ViewContext<Self>) -> Vector2F {

@@ -1,11 +1,11 @@
-use crate::{search::PathMatcher, worktree::WorktreeHandle, Event, *};
-use fs::{FakeFs, LineEnding, RealFs};
+use crate::{search::PathMatcher, worktree::WorktreeModelHandle, Event, *};
+use fs::{FakeFs, RealFs};
 use futures::{future, StreamExt};
 use gpui::{executor::Deterministic, test::subscribe, AppContext};
 use language::{
     language_settings::{AllLanguageSettings, LanguageSettingsContent},
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
-    OffsetRangeExt, Point, ToPoint,
+    LineEnding, OffsetRangeExt, Point, ToPoint,
 };
 use lsp::Url;
 use parking_lot::Mutex;
@@ -3953,11 +3953,12 @@ async fn search(
     query: SearchQuery,
     cx: &mut gpui::TestAppContext,
 ) -> Result<HashMap<String, Vec<Range<usize>>>> {
-    let results = project
-        .update(cx, |project, cx| project.search(query, cx))
-        .await?;
-
-    Ok(results
+    let mut search_rx = project.update(cx, |project, cx| project.search(query, cx));
+    let mut result = HashMap::default();
+    while let Some((buffer, range)) = search_rx.next().await {
+        result.entry(buffer).or_insert(range);
+    }
+    Ok(result
         .into_iter()
         .map(|(buffer, ranges)| {
             buffer.read_with(cx, |buffer, _| {

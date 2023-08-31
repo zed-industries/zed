@@ -6,15 +6,15 @@ import {
     text,
 } from "../style_tree/components"
 import { useTheme, Theme } from "../theme"
+import { Button } from "./button"
 import { Margin } from "./icon_button"
 
 interface TextButtonOptions {
-    layer?:
-    | Theme["lowest"]
-    | Theme["middle"]
-    | Theme["highest"]
+    layer?: Theme["lowest"] | Theme["middle"] | Theme["highest"]
+    variant?: Button.Variant
     color?: keyof Theme["lowest"]
     margin?: Partial<Margin>
+    disabled?: boolean
     text_properties?: TextProperties
 }
 
@@ -23,13 +23,20 @@ type ToggleableTextButtonOptions = TextButtonOptions & {
 }
 
 export function text_button({
+    variant = Button.variant.Default,
     color,
     layer,
     margin,
+    disabled,
     text_properties,
-}: TextButtonOptions) {
+}: TextButtonOptions = {}) {
     const theme = useTheme()
     if (!color) color = "base"
+
+    const background_color =
+        variant === Button.variant.Ghost
+            ? null
+            : background(layer ?? theme.lowest, color)
 
     const text_options: TextProperties = {
         size: "xs",
@@ -59,31 +66,54 @@ export function text_button({
         },
         state: {
             default: {
-                background: background(layer ?? theme.lowest, color),
-                color: foreground(layer ?? theme.lowest, color),
+                background: background_color,
+                color: disabled
+                    ? foreground(layer ?? theme.lowest, "disabled")
+                    : foreground(layer ?? theme.lowest, color),
             },
-            hovered: {
-                background: background(layer ?? theme.lowest, color, "hovered"),
-                color: foreground(layer ?? theme.lowest, color, "hovered"),
-            },
-            clicked: {
-                background: background(layer ?? theme.lowest, color, "pressed"),
-                color: foreground(layer ?? theme.lowest, color, "pressed"),
-            },
+            hovered: disabled
+                ? {}
+                : {
+                    background: background(
+                        layer ?? theme.lowest,
+                        color,
+                        "hovered"
+                    ),
+                    color: foreground(
+                        layer ?? theme.lowest,
+                        color,
+                        "hovered"
+                    ),
+                },
+            clicked: disabled
+                ? {}
+                : {
+                    background: background(
+                        layer ?? theme.lowest,
+                        color,
+                        "pressed"
+                    ),
+                    color: foreground(
+                        layer ?? theme.lowest,
+                        color,
+                        "pressed"
+                    ),
+                },
         },
     })
 }
 
 export function toggleable_text_button(
     theme: Theme,
-    { color, active_color, margin }: ToggleableTextButtonOptions
+    { variant, color, active_color, margin }: ToggleableTextButtonOptions = {}
 ) {
     if (!color) color = "base"
 
     return toggleable({
         state: {
-            inactive: text_button({ color, margin }),
+            inactive: text_button({ variant, color, margin }),
             active: text_button({
+                variant,
                 color: active_color ? active_color : color,
                 margin,
                 layer: theme.middle,

@@ -1,4 +1,4 @@
-import chroma, { Scale, Color } from "chroma-js"
+import { Scale, Color } from "chroma-js"
 import { Syntax, ThemeSyntax, SyntaxHighlightStyle } from "./syntax"
 export { Syntax, ThemeSyntax, SyntaxHighlightStyle }
 import {
@@ -13,16 +13,16 @@ export interface Theme {
     is_light: boolean
 
     /**
-    * App background, other elements that should sit directly on top of the background.
-    */
+     * App background, other elements that should sit directly on top of the background.
+     */
     lowest: Layer
     /**
-    * Panels, tabs, other UI surfaces that sit on top of the background.
-    */
+     * Panels, tabs, other UI surfaces that sit on top of the background.
+     */
     middle: Layer
     /**
-    * Editors like code buffers, conversation editors, etc.
-    */
+     * Editors like code buffers, conversation editors, etc.
+     */
     highest: Layer
 
     ramps: RampSet
@@ -206,7 +206,10 @@ function build_color_family(ramps: RampSet): ColorFamily {
     for (const ramp in ramps) {
         const ramp_value = ramps[ramp as keyof RampSet]
 
-        const lightnessValues = [ramp_value(0).get('hsl.l') * 100, ramp_value(1).get('hsl.l') * 100]
+        const lightnessValues = [
+            ramp_value(0).get("hsl.l") * 100,
+            ramp_value(1).get("hsl.l") * 100,
+        ]
         const low = Math.min(...lightnessValues)
         const high = Math.max(...lightnessValues)
         const range = high - low

@@ -4,7 +4,10 @@ mod inlay_map;
 mod tab_map;
 mod wrap_map;
 
-use crate::{Anchor, AnchorRangeExt, InlayId, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
+use crate::{
+    link_go_to_definition::{DocumentRange, InlayRange},
+    Anchor, AnchorRangeExt, InlayId, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
+};
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{HashMap, HashSet};
 use fold_map::FoldMap;
@@ -27,7 +30,8 @@ pub use block_map::{
     BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock, TransformBlock,
 };
 
-pub use self::inlay_map::Inlay;
+pub use self::fold_map::FoldPoint;
+pub use self::inlay_map::{Inlay, InlayOffset, InlayPoint};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FoldStatus {
@@ -39,7 +43,7 @@ pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
 
-type TextHighlights = TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
+type TextHighlights = TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<DocumentRange>)>>;
 
 pub struct DisplayMap {
     buffer: ModelHandle<MultiBuffer>,
@@ -211,11 +215,28 @@ impl DisplayMap {
         ranges: Vec<Range<Anchor>>,
         style: HighlightStyle,
     ) {
-        self.text_highlights
-            .insert(Some(type_id), Arc::new((style, ranges)));
+        self.text_highlights.insert(
+            Some(type_id),
+            Arc::new((style, ranges.into_iter().map(DocumentRange::Text).collect())),
+        );
     }
 
-    pub fn text_highlights(&self, type_id: TypeId) -> Option<(HighlightStyle, &[Range<Anchor>])> {
+    pub fn highlight_inlays(
+        &mut self,
+        type_id: TypeId,
+        ranges: Vec<InlayRange>,
+        style: HighlightStyle,
+    ) {
+        self.text_highlights.insert(
+            Some(type_id),
+            Arc::new((
+                style,
+                ranges.into_iter().map(DocumentRange::Inlay).collect(),
+            )),
+        );
+    }
+
+    pub fn text_highlights(&self, type_id: TypeId) -> Option<(HighlightStyle, &[DocumentRange])> {
         let highlights = self.text_highlights.get(&Some(type_id))?;
         Some((highlights.0, &highlights.1))
     }
@@ -223,7 +244,7 @@ impl DisplayMap {
     pub fn clear_text_highlights(
         &mut self,
         type_id: TypeId,
-    ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
+    ) -> Option<Arc<(HighlightStyle, Vec<DocumentRange>)>> {
         self.text_highlights.remove(&Some(type_id))
     }
 
@@ -290,7 +311,7 @@ impl DisplayMap {
 
 pub struct DisplaySnapshot {
     pub buffer_snapshot: MultiBufferSnapshot,
-    fold_snapshot: fold_map::FoldSnapshot,
+    pub fold_snapshot: fold_map::FoldSnapshot,
     inlay_snapshot: inlay_map::InlaySnapshot,
     tab_snapshot: tab_map::TabSnapshot,
     wrap_snapshot: wrap_map::WrapSnapshot,
@@ -387,12 +408,49 @@ impl DisplaySnapshot {
     }
 
     fn display_point_to_point(&self, point: DisplayPoint, bias: Bias) -> Point {
+        self.inlay_snapshot
+            .to_buffer_point(self.display_point_to_inlay_point(point, bias))
+    }
+
+    pub fn display_point_to_inlay_offset(&self, point: DisplayPoint, bias: Bias) -> InlayOffset {
+        self.inlay_snapshot
+            .to_offset(self.display_point_to_inlay_point(point, bias))
+    }
+
+    pub fn anchor_to_inlay_offset(&self, anchor: Anchor) -> InlayOffset {
+        self.inlay_snapshot
+            .to_inlay_offset(anchor.to_offset(&self.buffer_snapshot))
+    }
+
+    pub fn inlay_offset_to_display_point(&self, offset: InlayOffset, bias: Bias) -> DisplayPoint {
+        let inlay_point = self.inlay_snapshot.to_point(offset);
+        let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
+        let tab_point = self.tab_snapshot.to_tab_point(fold_point);
+        let wrap_point = self.wrap_snapshot.tab_point_to_wrap_point(tab_point);
+        let block_point = self.block_snapshot.to_block_point(wrap_point);
+        DisplayPoint(block_point)
+    }
+
+    fn display_point_to_inlay_point(&self, point: DisplayPoint, bias: Bias) -> InlayPoint {
         let block_point = point.0;
         let wrap_point = self.block_snapshot.to_wrap_point(block_point);
         let tab_point = self.wrap_snapshot.to_tab_point(wrap_point);
         let fold_point = self.tab_snapshot.to_fold_point(tab_point, bias).0;
-        let inlay_point = fold_point.to_inlay_point(&self.fold_snapshot);
-        self.inlay_snapshot.to_buffer_point(inlay_point)
+        fold_point.to_inlay_point(&self.fold_snapshot)
+    }
+
+    pub fn display_point_to_fold_point(&self, point: DisplayPoint, bias: Bias) -> FoldPoint {
+        let block_point = point.0;
+        let wrap_point = self.block_snapshot.to_wrap_point(block_point);
+        let tab_point = self.wrap_snapshot.to_tab_point(wrap_point);
+        self.tab_snapshot.to_fold_point(tab_point, bias).0
+    }
+
+    pub fn fold_point_to_display_point(&self, fold_point: FoldPoint) -> DisplayPoint {
+        let tab_point = self.tab_snapshot.to_tab_point(fold_point);
+        let wrap_point = self.wrap_snapshot.tab_point_to_wrap_point(tab_point);
+        let block_point = self.block_snapshot.to_block_point(wrap_point);
+        DisplayPoint(block_point)
     }
 
     pub fn max_point(&self) -> DisplayPoint {
@@ -428,15 +486,15 @@ impl DisplaySnapshot {
         &self,
         display_rows: Range<u32>,
         language_aware: bool,
-        hint_highlights: Option<HighlightStyle>,
-        suggestion_highlights: Option<HighlightStyle>,
+        hint_highlight_style: Option<HighlightStyle>,
+        suggestion_highlight_style: Option<HighlightStyle>,
     ) -> DisplayChunks<'_> {
         self.block_snapshot.chunks(
             display_rows,
             language_aware,
             Some(&self.text_highlights),
-            hint_highlights,
-            suggestion_highlights,
+            hint_highlight_style,
+            suggestion_highlight_style,
         )
     }
 
@@ -757,7 +815,7 @@ impl DisplaySnapshot {
     #[cfg(any(test, feature = "test-support"))]
     pub fn highlight_ranges<Tag: ?Sized + 'static>(
         &self,
-    ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
+    ) -> Option<Arc<(HighlightStyle, Vec<DocumentRange>)>> {
         let type_id = TypeId::of::<Tag>();
         self.text_highlights.get(&Some(type_id)).cloned()
     }
@@ -1319,7 +1377,8 @@ pub mod tests {
 
         cx.update(|cx| init_test(cx, |s| s.defaults.tab_size = Some(2.try_into().unwrap())));
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
+        let buffer = cx
+            .add_model(|cx| Buffer::new(0, cx.model_id() as u64, text).with_language(language, cx));
         buffer.condition(cx, |buf, _| !buf.is_parsing()).await;
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
 
@@ -1408,7 +1467,8 @@ pub mod tests {
 
         cx.update(|cx| init_test(cx, |_| {}));
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
+        let buffer = cx
+            .add_model(|cx| Buffer::new(0, cx.model_id() as u64, text).with_language(language, cx));
         buffer.condition(cx, |buf, _| !buf.is_parsing()).await;
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
 
@@ -1480,7 +1540,8 @@ pub mod tests {
 
         let (text, highlighted_ranges) = marked_text_ranges(r#"constˇ «a»: B = "c «d»""#, false);
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
+        let buffer = cx
+            .add_model(|cx| Buffer::new(0, cx.model_id() as u64, text).with_language(language, cx));
         buffer.condition(cx, |buf, _| !buf.is_parsing()).await;
 
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));

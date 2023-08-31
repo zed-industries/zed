@@ -36,7 +36,8 @@ CREATE INDEX "index_contacts_user_id_b" ON "contacts" ("user_id_b");
 
 CREATE TABLE "rooms" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "live_kit_room" VARCHAR NOT NULL
+    "live_kit_room" VARCHAR NOT NULL,
+    "channel_id" INTEGER REFERENCES channels (id) ON DELETE CASCADE
 );
 
 CREATE TABLE "projects" (
@@ -184,3 +185,86 @@ CREATE UNIQUE INDEX
     "index_followers_on_project_id_and_leader_connection_server_id_and_leader_connection_id_and_follower_connection_server_id_and_follower_connection_id"
 ON "followers" ("project_id", "leader_connection_server_id", "leader_connection_id", "follower_connection_server_id", "follower_connection_id");
 CREATE INDEX "index_followers_on_room_id" ON "followers" ("room_id");
+
+CREATE TABLE "channels" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "name" VARCHAR NOT NULL,
+    "created_at" TIMESTAMP NOT NULL DEFAULT now
+);
+
+CREATE TABLE "channel_paths" (
+    "id_path" TEXT NOT NULL PRIMARY KEY,
+    "channel_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE
+);
+CREATE INDEX "index_channel_paths_on_channel_id" ON "channel_paths" ("channel_id");
+
+CREATE TABLE "channel_members" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "channel_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE,
+    "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    "admin" BOOLEAN NOT NULL DEFAULT false,
+    "accepted" BOOLEAN NOT NULL DEFAULT false,
+    "updated_at" TIMESTAMP NOT NULL DEFAULT now
+);
+
+CREATE UNIQUE INDEX "index_channel_members_on_channel_id_and_user_id" ON "channel_members" ("channel_id", "user_id");
+
+CREATE TABLE "buffers" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "channel_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE,
+    "epoch" INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX "index_buffers_on_channel_id" ON "buffers" ("channel_id");
+
+CREATE TABLE "buffer_operations" (
+    "buffer_id" INTEGER NOT NULL REFERENCES buffers (id) ON DELETE CASCADE,
+    "epoch" INTEGER NOT NULL,
+    "replica_id" INTEGER NOT NULL,
+    "lamport_timestamp" INTEGER NOT NULL,
+    "value" BLOB NOT NULL,
+    PRIMARY KEY(buffer_id, epoch, lamport_timestamp, replica_id)
+);
+
+CREATE TABLE "buffer_snapshots" (
+    "buffer_id" INTEGER NOT NULL REFERENCES buffers (id) ON DELETE CASCADE,
+    "epoch" INTEGER NOT NULL,
+    "text" TEXT NOT NULL,
+    "operation_serialization_version" INTEGER NOT NULL,
+    PRIMARY KEY(buffer_id, epoch)
+);
+
+CREATE TABLE "channel_buffer_collaborators" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "channel_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE,
+    "connection_id" INTEGER NOT NULL,
+    "connection_server_id" INTEGER NOT NULL REFERENCES servers (id) ON DELETE CASCADE,
+    "connection_lost" BOOLEAN NOT NULL DEFAULT false,
+    "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    "replica_id" INTEGER NOT NULL
+);
+
+CREATE INDEX "index_channel_buffer_collaborators_on_channel_id" ON "channel_buffer_collaborators" ("channel_id");
+CREATE UNIQUE INDEX "index_channel_buffer_collaborators_on_channel_id_and_replica_id" ON "channel_buffer_collaborators" ("channel_id", "replica_id");
+CREATE INDEX "index_channel_buffer_collaborators_on_connection_server_id" ON "channel_buffer_collaborators" ("connection_server_id");
+CREATE INDEX "index_channel_buffer_collaborators_on_connection_id" ON "channel_buffer_collaborators" ("connection_id");
+CREATE UNIQUE INDEX "index_channel_buffer_collaborators_on_channel_id_connection_id_and_server_id" ON "channel_buffer_collaborators" ("channel_id", "connection_id", "connection_server_id");
+
+
+CREATE TABLE "feature_flags" (
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "flag" TEXT NOT NULL UNIQUE
+);
+
+CREATE INDEX "index_feature_flags" ON "feature_flags" ("id");
+
+
+CREATE TABLE "user_features" (
+    "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    "feature_id" INTEGER NOT NULL REFERENCES feature_flags (id) ON DELETE CASCADE,
+    PRIMARY KEY (user_id, feature_id)
+);
+
+CREATE UNIQUE INDEX "index_user_features_user_id_and_feature_id" ON "user_features" ("user_id", "feature_id");
+CREATE INDEX "index_user_features_on_user_id" ON "user_features" ("user_id");
+CREATE INDEX "index_user_features_on_feature_id" ON "user_features" ("feature_id");

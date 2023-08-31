@@ -16,7 +16,7 @@ use language::{Anchor, Buffer, Language, LanguageRegistry};
 use parking_lot::Mutex;
 use parsing::{CodeContextRetriever, Document, PARSEABLE_ENTIRE_FILE_TYPES};
 use postage::watch;
-use project::{search::PathMatcher, Fs, Project, WorktreeId};
+use project::{search::PathMatcher, Fs, PathChange, Project, ProjectEntryId, WorktreeId};
 use smol::channel;
 use std::{
     cmp::Ordering,
@@ -33,8 +33,9 @@ use util::{
     paths::EMBEDDINGS_DIR,
     ResultExt,
 };
+use workspace::WorkspaceCreated;
 
-const SEMANTIC_INDEX_VERSION: usize = 6;
+const SEMANTIC_INDEX_VERSION: usize = 7;
 const EMBEDDINGS_BATCH_SIZE: usize = 80;
 
 pub fn init(
@@ -49,11 +50,28 @@ pub fn init(
         .join(Path::new(RELEASE_CHANNEL_NAME.as_str()))
         .join("embeddings_db");
 
-    if *RELEASE_CHANNEL == ReleaseChannel::Stable
-        || !settings::get::<SemanticIndexSettings>(cx).enabled
-    {
+    // This needs to be removed at some point before stable.
+    if *RELEASE_CHANNEL == ReleaseChannel::Stable {
         return;
     }
+
+    cx.subscribe_global::<WorkspaceCreated, _>({
+        move |event, cx| {
+            let Some(semantic_index) = SemanticIndex::global(cx) else {
+                return;
+            };
+            let workspace = &event.0;
+            if let Some(workspace) = workspace.upgrade(cx) {
+                let project = workspace.read(cx).project().clone();
+                if project.read(cx).is_local() {
+                    semantic_index.update(cx, |index, cx| {
+                        index.initialize_project(project, cx).detach_and_log_err(cx)
+                    });
+                }
+            }
+        }
+    })
+    .detach();
 
     cx.spawn(move |mut cx| async move {
         let semantic_index = SemanticIndex::new(
@@ -93,15 +111,95 @@ pub struct SemanticIndex {
 
 struct ProjectState {
     worktree_db_ids: Vec<(WorktreeId, i64)>,
+    _subscription: gpui::Subscription,
     outstanding_job_count_rx: watch::Receiver<usize>,
     _outstanding_job_count_tx: Arc<Mutex<watch::Sender<usize>>>,
+    job_queue_tx: channel::Sender<IndexOperation>,
+    _queue_update_task: Task<()>,
 }
 
+#[derive(Clone)]
 struct JobHandle {
-    tx: Weak<Mutex<watch::Sender<usize>>>,
+    /// The outer Arc is here to count the clones of a JobHandle instance;
+    /// when the last handle to a given job is dropped, we decrement a counter (just once).
+    tx: Arc<Weak<Mutex<watch::Sender<usize>>>>,
 }
 
+impl JobHandle {
+    fn new(tx: &Arc<Mutex<watch::Sender<usize>>>) -> Self {
+        *tx.lock().borrow_mut() += 1;
+        Self {
+            tx: Arc::new(Arc::downgrade(&tx)),
+        }
+    }
+}
 impl ProjectState {
+    fn new(
+        cx: &mut AppContext,
+        subscription: gpui::Subscription,
+        worktree_db_ids: Vec<(WorktreeId, i64)>,
+        outstanding_job_count_rx: watch::Receiver<usize>,
+        _outstanding_job_count_tx: Arc<Mutex<watch::Sender<usize>>>,
+    ) -> Self {
+        let (job_queue_tx, job_queue_rx) = channel::unbounded();
+        let _queue_update_task = cx.background().spawn({
+            let mut worktree_queue = HashMap::new();
+            async move {
+                while let Ok(operation) = job_queue_rx.recv().await {
+                    Self::update_queue(&mut worktree_queue, operation);
+                }
+            }
+        });
+
+        Self {
+            worktree_db_ids,
+            outstanding_job_count_rx,
+            _outstanding_job_count_tx,
+            _subscription: subscription,
+            _queue_update_task,
+            job_queue_tx,
+        }
+    }
+
+    pub fn get_outstanding_count(&self) -> usize {
+        self.outstanding_job_count_rx.borrow().clone()
+    }
+
+    fn update_queue(queue: &mut HashMap<PathBuf, IndexOperation>, operation: IndexOperation) {
+        match operation {
+            IndexOperation::FlushQueue => {
+                let queue = std::mem::take(queue);
+                for (_, op) in queue {
+                    match op {
+                        IndexOperation::IndexFile {
+                            absolute_path: _,
+                            payload,
+                            tx,
+                        } => {
+                            let _ = tx.try_send(payload);
+                        }
+                        IndexOperation::DeleteFile {
+                            absolute_path: _,
+                            payload,
+                            tx,
+                        } => {
+                            let _ = tx.try_send(payload);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            IndexOperation::IndexFile {
+                ref absolute_path, ..
+            }
+            | IndexOperation::DeleteFile {
+                ref absolute_path, ..
+            } => {
+                queue.insert(absolute_path.clone(), operation);
+            }
+        }
+    }
+
     fn db_id_for_worktree_id(&self, id: WorktreeId) -> Option<i64> {
         self.worktree_db_ids
             .iter()
@@ -127,6 +225,7 @@ impl ProjectState {
     }
 }
 
+#[derive(Clone)]
 pub struct PendingFile {
     worktree_db_id: i64,
     relative_path: PathBuf,
@@ -134,6 +233,19 @@ pub struct PendingFile {
     language: Arc<Language>,
     modified_time: SystemTime,
     job_handle: JobHandle,
+}
+enum IndexOperation {
+    IndexFile {
+        absolute_path: PathBuf,
+        payload: PendingFile,
+        tx: channel::Sender<PendingFile>,
+    },
+    DeleteFile {
+        absolute_path: PathBuf,
+        payload: DbOperation,
+        tx: channel::Sender<DbOperation>,
+    },
+    FlushQueue,
 }
 
 pub struct SearchResult {
@@ -381,6 +493,20 @@ impl SemanticIndex {
                     .await
                     .unwrap();
             }
+        } else {
+            // Insert the file in spite of failure so that future attempts to index it do not take place (unless the file is changed).
+            for (worktree_id, _, path, mtime, job_handle) in embeddings_queue.into_iter() {
+                db_update_tx
+                    .send(DbOperation::InsertFile {
+                        worktree_id,
+                        documents: vec![],
+                        path,
+                        mtime,
+                        job_handle,
+                    })
+                    .await
+                    .unwrap();
+            }
         }
     }
 
@@ -390,6 +516,7 @@ impl SemanticIndex {
         embeddings_queue: &mut Vec<(i64, Vec<Document>, PathBuf, SystemTime, JobHandle)>,
         embed_batch_tx: &channel::Sender<Vec<(i64, Vec<Document>, PathBuf, SystemTime, JobHandle)>>,
     ) {
+        // Handle edge case where individual file has more documents than max batch size
         let should_flush = match job {
             EmbeddingJob::Enqueue {
                 documents,
@@ -398,9 +525,43 @@ impl SemanticIndex {
                 mtime,
                 job_handle,
             } => {
-                *queue_len += &documents.len();
-                embeddings_queue.push((worktree_id, documents, path, mtime, job_handle));
-                *queue_len >= EMBEDDINGS_BATCH_SIZE
+                // If documents is greater than embeddings batch size, recursively batch existing rows.
+                if &documents.len() > &EMBEDDINGS_BATCH_SIZE {
+                    let first_job = EmbeddingJob::Enqueue {
+                        documents: documents[..EMBEDDINGS_BATCH_SIZE].to_vec(),
+                        worktree_id,
+                        path: path.clone(),
+                        mtime,
+                        job_handle: job_handle.clone(),
+                    };
+
+                    Self::enqueue_documents_to_embed(
+                        first_job,
+                        queue_len,
+                        embeddings_queue,
+                        embed_batch_tx,
+                    );
+
+                    let second_job = EmbeddingJob::Enqueue {
+                        documents: documents[EMBEDDINGS_BATCH_SIZE..].to_vec(),
+                        worktree_id,
+                        path: path.clone(),
+                        mtime,
+                        job_handle: job_handle.clone(),
+                    };
+
+                    Self::enqueue_documents_to_embed(
+                        second_job,
+                        queue_len,
+                        embeddings_queue,
+                        embed_batch_tx,
+                    );
+                    return;
+                } else {
+                    *queue_len += &documents.len();
+                    embeddings_queue.push((worktree_id, documents, path, mtime, job_handle));
+                    *queue_len >= EMBEDDINGS_BATCH_SIZE
+                }
             }
             EmbeddingJob::Flush => true,
         };
@@ -501,26 +662,12 @@ impl SemanticIndex {
         project: ModelHandle<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<bool>> {
-        let worktree_scans_complete = project
-            .read(cx)
-            .worktrees(cx)
-            .map(|worktree| {
-                let scan_complete = worktree.read(cx).as_local().unwrap().scan_complete();
-                async move {
-                    scan_complete.await;
-                }
-            })
-            .collect::<Vec<_>>();
-
         let worktrees_indexed_previously = project
             .read(cx)
             .worktrees(cx)
             .map(|worktree| self.worktree_previously_indexed(worktree.read(cx).abs_path()))
             .collect::<Vec<_>>();
-
         cx.spawn(|_, _cx| async move {
-            futures::future::join_all(worktree_scans_complete).await;
-
             let worktree_indexed_previously =
                 futures::future::join_all(worktrees_indexed_previously).await;
 
@@ -531,12 +678,112 @@ impl SemanticIndex {
         })
     }
 
-    pub fn index_project(
+    fn project_entries_changed(
+        &self,
+        project: ModelHandle<Project>,
+        changes: Arc<[(Arc<Path>, ProjectEntryId, PathChange)]>,
+        cx: &mut ModelContext<'_, SemanticIndex>,
+        worktree_id: &WorktreeId,
+    ) -> Result<()> {
+        let parsing_files_tx = self.parsing_files_tx.clone();
+        let db_update_tx = self.db_update_tx.clone();
+        let (job_queue_tx, outstanding_job_tx, worktree_db_id) = {
+            let state = self
+                .projects
+                .get(&project.downgrade())
+                .ok_or(anyhow!("Project not yet initialized"))?;
+            let worktree_db_id = state
+                .db_id_for_worktree_id(*worktree_id)
+                .ok_or(anyhow!("Worktree ID in Database Not Available"))?;
+            (
+                state.job_queue_tx.clone(),
+                state._outstanding_job_count_tx.clone(),
+                worktree_db_id,
+            )
+        };
+
+        let language_registry = self.language_registry.clone();
+        let parsing_files_tx = parsing_files_tx.clone();
+        let db_update_tx = db_update_tx.clone();
+
+        let worktree = project
+            .read(cx)
+            .worktree_for_id(worktree_id.clone(), cx)
+            .ok_or(anyhow!("Worktree not available"))?
+            .read(cx)
+            .snapshot();
+        cx.spawn(|_, _| async move {
+            let worktree = worktree.clone();
+            for (path, entry_id, path_change) in changes.iter() {
+                let relative_path = path.to_path_buf();
+                let absolute_path = worktree.absolutize(path);
+
+                let Some(entry) = worktree.entry_for_id(*entry_id) else {
+                    continue;
+                };
+                if entry.is_ignored || entry.is_symlink || entry.is_external {
+                    continue;
+                }
+
+                log::trace!("File Event: {:?}, Path: {:?}", &path_change, &path);
+                match path_change {
+                    PathChange::AddedOrUpdated | PathChange::Updated | PathChange::Added => {
+                        if let Ok(language) = language_registry
+                            .language_for_file(&relative_path, None)
+                            .await
+                        {
+                            if !PARSEABLE_ENTIRE_FILE_TYPES.contains(&language.name().as_ref())
+                                && &language.name().as_ref() != &"Markdown"
+                                && language
+                                    .grammar()
+                                    .and_then(|grammar| grammar.embedding_config.as_ref())
+                                    .is_none()
+                            {
+                                continue;
+                            }
+
+                            let job_handle = JobHandle::new(&outstanding_job_tx);
+                            let new_operation = IndexOperation::IndexFile {
+                                absolute_path: absolute_path.clone(),
+                                payload: PendingFile {
+                                    worktree_db_id,
+                                    relative_path,
+                                    absolute_path,
+                                    language,
+                                    modified_time: entry.mtime,
+                                    job_handle,
+                                },
+                                tx: parsing_files_tx.clone(),
+                            };
+                            let _ = job_queue_tx.try_send(new_operation);
+                        }
+                    }
+                    PathChange::Removed => {
+                        let new_operation = IndexOperation::DeleteFile {
+                            absolute_path,
+                            payload: DbOperation::Delete {
+                                worktree_id: worktree_db_id,
+                                path: relative_path,
+                            },
+                            tx: db_update_tx.clone(),
+                        };
+                        let _ = job_queue_tx.try_send(new_operation);
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .detach();
+
+        Ok(())
+    }
+
+    pub fn initialize_project(
         &mut self,
         project: ModelHandle<Project>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<(usize, watch::Receiver<usize>)>> {
-        let t0 = Instant::now();
+    ) -> Task<Result<()>> {
+        log::trace!("Initializing Project for Semantic Index");
         let worktree_scans_complete = project
             .read(cx)
             .worktrees(cx)
@@ -547,6 +794,7 @@ impl SemanticIndex {
                 }
             })
             .collect::<Vec<_>>();
+
         let worktree_db_ids = project
             .read(cx)
             .worktrees(cx)
@@ -555,15 +803,21 @@ impl SemanticIndex {
             })
             .collect::<Vec<_>>();
 
+        let _subscription = cx.subscribe(&project, |this, project, event, cx| {
+            if let project::Event::WorktreeUpdatedEntries(worktree_id, changes) = event {
+                let _ =
+                    this.project_entries_changed(project.clone(), changes.clone(), cx, worktree_id);
+            };
+        });
+
         let language_registry = self.language_registry.clone();
-        let db_update_tx = self.db_update_tx.clone();
         let parsing_files_tx = self.parsing_files_tx.clone();
+        let db_update_tx = self.db_update_tx.clone();
 
         cx.spawn(|this, mut cx| async move {
             futures::future::join_all(worktree_scans_complete).await;
 
             let worktree_db_ids = futures::future::join_all(worktree_db_ids).await;
-
             let worktrees = project.read_with(&cx, |project, cx| {
                 project
                     .worktrees(cx)
@@ -573,6 +827,7 @@ impl SemanticIndex {
 
             let mut worktree_file_mtimes = HashMap::new();
             let mut db_ids_by_worktree_id = HashMap::new();
+
             for (worktree, db_id) in worktrees.iter().zip(worktree_db_ids) {
                 let db_id = db_id?;
                 db_ids_by_worktree_id.insert(worktree.id(), db_id);
@@ -583,34 +838,34 @@ impl SemanticIndex {
                 );
             }
 
+            let worktree_db_ids = db_ids_by_worktree_id
+                .iter()
+                .map(|(a, b)| (*a, *b))
+                .collect();
+
             let (job_count_tx, job_count_rx) = watch::channel_with(0);
             let job_count_tx = Arc::new(Mutex::new(job_count_tx));
-            this.update(&mut cx, |this, _| {
-                this.projects.insert(
-                    project.downgrade(),
-                    ProjectState {
-                        worktree_db_ids: db_ids_by_worktree_id
-                            .iter()
-                            .map(|(a, b)| (*a, *b))
-                            .collect(),
-                        outstanding_job_count_rx: job_count_rx.clone(),
-                        _outstanding_job_count_tx: job_count_tx.clone(),
-                    },
-                );
-            });
+            let job_count_tx_longlived = job_count_tx.clone();
 
-            cx.background()
+            let worktree_files = cx
+                .background()
                 .spawn(async move {
-                    let mut count = 0;
+                    let mut worktree_files = Vec::new();
                     for worktree in worktrees.into_iter() {
                         let mut file_mtimes = worktree_file_mtimes.remove(&worktree.id()).unwrap();
+                        let worktree_db_id = db_ids_by_worktree_id[&worktree.id()];
                         for file in worktree.files(false, 0) {
                             let absolute_path = worktree.absolutize(&file.path);
+
+                            if file.is_external || file.is_ignored || file.is_symlink {
+                                continue;
+                            }
 
                             if let Ok(language) = language_registry
                                 .language_for_file(&absolute_path, None)
                                 .await
                             {
+                                // Test if file is valid parseable file
                                 if !PARSEABLE_ENTIRE_FILE_TYPES.contains(&language.name().as_ref())
                                     && &language.name().as_ref() != &"Markdown"
                                     && language
@@ -627,41 +882,84 @@ impl SemanticIndex {
                                     .map_or(false, |existing_mtime| existing_mtime == file.mtime);
 
                                 if !already_stored {
-                                    count += 1;
-                                    *job_count_tx.lock().borrow_mut() += 1;
-                                    let job_handle = JobHandle {
-                                        tx: Arc::downgrade(&job_count_tx),
-                                    };
-                                    parsing_files_tx
-                                        .try_send(PendingFile {
-                                            worktree_db_id: db_ids_by_worktree_id[&worktree.id()],
+                                    let job_handle = JobHandle::new(&job_count_tx);
+                                    worktree_files.push(IndexOperation::IndexFile {
+                                        absolute_path: absolute_path.clone(),
+                                        payload: PendingFile {
+                                            worktree_db_id,
                                             relative_path: path_buf,
                                             absolute_path,
                                             language,
                                             job_handle,
                                             modified_time: file.mtime,
-                                        })
-                                        .unwrap();
+                                        },
+                                        tx: parsing_files_tx.clone(),
+                                    });
                                 }
                             }
                         }
-                        for file in file_mtimes.keys() {
-                            db_update_tx
-                                .try_send(DbOperation::Delete {
-                                    worktree_id: db_ids_by_worktree_id[&worktree.id()],
-                                    path: file.to_owned(),
-                                })
-                                .unwrap();
+                        // Clean up entries from database that are no longer in the worktree.
+                        for (path, _) in file_mtimes {
+                            worktree_files.push(IndexOperation::DeleteFile {
+                                absolute_path: worktree.absolutize(path.as_path()),
+                                payload: DbOperation::Delete {
+                                    worktree_id: worktree_db_id,
+                                    path,
+                                },
+                                tx: db_update_tx.clone(),
+                            });
                         }
                     }
 
-                    log::trace!(
-                        "walking worktree took {:?} milliseconds",
-                        t0.elapsed().as_millis()
-                    );
-                    anyhow::Ok((count, job_count_rx))
+                    anyhow::Ok(worktree_files)
                 })
-                .await
+                .await?;
+
+            this.update(&mut cx, |this, cx| {
+                let project_state = ProjectState::new(
+                    cx,
+                    _subscription,
+                    worktree_db_ids,
+                    job_count_rx,
+                    job_count_tx_longlived,
+                );
+
+                for op in worktree_files {
+                    let _ = project_state.job_queue_tx.try_send(op);
+                }
+
+                this.projects.insert(project.downgrade(), project_state);
+            });
+            Result::<(), _>::Ok(())
+        })
+    }
+
+    pub fn index_project(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<(usize, watch::Receiver<usize>)>> {
+        let state = self.projects.get_mut(&project.downgrade());
+        let state = if state.is_none() {
+            return Task::Ready(Some(Err(anyhow!("Project not yet initialized"))));
+        } else {
+            state.unwrap()
+        };
+
+        // let parsing_files_tx = self.parsing_files_tx.clone();
+        // let db_update_tx = self.db_update_tx.clone();
+        let job_count_rx = state.outstanding_job_count_rx.clone();
+        let count = state.get_outstanding_count();
+
+        cx.spawn(|this, mut cx| async move {
+            this.update(&mut cx, |this, _| {
+                let Some(state) = this.projects.get_mut(&project.downgrade()) else {
+                    return;
+                };
+                let _ = state.job_queue_tx.try_send(IndexOperation::FlushQueue);
+            });
+
+            Ok((count, job_count_rx))
         })
     }
 
@@ -705,6 +1003,7 @@ impl SemanticIndex {
         let database_url = self.database_url.clone();
         let fs = self.fs.clone();
         cx.spawn(|this, mut cx| async move {
+            let t0 = Instant::now();
             let database = VectorDatabase::new(fs.clone(), database_url.clone()).await?;
 
             let phrase_embedding = embedding_provider
@@ -713,6 +1012,11 @@ impl SemanticIndex {
                 .into_iter()
                 .next()
                 .unwrap();
+
+            log::trace!(
+                "Embedding search phrase took: {:?} milliseconds",
+                t0.elapsed().as_millis()
+            );
 
             let file_ids =
                 database.retrieve_included_file_ids(&worktree_db_ids, &includes, &excludes)?;
@@ -788,6 +1092,11 @@ impl SemanticIndex {
 
             let buffers = futures::future::join_all(tasks).await;
 
+            log::trace!(
+                "Semantic Searching took: {:?} milliseconds in total",
+                t0.elapsed().as_millis()
+            );
+
             Ok(buffers
                 .into_iter()
                 .zip(ranges)
@@ -809,9 +1118,32 @@ impl Entity for SemanticIndex {
 
 impl Drop for JobHandle {
     fn drop(&mut self) {
-        if let Some(tx) = self.tx.upgrade() {
-            let mut tx = tx.lock();
-            *tx.borrow_mut() -= 1;
+        if let Some(inner) = Arc::get_mut(&mut self.tx) {
+            // This is the last instance of the JobHandle (regardless of it's origin - whether it was cloned or not)
+            if let Some(tx) = inner.upgrade() {
+                let mut tx = tx.lock();
+                *tx.borrow_mut() -= 1;
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    #[test]
+    fn test_job_handle() {
+        let (job_count_tx, job_count_rx) = watch::channel_with(0);
+        let tx = Arc::new(Mutex::new(job_count_tx));
+        let job_handle = JobHandle::new(&tx);
+
+        assert_eq!(1, *job_count_rx.borrow());
+        let new_job_handle = job_handle.clone();
+        assert_eq!(1, *job_count_rx.borrow());
+        drop(job_handle);
+        assert_eq!(1, *job_count_rx.borrow());
+        drop(new_job_handle);
+        assert_eq!(0, *job_count_rx.borrow());
     }
 }

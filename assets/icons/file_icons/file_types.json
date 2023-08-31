@@ -21,23 +21,27 @@
         "dll": "storage",
         "doc": "document",
         "docx": "document",
+        "eex": "elixir",
         "eslintrc": "eslint",
         "eslintrc.js": "eslint",
         "eslintrc.json": "eslint",
+        "ex": "elixir",
+        "exs": "elixir",
+        "fish": "terminal",
+        "flac": "audio",
         "fmp": "storage",
         "fp7": "storage",
-        "flac": "audio",
-        "fish": "terminal",
         "frm": "storage",
         "gdb": "storage",
+        "gif": "image",
         "gitattributes": "vcs",
         "gitignore": "vcs",
         "gitmodules": "vcs",
-        "gif": "image",
         "go": "code",
         "h": "code",
         "handlebars": "code",
         "hbs": "template",
+        "heex": "elixir",
         "htm": "template",
         "html": "template",
         "ib": "storage",
@@ -51,16 +55,16 @@
         "ldf": "storage",
         "lock": "lock",
         "log": "log",
-        "mdb": "storage",
         "md": "document",
+        "mdb": "storage",
         "mdf": "storage",
         "mdx": "document",
         "mp3": "audio",
         "mp4": "video",
         "myd": "storage",
         "myi": "storage",
-        "ods": "document",
         "odp": "document",
+        "ods": "document",
         "odt": "document",
         "ogg": "video",
         "pdb": "storage",
@@ -74,24 +78,24 @@
         "profile": "terminal",
         "ps1": "terminal",
         "psd": "image",
-        "py": "code",
+        "py": "python",
         "rb": "code",
         "rkt": "code",
         "rs": "rust",
         "rtf": "document",
         "sav": "storage",
         "scm": "code",
+        "sdf": "storage",
         "sh": "terminal",
         "sqlite": "storage",
-        "sdf": "storage",
         "svelte": "template",
         "svg": "image",
         "swift": "code",
-        "ts": "typescript",
-        "tsx": "code",
         "tiff": "image",
         "toml": "toml",
+        "ts": "typescript",
         "tsv": "storage",
+        "tsx": "code",
         "txt": "document",
         "wav": "audio",
         "webm": "video",
@@ -103,9 +107,9 @@
         "zlogin": "terminal",
         "zsh": "terminal",
         "zsh_aliases": "terminal",
-        "zshenv": "terminal",
         "zsh_histfile": "terminal",
         "zsh_profile": "terminal",
+        "zshenv": "terminal",
         "zshrc": "terminal"
     },
     "types": {
@@ -127,6 +131,9 @@
         "document": {
             "icon": "icons/file_icons/book.svg"
         },
+        "elixir": {
+            "icon": "icons/file_icons/elixir.svg"
+        },
         "eslint": {
             "icon": "icons/file_icons/eslint.svg"
         },
@@ -145,8 +152,14 @@
         "log": {
             "icon": "icons/file_icons/info.svg"
         },
+        "phoenix": {
+            "icon": "icons/file_icons/phoenix.svg"
+        },
         "prettier": {
             "icon": "icons/file_icons/prettier.svg"
+        },
+        "python": {
+            "icon": "icons/file_icons/python.svg"
         },
         "rust": {
             "icon": "icons/file_icons/rust.svg"

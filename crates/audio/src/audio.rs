@@ -39,29 +39,43 @@ pub struct Audio {
 
 impl Audio {
     pub fn new() -> Self {
-        let (_output_stream, output_handle) = OutputStream::try_default().log_err().unzip();
-
         Self {
-            _output_stream,
-            output_handle,
+            _output_stream: None,
+            output_handle: None,
         }
     }
 
-    pub fn play_sound(sound: Sound, cx: &AppContext) {
+    fn ensure_output_exists(&mut self) -> Option<&OutputStreamHandle> {
+        if self.output_handle.is_none() {
+            let (_output_stream, output_handle) = OutputStream::try_default().log_err().unzip();
+            self.output_handle = output_handle;
+            self._output_stream = _output_stream;
+        }
+
+        self.output_handle.as_ref()
+    }
+
+    pub fn play_sound(sound: Sound, cx: &mut AppContext) {
         if !cx.has_global::<Self>() {
             return;
         }
 
-        let this = cx.global::<Self>();
+        cx.update_global::<Self, _, _>(|this, cx| {
+            let output_handle = this.ensure_output_exists()?;
+            let source = SoundRegistry::global(cx).get(sound.file()).log_err()?;
+            output_handle.play_raw(source).log_err()?;
+            Some(())
+        });
+    }
 
-        let Some(output_handle) = this.output_handle.as_ref() else {
+    pub fn end_call(cx: &mut AppContext) {
+        if !cx.has_global::<Self>() {
             return;
-        };
+        }
 
-        let Some(source) = SoundRegistry::global(cx).get(sound.file()).log_err() else {
-        return;
-    };
-
-        output_handle.play_raw(source).log_err();
+        cx.update_global::<Self, _, _>(|this, _| {
+            this._output_stream.take();
+            this.output_handle.take();
+        });
     }
 }

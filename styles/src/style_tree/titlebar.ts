@@ -1,8 +1,6 @@
-import { icon_button, toggleable_icon_button } from "../component/icon_button"
-import { toggleable_text_button } from "../component/text_button"
+import { icon_button, toggleable_icon_button, toggleable_text_button } from "../component"
 import { interactive, toggleable } from "../element"
-import { useTheme } from "../theme"
-import { with_opacity } from "../theme/color"
+import { useTheme, with_opacity } from "../theme"
 import { background, border, foreground, text } from "./components"
 
 const ITEM_SPACING = 8
@@ -34,16 +32,17 @@ function call_controls() {
     }
 
     return {
-        toggle_microphone_button: toggleable_icon_button(theme, {
+        toggle_microphone_button: toggleable_icon_button({
             margin: {
                 ...margin_y,
                 left: space.group,
                 right: space.half_item,
             },
             active_color: "negative",
+            active_background_color: "negative",
         }),
 
-        toggle_speakers_button: toggleable_icon_button(theme, {
+        toggle_speakers_button: toggleable_icon_button({
             margin: {
                 ...margin_y,
                 left: space.half_item,
@@ -51,13 +50,14 @@ function call_controls() {
             },
         }),
 
-        screen_share_button: toggleable_icon_button(theme, {
+        screen_share_button: toggleable_icon_button({
             margin: {
                 ...margin_y,
                 left: space.half_item,
                 right: space.group,
             },
             active_color: "accent",
+            active_background_color: "accent",
         }),
 
         muted: foreground(theme.lowest, "negative"),
@@ -178,15 +178,17 @@ export function titlebar(): any {
             left: 80,
             right: 0,
         },
-
-        // Project
-        project_name_divider: text(theme.lowest, "sans", "variant"),
+        menu: {
+            width: 300,
+            height: 400,
+        },
 
         project_menu_button: toggleable_text_button(theme, {
-            color: 'base',
+            color: "base"
         }),
+
         git_menu_button: toggleable_text_button(theme, {
-            color: 'variant',
+            color: "variant",
         }),
 
         // Collaborators
@@ -259,7 +261,7 @@ export function titlebar(): any {
 
         ...call_controls(),
 
-        toggle_contacts_button: toggleable_icon_button(theme, {
+        toggle_contacts_button: toggleable_icon_button({
             margin: {
                 left: ITEM_SPACING,
             },

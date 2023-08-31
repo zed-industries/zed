@@ -1,0 +1,12 @@
+[package]
+name = "feature_flags"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/feature_flags.rs"
+
+[dependencies]
+gpui = { path = "../gpui" }
+anyhow.workspace = true

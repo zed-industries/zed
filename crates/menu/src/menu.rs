@@ -7,6 +7,7 @@ gpui::actions!(
         SelectPrev,
         SelectNext,
         SelectFirst,
-        SelectLast
+        SelectLast,
+        ShowContextMenu
     ]
 );

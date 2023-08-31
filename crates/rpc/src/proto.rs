@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 use super::{entity_messages, messages, request_messages, ConnectionId, TypedEnvelope};
 use anyhow::{anyhow, Result};
 use async_tungstenite::tungstenite::Message as WebSocketMessage;
@@ -141,9 +143,10 @@ messages!(
     (Call, Foreground),
     (CallCanceled, Foreground),
     (CancelCall, Foreground),
-    (ChannelMessageSent, Foreground),
     (CopyProjectEntry, Foreground),
     (CreateBufferForPeer, Foreground),
+    (CreateChannel, Foreground),
+    (ChannelResponse, Foreground),
     (CreateProjectEntry, Foreground),
     (CreateRoom, Foreground),
     (CreateRoomResponse, Foreground),
@@ -156,10 +159,6 @@ messages!(
     (FormatBuffers, Foreground),
     (FormatBuffersResponse, Foreground),
     (FuzzySearchUsers, Foreground),
-    (GetChannelMessages, Foreground),
-    (GetChannelMessagesResponse, Foreground),
-    (GetChannels, Foreground),
-    (GetChannelsResponse, Foreground),
     (GetCodeActions, Background),
     (GetCodeActionsResponse, Background),
     (GetHover, Background),
@@ -179,14 +178,12 @@ messages!(
     (GetUsers, Foreground),
     (Hello, Foreground),
     (IncomingCall, Foreground),
+    (InviteChannelMember, Foreground),
     (UsersResponse, Foreground),
-    (JoinChannel, Foreground),
-    (JoinChannelResponse, Foreground),
     (JoinProject, Foreground),
     (JoinProjectResponse, Foreground),
     (JoinRoom, Foreground),
     (JoinRoomResponse, Foreground),
-    (LeaveChannel, Foreground),
     (LeaveProject, Foreground),
     (LeaveRoom, Foreground),
     (OpenBufferById, Background),
@@ -200,6 +197,8 @@ messages!(
     (OnTypeFormattingResponse, Background),
     (InlayHints, Background),
     (InlayHintsResponse, Background),
+    (ResolveInlayHint, Background),
+    (ResolveInlayHintResponse, Background),
     (RefreshInlayHints, Foreground),
     (Ping, Foreground),
     (PrepareRename, Background),
@@ -209,18 +208,21 @@ messages!(
     (RejoinRoom, Foreground),
     (RejoinRoomResponse, Foreground),
     (RemoveContact, Foreground),
+    (RemoveChannelMember, Foreground),
     (ReloadBuffers, Foreground),
     (ReloadBuffersResponse, Foreground),
     (RemoveProjectCollaborator, Foreground),
     (RenameProjectEntry, Foreground),
     (RequestContact, Foreground),
     (RespondToContactRequest, Foreground),
+    (RespondToChannelInvite, Foreground),
+    (JoinChannel, Foreground),
     (RoomUpdated, Foreground),
     (SaveBuffer, Foreground),
+    (RenameChannel, Foreground),
+    (SetChannelMemberAdmin, Foreground),
     (SearchProject, Background),
     (SearchProjectResponse, Background),
-    (SendChannelMessage, Foreground),
-    (SendChannelMessageResponse, Foreground),
     (ShareProject, Foreground),
     (ShareProjectResponse, Foreground),
     (ShowContacts, Foreground),
@@ -233,6 +235,8 @@ messages!(
     (UpdateBuffer, Foreground),
     (UpdateBufferFile, Foreground),
     (UpdateContacts, Foreground),
+    (RemoveChannel, Foreground),
+    (UpdateChannels, Foreground),
     (UpdateDiagnosticSummary, Foreground),
     (UpdateFollowers, Foreground),
     (UpdateInviteInfo, Foreground),
@@ -245,6 +249,14 @@ messages!(
     (UpdateDiffBase, Foreground),
     (GetPrivateUserInfo, Foreground),
     (GetPrivateUserInfoResponse, Foreground),
+    (GetChannelMembers, Foreground),
+    (GetChannelMembersResponse, Foreground),
+    (JoinChannelBuffer, Foreground),
+    (JoinChannelBufferResponse, Foreground),
+    (LeaveChannelBuffer, Background),
+    (UpdateChannelBuffer, Foreground),
+    (RemoveChannelBufferCollaborator, Foreground),
+    (AddChannelBufferCollaborator, Foreground),
 );
 
 request_messages!(
@@ -258,13 +270,12 @@ request_messages!(
     (CopyProjectEntry, ProjectEntryResponse),
     (CreateProjectEntry, ProjectEntryResponse),
     (CreateRoom, CreateRoomResponse),
+    (CreateChannel, ChannelResponse),
     (DeclineCall, Ack),
     (DeleteProjectEntry, ProjectEntryResponse),
     (ExpandProjectEntry, ExpandProjectEntryResponse),
     (Follow, FollowResponse),
     (FormatBuffers, FormatBuffersResponse),
-    (GetChannelMessages, GetChannelMessagesResponse),
-    (GetChannels, GetChannelsResponse),
     (GetCodeActions, GetCodeActionsResponse),
     (GetHover, GetHoverResponse),
     (GetCompletions, GetCompletionsResponse),
@@ -276,7 +287,7 @@ request_messages!(
     (GetProjectSymbols, GetProjectSymbolsResponse),
     (FuzzySearchUsers, UsersResponse),
     (GetUsers, UsersResponse),
-    (JoinChannel, JoinChannelResponse),
+    (InviteChannelMember, Ack),
     (JoinProject, JoinProjectResponse),
     (JoinRoom, JoinRoomResponse),
     (LeaveRoom, Ack),
@@ -290,15 +301,22 @@ request_messages!(
     (PrepareRename, PrepareRenameResponse),
     (OnTypeFormatting, OnTypeFormattingResponse),
     (InlayHints, InlayHintsResponse),
+    (ResolveInlayHint, ResolveInlayHintResponse),
     (RefreshInlayHints, Ack),
     (ReloadBuffers, ReloadBuffersResponse),
     (RequestContact, Ack),
+    (RemoveChannelMember, Ack),
     (RemoveContact, Ack),
     (RespondToContactRequest, Ack),
+    (RespondToChannelInvite, Ack),
+    (SetChannelMemberAdmin, Ack),
+    (GetChannelMembers, GetChannelMembersResponse),
+    (JoinChannel, JoinRoomResponse),
+    (RemoveChannel, Ack),
     (RenameProjectEntry, ProjectEntryResponse),
+    (RenameChannel, ChannelResponse),
     (SaveBuffer, BufferSaved),
     (SearchProject, SearchProjectResponse),
-    (SendChannelMessage, SendChannelMessageResponse),
     (ShareProject, ShareProjectResponse),
     (SynchronizeBuffers, SynchronizeBuffersResponse),
     (Test, Test),
@@ -306,6 +324,8 @@ request_messages!(
     (UpdateParticipantLocation, Ack),
     (UpdateProject, Ack),
     (UpdateWorktree, Ack),
+    (JoinChannelBuffer, JoinChannelBufferResponse),
+    (LeaveChannelBuffer, Ack)
 );
 
 entity_messages!(
@@ -338,6 +358,7 @@ entity_messages!(
     PerformRename,
     OnTypeFormatting,
     InlayHints,
+    ResolveInlayHint,
     RefreshInlayHints,
     PrepareRename,
     ReloadBuffers,
@@ -361,7 +382,12 @@ entity_messages!(
     UpdateDiffBase
 );
 
-entity_messages!(channel_id, ChannelMessageSent);
+entity_messages!(
+    channel_id,
+    UpdateChannelBuffer,
+    RemoveChannelBufferCollaborator,
+    AddChannelBufferCollaborator
+);
 
 const KIB: usize = 1024;
 const MIB: usize = KIB * 1024;

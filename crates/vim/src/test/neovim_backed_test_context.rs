@@ -1,9 +1,13 @@
 use indoc::indoc;
+use settings::SettingsStore;
 use std::ops::{Deref, DerefMut, Range};
 
 use collections::{HashMap, HashSet};
 use gpui::ContextHandle;
-use language::OffsetRangeExt;
+use language::{
+    language_settings::{AllLanguageSettings, SoftWrap},
+    OffsetRangeExt,
+};
 use util::test::{generate_marked_text, marked_text_offsets};
 
 use super::{neovim_connection::NeovimConnection, NeovimBackedBindingTestContext, VimTestContext};
@@ -116,7 +120,7 @@ impl<'a> NeovimBackedTestContext<'a> {
 
     pub async fn set_shared_state(&mut self, marked_text: &str) -> ContextHandle {
         let mode = if marked_text.contains("»") {
-            Mode::Visual { line: false }
+            Mode::Visual
         } else {
             Mode::Normal
         };
@@ -127,16 +131,46 @@ impl<'a> NeovimBackedTestContext<'a> {
         context_handle
     }
 
+    pub async fn set_shared_wrap(&mut self, columns: u32) {
+        if columns < 12 {
+            panic!("nvim doesn't support columns < 12")
+        }
+        self.neovim.set_option("wrap").await;
+        self.neovim.set_option("columns=12").await;
+
+        self.update(|cx| {
+            cx.update_global(|settings: &mut SettingsStore, cx| {
+                settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
+                    settings.defaults.soft_wrap = Some(SoftWrap::PreferredLineLength);
+                    settings.defaults.preferred_line_length = Some(columns);
+                });
+            })
+        })
+    }
+
+    pub async fn set_neovim_option(&mut self, option: &str) {
+        self.neovim.set_option(option).await;
+    }
+
     pub async fn assert_shared_state(&mut self, marked_text: &str) {
         let neovim = self.neovim_state().await;
-        if neovim != marked_text {
-            let initial_state = self
-                .last_set_state
-                .as_ref()
-                .unwrap_or(&"N/A".to_string())
-                .clone();
-            panic!(
-                indoc! {"Test is incorrect (currently expected != neovim state)
+        let editor = self.editor_state();
+        if neovim == marked_text && neovim == editor {
+            return;
+        }
+        let initial_state = self
+            .last_set_state
+            .as_ref()
+            .unwrap_or(&"N/A".to_string())
+            .clone();
+
+        let message = if neovim != marked_text {
+            "Test is incorrect (currently expected != neovim_state)"
+        } else {
+            "Editor does not match nvim behaviour"
+        };
+        panic!(
+            indoc! {"{}
                 # initial state:
                 {}
                 # keystrokes:
@@ -147,20 +181,65 @@ impl<'a> NeovimBackedTestContext<'a> {
                 {}
                 # zed state:
                 {}"},
-                initial_state,
-                self.recent_keystrokes.join(" "),
-                marked_text,
-                neovim,
-                self.editor_state(),
-            )
+            message,
+            initial_state,
+            self.recent_keystrokes.join(" "),
+            marked_text,
+            neovim,
+            editor
+        )
+    }
+
+    pub async fn assert_shared_clipboard(&mut self, text: &str) {
+        let neovim = self.neovim.read_register('"').await;
+        let editor = self
+            .platform()
+            .read_from_clipboard()
+            .unwrap()
+            .text()
+            .clone();
+
+        if text == neovim && text == editor {
+            return;
         }
-        self.assert_editor_state(marked_text)
+
+        let message = if neovim != text {
+            "Test is incorrect (currently expected != neovim)"
+        } else {
+            "Editor does not match nvim behaviour"
+        };
+
+        let initial_state = self
+            .last_set_state
+            .as_ref()
+            .unwrap_or(&"N/A".to_string())
+            .clone();
+
+        panic!(
+            indoc! {"{}
+                # initial state:
+                {}
+                # keystrokes:
+                {}
+                # currently expected:
+                {}
+                # neovim clipboard:
+                {}
+                # zed clipboard:
+                {}"},
+            message,
+            initial_state,
+            self.recent_keystrokes.join(" "),
+            text,
+            neovim,
+            editor
+        )
     }
 
     pub async fn neovim_state(&mut self) -> String {
         generate_marked_text(
             self.neovim.text().await.as_str(),
-            &vec![self.neovim_selection().await],
+            &self.neovim_selections().await[..],
             true,
         )
     }
@@ -169,9 +248,12 @@ impl<'a> NeovimBackedTestContext<'a> {
         self.neovim.mode().await.unwrap()
     }
 
-    async fn neovim_selection(&mut self) -> Range<usize> {
-        let neovim_selection = self.neovim.selection().await;
-        neovim_selection.to_offset(&self.buffer_snapshot())
+    async fn neovim_selections(&mut self) -> Vec<Range<usize>> {
+        let neovim_selections = self.neovim.selections().await;
+        neovim_selections
+            .into_iter()
+            .map(|selection| selection.to_offset(&self.buffer_snapshot()))
+            .collect()
     }
 
     pub async fn assert_state_matches(&mut self) {

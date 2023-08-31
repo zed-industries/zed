@@ -9,7 +9,7 @@ use gpui::{
 use project::Fs;
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
-use terminal::{TerminalDockPosition, TerminalSettings};
+use terminal::terminal_settings::{TerminalDockPosition, TerminalSettings};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel},
@@ -362,10 +362,10 @@ impl Panel for TerminalPanel {
         }
     }
 
-    fn set_size(&mut self, size: f32, cx: &mut ViewContext<Self>) {
+    fn set_size(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>) {
         match self.position(cx) {
-            DockPosition::Left | DockPosition::Right => self.width = Some(size),
-            DockPosition::Bottom => self.height = Some(size),
+            DockPosition::Left | DockPosition::Right => self.width = size,
+            DockPosition::Bottom => self.height = size,
         }
         self.serialize(cx);
         cx.notify();
@@ -393,8 +393,8 @@ impl Panel for TerminalPanel {
         }
     }
 
-    fn icon_path(&self) -> &'static str {
-        "icons/terminal_12.svg"
+    fn icon_path(&self, _: &WindowContext) -> Option<&'static str> {
+        Some("icons/terminal.svg")
     }
 
     fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {

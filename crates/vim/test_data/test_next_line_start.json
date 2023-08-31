@@ -1,0 +1,3 @@
+{"Put":{"state":"ˇone\n  two\nthree"}}
+{"Key":"enter"}
+{"Get":{"state":"one\n  ˇtwo\nthree","mode":"Normal"}}

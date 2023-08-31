@@ -12,6 +12,7 @@ mod workspace_settings;
 
 use anyhow::{anyhow, Context, Result};
 use call::ActiveCall;
+use channel::ChannelStore;
 use client::{
     proto::{self, PeerId},
     Client, TypedEnvelope, UserStore,
@@ -344,7 +345,7 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut AppContext) {
 
 type FollowableItemBuilder = fn(
     ViewHandle<Pane>,
-    ModelHandle<Project>,
+    ViewHandle<Workspace>,
     ViewId,
     &mut Option<proto::view::Variant>,
     &mut AppContext,
@@ -361,8 +362,8 @@ pub fn register_followable_item<I: FollowableItem>(cx: &mut AppContext) {
         builders.insert(
             TypeId::of::<I>(),
             (
-                |pane, project, id, state, cx| {
-                    I::from_state_proto(pane, project, id, state, cx).map(|task| {
+                |pane, workspace, id, state, cx| {
+                    I::from_state_proto(pane, workspace, id, state, cx).map(|task| {
                         cx.foreground()
                             .spawn(async move { Ok(Box::new(task.await?) as Box<_>) })
                     })
@@ -400,8 +401,9 @@ pub fn register_deserializable_item<I: Item>(cx: &mut AppContext) {
 
 pub struct AppState {
     pub languages: Arc<LanguageRegistry>,
-    pub client: Arc<client::Client>,
-    pub user_store: ModelHandle<client::UserStore>,
+    pub client: Arc<Client>,
+    pub user_store: ModelHandle<UserStore>,
+    pub channel_store: ModelHandle<ChannelStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub build_window_options:
         fn(Option<WindowBounds>, Option<uuid::Uuid>, &dyn Platform) -> WindowOptions<'static>,
@@ -424,6 +426,8 @@ impl AppState {
         let http_client = util::http::FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone(), cx);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
+        let channel_store =
+            cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
 
         theme::init((), cx);
         client::init(&client, cx);
@@ -434,6 +438,7 @@ impl AppState {
             fs,
             languages,
             user_store,
+            channel_store,
             initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
             build_window_options: |_, _, _| Default::default(),
             background_actions: || &[],
@@ -548,6 +553,8 @@ struct FollowerState {
     active_view_id: Option<ViewId>,
     items_by_leader_view_id: HashMap<ViewId, Box<dyn FollowableItemHandle>>,
 }
+
+enum WorkspaceBounds {}
 
 impl Workspace {
     pub fn new(
@@ -2307,8 +2314,12 @@ impl Workspace {
         item_id_to_move: usize,
         cx: &mut ViewContext<Self>,
     ) {
-        let Some(pane_to_split) = pane_to_split.upgrade(cx) else { return; };
-        let Some(from) = from.upgrade(cx) else { return; };
+        let Some(pane_to_split) = pane_to_split.upgrade(cx) else {
+            return;
+        };
+        let Some(from) = from.upgrade(cx) else {
+            return;
+        };
 
         let new_pane = self.add_pane(cx);
         self.move_item(from.clone(), new_pane.clone(), item_id_to_move, 0, cx);
@@ -2841,7 +2852,13 @@ impl Workspace {
         views: Vec<proto::View>,
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
-        let project = this.read_with(cx, |this, _| this.project.clone())?;
+        let this = this
+            .upgrade(cx)
+            .ok_or_else(|| anyhow!("workspace dropped"))?;
+        let project = this
+            .read_with(cx, |this, _| this.project.clone())
+            .ok_or_else(|| anyhow!("window dropped"))?;
+
         let replica_id = project
             .read_with(cx, |project, _| {
                 project
@@ -2867,12 +2884,11 @@ impl Workspace {
                 let id = ViewId::from_proto(id.clone())?;
                 let mut variant = view.variant.clone();
                 if variant.is_none() {
-                    Err(anyhow!("missing variant"))?;
+                    Err(anyhow!("missing view variant"))?;
                 }
                 for build_item in &item_builders {
-                    let task = cx.update(|cx| {
-                        build_item(pane.clone(), project.clone(), id, &mut variant, cx)
-                    });
+                    let task = cx
+                        .update(|cx| build_item(pane.clone(), this.clone(), id, &mut variant, cx));
                     if let Some(task) = task {
                         item_tasks.push(task);
                         leader_view_ids.push(id);
@@ -2900,7 +2916,7 @@ impl Workspace {
                 }
 
                 Some(())
-            })?;
+            });
         }
         Ok(())
     }
@@ -3403,10 +3419,16 @@ impl Workspace {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test_new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
+        let client = project.read(cx).client();
+        let user_store = project.read(cx).user_store();
+
+        let channel_store =
+            cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
         let app_state = Arc::new(AppState {
             languages: project.read(cx).languages().clone(),
-            client: project.read(cx).client(),
-            user_store: project.read(cx).user_store(),
+            client,
+            user_store,
+            channel_store,
             fs: project.read(cx).fs().clone(),
             build_window_options: |_, _, _| Default::default(),
             initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
@@ -3750,14 +3772,23 @@ impl View for Workspace {
                                         )
                                     }))
                                     .with_children(self.modal.as_ref().map(|modal| {
-                                        ChildView::new(modal.view.as_any(), cx)
-                                            .contained()
-                                            .with_style(theme.workspace.modal)
-                                            .aligned()
-                                            .top()
+                                        // Prevent clicks within the modal from falling
+                                        // through to the rest of the workspace.
+                                        enum ModalBackground {}
+                                        MouseEventHandler::new::<ModalBackground, _>(
+                                            0,
+                                            cx,
+                                            |_, cx| ChildView::new(modal.view.as_any(), cx),
+                                        )
+                                        .on_click(MouseButton::Left, |_, _, _| {})
+                                        .contained()
+                                        .with_style(theme.workspace.modal)
+                                        .aligned()
+                                        .top()
                                     }))
                                     .with_children(self.render_notifications(&theme.workspace, cx)),
                             ))
+                            .provide_resize_bounds::<WorkspaceBounds>()
                             .flex(1.0, true),
                     )
                     .with_child(ChildView::new(&self.status_bar, cx))
@@ -4841,7 +4872,9 @@ mod tests {
                 panel_1.size(cx)
             );
 
-            left_dock.update(cx, |left_dock, cx| left_dock.resize_active_panel(1337., cx));
+            left_dock.update(cx, |left_dock, cx| {
+                left_dock.resize_active_panel(Some(1337.), cx)
+            });
             assert_eq!(
                 workspace
                     .right_dock()

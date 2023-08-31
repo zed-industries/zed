@@ -103,9 +103,19 @@
       ],
       "v": "vim::ToggleVisual",
       "shift-v": "vim::ToggleVisualLine",
+      "ctrl-v": "vim::ToggleVisualBlock",
+      "ctrl-q": "vim::ToggleVisualBlock",
       "*": "vim::MoveToNext",
       "#": "vim::MoveToPrev",
       "0": "vim::StartOfLine", // When no number operator present, use start of line motion
+      "ctrl-f": "vim::PageDown",
+      "pagedown": "vim::PageDown",
+      "ctrl-b": "vim::PageUp",
+      "pageup": "vim::PageUp",
+      "ctrl-d": "vim::ScrollDown",
+      "ctrl-u": "vim::ScrollUp",
+      "ctrl-e": "vim::LineDown",
+      "ctrl-y": "vim::LineUp",
       // "g" commands
       "g g": "vim::StartOfDocument",
       "g h": "editor::Hover",
@@ -127,10 +137,67 @@
           "partialWord": true
         }
       ],
+      "g j": [
+        "vim::Down",
+        {
+          "displayLines": true
+        }
+      ],
+      "g down": [
+        "vim::Down",
+        {
+          "displayLines": true
+        }
+      ],
+      "g k": [
+        "vim::Up",
+        {
+          "displayLines": true
+        }
+      ],
+      "g up": [
+        "vim::Up",
+        {
+          "displayLines": true
+        }
+      ],
+      "g $": [
+        "vim::EndOfLine",
+        {
+          "displayLines": true
+        }
+      ],
+      "g end": [
+        "vim::EndOfLine",
+        {
+          "displayLines": true
+        }
+      ],
+      "g 0": [
+        "vim::StartOfLine",
+        {
+          "displayLines": true
+        }
+      ],
+      "g home": [
+        "vim::StartOfLine",
+        {
+          "displayLines": true
+        }
+      ],
+      "g ^": [
+        "vim::FirstNonWhitespace",
+        {
+          "displayLines": true
+        }
+      ],
       // z commands
       "z t": "editor::ScrollCursorTop",
       "z z": "editor::ScrollCursorCenter",
       "z b": "editor::ScrollCursorBottom",
+      "z c": "editor::Fold",
+      "z o": "editor::UnfoldLines",
+      "z f": "editor::FoldSelectedRanges",
       // Count support
       "1": [
         "vim::Number",
@@ -277,6 +344,12 @@
       "shift-o": "vim::InsertLineAbove",
       "~": "vim::ChangeCase",
       "p": "vim::Paste",
+      "shift-p": [
+        "vim::Paste",
+        {
+          "before": true
+        }
+      ],
       "u": "editor::Undo",
       "ctrl-r": "editor::Redo",
       "/": "vim::Search",
@@ -293,14 +366,6 @@
           "backwards": true
         }
       ],
-      "ctrl-f": "vim::PageDown",
-      "pagedown": "vim::PageDown",
-      "ctrl-b": "vim::PageUp",
-      "pageup": "vim::PageUp",
-      "ctrl-d": "vim::ScrollDown",
-      "ctrl-u": "vim::ScrollUp",
-      "ctrl-e": "vim::LineDown",
-      "ctrl-y": "vim::LineUp",
       "r": [
         "vim::PushOperator",
         "Replace"
@@ -365,7 +430,7 @@
     }
   },
   {
-    "context": "Editor && vim_mode == visual && !VimWaiting",
+    "context": "Editor && vim_mode == visual && !VimWaiting && !VimObject",
     "bindings": {
       "u": "editor::Undo",
       "o": "vim::OtherEnd",
@@ -373,10 +438,21 @@
       "d": "vim::VisualDelete",
       "x": "vim::VisualDelete",
       "y": "vim::VisualYank",
-      "p": "vim::VisualPaste",
+      "p": "vim::Paste",
+      "shift-p": [
+        "vim::Paste",
+        {
+          "preserveClipboard": true
+        }
+      ],
       "s": "vim::Substitute",
       "c": "vim::Substitute",
       "~": "vim::ChangeCase",
+      "shift-i": [
+        "vim::SwitchMode",
+        "Insert"
+      ],
+      "shift-a": "vim::InsertAfter",
       "r": [
         "vim::PushOperator",
         "Replace"
@@ -394,11 +470,27 @@
         "Normal"
       ],
       ">": "editor::Indent",
-      "<": "editor::Outdent"
+      "<": "editor::Outdent",
+      "i": [
+        "vim::PushOperator",
+        {
+          "Object": {
+            "around": false
+          }
+        }
+      ],
+      "a": [
+        "vim::PushOperator",
+        {
+          "Object": {
+            "around": true
+          }
+        }
+      ],
     }
   },
   {
-    "context": "Editor && vim_mode == insert",
+    "context": "Editor && vim_mode == insert && !menu",
     "bindings": {
       "escape": "vim::NormalBefore",
       "ctrl-c": "vim::NormalBefore",

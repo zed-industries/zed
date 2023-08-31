@@ -7,42 +7,6 @@ pub mod test_app_context;
 pub(crate) mod window;
 mod window_input_handler;
 
-use std::{
-    any::{type_name, Any, TypeId},
-    cell::RefCell,
-    fmt::{self, Debug},
-    hash::{Hash, Hasher},
-    marker::PhantomData,
-    mem,
-    ops::{Deref, DerefMut, Range},
-    path::{Path, PathBuf},
-    pin::Pin,
-    rc::{self, Rc},
-    sync::{Arc, Weak},
-    time::Duration,
-};
-
-use anyhow::{anyhow, Context, Result};
-
-use derive_more::Deref;
-use parking_lot::Mutex;
-use postage::oneshot;
-use smallvec::SmallVec;
-use smol::prelude::*;
-use util::ResultExt;
-use uuid::Uuid;
-
-pub use action::*;
-use callback_collection::CallbackCollection;
-use collections::{hash_map::Entry, BTreeMap, HashMap, HashSet, VecDeque};
-pub use menu::*;
-use platform::Event;
-#[cfg(any(test, feature = "test-support"))]
-use ref_counts::LeakDetector;
-#[cfg(any(test, feature = "test-support"))]
-pub use test_app_context::{ContextHandle, TestAppContext};
-use window_input_handler::WindowInputHandler;
-
 use crate::{
     elements::{AnyElement, AnyRootElement, RootElement},
     executor::{self, Task},
@@ -57,8 +21,39 @@ use crate::{
     window::{Window, WindowContext},
     AssetCache, AssetSource, ClipboardItem, FontCache, MouseRegionId,
 };
-
-use self::ref_counts::RefCounts;
+pub use action::*;
+use anyhow::{anyhow, Context, Result};
+use callback_collection::CallbackCollection;
+use collections::{hash_map::Entry, BTreeMap, HashMap, HashSet, VecDeque};
+use derive_more::Deref;
+pub use menu::*;
+use parking_lot::Mutex;
+use platform::Event;
+use postage::oneshot;
+#[cfg(any(test, feature = "test-support"))]
+use ref_counts::LeakDetector;
+use ref_counts::RefCounts;
+use smallvec::SmallVec;
+use smol::prelude::*;
+use std::{
+    any::{type_name, Any, TypeId},
+    cell::RefCell,
+    fmt::{self, Debug},
+    hash::{Hash, Hasher},
+    marker::PhantomData,
+    mem,
+    ops::{Deref, DerefMut, Range},
+    path::{Path, PathBuf},
+    pin::Pin,
+    rc::{self, Rc},
+    sync::{Arc, Weak},
+    time::Duration,
+};
+#[cfg(any(test, feature = "test-support"))]
+pub use test_app_context::{ContextHandle, TestAppContext};
+use util::ResultExt;
+use uuid::Uuid;
+use window_input_handler::WindowInputHandler;
 
 pub trait Entity: 'static {
     type Event;
@@ -73,10 +68,12 @@ pub trait Entity: 'static {
 }
 
 pub trait View: Entity + Sized {
-    fn ui_name() -> &'static str;
     fn render(&mut self, cx: &mut ViewContext<'_, '_, Self>) -> AnyElement<Self>;
     fn focus_in(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {}
     fn focus_out(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {}
+    fn ui_name() -> &'static str {
+        type_name::<Self>()
+    }
     fn key_down(&mut self, _: &KeyDownEvent, _: &mut ViewContext<Self>) -> bool {
         false
     }
@@ -577,6 +574,14 @@ impl AppContext {
         }
     }
 
+    pub fn optional_global<T: 'static>(&self) -> Option<&T> {
+        if let Some(global) = self.globals.get(&TypeId::of::<T>()) {
+            Some(global.downcast_ref().unwrap())
+        } else {
+            None
+        }
+    }
+
     pub fn upgrade(&self) -> App {
         App(self.weak_self.as_ref().unwrap().upgrade().unwrap())
     }
@@ -632,7 +637,7 @@ impl AppContext {
     pub fn add_action<A, V, F, R>(&mut self, handler: F)
     where
         A: Action,
-        V: View,
+        V: 'static,
         F: 'static + FnMut(&mut V, &A, &mut ViewContext<V>) -> R,
     {
         self.add_action_internal(handler, false)
@@ -641,7 +646,7 @@ impl AppContext {
     pub fn capture_action<A, V, F>(&mut self, handler: F)
     where
         A: Action,
-        V: View,
+        V: 'static,
         F: 'static + FnMut(&mut V, &A, &mut ViewContext<V>),
     {
         self.add_action_internal(handler, true)
@@ -650,7 +655,7 @@ impl AppContext {
     fn add_action_internal<A, V, F, R>(&mut self, mut handler: F, capture: bool)
     where
         A: Action,
-        V: View,
+        V: 'static,
         F: 'static + FnMut(&mut V, &A, &mut ViewContext<V>) -> R,
     {
         let handler = Box::new(
@@ -691,7 +696,7 @@ impl AppContext {
     pub fn add_async_action<A, V, F>(&mut self, mut handler: F)
     where
         A: Action,
-        V: View,
+        V: 'static,
         F: 'static + FnMut(&mut V, &A, &mut ViewContext<V>) -> Option<Task<Result<()>>>,
     {
         self.add_action(move |view, action, cx| {
@@ -890,8 +895,8 @@ impl AppContext {
 
     fn observe_focus<F, V>(&mut self, handle: &ViewHandle<V>, mut callback: F) -> Subscription
     where
+        V: 'static,
         F: 'static + FnMut(ViewHandle<V>, bool, &mut WindowContext) -> bool,
-        V: View,
     {
         let subscription_id = post_inc(&mut self.next_subscription_id);
         let observed = handle.downgrade();
@@ -1374,15 +1379,15 @@ impl AppContext {
         self.windows.keys().copied()
     }
 
-    pub fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
+    pub fn read_view<V: 'static>(&self, handle: &ViewHandle<V>) -> &V {
         if let Some(view) = self.views.get(&(handle.window, handle.view_id)) {
             view.as_any().downcast_ref().expect("downcast is type safe")
         } else {
-            panic!("circular view reference for type {}", type_name::<T>());
+            panic!("circular view reference for type {}", type_name::<V>());
         }
     }
 
-    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
+    fn upgrade_view_handle<V: 'static>(&self, handle: &WeakViewHandle<V>) -> Option<ViewHandle<V>> {
         if self.ref_counts.lock().is_entity_alive(handle.view_id) {
             Some(ViewHandle::new(
                 handle.window,
@@ -1651,6 +1656,9 @@ impl AppContext {
                             subscription_id,
                             callback,
                         ),
+                        Effect::RepaintWindow { window } => {
+                            self.handle_repaint_window_effect(window)
+                        }
                     }
                     self.pending_notifications.clear();
                 } else {
@@ -1885,6 +1893,15 @@ impl AppContext {
             observations.emit(window, move |callback| {
                 callback(&keystroke, &result, handled_by.as_ref(), cx)
             });
+        });
+    }
+
+    fn handle_repaint_window_effect(&mut self, window: AnyWindowHandle) {
+        self.update_window(window, |cx| {
+            cx.layout(false).log_err();
+            if let Some(scene) = cx.paint().log_err() {
+                cx.window.platform_window.present_scene(scene);
+            }
         });
     }
 
@@ -2143,7 +2160,7 @@ struct ViewMetadata {
     keymap_context: KeymapContext,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct WindowInvalidation {
     pub updated: HashSet<usize>,
     pub removed: Vec<usize>,
@@ -2246,6 +2263,9 @@ pub enum Effect {
     ActivateWindow {
         window: AnyWindowHandle,
         is_active: bool,
+    },
+    RepaintWindow {
+        window: AnyWindowHandle,
     },
     WindowActivationObservation {
         window: AnyWindowHandle,
@@ -2440,6 +2460,10 @@ impl Debug for Effect {
                 .debug_struct("Effect::ActiveLabeledTasksObservation")
                 .field("subscription_id", subscription_id)
                 .finish(),
+            Effect::RepaintWindow { window } => f
+                .debug_struct("Effect::RepaintWindow")
+                .field("window_id", &window.id())
+                .finish(),
         }
     }
 }
@@ -2535,10 +2559,7 @@ pub trait AnyView {
     }
 }
 
-impl<V> AnyView for V
-where
-    V: View,
-{
+impl<V: View> AnyView for V {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -2870,7 +2891,7 @@ pub struct ViewContext<'a, 'b, T: ?Sized> {
     view_type: PhantomData<T>,
 }
 
-impl<'a, 'b, T: View> Deref for ViewContext<'a, 'b, T> {
+impl<'a, 'b, V> Deref for ViewContext<'a, 'b, V> {
     type Target = WindowContext<'a>;
 
     fn deref(&self) -> &Self::Target {
@@ -2878,14 +2899,14 @@ impl<'a, 'b, T: View> Deref for ViewContext<'a, 'b, T> {
     }
 }
 
-impl<T: View> DerefMut for ViewContext<'_, '_, T> {
+impl<'a, 'b, V> DerefMut for ViewContext<'a, 'b, V> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.window_context
     }
 }
 
-impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
-    pub(crate) fn mutable(window_context: &'b mut WindowContext<'a>, view_id: usize) -> Self {
+impl<'a, 'b, V: 'static> ViewContext<'a, 'b, V> {
+    pub fn mutable(window_context: &'b mut WindowContext<'a>, view_id: usize) -> Self {
         Self {
             window_context: Reference::Mutable(window_context),
             view_id,
@@ -2893,7 +2914,7 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
         }
     }
 
-    pub(crate) fn immutable(window_context: &'b WindowContext<'a>, view_id: usize) -> Self {
+    pub fn immutable(window_context: &'b WindowContext<'a>, view_id: usize) -> Self {
         Self {
             window_context: Reference::Immutable(window_context),
             view_id,
@@ -2903,6 +2924,12 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
 
     pub fn window_context(&mut self) -> &mut WindowContext<'a> {
         &mut self.window_context
+    }
+
+    pub fn notify(&mut self) {
+        let window = self.window_handle;
+        let view_id = self.view_id;
+        self.window_context.notify_view(window, view_id);
     }
 
     pub fn handle(&self) -> ViewHandle<V> {
@@ -3218,21 +3245,6 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
         })
     }
 
-    pub fn emit(&mut self, payload: V::Event) {
-        self.window_context
-            .pending_effects
-            .push_back(Effect::Event {
-                entity_id: self.view_id,
-                payload: Box::new(payload),
-            });
-    }
-
-    pub fn notify(&mut self) {
-        let window = self.window_handle;
-        let view_id = self.view_id;
-        self.window_context.notify_view(window, view_id);
-    }
-
     pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut V, &mut ViewContext<V>)) {
         let handle = self.handle();
         self.window_context
@@ -3287,15 +3299,15 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
         let region_id = MouseRegionId::new(tag, self.view_id, region_id);
         MouseState {
             hovered: self.window.hovered_region_ids.contains(&region_id),
-            clicked: if let Some((clicked_region_id, button)) = self.window.clicked_region {
-                if region_id == clicked_region_id {
-                    Some(button)
-                } else {
-                    None
-                }
-            } else {
-                None
-            },
+            mouse_down: !self.window.clicked_region_ids.is_empty(),
+            clicked: self
+                .window
+                .clicked_region_ids
+                .iter()
+                .find(|click_region_id| **click_region_id == region_id)
+                // If we've gotten here, there should always be a clicked region.
+                // But let's be defensive and return None if there isn't.
+                .and_then(|_| self.window.clicked_region.map(|(_, button)| button)),
             accessed_hovered: false,
             accessed_clicked: false,
         }
@@ -3306,10 +3318,19 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
         element_id: usize,
         initial: T,
     ) -> ElementStateHandle<T> {
+        self.element_state_dynamic(TypeTag::new::<Tag>(), element_id, initial)
+    }
+
+    pub fn element_state_dynamic<T: 'static>(
+        &mut self,
+        tag: TypeTag,
+        element_id: usize,
+        initial: T,
+    ) -> ElementStateHandle<T> {
         let id = ElementStateId {
             view_id: self.view_id(),
             element_id,
-            tag: TypeId::of::<Tag>(),
+            tag,
         };
         self.element_states
             .entry(id)
@@ -3323,11 +3344,35 @@ impl<'a, 'b, V: View> ViewContext<'a, 'b, V> {
     ) -> ElementStateHandle<T> {
         self.element_state::<Tag, T>(element_id, T::default())
     }
+
+    pub fn rem_pixels(&self) -> f32 {
+        16.
+    }
+
+    pub fn default_element_state_dynamic<T: 'static + Default>(
+        &mut self,
+        tag: TypeTag,
+        element_id: usize,
+    ) -> ElementStateHandle<T> {
+        self.element_state_dynamic::<T>(tag, element_id, T::default())
+    }
+}
+
+impl<V: View> ViewContext<'_, '_, V> {
+    pub fn emit(&mut self, event: V::Event) {
+        self.window_context
+            .pending_effects
+            .push_back(Effect::Event {
+                entity_id: self.view_id,
+                payload: Box::new(event),
+            });
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TypeTag {
     tag: TypeId,
+    composed: Option<TypeId>,
     #[cfg(debug_assertions)]
     tag_type_name: &'static str,
 }
@@ -3336,6 +3381,7 @@ impl TypeTag {
     pub fn new<Tag: 'static>() -> Self {
         Self {
             tag: TypeId::of::<Tag>(),
+            composed: None,
             #[cfg(debug_assertions)]
             tag_type_name: std::any::type_name::<Tag>(),
         }
@@ -3344,9 +3390,15 @@ impl TypeTag {
     pub fn dynamic(tag: TypeId, #[cfg(debug_assertions)] type_name: &'static str) -> Self {
         Self {
             tag,
+            composed: None,
             #[cfg(debug_assertions)]
             tag_type_name: type_name,
         }
+    }
+
+    pub fn compose(mut self, other: TypeTag) -> Self {
+        self.composed = Some(other.tag);
+        self
     }
 
     #[cfg(debug_assertions)]
@@ -3395,15 +3447,27 @@ impl<V> BorrowWindowContext for ViewContext<'_, '_, V> {
     }
 }
 
-pub struct LayoutContext<'a, 'b, 'c, V: View> {
-    view_context: &'c mut ViewContext<'a, 'b, V>,
+/// Methods shared by both LayoutContext and PaintContext
+///
+/// It's that PaintContext should be implemented in terms of layout context and
+/// deref to it, in which case we wouldn't need this.
+pub trait RenderContext<'a, 'b, V> {
+    fn text_style(&self) -> TextStyle;
+    fn push_text_style(&mut self, style: TextStyle);
+    fn pop_text_style(&mut self);
+    fn as_view_context(&mut self) -> &mut ViewContext<'a, 'b, V>;
+}
+
+pub struct LayoutContext<'a, 'b, 'c, V> {
+    // Nathan: Making this is public while I work on playground.
+    pub view_context: &'c mut ViewContext<'a, 'b, V>,
     new_parents: &'c mut HashMap<usize, usize>,
     views_to_notify_if_ancestors_change: &'c mut HashMap<usize, SmallVec<[usize; 2]>>,
-    text_style_stack: Vec<Arc<TextStyle>>,
+    text_style_stack: Vec<TextStyle>,
     pub refreshing: bool,
 }
 
-impl<'a, 'b, 'c, V: View> LayoutContext<'a, 'b, 'c, V> {
+impl<'a, 'b, 'c, V> LayoutContext<'a, 'b, 'c, V> {
     pub fn new(
         view_context: &'c mut ViewContext<'a, 'b, V>,
         new_parents: &'c mut HashMap<usize, usize>,
@@ -3467,26 +3531,39 @@ impl<'a, 'b, 'c, V: View> LayoutContext<'a, 'b, 'c, V> {
             .push(self_view_id);
     }
 
-    pub fn text_style(&self) -> Arc<TextStyle> {
-        self.text_style_stack
-            .last()
-            .cloned()
-            .unwrap_or(Default::default())
-    }
-
-    pub fn with_text_style<S, F, T>(&mut self, style: S, f: F) -> T
+    pub fn with_text_style<F, T>(&mut self, style: TextStyle, f: F) -> T
     where
-        S: Into<Arc<TextStyle>>,
         F: FnOnce(&mut Self) -> T,
     {
-        self.text_style_stack.push(style.into());
+        self.push_text_style(style);
         let result = f(self);
-        self.text_style_stack.pop();
+        self.pop_text_style();
         result
     }
 }
 
-impl<'a, 'b, 'c, V: View> Deref for LayoutContext<'a, 'b, 'c, V> {
+impl<'a, 'b, 'c, V> RenderContext<'a, 'b, V> for LayoutContext<'a, 'b, 'c, V> {
+    fn text_style(&self) -> TextStyle {
+        self.text_style_stack
+            .last()
+            .cloned()
+            .unwrap_or(TextStyle::default(&self.font_cache))
+    }
+
+    fn push_text_style(&mut self, style: TextStyle) {
+        self.text_style_stack.push(style);
+    }
+
+    fn pop_text_style(&mut self) {
+        self.text_style_stack.pop();
+    }
+
+    fn as_view_context(&mut self) -> &mut ViewContext<'a, 'b, V> {
+        &mut self.view_context
+    }
+}
+
+impl<'a, 'b, 'c, V> Deref for LayoutContext<'a, 'b, 'c, V> {
     type Target = ViewContext<'a, 'b, V>;
 
     fn deref(&self) -> &Self::Target {
@@ -3494,13 +3571,13 @@ impl<'a, 'b, 'c, V: View> Deref for LayoutContext<'a, 'b, 'c, V> {
     }
 }
 
-impl<V: View> DerefMut for LayoutContext<'_, '_, '_, V> {
+impl<V> DerefMut for LayoutContext<'_, '_, '_, V> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.view_context
     }
 }
 
-impl<V: View> BorrowAppContext for LayoutContext<'_, '_, '_, V> {
+impl<V> BorrowAppContext for LayoutContext<'_, '_, '_, V> {
     fn read_with<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
         BorrowAppContext::read_with(&*self.view_context, f)
     }
@@ -3510,7 +3587,7 @@ impl<V: View> BorrowAppContext for LayoutContext<'_, '_, '_, V> {
     }
 }
 
-impl<V: View> BorrowWindowContext for LayoutContext<'_, '_, '_, V> {
+impl<V> BorrowWindowContext for LayoutContext<'_, '_, '_, V> {
     type Result<T> = T;
 
     fn read_window<T, F: FnOnce(&WindowContext) -> T>(&self, window: AnyWindowHandle, f: F) -> T {
@@ -3540,39 +3617,42 @@ impl<V: View> BorrowWindowContext for LayoutContext<'_, '_, '_, V> {
     }
 }
 
-pub struct PaintContext<'a, 'b, 'c, V: View> {
-    view_context: &'c mut ViewContext<'a, 'b, V>,
-    text_style_stack: Vec<Arc<TextStyle>>,
+pub struct PaintContext<'a, 'b, 'c, V> {
+    pub view_context: &'c mut ViewContext<'a, 'b, V>,
+    text_style_stack: Vec<TextStyle>,
 }
 
-impl<'a, 'b, 'c, V: View> PaintContext<'a, 'b, 'c, V> {
+impl<'a, 'b, 'c, V> PaintContext<'a, 'b, 'c, V> {
     pub fn new(view_context: &'c mut ViewContext<'a, 'b, V>) -> Self {
         Self {
             view_context,
             text_style_stack: Vec::new(),
         }
     }
+}
 
-    pub fn text_style(&self) -> Arc<TextStyle> {
+impl<'a, 'b, 'c, V> RenderContext<'a, 'b, V> for PaintContext<'a, 'b, 'c, V> {
+    fn text_style(&self) -> TextStyle {
         self.text_style_stack
             .last()
             .cloned()
-            .unwrap_or(Default::default())
+            .unwrap_or(TextStyle::default(&self.font_cache))
     }
 
-    pub fn with_text_style<S, F, T>(&mut self, style: S, f: F) -> T
-    where
-        S: Into<Arc<TextStyle>>,
-        F: FnOnce(&mut Self) -> T,
-    {
-        self.text_style_stack.push(style.into());
-        let result = f(self);
+    fn push_text_style(&mut self, style: TextStyle) {
+        self.text_style_stack.push(style);
+    }
+
+    fn pop_text_style(&mut self) {
         self.text_style_stack.pop();
-        result
+    }
+
+    fn as_view_context(&mut self) -> &mut ViewContext<'a, 'b, V> {
+        &mut self.view_context
     }
 }
 
-impl<'a, 'b, 'c, V: View> Deref for PaintContext<'a, 'b, 'c, V> {
+impl<'a, 'b, 'c, V> Deref for PaintContext<'a, 'b, 'c, V> {
     type Target = ViewContext<'a, 'b, V>;
 
     fn deref(&self) -> &Self::Target {
@@ -3580,13 +3660,13 @@ impl<'a, 'b, 'c, V: View> Deref for PaintContext<'a, 'b, 'c, V> {
     }
 }
 
-impl<V: View> DerefMut for PaintContext<'_, '_, '_, V> {
+impl<V> DerefMut for PaintContext<'_, '_, '_, V> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.view_context
     }
 }
 
-impl<V: View> BorrowAppContext for PaintContext<'_, '_, '_, V> {
+impl<V> BorrowAppContext for PaintContext<'_, '_, '_, V> {
     fn read_with<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
         BorrowAppContext::read_with(&*self.view_context, f)
     }
@@ -3596,7 +3676,7 @@ impl<V: View> BorrowAppContext for PaintContext<'_, '_, '_, V> {
     }
 }
 
-impl<V: View> BorrowWindowContext for PaintContext<'_, '_, '_, V> {
+impl<V> BorrowWindowContext for PaintContext<'_, '_, '_, V> {
     type Result<T> = T;
 
     fn read_window<T, F>(&self, window: AnyWindowHandle, f: F) -> Self::Result<T>
@@ -3628,25 +3708,37 @@ impl<V: View> BorrowWindowContext for PaintContext<'_, '_, '_, V> {
     }
 }
 
-pub struct EventContext<'a, 'b, 'c, V: View> {
+pub struct EventContext<'a, 'b, 'c, V> {
     view_context: &'c mut ViewContext<'a, 'b, V>,
     pub(crate) handled: bool,
+    // I would like to replace handled with this.
+    // Being additive for now.
+    pub bubble: bool,
 }
 
-impl<'a, 'b, 'c, V: View> EventContext<'a, 'b, 'c, V> {
-    pub(crate) fn new(view_context: &'c mut ViewContext<'a, 'b, V>) -> Self {
+impl<'a, 'b, 'c, V: 'static> EventContext<'a, 'b, 'c, V> {
+    pub fn new(view_context: &'c mut ViewContext<'a, 'b, V>) -> Self {
         EventContext {
             view_context,
             handled: true,
+            bubble: false,
         }
     }
 
     pub fn propagate_event(&mut self) {
         self.handled = false;
     }
+
+    pub fn bubble_event(&mut self) {
+        self.bubble = true;
+    }
+
+    pub fn event_bubbled(&self) -> bool {
+        self.bubble
+    }
 }
 
-impl<'a, 'b, 'c, V: View> Deref for EventContext<'a, 'b, 'c, V> {
+impl<'a, 'b, 'c, V> Deref for EventContext<'a, 'b, 'c, V> {
     type Target = ViewContext<'a, 'b, V>;
 
     fn deref(&self) -> &Self::Target {
@@ -3654,13 +3746,13 @@ impl<'a, 'b, 'c, V: View> Deref for EventContext<'a, 'b, 'c, V> {
     }
 }
 
-impl<V: View> DerefMut for EventContext<'_, '_, '_, V> {
+impl<V> DerefMut for EventContext<'_, '_, '_, V> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.view_context
     }
 }
 
-impl<V: View> BorrowAppContext for EventContext<'_, '_, '_, V> {
+impl<V> BorrowAppContext for EventContext<'_, '_, '_, V> {
     fn read_with<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
         BorrowAppContext::read_with(&*self.view_context, f)
     }
@@ -3670,7 +3762,7 @@ impl<V: View> BorrowAppContext for EventContext<'_, '_, '_, V> {
     }
 }
 
-impl<V: View> BorrowWindowContext for EventContext<'_, '_, '_, V> {
+impl<V> BorrowWindowContext for EventContext<'_, '_, '_, V> {
     type Result<T> = T;
 
     fn read_window<T, F: FnOnce(&WindowContext) -> T>(&self, window: AnyWindowHandle, f: F) -> T {
@@ -3731,14 +3823,20 @@ impl<'a, T> DerefMut for Reference<'a, T> {
 pub struct MouseState {
     pub(crate) hovered: bool,
     pub(crate) clicked: Option<MouseButton>,
+    pub(crate) mouse_down: bool,
     pub(crate) accessed_hovered: bool,
     pub(crate) accessed_clicked: bool,
 }
 
 impl MouseState {
+    pub fn dragging(&mut self) -> bool {
+        self.accessed_hovered = true;
+        self.hovered && self.mouse_down
+    }
+
     pub fn hovered(&mut self) -> bool {
         self.accessed_hovered = true;
-        self.hovered
+        self.hovered && (!self.mouse_down || self.clicked.is_some())
     }
 
     pub fn clicked(&mut self) -> Option<MouseButton> {
@@ -3998,7 +4096,7 @@ impl<V> Clone for WindowHandle<V> {
 
 impl<V> Copy for WindowHandle<V> {}
 
-impl<V: View> WindowHandle<V> {
+impl<V: 'static> WindowHandle<V> {
     fn new(window_id: usize) -> Self {
         WindowHandle {
             any_handle: AnyWindowHandle::new(window_id, TypeId::of::<V>()),
@@ -4036,7 +4134,9 @@ impl<V: View> WindowHandle<V> {
                 .update(cx, update)
         })
     }
+}
 
+impl<V: View> WindowHandle<V> {
     pub fn replace_root<C, F>(&self, cx: &mut C, build_root: F) -> C::Result<ViewHandle<V>>
     where
         C: BorrowWindowContext,
@@ -4116,7 +4216,7 @@ impl AnyWindowHandle {
         self.update(cx, |cx| cx.add_view(build_view))
     }
 
-    pub fn downcast<V: View>(self) -> Option<WindowHandle<V>> {
+    pub fn downcast<V: 'static>(self) -> Option<WindowHandle<V>> {
         if self.root_view_type == TypeId::of::<V>() {
             Some(WindowHandle {
                 any_handle: self,
@@ -4127,7 +4227,7 @@ impl AnyWindowHandle {
         }
     }
 
-    pub fn root_is<V: View>(&self) -> bool {
+    pub fn root_is<V: 'static>(&self) -> bool {
         self.root_view_type == TypeId::of::<V>()
     }
 
@@ -4205,9 +4305,9 @@ impl AnyWindowHandle {
 }
 
 #[repr(transparent)]
-pub struct ViewHandle<T> {
+pub struct ViewHandle<V> {
     any_handle: AnyViewHandle,
-    view_type: PhantomData<T>,
+    view_type: PhantomData<V>,
 }
 
 impl<T> Deref for ViewHandle<T> {
@@ -4218,15 +4318,15 @@ impl<T> Deref for ViewHandle<T> {
     }
 }
 
-impl<T: View> ViewHandle<T> {
+impl<V: 'static> ViewHandle<V> {
     fn new(window: AnyWindowHandle, view_id: usize, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
         Self {
-            any_handle: AnyViewHandle::new(window, view_id, TypeId::of::<T>(), ref_counts.clone()),
+            any_handle: AnyViewHandle::new(window, view_id, TypeId::of::<V>(), ref_counts.clone()),
             view_type: PhantomData,
         }
     }
 
-    pub fn downgrade(&self) -> WeakViewHandle<T> {
+    pub fn downgrade(&self) -> WeakViewHandle<V> {
         WeakViewHandle::new(self.window, self.view_id)
     }
 
@@ -4242,14 +4342,14 @@ impl<T: View> ViewHandle<T> {
         self.view_id
     }
 
-    pub fn read<'a>(&self, cx: &'a AppContext) -> &'a T {
+    pub fn read<'a>(&self, cx: &'a AppContext) -> &'a V {
         cx.read_view(self)
     }
 
     pub fn read_with<C, F, S>(&self, cx: &C, read: F) -> C::Result<S>
     where
         C: BorrowWindowContext,
-        F: FnOnce(&T, &ViewContext<T>) -> S,
+        F: FnOnce(&V, &ViewContext<V>) -> S,
     {
         cx.read_window(self.window, |cx| {
             let cx = ViewContext::immutable(cx, self.view_id);
@@ -4260,7 +4360,7 @@ impl<T: View> ViewHandle<T> {
     pub fn update<C, F, S>(&self, cx: &mut C, update: F) -> C::Result<S>
     where
         C: BorrowWindowContext,
-        F: FnOnce(&mut T, &mut ViewContext<T>) -> S,
+        F: FnOnce(&mut V, &mut ViewContext<V>) -> S,
     {
         let mut update = Some(update);
 
@@ -4396,8 +4496,8 @@ impl AnyViewHandle {
         TypeId::of::<T>() == self.view_type
     }
 
-    pub fn downcast<T: View>(self) -> Option<ViewHandle<T>> {
-        if self.is::<T>() {
+    pub fn downcast<V: 'static>(self) -> Option<ViewHandle<V>> {
+        if self.is::<V>() {
             Some(ViewHandle {
                 any_handle: self,
                 view_type: PhantomData,
@@ -4407,8 +4507,8 @@ impl AnyViewHandle {
         }
     }
 
-    pub fn downcast_ref<T: View>(&self) -> Option<&ViewHandle<T>> {
-        if self.is::<T>() {
+    pub fn downcast_ref<V: 'static>(&self) -> Option<&ViewHandle<V>> {
+        if self.is::<V>() {
             Some(unsafe { mem::transmute(self) })
         } else {
             None
@@ -4587,11 +4687,12 @@ impl AnyWeakModelHandle {
     }
 }
 
-#[derive(Copy)]
 pub struct WeakViewHandle<T> {
     any_handle: AnyWeakViewHandle,
     view_type: PhantomData<T>,
 }
+
+impl<T> Copy for WeakViewHandle<T> {}
 
 impl<T> Debug for WeakViewHandle<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -4607,7 +4708,7 @@ impl<T> WeakHandle for WeakViewHandle<T> {
     }
 }
 
-impl<V: View> WeakViewHandle<V> {
+impl<V: 'static> WeakViewHandle<V> {
     fn new(window: AnyWindowHandle, view_id: usize) -> Self {
         Self {
             any_handle: AnyWeakViewHandle {
@@ -4647,28 +4748,47 @@ impl<V: View> WeakViewHandle<V> {
         cx.read(|cx| {
             let handle = cx
                 .upgrade_view_handle(self)
-                .ok_or_else(|| anyhow!("view {} was dropped", V::ui_name()))?;
+                .ok_or_else(|| anyhow!("view was dropped"))?;
             cx.read_window(self.window, |cx| handle.read_with(cx, read))
                 .ok_or_else(|| anyhow!("window was removed"))
         })
     }
 
-    pub fn update<T>(
+    pub fn update<T, B>(
         &self,
-        cx: &mut AsyncAppContext,
+        cx: &mut B,
         update: impl FnOnce(&mut V, &mut ViewContext<V>) -> T,
-    ) -> Result<T> {
-        cx.update(|cx| {
-            let handle = cx
-                .upgrade_view_handle(self)
-                .ok_or_else(|| anyhow!("view {} was dropped", V::ui_name()))?;
-            cx.update_window(self.window, |cx| handle.update(cx, update))
-                .ok_or_else(|| anyhow!("window was removed"))
+    ) -> Result<T>
+    where
+        B: BorrowWindowContext,
+        B::Result<Option<T>>: Flatten<T>,
+    {
+        cx.update_window(self.window(), |cx| {
+            cx.upgrade_view_handle(self)
+                .map(|handle| handle.update(cx, update))
         })
+        .flatten()
+        .ok_or_else(|| anyhow!("window was removed"))
     }
 }
 
-impl<T> Deref for WeakViewHandle<T> {
+pub trait Flatten<T> {
+    fn flatten(self) -> Option<T>;
+}
+
+impl<T> Flatten<T> for Option<Option<T>> {
+    fn flatten(self) -> Option<T> {
+        self.flatten()
+    }
+}
+
+impl<T> Flatten<T> for Option<T> {
+    fn flatten(self) -> Option<T> {
+        self
+    }
+}
+
+impl<V> Deref for WeakViewHandle<V> {
     type Target = AnyWeakViewHandle;
 
     fn deref(&self) -> &Self::Target {
@@ -4676,7 +4796,7 @@ impl<T> Deref for WeakViewHandle<T> {
     }
 }
 
-impl<T> Clone for WeakViewHandle<T> {
+impl<V> Clone for WeakViewHandle<V> {
     fn clone(&self) -> Self {
         Self {
             any_handle: self.any_handle.clone(),
@@ -4743,7 +4863,7 @@ impl Hash for AnyWeakViewHandle {
 pub struct ElementStateId {
     view_id: usize,
     element_id: usize,
-    tag: TypeId,
+    tag: TypeTag,
 }
 
 pub struct ElementStateHandle<T> {
@@ -5230,6 +5350,7 @@ mod tests {
                     button: MouseButton::Left,
                     modifiers: Default::default(),
                     click_count: 1,
+                    is_down: true,
                 }),
                 false,
             );

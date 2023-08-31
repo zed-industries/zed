@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::Result;
 
+use collections::HashSet;
 use futures::Future;
 use gpui::{json, ViewContext, ViewHandle};
 use indoc::indoc;
@@ -154,10 +155,23 @@ impl<'a> EditorLspTestContext<'a> {
         capabilities: lsp::ServerCapabilities,
         cx: &'a mut gpui::TestAppContext,
     ) -> EditorLspTestContext<'a> {
+        let mut word_characters: HashSet<char> = Default::default();
+        word_characters.insert('$');
+        word_characters.insert('#');
         let language = Language::new(
             LanguageConfig {
                 name: "Typescript".into(),
                 path_suffixes: vec!["ts".to_string()],
+                brackets: language::BracketPairConfig {
+                    pairs: vec![language::BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: true,
+                        newline: true,
+                    }],
+                    disabled_scopes_by_bracket_ix: Default::default(),
+                },
+                word_characters,
                 ..Default::default()
             },
             Some(tree_sitter_typescript::language_typescript()),
@@ -169,6 +183,23 @@ impl<'a> EditorLspTestContext<'a> {
                 ("{" @open "}" @close)
                 ("<" @open ">" @close)
                 ("\"" @open "\"" @close)"#})),
+            indents: Some(Cow::from(indoc! {r#"
+                [
+                    (call_expression)
+                    (assignment_expression)
+                    (member_expression)
+                    (lexical_declaration)
+                    (variable_declaration)
+                    (assignment_expression)
+                    (if_statement)
+                    (for_statement)
+                ] @indent
+
+                (_ "[" "]" @end) @indent
+                (_ "<" ">" @end) @indent
+                (_ "{" "}" @end) @indent
+                (_ "(" ")" @end) @indent
+                "#})),
             ..Default::default()
         })
         .expect("Could not parse queries");

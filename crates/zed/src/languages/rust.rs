@@ -478,7 +478,7 @@ mod tests {
         let language = crate::languages::language("rust", tree_sitter_rust::language(), None).await;
 
         cx.add_model(|cx| {
-            let mut buffer = Buffer::new(0, "", cx).with_language(language, cx);
+            let mut buffer = Buffer::new(0, cx.model_id() as u64, "").with_language(language, cx);
 
             // indent between braces
             buffer.set_text("fn a() {}", cx);

@@ -9,6 +9,7 @@ pub struct EditorSettings {
     pub show_completions_on_input: bool,
     pub use_on_type_format: bool,
     pub scrollbar: Scrollbar,
+    pub relative_line_numbers: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -34,6 +35,7 @@ pub struct EditorSettingsContent {
     pub show_completions_on_input: Option<bool>,
     pub use_on_type_format: Option<bool>,
     pub scrollbar: Option<ScrollbarContent>,
+    pub relative_line_numbers: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]

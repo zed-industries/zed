@@ -12,6 +12,7 @@ import tabBar from "./tab_bar"
 import { interactive } from "../element"
 import { titlebar } from "./titlebar"
 import { useTheme } from "../theme"
+import { toolbar } from "./toolbar"
 
 export default function workspace(): any {
     const theme = useTheme()
@@ -127,47 +128,7 @@ export default function workspace(): any {
         },
         status_bar: statusBar(),
         titlebar: titlebar(),
-        toolbar: {
-            height: 34,
-            background: background(theme.highest),
-            border: border(theme.highest, { bottom: true }),
-            item_spacing: 8,
-            nav_button: interactive({
-                base: {
-                    color: foreground(theme.highest, "on"),
-                    icon_width: 12,
-                    button_width: 24,
-                    corner_radius: 6,
-                },
-                state: {
-                    hovered: {
-                        color: foreground(theme.highest, "on", "hovered"),
-                        background: background(theme.highest, "on", "hovered"),
-                    },
-                    disabled: {
-                        color: foreground(theme.highest, "on", "disabled"),
-                    },
-                },
-            }),
-            padding: { left: 8, right: 8, top: 4, bottom: 4 },
-        },
-        breadcrumb_height: 24,
-        breadcrumbs: interactive({
-            base: {
-                ...text(theme.highest, "sans", "variant"),
-                corner_radius: 6,
-                padding: {
-                    left: 6,
-                    right: 6,
-                },
-            },
-            state: {
-                hovered: {
-                    color: foreground(theme.highest, "on", "hovered"),
-                    background: background(theme.highest, "on", "hovered"),
-                },
-            },
-        }),
+        toolbar: toolbar(),
         disconnected_overlay: {
             ...text(theme.lowest, "sans"),
             background: with_opacity(background(theme.lowest), 0.8),

@@ -1,8 +1,8 @@
-use std::sync::Arc;
+use std::{cmp, sync::Arc};
 
 use editor::{
     char_kind,
-    display_map::{DisplaySnapshot, ToDisplayPoint},
+    display_map::{DisplaySnapshot, FoldPoint, ToDisplayPoint},
     movement, Bias, CharKind, DisplayPoint, ToOffset,
 };
 use gpui::{actions, impl_actions, AppContext, WindowContext};
@@ -21,16 +21,16 @@ use crate::{
 pub enum Motion {
     Left,
     Backspace,
-    Down,
-    Up,
+    Down { display_lines: bool },
+    Up { display_lines: bool },
     Right,
     NextWordStart { ignore_punctuation: bool },
     NextWordEnd { ignore_punctuation: bool },
     PreviousWordStart { ignore_punctuation: bool },
-    FirstNonWhitespace,
+    FirstNonWhitespace { display_lines: bool },
     CurrentLine,
-    StartOfLine,
-    EndOfLine,
+    StartOfLine { display_lines: bool },
+    EndOfLine { display_lines: bool },
     StartOfParagraph,
     EndOfParagraph,
     StartOfDocument,
@@ -63,6 +63,41 @@ struct PreviousWordStart {
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct Up {
+    #[serde(default)]
+    display_lines: bool,
+}
+
+#[derive(Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct Down {
+    #[serde(default)]
+    display_lines: bool,
+}
+
+#[derive(Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct FirstNonWhitespace {
+    #[serde(default)]
+    display_lines: bool,
+}
+
+#[derive(Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct EndOfLine {
+    #[serde(default)]
+    display_lines: bool,
+}
+
+#[derive(Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct StartOfLine {
+    #[serde(default)]
+    display_lines: bool,
+}
+
+#[derive(Clone, Deserialize, PartialEq)]
 struct RepeatFind {
     #[serde(default)]
     backwards: bool,
@@ -73,12 +108,7 @@ actions!(
     [
         Left,
         Backspace,
-        Down,
-        Up,
         Right,
-        FirstNonWhitespace,
-        StartOfLine,
-        EndOfLine,
         CurrentLine,
         StartOfParagraph,
         EndOfParagraph,
@@ -90,20 +120,63 @@ actions!(
 );
 impl_actions!(
     vim,
-    [NextWordStart, NextWordEnd, PreviousWordStart, RepeatFind]
+    [
+        NextWordStart,
+        NextWordEnd,
+        PreviousWordStart,
+        RepeatFind,
+        Up,
+        Down,
+        FirstNonWhitespace,
+        EndOfLine,
+        StartOfLine,
+    ]
 );
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(|_: &mut Workspace, _: &Left, cx: _| motion(Motion::Left, cx));
     cx.add_action(|_: &mut Workspace, _: &Backspace, cx: _| motion(Motion::Backspace, cx));
-    cx.add_action(|_: &mut Workspace, _: &Down, cx: _| motion(Motion::Down, cx));
-    cx.add_action(|_: &mut Workspace, _: &Up, cx: _| motion(Motion::Up, cx));
-    cx.add_action(|_: &mut Workspace, _: &Right, cx: _| motion(Motion::Right, cx));
-    cx.add_action(|_: &mut Workspace, _: &FirstNonWhitespace, cx: _| {
-        motion(Motion::FirstNonWhitespace, cx)
+    cx.add_action(|_: &mut Workspace, action: &Down, cx: _| {
+        motion(
+            Motion::Down {
+                display_lines: action.display_lines,
+            },
+            cx,
+        )
     });
-    cx.add_action(|_: &mut Workspace, _: &StartOfLine, cx: _| motion(Motion::StartOfLine, cx));
-    cx.add_action(|_: &mut Workspace, _: &EndOfLine, cx: _| motion(Motion::EndOfLine, cx));
+    cx.add_action(|_: &mut Workspace, action: &Up, cx: _| {
+        motion(
+            Motion::Up {
+                display_lines: action.display_lines,
+            },
+            cx,
+        )
+    });
+    cx.add_action(|_: &mut Workspace, _: &Right, cx: _| motion(Motion::Right, cx));
+    cx.add_action(|_: &mut Workspace, action: &FirstNonWhitespace, cx: _| {
+        motion(
+            Motion::FirstNonWhitespace {
+                display_lines: action.display_lines,
+            },
+            cx,
+        )
+    });
+    cx.add_action(|_: &mut Workspace, action: &StartOfLine, cx: _| {
+        motion(
+            Motion::StartOfLine {
+                display_lines: action.display_lines,
+            },
+            cx,
+        )
+    });
+    cx.add_action(|_: &mut Workspace, action: &EndOfLine, cx: _| {
+        motion(
+            Motion::EndOfLine {
+                display_lines: action.display_lines,
+            },
+            cx,
+        )
+    });
     cx.add_action(|_: &mut Workspace, _: &CurrentLine, cx: _| motion(Motion::CurrentLine, cx));
     cx.add_action(|_: &mut Workspace, _: &StartOfParagraph, cx: _| {
         motion(Motion::StartOfParagraph, cx)
@@ -147,9 +220,9 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
 
     let times = Vim::update(cx, |vim, cx| vim.pop_number_operator(cx));
     let operator = Vim::read(cx).active_operator();
-    match Vim::read(cx).state.mode {
+    match Vim::read(cx).state().mode {
         Mode::Normal => normal_motion(motion, operator, times, cx),
-        Mode::Visual { .. } => visual_motion(motion, times, cx),
+        Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_motion(motion, times, cx),
         Mode::Insert => {
             // Shouldn't execute a motion in insert mode. Ignoring
         }
@@ -158,7 +231,7 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
 }
 
 fn repeat_motion(backwards: bool, cx: &mut WindowContext) {
-    let find = match Vim::read(cx).state.last_find.clone() {
+    let find = match Vim::read(cx).workspace_state.last_find.clone() {
         Some(Motion::FindForward { before, text }) => {
             if backwards {
                 Motion::FindBackward {
@@ -192,19 +265,25 @@ impl Motion {
     pub fn linewise(&self) -> bool {
         use Motion::*;
         match self {
-            Down | Up | StartOfDocument | EndOfDocument | CurrentLine | NextLineStart
-            | StartOfParagraph | EndOfParagraph => true,
-            EndOfLine
+            Down { .. }
+            | Up { .. }
+            | StartOfDocument
+            | EndOfDocument
+            | CurrentLine
+            | NextLineStart
+            | StartOfParagraph
+            | EndOfParagraph => true,
+            EndOfLine { .. }
             | NextWordEnd { .. }
             | Matching
             | FindForward { .. }
             | Left
             | Backspace
             | Right
-            | StartOfLine
+            | StartOfLine { .. }
             | NextWordStart { .. }
             | PreviousWordStart { .. }
-            | FirstNonWhitespace
+            | FirstNonWhitespace { .. }
             | FindBackward { .. } => false,
         }
     }
@@ -213,21 +292,21 @@ impl Motion {
         use Motion::*;
         match self {
             StartOfDocument | EndOfDocument | CurrentLine => true,
-            Down
-            | Up
-            | EndOfLine
+            Down { .. }
+            | Up { .. }
+            | EndOfLine { .. }
             | NextWordEnd { .. }
             | Matching
             | FindForward { .. }
             | Left
             | Backspace
             | Right
-            | StartOfLine
+            | StartOfLine { .. }
             | StartOfParagraph
             | EndOfParagraph
             | NextWordStart { .. }
             | PreviousWordStart { .. }
-            | FirstNonWhitespace
+            | FirstNonWhitespace { .. }
             | FindBackward { .. }
             | NextLineStart => false,
         }
@@ -236,12 +315,12 @@ impl Motion {
     pub fn inclusive(&self) -> bool {
         use Motion::*;
         match self {
-            Down
-            | Up
+            Down { .. }
+            | Up { .. }
             | StartOfDocument
             | EndOfDocument
             | CurrentLine
-            | EndOfLine
+            | EndOfLine { .. }
             | NextWordEnd { .. }
             | Matching
             | FindForward { .. }
@@ -249,12 +328,12 @@ impl Motion {
             Left
             | Backspace
             | Right
-            | StartOfLine
+            | StartOfLine { .. }
             | StartOfParagraph
             | EndOfParagraph
             | NextWordStart { .. }
             | PreviousWordStart { .. }
-            | FirstNonWhitespace
+            | FirstNonWhitespace { .. }
             | FindBackward { .. } => false,
         }
     }
@@ -272,8 +351,18 @@ impl Motion {
         let (new_point, goal) = match self {
             Left => (left(map, point, times), SelectionGoal::None),
             Backspace => (backspace(map, point, times), SelectionGoal::None),
-            Down => down(map, point, goal, times),
-            Up => up(map, point, goal, times),
+            Down {
+                display_lines: false,
+            } => down(map, point, goal, times),
+            Down {
+                display_lines: true,
+            } => down_display(map, point, goal, times),
+            Up {
+                display_lines: false,
+            } => up(map, point, goal, times),
+            Up {
+                display_lines: true,
+            } => up_display(map, point, goal, times),
             Right => (right(map, point, times), SelectionGoal::None),
             NextWordStart { ignore_punctuation } => (
                 next_word_start(map, point, *ignore_punctuation, times),
@@ -287,9 +376,17 @@ impl Motion {
                 previous_word_start(map, point, *ignore_punctuation, times),
                 SelectionGoal::None,
             ),
-            FirstNonWhitespace => (first_non_whitespace(map, point), SelectionGoal::None),
-            StartOfLine => (start_of_line(map, point), SelectionGoal::None),
-            EndOfLine => (end_of_line(map, point), SelectionGoal::None),
+            FirstNonWhitespace { display_lines } => (
+                first_non_whitespace(map, *display_lines, point),
+                SelectionGoal::None,
+            ),
+            StartOfLine { display_lines } => (
+                start_of_line(map, *display_lines, point),
+                SelectionGoal::None,
+            ),
+            EndOfLine { display_lines } => {
+                (end_of_line(map, *display_lines, point), SelectionGoal::None)
+            }
             StartOfParagraph => (
                 movement::start_of_paragraph(map, point, times),
                 SelectionGoal::None,
@@ -298,7 +395,7 @@ impl Motion {
                 map.clip_at_line_end(movement::end_of_paragraph(map, point, times)),
                 SelectionGoal::None,
             ),
-            CurrentLine => (end_of_line(map, point), SelectionGoal::None),
+            CurrentLine => (end_of_line(map, false, point), SelectionGoal::None),
             StartOfDocument => (start_of_document(map, point, times), SelectionGoal::None),
             EndOfDocument => (
                 end_of_document(map, point, maybe_times),
@@ -400,6 +497,33 @@ fn backspace(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> Di
 
 fn down(
     map: &DisplaySnapshot,
+    point: DisplayPoint,
+    mut goal: SelectionGoal,
+    times: usize,
+) -> (DisplayPoint, SelectionGoal) {
+    let start = map.display_point_to_fold_point(point, Bias::Left);
+
+    let goal_column = match goal {
+        SelectionGoal::Column(column) => column,
+        SelectionGoal::ColumnRange { end, .. } => end,
+        _ => {
+            goal = SelectionGoal::Column(start.column());
+            start.column()
+        }
+    };
+
+    let new_row = cmp::min(
+        start.row() + times as u32,
+        map.buffer_snapshot.max_point().row,
+    );
+    let new_col = cmp::min(goal_column, map.fold_snapshot.line_len(new_row));
+    let point = map.fold_point_to_display_point(FoldPoint::new(new_row, new_col));
+
+    (map.clip_point(point, Bias::Left), goal)
+}
+
+fn down_display(
+    map: &DisplaySnapshot,
     mut point: DisplayPoint,
     mut goal: SelectionGoal,
     times: usize,
@@ -407,10 +531,35 @@ fn down(
     for _ in 0..times {
         (point, goal) = movement::down(map, point, goal, true);
     }
+
     (point, goal)
 }
 
-fn up(
+pub(crate) fn up(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    mut goal: SelectionGoal,
+    times: usize,
+) -> (DisplayPoint, SelectionGoal) {
+    let start = map.display_point_to_fold_point(point, Bias::Left);
+
+    let goal_column = match goal {
+        SelectionGoal::Column(column) => column,
+        SelectionGoal::ColumnRange { end, .. } => end,
+        _ => {
+            goal = SelectionGoal::Column(start.column());
+            start.column()
+        }
+    };
+
+    let new_row = start.row().saturating_sub(times as u32);
+    let new_col = cmp::min(goal_column, map.fold_snapshot.line_len(new_row));
+    let point = map.fold_point_to_display_point(FoldPoint::new(new_row, new_col));
+
+    (map.clip_point(point, Bias::Left), goal)
+}
+
+fn up_display(
     map: &DisplaySnapshot,
     mut point: DisplayPoint,
     mut goal: SelectionGoal,
@@ -419,6 +568,7 @@ fn up(
     for _ in 0..times {
         (point, goal) = movement::up(map, point, goal, true);
     }
+
     (point, goal)
 }
 
@@ -509,8 +659,12 @@ fn previous_word_start(
     point
 }
 
-fn first_non_whitespace(map: &DisplaySnapshot, from: DisplayPoint) -> DisplayPoint {
-    let mut last_point = DisplayPoint::new(from.row(), 0);
+fn first_non_whitespace(
+    map: &DisplaySnapshot,
+    display_lines: bool,
+    from: DisplayPoint,
+) -> DisplayPoint {
+    let mut last_point = start_of_line(map, display_lines, from);
     let scope = map.buffer_snapshot.language_scope_at(from.to_point(map));
     for (ch, point) in map.chars_at(last_point) {
         if ch == '\n' {
@@ -527,12 +681,31 @@ fn first_non_whitespace(map: &DisplaySnapshot, from: DisplayPoint) -> DisplayPoi
     map.clip_point(last_point, Bias::Left)
 }
 
-fn start_of_line(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
-    map.prev_line_boundary(point.to_point(map)).1
+pub(crate) fn start_of_line(
+    map: &DisplaySnapshot,
+    display_lines: bool,
+    point: DisplayPoint,
+) -> DisplayPoint {
+    if display_lines {
+        map.clip_point(DisplayPoint::new(point.row(), 0), Bias::Right)
+    } else {
+        map.prev_line_boundary(point.to_point(map)).1
+    }
 }
 
-fn end_of_line(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
-    map.clip_point(map.next_line_boundary(point.to_point(map)).1, Bias::Left)
+pub(crate) fn end_of_line(
+    map: &DisplaySnapshot,
+    display_lines: bool,
+    point: DisplayPoint,
+) -> DisplayPoint {
+    if display_lines {
+        map.clip_point(
+            DisplayPoint::new(point.row(), map.line_len(point.row())),
+            Bias::Left,
+        )
+    } else {
+        map.clip_point(map.next_line_boundary(point.to_point(map)).1, Bias::Left)
+    }
 }
 
 fn start_of_document(map: &DisplaySnapshot, point: DisplayPoint, line: usize) -> DisplayPoint {
@@ -654,8 +827,8 @@ fn find_backward(
 }
 
 fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
-    let new_row = (point.row() + times as u32).min(map.max_buffer_row());
-    map.clip_point(DisplayPoint::new(new_row, 0), Bias::Left)
+    let correct_line = down(map, point, SelectionGoal::None, times).0;
+    first_non_whitespace(map, false, correct_line)
 }
 
 #[cfg(test)]
@@ -802,5 +975,13 @@ mod test {
         cx.assert_shared_state("oneˇ two three four").await;
         cx.simulate_shared_keystrokes([","]).await;
         cx.assert_shared_state("one two thˇree four").await;
+    }
+
+    #[gpui::test]
+    async fn test_next_line_start(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state("ˇone\n  two\nthree").await;
+        cx.simulate_shared_keystrokes(["enter"]).await;
+        cx.assert_shared_state("one\n  ˇtwo\nthree").await;
     }
 }

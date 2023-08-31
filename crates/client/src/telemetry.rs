@@ -74,6 +74,7 @@ pub enum ClickhouseEvent {
     Call {
         operation: &'static str,
         room_id: u64,
+        channel_id: Option<u64>,
     },
 }
 
@@ -134,8 +135,6 @@ impl Telemetry {
         }
     }
 
-    /// This method takes the entire TelemetrySettings struct in order to force client code
-    /// to pull the struct out of the settings global. Do not remove!
     pub fn set_authenticated_user_info(
         self: &Arc<Self>,
         metrics_id: Option<String>,

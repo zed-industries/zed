@@ -10,7 +10,7 @@ use gpui::{
     platform,
     platform::MouseButton,
     scene::MouseClick,
-    Action, Element, EventContext, MouseState, View, ViewContext,
+    Action, Element, EventContext, MouseState, ViewContext,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -37,7 +37,7 @@ pub fn checkbox<Tag, V, F>(
 ) -> MouseEventHandler<V>
 where
     Tag: 'static,
-    V: View,
+    V: 'static,
     F: 'static + Fn(&mut V, bool, &mut EventContext<V>),
 {
     let label = Label::new(label, style.label.text.clone())
@@ -57,7 +57,7 @@ pub fn checkbox_with_label<Tag, D, V, F>(
 where
     Tag: 'static,
     D: Element<V>,
-    V: View,
+    V: 'static,
     F: 'static + Fn(&mut V, bool, &mut EventContext<V>),
 {
     MouseEventHandler::new::<Tag, _>(id, cx, |state, _| {
@@ -93,7 +93,7 @@ where
     .with_cursor_style(platform::CursorStyle::PointingHand)
 }
 
-pub fn svg<V: View>(style: &SvgStyle) -> ConstrainedBox<V> {
+pub fn svg<V: 'static>(style: &SvgStyle) -> ConstrainedBox<V> {
     Svg::new(style.asset.clone())
         .with_color(style.color)
         .constrained()
@@ -107,11 +107,21 @@ pub struct IconStyle {
     pub container: ContainerStyle,
 }
 
-pub fn icon<V: View>(style: &IconStyle) -> Container<V> {
+impl IconStyle {
+    pub fn width(&self) -> f32 {
+        self.icon.dimensions.width
+            + self.container.padding.left
+            + self.container.padding.right
+            + self.container.margin.left
+            + self.container.margin.right
+    }
+}
+
+pub fn icon<V: 'static>(style: &IconStyle) -> Container<V> {
     svg(&style.icon).contained().with_style(style.container)
 }
 
-pub fn keystroke_label<V: View>(
+pub fn keystroke_label<V: 'static>(
     label_text: &'static str,
     label_style: &ContainedText,
     keystroke_style: &ContainedText,
@@ -135,19 +145,19 @@ pub fn keystroke_label<V: View>(
         .with_style(label_style.container)
 }
 
-pub type ButtonStyle = Interactive<ContainedText>;
+pub type CopilotCTAButton = Interactive<ContainedText>;
 
 pub fn cta_button<Tag, L, V, F>(
     label: L,
     max_width: f32,
-    style: &ButtonStyle,
+    style: &CopilotCTAButton,
     cx: &mut ViewContext<V>,
     f: F,
 ) -> MouseEventHandler<V>
 where
     Tag: 'static,
     L: Into<Cow<'static, str>>,
-    V: View,
+    V: 'static,
     F: Fn(MouseClick, &mut V, &mut EventContext<V>) + 'static,
 {
     MouseEventHandler::new::<Tag, _>(0, cx, |state, _| {
@@ -186,9 +196,9 @@ pub fn modal<Tag, V, I, D, F>(
 ) -> impl Element<V>
 where
     Tag: 'static,
-    V: View,
     I: Into<Cow<'static, str>>,
     D: Element<V>,
+    V: 'static,
     F: FnOnce(&mut gpui::ViewContext<V>) -> D,
 {
     const TITLEBAR_HEIGHT: f32 = 28.;

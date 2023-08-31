@@ -29,7 +29,7 @@ pub async fn install_cli(cx: &AsyncAppContext) -> Result<()> {
 
     // The symlink could not be created, so use osascript with admin privileges
     // to create it.
-    let status = smol::process::Command::new("osascript")
+    let status = smol::process::Command::new("/usr/bin/osascript")
         .args([
             "-e",
             &format!(

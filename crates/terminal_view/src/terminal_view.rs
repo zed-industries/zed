@@ -33,7 +33,8 @@ use terminal::{
         index::Point,
         term::{search::RegexSearch, TermMode},
     },
-    Event, MaybeNavigationTarget, Terminal, TerminalBlink, WorkingDirectory,
+    terminal_settings::{TerminalBlink, TerminalSettings, WorkingDirectory},
+    Event, MaybeNavigationTarget, Terminal,
 };
 use util::{paths::PathLikeWithPosition, ResultExt};
 use workspace::{
@@ -43,8 +44,6 @@ use workspace::{
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
     NewCenterTerminal, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
 };
-
-pub use terminal::TerminalSettings;
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -80,6 +79,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(TerminalView::paste);
     cx.add_action(TerminalView::clear);
     cx.add_action(TerminalView::show_character_palette);
+    cx.add_action(TerminalView::select_all)
 }
 
 ///A terminal view, maintains the PTY's file handles and communicates with the terminal
@@ -312,6 +312,11 @@ impl TerminalView {
         }
     }
 
+    fn select_all(&mut self, _: &editor::SelectAll, cx: &mut ViewContext<Self>) {
+        self.terminal.update(cx, |term, _| term.select_all());
+        cx.notify();
+    }
+
     fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
         self.terminal.update(cx, |term, _| term.clear());
         cx.notify();
@@ -477,10 +482,8 @@ fn possible_open_targets(
 }
 
 pub fn regex_search_for_query(query: project::search::SearchQuery) -> Option<RegexSearch> {
-    let searcher = match query {
-        project::search::SearchQuery::Text { query, .. } => RegexSearch::new(&query),
-        project::search::SearchQuery::Regex { query, .. } => RegexSearch::new(&query),
-    };
+    let query = query.as_str();
+    let searcher = RegexSearch::new(&query);
     searcher.ok()
 }
 
@@ -657,7 +660,7 @@ impl Item for TerminalView {
         Some(self.terminal().read(cx).title().into())
     }
 
-    fn tab_content<T: View>(
+    fn tab_content<T: 'static>(
         &self,
         _detail: Option<usize>,
         tab_theme: &theme::Tab,
@@ -667,7 +670,7 @@ impl Item for TerminalView {
 
         Flex::row()
             .with_child(
-                gpui::elements::Svg::new("icons/terminal_12.svg")
+                gpui::elements::Svg::new("icons/terminal.svg")
                     .with_color(tab_theme.label.text.color)
                     .constrained()
                     .with_width(tab_theme.type_icon_width)

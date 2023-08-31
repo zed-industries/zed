@@ -1,15 +1,15 @@
 use crate::{
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
-    tests::{TestClient, TestServer},
+    tests::{room_participants, RoomParticipants, TestClient, TestServer},
 };
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use editor::{
     test::editor_test_context::EditorTestContext, ConfirmCodeAction, ConfirmCompletion,
     ConfirmRename, Editor, ExcerptRange, MultiBuffer, Redo, Rename, ToggleCodeActions, Undo,
 };
-use fs::{repository::GitFileStatus, FakeFs, Fs as _, LineEnding, RemoveOptions};
+use fs::{repository::GitFileStatus, FakeFs, Fs as _, RemoveOptions};
 use futures::StreamExt as _;
 use gpui::{
     executor::Deterministic, geometry::vector::vec2f, test::EmptyView, AppContext, ModelHandle,
@@ -19,7 +19,7 @@ use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, Formatter, InlayHintSettings},
     tree_sitter_rust, Anchor, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
-    LanguageConfig, OffsetRangeExt, Point, Rope,
+    LanguageConfig, LineEnding, OffsetRangeExt, Point, Rope,
 };
 use live_kit_client::MacOSDisplay;
 use lsp::LanguageServerId;
@@ -33,7 +33,7 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::{
-        atomic::{AtomicBool, AtomicU32, Ordering::SeqCst},
+        atomic::{self, AtomicBool, AtomicUsize, Ordering::SeqCst},
         Arc,
     },
 };
@@ -748,7 +748,7 @@ async fn test_server_restarts(
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     client_a
-        .fs
+        .fs()
         .insert_tree("/a", json!({ "a.txt": "a-contents" }))
         .await;
 
@@ -1220,7 +1220,7 @@ async fn test_share_project(
     let active_call_c = cx_c.read(ActiveCall::global);
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/a",
             json!({
@@ -1387,7 +1387,7 @@ async fn test_unshare_project(
     let active_call_b = cx_b.read(ActiveCall::global);
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/a",
             json!({
@@ -1476,7 +1476,7 @@ async fn test_host_disconnect(
     cx_b.update(editor::init);
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/a",
             json!({
@@ -1498,7 +1498,8 @@ async fn test_host_disconnect(
     deterministic.run_until_parked();
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
-    let window_b = cx_b.add_window(|cx| Workspace::test_new(project_b.clone(), cx));
+    let window_b =
+        cx_b.add_window(|cx| Workspace::new(0, project_b.clone(), client_b.app_state.clone(), cx));
     let workspace_b = window_b.root(cx_b);
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
@@ -1581,7 +1582,7 @@ async fn test_project_reconnect(
     cx_b.update(editor::init);
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/root-1",
             json!({
@@ -1609,7 +1610,7 @@ async fn test_project_reconnect(
         )
         .await;
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/root-2",
             json!({
@@ -1618,7 +1619,7 @@ async fn test_project_reconnect(
         )
         .await;
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/root-3",
             json!({
@@ -1698,7 +1699,7 @@ async fn test_project_reconnect(
 
     // While client A is disconnected, add and remove files from client A's project.
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/root-1/dir1/subdir2",
             json!({
@@ -1710,7 +1711,7 @@ async fn test_project_reconnect(
         )
         .await;
     client_a
-        .fs
+        .fs()
         .remove_dir(
             "/root-1/dir1/subdir1".as_ref(),
             RemoveOptions {
@@ -1832,11 +1833,11 @@ async fn test_project_reconnect(
 
     // While client B is disconnected, add and remove files from client A's project
     client_a
-        .fs
+        .fs()
         .insert_file("/root-1/dir1/subdir2/j.txt", "j-contents".into())
         .await;
     client_a
-        .fs
+        .fs()
         .remove_file("/root-1/dir1/subdir2/i.txt".as_ref(), Default::default())
         .await
         .unwrap();
@@ -1922,8 +1923,8 @@ async fn test_active_call_events(
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    client_a.fs.insert_tree("/a", json!({})).await;
-    client_b.fs.insert_tree("/b", json!({})).await;
+    client_a.fs().insert_tree("/a", json!({})).await;
+    client_b.fs().insert_tree("/b", json!({})).await;
 
     let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
     let (project_b, _) = client_b.build_local_project("/b", cx_b).await;
@@ -2011,8 +2012,8 @@ async fn test_room_location(
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
-    client_a.fs.insert_tree("/a", json!({})).await;
-    client_b.fs.insert_tree("/b", json!({})).await;
+    client_a.fs().insert_tree("/a", json!({})).await;
+    client_b.fs().insert_tree("/b", json!({})).await;
 
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
@@ -2201,12 +2202,12 @@ async fn test_propagate_saves_and_fs_changes(
         Some(tree_sitter_rust::language()),
     ));
     for client in [&client_a, &client_b, &client_c] {
-        client.language_registry.add(rust.clone());
-        client.language_registry.add(javascript.clone());
+        client.language_registry().add(rust.clone());
+        client.language_registry().add(javascript.clone());
     }
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/a",
             json!({
@@ -2276,7 +2277,7 @@ async fn test_propagate_saves_and_fs_changes(
     buffer_a.update(cx_a, |buf, cx| buf.edit([(0..0, "hi-a, ")], None, cx));
     save_b.await.unwrap();
     assert_eq!(
-        client_a.fs.load("/a/file1.rs".as_ref()).await.unwrap(),
+        client_a.fs().load("/a/file1.rs".as_ref()).await.unwrap(),
         "hi-a, i-am-c, i-am-b, i-am-a"
     );
 
@@ -2287,7 +2288,7 @@ async fn test_propagate_saves_and_fs_changes(
 
     // Make changes on host's file system, see those changes on guest worktrees.
     client_a
-        .fs
+        .fs()
         .rename(
             "/a/file1.rs".as_ref(),
             "/a/file1.js".as_ref(),
@@ -2296,11 +2297,11 @@ async fn test_propagate_saves_and_fs_changes(
         .await
         .unwrap();
     client_a
-        .fs
+        .fs()
         .rename("/a/file2".as_ref(), "/a/file3".as_ref(), Default::default())
         .await
         .unwrap();
-    client_a.fs.insert_file("/a/file4", "4".into()).await;
+    client_a.fs().insert_file("/a/file4", "4".into()).await;
     deterministic.run_until_parked();
 
     worktree_a.read_with(cx_a, |tree, _| {
@@ -2394,7 +2395,7 @@ async fn test_git_diff_base_change(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/dir",
             json!({
@@ -2438,7 +2439,7 @@ async fn test_git_diff_base_change(
     "
     .unindent();
 
-    client_a.fs.as_fake().set_index_for_repo(
+    client_a.fs().set_index_for_repo(
         Path::new("/dir/.git"),
         &[(Path::new("a.txt"), diff_base.clone())],
     );
@@ -2483,7 +2484,7 @@ async fn test_git_diff_base_change(
         );
     });
 
-    client_a.fs.as_fake().set_index_for_repo(
+    client_a.fs().set_index_for_repo(
         Path::new("/dir/.git"),
         &[(Path::new("a.txt"), new_diff_base.clone())],
     );
@@ -2528,7 +2529,7 @@ async fn test_git_diff_base_change(
     "
     .unindent();
 
-    client_a.fs.as_fake().set_index_for_repo(
+    client_a.fs().set_index_for_repo(
         Path::new("/dir/sub/.git"),
         &[(Path::new("b.txt"), diff_base.clone())],
     );
@@ -2573,7 +2574,7 @@ async fn test_git_diff_base_change(
         );
     });
 
-    client_a.fs.as_fake().set_index_for_repo(
+    client_a.fs().set_index_for_repo(
         Path::new("/dir/sub/.git"),
         &[(Path::new("b.txt"), new_diff_base.clone())],
     );
@@ -2632,7 +2633,7 @@ async fn test_git_branch_name(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/dir",
             json!({
@@ -2651,8 +2652,7 @@ async fn test_git_branch_name(
 
     let project_remote = client_b.build_remote_project(project_id, cx_b).await;
     client_a
-        .fs
-        .as_fake()
+        .fs()
         .set_branch_name(Path::new("/dir/.git"), Some("branch-1"));
 
     // Wait for it to catch up to the new branch
@@ -2677,8 +2677,7 @@ async fn test_git_branch_name(
     });
 
     client_a
-        .fs
-        .as_fake()
+        .fs()
         .set_branch_name(Path::new("/dir/.git"), Some("branch-2"));
 
     // Wait for buffer_local_a to receive it
@@ -2717,7 +2716,7 @@ async fn test_git_status_sync(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/dir",
             json!({
@@ -2731,7 +2730,7 @@ async fn test_git_status_sync(
     const A_TXT: &'static str = "a.txt";
     const B_TXT: &'static str = "b.txt";
 
-    client_a.fs.as_fake().set_status_for_repo_via_git_operation(
+    client_a.fs().set_status_for_repo_via_git_operation(
         Path::new("/dir/.git"),
         &[
             (&Path::new(A_TXT), GitFileStatus::Added),
@@ -2777,16 +2776,13 @@ async fn test_git_status_sync(
         assert_status(&Path::new(B_TXT), Some(GitFileStatus::Added), project, cx);
     });
 
-    client_a
-        .fs
-        .as_fake()
-        .set_status_for_repo_via_working_copy_change(
-            Path::new("/dir/.git"),
-            &[
-                (&Path::new(A_TXT), GitFileStatus::Modified),
-                (&Path::new(B_TXT), GitFileStatus::Modified),
-            ],
-        );
+    client_a.fs().set_status_for_repo_via_working_copy_change(
+        Path::new("/dir/.git"),
+        &[
+            (&Path::new(A_TXT), GitFileStatus::Modified),
+            (&Path::new(B_TXT), GitFileStatus::Modified),
+        ],
+    );
 
     // Wait for buffer_local_a to receive it
     deterministic.run_until_parked();
@@ -2857,7 +2853,7 @@ async fn test_fs_operations(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/dir",
             json!({
@@ -3130,7 +3126,7 @@ async fn test_local_settings(
 
     // As client A, open a project that contains some local settings files
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/dir",
             json!({
@@ -3172,7 +3168,7 @@ async fn test_local_settings(
 
     // As client A, update a settings file. As Client B, see the changed settings.
     client_a
-        .fs
+        .fs()
         .insert_file("/dir/.zed/settings.json", r#"{}"#.into())
         .await;
     deterministic.run_until_parked();
@@ -3189,17 +3185,17 @@ async fn test_local_settings(
 
     // As client A, create and remove some settings files. As client B, see the changed settings.
     client_a
-        .fs
+        .fs()
         .remove_file("/dir/.zed/settings.json".as_ref(), Default::default())
         .await
         .unwrap();
     client_a
-        .fs
+        .fs()
         .create_dir("/dir/b/.zed".as_ref())
         .await
         .unwrap();
     client_a
-        .fs
+        .fs()
         .insert_file("/dir/b/.zed/settings.json", r#"{"tab_size": 4}"#.into())
         .await;
     deterministic.run_until_parked();
@@ -3220,11 +3216,11 @@ async fn test_local_settings(
 
     // As client A, change and remove settings files while client B is disconnected.
     client_a
-        .fs
+        .fs()
         .insert_file("/dir/a/.zed/settings.json", r#"{"hard_tabs":true}"#.into())
         .await;
     client_a
-        .fs
+        .fs()
         .remove_file("/dir/b/.zed/settings.json".as_ref(), Default::default())
         .await
         .unwrap();
@@ -3258,7 +3254,7 @@ async fn test_buffer_conflict_after_save(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/dir",
             json!({
@@ -3320,7 +3316,7 @@ async fn test_buffer_reloading(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/dir",
             json!({
@@ -3348,7 +3344,7 @@ async fn test_buffer_reloading(
 
     let new_contents = Rope::from("d\ne\nf");
     client_a
-        .fs
+        .fs()
         .save("/dir/a.txt".as_ref(), &new_contents, LineEnding::Windows)
         .await
         .unwrap();
@@ -3377,7 +3373,7 @@ async fn test_editing_while_guest_opens_buffer(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
-        .fs
+        .fs()
         .insert_tree("/dir", json!({ "a.txt": "a-contents" }))
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
@@ -3426,7 +3422,7 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
-        .fs
+        .fs()
         .insert_tree("/dir", json!({ "a.txt": "Some text\n" }))
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
@@ -3520,7 +3516,7 @@ async fn test_leaving_worktree_while_opening_buffer(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
-        .fs
+        .fs()
         .insert_tree("/dir", json!({ "a.txt": "a-contents" }))
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
@@ -3563,7 +3559,7 @@ async fn test_canceling_buffer_opening(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/dir",
             json!({
@@ -3619,7 +3615,7 @@ async fn test_leaving_project(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/a",
             json!({
@@ -3707,9 +3703,9 @@ async fn test_leaving_project(
     cx_b.spawn(|cx| {
         Project::remote(
             project_id,
-            client_b.client.clone(),
-            client_b.user_store.clone(),
-            client_b.language_registry.clone(),
+            client_b.app_state.client.clone(),
+            client_b.user_store().clone(),
+            client_b.language_registry().clone(),
             FakeFs::new(cx.background()),
             cx,
         )
@@ -3761,11 +3757,11 @@ async fn test_collaborating_with_diagnostics(
         Some(tree_sitter_rust::language()),
     );
     let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
-    client_a.language_registry.add(Arc::new(language));
+    client_a.language_registry().add(Arc::new(language));
 
     // Share a project as client A
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/a",
             json!({
@@ -4033,11 +4029,11 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
             ..Default::default()
         }))
         .await;
-    client_a.language_registry.add(Arc::new(language));
+    client_a.language_registry().add(Arc::new(language));
 
     let file_names = &["one.rs", "two.rs", "three.rs", "four.rs", "five.rs"];
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/test",
             json!({
@@ -4167,6 +4163,7 @@ async fn test_collaborating_with_completion(
             capabilities: lsp::ServerCapabilities {
                 completion_provider: Some(lsp::CompletionOptions {
                     trigger_characters: Some(vec![".".to_string()]),
+                    resolve_provider: Some(true),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -4174,10 +4171,10 @@ async fn test_collaborating_with_completion(
             ..Default::default()
         }))
         .await;
-    client_a.language_registry.add(Arc::new(language));
+    client_a.language_registry().add(Arc::new(language));
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/a",
             json!({
@@ -4335,7 +4332,7 @@ async fn test_reloading_buffer_manually(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
-        .fs
+        .fs()
         .insert_tree("/a", json!({ "a.rs": "let one = 1;" }))
         .await;
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
@@ -4366,7 +4363,7 @@ async fn test_reloading_buffer_manually(
     buffer_a.read_with(cx_a, |buffer, _| assert_eq!(buffer.text(), "let six = 6;"));
 
     client_a
-        .fs
+        .fs()
         .save(
             "/a/a.rs".as_ref(),
             &Rope::from("let seven = 7;"),
@@ -4437,14 +4434,14 @@ async fn test_formatting_buffer(
         Some(tree_sitter_rust::language()),
     );
     let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
-    client_a.language_registry.add(Arc::new(language));
+    client_a.language_registry().add(Arc::new(language));
 
     // Here we insert a fake tree with a directory that exists on disk. This is needed
     // because later we'll invoke a command, which requires passing a working directory
     // that points to a valid location on disk.
     let directory = env::current_dir().unwrap();
     client_a
-        .fs
+        .fs()
         .insert_tree(&directory, json!({ "a.rs": "let one = \"two\"" }))
         .await;
     let (project_a, worktree_id) = client_a.build_local_project(&directory, cx_a).await;
@@ -4546,10 +4543,10 @@ async fn test_definition(
         Some(tree_sitter_rust::language()),
     );
     let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
-    client_a.language_registry.add(Arc::new(language));
+    client_a.language_registry().add(Arc::new(language));
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/root",
             json!({
@@ -4694,10 +4691,10 @@ async fn test_references(
         Some(tree_sitter_rust::language()),
     );
     let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
-    client_a.language_registry.add(Arc::new(language));
+    client_a.language_registry().add(Arc::new(language));
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/root",
             json!({
@@ -4790,7 +4787,7 @@ async fn test_project_search(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/root",
             json!({
@@ -4824,15 +4821,16 @@ async fn test_project_search(
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
     // Perform a search as the guest.
-    let results = project_b
-        .update(cx_b, |project, cx| {
-            project.search(
-                SearchQuery::text("world", false, false, Vec::new(), Vec::new()),
-                cx,
-            )
-        })
-        .await
-        .unwrap();
+    let mut results = HashMap::default();
+    let mut search_rx = project_b.update(cx_b, |project, cx| {
+        project.search(
+            SearchQuery::text("world", false, false, Vec::new(), Vec::new()),
+            cx,
+        )
+    });
+    while let Some((buffer, ranges)) = search_rx.next().await {
+        results.entry(buffer).or_insert(ranges);
+    }
 
     let mut ranges_by_path = results
         .into_iter()
@@ -4876,7 +4874,7 @@ async fn test_document_highlights(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/root-1",
             json!({
@@ -4895,7 +4893,7 @@ async fn test_document_highlights(
         Some(tree_sitter_rust::language()),
     );
     let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
-    client_a.language_registry.add(Arc::new(language));
+    client_a.language_registry().add(Arc::new(language));
 
     let (project_a, worktree_id) = client_a.build_local_project("/root-1", cx_a).await;
     let project_id = active_call_a
@@ -4982,7 +4980,7 @@ async fn test_lsp_hover(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/root-1",
             json!({
@@ -5001,7 +4999,7 @@ async fn test_lsp_hover(
         Some(tree_sitter_rust::language()),
     );
     let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
-    client_a.language_registry.add(Arc::new(language));
+    client_a.language_registry().add(Arc::new(language));
 
     let (project_a, worktree_id) = client_a.build_local_project("/root-1", cx_a).await;
     let project_id = active_call_a
@@ -5100,10 +5098,10 @@ async fn test_project_symbols(
         Some(tree_sitter_rust::language()),
     );
     let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
-    client_a.language_registry.add(Arc::new(language));
+    client_a.language_registry().add(Arc::new(language));
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/code",
             json!({
@@ -5211,10 +5209,10 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
         Some(tree_sitter_rust::language()),
     );
     let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
-    client_a.language_registry.add(Arc::new(language));
+    client_a.language_registry().add(Arc::new(language));
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/root",
             json!({
@@ -5271,6 +5269,7 @@ async fn test_collaborating_with_code_actions(
     deterministic.forbid_parking();
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
+    //
     let client_b = server.create_client(cx_b, "user_b").await;
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
@@ -5289,10 +5288,10 @@ async fn test_collaborating_with_code_actions(
         Some(tree_sitter_rust::language()),
     );
     let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
-    client_a.language_registry.add(Arc::new(language));
+    client_a.language_registry().add(Arc::new(language));
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/a",
             json!({
@@ -5309,7 +5308,8 @@ async fn test_collaborating_with_code_actions(
 
     // Join the project as client B.
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
-    let window_b = cx_b.add_window(|cx| Workspace::test_new(project_b.clone(), cx));
+    let window_b =
+        cx_b.add_window(|cx| Workspace::new(0, project_b.clone(), client_b.app_state.clone(), cx));
     let workspace_b = window_b.root(cx_b);
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
@@ -5321,7 +5321,7 @@ async fn test_collaborating_with_code_actions(
         .unwrap();
 
     let mut fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server
+    let mut requests = fake_language_server
         .handle_request::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri,
@@ -5330,9 +5330,9 @@ async fn test_collaborating_with_code_actions(
             assert_eq!(params.range.start, lsp::Position::new(0, 0));
             assert_eq!(params.range.end, lsp::Position::new(0, 0));
             Ok(None)
-        })
-        .next()
-        .await;
+        });
+    deterministic.advance_clock(editor::CODE_ACTIONS_DEBOUNCE_TIMEOUT * 2);
+    requests.next().await;
 
     // Move cursor to a location that contains code actions.
     editor_b.update(cx_b, |editor, cx| {
@@ -5342,7 +5342,7 @@ async fn test_collaborating_with_code_actions(
         cx.focus(&editor_b);
     });
 
-    fake_language_server
+    let mut requests = fake_language_server
         .handle_request::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri,
@@ -5394,9 +5394,9 @@ async fn test_collaborating_with_code_actions(
                     ..Default::default()
                 },
             )]))
-        })
-        .next()
-        .await;
+        });
+    deterministic.advance_clock(editor::CODE_ACTIONS_DEBOUNCE_TIMEOUT * 2);
+    requests.next().await;
 
     // Toggle code actions and wait for them to display.
     editor_b.update(cx_b, |editor, cx| {
@@ -5515,10 +5515,10 @@ async fn test_collaborating_with_renames(
             ..Default::default()
         }))
         .await;
-    client_a.language_registry.add(Arc::new(language));
+    client_a.language_registry().add(Arc::new(language));
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/dir",
             json!({
@@ -5534,7 +5534,8 @@ async fn test_collaborating_with_renames(
         .unwrap();
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
 
-    let window_b = cx_b.add_window(|cx| Workspace::test_new(project_b.clone(), cx));
+    let window_b =
+        cx_b.add_window(|cx| Workspace::new(0, project_b.clone(), client_b.app_state.clone(), cx));
     let workspace_b = window_b.root(cx_b);
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
@@ -5702,10 +5703,10 @@ async fn test_language_server_statuses(
             ..Default::default()
         }))
         .await;
-    client_a.language_registry.add(Arc::new(language));
+    client_a.language_registry().add(Arc::new(language));
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/dir",
             json!({
@@ -6162,7 +6163,7 @@ async fn test_contacts(
 
     // Test removing a contact
     client_b
-        .user_store
+        .user_store()
         .update(cx_b, |store, cx| {
             store.remove_contact(client_c.user_id().unwrap(), cx)
         })
@@ -6185,7 +6186,7 @@ async fn test_contacts(
         client: &TestClient,
         cx: &TestAppContext,
     ) -> Vec<(String, &'static str, &'static str)> {
-        client.user_store.read_with(cx, |store, _| {
+        client.user_store().read_with(cx, |store, _| {
             store
                 .contacts()
                 .iter()
@@ -6228,14 +6229,14 @@ async fn test_contact_requests(
 
     // User A and User C request that user B become their contact.
     client_a
-        .user_store
+        .user_store()
         .update(cx_a, |store, cx| {
             store.request_contact(client_b.user_id().unwrap(), cx)
         })
         .await
         .unwrap();
     client_c
-        .user_store
+        .user_store()
         .update(cx_c, |store, cx| {
             store.request_contact(client_b.user_id().unwrap(), cx)
         })
@@ -6289,7 +6290,7 @@ async fn test_contact_requests(
 
     // User B accepts the request from user A.
     client_b
-        .user_store
+        .user_store()
         .update(cx_b, |store, cx| {
             store.respond_to_contact_request(client_a.user_id().unwrap(), true, cx)
         })
@@ -6333,7 +6334,7 @@ async fn test_contact_requests(
 
     // User B rejects the request from user C.
     client_b
-        .user_store
+        .user_store()
         .update(cx_b, |store, cx| {
             store.respond_to_contact_request(client_c.user_id().unwrap(), false, cx)
         })
@@ -6415,7 +6416,7 @@ async fn test_basic_following(
     cx_b.update(editor::init);
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/a",
             json!({
@@ -6978,7 +6979,7 @@ async fn test_join_call_after_screen_was_shared(
         .await
         .unwrap();
 
-    client_b.user_store.update(cx_b, |user_store, _| {
+    client_b.user_store().update(cx_b, |user_store, _| {
         user_store.clear_cache();
     });
 
@@ -7038,7 +7039,7 @@ async fn test_following_tab_order(
     cx_b.update(editor::init);
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/a",
             json!({
@@ -7161,7 +7162,7 @@ async fn test_peers_following_each_other(
 
     // Client A shares a project.
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/a",
             json!({
@@ -7334,7 +7335,7 @@ async fn test_auto_unfollowing(
 
     // Client A shares a project.
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/a",
             json!({
@@ -7498,7 +7499,7 @@ async fn test_peers_simultaneously_following_each_other(
     cx_a.update(editor::init);
     cx_b.update(editor::init);
 
-    client_a.fs.insert_tree("/a", json!({})).await;
+    client_a.fs().insert_tree("/a", json!({})).await;
     let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
     let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
     let project_id = active_call_a
@@ -7575,10 +7576,10 @@ async fn test_on_input_format_from_host_to_guest(
             ..Default::default()
         }))
         .await;
-    client_a.language_registry.add(Arc::new(language));
+    client_a.language_registry().add(Arc::new(language));
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/a",
             json!({
@@ -7704,10 +7705,10 @@ async fn test_on_input_format_from_guest_to_host(
             ..Default::default()
         }))
         .await;
-    client_a.language_registry.add(Arc::new(language));
+    client_a.language_registry().add(Arc::new(language));
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/a",
             json!({
@@ -7798,7 +7799,7 @@ async fn test_on_input_format_from_guest_to_host(
     });
 }
 
-#[gpui::test]
+#[gpui::test(iterations = 10)]
 async fn test_mutual_editor_inlay_hint_cache_update(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
@@ -7860,15 +7861,16 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         }))
         .await;
     let language = Arc::new(language);
-    client_a.language_registry.add(Arc::clone(&language));
-    client_b.language_registry.add(language);
+    client_a.language_registry().add(Arc::clone(&language));
+    client_b.language_registry().add(language);
 
+    // Client A opens a project.
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/a",
             json!({
-                "main.rs": "fn main() { a } // and some long comment to ensure inlays are not trimmed out",
+                "main.rs": "fn main() { a } // and some long comment to ensure inlay hints are not trimmed out",
                 "other.rs": "// Test file",
             }),
         )
@@ -7883,6 +7885,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .await
         .unwrap();
 
+    // Client B joins the project
     let project_b = client_b.build_remote_project(project_id, cx_b).await;
     active_call_b
         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
@@ -7892,6 +7895,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
     cx_a.foreground().start_waiting();
 
+    // The host opens a rust file.
     let _buffer_a = project_a
         .update(cx_a, |project, cx| {
             project.open_local_buffer("/a/main.rs", cx)
@@ -7899,7 +7903,6 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .await
         .unwrap();
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    let next_call_id = Arc::new(AtomicU32::new(0));
     let editor_a = workspace_a
         .update(cx_a, |workspace, cx| {
             workspace.open_path((worktree_id, "main.rs"), None, true, cx)
@@ -7908,53 +7911,48 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
+
+    // Set up the language server to return an additional inlay hint on each request.
+    let edits_made = Arc::new(AtomicUsize::new(0));
+    let closure_edits_made = Arc::clone(&edits_made);
     fake_language_server
         .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
-            let task_next_call_id = Arc::clone(&next_call_id);
+            let task_edits_made = Arc::clone(&closure_edits_made);
             async move {
                 assert_eq!(
                     params.text_document.uri,
                     lsp::Url::from_file_path("/a/main.rs").unwrap(),
                 );
-                let mut current_call_id = Arc::clone(&task_next_call_id).fetch_add(1, SeqCst);
-                let mut new_hints = Vec::with_capacity(current_call_id as usize);
-                loop {
-                    new_hints.push(lsp::InlayHint {
-                        position: lsp::Position::new(0, current_call_id),
-                        label: lsp::InlayHintLabel::String(current_call_id.to_string()),
-                        kind: None,
-                        text_edits: None,
-                        tooltip: None,
-                        padding_left: None,
-                        padding_right: None,
-                        data: None,
-                    });
-                    if current_call_id == 0 {
-                        break;
-                    }
-                    current_call_id -= 1;
-                }
-                Ok(Some(new_hints))
+                let edits_made = task_edits_made.load(atomic::Ordering::Acquire);
+                Ok(Some(vec![lsp::InlayHint {
+                    position: lsp::Position::new(0, edits_made as u32),
+                    label: lsp::InlayHintLabel::String(edits_made.to_string()),
+                    kind: None,
+                    text_edits: None,
+                    tooltip: None,
+                    padding_left: None,
+                    padding_right: None,
+                    data: None,
+                }]))
             }
         })
         .next()
         .await
         .unwrap();
 
-    cx_a.foreground().finish_waiting();
-    cx_a.foreground().run_until_parked();
+    deterministic.run_until_parked();
 
-    let mut edits_made = 1;
+    let initial_edit = edits_made.load(atomic::Ordering::Acquire);
     editor_a.update(cx_a, |editor, _| {
         assert_eq!(
-            vec!["0".to_string()],
+            vec![initial_edit.to_string()],
             extract_hint_labels(editor),
             "Host should get its first hints when opens an editor"
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
             inlay_cache.version(),
-            edits_made,
+            1,
             "Host editor update the cache version after every cache/view change",
         );
     });
@@ -7968,147 +7966,107 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .downcast::<Editor>()
         .unwrap();
 
-    cx_b.foreground().run_until_parked();
+    deterministic.run_until_parked();
     editor_b.update(cx_b, |editor, _| {
         assert_eq!(
-            vec!["0".to_string(), "1".to_string()],
+            vec![initial_edit.to_string()],
             extract_hint_labels(editor),
             "Client should get its first hints when opens an editor"
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
             inlay_cache.version(),
-            edits_made,
+            1,
             "Guest editor update the cache version after every cache/view change"
         );
     });
 
+    let after_client_edit = edits_made.fetch_add(1, atomic::Ordering::Release) + 1;
     editor_b.update(cx_b, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges([13..13].clone()));
         editor.handle_input(":", cx);
         cx.focus(&editor_b);
-        edits_made += 1;
     });
-    cx_a.foreground().run_until_parked();
-    cx_b.foreground().run_until_parked();
+
+    deterministic.run_until_parked();
     editor_a.update(cx_a, |editor, _| {
         assert_eq!(
-            vec!["0".to_string(), "1".to_string(), "2".to_string()],
+            vec![after_client_edit.to_string()],
             extract_hint_labels(editor),
-            "Host should get hints from the 1st edit and 1st LSP query"
         );
         let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(inlay_cache.version(), edits_made);
+        assert_eq!(inlay_cache.version(), 2);
     });
     editor_b.update(cx_b, |editor, _| {
         assert_eq!(
-            vec![
-                "0".to_string(),
-                "1".to_string(),
-                "2".to_string(),
-                "3".to_string()
-            ],
+            vec![after_client_edit.to_string()],
             extract_hint_labels(editor),
-            "Guest should get hints the 1st edit and 2nd LSP query"
         );
         let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(inlay_cache.version(), edits_made);
+        assert_eq!(inlay_cache.version(), 2);
     });
 
+    let after_host_edit = edits_made.fetch_add(1, atomic::Ordering::Release) + 1;
     editor_a.update(cx_a, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
         editor.handle_input("a change to increment both buffers' versions", cx);
         cx.focus(&editor_a);
-        edits_made += 1;
     });
-    cx_a.foreground().run_until_parked();
-    cx_b.foreground().run_until_parked();
+
+    deterministic.run_until_parked();
     editor_a.update(cx_a, |editor, _| {
         assert_eq!(
-            vec![
-                "0".to_string(),
-                "1".to_string(),
-                "2".to_string(),
-                "3".to_string(),
-                "4".to_string()
-            ],
+            vec![after_host_edit.to_string()],
             extract_hint_labels(editor),
-            "Host should get hints from 3rd edit, 5th LSP query: \
-4th query was made by guest (but not applied) due to cache invalidation logic"
         );
         let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(inlay_cache.version(), edits_made);
+        assert_eq!(inlay_cache.version(), 3);
     });
     editor_b.update(cx_b, |editor, _| {
         assert_eq!(
-            vec![
-                "0".to_string(),
-                "1".to_string(),
-                "2".to_string(),
-                "3".to_string(),
-                "4".to_string(),
-                "5".to_string(),
-            ],
+            vec![after_host_edit.to_string()],
             extract_hint_labels(editor),
-            "Guest should get hints from 3rd edit, 6th LSP query"
         );
         let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(inlay_cache.version(), edits_made);
+        assert_eq!(inlay_cache.version(), 3);
     });
 
+    let after_special_edit_for_refresh = edits_made.fetch_add(1, atomic::Ordering::Release) + 1;
     fake_language_server
         .request::<lsp::request::InlayHintRefreshRequest>(())
         .await
         .expect("inlay refresh request failed");
-    edits_made += 1;
-    cx_a.foreground().run_until_parked();
-    cx_b.foreground().run_until_parked();
+
+    deterministic.run_until_parked();
     editor_a.update(cx_a, |editor, _| {
         assert_eq!(
-            vec![
-                "0".to_string(),
-                "1".to_string(),
-                "2".to_string(),
-                "3".to_string(),
-                "4".to_string(),
-                "5".to_string(),
-                "6".to_string(),
-            ],
+            vec![after_special_edit_for_refresh.to_string()],
             extract_hint_labels(editor),
-            "Host should react to /refresh LSP request and get new hints from 7th LSP query"
+            "Host should react to /refresh LSP request"
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
             inlay_cache.version(),
-            edits_made,
+            4,
             "Host should accepted all edits and bump its cache version every time"
         );
     });
     editor_b.update(cx_b, |editor, _| {
         assert_eq!(
-            vec![
-                "0".to_string(),
-                "1".to_string(),
-                "2".to_string(),
-                "3".to_string(),
-                "4".to_string(),
-                "5".to_string(),
-                "6".to_string(),
-                "7".to_string(),
-            ],
+            vec![after_special_edit_for_refresh.to_string()],
             extract_hint_labels(editor),
-            "Guest should get a /refresh LSP request propagated by host and get new hints from 8th LSP query"
+            "Guest should get a /refresh LSP request propagated by host"
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
             inlay_cache.version(),
-            edits_made,
+            4,
             "Guest should accepted all edits and bump its cache version every time"
         );
     });
 }
 
-#[gpui::test]
+#[gpui::test(iterations = 10)]
 async fn test_inlay_hint_refresh_is_forwarded(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
@@ -8170,15 +8128,15 @@ async fn test_inlay_hint_refresh_is_forwarded(
         }))
         .await;
     let language = Arc::new(language);
-    client_a.language_registry.add(Arc::clone(&language));
-    client_b.language_registry.add(language);
+    client_a.language_registry().add(Arc::clone(&language));
+    client_b.language_registry().add(language);
 
     client_a
-        .fs
+        .fs()
         .insert_tree(
             "/a",
             json!({
-                "main.rs": "fn main() { a } // and some long comment to ensure inlays are not trimmed out",
+                "main.rs": "fn main() { a } // and some long comment to ensure inlay hints are not trimmed out",
                 "other.rs": "// Test file",
             }),
         )
@@ -8222,35 +8180,34 @@ async fn test_inlay_hint_refresh_is_forwarded(
         .downcast::<Editor>()
         .unwrap();
 
+    let other_hints = Arc::new(AtomicBool::new(false));
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    let next_call_id = Arc::new(AtomicU32::new(0));
+    let closure_other_hints = Arc::clone(&other_hints);
     fake_language_server
         .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
-            let task_next_call_id = Arc::clone(&next_call_id);
+            let task_other_hints = Arc::clone(&closure_other_hints);
             async move {
                 assert_eq!(
                     params.text_document.uri,
                     lsp::Url::from_file_path("/a/main.rs").unwrap(),
                 );
-                let mut current_call_id = Arc::clone(&task_next_call_id).fetch_add(1, SeqCst);
-                let mut new_hints = Vec::with_capacity(current_call_id as usize);
-                loop {
-                    new_hints.push(lsp::InlayHint {
-                        position: lsp::Position::new(0, current_call_id),
-                        label: lsp::InlayHintLabel::String(current_call_id.to_string()),
-                        kind: None,
-                        text_edits: None,
-                        tooltip: None,
-                        padding_left: None,
-                        padding_right: None,
-                        data: None,
-                    });
-                    if current_call_id == 0 {
-                        break;
-                    }
-                    current_call_id -= 1;
-                }
-                Ok(Some(new_hints))
+                let other_hints = task_other_hints.load(atomic::Ordering::Acquire);
+                let character = if other_hints { 0 } else { 2 };
+                let label = if other_hints {
+                    "other hint"
+                } else {
+                    "initial hint"
+                };
+                Ok(Some(vec![lsp::InlayHint {
+                    position: lsp::Position::new(0, character),
+                    label: lsp::InlayHintLabel::String(label.to_string()),
+                    kind: None,
+                    text_edits: None,
+                    tooltip: None,
+                    padding_left: None,
+                    padding_right: None,
+                    data: None,
+                }]))
             }
         })
         .next()
@@ -8269,26 +8226,26 @@ async fn test_inlay_hint_refresh_is_forwarded(
         assert_eq!(
             inlay_cache.version(),
             0,
-            "Host should not increment its cache version due to no changes",
+            "Turned off hints should not generate version updates"
         );
     });
 
-    let mut edits_made = 1;
     cx_b.foreground().run_until_parked();
     editor_b.update(cx_b, |editor, _| {
         assert_eq!(
-            vec!["0".to_string()],
+            vec!["initial hint".to_string()],
             extract_hint_labels(editor),
             "Client should get its first hints when opens an editor"
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
             inlay_cache.version(),
-            edits_made,
-            "Guest editor update the cache version after every cache/view change"
+            1,
+            "Should update cache verison after first hints"
         );
     });
 
+    other_hints.fetch_or(true, atomic::Ordering::Release);
     fake_language_server
         .request::<lsp::request::InlayHintRefreshRequest>(())
         .await
@@ -8303,49 +8260,24 @@ async fn test_inlay_hint_refresh_is_forwarded(
         assert_eq!(
             inlay_cache.version(),
             0,
-            "Host should not increment its cache version due to no changes",
+            "Turned off hints should not generate version updates, again"
         );
     });
 
-    edits_made += 1;
     cx_b.foreground().run_until_parked();
     editor_b.update(cx_b, |editor, _| {
         assert_eq!(
-            vec!["0".to_string(), "1".to_string(),],
+            vec!["other hint".to_string()],
             extract_hint_labels(editor),
             "Guest should get a /refresh LSP request propagated by host despite host hints are off"
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
             inlay_cache.version(),
-            edits_made,
+            2,
             "Guest should accepted all edits and bump its cache version every time"
         );
     });
-}
-
-#[derive(Debug, Eq, PartialEq)]
-struct RoomParticipants {
-    remote: Vec<String>,
-    pending: Vec<String>,
-}
-
-fn room_participants(room: &ModelHandle<Room>, cx: &mut TestAppContext) -> RoomParticipants {
-    room.read_with(cx, |room, _| {
-        let mut remote = room
-            .remote_participants()
-            .iter()
-            .map(|(_, participant)| participant.user.github_login.clone())
-            .collect::<Vec<_>>();
-        let mut pending = room
-            .pending_participants()
-            .iter()
-            .map(|user| user.github_login.clone())
-            .collect::<Vec<_>>();
-        remote.sort();
-        pending.sort();
-        RoomParticipants { remote, pending }
-    })
 }
 
 fn extract_hint_labels(editor: &Editor) -> Vec<String> {

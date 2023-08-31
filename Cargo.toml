@@ -6,6 +6,7 @@ members = [
     "crates/auto_update",
     "crates/breadcrumbs",
     "crates/call",
+    "crates/channel",
     "crates/cli",
     "crates/client",
     "crates/clock",
@@ -13,10 +14,13 @@ members = [
     "crates/collab_ui",
     "crates/collections",
     "crates/command_palette",
+    "crates/component_test",
     "crates/context_menu",
     "crates/copilot",
     "crates/copilot_button",
     "crates/db",
+    "crates/refineable",
+    "crates/refineable/derive_refineable",
     "crates/diagnostics",
     "crates/drag_and_drop",
     "crates/editor",
@@ -28,6 +32,8 @@ members = [
     "crates/git",
     "crates/go_to_line",
     "crates/gpui",
+    "crates/gpui/playground",
+    "crates/gpui/playground_macros",
     "crates/gpui_macros",
     "crates/install_cli",
     "crates/journal",
@@ -56,7 +62,7 @@ members = [
     "crates/snippet",
     "crates/sqlez",
     "crates/sqlez_macros",
-    "crates/staff_mode",
+    "crates/feature_flags",
     "crates/sum_tree",
     "crates/terminal",
     "crates/text",
@@ -91,9 +97,11 @@ log = { version = "0.4.16", features = ["kv_unstable_serde"] }
 ordered-float = { version = "2.1.1" }
 parking_lot = { version = "0.11.1" }
 postage = { version = "0.5", features = ["futures-traits"] }
+prost = { version = "0.8" }
 rand = { version = "0.8.5" }
+refineable = { path = "./crates/refineable" }
 regex = { version = "1.5" }
-rust-embed = { version = "6.3", features = ["include-exclude"] }
+rust-embed = { version = "8.0", features = ["include-exclude"] }
 schemars = { version = "0.8" }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
@@ -135,7 +143,7 @@ tree-sitter-lua = "0.0.14"
 tree-sitter-nix = { git = "https://github.com/nix-community/tree-sitter-nix", rev = "66e3e9ce9180ae08fc57372061006ef83f0abde7" }
 
 [patch.crates-io]
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "1c65ca24bc9a734ab70115188f465e12eecf224e" }
+tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "35a6052fbcafc5e5fc0f9415b8652be7dcaf7222" }
 async-task = { git = "https://github.com/zed-industries/async-task", rev = "341b57d6de98cdfd7b418567b8de2022ca993a6e" }
 
 # TODO - Remove when a version is released with this PR: https://github.com/servo/core-foundation-rs/pull/457

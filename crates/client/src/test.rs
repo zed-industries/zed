@@ -168,6 +168,7 @@ impl FakeServer {
                     GetPrivateUserInfoResponse {
                         metrics_id: "the-metrics-id".into(),
                         staff: false,
+                        flags: Default::default(),
                     },
                 )
                 .await;

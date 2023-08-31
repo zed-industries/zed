@@ -1320,7 +1320,7 @@ impl ProjectPanel {
         }
     }
 
-    fn render_entry_visual_element<V: View>(
+    fn render_entry_visual_element<V: 'static>(
         details: &EntryDetails,
         editor: Option<&ViewHandle<Editor>>,
         padding: f32,
@@ -1651,30 +1651,14 @@ impl workspace::dock::Panel for ProjectPanel {
             .unwrap_or_else(|| settings::get::<ProjectPanelSettings>(cx).default_width)
     }
 
-    fn set_size(&mut self, size: f32, cx: &mut ViewContext<Self>) {
-        self.width = Some(size);
+    fn set_size(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>) {
+        self.width = size;
         self.serialize(cx);
         cx.notify();
     }
 
-    fn should_zoom_in_on_event(_: &Self::Event) -> bool {
-        false
-    }
-
-    fn should_zoom_out_on_event(_: &Self::Event) -> bool {
-        false
-    }
-
-    fn is_zoomed(&self, _: &WindowContext) -> bool {
-        false
-    }
-
-    fn set_zoomed(&mut self, _: bool, _: &mut ViewContext<Self>) {}
-
-    fn set_active(&mut self, _: bool, _: &mut ViewContext<Self>) {}
-
-    fn icon_path(&self) -> &'static str {
-        "icons/folder_tree_16.svg"
+    fn icon_path(&self, _: &WindowContext) -> Option<&'static str> {
+        Some("icons/project.svg")
     }
 
     fn icon_tooltip(&self) -> (String, Option<Box<dyn Action>>) {
@@ -1683,14 +1667,6 @@ impl workspace::dock::Panel for ProjectPanel {
 
     fn should_change_position_on_event(event: &Self::Event) -> bool {
         matches!(event, Event::DockPositionChanged)
-    }
-
-    fn should_activate_on_event(_: &Self::Event) -> bool {
-        false
-    }
-
-    fn should_close_on_event(_: &Self::Event) -> bool {
-        false
     }
 
     fn has_focus(&self, _: &WindowContext) -> bool {

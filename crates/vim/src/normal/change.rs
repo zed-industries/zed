@@ -10,7 +10,11 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
     // Some motions ignore failure when switching to normal mode
     let mut motion_succeeded = matches!(
         motion,
-        Motion::Left | Motion::Right | Motion::EndOfLine | Motion::Backspace | Motion::StartOfLine
+        Motion::Left
+            | Motion::Right
+            | Motion::EndOfLine { .. }
+            | Motion::Backspace
+            | Motion::StartOfLine { .. }
     );
     vim.update_active_editor(cx, |editor, cx| {
         editor.transact(cx, |editor, cx| {

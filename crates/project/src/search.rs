@@ -14,24 +14,39 @@ use std::{
 };
 
 #[derive(Clone, Debug)]
+pub struct SearchInputs {
+    query: Arc<str>,
+    files_to_include: Vec<PathMatcher>,
+    files_to_exclude: Vec<PathMatcher>,
+}
+
+impl SearchInputs {
+    pub fn as_str(&self) -> &str {
+        self.query.as_ref()
+    }
+    pub fn files_to_include(&self) -> &[PathMatcher] {
+        &self.files_to_include
+    }
+    pub fn files_to_exclude(&self) -> &[PathMatcher] {
+        &self.files_to_exclude
+    }
+}
+#[derive(Clone, Debug)]
 pub enum SearchQuery {
     Text {
         search: Arc<AhoCorasick<usize>>,
-        query: Arc<str>,
         whole_word: bool,
         case_sensitive: bool,
-        files_to_include: Vec<PathMatcher>,
-        files_to_exclude: Vec<PathMatcher>,
+        inner: SearchInputs,
     },
 
     Regex {
         regex: Regex,
-        query: Arc<str>,
+
         multiline: bool,
         whole_word: bool,
         case_sensitive: bool,
-        files_to_include: Vec<PathMatcher>,
-        files_to_exclude: Vec<PathMatcher>,
+        inner: SearchInputs,
     },
 }
 
@@ -73,13 +88,16 @@ impl SearchQuery {
             .auto_configure(&[&query])
             .ascii_case_insensitive(!case_sensitive)
             .build(&[&query]);
+        let inner = SearchInputs {
+            query: query.into(),
+            files_to_exclude,
+            files_to_include,
+        };
         Self::Text {
             search: Arc::new(search),
-            query: Arc::from(query),
             whole_word,
             case_sensitive,
-            files_to_include,
-            files_to_exclude,
+            inner,
         }
     }
 
@@ -105,14 +123,17 @@ impl SearchQuery {
             .case_insensitive(!case_sensitive)
             .multi_line(multiline)
             .build()?;
+        let inner = SearchInputs {
+            query: initial_query,
+            files_to_exclude,
+            files_to_include,
+        };
         Ok(Self::Regex {
             regex,
-            query: initial_query,
             multiline,
             whole_word,
             case_sensitive,
-            files_to_include,
-            files_to_exclude,
+            inner,
         })
     }
 
@@ -284,10 +305,7 @@ impl SearchQuery {
     }
 
     pub fn as_str(&self) -> &str {
-        match self {
-            Self::Text { query, .. } => query.as_ref(),
-            Self::Regex { query, .. } => query.as_ref(),
-        }
+        self.as_inner().as_str()
     }
 
     pub fn whole_word(&self) -> bool {
@@ -309,25 +327,11 @@ impl SearchQuery {
     }
 
     pub fn files_to_include(&self) -> &[PathMatcher] {
-        match self {
-            Self::Text {
-                files_to_include, ..
-            } => files_to_include,
-            Self::Regex {
-                files_to_include, ..
-            } => files_to_include,
-        }
+        self.as_inner().files_to_include()
     }
 
     pub fn files_to_exclude(&self) -> &[PathMatcher] {
-        match self {
-            Self::Text {
-                files_to_exclude, ..
-            } => files_to_exclude,
-            Self::Regex {
-                files_to_exclude, ..
-            } => files_to_exclude,
-        }
+        self.as_inner().files_to_exclude()
     }
 
     pub fn file_matches(&self, file_path: Option<&Path>) -> bool {
@@ -344,6 +348,11 @@ impl SearchQuery {
                             .any(|include_glob| include_glob.is_match(file_path)))
             }
             None => self.files_to_include().is_empty(),
+        }
+    }
+    pub fn as_inner(&self) -> &SearchInputs {
+        match self {
+            Self::Regex { inner, .. } | Self::Text { inner, .. } => inner,
         }
     }
 }

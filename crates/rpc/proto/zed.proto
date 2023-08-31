@@ -102,17 +102,6 @@ message Envelope {
         SearchProject search_project = 80;
         SearchProjectResponse search_project_response = 81;
 
-        GetChannels get_channels = 82;
-        GetChannelsResponse get_channels_response = 83;
-        JoinChannel join_channel = 84;
-        JoinChannelResponse join_channel_response = 85;
-        LeaveChannel leave_channel = 86;
-        SendChannelMessage send_channel_message = 87;
-        SendChannelMessageResponse send_channel_message_response = 88;
-        ChannelMessageSent channel_message_sent = 89;
-        GetChannelMessages get_channel_messages = 90;
-        GetChannelMessagesResponse get_channel_messages_response = 91;
-
         UpdateContacts update_contacts = 92;
         UpdateInviteInfo update_invite_info = 93;
         ShowContacts show_contacts = 94;
@@ -139,7 +128,29 @@ message Envelope {
 
         InlayHints inlay_hints = 116;
         InlayHintsResponse inlay_hints_response = 117;
+        ResolveInlayHint resolve_inlay_hint = 137;
+        ResolveInlayHintResponse resolve_inlay_hint_response = 138;
         RefreshInlayHints refresh_inlay_hints = 118;
+
+        CreateChannel create_channel = 119;
+        ChannelResponse channel_response = 120;
+        InviteChannelMember invite_channel_member = 121;
+        RemoveChannelMember remove_channel_member = 122;
+        RespondToChannelInvite respond_to_channel_invite = 123;
+        UpdateChannels update_channels = 124;
+        JoinChannel join_channel = 125;
+        RemoveChannel remove_channel = 126;
+        GetChannelMembers get_channel_members = 127;
+        GetChannelMembersResponse get_channel_members_response = 128;
+        SetChannelMemberAdmin set_channel_member_admin = 129;
+        RenameChannel rename_channel = 130;
+
+        JoinChannelBuffer join_channel_buffer = 131;
+        JoinChannelBufferResponse join_channel_buffer_response = 132;
+        UpdateChannelBuffer update_channel_buffer = 133;
+        LeaveChannelBuffer leave_channel_buffer = 134;
+        AddChannelBufferCollaborator add_channel_buffer_collaborator = 135;
+        RemoveChannelBufferCollaborator remove_channel_buffer_collaborator = 136;
     }
 }
 
@@ -174,7 +185,8 @@ message JoinRoom {
 
 message JoinRoomResponse {
     Room room = 1;
-    optional LiveKitConnectionInfo live_kit_connection_info = 2;
+    optional uint64 channel_id = 2;
+    optional LiveKitConnectionInfo live_kit_connection_info = 3;
 }
 
 message RejoinRoom {
@@ -408,6 +420,16 @@ message RemoveProjectCollaborator {
     PeerId peer_id = 2;
 }
 
+message AddChannelBufferCollaborator {
+    uint64 channel_id = 1;
+    Collaborator collaborator = 2;
+}
+
+message RemoveChannelBufferCollaborator {
+    uint64 channel_id = 1;
+    PeerId peer_id = 2;
+}
+
 message GetDefinition {
      uint64 project_id = 1;
      uint64 buffer_id = 2;
@@ -535,6 +557,11 @@ message UpdateBuffer {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
     repeated Operation operations = 3;
+}
+
+message UpdateChannelBuffer {
+    uint64 channel_id = 1;
+    repeated Operation operations = 2;
 }
 
 message UpdateBufferFile {
@@ -730,6 +757,7 @@ message InlayHint {
     bool padding_left = 4;
     bool padding_right = 5;
     InlayHintTooltip tooltip = 6;
+    ResolveState resolve_state = 7;
 }
 
 message InlayHintLabel {
@@ -746,7 +774,10 @@ message InlayHintLabelParts {
 message InlayHintLabelPart {
     string value = 1;
     InlayHintLabelPartTooltip tooltip = 2;
-    Location location = 3;
+    optional string location_url = 3;
+    PointUtf16 location_range_start = 4;
+    PointUtf16 location_range_end = 5;
+    optional uint64 language_server_id = 6;
 }
 
 message InlayHintTooltip {
@@ -763,12 +794,39 @@ message InlayHintLabelPartTooltip {
     }
 }
 
+message ResolveState {
+    State state = 1;
+    LspResolveState lsp_resolve_state = 2;
+
+    enum State {
+        Resolved = 0;
+        CanResolve = 1;
+        Resolving = 2;
+    }
+
+    message LspResolveState {
+        string value = 1;
+        uint64 server_id = 2;
+    }
+}
+
+message ResolveInlayHint {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    uint64 language_server_id = 3;
+    InlayHint hint = 4;
+}
+
+message ResolveInlayHintResponse {
+    InlayHint hint = 1;
+}
+
 message RefreshInlayHints {
     uint64 project_id = 1;
 }
 
 message MarkupContent {
-    string kind = 1;
+    bool is_markdown = 1;
     string value = 2;
 }
 
@@ -868,23 +926,103 @@ message LspDiskBasedDiagnosticsUpdating {}
 
 message LspDiskBasedDiagnosticsUpdated {}
 
-message GetChannels {}
-
-message GetChannelsResponse {
+message UpdateChannels {
     repeated Channel channels = 1;
+    repeated uint64 remove_channels = 2;
+    repeated Channel channel_invitations = 3;
+    repeated uint64 remove_channel_invitations = 4;
+    repeated ChannelParticipants channel_participants = 5;
+    repeated ChannelPermission channel_permissions = 6;
+}
+
+message ChannelPermission {
+    uint64 channel_id = 1;
+    bool is_admin = 2;
+}
+
+message ChannelParticipants {
+    uint64 channel_id = 1;
+    repeated uint64 participant_user_ids = 2;
 }
 
 message JoinChannel {
     uint64 channel_id = 1;
 }
 
-message JoinChannelResponse {
-    repeated ChannelMessage messages = 1;
-    bool done = 2;
+message RemoveChannel {
+    uint64 channel_id = 1;
 }
 
-message LeaveChannel {
+message GetChannelMembers {
     uint64 channel_id = 1;
+}
+
+message GetChannelMembersResponse {
+    repeated ChannelMember members = 1;
+}
+
+message ChannelMember {
+    uint64 user_id = 1;
+    bool admin = 2;
+    Kind kind = 3;
+
+    enum Kind {
+        Member = 0;
+        Invitee = 1;
+        AncestorMember = 2;
+    }
+}
+
+message CreateChannel {
+    string name = 1;
+    optional uint64 parent_id = 2;
+}
+
+message ChannelResponse {
+    Channel channel = 1;
+}
+
+message InviteChannelMember {
+    uint64 channel_id = 1;
+    uint64 user_id = 2;
+    bool admin = 3;
+}
+
+message RemoveChannelMember {
+    uint64 channel_id = 1;
+    uint64 user_id = 2;
+}
+
+message SetChannelMemberAdmin {
+    uint64 channel_id = 1;
+    uint64 user_id = 2;
+    bool admin = 3;
+}
+
+message RenameChannel {
+    uint64 channel_id = 1;
+    string name = 2;
+}
+
+message JoinChannelBuffer {
+    uint64 channel_id = 1;
+}
+
+message JoinChannelBufferResponse {
+    uint64 buffer_id = 1;
+    uint32 replica_id = 2;
+    string base_text = 3;
+    repeated Operation operations = 4;
+    repeated Collaborator collaborators = 5;
+}
+
+message LeaveChannelBuffer {
+    uint64 channel_id = 1;
+}
+
+message RespondToChannelInvite {
+    uint64 channel_id = 1;
+    bool accept = 2;
 }
 
 message GetUsers {
@@ -917,31 +1055,6 @@ enum ContactRequestResponse {
     Decline = 1;
     Block = 2;
     Dismiss = 3;
-}
-
-message SendChannelMessage {
-    uint64 channel_id = 1;
-    string body = 2;
-    Nonce nonce = 3;
-}
-
-message SendChannelMessageResponse {
-    ChannelMessage message = 1;
-}
-
-message ChannelMessageSent {
-    uint64 channel_id = 1;
-    ChannelMessage message = 2;
-}
-
-message GetChannelMessages {
-    uint64 channel_id = 1;
-    uint64 before_message_id = 2;
-}
-
-message GetChannelMessagesResponse {
-    repeated ChannelMessage messages = 1;
-    bool done = 2;
 }
 
 message UpdateContacts {
@@ -1002,6 +1115,7 @@ message GetPrivateUserInfo {}
 message GetPrivateUserInfoResponse {
     string metrics_id = 1;
     bool staff = 2;
+    repeated string flags = 3;
 }
 
 // Entities
@@ -1041,6 +1155,7 @@ message View {
 
     oneof variant {
         Editor editor = 3;
+        ChannelView channel_view = 4;
     }
 
     message Editor {
@@ -1052,6 +1167,11 @@ message View {
         EditorAnchor scroll_top_anchor = 6;
         float scroll_x = 7;
         float scroll_y = 8;
+    }
+
+    message ChannelView {
+        uint64 channel_id = 1;
+        Editor editor = 2;
     }
 }
 
@@ -1102,7 +1222,6 @@ enum GitStatus {
     Modified = 1;
     Conflict = 2;
 }
-
 
 message BufferState {
     uint64 id = 1;
@@ -1275,14 +1394,7 @@ message Nonce {
 message Channel {
     uint64 id = 1;
     string name = 2;
-}
-
-message ChannelMessage {
-    uint64 id = 1;
-    string body = 2;
-    uint64 timestamp = 3;
-    uint64 sender_id = 4;
-    Nonce nonce = 5;
+    optional uint64 parent_id = 3;
 }
 
 message Contact {

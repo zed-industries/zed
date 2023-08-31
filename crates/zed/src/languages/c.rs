@@ -293,7 +293,7 @@ mod tests {
         let language = crate::languages::language("c", tree_sitter_c::language(), None).await;
 
         cx.add_model(|cx| {
-            let mut buffer = Buffer::new(0, "", cx).with_language(language, cx);
+            let mut buffer = Buffer::new(0, cx.model_id() as u64, "").with_language(language, cx);
 
             // empty function
             buffer.edit([(0..0, "int main() {}")], None, cx);

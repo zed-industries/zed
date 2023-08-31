@@ -1,6 +1,7 @@
 import { interactive, toggleable } from "../element"
 import { background, foreground } from "../style_tree/components"
-import { useTheme, Theme } from "../theme"
+import { useTheme, Theme, Layer } from "../theme"
+import { Button } from "./button"
 
 export type Margin = {
     top: number
@@ -10,22 +11,35 @@ export type Margin = {
 }
 
 interface IconButtonOptions {
-    layer?:
-    | Theme["lowest"]
-    | Theme["middle"]
-    | Theme["highest"]
+    layer?: Theme["lowest"] | Theme["middle"] | Theme["highest"]
     color?: keyof Theme["lowest"]
+    background_color?: keyof Theme["lowest"]
     margin?: Partial<Margin>
+    variant?: Button.Variant
+    size?: Button.Size
 }
 
 type ToggleableIconButtonOptions = IconButtonOptions & {
     active_color?: keyof Theme["lowest"]
+    active_background_color?: keyof Theme["lowest"]
+    active_layer?: Layer
+    active_variant?: Button.Variant
 }
 
-export function icon_button({ color, margin, layer }: IconButtonOptions) {
+export function icon_button(
+    { color, background_color, margin, layer, variant, size }: IconButtonOptions = {
+        variant: Button.variant.Default,
+        size: Button.size.Medium,
+    }
+) {
     const theme = useTheme()
 
     if (!color) color = "base"
+
+    const default_background =
+        variant === Button.variant.Ghost
+            ? null
+            : background(layer ?? theme.lowest, background_color ?? color)
 
     const m = {
         top: margin?.top ?? 0,
@@ -34,51 +48,63 @@ export function icon_button({ color, margin, layer }: IconButtonOptions) {
         right: margin?.right ?? 0,
     }
 
+    const padding = {
+        top: size === Button.size.Small ? 2 : 2,
+        bottom: size === Button.size.Small ? 2 : 2,
+        left: size === Button.size.Small ? 2 : 4,
+        right: size === Button.size.Small ? 2 : 4,
+    }
+
     return interactive({
         base: {
             corner_radius: 6,
-            padding: {
-                top: 2,
-                bottom: 2,
-                left: 4,
-                right: 4,
-            },
+            padding: padding,
             margin: m,
             icon_width: 14,
             icon_height: 14,
-            button_width: 20,
-            button_height: 16,
+            button_width: size === Button.size.Small ? 16 : 20,
+            button_height: 14,
         },
         state: {
             default: {
-                background: background(layer ?? theme.lowest, color),
+                background: default_background,
                 color: foreground(layer ?? theme.lowest, color),
             },
             hovered: {
-                background: background(layer ?? theme.lowest, color, "hovered"),
+                background: background(layer ?? theme.lowest, background_color ?? color, "hovered"),
                 color: foreground(layer ?? theme.lowest, color, "hovered"),
             },
             clicked: {
-                background: background(layer ?? theme.lowest, color, "pressed"),
+                background: background(layer ?? theme.lowest, background_color ?? color, "pressed"),
                 color: foreground(layer ?? theme.lowest, color, "pressed"),
             },
         },
     })
 }
 
-export function toggleable_icon_button(
-    theme: Theme,
-    { color, active_color, margin }: ToggleableIconButtonOptions
-) {
+export function toggleable_icon_button({
+    color,
+    background_color,
+    active_color,
+    active_background_color,
+    active_variant,
+    margin,
+    variant,
+    size,
+    active_layer,
+}: ToggleableIconButtonOptions) {
     if (!color) color = "base"
 
     return toggleable({
         state: {
-            inactive: icon_button({ color, margin }),
+            inactive: icon_button({ color, background_color, margin, variant, size }),
             active: icon_button({
                 color: active_color ? active_color : color,
+                background_color: active_background_color ? active_background_color : background_color,
                 margin,
-                layer: theme.middle,
+                layer: active_layer,
+                variant: active_variant || variant,
+                size,
             }),
         },
     })

@@ -50,7 +50,7 @@ impl View for Breadcrumbs {
         let not_editor = active_item.downcast::<editor::Editor>().is_none();
 
         let theme = theme::current(cx).clone();
-        let style = &theme.workspace.breadcrumbs;
+        let style = &theme.workspace.toolbar.breadcrumbs;
 
         let breadcrumbs = match active_item.breadcrumbs(&theme, cx) {
             Some(breadcrumbs) => breadcrumbs,
@@ -60,7 +60,7 @@ impl View for Breadcrumbs {
         .map(|breadcrumb| {
             Text::new(
                 breadcrumb.text,
-                theme.workspace.breadcrumbs.default.text.clone(),
+                theme.workspace.toolbar.breadcrumbs.default.text.clone(),
             )
             .with_highlights(breadcrumb.highlights.unwrap_or_default())
             .into_any()
@@ -68,10 +68,10 @@ impl View for Breadcrumbs {
 
         let crumbs = Flex::row()
             .with_children(Itertools::intersperse_with(breadcrumbs, || {
-                Label::new(" 〉 ", style.default.text.clone()).into_any()
+                Label::new(" › ", style.default.text.clone()).into_any()
             }))
             .constrained()
-            .with_height(theme.workspace.breadcrumb_height)
+            .with_height(theme.workspace.toolbar.breadcrumb_height)
             .contained();
 
         if not_editor || !self.pane_focused {

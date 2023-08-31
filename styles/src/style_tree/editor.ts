@@ -184,6 +184,7 @@ export default function editor(): any {
             theme.players[6],
             theme.players[7],
         ],
+        absent_selection: theme.players[7],
         autocomplete: {
             background: background(theme.middle),
             corner_radius: 8,
@@ -309,7 +310,7 @@ export default function editor(): any {
                     ? with_opacity(theme.ramps.green(0.5).hex(), 0.8)
                     : with_opacity(theme.ramps.green(0.4).hex(), 0.8),
             },
-            selections: foreground(layer, "accent")
+            selections: foreground(layer, "accent"),
         },
         composition_mark: {
             underline: {

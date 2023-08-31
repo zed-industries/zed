@@ -132,6 +132,7 @@ impl Event {
                         ),
                         modifiers: read_modifiers(native_event),
                         click_count: native_event.clickCount() as usize,
+                        is_down: true,
                     })
                 })
             }
@@ -158,6 +159,7 @@ impl Event {
                         ),
                         modifiers: read_modifiers(native_event),
                         click_count: native_event.clickCount() as usize,
+                        is_down: false,
                     })
                 })
             }

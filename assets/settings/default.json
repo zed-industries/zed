@@ -98,6 +98,7 @@
     // Whether to show selections in the scrollbar.
     "selections": true
   },
+  "relative_line_numbers": false,
   // Inlay hint related settings
   "inlay_hints": {
     // Global switch to toggle hints on and off, switched off by default.
@@ -122,13 +123,29 @@
     // Amount of indentation for nested items.
     "indent_size": 20
   },
+  "collaboration_panel": {
+    // Whether to show the collaboration panel button in the status bar.
+    "button": true,
+    // Where to dock channels panel. Can be 'left' or 'right'.
+    "dock": "left",
+    // Default width of the channels panel.
+    "default_width": 240
+  },
   "assistant": {
+    // Whether to show the assistant panel button in the status bar.
+    "button": true,
     // Where to dock the assistant. Can be 'left', 'right' or 'bottom'.
     "dock": "right",
     // Default width when the assistant is docked to the left or right.
     "default_width": 640,
     // Default height when the assistant is docked to the bottom.
-    "default_height": 320
+    "default_height": 320,
+    // The default OpenAI model to use when starting new conversations. This
+    // setting can take two values:
+    //
+    // 1. "gpt-3.5-turbo-0613""
+    // 2. "gpt-4-0613""
+    "default_open_ai_model": "gpt-4-0613"
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
@@ -268,8 +285,6 @@
     //          "directory": "~/zed/projects/"
     //        }
     //      }
-    //
-    //
     "working_directory": "current_project_directory",
     // Set the cursor blinking behavior in the terminal.
     // May take 4 values:
@@ -318,13 +333,32 @@
     //         "line_height": {
     //           "custom": 2
     //         },
-    "line_height": "comfortable"
+    "line_height": "comfortable",
+    // Activate the python virtual environment, if one is found, in the
+    // terminal's working directory (as resolved by the working_directory
+    // setting). Set this to "off" to disable this behavior.
+    "detect_venv": {
+      "on": {
+        // Default directories to search for virtual environments, relative
+        // to the current working directory. We recommend overriding this
+        // in your project's settings, rather than globally.
+        "directories": [
+          ".env",
+          "env",
+          ".venv",
+          "venv"
+        ],
+        // Can also be 'csh' and 'fish'
+        "activate_script": "default"
+      }
+    }
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.
-    // "font_size": "15"
+    // "font_size": "15",
     // Set the terminal's font family. If this option is not included,
     // the terminal will default to matching the buffer's font family.
-    // "font_family": "Zed Mono"
+    // "font_family": "Zed Mono",
+    // ---
   },
   // Difference settings for semantic_index
   "semantic_index": {

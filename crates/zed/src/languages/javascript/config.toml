@@ -1,5 +1,5 @@
 name = "JavaScript"
-path_suffixes = ["js", "jsx", "mjs"]
+path_suffixes = ["js", "jsx", "mjs", "cjs"]
 first_line_pattern = '^#!.*\bnode\b'
 line_comment = "// "
 autoclose_before = ";:.,=}])>"
@@ -13,6 +13,7 @@ brackets = [
     { start = "`", end = "`", close = true, newline = false, not_in = ["comment", "string"] },
     { start = "/*", end = " */", close = true, newline = false, not_in = ["comment", "string"] },
 ]
+word_characters = ["$", "#"]
 scope_opt_in_language_servers = ["tailwindcss-language-server"]
 
 [overrides.element]

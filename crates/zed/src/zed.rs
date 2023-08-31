@@ -10,7 +10,7 @@ use anyhow::Context;
 use assets::Assets;
 use breadcrumbs::Breadcrumbs;
 pub use client;
-use collab_ui::{CollabTitlebarItem, ToggleContactsMenu};
+use collab_ui::CollabTitlebarItem; // TODO: Add back toggle collab ui shortcut
 use collections::VecDeque;
 pub use editor;
 use editor::{Editor, MultiBuffer};
@@ -30,6 +30,7 @@ use gpui::{
 pub use lsp;
 pub use project;
 use project_panel::ProjectPanel;
+use quick_action_bar::QuickActionBar;
 use search::{BufferSearchBar, ProjectSearchBar};
 use serde::Deserialize;
 use serde_json::to_string_pretty;
@@ -83,20 +84,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
     cx.add_action(
         |_: &mut Workspace, _: &ToggleFullScreen, cx: &mut ViewContext<Workspace>| {
             cx.toggle_full_screen();
-        },
-    );
-    cx.add_action(
-        |workspace: &mut Workspace, _: &ToggleContactsMenu, cx: &mut ViewContext<Workspace>| {
-            if let Some(item) = workspace
-                .titlebar_item()
-                .and_then(|item| item.downcast::<CollabTitlebarItem>())
-            {
-                cx.defer(move |_, cx| {
-                    item.update(cx, |item, cx| {
-                        item.toggle_contacts_popover(&Default::default(), cx);
-                    });
-                });
-            }
         },
     );
     cx.add_global_action(quit);
@@ -222,6 +209,13 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
     );
     cx.add_action(
         |workspace: &mut Workspace,
+         _: &collab_ui::collab_panel::ToggleFocus,
+         cx: &mut ViewContext<Workspace>| {
+            workspace.toggle_panel_focus::<collab_ui::collab_panel::CollabPanel>(cx);
+        },
+    );
+    cx.add_action(
+        |workspace: &mut Workspace,
          _: &terminal_panel::ToggleFocus,
          cx: &mut ViewContext<Workspace>| {
             workspace.toggle_panel_focus::<TerminalPanel>(cx);
@@ -269,7 +263,11 @@ pub fn initialize_workspace(
                                 let breadcrumbs = cx.add_view(|_| Breadcrumbs::new(workspace));
                                 toolbar.add_item(breadcrumbs, cx);
                                 let buffer_search_bar = cx.add_view(BufferSearchBar::new);
-                                toolbar.add_item(buffer_search_bar, cx);
+                                toolbar.add_item(buffer_search_bar.clone(), cx);
+                                let quick_action_bar = cx.add_view(|_| {
+                                    QuickActionBar::new(buffer_search_bar, workspace)
+                                });
+                                toolbar.add_item(quick_action_bar, cx);
                                 let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
                                 toolbar.add_item(project_search_bar, cx);
                                 let submit_feedback_button =
@@ -338,9 +336,14 @@ pub fn initialize_workspace(
         let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
         let assistant_panel = AssistantPanel::load(workspace_handle.clone(), cx.clone());
-        let (project_panel, terminal_panel, assistant_panel) =
-            futures::try_join!(project_panel, terminal_panel, assistant_panel)?;
-
+        let channels_panel =
+            collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
+        let (project_panel, terminal_panel, assistant_panel, channels_panel) = futures::try_join!(
+            project_panel,
+            terminal_panel,
+            assistant_panel,
+            channels_panel
+        )?;
         workspace_handle.update(&mut cx, |workspace, cx| {
             let project_panel_position = project_panel.position(cx);
             workspace.add_panel_with_extra_event_handler(
@@ -358,6 +361,7 @@ pub fn initialize_workspace(
             );
             workspace.add_panel(terminal_panel, cx);
             workspace.add_panel(assistant_panel, cx);
+            workspace.add_panel(channels_panel, cx);
 
             if !was_deserialized
                 && workspace
@@ -1703,6 +1707,8 @@ mod tests {
             .remove_file(Path::new("/root/a/file2"), Default::default())
             .await
             .unwrap();
+        cx.foreground().run_until_parked();
+
         workspace
             .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
             .await
@@ -2382,6 +2388,7 @@ mod tests {
             language::init(cx);
             editor::init(cx);
             project_panel::init_settings(cx);
+            collab_ui::init(&app_state, cx);
             pane::init(cx);
             project_panel::init((), cx);
             terminal_view::init(cx);
