@@ -7780,7 +7780,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
         if let Some(ContextMenu::Completions(menu)) = &editor.context_menu {
             assert_eq!(
                 menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
-                &["bg-blue", "bg-yellow"]
+                &["bg-yellow"]
             );
         } else {
             panic!("expected completion menu to be open");
