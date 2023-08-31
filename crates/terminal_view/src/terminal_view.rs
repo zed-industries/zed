@@ -18,7 +18,7 @@ use gpui::{
     ViewHandle, WeakViewHandle,
 };
 use language::Bias;
-use project::{LocalWorktree, Project};
+use project::{search::SearchQuery, LocalWorktree, Project};
 use serde::Deserialize;
 use smallvec::{smallvec, SmallVec};
 use smol::Timer;
@@ -894,6 +894,9 @@ impl SearchableItem for TerminalView {
         };
 
         res
+    }
+    fn replace(&mut self, _: &Self::Match, _: &SearchQuery, _: &mut ViewContext<Self>) {
+        // Replacement is not supported in terminal view, so this is a no-op.
     }
 }
 
