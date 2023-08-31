@@ -1684,5 +1684,55 @@ mod tests {
         "#
             .unindent()
         );
+        // Let's turn on regex mode.
+        search_bar
+            .update(cx, |search_bar, cx| {
+                search_bar.activate_search_mode(SearchMode::Regex, cx);
+                search_bar.search("\\[([^\\]]+)\\]", None, cx)
+            })
+            .await
+            .unwrap();
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.replacement_editor.update(cx, |editor, cx| {
+                editor.set_text("${1}number", cx);
+            });
+            search_bar.replace_all(&ReplaceAll, cx)
+        });
+        assert_eq!(
+            editor.read_with(cx, |this, cx| { this.text(cx) }),
+            r#"
+        A regular expr$1 (shortened as regex banana regexp;1number also referred to as
+        rational expr$12number3number) is a sequence of characters that specifies a search
+        pattern in text. Usually such patterns are used by string-searching algorithms
+        for "find" or "find and replace" operations on strings, or for input validation.
+        "#
+            .unindent()
+        );
+        // Now with a whole-word twist.
+        search_bar
+            .update(cx, |search_bar, cx| {
+                search_bar.activate_search_mode(SearchMode::Regex, cx);
+                search_bar.search("a\\w+s", Some(SearchOptions::WHOLE_WORD), cx)
+            })
+            .await
+            .unwrap();
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.replacement_editor.update(cx, |editor, cx| {
+                editor.set_text("things", cx);
+            });
+            search_bar.replace_all(&ReplaceAll, cx)
+        });
+        // The only word affected by this edit should be `algorithms`, even though there's a bunch
+        // of words in this text that would match this regex if not for WHOLE_WORD.
+        assert_eq!(
+            editor.read_with(cx, |this, cx| { this.text(cx) }),
+            r#"
+        A regular expr$1 (shortened as regex banana regexp;1number also referred to as
+        rational expr$12number3number) is a sequence of characters that specifies a search
+        pattern in text. Usually such patterns are used by string-searching things
+        for "find" or "find and replace" operations on strings, or for input validation.
+        "#
+            .unindent()
+        );
     }
 }
