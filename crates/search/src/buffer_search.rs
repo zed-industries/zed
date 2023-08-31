@@ -221,8 +221,7 @@ impl View for BufferSearchBar {
                 cx,
             )
         };
-
-        let query = Flex::row()
+        let query_column = Flex::row()
             .with_child(
                 Svg::for_style(theme.search.editor_icon.clone().icon)
                     .contained()
@@ -245,7 +244,14 @@ impl View for BufferSearchBar {
                     .contained(),
             )
             .align_children_center()
-            .flex(1., true);
+            .contained()
+            .with_style(query_container_style)
+            .constrained()
+            .with_min_width(theme.search.editor.min_width)
+            .with_max_width(theme.search.editor.max_width)
+            .with_height(theme.search.search_bar_row_height)
+            .flex(1., false);
+
         let replacement = supported_options.replacement.then(|| {
             Flex::row()
                 .with_child(ChildView::new(&self.replacement_editor, cx).flex(1., true))
@@ -259,25 +265,6 @@ impl View for BufferSearchBar {
                 .with_height(theme.search.search_bar_row_height)
                 .flex(1., false)
         });
-
-        let editor_column = Flex::row()
-            .with_child(
-                query
-                    .contained()
-                    .with_style(query_container_style)
-                    .constrained()
-                    .with_min_width(theme.search.editor.min_width)
-                    .with_max_width(theme.search.editor.max_width)
-                    .with_height(theme.search.search_bar_row_height)
-                    .flex(1., false),
-            )
-            .contained()
-            .with_style(query_container_style)
-            .constrained()
-            .with_min_width(theme.search.editor.min_width)
-            .with_max_width(theme.search.editor.max_width)
-            .with_height(theme.search.search_bar_row_height)
-            .flex(1., false);
 
         let mode_column = Flex::row()
             .with_child(search_button_for_mode(
@@ -305,7 +292,7 @@ impl View for BufferSearchBar {
             .flex_float();
 
         Flex::row()
-            .with_child(editor_column)
+            .with_child(query_column)
             .with_children(replacement)
             .with_child(mode_column)
             .with_child(nav_column)
