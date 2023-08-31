@@ -7712,7 +7712,13 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
         )
         .with_override_query("(jsx_self_closing_element) @element")
         .unwrap(),
-        Default::default(),
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![":".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
         cx,
     )
     .await;
