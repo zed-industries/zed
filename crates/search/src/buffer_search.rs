@@ -1,6 +1,6 @@
 use crate::{
     history::SearchHistory,
-    mode::{next_mode, SearchMode},
+    mode::{next_mode, SearchMode, Side},
     search_bar::{render_nav_button, render_search_mode_button},
     CycleMode, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
     SelectAllMatches, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
@@ -163,11 +163,12 @@ impl View for BufferSearchBar {
         self.replacement_editor.update(cx, |editor, cx| {
             editor.set_placeholder_text("Replace with...", cx);
         });
-        let search_button_for_mode = |mode, cx: &mut ViewContext<BufferSearchBar>| {
+        let search_button_for_mode = |mode, side, cx: &mut ViewContext<BufferSearchBar>| {
             let is_active = self.current_mode == mode;
 
             render_search_mode_button(
                 mode,
+                side,
                 is_active,
                 move |_, this, cx| {
                     this.activate_search_mode(mode, cx);
@@ -219,20 +220,11 @@ impl View for BufferSearchBar {
             )
         };
 
-        let icon_style = theme.search.editor_icon.clone();
-        let nav_column = Flex::row()
-            .with_child(self.render_action_button("Select All", cx))
-            .with_child(nav_button_for_direction("<", Direction::Prev, cx))
-            .with_child(nav_button_for_direction(">", Direction::Next, cx))
-            .with_child(Flex::row().with_children(match_count))
-            .constrained()
-            .with_height(theme.search.search_bar_row_height);
-
         let query = Flex::row()
             .with_child(
-                Svg::for_style(icon_style.icon)
+                Svg::for_style(theme.search.editor_icon.clone().icon)
                     .contained()
-                    .with_style(icon_style.container),
+                    .with_style(theme.search.editor_icon.clone().container),
             )
             .with_child(ChildView::new(&self.query_editor, cx).flex(1., true))
             .with_child(
@@ -279,36 +271,44 @@ impl View for BufferSearchBar {
             )
             .with_children(replacement)
             .contained()
+            .with_style(query_container_style)
             .constrained()
+            .with_min_width(theme.search.editor.min_width)
+            .with_max_width(theme.search.editor.max_width)
             .with_height(theme.search.search_bar_row_height)
             .flex(1., false);
+
         let mode_column = Flex::row()
-            .with_child(
-                Flex::row()
-                    .with_child(search_button_for_mode(SearchMode::Text, cx))
-                    .with_child(search_button_for_mode(SearchMode::Regex, cx))
-                    .contained()
-                    .with_style(theme.search.modes_container),
-            )
-            .with_child(super::search_bar::render_close_button(
-                "Dismiss Buffer Search",
-                &theme.search,
+            .with_child(search_button_for_mode(
+                SearchMode::Text,
+                Some(Side::Left),
                 cx,
-                |_, this, cx| this.dismiss(&Default::default(), cx),
-                Some(Box::new(Dismiss)),
             ))
+            .with_child(search_button_for_mode(
+                SearchMode::Regex,
+                Some(Side::Right),
+                cx,
+            ))
+            .contained()
+            .with_style(theme.search.modes_container)
+            .constrained()
+            .with_height(theme.search.search_bar_row_height);
+
+        let nav_column = Flex::row()
+            .with_child(self.render_action_button("all", cx))
+            .with_child(Flex::row().with_children(match_count))
+            .with_child(nav_button_for_direction("<", Direction::Prev, cx))
+            .with_child(nav_button_for_direction(">", Direction::Next, cx))
             .constrained()
             .with_height(theme.search.search_bar_row_height)
-            .aligned()
-            .right()
             .flex_float();
+
         Flex::row()
             .with_child(editor_column)
-            .with_child(nav_column)
             .with_child(mode_column)
+            .with_child(nav_column)
             .contained()
             .with_style(theme.search.container)
-            .aligned()
             .into_any_named("search bar")
     }
 }
@@ -362,8 +362,9 @@ impl ToolbarItemView for BufferSearchBar {
             ToolbarItemLocation::Hidden
         }
     }
+
     fn row_count(&self, _: &ViewContext<Self>) -> usize {
-        2
+        1
     }
 }
 

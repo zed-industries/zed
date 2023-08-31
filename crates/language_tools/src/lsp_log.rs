@@ -12,6 +12,7 @@ use gpui::{
     ViewHandle, WeakModelHandle,
 };
 use language::{Buffer, LanguageServerId, LanguageServerName};
+use lsp::IoKind;
 use project::{search::SearchQuery, Project, Worktree};
 use std::{borrow::Cow, sync::Arc};
 use theme::{ui, Theme};
@@ -26,7 +27,7 @@ const RECEIVE_LINE: &str = "// Receive:\n";
 
 pub struct LogStore {
     projects: HashMap<WeakModelHandle<Project>, ProjectState>,
-    io_tx: mpsc::UnboundedSender<(WeakModelHandle<Project>, LanguageServerId, bool, String)>,
+    io_tx: mpsc::UnboundedSender<(WeakModelHandle<Project>, LanguageServerId, IoKind, String)>,
 }
 
 struct ProjectState {
@@ -37,12 +38,12 @@ struct ProjectState {
 struct LanguageServerState {
     log_buffer: ModelHandle<Buffer>,
     rpc_state: Option<LanguageServerRpcState>,
+    _subscription: Option<lsp::Subscription>,
 }
 
 struct LanguageServerRpcState {
     buffer: ModelHandle<Buffer>,
     last_message_kind: Option<MessageKind>,
-    _subscription: lsp::Subscription,
 }
 
 pub struct LspLogView {
@@ -118,11 +119,11 @@ impl LogStore {
             io_tx,
         };
         cx.spawn_weak(|this, mut cx| async move {
-            while let Some((project, server_id, is_output, mut message)) = io_rx.next().await {
+            while let Some((project, server_id, io_kind, mut message)) = io_rx.next().await {
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| {
                         message.push('\n');
-                        this.on_io(project, server_id, is_output, &message, cx);
+                        this.on_io(project, server_id, io_kind, &message, cx);
                     });
                 }
             }
@@ -168,22 +169,29 @@ impl LogStore {
         cx: &mut ModelContext<Self>,
     ) -> Option<ModelHandle<Buffer>> {
         let project_state = self.projects.get_mut(&project.downgrade())?;
-        Some(
-            project_state
-                .servers
-                .entry(id)
-                .or_insert_with(|| {
-                    cx.notify();
-                    LanguageServerState {
-                        rpc_state: None,
-                        log_buffer: cx
-                            .add_model(|cx| Buffer::new(0, cx.model_id() as u64, ""))
-                            .clone(),
-                    }
-                })
-                .log_buffer
-                .clone(),
-        )
+        let server_state = project_state.servers.entry(id).or_insert_with(|| {
+            cx.notify();
+            LanguageServerState {
+                rpc_state: None,
+                log_buffer: cx
+                    .add_model(|cx| Buffer::new(0, cx.model_id() as u64, ""))
+                    .clone(),
+                _subscription: None,
+            }
+        });
+
+        let server = project.read(cx).language_server_for_id(id);
+        let weak_project = project.downgrade();
+        let io_tx = self.io_tx.clone();
+        server_state._subscription = server.map(|server| {
+            server.on_io(move |io_kind, message| {
+                io_tx
+                    .unbounded_send((weak_project, id, io_kind, message.to_string()))
+                    .ok();
+            })
+        });
+
+        Some(server_state.log_buffer.clone())
     }
 
     fn add_language_server_log(
@@ -230,7 +238,7 @@ impl LogStore {
         Some(server_state.log_buffer.clone())
     }
 
-    pub fn enable_rpc_trace_for_language_server(
+    fn enable_rpc_trace_for_language_server(
         &mut self,
         project: &ModelHandle<Project>,
         server_id: LanguageServerId,
@@ -239,9 +247,7 @@ impl LogStore {
         let weak_project = project.downgrade();
         let project_state = self.projects.get_mut(&weak_project)?;
         let server_state = project_state.servers.get_mut(&server_id)?;
-        let server = project.read(cx).language_server_for_id(server_id)?;
         let rpc_state = server_state.rpc_state.get_or_insert_with(|| {
-            let io_tx = self.io_tx.clone();
             let language = project.read(cx).languages().language_for_name("JSON");
             let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, ""));
             cx.spawn_weak({
@@ -258,11 +264,6 @@ impl LogStore {
             LanguageServerRpcState {
                 buffer,
                 last_message_kind: None,
-                _subscription: server.on_io(move |is_received, json| {
-                    io_tx
-                        .unbounded_send((weak_project, server_id, is_received, json.to_string()))
-                        .ok();
-                }),
             }
         });
         Some(rpc_state.buffer.clone())
@@ -285,10 +286,25 @@ impl LogStore {
         &mut self,
         project: WeakModelHandle<Project>,
         language_server_id: LanguageServerId,
-        is_received: bool,
+        io_kind: IoKind,
         message: &str,
         cx: &mut AppContext,
     ) -> Option<()> {
+        let is_received = match io_kind {
+            IoKind::StdOut => true,
+            IoKind::StdIn => false,
+            IoKind::StdErr => {
+                let project = project.upgrade(cx)?;
+                project.update(cx, |_, cx| {
+                    cx.emit(project::Event::LanguageServerLog(
+                        language_server_id,
+                        format!("stderr: {}\n", message.trim()),
+                    ))
+                });
+                return Some(());
+            }
+        };
+
         let state = self
             .projects
             .get_mut(&project)?

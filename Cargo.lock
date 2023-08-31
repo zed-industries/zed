@@ -102,14 +102,20 @@ dependencies = [
  "anyhow",
  "chrono",
  "collections",
+ "ctor",
  "editor",
+ "env_logger 0.9.3",
  "fs",
  "futures 0.3.28",
  "gpui",
+ "indoc",
  "isahc",
  "language",
+ "log",
  "menu",
+ "ordered-float",
  "project",
+ "rand 0.8.5",
  "regex",
  "schemars",
  "search",
@@ -1447,7 +1453,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "anyhow",
  "async-tungstenite",
@@ -2762,6 +2768,7 @@ dependencies = [
  "smol",
  "sum_tree",
  "tempfile",
+ "text",
  "time 0.3.27",
  "util",
 ]
@@ -4269,9 +4276,9 @@ dependencies = [
 
 [[package]]
 name = "memchr"
-version = "2.5.0"
+version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2dffe52ecf27772e601905b7522cb4ef790d2cc203488bbd0e2fe85fcb74566d"
+checksum = "76fc44e2588d5b436dbc3c6cf62aef290f90dab6235744a93dfe1cc18f451e2c"
 
 [[package]]
 name = "memfd"
@@ -5649,6 +5656,7 @@ dependencies = [
 name = "quick_action_bar"
 version = "0.1.0"
 dependencies = [
+ "ai",
  "editor",
  "gpui",
  "search",
@@ -7629,7 +7637,6 @@ dependencies = [
  "ctor",
  "digest 0.9.0",
  "env_logger 0.9.3",
- "fs",
  "gpui",
  "lazy_static",
  "log",
@@ -9695,7 +9702,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.102.0"
+version = "0.103.0"
 dependencies = [
  "activity_indicator",
  "ai",

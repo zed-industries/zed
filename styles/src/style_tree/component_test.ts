@@ -1,4 +1,3 @@
-
 import { useTheme } from "../common"
 import { text_button } from "../component/text_button"
 import { icon_button } from "../component/icon_button"
@@ -14,14 +13,14 @@ export default function contacts_panel(): any {
             base: text_button({}),
             state: {
                 active: {
-                    ...text_button({ color: "accent" })
-                }
-            }
+                    ...text_button({ color: "accent" }),
+                },
+            },
         }),
         disclosure: {
             ...text(theme.lowest, "sans", "base"),
             button: icon_button({ variant: "ghost" }),
             spacing: 4,
-        }
+        },
     }
 }

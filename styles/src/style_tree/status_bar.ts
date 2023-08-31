@@ -34,9 +34,11 @@ export default function status_bar(): any {
             ...text(layer, "mono", "base", { size: "xs" }),
         },
         active_language: text_button({
-            color: "base"
+            color: "base",
         }),
-        auto_update_progress_message: text(layer, "sans", "base", { size: "xs" }),
+        auto_update_progress_message: text(layer, "sans", "base", {
+            size: "xs",
+        }),
         auto_update_done_message: text(layer, "sans", "base", { size: "xs" }),
         lsp_status: interactive({
             base: {
@@ -73,34 +75,36 @@ export default function status_bar(): any {
                 icon_color_error: foreground(layer, "negative"),
                 container_ok: {
                     corner_radius: 6,
-                    padding: { top: 3, bottom: 3, left: 7, right: 7 },
+                    padding: { top: 2, bottom: 2, left: 6, right: 6 },
                 },
-                container_warning: {
-                    ...diagnostic_status_container,
-                    background: background(layer, "warning"),
-                    border: border(layer, "warning"),
-                },
-                container_error: {
-                    ...diagnostic_status_container,
-                    background: background(layer, "negative"),
-                    border: border(layer, "negative"),
-                },
+                container_warning: diagnostic_status_container,
+                container_error: diagnostic_status_container
             },
             state: {
                 hovered: {
                     icon_color_ok: foreground(layer, "on"),
                     container_ok: {
-                        background: background(layer, "on", "hovered"),
+                        background: background(layer, "hovered")
                     },
                     container_warning: {
-                        background: background(layer, "warning", "hovered"),
-                        border: border(layer, "warning", "hovered"),
+                        background: background(layer, "hovered")
                     },
                     container_error: {
-                        background: background(layer, "negative", "hovered"),
-                        border: border(layer, "negative", "hovered"),
+                        background: background(layer, "hovered")
                     },
                 },
+                clicked: {
+                    icon_color_ok: foreground(layer, "on"),
+                    container_ok: {
+                        background: background(layer, "pressed")
+                    },
+                    container_warning: {
+                        background: background(layer, "pressed")
+                    },
+                    container_error: {
+                        background: background(layer, "pressed")
+                    }
+                }
             },
         }),
         panel_buttons: {
@@ -125,7 +129,7 @@ export default function status_bar(): any {
                         },
                         clicked: {
                             background: background(layer, "pressed"),
-                        }
+                        },
                     },
                 }),
                 state: {

@@ -213,7 +213,7 @@ impl Item for ChannelView {
     }
 
     fn is_singleton(&self, _cx: &AppContext) -> bool {
-        true
+        false
     }
 
     fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) -> bool {

@@ -15,7 +15,6 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 pub use clock::ReplicaId;
-use fs::LineEnding;
 use futures::FutureExt as _;
 use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, Task};
 use lsp::LanguageServerId;
@@ -1298,6 +1297,10 @@ impl Buffer {
         self.text.forget_transaction(transaction_id);
     }
 
+    pub fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
+        self.text.merge_transactions(transaction, destination);
+    }
+
     pub fn wait_for_edits(
         &mut self,
         edit_ids: impl IntoIterator<Item = clock::Local>,
@@ -1661,6 +1664,22 @@ impl Buffer {
             Some(transaction_id)
         } else {
             None
+        }
+    }
+
+    pub fn undo_transaction(
+        &mut self,
+        transaction_id: TransactionId,
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
+        let was_dirty = self.is_dirty();
+        let old_version = self.version.clone();
+        if let Some(operation) = self.text.undo_transaction(transaction_id) {
+            self.send_operation(Operation::Buffer(operation), cx);
+            self.did_edit(&old_version, was_dirty, cx);
+            true
+        } else {
+            false
         }
     }
 

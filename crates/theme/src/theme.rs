@@ -88,8 +88,6 @@ pub struct Workspace {
     pub dock: Dock,
     pub status_bar: StatusBar,
     pub toolbar: Toolbar,
-    pub breadcrumb_height: f32,
-    pub breadcrumbs: Interactive<ContainedText>,
     pub disconnected_overlay: ContainedText,
     pub modal: ContainerStyle,
     pub zoomed_panel_foreground: ContainerStyle,
@@ -120,7 +118,6 @@ pub struct Titlebar {
     pub height: f32,
     pub menu: TitlebarMenu,
     pub project_menu_button: Toggleable<Interactive<ContainedText>>,
-    pub project_name_divider: ContainedText,
     pub git_menu_button: Toggleable<Interactive<ContainedText>>,
     pub item_spacing: f32,
     pub face_pile_spacing: f32,
@@ -411,6 +408,8 @@ pub struct Toolbar {
     pub height: f32,
     pub item_spacing: f32,
     pub toggleable_tool: Toggleable<Interactive<IconButton>>,
+    pub breadcrumb_height: f32,
+    pub breadcrumbs: Interactive<ContainedText>,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]
@@ -437,11 +436,11 @@ pub struct Search {
     pub match_index: ContainedText,
     pub major_results_status: TextStyle,
     pub minor_results_status: TextStyle,
-    pub dismiss_button: Interactive<IconButton>,
     pub editor_icon: IconStyle,
     pub mode_button: Toggleable<Interactive<ContainedText>>,
     pub nav_button: Toggleable<Interactive<ContainedLabel>>,
     pub search_bar_row_height: f32,
+    pub search_row_spacing: f32,
     pub option_button_height: f32,
     pub modes_container: ContainerStyle,
 }
@@ -1150,6 +1149,17 @@ pub struct AssistantStyle {
     pub api_key_editor: FieldEditor,
     pub api_key_prompt: ContainedText,
     pub saved_conversation: SavedConversation,
+    pub inline: InlineAssistantStyle,
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct InlineAssistantStyle {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub editor: FieldEditor,
+    pub disabled_editor: FieldEditor,
+    pub pending_edit_background: Color,
+    pub include_conversation: ToggleIconButtonStyle,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]

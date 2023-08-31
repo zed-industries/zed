@@ -264,8 +264,9 @@ pub fn initialize_workspace(
                                 toolbar.add_item(breadcrumbs, cx);
                                 let buffer_search_bar = cx.add_view(BufferSearchBar::new);
                                 toolbar.add_item(buffer_search_bar.clone(), cx);
-                                let quick_action_bar =
-                                    cx.add_view(|_| QuickActionBar::new(buffer_search_bar));
+                                let quick_action_bar = cx.add_view(|_| {
+                                    QuickActionBar::new(buffer_search_bar, workspace)
+                                });
                                 toolbar.add_item(quick_action_bar, cx);
                                 let project_search_bar = cx.add_view(|_| ProjectSearchBar::new());
                                 toolbar.add_item(project_search_bar, cx);
@@ -1706,6 +1707,8 @@ mod tests {
             .remove_file(Path::new("/root/a/file2"), Default::default())
             .await
             .unwrap();
+        cx.foreground().run_until_parked();
+
         workspace
             .update(cx, |w, cx| w.go_back(w.active_pane().downgrade(), cx))
             .await

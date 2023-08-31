@@ -1188,7 +1188,7 @@ mod tests {
             _: u64,
             _: &clock::Global,
             _: language::RopeFingerprint,
-            _: ::fs::LineEnding,
+            _: language::LineEnding,
             _: std::time::SystemTime,
             _: &mut AppContext,
         ) {
