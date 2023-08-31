@@ -4429,16 +4429,27 @@ impl Project {
         self.request_primary_lsp(buffer.clone(), GetHover { position }, cx)
     }
 
-    pub fn completions<T: ToPointUtf16>(
+    pub fn completions<T: ToOffset + ToPointUtf16>(
         &self,
         buffer: &ModelHandle<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Completion>>> {
+        let snapshot = buffer.read(cx).snapshot();
+        let offset = position.to_offset(&snapshot);
         let position = position.to_point_utf16(buffer.read(cx));
+
+        let scope = snapshot.language_scope_at(offset);
+
         let server_ids: Vec<_> = self
             .language_servers_for_buffer(buffer.read(cx), cx)
             .filter(|(_, server)| server.capabilities().completion_provider.is_some())
+            .filter(|(adapter, _)| {
+                scope
+                    .as_ref()
+                    .map(|scope| scope.language_allowed(&adapter.name))
+                    .unwrap_or(true)
+            })
             .map(|(_, server)| server.server_id())
             .collect();
 

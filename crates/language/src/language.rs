@@ -345,6 +345,8 @@ pub struct LanguageConfig {
     #[serde(default)]
     pub block_comment: Option<(Arc<str>, Arc<str>)>,
     #[serde(default)]
+    pub scope_opt_in_language_servers: Vec<String>,
+    #[serde(default)]
     pub overrides: HashMap<String, LanguageConfigOverride>,
     #[serde(default)]
     pub word_characters: HashSet<char>,
@@ -377,6 +379,8 @@ pub struct LanguageConfigOverride {
     pub disabled_bracket_ixs: Vec<u16>,
     #[serde(default)]
     pub word_characters: Override<HashSet<char>>,
+    #[serde(default)]
+    pub opt_into_language_servers: Vec<String>,
 }
 
 #[derive(Clone, Deserialize, Debug)]
@@ -415,6 +419,7 @@ impl Default for LanguageConfig {
             autoclose_before: Default::default(),
             line_comment: Default::default(),
             block_comment: Default::default(),
+            scope_opt_in_language_servers: Default::default(),
             overrides: Default::default(),
             collapsed_placeholder: Default::default(),
             word_characters: Default::default(),
@@ -1352,13 +1357,23 @@ impl Language {
         Ok(self)
     }
 
-    pub fn with_override_query(mut self, source: &str) -> Result<Self> {
+    pub fn with_override_query(mut self, source: &str) -> anyhow::Result<Self> {
         let query = Query::new(self.grammar_mut().ts_language, source)?;
 
         let mut override_configs_by_id = HashMap::default();
         for (ix, name) in query.capture_names().iter().enumerate() {
             if !name.starts_with('_') {
                 let value = self.config.overrides.remove(name).unwrap_or_default();
+                for server_name in &value.opt_into_language_servers {
+                    if !self
+                        .config
+                        .scope_opt_in_language_servers
+                        .contains(server_name)
+                    {
+                        util::debug_panic!("Server {server_name:?} has been opted-in by scope {name:?} but has not been marked as an opt-in server");
+                    }
+                }
+
                 override_configs_by_id.insert(ix as u32, (name.clone(), value));
             }
         }
@@ -1595,6 +1610,20 @@ impl LanguageScope {
 
     pub fn should_autoclose_before(&self, c: char) -> bool {
         c.is_whitespace() || self.language.config.autoclose_before.contains(c)
+    }
+
+    pub fn language_allowed(&self, name: &LanguageServerName) -> bool {
+        let config = &self.language.config;
+        let opt_in_servers = &config.scope_opt_in_language_servers;
+        if opt_in_servers.iter().any(|o| *o == *name.0) {
+            if let Some(over) = self.config_override() {
+                over.opt_into_language_servers.iter().any(|o| *o == *name.0)
+            } else {
+                false
+            }
+        } else {
+            true
+        }
     }
 
     fn config_override(&self) -> Option<&LanguageConfigOverride> {
