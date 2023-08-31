@@ -66,7 +66,6 @@ impl LspAdapter for TailwindLspAdapter {
         let server_path = container_dir.join(SERVER_PATH);
 
         if fs::metadata(&server_path).await.is_err() {
-            dbg!(&container_dir, version.as_str());
             self.node
                 .npm_install_packages(
                     &container_dir,
