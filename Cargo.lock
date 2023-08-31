@@ -4177,8 +4177,7 @@ dependencies = [
 [[package]]
 name = "lsp-types"
 version = "0.94.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c66bfd44a06ae10647fe3f8214762e9369fd4248df1350924b4ef9e770a85ea1"
+source = "git+https://github.com/zed-industries/lsp-types?branch=updated-completion-list-item-defaults#90a040a1d195687bd19e1df47463320a44e93d7a"
 dependencies = [
  "bitflags 1.3.2",
  "serde",

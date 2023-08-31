@@ -22,6 +22,10 @@ impl super::LspAdapter for LuaLspAdapter {
         LanguageServerName("lua-language-server".into())
     }
 
+    fn short_name(&self) -> &'static str {
+        "lua"
+    }
+
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,

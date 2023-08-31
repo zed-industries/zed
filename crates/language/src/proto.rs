@@ -434,6 +434,7 @@ pub fn serialize_completion(completion: &Completion) -> proto::Completion {
         old_start: Some(serialize_anchor(&completion.old_range.start)),
         old_end: Some(serialize_anchor(&completion.old_range.end)),
         new_text: completion.new_text.clone(),
+        server_id: completion.server_id.0 as u64,
         lsp_completion: serde_json::to_vec(&completion.lsp_completion).unwrap(),
     }
 }
@@ -466,6 +467,7 @@ pub async fn deserialize_completion(
                 lsp_completion.filter_text.as_deref(),
             )
         }),
+        server_id: LanguageServerId(completion.server_id as usize),
         lsp_completion,
     })
 }

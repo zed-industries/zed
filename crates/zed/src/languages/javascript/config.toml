@@ -14,7 +14,12 @@ brackets = [
     { start = "/*", end = " */", close = true, newline = false, not_in = ["comment", "string"] },
 ]
 word_characters = ["$", "#"]
+scope_opt_in_language_servers = ["tailwindcss-language-server"]
 
 [overrides.element]
 line_comment = { remove = true }
 block_comment = ["{/* ", " */}"]
+
+[overrides.string]
+word_characters = ["-"]
+opt_into_language_servers = ["tailwindcss-language-server"]

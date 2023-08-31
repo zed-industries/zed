@@ -177,18 +177,20 @@ fn in_word(
     ignore_punctuation: bool,
 ) -> Option<Range<DisplayPoint>> {
     // Use motion::right so that we consider the character under the cursor when looking for the start
-    let language = map.buffer_snapshot.language_at(relative_to.to_point(map));
+    let scope = map
+        .buffer_snapshot
+        .language_scope_at(relative_to.to_point(map));
     let start = movement::find_preceding_boundary_in_line(
         map,
         right(map, relative_to, 1),
         |left, right| {
-            char_kind(language, left).coerce_punctuation(ignore_punctuation)
-                != char_kind(language, right).coerce_punctuation(ignore_punctuation)
+            char_kind(&scope, left).coerce_punctuation(ignore_punctuation)
+                != char_kind(&scope, right).coerce_punctuation(ignore_punctuation)
         },
     );
     let end = movement::find_boundary_in_line(map, relative_to, |left, right| {
-        char_kind(language, left).coerce_punctuation(ignore_punctuation)
-            != char_kind(language, right).coerce_punctuation(ignore_punctuation)
+        char_kind(&scope, left).coerce_punctuation(ignore_punctuation)
+            != char_kind(&scope, right).coerce_punctuation(ignore_punctuation)
     });
 
     Some(start..end)
@@ -211,11 +213,13 @@ fn around_word(
     relative_to: DisplayPoint,
     ignore_punctuation: bool,
 ) -> Option<Range<DisplayPoint>> {
-    let language = map.buffer_snapshot.language_at(relative_to.to_point(map));
+    let scope = map
+        .buffer_snapshot
+        .language_scope_at(relative_to.to_point(map));
     let in_word = map
         .chars_at(relative_to)
         .next()
-        .map(|(c, _)| char_kind(language, c) != CharKind::Whitespace)
+        .map(|(c, _)| char_kind(&scope, c) != CharKind::Whitespace)
         .unwrap_or(false);
 
     if in_word {
@@ -239,21 +243,23 @@ fn around_next_word(
     relative_to: DisplayPoint,
     ignore_punctuation: bool,
 ) -> Option<Range<DisplayPoint>> {
-    let language = map.buffer_snapshot.language_at(relative_to.to_point(map));
+    let scope = map
+        .buffer_snapshot
+        .language_scope_at(relative_to.to_point(map));
     // Get the start of the word
     let start = movement::find_preceding_boundary_in_line(
         map,
         right(map, relative_to, 1),
         |left, right| {
-            char_kind(language, left).coerce_punctuation(ignore_punctuation)
-                != char_kind(language, right).coerce_punctuation(ignore_punctuation)
+            char_kind(&scope, left).coerce_punctuation(ignore_punctuation)
+                != char_kind(&scope, right).coerce_punctuation(ignore_punctuation)
         },
     );
 
     let mut word_found = false;
     let end = movement::find_boundary(map, relative_to, |left, right| {
-        let left_kind = char_kind(language, left).coerce_punctuation(ignore_punctuation);
-        let right_kind = char_kind(language, right).coerce_punctuation(ignore_punctuation);
+        let left_kind = char_kind(&scope, left).coerce_punctuation(ignore_punctuation);
+        let right_kind = char_kind(&scope, right).coerce_punctuation(ignore_punctuation);
 
         let found = (word_found && left_kind != right_kind) || right == '\n' && left == '\n';
 
