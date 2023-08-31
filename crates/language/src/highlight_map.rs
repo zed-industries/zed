@@ -2,11 +2,24 @@ use gpui::fonts::HighlightStyle;
 use std::sync::Arc;
 use theme::SyntaxTheme;
 
+use crate::QueryFeatureMap;
+
 #[derive(Clone, Debug)]
 pub struct HighlightMap(Arc<[HighlightId]>);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HighlightId(pub u32);
+
+impl QueryFeatureMap for HighlightMap {
+    type Id = HighlightId;
+
+    fn get(&self, capture_id: u32) -> HighlightId {
+        self.0
+            .get(capture_id as usize)
+            .copied()
+            .unwrap_or(DEFAULT_SYNTAX_HIGHLIGHT_ID)
+    }
+}
 
 const DEFAULT_SYNTAX_HIGHLIGHT_ID: HighlightId = HighlightId(u32::MAX);
 
@@ -40,13 +53,6 @@ impl HighlightMap {
                 })
                 .collect(),
         )
-    }
-
-    pub fn get(&self, capture_id: u32) -> HighlightId {
-        self.0
-            .get(capture_id as usize)
-            .copied()
-            .unwrap_or(DEFAULT_SYNTAX_HIGHLIGHT_ID)
     }
 }
 

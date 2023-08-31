@@ -13,6 +13,7 @@ mod json;
 #[cfg(feature = "plugin_runtime")]
 mod language_plugin;
 mod lua;
+mod markdown;
 mod php;
 mod python;
 mod ruby;
@@ -36,36 +37,48 @@ mod yaml;
 struct LanguageDir;
 
 pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
-    let language = |name, grammar, adapters| {
-        languages.register(name, load_config(name), grammar, adapters, load_queries)
+    let language = |name, grammar, adapters, interactions| {
+        languages.register(
+            name,
+            load_config(name),
+            grammar,
+            adapters,
+            interactions,
+            load_queries,
+        )
     };
 
-    language("bash", tree_sitter_bash::language(), vec![]);
+    language("bash", tree_sitter_bash::language(), vec![], None);
     language(
         "c",
         tree_sitter_c::language(),
         vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>],
+        None,
     );
     language(
         "cpp",
         tree_sitter_cpp::language(),
         vec![Arc::new(c::CLspAdapter)],
+        None,
     );
-    language("css", tree_sitter_css::language(), vec![]);
+    language("css", tree_sitter_css::language(), vec![], None);
     language(
         "elixir",
         tree_sitter_elixir::language(),
         vec![Arc::new(elixir::ElixirLspAdapter)],
+        None,
     );
     language(
         "go",
         tree_sitter_go::language(),
         vec![Arc::new(go::GoLspAdapter)],
+        None,
     );
     language(
         "heex",
         tree_sitter_heex::language(),
         vec![Arc::new(elixir::ElixirLspAdapter)],
+        None,
     );
     language(
         "json",
@@ -74,21 +87,29 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
             node_runtime.clone(),
             languages.clone(),
         ))],
+        None,
     );
-    language("markdown", tree_sitter_markdown::language(), vec![]);
+    language(
+        "markdown",
+        tree_sitter_markdown::language(),
+        vec![],
+        Some(Arc::new(MarkdownInteractions)),
+    );
     language(
         "python",
         tree_sitter_python::language(),
         vec![Arc::new(python::PythonLspAdapter::new(
             node_runtime.clone(),
         ))],
+        None,
     );
     language(
         "rust",
         tree_sitter_rust::language(),
         vec![Arc::new(rust::RustLspAdapter)],
+        None,
     );
-    language("toml", tree_sitter_toml::language(), vec![]);
+    language("toml", tree_sitter_toml::language(), vec![], None);
     language(
         "tsx",
         tree_sitter_typescript::language_tsx(),
@@ -96,6 +117,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
             Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
             Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
         ],
+        None,
     );
     language(
         "typescript",
@@ -104,6 +126,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
             Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
             Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
         ],
+        None,
     );
     language(
         "javascript",
@@ -112,33 +135,39 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
             Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
             Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
         ],
+        None,
     );
     language(
         "html",
         tree_sitter_html::language(),
         vec![Arc::new(html::HtmlLspAdapter::new(node_runtime.clone()))],
+        None,
     );
     language(
         "ruby",
         tree_sitter_ruby::language(),
         vec![Arc::new(ruby::RubyLanguageServer)],
+        None,
     );
     language(
         "erb",
         tree_sitter_embedded_template::language(),
         vec![Arc::new(ruby::RubyLanguageServer)],
+        None,
     );
-    language("scheme", tree_sitter_scheme::language(), vec![]);
-    language("racket", tree_sitter_racket::language(), vec![]);
+    language("scheme", tree_sitter_scheme::language(), vec![], None);
+    language("racket", tree_sitter_racket::language(), vec![], None);
     language(
         "lua",
         tree_sitter_lua::language(),
         vec![Arc::new(lua::LuaLspAdapter)],
+        None,
     );
     language(
         "yaml",
         tree_sitter_yaml::language(),
         vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))],
+        None,
     );
     language(
         "svelte",
@@ -146,16 +175,18 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
         vec![Arc::new(svelte::SvelteLspAdapter::new(
             node_runtime.clone(),
         ))],
+        None,
     );
     language(
         "php",
         tree_sitter_php::language(),
         vec![Arc::new(php::IntelephenseLspAdapter::new(node_runtime))],
+        None,
     );
 
-    language("elm", tree_sitter_elm::language(), vec![]);
-    language("glsl", tree_sitter_glsl::language(), vec![]);
-    language("nix", tree_sitter_nix::language(), vec![]);
+    language("elm", tree_sitter_elm::language(), vec![], None);
+    language("glsl", tree_sitter_glsl::language(), vec![], None);
+    language("nix", tree_sitter_nix::language(), vec![], None);
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -192,6 +223,7 @@ fn load_queries(name: &str) -> LanguageQueries {
         embedding: load_query(name, "/embedding"),
         injections: load_query(name, "/injections"),
         overrides: load_query(name, "/overrides"),
+        interactions: load_query(name, "/interactions"),
     }
 }
 

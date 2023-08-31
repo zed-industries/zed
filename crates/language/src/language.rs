@@ -1,6 +1,7 @@
 mod buffer;
 mod diagnostic_set;
 mod highlight_map;
+mod interaction_map;
 pub mod language_settings;
 mod outline;
 pub mod proto;
@@ -18,7 +19,7 @@ use futures::{
     FutureExt, TryFutureExt as _,
 };
 use gpui::{executor::Background, AppContext, AsyncAppContext, Task};
-pub use highlight_map::HighlightMap;
+use interaction_map::InteractionMap;
 use lazy_static::lazy_static;
 use lsp::{CodeActionKind, LanguageServerBinary};
 use parking_lot::{Mutex, RwLock};
@@ -54,6 +55,8 @@ use futures::channel::mpsc;
 pub use buffer::Operation;
 pub use buffer::*;
 pub use diagnostic_set::DiagnosticEntry;
+pub use highlight_map::HighlightMap;
+pub use interaction_map::InteractionId;
 pub use lsp::LanguageServerId;
 pub use outline::{Outline, OutlineItem};
 pub use syntax_map::{OwnedSyntaxLayerInfo, SyntaxLayerInfo};
@@ -315,6 +318,12 @@ pub trait LspAdapter: 'static + Send + Sync {
     }
 }
 
+pub trait InteractionProvider: 'static + Send + Sync {
+    fn on_click(&self, _capture: &str, _text: &str) -> Option<String> {
+        None
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CodeLabel {
     pub text: String,
@@ -358,6 +367,7 @@ pub struct LanguageQueries {
     pub embedding: Option<Cow<'static, str>>,
     pub injections: Option<Cow<'static, str>>,
     pub overrides: Option<Cow<'static, str>>,
+    pub interactions: Option<Cow<'static, str>>,
 }
 
 #[derive(Clone, Debug)]
@@ -488,6 +498,7 @@ pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
     pub(crate) adapters: Vec<Arc<CachedLspAdapter>>,
+    pub(crate) interaction_provider: Option<Arc<dyn InteractionProvider>>,
 
     #[cfg(any(test, feature = "test-support"))]
     fake_adapter: Option<(
@@ -501,6 +512,7 @@ pub struct Grammar {
     pub ts_language: tree_sitter::Language,
     pub(crate) error_query: Query,
     pub(crate) highlights_query: Option<Query>,
+    pub(crate) interactions_query: Option<Query>,
     pub(crate) brackets_config: Option<BracketConfig>,
     pub(crate) indents_config: Option<IndentConfig>,
     pub outline_config: Option<OutlineConfig>,
@@ -508,6 +520,7 @@ pub struct Grammar {
     pub(crate) injection_config: Option<InjectionConfig>,
     pub(crate) override_config: Option<OverrideConfig>,
     pub(crate) highlight_map: Mutex<HighlightMap>,
+    pub(crate) interaction_map: Mutex<InteractionMap>,
 }
 
 struct IndentConfig {
@@ -578,6 +591,7 @@ struct AvailableLanguage {
     config: LanguageConfig,
     grammar: tree_sitter::Language,
     lsp_adapters: Vec<Arc<dyn LspAdapter>>,
+    interaction_provider: Option<Arc<dyn InteractionProvider>>,
     get_queries: fn(&str) -> LanguageQueries,
     loaded: bool,
 }
@@ -660,6 +674,7 @@ impl LanguageRegistry {
         config: LanguageConfig,
         grammar: tree_sitter::Language,
         lsp_adapters: Vec<Arc<dyn LspAdapter>>,
+        interaction_provider: Option<Arc<dyn InteractionProvider>>,
         get_queries: fn(&str) -> LanguageQueries,
     ) {
         let state = &mut *self.state.write();
@@ -670,6 +685,7 @@ impl LanguageRegistry {
             grammar,
             lsp_adapters,
             get_queries,
+            interaction_provider,
             loaded: false,
         });
     }
@@ -832,6 +848,7 @@ impl LanguageRegistry {
                                 let queries = (language.get_queries)(&language.path);
                                 let language =
                                     Language::new(language.config, Some(language.grammar))
+                                        .with_interaction_provider(language.interaction_provider)
                                         .with_lsp_adapters(language.lsp_adapters)
                                         .await;
                                 let name = language.name();
@@ -1170,12 +1187,15 @@ impl Language {
                     indents_config: None,
                     injection_config: None,
                     override_config: None,
+                    interactions_query: None,
                     error_query: Query::new(ts_language, "(ERROR) @error").unwrap(),
                     ts_language,
                     highlight_map: Default::default(),
+                    interaction_map: Default::default(),
                 })
             }),
             adapters: Vec::new(),
+            interaction_provider: None,
 
             #[cfg(any(test, feature = "test-support"))]
             fake_adapter: None,
@@ -1226,6 +1246,19 @@ impl Language {
                 .with_override_query(query.as_ref())
                 .context("Error loading override query")?;
         }
+        if let Some(query) = queries.interactions {
+            self = self
+                .with_interaction_query(query.as_ref())
+                .context("Error loading interaction query")?;
+        }
+        Ok(self)
+    }
+
+    pub fn with_interaction_query(mut self, source: &str) -> Result<Self> {
+        let grammar = self.grammar_mut();
+        let query = Query::new(grammar.ts_language, source)?;
+        *grammar.interaction_map.lock() = InteractionMap::new(query.capture_names());
+        grammar.interactions_query = Some(query);
         Ok(self)
     }
 
@@ -1457,6 +1490,15 @@ impl Language {
         self
     }
 
+    pub fn with_interaction_provider(
+        mut self,
+        interaction_provider: Option<Arc<dyn InteractionProvider>>,
+    ) -> Self {
+        self.interaction_provider = interaction_provider;
+
+        self
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub async fn set_fake_lsp_adapter(
         &mut self,
@@ -1534,7 +1576,9 @@ impl Language {
                 });
             let highlight_maps = vec![grammar.highlight_map()];
             let mut offset = 0;
-            for chunk in BufferChunks::new(text, range, Some((captures, highlight_maps)), vec![]) {
+            for chunk in
+                BufferChunks::new(text, range, Some((captures, highlight_maps)), None, vec![])
+            {
                 let end_offset = offset + chunk.text.len();
                 if let Some(highlight_id) = chunk.syntax_highlight_id {
                     if !highlight_id.is_default() {
@@ -1678,6 +1722,10 @@ impl Grammar {
 
     pub fn highlight_map(&self) -> HighlightMap {
         self.highlight_map.lock().clone()
+    }
+
+    pub fn interaction_map(&self) -> InteractionMap {
+        self.interaction_map.lock().clone()
     }
 
     pub fn highlight_id_for_name(&self, name: &str) -> Option<HighlightId> {
@@ -1824,6 +1872,7 @@ mod tests {
             },
             tree_sitter_typescript::language_tsx(),
             vec![],
+            None,
             |_| Default::default(),
         );
 
@@ -1860,6 +1909,7 @@ mod tests {
             },
             tree_sitter_json::language(),
             vec![],
+            None,
             |_| Default::default(),
         );
         languages.register(
@@ -1871,6 +1921,7 @@ mod tests {
             },
             tree_sitter_rust::language(),
             vec![],
+            None,
             |_| Default::default(),
         );
         assert_eq!(

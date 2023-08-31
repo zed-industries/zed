@@ -38,8 +38,8 @@ use gpui::{
 use itertools::Itertools;
 use json::json;
 use language::{
-    language_settings::ShowWhitespaceSetting, Bias, CursorShape, DiagnosticSeverity, OffsetUtf16,
-    Selection,
+    language_settings::ShowWhitespaceSetting, Bias, CursorShape, DiagnosticSeverity, InteractionId,
+    OffsetUtf16, Selection,
 };
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
@@ -1659,6 +1659,7 @@ impl EditorElement {
                         chunk: chunk.text,
                         style: highlight_style,
                         is_tab: chunk.is_tab,
+                        interaction: chunk.interaction_id,
                     }
                 });
 
@@ -1900,6 +1901,7 @@ impl EditorElement {
 struct HighlightedChunk<'a> {
     chunk: &'a str,
     style: Option<HighlightStyle>,
+    interaction: Option<InteractionId>,
     is_tab: bool,
 }
 
@@ -1930,6 +1932,7 @@ impl LineWithInvisibles {
         for highlighted_chunk in chunks.chain([HighlightedChunk {
             chunk: "\n",
             style: None,
+            interaction: None,
             is_tab: false,
         }]) {
             for (ix, mut line_chunk) in highlighted_chunk.chunk.split('\n').enumerate() {
@@ -1958,6 +1961,12 @@ impl LineWithInvisibles {
                             .unwrap_or_else(|_| Cow::Borrowed(text_style))
                     } else {
                         Cow::Borrowed(text_style)
+                    };
+
+                    let interaction = if let Some(interaction) = highlighted_chunk.interaction {
+                        Some(interaction)
+                    } else {
+                        None
                     };
 
                     if line.len() + line_chunk.len() > max_line_len {

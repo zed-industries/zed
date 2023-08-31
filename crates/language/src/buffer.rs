@@ -5,6 +5,7 @@ pub use crate::{
 };
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
+    interaction_map::{InteractionId, InteractionMap},
     language_settings::{language_settings, LanguageSettings},
     outline::OutlineItem,
     syntax_map::{
@@ -285,11 +286,74 @@ struct IndentSuggestion {
     within_error: bool,
 }
 
-struct BufferChunkHighlights<'a> {
+pub(crate) trait QueryFeatureMap {
+    type Id: Copy + Clone + std::fmt::Debug;
+
+    fn get(&self, capture_id: u32) -> Self::Id;
+}
+
+type BufferChunkHighlights<'a> = BufferChunkQuery<'a, HighlightMap>;
+
+type BufferChunkInteractions<'a> = BufferChunkQuery<'a, InteractionMap>;
+
+struct BufferChunkQuery<'a, T: QueryFeatureMap> {
     captures: SyntaxMapCaptures<'a>,
     next_capture: Option<SyntaxMapCapture<'a>>,
-    stack: Vec<(usize, HighlightId)>,
-    highlight_maps: Vec<HighlightMap>,
+    maps: Vec<T>,
+    stack: Vec<(usize, T::Id)>,
+}
+
+impl<'a, T: QueryFeatureMap> BufferChunkQuery<'a, T> {
+    fn seek(&mut self, offset: usize, byte_range: Range<usize>) {
+        self.stack.retain(|(end_offset, _)| *end_offset > offset);
+        if let Some(capture) = &self.next_capture {
+            if offset >= capture.node.start_byte() {
+                let next_capture_end = capture.node.end_byte();
+                if offset < next_capture_end {
+                    self.stack.push((
+                        next_capture_end,
+                        self.maps[capture.grammar_index].get(capture.index),
+                    ));
+                }
+                self.next_capture.take();
+            }
+        }
+        self.captures.set_byte_range(byte_range);
+    }
+
+    fn select_current_id(&self, chunk_end: &mut usize, id: &mut Option<T::Id>) {
+        if let Some((parent_capture_end, parent_id)) = self.stack.last() {
+            *chunk_end = (*chunk_end).min(*parent_capture_end);
+            *id = Some(parent_id.clone());
+        }
+    }
+
+    fn next(&mut self, range_start: usize, next_capture_start: &mut usize) {
+        while let Some((parent_capture_end, _)) = self.stack.last() {
+            if *parent_capture_end <= range_start {
+                self.stack.pop();
+            } else {
+                break;
+            }
+        }
+
+        if self.next_capture.is_none() {
+            self.next_capture = self.captures.next();
+        }
+
+        while let Some(capture) = self.next_capture.as_ref() {
+            if range_start < capture.node.start_byte() {
+                if capture.node.start_byte() < *next_capture_start {
+                    *next_capture_start = capture.node.start_byte();
+                }
+                break;
+            } else {
+                let highlight_id = self.maps[capture.grammar_index].get(capture.index);
+                self.stack.push((capture.node.end_byte(), highlight_id));
+                self.next_capture = self.captures.next();
+            }
+        }
+    }
 }
 
 pub struct BufferChunks<'a> {
@@ -302,12 +366,14 @@ pub struct BufferChunks<'a> {
     hint_depth: usize,
     unnecessary_depth: usize,
     highlights: Option<BufferChunkHighlights<'a>>,
+    interactions: Option<BufferChunkInteractions<'a>>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Chunk<'a> {
     pub text: &'a str,
     pub syntax_highlight_id: Option<HighlightId>,
+    pub interaction_id: Option<InteractionId>,
     pub highlight_style: Option<HighlightStyle>,
     pub diagnostic_severity: Option<DiagnosticSeverity>,
     pub is_unnecessary: bool,
@@ -2089,10 +2155,14 @@ impl BufferSnapshot {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
         let mut syntax = None;
+        let mut interactions = None;
         let mut diagnostic_endpoints = Vec::new();
         if language_aware {
             let captures = self.syntax.captures(range.clone(), &self.text, |grammar| {
                 grammar.highlights_query.as_ref()
+            });
+            let interaction_captures = self.syntax.captures(range.clone(), &self.text, |grammar| {
+                grammar.interactions_query.as_ref()
             });
             let highlight_maps = captures
                 .grammars()
@@ -2100,6 +2170,12 @@ impl BufferSnapshot {
                 .map(|grammar| grammar.highlight_map())
                 .collect();
             syntax = Some((captures, highlight_maps));
+            let interaction_maps = interaction_captures
+                .grammars()
+                .into_iter()
+                .map(|grammar| grammar.interaction_map())
+                .collect();
+            interactions = Some((interaction_captures, interaction_maps));
             for entry in self.diagnostics_in_range::<_, usize>(range.clone(), false) {
                 diagnostic_endpoints.push(DiagnosticEndpoint {
                     offset: entry.range.start,
@@ -2118,7 +2194,13 @@ impl BufferSnapshot {
                 .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
         }
 
-        BufferChunks::new(self.text.as_rope(), range, syntax, diagnostic_endpoints)
+        BufferChunks::new(
+            self.text.as_rope(),
+            range,
+            syntax,
+            interactions,
+            diagnostic_endpoints,
+        )
     }
 
     pub fn for_each_line(&self, range: Range<Point>, mut callback: impl FnMut(u32, &str)) {
@@ -2735,6 +2817,7 @@ impl<'a> BufferChunks<'a> {
         text: &'a Rope,
         range: Range<usize>,
         syntax: Option<(SyntaxMapCaptures<'a>, Vec<HighlightMap>)>,
+        interactions_syntax: Option<(SyntaxMapCaptures<'a>, Vec<InteractionMap>)>,
         diagnostic_endpoints: Vec<DiagnosticEndpoint>,
     ) -> Self {
         let mut highlights = None;
@@ -2743,7 +2826,17 @@ impl<'a> BufferChunks<'a> {
                 captures,
                 next_capture: None,
                 stack: Default::default(),
-                highlight_maps,
+                maps: highlight_maps,
+            })
+        }
+
+        let mut interactions = None;
+        if let Some((captures, interaction_maps)) = interactions_syntax {
+            interactions = Some(BufferChunkInteractions {
+                captures,
+                next_capture: None,
+                stack: Default::default(),
+                maps: interaction_maps,
             })
         }
 
@@ -2760,6 +2853,7 @@ impl<'a> BufferChunks<'a> {
             hint_depth: 0,
             unnecessary_depth: 0,
             highlights,
+            interactions,
         }
     }
 
@@ -2767,22 +2861,10 @@ impl<'a> BufferChunks<'a> {
         self.range.start = offset;
         self.chunks.seek(self.range.start);
         if let Some(highlights) = self.highlights.as_mut() {
-            highlights
-                .stack
-                .retain(|(end_offset, _)| *end_offset > offset);
-            if let Some(capture) = &highlights.next_capture {
-                if offset >= capture.node.start_byte() {
-                    let next_capture_end = capture.node.end_byte();
-                    if offset < next_capture_end {
-                        highlights.stack.push((
-                            next_capture_end,
-                            highlights.highlight_maps[capture.grammar_index].get(capture.index),
-                        ));
-                    }
-                    highlights.next_capture.take();
-                }
-            }
-            highlights.captures.set_byte_range(self.range.clone());
+            highlights.seek(offset, self.range.clone());
+        }
+        if let Some(interactions) = self.interactions.as_mut() {
+            interactions.seek(offset, self.range.clone());
         }
     }
 
@@ -2840,31 +2922,10 @@ impl<'a> Iterator for BufferChunks<'a> {
         let mut next_diagnostic_endpoint = usize::MAX;
 
         if let Some(highlights) = self.highlights.as_mut() {
-            while let Some((parent_capture_end, _)) = highlights.stack.last() {
-                if *parent_capture_end <= self.range.start {
-                    highlights.stack.pop();
-                } else {
-                    break;
-                }
-            }
-
-            if highlights.next_capture.is_none() {
-                highlights.next_capture = highlights.captures.next();
-            }
-
-            while let Some(capture) = highlights.next_capture.as_ref() {
-                if self.range.start < capture.node.start_byte() {
-                    next_capture_start = capture.node.start_byte();
-                    break;
-                } else {
-                    let highlight_id =
-                        highlights.highlight_maps[capture.grammar_index].get(capture.index);
-                    highlights
-                        .stack
-                        .push((capture.node.end_byte(), highlight_id));
-                    highlights.next_capture = highlights.captures.next();
-                }
-            }
+            highlights.next(self.range.start, &mut next_capture_start);
+        }
+        if let Some(interactions) = self.interactions.as_mut() {
+            interactions.next(self.range.start, &mut next_capture_start);
         }
 
         while let Some(endpoint) = self.diagnostic_endpoints.peek().copied() {
@@ -2884,10 +2945,11 @@ impl<'a> Iterator for BufferChunks<'a> {
                 .min(next_diagnostic_endpoint);
             let mut highlight_id = None;
             if let Some(highlights) = self.highlights.as_ref() {
-                if let Some((parent_capture_end, parent_highlight_id)) = highlights.stack.last() {
-                    chunk_end = chunk_end.min(*parent_capture_end);
-                    highlight_id = Some(*parent_highlight_id);
-                }
+                highlights.select_current_id(&mut chunk_end, &mut highlight_id);
+            }
+            let mut interaction_id = None;
+            if let Some(interactions) = self.interactions.as_ref() {
+                interactions.select_current_id(&mut chunk_end, &mut interaction_id);
             }
 
             let slice =
@@ -2900,6 +2962,7 @@ impl<'a> Iterator for BufferChunks<'a> {
             Some(Chunk {
                 text: slice,
                 syntax_highlight_id: highlight_id,
+                interaction_id,
                 diagnostic_severity: self.current_diagnostic_severity(),
                 is_unnecessary: self.current_code_is_unnecessary(),
                 ..Default::default()

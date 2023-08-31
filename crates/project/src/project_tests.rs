@@ -2601,6 +2601,7 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
         },
         tree_sitter_rust::language(),
         vec![],
+        None,
         |_| Default::default(),
     );
 
