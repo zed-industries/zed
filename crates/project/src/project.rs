@@ -4496,47 +4496,52 @@ impl Project {
         position: T,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Completion>>> {
-        let snapshot = buffer.read(cx).snapshot();
-        let offset = position.to_offset(&snapshot);
         let position = position.to_point_utf16(buffer.read(cx));
+        if self.is_local() {
+            let snapshot = buffer.read(cx).snapshot();
+            let offset = position.to_offset(&snapshot);
+            let scope = snapshot.language_scope_at(offset);
 
-        let scope = snapshot.language_scope_at(offset);
+            let server_ids: Vec<_> = self
+                .language_servers_for_buffer(buffer.read(cx), cx)
+                .filter(|(_, server)| server.capabilities().completion_provider.is_some())
+                .filter(|(adapter, _)| {
+                    scope
+                        .as_ref()
+                        .map(|scope| scope.language_allowed(&adapter.name))
+                        .unwrap_or(true)
+                })
+                .map(|(_, server)| server.server_id())
+                .collect();
 
-        let server_ids: Vec<_> = self
-            .language_servers_for_buffer(buffer.read(cx), cx)
-            .filter(|(_, server)| server.capabilities().completion_provider.is_some())
-            .filter(|(adapter, _)| {
-                scope
-                    .as_ref()
-                    .map(|scope| scope.language_allowed(&adapter.name))
-                    .unwrap_or(true)
+            let buffer = buffer.clone();
+            cx.spawn(|this, mut cx| async move {
+                let mut tasks = Vec::with_capacity(server_ids.len());
+                this.update(&mut cx, |this, cx| {
+                    for server_id in server_ids {
+                        tasks.push(this.request_lsp(
+                            buffer.clone(),
+                            LanguageServerToQuery::Other(server_id),
+                            GetCompletions { position },
+                            cx,
+                        ));
+                    }
+                });
+
+                let mut completions = Vec::new();
+                for task in tasks {
+                    if let Ok(new_completions) = task.await {
+                        completions.extend_from_slice(&new_completions);
+                    }
+                }
+
+                Ok(completions)
             })
-            .map(|(_, server)| server.server_id())
-            .collect();
-
-        let buffer = buffer.clone();
-        cx.spawn(|this, mut cx| async move {
-            let mut tasks = Vec::with_capacity(server_ids.len());
-            this.update(&mut cx, |this, cx| {
-                for server_id in server_ids {
-                    tasks.push(this.request_lsp(
-                        buffer.clone(),
-                        LanguageServerToQuery::Other(server_id),
-                        GetCompletions { position },
-                        cx,
-                    ));
-                }
-            });
-
-            let mut completions = Vec::new();
-            for task in tasks {
-                if let Ok(new_completions) = task.await {
-                    completions.extend_from_slice(&new_completions);
-                }
-            }
-
-            Ok(completions)
-        })
+        } else if let Some(project_id) = self.remote_id() {
+            self.send_lsp_proto_request(buffer.clone(), project_id, GetCompletions { position }, cx)
+        } else {
+            Task::ready(Ok(Default::default()))
+        }
     }
 
     pub fn apply_additional_edits_for_completion(
@@ -5587,30 +5592,38 @@ impl Project {
                 });
             }
         } else if let Some(project_id) = self.remote_id() {
-            let rpc = self.client.clone();
-            let message = request.to_proto(project_id, buffer);
-            return cx.spawn_weak(|this, cx| async move {
-                // Ensure the project is still alive by the time the task
-                // is scheduled.
-                this.upgrade(&cx)
-                    .ok_or_else(|| anyhow!("project dropped"))?;
-
-                let response = rpc.request(message).await?;
-
-                let this = this
-                    .upgrade(&cx)
-                    .ok_or_else(|| anyhow!("project dropped"))?;
-                if this.read_with(&cx, |this, _| this.is_read_only()) {
-                    Err(anyhow!("disconnected before completing request"))
-                } else {
-                    request
-                        .response_from_proto(response, this, buffer_handle, cx)
-                        .await
-                }
-            });
+            return self.send_lsp_proto_request(buffer_handle, project_id, request, cx);
         }
 
         Task::ready(Ok(Default::default()))
+    }
+
+    fn send_lsp_proto_request<R: LspCommand>(
+        &self,
+        buffer: ModelHandle<Buffer>,
+        project_id: u64,
+        request: R,
+        cx: &mut ModelContext<'_, Project>,
+    ) -> Task<anyhow::Result<<R as LspCommand>::Response>> {
+        let rpc = self.client.clone();
+        let message = request.to_proto(project_id, buffer.read(cx));
+        cx.spawn_weak(|this, cx| async move {
+            // Ensure the project is still alive by the time the task
+            // is scheduled.
+            this.upgrade(&cx)
+                .ok_or_else(|| anyhow!("project dropped"))?;
+            let response = rpc.request(message).await?;
+            let this = this
+                .upgrade(&cx)
+                .ok_or_else(|| anyhow!("project dropped"))?;
+            if this.read_with(&cx, |this, _| this.is_read_only()) {
+                Err(anyhow!("disconnected before completing request"))
+            } else {
+                request
+                    .response_from_proto(response, this, buffer, cx)
+                    .await
+            }
+        })
     }
 
     fn sort_candidates_and_open_buffers(
