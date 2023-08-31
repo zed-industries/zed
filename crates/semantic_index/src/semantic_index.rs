@@ -309,6 +309,23 @@ impl SemanticIndex {
                     documents.len()
                 );
 
+                todo!();
+                // if let Some(embeddings) = db
+                //     .embeddings_for_documents(
+                //         pending_file.worktree_db_id,
+                //         pending_file.relative_path,
+                //         &documents,
+                //     )
+                //     .await
+                //     .log_err()
+                // {
+                //     for (document, embedding) in documents.iter_mut().zip(embeddings) {
+                //         if let Some(embedding) = embedding {
+                //             document.embedding = embedding;
+                //         }
+                //     }
+                // }
+
                 embedding_queue.lock().push(FileToEmbed {
                     worktree_id: pending_file.worktree_db_id,
                     path: pending_file.relative_path,

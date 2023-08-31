@@ -264,6 +264,25 @@ impl VectorDatabase {
         })
     }
 
+    pub fn embeddings_for_file(
+        &self,
+        worktree_id: i64,
+        relative_path: PathBuf,
+    ) -> impl Future<Output = Result<HashMap<DocumentDigest, Embedding>>> {
+        let relative_path = relative_path.to_string_lossy().into_owned();
+        self.transact(move |db| {
+            let mut query = db.prepare("SELECT digest, embedding FROM documents LEFT JOIN files ON files.id = documents.file_id WHERE files.worktree_id = ?1 AND files.relative_path = ?2")?;
+            let mut result: HashMap<DocumentDigest, Embedding> = HashMap::new();
+            for row in query.query_map(params![worktree_id, relative_path], |row| {
+                Ok((row.get::<_, DocumentDigest>(0)?.into(), row.get::<_, Embedding>(1)?.into()))
+            })? {
+                let row = row?;
+                result.insert(row.0, row.1);
+            }
+            Ok(result)
+        })
+    }
+
     pub fn find_or_create_worktree(
         &self,
         worktree_root_path: PathBuf,
