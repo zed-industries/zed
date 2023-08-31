@@ -2,68 +2,15 @@ use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
     fmt, iter,
-    ops::{Add, AddAssign},
 };
 
 pub type ReplicaId = u16;
 pub type Seq = u32;
 
-#[derive(Clone, Copy, Default, Eq, Hash, PartialEq, Ord, PartialOrd)]
-pub struct Local {
-    pub replica_id: ReplicaId,
-    pub value: Seq,
-}
-
 #[derive(Clone, Copy, Default, Eq, Hash, PartialEq)]
 pub struct Lamport {
     pub replica_id: ReplicaId,
     pub value: Seq,
-}
-
-impl Local {
-    pub const MIN: Self = Self {
-        replica_id: ReplicaId::MIN,
-        value: Seq::MIN,
-    };
-    pub const MAX: Self = Self {
-        replica_id: ReplicaId::MAX,
-        value: Seq::MAX,
-    };
-
-    pub fn new(replica_id: ReplicaId) -> Self {
-        Self {
-            replica_id,
-            value: 1,
-        }
-    }
-
-    pub fn tick(&mut self) -> Self {
-        let timestamp = *self;
-        self.value += 1;
-        timestamp
-    }
-
-    pub fn observe(&mut self, timestamp: Self) {
-        if timestamp.replica_id == self.replica_id {
-            self.value = cmp::max(self.value, timestamp.value + 1);
-        }
-    }
-}
-
-impl<'a> Add<&'a Self> for Local {
-    type Output = Local;
-
-    fn add(self, other: &'a Self) -> Self::Output {
-        *cmp::max(&self, other)
-    }
-}
-
-impl<'a> AddAssign<&'a Local> for Local {
-    fn add_assign(&mut self, other: &Self) {
-        if *self < *other {
-            *self = *other;
-        }
-    }
 }
 
 /// A vector clock
@@ -79,7 +26,7 @@ impl Global {
         self.0.get(replica_id as usize).copied().unwrap_or(0) as Seq
     }
 
-    pub fn observe(&mut self, timestamp: Local) {
+    pub fn observe(&mut self, timestamp: Lamport) {
         if timestamp.value > 0 {
             let new_len = timestamp.replica_id as usize + 1;
             if new_len > self.0.len() {
@@ -126,7 +73,7 @@ impl Global {
         self.0.resize(new_len, 0);
     }
 
-    pub fn observed(&self, timestamp: Local) -> bool {
+    pub fn observed(&self, timestamp: Lamport) -> bool {
         self.get(timestamp.replica_id) >= timestamp.value
     }
 
@@ -178,16 +125,16 @@ impl Global {
         false
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = Local> + '_ {
-        self.0.iter().enumerate().map(|(replica_id, seq)| Local {
+    pub fn iter(&self) -> impl Iterator<Item = Lamport> + '_ {
+        self.0.iter().enumerate().map(|(replica_id, seq)| Lamport {
             replica_id: replica_id as ReplicaId,
             value: *seq,
         })
     }
 }
 
-impl FromIterator<Local> for Global {
-    fn from_iter<T: IntoIterator<Item = Local>>(locals: T) -> Self {
+impl FromIterator<Lamport> for Global {
+    fn from_iter<T: IntoIterator<Item = Lamport>>(locals: T) -> Self {
         let mut result = Self::new();
         for local in locals {
             result.observe(local);
@@ -212,6 +159,16 @@ impl PartialOrd for Lamport {
 }
 
 impl Lamport {
+    pub const MIN: Self = Self {
+        replica_id: ReplicaId::MIN,
+        value: Seq::MIN,
+    };
+
+    pub const MAX: Self = Self {
+        replica_id: ReplicaId::MAX,
+        value: Seq::MAX,
+    };
+
     pub fn new(replica_id: ReplicaId) -> Self {
         Self {
             value: 1,
@@ -227,12 +184,6 @@ impl Lamport {
 
     pub fn observe(&mut self, timestamp: Self) {
         self.value = cmp::max(self.value, timestamp.value) + 1;
-    }
-}
-
-impl fmt::Debug for Local {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Local {{{}: {}}}", self.replica_id, self.value)
     }
 }
 

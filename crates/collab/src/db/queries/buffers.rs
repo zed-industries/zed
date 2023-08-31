@@ -1,6 +1,6 @@
 use super::*;
 use prost::Message;
-use text::{EditOperation, InsertionTimestamp, UndoOperation};
+use text::{EditOperation, UndoOperation};
 
 impl Database {
     pub async fn join_channel_buffer(
@@ -182,7 +182,6 @@ impl Database {
         .await
     }
 
-    #[cfg(debug_assertions)]
     pub async fn get_channel_buffer_collaborators(
         &self,
         channel_id: ChannelId,
@@ -370,7 +369,6 @@ fn operation_to_storage(
             operation.replica_id,
             operation.lamport_timestamp,
             storage::Operation {
-                local_timestamp: operation.local_timestamp,
                 version: version_to_storage(&operation.version),
                 is_undo: false,
                 edit_ranges: operation
@@ -389,7 +387,6 @@ fn operation_to_storage(
             operation.replica_id,
             operation.lamport_timestamp,
             storage::Operation {
-                local_timestamp: operation.local_timestamp,
                 version: version_to_storage(&operation.version),
                 is_undo: true,
                 edit_ranges: Vec::new(),
@@ -399,7 +396,7 @@ fn operation_to_storage(
                     .iter()
                     .map(|entry| storage::UndoCount {
                         replica_id: entry.replica_id,
-                        local_timestamp: entry.local_timestamp,
+                        lamport_timestamp: entry.lamport_timestamp,
                         count: entry.count,
                     })
                     .collect(),
@@ -427,7 +424,6 @@ fn operation_from_storage(
     Ok(if operation.is_undo {
         proto::operation::Variant::Undo(proto::operation::Undo {
             replica_id: row.replica_id as u32,
-            local_timestamp: operation.local_timestamp as u32,
             lamport_timestamp: row.lamport_timestamp as u32,
             version,
             counts: operation
@@ -435,7 +431,7 @@ fn operation_from_storage(
                 .iter()
                 .map(|entry| proto::UndoCount {
                     replica_id: entry.replica_id,
-                    local_timestamp: entry.local_timestamp,
+                    lamport_timestamp: entry.lamport_timestamp,
                     count: entry.count,
                 })
                 .collect(),
@@ -443,7 +439,6 @@ fn operation_from_storage(
     } else {
         proto::operation::Variant::Edit(proto::operation::Edit {
             replica_id: row.replica_id as u32,
-            local_timestamp: operation.local_timestamp as u32,
             lamport_timestamp: row.lamport_timestamp as u32,
             version,
             ranges: operation
@@ -483,10 +478,9 @@ fn version_from_storage(version: &Vec<storage::VectorClockEntry>) -> Vec<proto::
 pub fn operation_from_wire(operation: proto::Operation) -> Option<text::Operation> {
     match operation.variant? {
         proto::operation::Variant::Edit(edit) => Some(text::Operation::Edit(EditOperation {
-            timestamp: InsertionTimestamp {
+            timestamp: clock::Lamport {
                 replica_id: edit.replica_id as text::ReplicaId,
-                local: edit.local_timestamp,
-                lamport: edit.lamport_timestamp,
+                value: edit.lamport_timestamp,
             },
             version: version_from_wire(&edit.version),
             ranges: edit
@@ -498,32 +492,26 @@ pub fn operation_from_wire(operation: proto::Operation) -> Option<text::Operatio
                 .collect(),
             new_text: edit.new_text.into_iter().map(Arc::from).collect(),
         })),
-        proto::operation::Variant::Undo(undo) => Some(text::Operation::Undo {
-            lamport_timestamp: clock::Lamport {
+        proto::operation::Variant::Undo(undo) => Some(text::Operation::Undo(UndoOperation {
+            timestamp: clock::Lamport {
                 replica_id: undo.replica_id as text::ReplicaId,
                 value: undo.lamport_timestamp,
             },
-            undo: UndoOperation {
-                id: clock::Local {
-                    replica_id: undo.replica_id as text::ReplicaId,
-                    value: undo.local_timestamp,
-                },
-                version: version_from_wire(&undo.version),
-                counts: undo
-                    .counts
-                    .into_iter()
-                    .map(|c| {
-                        (
-                            clock::Local {
-                                replica_id: c.replica_id as text::ReplicaId,
-                                value: c.local_timestamp,
-                            },
-                            c.count,
-                        )
-                    })
-                    .collect(),
-            },
-        }),
+            version: version_from_wire(&undo.version),
+            counts: undo
+                .counts
+                .into_iter()
+                .map(|c| {
+                    (
+                        clock::Lamport {
+                            replica_id: c.replica_id as text::ReplicaId,
+                            value: c.lamport_timestamp,
+                        },
+                        c.count,
+                    )
+                })
+                .collect(),
+        })),
         _ => None,
     }
 }
@@ -531,7 +519,7 @@ pub fn operation_from_wire(operation: proto::Operation) -> Option<text::Operatio
 fn version_from_wire(message: &[proto::VectorClockEntry]) -> clock::Global {
     let mut version = clock::Global::new();
     for entry in message {
-        version.observe(clock::Local {
+        version.observe(clock::Lamport {
             replica_id: entry.replica_id as text::ReplicaId,
             value: entry.timestamp,
         });
@@ -546,8 +534,6 @@ mod storage {
 
     #[derive(Message)]
     pub struct Operation {
-        #[prost(uint32, tag = "1")]
-        pub local_timestamp: u32,
         #[prost(message, repeated, tag = "2")]
         pub version: Vec<VectorClockEntry>,
         #[prost(bool, tag = "3")]
@@ -581,7 +567,7 @@ mod storage {
         #[prost(uint32, tag = "1")]
         pub replica_id: u32,
         #[prost(uint32, tag = "2")]
-        pub local_timestamp: u32,
+        pub lamport_timestamp: u32,
         #[prost(uint32, tag = "3")]
         pub count: u32,
     }

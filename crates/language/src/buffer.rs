@@ -439,7 +439,7 @@ impl Buffer {
             operations.extend(
                 text_operations
                     .iter()
-                    .filter(|(_, op)| !since.observed(op.local_timestamp()))
+                    .filter(|(_, op)| !since.observed(op.timestamp()))
                     .map(|(_, op)| proto::serialize_operation(&Operation::Buffer(op.clone()))),
             );
             operations.sort_unstable_by_key(proto::lamport_timestamp_for_operation);
@@ -1304,7 +1304,7 @@ impl Buffer {
 
     pub fn wait_for_edits(
         &mut self,
-        edit_ids: impl IntoIterator<Item = clock::Local>,
+        edit_ids: impl IntoIterator<Item = clock::Lamport>,
     ) -> impl Future<Output = Result<()>> {
         self.text.wait_for_edits(edit_ids)
     }
@@ -1362,7 +1362,7 @@ impl Buffer {
         }
     }
 
-    pub fn set_text<T>(&mut self, text: T, cx: &mut ModelContext<Self>) -> Option<clock::Local>
+    pub fn set_text<T>(&mut self, text: T, cx: &mut ModelContext<Self>) -> Option<clock::Lamport>
     where
         T: Into<Arc<str>>,
     {
@@ -1375,7 +1375,7 @@ impl Buffer {
         edits_iter: I,
         autoindent_mode: Option<AutoindentMode>,
         cx: &mut ModelContext<Self>,
-    ) -> Option<clock::Local>
+    ) -> Option<clock::Lamport>
     where
         I: IntoIterator<Item = (Range<S>, T)>,
         S: ToOffset,
@@ -1412,7 +1412,7 @@ impl Buffer {
             .and_then(|mode| self.language.as_ref().map(|_| (self.snapshot(), mode)));
 
         let edit_operation = self.text.edit(edits.iter().cloned());
-        let edit_id = edit_operation.local_timestamp();
+        let edit_id = edit_operation.timestamp();
 
         if let Some((before_edit, mode)) = autoindent_request {
             let mut delta = 0isize;
