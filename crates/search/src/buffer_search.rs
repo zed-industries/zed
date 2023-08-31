@@ -56,6 +56,8 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(BufferSearchBar::cycle_mode_on_pane);
     cx.add_action(BufferSearchBar::replace_all);
     cx.add_action(BufferSearchBar::replace_next);
+    cx.add_action(BufferSearchBar::replace_all_on_pane);
+    cx.add_action(BufferSearchBar::replace_next_on_pane);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
     add_toggle_option_action::<ToggleWholeWord>(SearchOptions::WHOLE_WORD, cx);
 }
@@ -269,7 +271,6 @@ impl View for BufferSearchBar {
                     .with_height(theme.search.search_bar_row_height)
                     .flex(1., false),
             )
-            .with_children(replacement)
             .contained()
             .with_style(query_container_style)
             .constrained()
@@ -305,6 +306,7 @@ impl View for BufferSearchBar {
 
         Flex::row()
             .with_child(editor_column)
+            .with_children(replacement)
             .with_child(mode_column)
             .with_child(nav_column)
             .contained()
@@ -900,6 +902,16 @@ impl BufferSearchBar {
                     }
                 }
             }
+        }
+    }
+    fn replace_next_on_pane(pane: &mut Pane, action: &ReplaceNext, cx: &mut ViewContext<Pane>) {
+        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
+            search_bar.update(cx, |bar, cx| bar.replace_next(action, cx));
+        }
+    }
+    fn replace_all_on_pane(pane: &mut Pane, action: &ReplaceAll, cx: &mut ViewContext<Pane>) {
+        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
+            search_bar.update(cx, |bar, cx| bar.replace_all(action, cx));
         }
     }
 }
