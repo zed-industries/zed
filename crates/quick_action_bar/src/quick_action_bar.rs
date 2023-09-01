@@ -1,25 +1,29 @@
+use ai::{assistant::InlineAssist, AssistantPanel};
 use editor::Editor;
 use gpui::{
     elements::{Empty, Flex, MouseEventHandler, ParentElement, Svg},
     platform::{CursorStyle, MouseButton},
     Action, AnyElement, Element, Entity, EventContext, Subscription, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 
 use search::{buffer_search, BufferSearchBar};
-use workspace::{item::ItemHandle, ToolbarItemLocation, ToolbarItemView};
+use workspace::{item::ItemHandle, ToolbarItemLocation, ToolbarItemView, Workspace};
 
 pub struct QuickActionBar {
     buffer_search_bar: ViewHandle<BufferSearchBar>,
     active_item: Option<Box<dyn ItemHandle>>,
     _inlay_hints_enabled_subscription: Option<Subscription>,
+    workspace: WeakViewHandle<Workspace>,
 }
 
 impl QuickActionBar {
-    pub fn new(buffer_search_bar: ViewHandle<BufferSearchBar>) -> Self {
+    pub fn new(buffer_search_bar: ViewHandle<BufferSearchBar>, workspace: &Workspace) -> Self {
         Self {
             buffer_search_bar,
             active_item: None,
             _inlay_hints_enabled_subscription: None,
+            workspace: workspace.weak_handle(),
         }
     }
 
@@ -87,6 +91,21 @@ impl View for QuickActionBar {
                 },
             ));
         }
+
+        bar.add_child(render_quick_action_bar_button(
+            2,
+            "icons/radix/magic-wand.svg",
+            false,
+            ("Inline Assist".into(), Some(Box::new(InlineAssist))),
+            cx,
+            move |this, cx| {
+                if let Some(workspace) = this.workspace.upgrade(cx) {
+                    workspace.update(cx, |workspace, cx| {
+                        AssistantPanel::inline_assist(workspace, &Default::default(), cx);
+                    });
+                }
+            },
+        ));
 
         bar.into_any()
     }

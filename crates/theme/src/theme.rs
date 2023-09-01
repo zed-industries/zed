@@ -97,8 +97,6 @@ pub struct Workspace {
     pub dock: Dock,
     pub status_bar: StatusBar,
     pub toolbar: Toolbar,
-    pub breadcrumb_height: f32,
-    pub breadcrumbs: Interactive<ContainedText>,
     pub disconnected_overlay: ContainedText,
     pub modal: ContainerStyle,
     pub zoomed_panel_foreground: ContainerStyle,
@@ -129,7 +127,6 @@ pub struct Titlebar {
     pub height: f32,
     pub menu: TitlebarMenu,
     pub project_menu_button: Toggleable<Interactive<ContainedText>>,
-    pub project_name_divider: ContainedText,
     pub git_menu_button: Toggleable<Interactive<ContainedText>>,
     pub item_spacing: f32,
     pub face_pile_spacing: f32,
@@ -420,6 +417,8 @@ pub struct Toolbar {
     pub height: f32,
     pub item_spacing: f32,
     pub toggleable_tool: Toggleable<Interactive<IconButton>>,
+    pub breadcrumb_height: f32,
+    pub breadcrumbs: Interactive<ContainedText>,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]
@@ -844,6 +843,9 @@ pub struct AutocompleteStyle {
     pub selected_item: ContainerStyle,
     pub hovered_item: ContainerStyle,
     pub match_highlight: HighlightStyle,
+    pub server_name_container: ContainerStyle,
+    pub server_name_color: Color,
+    pub server_name_size_percent: f32,
 }
 
 #[derive(Clone, Copy, Default, Deserialize, JsonSchema)]
@@ -1159,6 +1161,17 @@ pub struct AssistantStyle {
     pub api_key_editor: FieldEditor,
     pub api_key_prompt: ContainedText,
     pub saved_conversation: SavedConversation,
+    pub inline: InlineAssistantStyle,
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct InlineAssistantStyle {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub editor: FieldEditor,
+    pub disabled_editor: FieldEditor,
+    pub pending_edit_background: Color,
+    pub include_conversation: ToggleIconButtonStyle,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]

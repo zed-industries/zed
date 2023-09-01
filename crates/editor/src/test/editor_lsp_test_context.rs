@@ -51,7 +51,7 @@ impl<'a> EditorLspTestContext<'a> {
             language
                 .path_suffixes()
                 .first()
-                .unwrap_or(&"txt".to_string())
+                .expect("language must have a path suffix for EditorLspTestContext")
         );
 
         let mut fake_servers = language

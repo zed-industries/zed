@@ -1,11 +1,11 @@
 use crate::{search::PathMatcher, worktree::WorktreeModelHandle, Event, *};
-use fs::{FakeFs, LineEnding, RealFs};
+use fs::{FakeFs, RealFs};
 use futures::{future, StreamExt};
 use gpui::{executor::Deterministic, test::subscribe, AppContext};
 use language::{
     language_settings::{AllLanguageSettings, LanguageSettingsContent},
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, FakeLspAdapter, LanguageConfig,
-    OffsetRangeExt, Point, ToPoint,
+    LineEnding, OffsetRangeExt, Point, ToPoint,
 };
 use lsp::Url;
 use parking_lot::Mutex;
@@ -2272,7 +2272,18 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
         },
         Some(tree_sitter_typescript::language_typescript()),
     );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
+    let mut fake_language_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![":".to_string()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        }))
+        .await;
 
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
@@ -2358,7 +2369,18 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
         },
         Some(tree_sitter_typescript::language_typescript()),
     );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
+    let mut fake_language_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![":".to_string()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        }))
+        .await;
 
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(

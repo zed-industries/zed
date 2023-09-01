@@ -20,7 +20,7 @@ anyhow.workspace = true
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553", optional = true }
 futures.workspace = true
 log.workspace = true
-lsp-types = "0.94"
+lsp-types = { git = "https://github.com/zed-industries/lsp-types", branch = "updated-completion-list-item-defaults" }
 parking_lot.workspace = true
 postage.workspace = true
 serde.workspace = true

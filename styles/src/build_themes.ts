@@ -21,9 +21,7 @@ function clear_themes(theme_directory: string) {
     }
 }
 
-const all_themes: Theme[] = themes.map((theme) =>
-    create_theme(theme)
-)
+const all_themes: Theme[] = themes.map((theme) => create_theme(theme))
 
 function write_themes(themes: Theme[], output_directory: string) {
     clear_themes(output_directory)
@@ -37,10 +35,7 @@ function write_themes(themes: Theme[], output_directory: string) {
         style_tree.base_theme = theme
         const style_tree_json = JSON.stringify(style_tree, null, 2)
         const temp_path = path.join(temp_directory, `${theme.name}.json`)
-        const out_path = path.join(
-            output_directory,
-            `${theme.name}.json`
-        )
+        const out_path = path.join(output_directory, `${theme.name}.json`)
         fs.writeFileSync(temp_path, style_tree_json)
         fs.renameSync(temp_path, out_path)
         console.log(`- ${out_path} created`)

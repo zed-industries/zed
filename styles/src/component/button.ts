@@ -5,7 +5,7 @@ import { TextStyle, background } from "../style_tree/components"
 // eslint-disable-next-line @typescript-eslint/no-namespace
 export namespace Button {
     export type Options = {
-        layer: Layer,
+        layer: Layer
         background: keyof Theme["lowest"]
         color: keyof Theme["lowest"]
         variant: Button.Variant
@@ -16,13 +16,13 @@ export namespace Button {
             bottom?: number
             left?: number
             right?: number
-        },
+        }
         states: {
-            enabled?: boolean,
-            hovered?: boolean,
-            pressed?: boolean,
-            focused?: boolean,
-            disabled?: boolean,
+            enabled?: boolean
+            hovered?: boolean
+            pressed?: boolean
+            focused?: boolean
+            disabled?: boolean
         }
     }
 
@@ -38,26 +38,26 @@ export namespace Button {
     export const CORNER_RADIUS = 6
 
     export const variant = {
-        Default: 'filled',
-        Outline: 'outline',
-        Ghost: 'ghost'
+        Default: "filled",
+        Outline: "outline",
+        Ghost: "ghost",
     } as const
 
-    export type Variant = typeof variant[keyof typeof variant]
+    export type Variant = (typeof variant)[keyof typeof variant]
 
     export const shape = {
-        Rectangle: 'rectangle',
-        Square: 'square'
+        Rectangle: "rectangle",
+        Square: "square",
     } as const
 
-    export type Shape = typeof shape[keyof typeof shape]
+    export type Shape = (typeof shape)[keyof typeof shape]
 
     export const size = {
         Small: "sm",
-        Medium: "md"
+        Medium: "md",
     } as const
 
-    export type Size = typeof size[keyof typeof size]
+    export type Size = (typeof size)[keyof typeof size]
 
     export type BaseStyle = {
         corder_radius: number
@@ -67,8 +67,8 @@ export namespace Button {
             bottom: number
             left: number
             right: number
-        },
-        margin: Button.Options['margin']
+        }
+        margin: Button.Options["margin"]
         button_height: number
     }
 
@@ -81,15 +81,18 @@ export namespace Button {
             shape: Button.shape.Rectangle,
             states: {
                 hovered: true,
-                pressed: true
-            }
+                pressed: true,
+            },
         }
     ): BaseStyle => {
         const theme = useTheme()
 
         const layer = options.layer ?? theme.middle
         const color = options.color ?? "base"
-        const background_color = options.variant === Button.variant.Ghost ? null : background(layer, options.background ?? color)
+        const background_color =
+            options.variant === Button.variant.Ghost
+                ? null
+                : background(layer, options.background ?? color)
 
         const m = {
             top: options.margin?.top ?? 0,
@@ -106,8 +109,14 @@ export namespace Button {
             padding: {
                 top: padding,
                 bottom: padding,
-                left: options.shape === Button.shape.Rectangle ? padding + Button.RECTANGLE_PADDING : padding,
-                right: options.shape === Button.shape.Rectangle ? padding + Button.RECTANGLE_PADDING : padding
+                left:
+                    options.shape === Button.shape.Rectangle
+                        ? padding + Button.RECTANGLE_PADDING
+                        : padding,
+                right:
+                    options.shape === Button.shape.Rectangle
+                        ? padding + Button.RECTANGLE_PADDING
+                        : padding,
             },
             margin: m,
             button_height: 16,

@@ -46,7 +46,7 @@ use theme::{SyntaxTheme, Theme};
 use tree_sitter::{self, Query};
 use unicase::UniCase;
 use util::{http::HttpClient, paths::PathExt};
-use util::{merge_json_value_into, post_inc, ResultExt, TryFutureExt as _, UnwrapFuture};
+use util::{post_inc, ResultExt, TryFutureExt as _, UnwrapFuture};
 
 #[cfg(any(test, feature = "test-support"))]
 use futures::channel::mpsc;
@@ -57,6 +57,7 @@ pub use diagnostic_set::DiagnosticEntry;
 pub use lsp::LanguageServerId;
 pub use outline::{Outline, OutlineItem};
 pub use syntax_map::{OwnedSyntaxLayerInfo, SyntaxLayerInfo};
+pub use text::LineEnding;
 pub use tree_sitter::{Parser, Tree};
 
 pub fn init(cx: &mut AppContext) {
@@ -90,6 +91,7 @@ pub struct LanguageServerName(pub Arc<str>);
 /// once at startup, and caches the results.
 pub struct CachedLspAdapter {
     pub name: LanguageServerName,
+    pub short_name: &'static str,
     pub initialization_options: Option<Value>,
     pub disk_based_diagnostic_sources: Vec<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
@@ -100,6 +102,7 @@ pub struct CachedLspAdapter {
 impl CachedLspAdapter {
     pub async fn new(adapter: Arc<dyn LspAdapter>) -> Arc<Self> {
         let name = adapter.name().await;
+        let short_name = adapter.short_name();
         let initialization_options = adapter.initialization_options().await;
         let disk_based_diagnostic_sources = adapter.disk_based_diagnostic_sources().await;
         let disk_based_diagnostics_progress_token =
@@ -108,6 +111,7 @@ impl CachedLspAdapter {
 
         Arc::new(CachedLspAdapter {
             name,
+            short_name,
             initialization_options,
             disk_based_diagnostic_sources,
             disk_based_diagnostics_progress_token,
@@ -175,10 +179,7 @@ impl CachedLspAdapter {
         self.adapter.code_action_kinds()
     }
 
-    pub fn workspace_configuration(
-        &self,
-        cx: &mut AppContext,
-    ) -> Option<BoxFuture<'static, Value>> {
+    pub fn workspace_configuration(&self, cx: &mut AppContext) -> BoxFuture<'static, Value> {
         self.adapter.workspace_configuration(cx)
     }
 
@@ -218,6 +219,8 @@ pub trait LspAdapterDelegate: Send + Sync {
 #[async_trait]
 pub trait LspAdapter: 'static + Send + Sync {
     async fn name(&self) -> LanguageServerName;
+
+    fn short_name(&self) -> &'static str;
 
     async fn fetch_latest_server_version(
         &self,
@@ -287,8 +290,8 @@ pub trait LspAdapter: 'static + Send + Sync {
         None
     }
 
-    fn workspace_configuration(&self, _: &mut AppContext) -> Option<BoxFuture<'static, Value>> {
-        None
+    fn workspace_configuration(&self, _: &mut AppContext) -> BoxFuture<'static, Value> {
+        futures::future::ready(serde_json::json!({})).boxed()
     }
 
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
@@ -343,6 +346,8 @@ pub struct LanguageConfig {
     #[serde(default)]
     pub block_comment: Option<(Arc<str>, Arc<str>)>,
     #[serde(default)]
+    pub scope_opt_in_language_servers: Vec<String>,
+    #[serde(default)]
     pub overrides: HashMap<String, LanguageConfigOverride>,
     #[serde(default)]
     pub word_characters: HashSet<char>,
@@ -373,6 +378,10 @@ pub struct LanguageConfigOverride {
     pub block_comment: Override<(Arc<str>, Arc<str>)>,
     #[serde(skip_deserializing)]
     pub disabled_bracket_ixs: Vec<u16>,
+    #[serde(default)]
+    pub word_characters: Override<HashSet<char>>,
+    #[serde(default)]
+    pub opt_into_language_servers: Vec<String>,
 }
 
 #[derive(Clone, Deserialize, Debug)]
@@ -411,6 +420,7 @@ impl Default for LanguageConfig {
             autoclose_before: Default::default(),
             line_comment: Default::default(),
             block_comment: Default::default(),
+            scope_opt_in_language_servers: Default::default(),
             overrides: Default::default(),
             collapsed_placeholder: Default::default(),
             word_characters: Default::default(),
@@ -683,41 +693,6 @@ impl LanguageRegistry {
             .collect::<Vec<_>>();
         result.sort_unstable_by_key(|language_name| language_name.to_lowercase());
         result
-    }
-
-    pub fn workspace_configuration(&self, cx: &mut AppContext) -> Task<serde_json::Value> {
-        let lsp_adapters = {
-            let state = self.state.read();
-            state
-                .available_languages
-                .iter()
-                .filter(|l| !l.loaded)
-                .flat_map(|l| l.lsp_adapters.clone())
-                .chain(
-                    state
-                        .languages
-                        .iter()
-                        .flat_map(|language| &language.adapters)
-                        .map(|adapter| adapter.adapter.clone()),
-                )
-                .collect::<Vec<_>>()
-        };
-
-        let mut language_configs = Vec::new();
-        for adapter in &lsp_adapters {
-            if let Some(language_config) = adapter.workspace_configuration(cx) {
-                language_configs.push(language_config);
-            }
-        }
-
-        cx.background().spawn(async move {
-            let mut config = serde_json::json!({});
-            let language_configs = futures::future::join_all(language_configs).await;
-            for language_config in language_configs {
-                merge_json_value_into(language_config, &mut config);
-            }
-            config
-        })
     }
 
     pub fn add(&self, language: Arc<Language>) {
@@ -1383,13 +1358,23 @@ impl Language {
         Ok(self)
     }
 
-    pub fn with_override_query(mut self, source: &str) -> Result<Self> {
+    pub fn with_override_query(mut self, source: &str) -> anyhow::Result<Self> {
         let query = Query::new(self.grammar_mut().ts_language, source)?;
 
         let mut override_configs_by_id = HashMap::default();
         for (ix, name) in query.capture_names().iter().enumerate() {
             if !name.starts_with('_') {
                 let value = self.config.overrides.remove(name).unwrap_or_default();
+                for server_name in &value.opt_into_language_servers {
+                    if !self
+                        .config
+                        .scope_opt_in_language_servers
+                        .contains(server_name)
+                    {
+                        util::debug_panic!("Server {server_name:?} has been opted-in by scope {name:?} but has not been marked as an opt-in server");
+                    }
+                }
+
                 override_configs_by_id.insert(ix as u32, (name.clone(), value));
             }
         }
@@ -1595,6 +1580,13 @@ impl LanguageScope {
         .map(|e| (&e.0, &e.1))
     }
 
+    pub fn word_characters(&self) -> Option<&HashSet<char>> {
+        Override::as_option(
+            self.config_override().map(|o| &o.word_characters),
+            Some(&self.language.config.word_characters),
+        )
+    }
+
     pub fn brackets(&self) -> impl Iterator<Item = (&BracketPair, bool)> {
         let mut disabled_ids = self
             .config_override()
@@ -1619,6 +1611,20 @@ impl LanguageScope {
 
     pub fn should_autoclose_before(&self, c: char) -> bool {
         c.is_whitespace() || self.language.config.autoclose_before.contains(c)
+    }
+
+    pub fn language_allowed(&self, name: &LanguageServerName) -> bool {
+        let config = &self.language.config;
+        let opt_in_servers = &config.scope_opt_in_language_servers;
+        if opt_in_servers.iter().any(|o| *o == *name.0) {
+            if let Some(over) = self.config_override() {
+                over.opt_into_language_servers.iter().any(|o| *o == *name.0)
+            } else {
+                false
+            }
+        } else {
+            true
+        }
     }
 
     fn config_override(&self) -> Option<&LanguageConfigOverride> {
@@ -1723,6 +1729,10 @@ impl Default for FakeLspAdapter {
 impl LspAdapter for Arc<FakeLspAdapter> {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName(self.name.into())
+    }
+
+    fn short_name(&self) -> &'static str {
+        "FakeLspAdapter"
     }
 
     async fn fetch_latest_server_version(

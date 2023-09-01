@@ -56,6 +56,10 @@ impl LspAdapter for TypeScriptLspAdapter {
         LanguageServerName("typescript-language-server".into())
     }
 
+    fn short_name(&self) -> &'static str {
+        "tsserver"
+    }
+
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
@@ -202,22 +206,24 @@ impl EsLintLspAdapter {
 
 #[async_trait]
 impl LspAdapter for EsLintLspAdapter {
-    fn workspace_configuration(&self, _: &mut AppContext) -> Option<BoxFuture<'static, Value>> {
-        Some(
-            future::ready(json!({
-                "": {
-                    "validate": "on",
-                    "rulesCustomizations": [],
-                    "run": "onType",
-                    "nodePath": null,
-                }
-            }))
-            .boxed(),
-        )
+    fn workspace_configuration(&self, _: &mut AppContext) -> BoxFuture<'static, Value> {
+        future::ready(json!({
+            "": {
+                "validate": "on",
+                "rulesCustomizations": [],
+                "run": "onType",
+                "nodePath": null,
+            }
+        }))
+        .boxed()
     }
 
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("eslint".into())
+    }
+
+    fn short_name(&self) -> &'static str {
+        "eslint"
     }
 
     async fn fetch_latest_server_version(

@@ -1,59 +1,53 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use collections::HashMap;
-use feature_flags::FeatureFlagAppExt;
-use futures::{future::BoxFuture, FutureExt, StreamExt};
-use gpui::AppContext;
-use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
+use futures::StreamExt;
+use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 use serde_json::json;
-use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::fs;
 use std::{
     any::Any,
     ffi::OsString,
-    future,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{paths, ResultExt};
+use util::ResultExt;
 
 const SERVER_PATH: &'static str =
-    "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
+    "node_modules/vscode-langservers-extracted/bin/vscode-css-language-server";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
 }
 
-pub struct JsonLspAdapter {
+pub struct CssLspAdapter {
     node: Arc<NodeRuntime>,
-    languages: Arc<LanguageRegistry>,
 }
 
-impl JsonLspAdapter {
-    pub fn new(node: Arc<NodeRuntime>, languages: Arc<LanguageRegistry>) -> Self {
-        JsonLspAdapter { node, languages }
+impl CssLspAdapter {
+    pub fn new(node: Arc<NodeRuntime>) -> Self {
+        CssLspAdapter { node }
     }
 }
 
 #[async_trait]
-impl LspAdapter for JsonLspAdapter {
+impl LspAdapter for CssLspAdapter {
     async fn name(&self) -> LanguageServerName {
-        LanguageServerName("json-language-server".into())
+        LanguageServerName("vscode-css-language-server".into())
     }
 
     fn short_name(&self) -> &'static str {
-        "json"
+        "css"
     }
 
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
+    ) -> Result<Box<dyn 'static + Any + Send>> {
         Ok(Box::new(
             self.node
-                .npm_package_latest_version("vscode-json-languageserver")
+                .npm_package_latest_version("vscode-langservers-extracted")
                 .await?,
         ) as Box<_>)
     }
@@ -71,7 +65,7 @@ impl LspAdapter for JsonLspAdapter {
             self.node
                 .npm_install_packages(
                     &container_dir,
-                    [("vscode-json-languageserver", version.as_str())],
+                    [("vscode-langservers-extracted", version.as_str())],
                 )
                 .await?;
         }
@@ -102,48 +96,6 @@ impl LspAdapter for JsonLspAdapter {
             "provideFormatter": true
         }))
     }
-
-    fn workspace_configuration(
-        &self,
-        cx: &mut AppContext,
-    ) -> BoxFuture<'static, serde_json::Value> {
-        let action_names = cx.all_action_names().collect::<Vec<_>>();
-        let staff_mode = cx.is_staff();
-        let language_names = &self.languages.language_names();
-        let settings_schema = cx.global::<SettingsStore>().json_schema(
-            &SettingsJsonSchemaParams {
-                language_names,
-                staff_mode,
-            },
-            cx,
-        );
-
-        future::ready(serde_json::json!({
-            "json": {
-                "format": {
-                    "enable": true,
-                },
-                "schemas": [
-                    {
-                        "fileMatch": [
-                            schema_file_match(&paths::SETTINGS),
-                            &*paths::LOCAL_SETTINGS_RELATIVE_PATH,
-                        ],
-                        "schema": settings_schema,
-                    },
-                    {
-                        "fileMatch": [schema_file_match(&paths::KEYMAP)],
-                        "schema": KeymapFile::generate_json_schema(&action_names),
-                    }
-                ]
-            }
-        }))
-        .boxed()
-    }
-
-    async fn language_ids(&self) -> HashMap<String, String> {
-        [("JSON".into(), "jsonc".into())].into_iter().collect()
-    }
 }
 
 async fn get_cached_server_binary(
@@ -159,7 +111,6 @@ async fn get_cached_server_binary(
                 last_version_dir = Some(entry.path());
             }
         }
-
         let last_version_dir = last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
         let server_path = last_version_dir.join(SERVER_PATH);
         if server_path.exists() {
@@ -176,9 +127,4 @@ async fn get_cached_server_binary(
     })()
     .await
     .log_err()
-}
-
-fn schema_file_match(path: &Path) -> &Path {
-    path.strip_prefix(path.parent().unwrap().parent().unwrap())
-        .unwrap()
 }
