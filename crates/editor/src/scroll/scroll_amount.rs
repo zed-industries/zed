@@ -39,7 +39,7 @@ impl ScrollAmount {
                 .visible_line_count()
                 // subtract one to leave an anchor line
                 // round towards zero (so page-up and page-down are symmetric)
-                .map(|l| ((l - 1.) * count).trunc())
+                .map(|l| (l * count).trunc() - count.signum())
                 .unwrap_or(0.),
         }
     }
