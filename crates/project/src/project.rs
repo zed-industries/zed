@@ -50,6 +50,7 @@ use lsp::{
 };
 use lsp_command::*;
 use postage::watch;
+use prettier::Prettier;
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use search::SearchQuery;
@@ -152,6 +153,7 @@ pub struct Project {
     copilot_lsp_subscription: Option<gpui::Subscription>,
     copilot_log_subscription: Option<lsp::Subscription>,
     current_lsp_settings: HashMap<Arc<str>, LspSettings>,
+    prettier_instances: HashMap<(WorktreeId, PathBuf), Shared<Task<Result<Arc<Prettier>>>>>,
 }
 
 struct DelayedDebounced {
@@ -660,6 +662,7 @@ impl Project {
                 copilot_lsp_subscription,
                 copilot_log_subscription: None,
                 current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
+                prettier_instances: HashMap::default(),
             }
         })
     }
@@ -757,6 +760,7 @@ impl Project {
                 copilot_lsp_subscription,
                 copilot_log_subscription: None,
                 current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
+                prettier_instances: HashMap::default(),
             };
             for worktree in worktrees {
                 let _ = this.add_worktree(&worktree, cx);
@@ -4027,6 +4031,7 @@ impl Project {
                     enum FormatOperation {
                         Lsp(Vec<(Range<Anchor>, String)>),
                         External(Diff),
+                        Prettier(Diff),
                     }
 
                     // Apply language-specific formatting using either a language server
@@ -4062,8 +4067,8 @@ impl Project {
                         | (_, FormatOnSave::External { command, arguments }) => {
                             if let Some(buffer_abs_path) = buffer_abs_path {
                                 format_operation = Self::format_via_external_command(
-                                    &buffer,
-                                    &buffer_abs_path,
+                                    buffer,
+                                    buffer_abs_path,
                                     &command,
                                     &arguments,
                                     &mut cx,
@@ -4074,6 +4079,45 @@ impl Project {
                                     command
                                 ))?
                                 .map(FormatOperation::External);
+                            }
+                        }
+                        (Formatter::Auto, FormatOnSave::On | FormatOnSave::Off) => {
+                            if let Some(prettier) = this.update(&mut cx, |project, _| {
+                                project.prettier_instance_for_buffer(buffer)
+                            }) {
+                                format_operation = Some(FormatOperation::Prettier(
+                                    prettier
+                                        .format(buffer)
+                                        .await
+                                        .context("autoformatting via prettier")?,
+                                ));
+                            } else if let Some((language_server, buffer_abs_path)) =
+                                language_server.as_ref().zip(buffer_abs_path.as_ref())
+                            {
+                                format_operation = Some(FormatOperation::Lsp(
+                                    Self::format_via_lsp(
+                                        &this,
+                                        &buffer,
+                                        buffer_abs_path,
+                                        &language_server,
+                                        tab_size,
+                                        &mut cx,
+                                    )
+                                    .await
+                                    .context("failed to format via language server")?,
+                                ));
+                            }
+                        }
+                        (Formatter::Prettier { .. }, FormatOnSave::On | FormatOnSave::Off) => {
+                            if let Some(prettier) = this.update(&mut cx, |project, _| {
+                                project.prettier_instance_for_buffer(buffer)
+                            }) {
+                                format_operation = Some(FormatOperation::Prettier(
+                                    prettier
+                                        .format(buffer)
+                                        .await
+                                        .context("formatting via prettier")?,
+                                ));
                             }
                         }
                     };
@@ -4098,6 +4142,9 @@ impl Project {
                                     b.edit(edits, None, cx);
                                 }
                                 FormatOperation::External(diff) => {
+                                    b.apply_diff(diff, cx);
+                                }
+                                FormatOperation::Prettier(diff) => {
                                     b.apply_diff(diff, cx);
                                 }
                             }
@@ -8108,6 +8155,11 @@ impl Project {
         } else {
             Vec::new()
         }
+    }
+
+    fn prettier_instance_for_buffer(&self, buffer: &ModelHandle<Buffer>) -> Option<Prettier> {
+        // TODO kb
+        None
     }
 }
 

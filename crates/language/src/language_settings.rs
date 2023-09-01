@@ -149,10 +149,15 @@ pub enum ShowWhitespaceSetting {
     All,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Formatter {
+    #[default]
+    Auto,
     LanguageServer,
+    Prettier {
+        config: (), // Support some of the most important settings in the prettier-vscode extension.
+    },
     External {
         command: Arc<str>,
         arguments: Arc<[String]>,

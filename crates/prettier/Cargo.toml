@@ -3,7 +3,18 @@ name = "prettier"
 version = "0.1.0"
 edition = "2021"
 
-[dependencies]
-
 [lib]
 path = "src/prettier.rs"
+
+[dependencies]
+language = { path = "../language" }
+gpui = { path = "../gpui" }
+fs = { path = "../fs" }
+
+anyhow.workspace = true
+
+
+[dev-dependencies]
+language = { path = "../language", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
+fs = { path = "../fs",  features = ["test-support"] }
