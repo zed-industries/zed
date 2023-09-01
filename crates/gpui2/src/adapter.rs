@@ -38,7 +38,7 @@ impl<V: 'static> gpui::Element<V> for AdapterElement<V> {
         &mut self,
         scene: &mut gpui::SceneBuilder,
         bounds: RectF,
-        visible_bounds: RectF,
+        _visible_bounds: RectF,
         layout_data: &mut Option<(LayoutEngine, LayoutId)>,
         view: &mut V,
         legacy_cx: &mut gpui::PaintContext<V>,
@@ -53,24 +53,24 @@ impl<V: 'static> gpui::Element<V> for AdapterElement<V> {
 
     fn rect_for_text_range(
         &self,
-        range_utf16: std::ops::Range<usize>,
-        bounds: RectF,
-        visible_bounds: RectF,
-        layout: &Self::LayoutState,
-        paint: &Self::PaintState,
-        view: &V,
-        cx: &gpui::ViewContext<V>,
+        _range_utf16: std::ops::Range<usize>,
+        _bounds: RectF,
+        _visible_bounds: RectF,
+        _layout: &Self::LayoutState,
+        _paint: &Self::PaintState,
+        _view: &V,
+        _cx: &gpui::ViewContext<V>,
     ) -> Option<RectF> {
         todo!("implement before merging to main")
     }
 
     fn debug(
         &self,
-        bounds: RectF,
-        layout: &Self::LayoutState,
-        paint: &Self::PaintState,
-        view: &V,
-        cx: &gpui::ViewContext<V>,
+        _bounds: RectF,
+        _layout: &Self::LayoutState,
+        _paint: &Self::PaintState,
+        _view: &V,
+        _cx: &gpui::ViewContext<V>,
     ) -> gpui::serde_json::Value {
         todo!("implement before merging to main")
     }

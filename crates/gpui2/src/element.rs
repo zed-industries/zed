@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 pub use crate::layout_context::LayoutContext;
 pub use crate::paint_context::PaintContext;
 use anyhow::Result;
@@ -56,6 +54,7 @@ enum ElementPhase<V: 'static, E: Element<V>> {
         layout_id: LayoutId,
         paint_state: E::PaintState,
     },
+    #[allow(dead_code)]
     PostPaint {
         layout: Layout,
         paint_state: E::PaintState,

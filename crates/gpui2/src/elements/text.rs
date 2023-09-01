@@ -36,7 +36,7 @@ impl<V: 'static> Element<V> for Text {
 
         let layout_id = cx.add_measured_layout_node(Default::default(), {
             let paint_state = paint_state.clone();
-            move |params| {
+            move |_params| {
                 let line_layout = fonts.layout_line(
                     text.as_ref(),
                     text_style.font_size,
