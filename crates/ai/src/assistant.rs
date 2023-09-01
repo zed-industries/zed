@@ -513,10 +513,13 @@ impl AssistantPanel {
             return;
         };
 
+        self.inline_prompt_history
+            .retain(|prompt| prompt != user_prompt);
         self.inline_prompt_history.push_back(user_prompt.into());
         if self.inline_prompt_history.len() > Self::INLINE_PROMPT_HISTORY_MAX_LEN {
             self.inline_prompt_history.pop_front();
         }
+
         let range = pending_assist.range.clone();
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
         let selected_text = snapshot
