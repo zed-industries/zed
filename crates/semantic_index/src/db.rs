@@ -18,7 +18,7 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
-    time::SystemTime,
+    time::{Instant, SystemTime},
 };
 use util::TryFutureExt;
 
@@ -54,6 +54,12 @@ impl VectorDatabase {
                 let path = path.clone();
                 async move {
                     let mut connection = rusqlite::Connection::open(&path)?;
+
+                    connection.pragma_update(None, "journal_mode", "wal")?;
+                    connection.pragma_update(None, "synchronous", "normal")?;
+                    connection.pragma_update(None, "cache_size", 1000000)?;
+                    connection.pragma_update(None, "temp_store", "MEMORY")?;
+
                     while let Ok(transaction) = transactions_rx.recv().await {
                         transaction(&mut connection);
                     }
@@ -222,6 +228,7 @@ impl VectorDatabase {
 
             let file_id = db.last_insert_rowid();
 
+            let t0 = Instant::now();
             let mut query = db.prepare(
                 "
                 INSERT INTO documents
@@ -229,6 +236,10 @@ impl VectorDatabase {
                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                 ",
             )?;
+            log::trace!(
+                "Preparing Query Took: {:?} milliseconds",
+                t0.elapsed().as_millis()
+            );
 
             for document in documents {
                 query.execute(params![

@@ -81,7 +81,6 @@ pub fn init(
         let semantic_index = SemanticIndex::new(
             fs,
             db_file_path,
-            // Arc::new(embedding::DummyEmbeddings {}),
             Arc::new(OpenAIEmbeddings {
                 client: http_client,
                 executor: cx.background(),
