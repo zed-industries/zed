@@ -3,11 +3,11 @@ use crate::{
     embedding_queue::EmbeddingQueue,
     parsing::{subtract_ranges, CodeContextRetriever, Document, DocumentDigest},
     semantic_index_settings::SemanticIndexSettings,
-    FileToEmbed, JobHandle, SearchResult, SemanticIndex,
+    FileToEmbed, JobHandle, SearchResult, SemanticIndex, EMBEDDING_QUEUE_FLUSH_TIMEOUT,
 };
 use anyhow::Result;
 use async_trait::async_trait;
-use gpui::{Task, TestAppContext};
+use gpui::{executor::Deterministic, Task, TestAppContext};
 use language::{Language, LanguageConfig, LanguageRegistry, ToOffset};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
@@ -34,7 +34,7 @@ fn init_logger() {
 }
 
 #[gpui::test]
-async fn test_semantic_index(cx: &mut TestAppContext) {
+async fn test_semantic_index(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
     init_test(cx);
 
     let fs = FakeFs::new(cx.background());
@@ -98,7 +98,7 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
         .await
         .unwrap();
     assert_eq!(file_count, 3);
-    cx.foreground().run_until_parked();
+    deterministic.advance_clock(EMBEDDING_QUEUE_FLUSH_TIMEOUT);
     assert_eq!(*outstanding_file_count.borrow(), 0);
 
     let search_results = semantic_index
@@ -188,7 +188,7 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
     .await
     .unwrap();
 
-    cx.foreground().run_until_parked();
+    deterministic.advance_clock(EMBEDDING_QUEUE_FLUSH_TIMEOUT);
 
     let prev_embedding_count = embedding_provider.embedding_count();
     let (file_count, outstanding_file_count) = semantic_index
@@ -197,7 +197,7 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
         .unwrap();
     assert_eq!(file_count, 1);
 
-    cx.foreground().run_until_parked();
+    deterministic.advance_clock(EMBEDDING_QUEUE_FLUSH_TIMEOUT);
     assert_eq!(*outstanding_file_count.borrow(), 0);
 
     assert_eq!(
