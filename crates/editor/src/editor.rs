@@ -1559,7 +1559,7 @@ impl Editor {
             .excerpt_containing(self.selections.newest_anchor().head(), cx)
     }
 
-    fn style(&self, cx: &AppContext) -> EditorStyle {
+    pub fn style(&self, cx: &AppContext) -> EditorStyle {
         build_style(
             settings::get::<ThemeSettings>(cx),
             self.get_field_editor_theme.as_deref(),
