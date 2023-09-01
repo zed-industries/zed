@@ -38,7 +38,7 @@ use util::{
 };
 use workspace::WorkspaceCreated;
 
-const SEMANTIC_INDEX_VERSION: usize = 8;
+const SEMANTIC_INDEX_VERSION: usize = 9;
 const BACKGROUND_INDEXING_DELAY: Duration = Duration::from_secs(600);
 const EMBEDDING_QUEUE_FLUSH_TIMEOUT: Duration = Duration::from_millis(250);
 
