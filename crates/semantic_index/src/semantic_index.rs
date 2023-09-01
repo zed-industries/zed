@@ -379,11 +379,14 @@ impl SemanticIndex {
         };
 
         let embeddings_for_digest = {
-            let mut worktree_id_file_paths = Vec::new();
+            let mut worktree_id_file_paths = HashMap::new();
             for (path, _) in &project_state.changed_paths {
                 if let Some(worktree_db_id) = project_state.db_id_for_worktree_id(path.worktree_id)
                 {
-                    worktree_id_file_paths.push((worktree_db_id, path.path.to_path_buf()));
+                    worktree_id_file_paths
+                        .entry(worktree_db_id)
+                        .or_insert(Vec::new())
+                        .push(path.path.clone());
                 }
             }
             self.db.embeddings_for_files(worktree_id_file_paths)
@@ -580,11 +583,14 @@ impl SemanticIndex {
         cx.spawn(|this, mut cx| async move {
             let embeddings_for_digest = this.read_with(&cx, |this, cx| {
                 if let Some(state) = this.projects.get(&project.downgrade()) {
-                    let mut worktree_id_file_paths = Vec::new();
+                    let mut worktree_id_file_paths = HashMap::default();
                     for (path, _) in &state.changed_paths {
                         if let Some(worktree_db_id) = state.db_id_for_worktree_id(path.worktree_id)
                         {
-                            worktree_id_file_paths.push((worktree_db_id, path.path.to_path_buf()));
+                            worktree_id_file_paths
+                                .entry(worktree_db_id)
+                                .or_insert(Vec::new())
+                                .push(path.path.clone());
                         }
                     }
 

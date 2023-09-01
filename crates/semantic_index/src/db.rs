@@ -265,58 +265,43 @@ impl VectorDatabase {
         })
     }
 
-    pub fn embeddings_for_file(
-        &self,
-        worktree_id: i64,
-        relative_path: PathBuf,
-    ) -> impl Future<Output = Result<HashMap<DocumentDigest, Embedding>>> {
-        let relative_path = relative_path.to_string_lossy().into_owned();
-        self.transact(move |db| {
-            let mut query = db.prepare("SELECT digest, embedding FROM documents LEFT JOIN files ON files.id = documents.file_id WHERE files.worktree_id = ?1 AND files.relative_path = ?2")?;
-            let mut result: HashMap<DocumentDigest, Embedding> = HashMap::new();
-            for row in query.query_map(params![worktree_id, relative_path], |row| {
-                Ok((row.get::<_, DocumentDigest>(0)?.into(), row.get::<_, Embedding>(1)?.into()))
-            })? {
-                let row = row?;
-                result.insert(row.0, row.1);
-            }
-            Ok(result)
-        })
-    }
-
     pub fn embeddings_for_files(
         &self,
-        worktree_id_file_paths: Vec<(i64, PathBuf)>,
+        worktree_id_file_paths: HashMap<i64, Vec<Arc<Path>>>,
     ) -> impl Future<Output = Result<HashMap<DocumentDigest, Embedding>>> {
-        todo!();
-        // The remainder of the code is wired up.
-        // I'm having a bit of trouble figuring out the rusqlite syntax for a WHERE (files.worktree_id, files.relative_path) IN (VALUES (?, ?), (?, ?)) query
-        async { Ok(HashMap::new()) }
-        // let mut embeddings_by_digest = HashMap::new();
-        // self.transact(move |db| {
+        self.transact(move |db| {
+            let mut query = db.prepare(
+                "
+                SELECT digest, embedding
+                FROM documents
+                LEFT JOIN files ON files.id = documents.file_id
+                WHERE files.worktree_id = ? AND files.relative_path IN rarray(?)
+            ",
+            )?;
+            let mut embeddings_by_digest = HashMap::new();
+            for (worktree_id, file_paths) in worktree_id_file_paths {
+                let file_paths = Rc::new(
+                    file_paths
+                        .into_iter()
+                        .map(|p| Value::Text(p.to_string_lossy().into_owned()))
+                        .collect::<Vec<_>>(),
+                );
+                let rows = query.query_map(params![worktree_id, file_paths], |row| {
+                    Ok((
+                        row.get::<_, DocumentDigest>(0)?,
+                        row.get::<_, Embedding>(1)?,
+                    ))
+                })?;
 
-        //     let worktree_ids: Rc<Vec<Value>> = Rc::new(
-        //         worktree_id_file_paths
-        //             .iter()
-        //             .map(|(id, _)| Value::from(*id))
-        //             .collect(),
-        //     );
-        //     let file_paths: Rc<Vec<Value>> = Rc::new(worktree_id_file_paths
-        //         .iter()
-        //         .map(|(_, path)| Value::from(path.to_string_lossy().to_string()))
-        //         .collect());
+                for row in rows {
+                    if let Ok(row) = row {
+                        embeddings_by_digest.insert(row.0, row.1);
+                    }
+                }
+            }
 
-        //     let mut query = db.prepare("SELECT digest, embedding FROM documents LEFT JOIN files ON files.id = documents.file_id WHERE (files.worktree_id, files.relative_path) IN (VALUES (rarray = (?1), rarray = (?2))")?;
-
-        //     for row in query.query_map(params![worktree_ids, file_paths], |row| {
-        //         Ok((row.get::<_, DocumentDigest>(0)?, row.get::<_, Embedding>(1)?))
-        //     })? {
-        //         if let Ok(row) = row {
-        //             embeddings_by_digest.insert(row.0, row.1);
-        //         }
-        //     }
-        //     Ok(embeddings_by_digest)
-        // })
+            Ok(embeddings_by_digest)
+        })
     }
 
     pub fn find_or_create_worktree(

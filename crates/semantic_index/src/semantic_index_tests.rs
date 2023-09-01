@@ -55,6 +55,7 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
                     fn bbb() {
                         println!(\"bbbbbbbbbbbbb!\");
                     }
+                    struct pqpqpqp {}
                 ".unindent(),
                 "file3.toml": "
                     ZZZZZZZZZZZZZZZZZZ = 5
@@ -121,6 +122,7 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
             (Path::new("src/file2.rs").into(), 0),
             (Path::new("src/file3.toml").into(), 0),
             (Path::new("src/file1.rs").into(), 45),
+            (Path::new("src/file2.rs").into(), 45),
         ],
         cx,
     );
@@ -148,6 +150,7 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
             (Path::new("src/file1.rs").into(), 0),
             (Path::new("src/file2.rs").into(), 0),
             (Path::new("src/file1.rs").into(), 45),
+            (Path::new("src/file2.rs").into(), 45),
         ],
         cx,
     );
@@ -199,7 +202,7 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
 
     assert_eq!(
         embedding_provider.embedding_count() - prev_embedding_count,
-        2
+        1
     );
 }
 
