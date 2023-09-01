@@ -127,6 +127,31 @@ pub fn serialize_undo_map_entry(
     }
 }
 
+pub fn split_operations(
+    mut operations: Vec<proto::Operation>,
+) -> impl Iterator<Item = Vec<proto::Operation>> {
+    #[cfg(any(test, feature = "test-support"))]
+    const CHUNK_SIZE: usize = 5;
+
+    #[cfg(not(any(test, feature = "test-support")))]
+    const CHUNK_SIZE: usize = 100;
+
+    let mut done = false;
+    std::iter::from_fn(move || {
+        if done {
+            return None;
+        }
+
+        let operations = operations
+            .drain(..std::cmp::min(CHUNK_SIZE, operations.len()))
+            .collect::<Vec<_>>();
+        if operations.is_empty() {
+            done = true;
+        }
+        Some(operations)
+    })
+}
+
 pub fn serialize_selections(selections: &Arc<[Selection<Anchor>]>) -> Vec<proto::Selection> {
     selections.iter().map(serialize_selection).collect()
 }

@@ -251,6 +251,7 @@ impl Server {
             .add_request_handler(join_channel_buffer)
             .add_request_handler(leave_channel_buffer)
             .add_message_handler(update_channel_buffer)
+            .add_request_handler(rejoin_channel_buffers)
             .add_request_handler(get_channel_members)
             .add_request_handler(respond_to_channel_invite)
             .add_request_handler(join_channel)
@@ -854,13 +855,12 @@ async fn connection_lost(
         .await
         .trace_err();
 
-    leave_channel_buffers_for_session(&session)
-        .await
-        .trace_err();
-
     futures::select_biased! {
         _ = executor.sleep(RECONNECT_TIMEOUT).fuse() => {
             leave_room_for_session(&session).await.trace_err();
+            leave_channel_buffers_for_session(&session)
+                .await
+                .trace_err();
 
             if !session
                 .connection_pool()
@@ -2544,6 +2544,23 @@ async fn update_channel_buffer(
         },
         &session.peer,
     );
+    Ok(())
+}
+
+async fn rejoin_channel_buffers(
+    request: proto::RejoinChannelBuffers,
+    response: Response<proto::RejoinChannelBuffers>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+    let rejoin_response = db
+        .rejoin_channel_buffers(&request.buffers, session.user_id, session.connection_id)
+        .await?;
+
+    // TODO: inform channel buffer collaborators that this user has rejoined.
+
+    response.send(rejoin_response)?;
+
     Ok(())
 }
 

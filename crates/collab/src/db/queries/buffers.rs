@@ -10,8 +10,6 @@ impl Database {
         connection: ConnectionId,
     ) -> Result<proto::JoinChannelBufferResponse> {
         self.transaction(|tx| async move {
-            let tx = tx;
-
             self.check_user_is_channel_member(channel_id, user_id, &tx)
                 .await?;
 
@@ -70,7 +68,6 @@ impl Database {
             .await?;
             collaborators.push(collaborator);
 
-            // Assemble the buffer state
             let (base_text, operations) = self.get_buffer_state(&buffer, &tx).await?;
 
             Ok(proto::JoinChannelBufferResponse {
@@ -78,6 +75,7 @@ impl Database {
                 replica_id: replica_id.to_proto() as u32,
                 base_text,
                 operations,
+                epoch: buffer.epoch as u64,
                 collaborators: collaborators
                     .into_iter()
                     .map(|collaborator| proto::Collaborator {
@@ -91,6 +89,113 @@ impl Database {
         .await
     }
 
+    pub async fn rejoin_channel_buffers(
+        &self,
+        buffers: &[proto::ChannelBufferVersion],
+        user_id: UserId,
+        connection_id: ConnectionId,
+    ) -> Result<proto::RejoinChannelBuffersResponse> {
+        self.transaction(|tx| async move {
+            let mut response = proto::RejoinChannelBuffersResponse::default();
+            for client_buffer in buffers {
+                let channel_id = ChannelId::from_proto(client_buffer.channel_id);
+                if self
+                    .check_user_is_channel_member(channel_id, user_id, &*tx)
+                    .await
+                    .is_err()
+                {
+                    log::info!("user is not a member of channel");
+                    continue;
+                }
+
+                let buffer = self.get_channel_buffer(channel_id, &*tx).await?;
+                let mut collaborators = channel_buffer_collaborator::Entity::find()
+                    .filter(channel_buffer_collaborator::Column::ChannelId.eq(channel_id))
+                    .all(&*tx)
+                    .await?;
+
+                // If the buffer epoch hasn't changed since the client lost
+                // connection, then the client's buffer can be syncronized with
+                // the server's buffer.
+                if buffer.epoch as u64 != client_buffer.epoch {
+                    continue;
+                }
+
+                // If there is still a disconnected collaborator for the user,
+                // update the connection associated with that collaborator, and reuse
+                // that replica id.
+                if let Some(ix) = collaborators
+                    .iter()
+                    .position(|c| c.user_id == user_id && c.connection_lost)
+                {
+                    let self_collaborator = &mut collaborators[ix];
+                    *self_collaborator = channel_buffer_collaborator::ActiveModel {
+                        id: ActiveValue::Unchanged(self_collaborator.id),
+                        connection_id: ActiveValue::Set(connection_id.id as i32),
+                        connection_server_id: ActiveValue::Set(ServerId(
+                            connection_id.owner_id as i32,
+                        )),
+                        connection_lost: ActiveValue::Set(false),
+                        ..Default::default()
+                    }
+                    .update(&*tx)
+                    .await?;
+                } else {
+                    continue;
+                }
+
+                let client_version = version_from_wire(&client_buffer.version);
+                let serialization_version = self
+                    .get_buffer_operation_serialization_version(buffer.id, buffer.epoch, &*tx)
+                    .await?;
+
+                let mut rows = buffer_operation::Entity::find()
+                    .filter(
+                        buffer_operation::Column::BufferId
+                            .eq(buffer.id)
+                            .and(buffer_operation::Column::Epoch.eq(buffer.epoch)),
+                    )
+                    .stream(&*tx)
+                    .await?;
+
+                // Find the server's version vector and any operations
+                // that the client has not seen.
+                let mut server_version = clock::Global::new();
+                let mut operations = Vec::new();
+                while let Some(row) = rows.next().await {
+                    let row = row?;
+                    let timestamp = clock::Lamport {
+                        replica_id: row.replica_id as u16,
+                        value: row.lamport_timestamp as u32,
+                    };
+                    server_version.observe(timestamp);
+                    if !client_version.observed(timestamp) {
+                        operations.push(proto::Operation {
+                            variant: Some(operation_from_storage(row, serialization_version)?),
+                        })
+                    }
+                }
+
+                response.buffers.push(proto::RejoinedChannelBuffer {
+                    channel_id: client_buffer.channel_id,
+                    version: version_to_wire(&server_version),
+                    operations,
+                    collaborators: collaborators
+                        .into_iter()
+                        .map(|collaborator| proto::Collaborator {
+                            peer_id: Some(collaborator.connection().into()),
+                            user_id: collaborator.user_id.to_proto(),
+                            replica_id: collaborator.replica_id.0 as u32,
+                        })
+                        .collect(),
+                });
+            }
+
+            Ok(response)
+        })
+        .await
+    }
+
     pub async fn leave_channel_buffer(
         &self,
         channel_id: ChannelId,
@@ -99,6 +204,39 @@ impl Database {
         self.transaction(|tx| async move {
             self.leave_channel_buffer_internal(channel_id, connection, &*tx)
                 .await
+        })
+        .await
+    }
+
+    pub async fn leave_channel_buffers(
+        &self,
+        connection: ConnectionId,
+    ) -> Result<Vec<(ChannelId, Vec<ConnectionId>)>> {
+        self.transaction(|tx| async move {
+            #[derive(Debug, Clone, Copy, EnumIter, DeriveColumn)]
+            enum QueryChannelIds {
+                ChannelId,
+            }
+
+            let channel_ids: Vec<ChannelId> = channel_buffer_collaborator::Entity::find()
+                .select_only()
+                .column(channel_buffer_collaborator::Column::ChannelId)
+                .filter(Condition::all().add(
+                    channel_buffer_collaborator::Column::ConnectionId.eq(connection.id as i32),
+                ))
+                .into_values::<_, QueryChannelIds>()
+                .all(&*tx)
+                .await?;
+
+            let mut result = Vec::new();
+            for channel_id in channel_ids {
+                let collaborators = self
+                    .leave_channel_buffer_internal(channel_id, connection, &*tx)
+                    .await?;
+                result.push((channel_id, collaborators));
+            }
+
+            Ok(result)
         })
         .await
     }
@@ -143,43 +281,10 @@ impl Database {
         drop(rows);
 
         if connections.is_empty() {
-            self.snapshot_buffer(channel_id, &tx).await?;
+            self.snapshot_channel_buffer(channel_id, &tx).await?;
         }
 
         Ok(connections)
-    }
-
-    pub async fn leave_channel_buffers(
-        &self,
-        connection: ConnectionId,
-    ) -> Result<Vec<(ChannelId, Vec<ConnectionId>)>> {
-        self.transaction(|tx| async move {
-            #[derive(Debug, Clone, Copy, EnumIter, DeriveColumn)]
-            enum QueryChannelIds {
-                ChannelId,
-            }
-
-            let channel_ids: Vec<ChannelId> = channel_buffer_collaborator::Entity::find()
-                .select_only()
-                .column(channel_buffer_collaborator::Column::ChannelId)
-                .filter(Condition::all().add(
-                    channel_buffer_collaborator::Column::ConnectionId.eq(connection.id as i32),
-                ))
-                .into_values::<_, QueryChannelIds>()
-                .all(&*tx)
-                .await?;
-
-            let mut result = Vec::new();
-            for channel_id in channel_ids {
-                let collaborators = self
-                    .leave_channel_buffer_internal(channel_id, connection, &*tx)
-                    .await?;
-                result.push((channel_id, collaborators));
-            }
-
-            Ok(result)
-        })
-        .await
     }
 
     pub async fn get_channel_buffer_collaborators(
@@ -224,20 +329,9 @@ impl Database {
                 .await?
                 .ok_or_else(|| anyhow!("no such buffer"))?;
 
-            #[derive(Debug, Clone, Copy, EnumIter, DeriveColumn)]
-            enum QueryVersion {
-                OperationSerializationVersion,
-            }
-
-            let serialization_version: i32 = buffer
-                .find_related(buffer_snapshot::Entity)
-                .select_only()
-                .column(buffer_snapshot::Column::OperationSerializationVersion)
-                .filter(buffer_snapshot::Column::Epoch.eq(buffer.epoch))
-                .into_values::<_, QueryVersion>()
-                .one(&*tx)
-                .await?
-                .ok_or_else(|| anyhow!("missing buffer snapshot"))?;
+            let serialization_version = self
+                .get_buffer_operation_serialization_version(buffer.id, buffer.epoch, &*tx)
+                .await?;
 
             let operations = operations
                 .iter()
@@ -268,6 +362,38 @@ impl Database {
             Ok(connections)
         })
         .await
+    }
+
+    async fn get_buffer_operation_serialization_version(
+        &self,
+        buffer_id: BufferId,
+        epoch: i32,
+        tx: &DatabaseTransaction,
+    ) -> Result<i32> {
+        Ok(buffer_snapshot::Entity::find()
+            .filter(buffer_snapshot::Column::BufferId.eq(buffer_id))
+            .filter(buffer_snapshot::Column::Epoch.eq(epoch))
+            .select_only()
+            .column(buffer_snapshot::Column::OperationSerializationVersion)
+            .into_values::<_, QueryOperationSerializationVersion>()
+            .one(&*tx)
+            .await?
+            .ok_or_else(|| anyhow!("missing buffer snapshot"))?)
+    }
+
+    async fn get_channel_buffer(
+        &self,
+        channel_id: ChannelId,
+        tx: &DatabaseTransaction,
+    ) -> Result<buffer::Model> {
+        Ok(channel::Model {
+            id: channel_id,
+            ..Default::default()
+        }
+        .find_related(buffer::Entity)
+        .one(&*tx)
+        .await?
+        .ok_or_else(|| anyhow!("no such buffer"))?)
     }
 
     async fn get_buffer_state(
@@ -303,27 +429,20 @@ impl Database {
             .await?;
         let mut operations = Vec::new();
         while let Some(row) = rows.next().await {
-            let row = row?;
-
-            let operation = operation_from_storage(row, version)?;
             operations.push(proto::Operation {
-                variant: Some(operation),
+                variant: Some(operation_from_storage(row?, version)?),
             })
         }
 
         Ok((base_text, operations))
     }
 
-    async fn snapshot_buffer(&self, channel_id: ChannelId, tx: &DatabaseTransaction) -> Result<()> {
-        let buffer = channel::Model {
-            id: channel_id,
-            ..Default::default()
-        }
-        .find_related(buffer::Entity)
-        .one(&*tx)
-        .await?
-        .ok_or_else(|| anyhow!("no such buffer"))?;
-
+    async fn snapshot_channel_buffer(
+        &self,
+        channel_id: ChannelId,
+        tx: &DatabaseTransaction,
+    ) -> Result<()> {
+        let buffer = self.get_channel_buffer(channel_id, tx).await?;
         let (base_text, operations) = self.get_buffer_state(&buffer, tx).await?;
         if operations.is_empty() {
             return Ok(());
@@ -525,6 +644,22 @@ fn version_from_wire(message: &[proto::VectorClockEntry]) -> clock::Global {
         });
     }
     version
+}
+
+fn version_to_wire(version: &clock::Global) -> Vec<proto::VectorClockEntry> {
+    let mut message = Vec::new();
+    for entry in version.iter() {
+        message.push(proto::VectorClockEntry {
+            replica_id: entry.replica_id as u32,
+            timestamp: entry.value,
+        });
+    }
+    message
+}
+
+#[derive(Debug, Clone, Copy, EnumIter, DeriveColumn)]
+enum QueryOperationSerializationVersion {
+    OperationSerializationVersion,
 }
 
 mod storage {

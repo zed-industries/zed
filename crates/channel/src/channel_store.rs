@@ -1,12 +1,14 @@
 use crate::channel_buffer::ChannelBuffer;
 use anyhow::{anyhow, Result};
-use client::{Client, Status, Subscription, User, UserId, UserStore};
+use client::{Client, Subscription, User, UserId, UserStore};
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
 use rpc::{proto, TypedEnvelope};
-use std::sync::Arc;
+use std::{mem, sync::Arc, time::Duration};
 use util::ResultExt;
+
+pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub type ChannelId = u64;
 
@@ -22,7 +24,8 @@ pub struct ChannelStore {
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
     _rpc_subscription: Subscription,
-    _watch_connection_status: Task<()>,
+    _watch_connection_status: Task<Option<()>>,
+    disconnect_channel_buffers_task: Option<Task<()>>,
     _update_channels: Task<()>,
 }
 
@@ -67,24 +70,20 @@ impl ChannelStore {
         let rpc_subscription =
             client.add_message_handler(cx.handle(), Self::handle_update_channels);
 
-        let (update_channels_tx, mut update_channels_rx) = mpsc::unbounded();
         let mut connection_status = client.status();
+        let (update_channels_tx, mut update_channels_rx) = mpsc::unbounded();
         let watch_connection_status = cx.spawn_weak(|this, mut cx| async move {
             while let Some(status) = connection_status.next().await {
-                if !status.is_connected() {
-                    if let Some(this) = this.upgrade(&cx) {
-                        this.update(&mut cx, |this, cx| {
-                            if matches!(status, Status::ConnectionLost | Status::SignedOut) {
-                                this.handle_disconnect(cx);
-                            } else {
-                                this.disconnect_buffers(cx);
-                            }
-                        });
-                    } else {
-                        break;
-                    }
+                let this = this.upgrade(&cx)?;
+                if status.is_connected() {
+                    this.update(&mut cx, |this, cx| this.handle_connect(cx))
+                        .await
+                        .log_err()?;
+                } else {
+                    this.update(&mut cx, |this, cx| this.handle_disconnect(cx));
                 }
             }
+            Some(())
         });
 
         Self {
@@ -100,6 +99,7 @@ impl ChannelStore {
             user_store,
             _rpc_subscription: rpc_subscription,
             _watch_connection_status: watch_connection_status,
+            disconnect_channel_buffers_task: None,
             _update_channels: cx.spawn_weak(|this, mut cx| async move {
                 while let Some(update_channels) = update_channels_rx.next().await {
                     if let Some(this) = this.upgrade(&cx) {
@@ -482,8 +482,102 @@ impl ChannelStore {
         Ok(())
     }
 
-    fn handle_disconnect(&mut self, cx: &mut ModelContext<'_, ChannelStore>) {
-        self.disconnect_buffers(cx);
+    fn handle_connect(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        self.disconnect_channel_buffers_task.take();
+
+        let mut buffer_versions = Vec::new();
+        for buffer in self.opened_buffers.values() {
+            if let OpenedChannelBuffer::Open(buffer) = buffer {
+                if let Some(buffer) = buffer.upgrade(cx) {
+                    let channel_buffer = buffer.read(cx);
+                    let buffer = channel_buffer.buffer().read(cx);
+                    buffer_versions.push(proto::ChannelBufferVersion {
+                        channel_id: channel_buffer.channel().id,
+                        epoch: channel_buffer.epoch(),
+                        version: language::proto::serialize_version(&buffer.version()),
+                    });
+                }
+            }
+        }
+
+        let response = self.client.request(proto::RejoinChannelBuffers {
+            buffers: buffer_versions,
+        });
+
+        cx.spawn(|this, mut cx| async move {
+            let mut response = response.await?;
+
+            this.update(&mut cx, |this, cx| {
+                this.opened_buffers.retain(|_, buffer| match buffer {
+                    OpenedChannelBuffer::Open(channel_buffer) => {
+                        let Some(channel_buffer) = channel_buffer.upgrade(cx) else {
+                            return false;
+                        };
+
+                        channel_buffer.update(cx, |channel_buffer, cx| {
+                            let channel_id = channel_buffer.channel().id;
+                            if let Some(remote_buffer) = response
+                                .buffers
+                                .iter_mut()
+                                .find(|buffer| buffer.channel_id == channel_id)
+                            {
+                                let channel_id = channel_buffer.channel().id;
+                                let remote_version =
+                                    language::proto::deserialize_version(&remote_buffer.version);
+
+                                channel_buffer.replace_collaborators(
+                                    mem::take(&mut remote_buffer.collaborators),
+                                    cx,
+                                );
+
+                                let operations = channel_buffer
+                                    .buffer()
+                                    .update(cx, |buffer, cx| {
+                                        let outgoing_operations =
+                                            buffer.serialize_ops(Some(remote_version), cx);
+                                        let incoming_operations =
+                                            mem::take(&mut remote_buffer.operations)
+                                                .into_iter()
+                                                .map(language::proto::deserialize_operation)
+                                                .collect::<Result<Vec<_>>>()?;
+                                        buffer.apply_ops(incoming_operations, cx)?;
+                                        anyhow::Ok(outgoing_operations)
+                                    })
+                                    .log_err();
+
+                                if let Some(operations) = operations {
+                                    let client = this.client.clone();
+                                    cx.background()
+                                        .spawn(async move {
+                                            let operations = operations.await;
+                                            for chunk in
+                                                language::proto::split_operations(operations)
+                                            {
+                                                client
+                                                    .send(proto::UpdateChannelBuffer {
+                                                        channel_id,
+                                                        operations: chunk,
+                                                    })
+                                                    .ok();
+                                            }
+                                        })
+                                        .detach();
+                                    return true;
+                                }
+                            }
+
+                            channel_buffer.disconnect(cx);
+                            false
+                        })
+                    }
+                    OpenedChannelBuffer::Loading(_) => true,
+                });
+            });
+            anyhow::Ok(())
+        })
+    }
+
+    fn handle_disconnect(&mut self, cx: &mut ModelContext<Self>) {
         self.channels_by_id.clear();
         self.channel_invitations.clear();
         self.channel_participants.clear();
@@ -491,16 +585,23 @@ impl ChannelStore {
         self.channel_paths.clear();
         self.outgoing_invites.clear();
         cx.notify();
-    }
 
-    fn disconnect_buffers(&mut self, cx: &mut ModelContext<ChannelStore>) {
-        for (_, buffer) in self.opened_buffers.drain() {
-            if let OpenedChannelBuffer::Open(buffer) = buffer {
-                if let Some(buffer) = buffer.upgrade(cx) {
-                    buffer.update(cx, |buffer, cx| buffer.disconnect(cx));
+        self.disconnect_channel_buffers_task.get_or_insert_with(|| {
+            cx.spawn_weak(|this, mut cx| async move {
+                cx.background().timer(RECONNECT_TIMEOUT).await;
+                if let Some(this) = this.upgrade(&cx) {
+                    this.update(&mut cx, |this, cx| {
+                        for (_, buffer) in this.opened_buffers.drain() {
+                            if let OpenedChannelBuffer::Open(buffer) = buffer {
+                                if let Some(buffer) = buffer.upgrade(cx) {
+                                    buffer.update(cx, |buffer, cx| buffer.disconnect(cx));
+                                }
+                            }
+                        }
+                    });
                 }
-            }
-        }
+            })
+        });
     }
 
     pub(crate) fn update_channels(
