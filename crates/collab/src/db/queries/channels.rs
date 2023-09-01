@@ -703,6 +703,16 @@ impl Database {
         })
         .await
     }
+
+    pub async fn move_channel(
+        &self,
+        user: UserId,
+        from: ChannelId,
+        to: Option<ChannelId>,
+        link: bool,
+    ) -> Result<()> {
+        self.transaction(|tx| async move { todo!() }).await
+    }
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
