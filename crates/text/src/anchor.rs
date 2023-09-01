@@ -8,7 +8,7 @@ use sum_tree::Bias;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Default)]
 pub struct Anchor {
-    pub timestamp: clock::Local,
+    pub timestamp: clock::Lamport,
     pub offset: usize,
     pub bias: Bias,
     pub buffer_id: Option<u64>,
@@ -16,14 +16,14 @@ pub struct Anchor {
 
 impl Anchor {
     pub const MIN: Self = Self {
-        timestamp: clock::Local::MIN,
+        timestamp: clock::Lamport::MIN,
         offset: usize::MIN,
         bias: Bias::Left,
         buffer_id: None,
     };
 
     pub const MAX: Self = Self {
-        timestamp: clock::Local::MAX,
+        timestamp: clock::Lamport::MAX,
         offset: usize::MAX,
         bias: Bias::Right,
         buffer_id: None,

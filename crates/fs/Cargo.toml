@@ -12,6 +12,7 @@ collections = { path = "../collections" }
 gpui = { path = "../gpui" }
 lsp = { path = "../lsp" }
 rope = { path = "../rope" }
+text = { path = "../text" }
 util = { path = "../util" }
 sum_tree = { path = "../sum_tree" }
 rpc = { path = "../rpc" }

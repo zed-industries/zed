@@ -41,6 +41,10 @@ impl LspAdapter for IntelephenseLspAdapter {
         LanguageServerName("intelephense".into())
     }
 
+    fn short_name(&self) -> &'static str {
+        "php"
+    }
+
     async fn fetch_latest_server_version(
         &self,
         _delegate: &dyn LspAdapterDelegate,

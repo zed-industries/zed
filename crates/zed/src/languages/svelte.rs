@@ -36,6 +36,10 @@ impl LspAdapter for SvelteLspAdapter {
         LanguageServerName("svelte-language-server".into())
     }
 
+    fn short_name(&self) -> &'static str {
+        "svelte"
+    }
+
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,

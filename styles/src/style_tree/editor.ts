@@ -206,6 +206,9 @@ export default function editor(): any {
                 match_highlight: foreground(theme.middle, "accent", "active"),
                 background: background(theme.middle, "active"),
             },
+            server_name_container: { padding: { left: 40 } },
+            server_name_color: text(theme.middle, "sans", "disabled", {}).color,
+            server_name_size_percent: 0.75,
         },
         diagnostic_header: {
             background: background(theme.middle),
@@ -307,7 +310,7 @@ export default function editor(): any {
                     ? with_opacity(theme.ramps.green(0.5).hex(), 0.8)
                     : with_opacity(theme.ramps.green(0.4).hex(), 0.8),
             },
-            selections: foreground(layer, "accent")
+            selections: foreground(layer, "accent"),
         },
         composition_mark: {
             underline: {

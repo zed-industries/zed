@@ -9,7 +9,7 @@ use editor::{
     test::editor_test_context::EditorTestContext, ConfirmCodeAction, ConfirmCompletion,
     ConfirmRename, Editor, ExcerptRange, MultiBuffer, Redo, Rename, ToggleCodeActions, Undo,
 };
-use fs::{repository::GitFileStatus, FakeFs, Fs as _, LineEnding, RemoveOptions};
+use fs::{repository::GitFileStatus, FakeFs, Fs as _, RemoveOptions};
 use futures::StreamExt as _;
 use gpui::{
     executor::Deterministic, geometry::vector::vec2f, test::EmptyView, AppContext, ModelHandle,
@@ -19,7 +19,7 @@ use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, Formatter, InlayHintSettings},
     tree_sitter_rust, Anchor, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
-    LanguageConfig, OffsetRangeExt, Point, Rope,
+    LanguageConfig, LineEnding, OffsetRangeExt, Point, Rope,
 };
 use live_kit_client::MacOSDisplay;
 use lsp::LanguageServerId;
@@ -33,7 +33,7 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::{
-        atomic::{AtomicBool, AtomicU32, Ordering::SeqCst},
+        atomic::{self, AtomicBool, AtomicUsize, Ordering::SeqCst},
         Arc,
     },
 };
@@ -7799,7 +7799,7 @@ async fn test_on_input_format_from_guest_to_host(
     });
 }
 
-#[gpui::test]
+#[gpui::test(iterations = 10)]
 async fn test_mutual_editor_inlay_hint_cache_update(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
@@ -7913,30 +7913,27 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .unwrap();
 
     // Set up the language server to return an additional inlay hint on each request.
-    let next_call_id = Arc::new(AtomicU32::new(0));
+    let edits_made = Arc::new(AtomicUsize::new(0));
+    let closure_edits_made = Arc::clone(&edits_made);
     fake_language_server
         .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
-            let task_next_call_id = Arc::clone(&next_call_id);
+            let task_edits_made = Arc::clone(&closure_edits_made);
             async move {
                 assert_eq!(
                     params.text_document.uri,
                     lsp::Url::from_file_path("/a/main.rs").unwrap(),
                 );
-                let call_count = task_next_call_id.fetch_add(1, SeqCst);
-                Ok(Some(
-                    (0..=call_count)
-                        .map(|ix| lsp::InlayHint {
-                            position: lsp::Position::new(0, ix),
-                            label: lsp::InlayHintLabel::String(ix.to_string()),
-                            kind: None,
-                            text_edits: None,
-                            tooltip: None,
-                            padding_left: None,
-                            padding_right: None,
-                            data: None,
-                        })
-                        .collect(),
-                ))
+                let edits_made = task_edits_made.load(atomic::Ordering::Acquire);
+                Ok(Some(vec![lsp::InlayHint {
+                    position: lsp::Position::new(0, edits_made as u32),
+                    label: lsp::InlayHintLabel::String(edits_made.to_string()),
+                    kind: None,
+                    text_edits: None,
+                    tooltip: None,
+                    padding_left: None,
+                    padding_right: None,
+                    data: None,
+                }]))
             }
         })
         .next()
@@ -7945,17 +7942,17 @@ async fn test_mutual_editor_inlay_hint_cache_update(
 
     deterministic.run_until_parked();
 
-    let mut edits_made = 1;
+    let initial_edit = edits_made.load(atomic::Ordering::Acquire);
     editor_a.update(cx_a, |editor, _| {
         assert_eq!(
-            vec!["0".to_string()],
+            vec![initial_edit.to_string()],
             extract_hint_labels(editor),
             "Host should get its first hints when opens an editor"
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
             inlay_cache.version(),
-            edits_made,
+            1,
             "Host editor update the cache version after every cache/view change",
         );
     });
@@ -7972,144 +7969,104 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     deterministic.run_until_parked();
     editor_b.update(cx_b, |editor, _| {
         assert_eq!(
-            vec!["0".to_string(), "1".to_string()],
+            vec![initial_edit.to_string()],
             extract_hint_labels(editor),
             "Client should get its first hints when opens an editor"
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
             inlay_cache.version(),
-            edits_made,
+            1,
             "Guest editor update the cache version after every cache/view change"
         );
     });
 
+    let after_client_edit = edits_made.fetch_add(1, atomic::Ordering::Release) + 1;
     editor_b.update(cx_b, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges([13..13].clone()));
         editor.handle_input(":", cx);
         cx.focus(&editor_b);
-        edits_made += 1;
     });
 
     deterministic.run_until_parked();
     editor_a.update(cx_a, |editor, _| {
         assert_eq!(
-            vec![
-                "0".to_string(),
-                "1".to_string(),
-                "2".to_string(),
-                "3".to_string()
-            ],
+            vec![after_client_edit.to_string()],
             extract_hint_labels(editor),
-            "Guest should get hints the 1st edit and 2nd LSP query"
         );
         let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(inlay_cache.version(), edits_made);
+        assert_eq!(inlay_cache.version(), 2);
     });
     editor_b.update(cx_b, |editor, _| {
         assert_eq!(
-            vec!["0".to_string(), "1".to_string(), "2".to_string(),],
+            vec![after_client_edit.to_string()],
             extract_hint_labels(editor),
-            "Guest should get hints the 1st edit and 2nd LSP query"
         );
         let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(inlay_cache.version(), edits_made);
+        assert_eq!(inlay_cache.version(), 2);
     });
 
+    let after_host_edit = edits_made.fetch_add(1, atomic::Ordering::Release) + 1;
     editor_a.update(cx_a, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
         editor.handle_input("a change to increment both buffers' versions", cx);
         cx.focus(&editor_a);
-        edits_made += 1;
     });
 
     deterministic.run_until_parked();
     editor_a.update(cx_a, |editor, _| {
         assert_eq!(
-            vec![
-                "0".to_string(),
-                "1".to_string(),
-                "2".to_string(),
-                "3".to_string(),
-                "4".to_string()
-            ],
+            vec![after_host_edit.to_string()],
             extract_hint_labels(editor),
-            "Host should get hints from 3rd edit, 5th LSP query: \
-4th query was made by guest (but not applied) due to cache invalidation logic"
         );
         let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(inlay_cache.version(), edits_made);
+        assert_eq!(inlay_cache.version(), 3);
     });
     editor_b.update(cx_b, |editor, _| {
         assert_eq!(
-            vec![
-                "0".to_string(),
-                "1".to_string(),
-                "2".to_string(),
-                "3".to_string(),
-                "4".to_string(),
-                "5".to_string(),
-            ],
+            vec![after_host_edit.to_string()],
             extract_hint_labels(editor),
-            "Guest should get hints from 3rd edit, 6th LSP query"
         );
         let inlay_cache = editor.inlay_hint_cache();
-        assert_eq!(inlay_cache.version(), edits_made);
+        assert_eq!(inlay_cache.version(), 3);
     });
 
+    let after_special_edit_for_refresh = edits_made.fetch_add(1, atomic::Ordering::Release) + 1;
     fake_language_server
         .request::<lsp::request::InlayHintRefreshRequest>(())
         .await
         .expect("inlay refresh request failed");
-    edits_made += 1;
 
     deterministic.run_until_parked();
     editor_a.update(cx_a, |editor, _| {
         assert_eq!(
-            vec![
-                "0".to_string(),
-                "1".to_string(),
-                "2".to_string(),
-                "3".to_string(),
-                "4".to_string(),
-                "5".to_string(),
-                "6".to_string(),
-            ],
+            vec![after_special_edit_for_refresh.to_string()],
             extract_hint_labels(editor),
-            "Host should react to /refresh LSP request and get new hints from 7th LSP query"
+            "Host should react to /refresh LSP request"
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
             inlay_cache.version(),
-            edits_made,
+            4,
             "Host should accepted all edits and bump its cache version every time"
         );
     });
     editor_b.update(cx_b, |editor, _| {
         assert_eq!(
-            vec![
-                "0".to_string(),
-                "1".to_string(),
-                "2".to_string(),
-                "3".to_string(),
-                "4".to_string(),
-                "5".to_string(),
-                "6".to_string(),
-                "7".to_string(),
-            ],
+            vec![after_special_edit_for_refresh.to_string()],
             extract_hint_labels(editor),
-            "Guest should get a /refresh LSP request propagated by host and get new hints from 8th LSP query"
+            "Guest should get a /refresh LSP request propagated by host"
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
             inlay_cache.version(),
-            edits_made,
+            4,
             "Guest should accepted all edits and bump its cache version every time"
         );
     });
 }
 
-#[gpui::test]
+#[gpui::test(iterations = 10)]
 async fn test_inlay_hint_refresh_is_forwarded(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
@@ -8223,35 +8180,34 @@ async fn test_inlay_hint_refresh_is_forwarded(
         .downcast::<Editor>()
         .unwrap();
 
+    let other_hints = Arc::new(AtomicBool::new(false));
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    let next_call_id = Arc::new(AtomicU32::new(0));
+    let closure_other_hints = Arc::clone(&other_hints);
     fake_language_server
         .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
-            let task_next_call_id = Arc::clone(&next_call_id);
+            let task_other_hints = Arc::clone(&closure_other_hints);
             async move {
                 assert_eq!(
                     params.text_document.uri,
                     lsp::Url::from_file_path("/a/main.rs").unwrap(),
                 );
-                let mut current_call_id = Arc::clone(&task_next_call_id).fetch_add(1, SeqCst);
-                let mut new_hints = Vec::with_capacity(current_call_id as usize);
-                loop {
-                    new_hints.push(lsp::InlayHint {
-                        position: lsp::Position::new(0, current_call_id),
-                        label: lsp::InlayHintLabel::String(current_call_id.to_string()),
-                        kind: None,
-                        text_edits: None,
-                        tooltip: None,
-                        padding_left: None,
-                        padding_right: None,
-                        data: None,
-                    });
-                    if current_call_id == 0 {
-                        break;
-                    }
-                    current_call_id -= 1;
-                }
-                Ok(Some(new_hints))
+                let other_hints = task_other_hints.load(atomic::Ordering::Acquire);
+                let character = if other_hints { 0 } else { 2 };
+                let label = if other_hints {
+                    "other hint"
+                } else {
+                    "initial hint"
+                };
+                Ok(Some(vec![lsp::InlayHint {
+                    position: lsp::Position::new(0, character),
+                    label: lsp::InlayHintLabel::String(label.to_string()),
+                    kind: None,
+                    text_edits: None,
+                    tooltip: None,
+                    padding_left: None,
+                    padding_right: None,
+                    data: None,
+                }]))
             }
         })
         .next()
@@ -8270,26 +8226,26 @@ async fn test_inlay_hint_refresh_is_forwarded(
         assert_eq!(
             inlay_cache.version(),
             0,
-            "Host should not increment its cache version due to no changes",
+            "Turned off hints should not generate version updates"
         );
     });
 
-    let mut edits_made = 1;
     cx_b.foreground().run_until_parked();
     editor_b.update(cx_b, |editor, _| {
         assert_eq!(
-            vec!["0".to_string()],
+            vec!["initial hint".to_string()],
             extract_hint_labels(editor),
             "Client should get its first hints when opens an editor"
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
             inlay_cache.version(),
-            edits_made,
-            "Guest editor update the cache version after every cache/view change"
+            1,
+            "Should update cache verison after first hints"
         );
     });
 
+    other_hints.fetch_or(true, atomic::Ordering::Release);
     fake_language_server
         .request::<lsp::request::InlayHintRefreshRequest>(())
         .await
@@ -8304,22 +8260,21 @@ async fn test_inlay_hint_refresh_is_forwarded(
         assert_eq!(
             inlay_cache.version(),
             0,
-            "Host should not increment its cache version due to no changes",
+            "Turned off hints should not generate version updates, again"
         );
     });
 
-    edits_made += 1;
     cx_b.foreground().run_until_parked();
     editor_b.update(cx_b, |editor, _| {
         assert_eq!(
-            vec!["0".to_string(), "1".to_string(),],
+            vec!["other hint".to_string()],
             extract_hint_labels(editor),
             "Guest should get a /refresh LSP request propagated by host despite host hints are off"
         );
         let inlay_cache = editor.inlay_hint_cache();
         assert_eq!(
             inlay_cache.version(),
-            edits_made,
+            2,
             "Guest should accepted all edits and bump its cache version every time"
         );
     });

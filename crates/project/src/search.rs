@@ -225,14 +225,13 @@ impl SearchQuery {
         if self.as_str().is_empty() {
             return Default::default();
         }
-        let language = buffer.language_at(0);
+
+        let range_offset = subrange.as_ref().map(|r| r.start).unwrap_or(0);
         let rope = if let Some(range) = subrange {
             buffer.as_rope().slice(range)
         } else {
             buffer.as_rope().clone()
         };
-
-        let kind = |c| char_kind(language, c);
 
         let mut matches = Vec::new();
         match self {
@@ -249,6 +248,9 @@ impl SearchQuery {
 
                     let mat = mat.unwrap();
                     if *whole_word {
+                        let scope = buffer.language_scope_at(range_offset + mat.start());
+                        let kind = |c| char_kind(&scope, c);
+
                         let prev_kind = rope.reversed_chars_at(mat.start()).next().map(kind);
                         let start_kind = kind(rope.chars_at(mat.start()).next().unwrap());
                         let end_kind = kind(rope.reversed_chars_at(mat.end()).next().unwrap());

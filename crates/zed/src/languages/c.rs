@@ -19,6 +19,10 @@ impl super::LspAdapter for CLspAdapter {
         LanguageServerName("clangd".into())
     }
 
+    fn short_name(&self) -> &'static str {
+        "clangd"
+    }
+
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,

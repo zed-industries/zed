@@ -1,5 +1,5 @@
 import { text, border, background, foreground, TextStyle } from "./components"
-import { Interactive, interactive } from "../element"
+import { Interactive, interactive, toggleable } from "../element"
 import { tab_bar_button } from "../component/tab_bar_button"
 import { StyleSets, useTheme } from "../theme"
 
@@ -8,56 +8,133 @@ type RoleCycleButton = TextStyle & {
 }
 // TODO: Replace these with zed types
 type RemainingTokens = TextStyle & {
-    background: string,
-    margin: { top: number, right: number },
+    background: string
+    margin: { top: number; right: number }
     padding: {
-        right: number,
-        left: number,
-        top: number,
-        bottom: number,
-    },
-    corner_radius: number,
+        right: number
+        left: number
+        top: number
+        bottom: number
+    }
+    corner_radius: number
 }
 
 export default function assistant(): any {
     const theme = useTheme()
 
-    const interactive_role = (color: StyleSets): Interactive<RoleCycleButton> => {
-        return (
-            interactive({
-                base: {
+    const interactive_role = (
+        color: StyleSets
+    ): Interactive<RoleCycleButton> => {
+        return interactive({
+            base: {
+                ...text(theme.highest, "sans", color, { size: "sm" }),
+            },
+            state: {
+                hovered: {
                     ...text(theme.highest, "sans", color, { size: "sm" }),
+                    background: background(theme.highest, color, "hovered"),
                 },
-                state: {
-                    hovered: {
-                        ...text(theme.highest, "sans", color, { size: "sm" }),
-                        background: background(theme.highest, color, "hovered"),
-                    },
-                    clicked: {
-                        ...text(theme.highest, "sans", color, { size: "sm" }),
-                        background: background(theme.highest, color, "pressed"),
-                    }
+                clicked: {
+                    ...text(theme.highest, "sans", color, { size: "sm" }),
+                    background: background(theme.highest, color, "pressed"),
                 },
-            })
-        )
+            },
+        })
     }
 
     const tokens_remaining = (color: StyleSets): RemainingTokens => {
-        return (
-            {
-                ...text(theme.highest, "mono", color, { size: "xs" }),
-                background: background(theme.highest, "on", "default"),
-                margin: { top: 12, right: 20 },
-                padding: { right: 4, left: 4, top: 1, bottom: 1 },
-                corner_radius: 6,
-            }
-        )
+        return {
+            ...text(theme.highest, "mono", color, { size: "xs" }),
+            background: background(theme.highest, "on", "default"),
+            margin: { top: 12, right: 20 },
+            padding: { right: 4, left: 4, top: 1, bottom: 1 },
+            corner_radius: 6,
+        }
     }
 
     return {
         container: {
             background: background(theme.highest),
             padding: { left: 12 },
+        },
+        inline: {
+            background: background(theme.highest),
+            margin: { top: 3, bottom: 3 },
+            border: border(theme.lowest, "on", {
+                top: true,
+                bottom: true,
+                overlay: true,
+            }),
+            editor: {
+                text: text(theme.highest, "mono", "default", { size: "sm" }),
+                placeholder_text: text(theme.highest, "sans", "on", "disabled"),
+                selection: theme.players[0],
+            },
+            disabled_editor: {
+                text: text(theme.highest, "mono", "disabled", { size: "sm" }),
+                placeholder_text: text(theme.highest, "sans", "on", "disabled"),
+                selection: {
+                    cursor: text(theme.highest, "mono", "disabled").color,
+                    selection: theme.players[0].selection,
+                },
+            },
+            pending_edit_background: background(theme.highest, "positive"),
+            include_conversation: toggleable({
+                base: interactive({
+                    base: {
+                        icon_size: 12,
+                        color: foreground(theme.highest, "variant"),
+
+                        button_width: 12,
+                        background: background(theme.highest, "on"),
+                        corner_radius: 2,
+                        border: {
+                            width: 1., color: background(theme.highest, "on")
+                        },
+                        padding: {
+                            left: 4,
+                            right: 4,
+                            top: 4,
+                            bottom: 4,
+                        },
+                    },
+                    state: {
+                        hovered: {
+                            ...text(theme.highest, "mono", "variant", "hovered"),
+                            background: background(theme.highest, "on", "hovered"),
+                            border: {
+                                width: 1., color: background(theme.highest, "on", "hovered")
+                            },
+                        },
+                        clicked: {
+                            ...text(theme.highest, "mono", "variant", "pressed"),
+                            background: background(theme.highest, "on", "pressed"),
+                            border: {
+                                width: 1., color: background(theme.highest, "on", "pressed")
+                            },
+                        },
+                    },
+                }),
+                state: {
+                    active: {
+                        default: {
+                            icon_size: 12,
+                            button_width: 12,
+                            color: foreground(theme.highest, "variant"),
+                            background: background(theme.highest, "accent"),
+                            border: border(theme.highest, "accent"),
+                        },
+                        hovered: {
+                            background: background(theme.highest, "accent", "hovered"),
+                            border: border(theme.highest, "accent", "hovered"),
+                        },
+                        clicked: {
+                            background: background(theme.highest, "accent", "pressed"),
+                            border: border(theme.highest, "accent", "pressed"),
+                        },
+                    },
+                },
+            }),
         },
         message_header: {
             margin: { bottom: 4, top: 4 },
@@ -93,7 +170,10 @@ export default function assistant(): any {
                 base: {
                     background: background(theme.middle),
                     padding: { top: 4, bottom: 4 },
-                    border: border(theme.middle, "default", { top: true, overlay: true }),
+                    border: border(theme.middle, "default", {
+                        top: true,
+                        overlay: true,
+                    }),
                 },
                 state: {
                     hovered: {
@@ -101,7 +181,7 @@ export default function assistant(): any {
                     },
                     clicked: {
                         background: background(theme.middle, "pressed"),
-                    }
+                    },
                 },
             }),
             saved_at: {

@@ -39,7 +39,12 @@ export default function channel_modal(): any {
             row_height: ITEM_HEIGHT,
             header: {
                 background: background(theme.lowest),
-                border: border(theme.middle, { "bottom": true, "top": false, left: false, right: false }),
+                border: border(theme.middle, {
+                    bottom: true,
+                    top: false,
+                    left: false,
+                    right: false,
+                }),
                 padding: {
                     top: SPACING,
                     left: SPACING - BUTTON_OFFSET,
@@ -48,7 +53,7 @@ export default function channel_modal(): any {
                 corner_radii: {
                     top_right: 12,
                     top_left: 12,
-                }
+                },
             },
             body: {
                 background: background(theme.middle),
@@ -57,12 +62,11 @@ export default function channel_modal(): any {
                     left: SPACING,
                     right: SPACING,
                     bottom: SPACING,
-
                 },
                 corner_radii: {
                     bottom_right: 12,
                     bottom_left: 12,
-                }
+                },
             },
             modal: {
                 background: background(theme.middle),
@@ -74,7 +78,6 @@ export default function channel_modal(): any {
                     right: 0,
                     top: 0,
                 },
-
             },
             // FIXME: due to a bug in the picker's size calculation, this must be 600
             max_height: 600,
@@ -83,7 +86,7 @@ export default function channel_modal(): any {
                 ...text(theme.middle, "sans", "on", { size: "lg" }),
                 padding: {
                     left: BUTTON_OFFSET,
-                }
+                },
             },
             picker: {
                 empty_container: {},
@@ -108,8 +111,8 @@ export default function channel_modal(): any {
                 background: background(theme.middle),
                 padding: {
                     left: 7,
-                    right: 7
-                }
+                    right: 7,
+                },
             },
             cancel_invite_button: {
                 ...text(theme.middle, "sans", { size: "xs" }),
@@ -125,7 +128,7 @@ export default function channel_modal(): any {
                 padding: {
                     left: 4,
                     right: 4,
-                }
+                },
             },
             contact_avatar: {
                 corner_radius: 10,
@@ -147,6 +150,6 @@ export default function channel_modal(): any {
                 background: background(theme.middle, "disabled"),
                 color: foreground(theme.middle, "disabled"),
             },
-        }
+        },
     }
 }
