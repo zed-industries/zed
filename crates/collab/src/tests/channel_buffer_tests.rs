@@ -432,9 +432,8 @@ async fn test_rejoin_channel_buffer(
     // Client A disconnects.
     server.forbid_connections();
     server.disconnect_client(client_a.peer_id().unwrap());
-    // deterministic.advance_clock(RECEIVE_TIMEOUT);
 
-    // Both clients make an edit. Both clients see their own edit.
+    // Both clients make an edit.
     channel_buffer_a.update(cx_a, |buffer, cx| {
         buffer.buffer().update(cx, |buffer, cx| {
             buffer.edit([(1..1, "2")], None, cx);
@@ -445,6 +444,8 @@ async fn test_rejoin_channel_buffer(
             buffer.edit([(0..0, "0")], None, cx);
         })
     });
+
+    // Both clients see their own edit.
     deterministic.run_until_parked();
     channel_buffer_a.read_with(cx_a, |buffer, cx| {
         assert_eq!(buffer.buffer().read(cx).text(), "12");
@@ -453,7 +454,8 @@ async fn test_rejoin_channel_buffer(
         assert_eq!(buffer.buffer().read(cx).text(), "01");
     });
 
-    // Client A reconnects.
+    // Client A reconnects. Both clients see each other's edits, and see
+    // the same collaborators.
     server.allow_connections();
     deterministic.advance_clock(RECEIVE_TIMEOUT);
     channel_buffer_a.read_with(cx_a, |buffer, cx| {
@@ -461,6 +463,12 @@ async fn test_rejoin_channel_buffer(
     });
     channel_buffer_b.read_with(cx_b, |buffer, cx| {
         assert_eq!(buffer.buffer().read(cx).text(), "012");
+    });
+
+    channel_buffer_a.read_with(cx_a, |buffer_a, _| {
+        channel_buffer_b.read_with(cx_b, |buffer_b, _| {
+            assert_eq!(buffer_a.collaborators(), buffer_b.collaborators());
+        });
     });
 }
 

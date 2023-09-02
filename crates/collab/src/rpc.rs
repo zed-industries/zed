@@ -2553,13 +2553,31 @@ async fn rejoin_channel_buffers(
     session: Session,
 ) -> Result<()> {
     let db = session.db().await;
-    let rejoin_response = db
+    let buffers = db
         .rejoin_channel_buffers(&request.buffers, session.user_id, session.connection_id)
         .await?;
 
-    // TODO: inform channel buffer collaborators that this user has rejoined.
+    for buffer in &buffers {
+        let collaborators_to_notify = buffer
+            .buffer
+            .collaborators
+            .iter()
+            .filter_map(|c| Some(c.peer_id?.into()));
+        channel_buffer_updated(
+            session.connection_id,
+            collaborators_to_notify,
+            &proto::UpdateChannelBufferCollaborator {
+                channel_id: buffer.buffer.channel_id,
+                old_peer_id: Some(buffer.old_connection_id.into()),
+                new_peer_id: Some(session.connection_id.into()),
+            },
+            &session.peer,
+        );
+    }
 
-    response.send(rejoin_response)?;
+    response.send(proto::RejoinChannelBuffersResponse {
+        buffers: buffers.into_iter().map(|b| b.buffer).collect(),
+    })?;
 
     Ok(())
 }

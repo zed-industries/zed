@@ -259,6 +259,7 @@ messages!(
     (UpdateChannelBuffer, Foreground),
     (RemoveChannelBufferCollaborator, Foreground),
     (AddChannelBufferCollaborator, Foreground),
+    (UpdateChannelBufferCollaborator, Foreground),
 );
 
 request_messages!(
@@ -389,7 +390,8 @@ entity_messages!(
     channel_id,
     UpdateChannelBuffer,
     RemoveChannelBufferCollaborator,
-    AddChannelBufferCollaborator
+    AddChannelBufferCollaborator,
+    UpdateChannelBufferCollaborator
 );
 
 const KIB: usize = 1024;

@@ -10,6 +10,7 @@ pub(crate) fn init(client: &Arc<Client>) {
     client.add_model_message_handler(ChannelBuffer::handle_update_channel_buffer);
     client.add_model_message_handler(ChannelBuffer::handle_add_channel_buffer_collaborator);
     client.add_model_message_handler(ChannelBuffer::handle_remove_channel_buffer_collaborator);
+    client.add_model_message_handler(ChannelBuffer::handle_update_channel_buffer_collaborator);
 }
 
 pub struct ChannelBuffer {
@@ -164,6 +165,26 @@ impl ChannelBuffer {
                     true
                 }
             });
+            cx.emit(Event::CollaboratorsChanged);
+            cx.notify();
+        });
+
+        Ok(())
+    }
+
+    async fn handle_update_channel_buffer_collaborator(
+        this: ModelHandle<Self>,
+        message: TypedEnvelope<proto::UpdateChannelBufferCollaborator>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            for collaborator in &mut this.collaborators {
+                if collaborator.peer_id == message.payload.old_peer_id {
+                    collaborator.peer_id = message.payload.new_peer_id;
+                    break;
+                }
+            }
             cx.emit(Event::CollaboratorsChanged);
             cx.notify();
         });

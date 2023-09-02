@@ -153,8 +153,9 @@ message Envelope {
         LeaveChannelBuffer leave_channel_buffer = 134;
         AddChannelBufferCollaborator add_channel_buffer_collaborator = 135;
         RemoveChannelBufferCollaborator remove_channel_buffer_collaborator = 136;
-        RejoinChannelBuffers rejoin_channel_buffers = 139;
-        RejoinChannelBuffersResponse rejoin_channel_buffers_response = 140; // Current max
+        UpdateChannelBufferCollaborator update_channel_buffer_collaborator = 139;
+        RejoinChannelBuffers rejoin_channel_buffers = 140;
+        RejoinChannelBuffersResponse rejoin_channel_buffers_response = 141; // Current max
     }
 }
 
@@ -432,6 +433,12 @@ message AddChannelBufferCollaborator {
 message RemoveChannelBufferCollaborator {
     uint64 channel_id = 1;
     PeerId peer_id = 2;
+}
+
+message UpdateChannelBufferCollaborator {
+    uint64 channel_id = 1;
+    PeerId old_peer_id = 2;
+    PeerId new_peer_id = 3;
 }
 
 message GetDefinition {

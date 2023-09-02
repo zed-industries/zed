@@ -94,9 +94,9 @@ impl Database {
         buffers: &[proto::ChannelBufferVersion],
         user_id: UserId,
         connection_id: ConnectionId,
-    ) -> Result<proto::RejoinChannelBuffersResponse> {
+    ) -> Result<Vec<RejoinedChannelBuffer>> {
         self.transaction(|tx| async move {
-            let mut response = proto::RejoinChannelBuffersResponse::default();
+            let mut results = Vec::new();
             for client_buffer in buffers {
                 let channel_id = ChannelId::from_proto(client_buffer.channel_id);
                 if self
@@ -121,28 +121,24 @@ impl Database {
                     continue;
                 }
 
-                // If there is still a disconnected collaborator for the user,
-                // update the connection associated with that collaborator, and reuse
-                // that replica id.
-                if let Some(ix) = collaborators
-                    .iter()
-                    .position(|c| c.user_id == user_id && c.connection_lost)
-                {
-                    let self_collaborator = &mut collaborators[ix];
-                    *self_collaborator = channel_buffer_collaborator::ActiveModel {
-                        id: ActiveValue::Unchanged(self_collaborator.id),
-                        connection_id: ActiveValue::Set(connection_id.id as i32),
-                        connection_server_id: ActiveValue::Set(ServerId(
-                            connection_id.owner_id as i32,
-                        )),
-                        connection_lost: ActiveValue::Set(false),
-                        ..Default::default()
-                    }
-                    .update(&*tx)
-                    .await?;
-                } else {
+                // Find the collaborator record for this user's previous lost
+                // connection. Update it with the new connection id.
+                let Some(self_collaborator) = collaborators
+                    .iter_mut()
+                    .find(|c| c.user_id == user_id && c.connection_lost)
+                else {
                     continue;
+                };
+                let old_connection_id = self_collaborator.connection();
+                *self_collaborator = channel_buffer_collaborator::ActiveModel {
+                    id: ActiveValue::Unchanged(self_collaborator.id),
+                    connection_id: ActiveValue::Set(connection_id.id as i32),
+                    connection_server_id: ActiveValue::Set(ServerId(connection_id.owner_id as i32)),
+                    connection_lost: ActiveValue::Set(false),
+                    ..Default::default()
                 }
+                .update(&*tx)
+                .await?;
 
                 let client_version = version_from_wire(&client_buffer.version);
                 let serialization_version = self
@@ -176,22 +172,25 @@ impl Database {
                     }
                 }
 
-                response.buffers.push(proto::RejoinedChannelBuffer {
-                    channel_id: client_buffer.channel_id,
-                    version: version_to_wire(&server_version),
-                    operations,
-                    collaborators: collaborators
-                        .into_iter()
-                        .map(|collaborator| proto::Collaborator {
-                            peer_id: Some(collaborator.connection().into()),
-                            user_id: collaborator.user_id.to_proto(),
-                            replica_id: collaborator.replica_id.0 as u32,
-                        })
-                        .collect(),
+                results.push(RejoinedChannelBuffer {
+                    old_connection_id,
+                    buffer: proto::RejoinedChannelBuffer {
+                        channel_id: client_buffer.channel_id,
+                        version: version_to_wire(&server_version),
+                        operations,
+                        collaborators: collaborators
+                            .into_iter()
+                            .map(|collaborator| proto::Collaborator {
+                                peer_id: Some(collaborator.connection().into()),
+                                user_id: collaborator.user_id.to_proto(),
+                                replica_id: collaborator.replica_id.0 as u32,
+                            })
+                            .collect(),
+                    },
                 });
             }
 
-            Ok(response)
+            Ok(results)
         })
         .await
     }
