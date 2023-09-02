@@ -123,10 +123,11 @@ impl Database {
 
                 // Find the collaborator record for this user's previous lost
                 // connection. Update it with the new connection id.
-                let Some(self_collaborator) = collaborators
-                    .iter_mut()
-                    .find(|c| c.user_id == user_id && c.connection_lost)
-                else {
+                let server_id = ServerId(connection_id.owner_id as i32);
+                let Some(self_collaborator) = collaborators.iter_mut().find(|c| {
+                    c.user_id == user_id
+                        && (c.connection_lost || c.connection_server_id != server_id)
+                }) else {
                     continue;
                 };
                 let old_connection_id = self_collaborator.connection();
@@ -191,6 +192,25 @@ impl Database {
             }
 
             Ok(results)
+        })
+        .await
+    }
+
+    pub async fn refresh_channel_buffer(
+        &self,
+        channel_id: ChannelId,
+        server_id: ServerId,
+    ) -> Result<RefreshedChannelBuffer> {
+        self.transaction(|tx| async move {
+            let mut connection_ids = Vec::new();
+            let mut removed_collaborators = Vec::new();
+
+            // TODO
+
+            Ok(RefreshedChannelBuffer {
+                connection_ids,
+                removed_collaborators,
+            })
         })
         .await
     }

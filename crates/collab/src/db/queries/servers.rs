@@ -14,31 +14,48 @@ impl Database {
         .await
     }
 
-    pub async fn stale_room_ids(
+    pub async fn stale_server_resource_ids(
         &self,
         environment: &str,
         new_server_id: ServerId,
-    ) -> Result<Vec<RoomId>> {
+    ) -> Result<(Vec<RoomId>, Vec<ChannelId>)> {
         self.transaction(|tx| async move {
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-            enum QueryAs {
+            enum QueryRoomIds {
                 RoomId,
+            }
+
+            #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+            enum QueryChannelIds {
+                ChannelId,
             }
 
             let stale_server_epochs = self
                 .stale_server_ids(environment, new_server_id, &tx)
                 .await?;
-            Ok(room_participant::Entity::find()
+            let room_ids = room_participant::Entity::find()
                 .select_only()
                 .column(room_participant::Column::RoomId)
                 .distinct()
                 .filter(
                     room_participant::Column::AnsweringConnectionServerId
-                        .is_in(stale_server_epochs),
+                        .is_in(stale_server_epochs.iter().copied()),
                 )
-                .into_values::<_, QueryAs>()
+                .into_values::<_, QueryRoomIds>()
                 .all(&*tx)
-                .await?)
+                .await?;
+            let channel_ids = channel_buffer_collaborator::Entity::find()
+                .select_only()
+                .column(channel_buffer_collaborator::Column::ChannelId)
+                .distinct()
+                .filter(
+                    channel_buffer_collaborator::Column::ConnectionServerId
+                        .is_in(stale_server_epochs.iter().copied()),
+                )
+                .into_values::<_, QueryChannelIds>()
+                .all(&*tx)
+                .await?;
+            Ok((room_ids, channel_ids))
         })
         .await
     }

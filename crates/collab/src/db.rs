@@ -503,6 +503,11 @@ pub struct RefreshedRoom {
     pub canceled_calls_to_user_ids: Vec<UserId>,
 }
 
+pub struct RefreshedChannelBuffer {
+    pub connection_ids: Vec<ConnectionId>,
+    pub removed_collaborators: Vec<proto::RemoveChannelBufferCollaborator>,
+}
+
 pub struct Project {
     pub collaborators: Vec<ProjectCollaborator>,
     pub worktrees: BTreeMap<u64, Worktree>,

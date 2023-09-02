@@ -278,13 +278,29 @@ impl Server {
                 tracing::info!("waiting for cleanup timeout");
                 timeout.await;
                 tracing::info!("cleanup timeout expired, retrieving stale rooms");
-                if let Some(room_ids) = app_state
+                if let Some((room_ids, channel_ids)) = app_state
                     .db
-                    .stale_room_ids(&app_state.config.zed_environment, server_id)
+                    .stale_server_resource_ids(&app_state.config.zed_environment, server_id)
                     .await
                     .trace_err()
                 {
                     tracing::info!(stale_room_count = room_ids.len(), "retrieved stale rooms");
+
+                    for channel_id in channel_ids {
+                        if let Some(refreshed_channel_buffer) = app_state
+                            .db
+                            .refresh_channel_buffer(channel_id, server_id)
+                            .await
+                            .trace_err()
+                        {
+                            for connection_id in refreshed_channel_buffer.connection_ids {
+                                for message in &refreshed_channel_buffer.removed_collaborators {
+                                    peer.send(connection_id, message.clone()).trace_err();
+                                }
+                            }
+                        }
+                    }
+
                     for room_id in room_ids {
                         let mut contacts_to_update = HashSet::default();
                         let mut canceled_calls_to_user_ids = Vec::new();

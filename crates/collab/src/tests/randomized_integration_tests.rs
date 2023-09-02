@@ -307,10 +307,10 @@ async fn apply_server_operation(
             server.start().await.unwrap();
             deterministic.advance_clock(CLEANUP_TIMEOUT);
             let environment = &server.app_state.config.zed_environment;
-            let stale_room_ids = server
+            let (stale_room_ids, _) = server
                 .app_state
                 .db
-                .stale_room_ids(environment, server.id())
+                .stale_server_resource_ids(environment, server.id())
                 .await
                 .unwrap();
             assert_eq!(stale_room_ids, vec![]);
