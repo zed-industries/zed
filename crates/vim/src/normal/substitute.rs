@@ -10,8 +10,8 @@ actions!(vim, [Substitute, SubstituteLine]);
 pub(crate) fn init(cx: &mut AppContext) {
     cx.add_action(|_: &mut Workspace, _: &Substitute, cx| {
         Vim::update(cx, |vim, cx| {
-            let times = vim.pop_number_operator(cx);
-            substitute(vim, times, vim.state().mode == Mode::VisualLine, cx);
+            let count = vim.pop_number_operator(cx);
+            substitute(vim, count, vim.state().mode == Mode::VisualLine, cx);
         })
     });
 
