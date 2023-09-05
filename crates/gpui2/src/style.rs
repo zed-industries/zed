@@ -364,6 +364,30 @@ pub trait StyleHelpers: Styleable<Style = Style> {
         self
     }
 
+    fn items_start(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().align_items = Some(AlignItems::FlexStart);
+        self
+    }
+
+    fn items_end(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().align_items = Some(AlignItems::FlexEnd);
+        self
+    }
+
+    fn items_center(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().align_items = Some(AlignItems::Center);
+        self
+    }
+
     fn justify_between(mut self) -> Self
     where
         Self: Sized,
