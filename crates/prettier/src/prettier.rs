@@ -9,7 +9,7 @@ pub struct Prettier {
     _private: (),
 }
 
-type NodeRuntime = ();
+pub struct NodeRuntime;
 
 impl Prettier {
     // This was taken from the prettier-vscode extension.

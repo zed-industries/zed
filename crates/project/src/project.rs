@@ -50,7 +50,7 @@ use lsp::{
 };
 use lsp_command::*;
 use postage::watch;
-use prettier::Prettier;
+use prettier::{NodeRuntime, Prettier};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use search::SearchQuery;
@@ -153,7 +153,10 @@ pub struct Project {
     copilot_lsp_subscription: Option<gpui::Subscription>,
     copilot_log_subscription: Option<lsp::Subscription>,
     current_lsp_settings: HashMap<Arc<str>, LspSettings>,
-    prettier_instances: HashMap<(WorktreeId, PathBuf), Shared<Task<Result<Arc<Prettier>>>>>,
+    prettier_instances: HashMap<
+        (Option<WorktreeId>, PathBuf),
+        Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>,
+    >,
 }
 
 struct DelayedDebounced {
@@ -3953,7 +3956,7 @@ impl Project {
         push_to_history: bool,
         trigger: FormatTrigger,
         cx: &mut ModelContext<Project>,
-    ) -> Task<Result<ProjectTransaction>> {
+    ) -> Task<anyhow::Result<ProjectTransaction>> {
         if self.is_local() {
             let mut buffers_with_paths_and_servers = buffers
                 .into_iter()
@@ -4082,15 +4085,26 @@ impl Project {
                             }
                         }
                         (Formatter::Auto, FormatOnSave::On | FormatOnSave::Off) => {
-                            if let Some(prettier) = this.update(&mut cx, |project, _| {
-                                project.prettier_instance_for_buffer(buffer)
-                            }) {
-                                format_operation = Some(FormatOperation::Prettier(
-                                    prettier
-                                        .format(buffer)
+                            if let Some(prettier_task) = this
+                                .update(&mut cx, |project, cx| {
+                                    project.prettier_instance_for_buffer(buffer, cx)
+                                }) {
+                                    match prettier_task
                                         .await
-                                        .context("autoformatting via prettier")?,
-                                ));
+                                        .await
+                                    {
+                                        Ok(prettier) => {
+                                            format_operation = Some(FormatOperation::Prettier(
+                                                prettier
+                                                    .format(buffer)
+                                                    .await
+                                                    .context("formatting via prettier")?,
+                                            ));
+                                        }
+                                        Err(e) => anyhow::bail!(
+                                            "Failed to create prettier instance for buffer during autoformatting: {e:#}"
+                                        ),
+                                    }
                             } else if let Some((language_server, buffer_abs_path)) =
                                 language_server.as_ref().zip(buffer_abs_path.as_ref())
                             {
@@ -4109,16 +4123,27 @@ impl Project {
                             }
                         }
                         (Formatter::Prettier { .. }, FormatOnSave::On | FormatOnSave::Off) => {
-                            if let Some(prettier) = this.update(&mut cx, |project, _| {
-                                project.prettier_instance_for_buffer(buffer)
-                            }) {
-                                format_operation = Some(FormatOperation::Prettier(
-                                    prettier
-                                        .format(buffer)
+                            if let Some(prettier_task) = this
+                                .update(&mut cx, |project, cx| {
+                                    project.prettier_instance_for_buffer(buffer, cx)
+                                }) {
+                                    match prettier_task
                                         .await
-                                        .context("formatting via prettier")?,
-                                ));
-                            }
+                                        .await
+                                    {
+                                        Ok(prettier) => {
+                                            format_operation = Some(FormatOperation::Prettier(
+                                                prettier
+                                                    .format(buffer)
+                                                    .await
+                                                    .context("formatting via prettier")?,
+                                            ));
+                                        }
+                                        Err(e) => anyhow::bail!(
+                                            "Failed to create prettier instance for buffer during formatting: {e:#}"
+                                        ),
+                                    }
+                                }
                         }
                     };
 
@@ -8157,9 +8182,53 @@ impl Project {
         }
     }
 
-    fn prettier_instance_for_buffer(&self, buffer: &ModelHandle<Buffer>) -> Option<Prettier> {
-        // TODO kb
-        None
+    fn prettier_instance_for_buffer(
+        &mut self,
+        buffer: &ModelHandle<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<Task<Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>>> {
+        let buffer_file = File::from_dyn(buffer.read(cx).file());
+        let buffer_path = buffer_file.map(|file| Arc::clone(file.path()));
+        let worktree_id = buffer_file.map(|file| file.worktree_id(cx));
+
+        // TODO kb return None if config opted out of prettier
+
+        let task = cx.spawn(|this, mut cx| async move {
+            let fs = this.update(&mut cx, |project, _| Arc::clone(&project.fs));
+            // TODO kb can we have a cache for this instead?
+            let prettier_path = Prettier::locate(buffer_path.as_deref(), fs).await;
+            if let Some(existing_prettier) = this.update(&mut cx, |project, _| {
+                project
+                    .prettier_instances
+                    .get(&(worktree_id, prettier_path.clone()))
+                    .cloned()
+            }) {
+                return existing_prettier;
+            }
+
+            let task_node_runtime = Arc::new(NodeRuntime);
+            let task_prettier_path = prettier_path.clone();
+            let new_prettier_task = cx
+                .background()
+                .spawn(async move {
+                    Ok(Arc::new(
+                        Prettier::start(&task_prettier_path, task_node_runtime)
+                            .await
+                            .with_context(|| {
+                                format!("starting new prettier for path {task_prettier_path:?}")
+                            })?,
+                    ))
+                    .map_err(Arc::new)
+                })
+                .shared();
+            this.update(&mut cx, |project, _| {
+                project
+                    .prettier_instances
+                    .insert((worktree_id, prettier_path), new_prettier_task.clone());
+            });
+            new_prettier_task
+        });
+        Some(task)
     }
 }
 
