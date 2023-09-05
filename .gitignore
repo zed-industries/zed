@@ -1,4 +1,5 @@
 **/target
+**/cargo-target
 /zed.xcworkspace
 .DS_Store
 /plugins/bin
