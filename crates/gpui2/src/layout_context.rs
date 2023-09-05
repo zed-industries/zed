@@ -1,7 +1,7 @@
 use crate::{element::LayoutId, style::Style};
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
-use gpui::{geometry::Size, MeasureParams, RenderContext, ViewContext};
+use gpui::{geometry::Size, MeasureParams};
 pub use gpui::{taffy::tree::NodeId, LayoutContext as LegacyLayoutContext};
 
 #[derive(Deref, DerefMut)]
@@ -9,24 +9,6 @@ pub struct LayoutContext<'a, 'b, 'c, 'd, V> {
     #[deref]
     #[deref_mut]
     pub(crate) legacy_cx: &'d mut LegacyLayoutContext<'a, 'b, 'c, V>,
-}
-
-impl<'a, 'b, V> RenderContext<'a, 'b, V> for LayoutContext<'a, 'b, '_, '_, V> {
-    fn text_style(&self) -> gpui::fonts::TextStyle {
-        self.legacy_cx.text_style()
-    }
-
-    fn push_text_style(&mut self, style: gpui::fonts::TextStyle) {
-        self.legacy_cx.push_text_style(style)
-    }
-
-    fn pop_text_style(&mut self) {
-        self.legacy_cx.pop_text_style()
-    }
-
-    fn as_view_context(&mut self) -> &mut ViewContext<'a, 'b, V> {
-        &mut self.view_context
-    }
 }
 
 impl<'a, 'b, 'c, 'd, V: 'static> LayoutContext<'a, 'b, 'c, 'd, V> {
@@ -39,7 +21,7 @@ impl<'a, 'b, 'c, 'd, V: 'static> LayoutContext<'a, 'b, 'c, 'd, V> {
         style: Style,
         children: impl IntoIterator<Item = NodeId>,
     ) -> Result<LayoutId> {
-        let rem_size = self.rem_pixels();
+        let rem_size = self.rem_size();
         let id = self
             .legacy_cx
             .layout_engine()
@@ -53,7 +35,7 @@ impl<'a, 'b, 'c, 'd, V: 'static> LayoutContext<'a, 'b, 'c, 'd, V> {
     where
         F: Fn(MeasureParams) -> Size<f32> + Sync + Send + 'static,
     {
-        let rem_size = self.rem_pixels();
+        let rem_size = self.rem_size();
         let layout_id = self
             .layout_engine()
             .ok_or_else(|| anyhow!("no layout engine"))?

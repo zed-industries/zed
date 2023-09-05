@@ -4,20 +4,23 @@ use crate::{
     elements::pressable::{pressable, Pressable},
     paint_context::PaintContext,
 };
+pub use fonts::Style as FontStyle;
+pub use fonts::Weight as FontWeight;
 pub use gpui::taffy::style::{
     AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap, JustifyContent,
     Overflow, Position,
 };
 use gpui::{
-    fonts::TextStyleRefinement,
+    fonts::{self, TextStyleRefinement},
     geometry::{
         rect::RectF, relative, AbsoluteLength, DefiniteLength, Edges, EdgesRefinement, Length,
         Point, PointRefinement, Size, SizeRefinement,
     },
-    taffy,
+    taffy, WindowContext,
 };
 use gpui2_macros::styleable_helpers;
 use refineable::{Refineable, RefinementCascade};
+use std::sync::Arc;
 
 #[derive(Clone, Refineable)]
 pub struct Style {
@@ -92,11 +95,41 @@ pub struct Style {
     /// The radius of the corners of this element
     #[refineable]
     pub corner_radii: CornerRadii,
+
     /// The color of text within this element. Cascades to children unless overridden.
     pub text_color: Option<Hsla>,
+
+    /// The font size in rems.
+    pub font_size: Option<f32>,
+
+    pub font_family: Option<Arc<str>>,
+
+    pub font_weight: Option<FontWeight>,
+
+    pub font_style: Option<FontStyle>,
 }
 
 impl Style {
+    pub fn text_style(&self, cx: &WindowContext) -> Option<TextStyleRefinement> {
+        if self.text_color.is_none()
+            && self.font_size.is_none()
+            && self.font_family.is_none()
+            && self.font_weight.is_none()
+            && self.font_style.is_none()
+        {
+            return None;
+        }
+
+        Some(TextStyleRefinement {
+            color: self.text_color.map(Into::into),
+            font_family: self.font_family.clone(),
+            font_size: self.font_size.map(|size| size * cx.rem_size()),
+            font_weight: self.font_weight,
+            font_style: self.font_style,
+            underline: None,
+        })
+    }
+
     pub fn to_taffy(&self, rem_size: f32) -> taffy::style::Style {
         taffy::style::Style {
             display: self.display,
@@ -128,7 +161,7 @@ impl Style {
     /// Paints the background of an element styled with this style.
     /// Return the bounds in which to paint the content.
     pub fn paint_background<V: 'static>(&self, bounds: RectF, cx: &mut PaintContext<V>) {
-        let rem_size = cx.rem_pixels();
+        let rem_size = cx.rem_size();
         if let Some(color) = self.fill.as_ref().and_then(Fill::color) {
             cx.scene.push_quad(gpui::Quad {
                 bounds,
@@ -136,17 +169,6 @@ impl Style {
                 corner_radii: self.corner_radii.to_gpui(rem_size),
                 border: Default::default(),
             });
-        }
-    }
-
-    pub fn text_style(&self) -> Option<TextStyleRefinement> {
-        if let Some(color) = self.text_color {
-            Some(TextStyleRefinement {
-                color: Some(color.into()),
-                ..Default::default()
-            })
-        } else {
-            None
         }
     }
 }
@@ -182,29 +204,12 @@ impl Default for Style {
             flex_shrink: 1.0,
             flex_basis: Length::Auto,
             fill: None,
-            text_color: None,
             corner_radii: CornerRadii::default(),
-        }
-    }
-}
-
-impl StyleRefinement {
-    pub fn text_style(&self) -> Option<TextStyleRefinement> {
-        self.text_color.map(|color| TextStyleRefinement {
-            color: Some(color.into()),
-            ..Default::default()
-        })
-    }
-}
-
-pub struct OptionalTextStyle {
-    color: Option<Hsla>,
-}
-
-impl OptionalTextStyle {
-    pub fn apply(&self, style: &mut gpui::fonts::TextStyle) {
-        if let Some(color) = self.color {
-            style.color = color.into();
+            text_color: None,
+            font_size: Some(1.),
+            font_family: None,
+            font_weight: None,
+            font_style: None,
         }
     }
 }
@@ -414,6 +419,70 @@ pub trait StyleHelpers: Styleable<Style = Style> {
         Self: Sized,
     {
         self.declared_style().text_color = Some(color.into());
+        self
+    }
+
+    fn text_xs(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().font_size = Some(0.75);
+        self
+    }
+
+    fn text_sm(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().font_size = Some(0.875);
+        self
+    }
+
+    fn text_base(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().font_size = Some(1.0);
+        self
+    }
+
+    fn text_lg(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().font_size = Some(1.125);
+        self
+    }
+
+    fn text_xl(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().font_size = Some(1.25);
+        self
+    }
+
+    fn text_2xl(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().font_size = Some(1.5);
+        self
+    }
+
+    fn text_3xl(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().font_size = Some(1.875);
+        self
+    }
+
+    fn font(mut self, family_name: impl Into<Arc<str>>) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().font_family = Some(family_name.into());
         self
     }
 }

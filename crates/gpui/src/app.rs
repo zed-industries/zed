@@ -10,7 +10,6 @@ mod window_input_handler;
 use crate::{
     elements::{AnyElement, AnyRootElement, RootElement},
     executor::{self, Task},
-    fonts::TextStyle,
     json,
     keymap_matcher::{self, Binding, KeymapContext, KeymapMatcher, Keystroke, MatchResult},
     platform::{
@@ -3345,10 +3344,6 @@ impl<'a, 'b, V: 'static> ViewContext<'a, 'b, V> {
         self.element_state::<Tag, T>(element_id, T::default())
     }
 
-    pub fn rem_pixels(&self) -> f32 {
-        16.
-    }
-
     pub fn default_element_state_dynamic<T: 'static + Default>(
         &mut self,
         tag: TypeTag,
@@ -3447,17 +3442,6 @@ impl<V> BorrowWindowContext for ViewContext<'_, '_, V> {
     }
 }
 
-/// Methods shared by both LayoutContext and PaintContext
-///
-/// It's that PaintContext should be implemented in terms of layout context and
-/// deref to it, in which case we wouldn't need this.
-pub trait RenderContext<'a, 'b, V> {
-    fn text_style(&self) -> TextStyle;
-    fn push_text_style(&mut self, style: TextStyle);
-    fn pop_text_style(&mut self);
-    fn as_view_context(&mut self) -> &mut ViewContext<'a, 'b, V>;
-}
-
 pub struct LayoutContext<'a, 'b, 'c, V> {
     // Nathan: Making this is public while I work on gpui2.
     pub view_context: &'c mut ViewContext<'a, 'b, V>,
@@ -3519,38 +3503,6 @@ impl<'a, 'b, 'c, V> LayoutContext<'a, 'b, 'c, V> {
             .entry(view_id)
             .or_default()
             .push(self_view_id);
-    }
-
-    pub fn with_text_style<F, T>(&mut self, style: TextStyle, f: F) -> T
-    where
-        F: FnOnce(&mut Self) -> T,
-    {
-        self.push_text_style(style);
-        let result = f(self);
-        self.pop_text_style();
-        result
-    }
-}
-
-impl<'a, 'b, 'c, V> RenderContext<'a, 'b, V> for LayoutContext<'a, 'b, 'c, V> {
-    fn text_style(&self) -> TextStyle {
-        self.window
-            .text_style_stack
-            .last()
-            .cloned()
-            .unwrap_or(TextStyle::default(&self.font_cache))
-    }
-
-    fn push_text_style(&mut self, style: TextStyle) {
-        self.window.text_style_stack.push(style);
-    }
-
-    fn pop_text_style(&mut self) {
-        self.window.text_style_stack.pop();
-    }
-
-    fn as_view_context(&mut self) -> &mut ViewContext<'a, 'b, V> {
-        &mut self.view_context
     }
 }
 

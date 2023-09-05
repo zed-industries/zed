@@ -1,4 +1,5 @@
 #![allow(dead_code, unused_variables)]
+
 use crate::theme::Theme;
 use ::theme as legacy_theme;
 use collab_panel::collab_panel;
@@ -25,6 +26,7 @@ fn main() {
             .unwrap();
         cx.set_global(store);
         legacy_theme::init(Assets, cx);
+        // load_embedded_fonts(cx.platform().as_ref());
 
         cx.add_window(
             gpui2::WindowOptions {
@@ -66,6 +68,7 @@ use rust_embed::RustEmbed;
 #[derive(RustEmbed)]
 #[folder = "../../assets"]
 #[include = "themes/**/*"]
+#[include = "fonts/**/*"]
 #[exclude = "*.DS_Store"]
 pub struct Assets;
 
@@ -80,3 +83,16 @@ impl AssetSource for Assets {
         Self::iter().filter(|p| p.starts_with(path)).collect()
     }
 }
+
+// fn load_embedded_fonts(platform: &dyn gpui2::Platform) {
+//     let font_paths = Assets.list("fonts");
+//     let mut embedded_fonts = Vec::new();
+//     for font_path in &font_paths {
+//         if font_path.ends_with(".ttf") {
+//             let font_path = &*font_path;
+//             let font_bytes = Assets.load(font_path).unwrap().to_vec();
+//             embedded_fonts.push(Arc::from(font_bytes));
+//         }
+//     }
+//     platform.fonts().add_fonts(&embedded_fonts).unwrap();
+// }

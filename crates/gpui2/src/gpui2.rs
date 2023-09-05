@@ -18,5 +18,5 @@ pub use gpui::*;
 pub use gpui2_macros::{Element, *};
 pub use interactive::*;
 pub use layout_context::LayoutContext;
-pub use platform::{WindowBounds, WindowOptions};
+pub use platform::{Platform, WindowBounds, WindowOptions};
 pub use view::*;

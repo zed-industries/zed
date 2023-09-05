@@ -1,6 +1,6 @@
 use crate::{
     elements::AnyRootElement,
-    fonts::TextStyle,
+    fonts::{TextStyle, TextStyleRefinement},
     geometry::{rect::RectF, Size},
     json::ToJson,
     keymap_matcher::{Binding, KeymapContext, Keystroke, MatchResult},
@@ -233,6 +233,10 @@ impl<'a> WindowContext<'a> {
         let window = self.window();
         self.pending_effects
             .push_back(Effect::RepaintWindow { window });
+    }
+
+    pub fn rem_size(&self) -> f32 {
+        16.
     }
 
     pub fn layout_engine(&mut self) -> Option<&mut LayoutEngine> {
@@ -1284,8 +1288,14 @@ impl<'a> WindowContext<'a> {
             .unwrap_or(TextStyle::default(&self.font_cache))
     }
 
-    pub fn push_text_style(&mut self, style: TextStyle) {
+    pub fn push_text_style(&mut self, refinement: &TextStyleRefinement) -> Result<()> {
+        let mut style = self.text_style();
+        style.refine(refinement, self.font_cache())?;
+
+        dbg!(&style);
+
         self.window.text_style_stack.push(style);
+        Ok(())
     }
 
     pub fn pop_text_style(&mut self) {

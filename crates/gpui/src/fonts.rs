@@ -60,7 +60,7 @@ pub struct Features {
     pub zero: Option<bool>,
 }
 
-#[derive(Clone, Debug, JsonSchema, Refineable)]
+#[derive(Clone, Debug, JsonSchema)]
 pub struct TextStyle {
     pub color: Color,
     pub font_family_name: Arc<str>,
@@ -80,19 +80,78 @@ impl TextStyle {
             ..Default::default()
         }
     }
+}
 
-    pub fn refine(self, refinement: TextStyleRefinement) -> TextStyle {
-        TextStyle {
-            color: refinement.color.unwrap_or(self.color),
-            font_family_name: refinement
-                .font_family_name
-                .unwrap_or_else(|| self.font_family_name.clone()),
-            font_family_id: refinement.font_family_id.unwrap_or(self.font_family_id),
-            font_id: refinement.font_id.unwrap_or(self.font_id),
-            font_size: refinement.font_size.unwrap_or(self.font_size),
-            font_properties: refinement.font_properties.unwrap_or(self.font_properties),
-            underline: refinement.underline.unwrap_or(self.underline),
-            soft_wrap: refinement.soft_wrap.unwrap_or(self.soft_wrap),
+impl TextStyle {
+    pub fn refine(
+        &mut self,
+        refinement: &TextStyleRefinement,
+        font_cache: &FontCache,
+    ) -> Result<()> {
+        if let Some(font_size) = refinement.font_size {
+            self.font_size = font_size;
+        }
+        if let Some(color) = refinement.color {
+            self.color = color;
+        }
+        if let Some(underline) = refinement.underline {
+            self.underline = underline;
+        }
+
+        let mut update_font_id = false;
+        if let Some(font_family) = refinement.font_family.clone() {
+            self.font_family_id = font_cache.load_family(&[&font_family], &Default::default())?;
+            self.font_family_name = font_family;
+            update_font_id = true;
+        }
+        if let Some(font_weight) = refinement.font_weight {
+            self.font_properties.weight = font_weight;
+            update_font_id = true;
+        }
+        if let Some(font_style) = refinement.font_style {
+            self.font_properties.style = font_style;
+            update_font_id = true;
+        }
+
+        if update_font_id {
+            self.font_id = font_cache.select_font(self.font_family_id, &self.font_properties)?;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct TextStyleRefinement {
+    pub color: Option<Color>,
+    pub font_family: Option<Arc<str>>,
+    pub font_size: Option<f32>,
+    pub font_weight: Option<Weight>,
+    pub font_style: Option<Style>,
+    pub underline: Option<Underline>,
+}
+
+impl Refineable for TextStyleRefinement {
+    type Refinement = Self;
+
+    fn refine(&mut self, refinement: &Self::Refinement) {
+        if refinement.color.is_some() {
+            self.color = refinement.color;
+        }
+        if refinement.font_family.is_some() {
+            self.font_family = refinement.font_family.clone();
+        }
+        if refinement.font_size.is_some() {
+            self.font_size = refinement.font_size;
+        }
+        if refinement.font_weight.is_some() {
+            self.font_weight = refinement.font_weight;
+        }
+        if refinement.font_style.is_some() {
+            self.font_style = refinement.font_style;
+        }
+        if refinement.underline.is_some() {
+            self.underline = refinement.underline;
         }
     }
 }

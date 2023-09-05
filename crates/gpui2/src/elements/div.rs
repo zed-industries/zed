@@ -6,9 +6,10 @@ use crate::{
     InteractionHandlers, Interactive,
 };
 use anyhow::Result;
-use gpui::{LayoutId, RenderContext};
+use gpui::LayoutId;
 use refineable::{Refineable, RefinementCascade};
 use smallvec::SmallVec;
+use util::ResultExt;
 
 pub struct Div<V: 'static> {
     styles: RefinementCascade<Style>,
@@ -36,9 +37,8 @@ impl<V: 'static> Element<V> for Div<V> {
         Self: Sized,
     {
         let style = self.computed_style();
-        let pop_text_style = style.text_style().map_or(false, |style| {
-            cx.push_text_style(cx.text_style().clone().refined(&style));
-            true
+        let pop_text_style = style.text_style(cx).map_or(false, |style| {
+            cx.push_text_style(&style).log_err().is_some()
         });
 
         let children = self
@@ -64,10 +64,8 @@ impl<V: 'static> Element<V> for Div<V> {
         Self: Sized,
     {
         let style = &self.computed_style();
-        let pop_text_style = style.text_style().map_or(false, |style| {
-            let style = cx.text_style().clone().refined(&style);
-            cx.push_text_style(style);
-            true
+        let pop_text_style = style.text_style(cx).map_or(false, |style| {
+            cx.push_text_style(&style).log_err().is_some()
         });
         style.paint_background(layout.bounds, cx);
         self.interaction_handlers()

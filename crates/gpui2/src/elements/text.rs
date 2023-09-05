@@ -4,7 +4,7 @@ use crate::{
     paint_context::PaintContext,
 };
 use anyhow::Result;
-use gpui::{geometry::Size, text_layout::LineLayout, LayoutId, RenderContext};
+use gpui::{geometry::Size, text_layout::LineLayout, LayoutId};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
