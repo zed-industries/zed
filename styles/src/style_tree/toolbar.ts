@@ -8,8 +8,8 @@ export const toolbar = () => {
     const theme = useTheme()
 
     return {
-        height: 32,
-        padding: { left: 4, right: 4, top: 4, bottom: 4 },
+        height: 42,
+        padding: { left: 4, right: 4 },
         background: background(theme.highest),
         border: border(theme.highest, { bottom: true }),
         item_spacing: 4,
