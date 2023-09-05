@@ -34,7 +34,6 @@ use util::{
     paths::EMBEDDINGS_DIR,
     ResultExt, TryFutureExt,
 };
-use workspace::WorkspaceCreated;
 
 const SEMANTIC_INDEX_VERSION: usize = 9;
 const BACKGROUND_INDEXING_DELAY: Duration = Duration::from_secs(5 * 60);
@@ -56,24 +55,6 @@ pub fn init(
     if *RELEASE_CHANNEL == ReleaseChannel::Stable {
         return;
     }
-
-    cx.subscribe_global::<WorkspaceCreated, _>({
-        move |event, cx| {
-            let Some(semantic_index) = SemanticIndex::global(cx) else {
-                return;
-            };
-            let workspace = &event.0;
-            if let Some(workspace) = workspace.upgrade(cx) {
-                let project = workspace.read(cx).project().clone();
-                if project.read(cx).is_local() {
-                    semantic_index.update(cx, |index, cx| {
-                        index.register_project(project, cx);
-                    });
-                }
-            }
-        }
-    })
-    .detach();
 
     cx.spawn(move |mut cx| async move {
         let semantic_index = SemanticIndex::new(
@@ -426,31 +407,6 @@ impl SemanticIndex {
         }
     }
 
-    fn register_project(
-        &mut self,
-        project: ModelHandle<Project>,
-        cx: &mut ModelContext<Self>,
-    ) -> &mut ProjectState {
-        if !self.projects.contains_key(&project.downgrade()) {
-            log::trace!("Registering Project for Semantic Index");
-
-            let subscription = cx.subscribe(&project, |this, project, event, cx| match event {
-                project::Event::WorktreeAdded | project::Event::WorktreeRemoved(_) => {
-                    this.project_worktrees_changed(project.clone(), cx);
-                }
-                project::Event::WorktreeUpdatedEntries(worktree_id, changes) => {
-                    this.project_entries_changed(project, *worktree_id, changes.clone(), cx);
-                }
-                _ => {}
-            });
-            self.projects
-                .insert(project.downgrade(), ProjectState::new(subscription));
-            self.project_worktrees_changed(project.clone(), cx);
-        }
-
-        self.projects.get_mut(&project.downgrade()).unwrap()
-    }
-
     fn register_worktree(
         &mut self,
         project: ModelHandle<Project>,
@@ -542,11 +498,14 @@ impl SemanticIndex {
                         anyhow::Ok(changed_paths)
                     })
                     .await?;
-                this.update(&mut cx, |this, _| {
+                this.update(&mut cx, |this, cx| {
                     let project_state = this
                         .projects
                         .get_mut(&project)
                         .ok_or_else(|| anyhow!("project not registered"))?;
+                    let project = project
+                        .upgrade(cx)
+                        .ok_or_else(|| anyhow!("project was dropped"))?;
 
                     if let Some(WorktreeState::Registering(state)) =
                         project_state.worktrees.remove(&worktree_id)
@@ -560,6 +519,7 @@ impl SemanticIndex {
                             changed_paths,
                         }),
                     );
+                    this.index_project(project, cx);
 
                     anyhow::Ok(())
                 })?;
@@ -762,7 +722,24 @@ impl SemanticIndex {
     }
 
     pub fn index_project(&mut self, project: ModelHandle<Project>, cx: &mut ModelContext<Self>) {
-        let project_state = self.register_project(project.clone(), cx);
+        if !self.projects.contains_key(&project.downgrade()) {
+            log::trace!("Registering Project for Semantic Index");
+
+            let subscription = cx.subscribe(&project, |this, project, event, cx| match event {
+                project::Event::WorktreeAdded | project::Event::WorktreeRemoved(_) => {
+                    this.project_worktrees_changed(project.clone(), cx);
+                }
+                project::Event::WorktreeUpdatedEntries(worktree_id, changes) => {
+                    this.project_entries_changed(project, *worktree_id, changes.clone(), cx);
+                }
+                _ => {}
+            });
+            self.projects
+                .insert(project.downgrade(), ProjectState::new(subscription));
+            self.project_worktrees_changed(project.clone(), cx);
+        }
+
+        let project_state = self.projects.get_mut(&project.downgrade()).unwrap();
 
         let mut pending_files = Vec::new();
         let mut files_to_delete = Vec::new();

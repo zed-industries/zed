@@ -87,14 +87,9 @@ async fn test_semantic_index(deterministic: Arc<Deterministic>, cx: &mut TestApp
 
     let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
 
-    semantic_index.update(cx, |store, cx| {
-        store.register_project(project.clone(), cx);
-    });
-    deterministic.run_until_parked();
-
+    semantic_index.update(cx, |store, cx| store.index_project(project.clone(), cx));
     let pending_file_count =
         semantic_index.read_with(cx, |index, _| index.pending_file_count(&project).unwrap());
-    semantic_index.update(cx, |store, cx| store.index_project(project.clone(), cx));
     deterministic.run_until_parked();
     assert_eq!(*pending_file_count.borrow(), 3);
     deterministic.advance_clock(EMBEDDING_QUEUE_FLUSH_TIMEOUT);
