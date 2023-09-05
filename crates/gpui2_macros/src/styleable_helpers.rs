@@ -68,8 +68,11 @@ fn tailwind_lengths() -> Vec<(&'static str, TokenStream2)> {
         ("4", quote! { rems(1.) }),
         ("5", quote! { rems(1.25) }),
         ("6", quote! { rems(1.5) }),
+        ("7", quote! { rems(1.75) }),
         ("8", quote! { rems(2.0) }),
+        ("9", quote! { rems(2.25) }),
         ("10", quote! { rems(2.5) }),
+        ("11", quote! { rems(2.75) }),
         ("12", quote! { rems(3.) }),
         ("16", quote! { rems(4.) }),
         ("20", quote! { rems(5.) }),
@@ -149,5 +152,12 @@ fn tailwind_prefixes() -> Vec<(&'static str, bool, Vec<TokenStream2>)> {
         ("bottom", true, vec![quote! { inset.bottom }]),
         ("left", true, vec![quote! { inset.left }]),
         ("right", true, vec![quote! { inset.right }]),
+        (
+            "gap",
+            false,
+            vec![quote! { gap.width }, quote! { gap.height }],
+        ),
+        ("gap_x", false, vec![quote! { gap.width }]),
+        ("gap_y", false, vec![quote! { gap.height }]),
     ]
 }

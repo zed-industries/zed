@@ -268,14 +268,14 @@ pub trait Styleable {
         Self::Style::from_refinement(&self.style_cascade().merged())
     }
 
-    fn hovered(self) -> Hoverable<Self>
+    fn hover(self) -> Hoverable<Self>
     where
         Self: Sized,
     {
         hoverable(self)
     }
 
-    fn pressed(self) -> Pressable<Self>
+    fn active(self) -> Pressable<Self>
     where
         Self: Sized,
     {

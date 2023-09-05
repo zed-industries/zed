@@ -62,6 +62,21 @@ enum ElementPhase<V: 'static, E: Element<V>> {
     Error(String),
 }
 
+impl<V: 'static, E: Element<V>> std::fmt::Debug for ElementPhase<V, E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ElementPhase::Init => write!(f, "Init"),
+            ElementPhase::PostLayout { layout_id, .. } => {
+                write!(f, "PostLayout with layout id: {:?}", layout_id)
+            }
+            ElementPhase::PostPaint { layout, .. } => {
+                write!(f, "PostPaint with layout: {:?}", layout)
+            }
+            ElementPhase::Error(err) => write!(f, "Error: {}", err),
+        }
+    }
+}
+
 impl<V: 'static, E: Element<V>> Default for ElementPhase<V, E> {
     fn default() -> Self {
         Self::Init
@@ -105,8 +120,22 @@ impl<V, E: Element<V>> AnyStatefulElement<V> for StatefulElement<V, E> {
                 }
                 Err(error) => ElementPhase::Error(error.to_string()),
             },
+            ElementPhase::PostPaint {
+                mut layout,
+                mut paint_state,
+            } => {
+                layout.bounds = layout.bounds + parent_origin;
+                self.element.paint(view, &layout, &mut paint_state, cx);
+                ElementPhase::PostPaint {
+                    layout,
+                    paint_state,
+                }
+            }
             phase @ ElementPhase::Error(_) => phase,
-            _ => panic!("invalid element phase to call paint"),
+
+            phase @ _ => {
+                panic!("invalid element phase to call paint: {:?}", phase);
+            }
         };
     }
 }
