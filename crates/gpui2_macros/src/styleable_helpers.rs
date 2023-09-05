@@ -62,9 +62,13 @@ fn generate_methods() -> Vec<TokenStream2> {
 fn tailwind_lengths() -> Vec<(&'static str, TokenStream2)> {
     vec![
         ("0", quote! { pixels(0.) }),
+        ("0p5", quote! { rems(0.125) }),
         ("1", quote! { rems(0.25) }),
+        ("1p5", quote! { rems(0.375) }),
         ("2", quote! { rems(0.5) }),
+        ("2p5", quote! { rems(0.625) }),
         ("3", quote! { rems(0.75) }),
+        ("3p5", quote! { rems(0.875) }),
         ("4", quote! { rems(1.) }),
         ("5", quote! { rems(1.25) }),
         ("6", quote! { rems(1.5) }),

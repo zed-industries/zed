@@ -128,8 +128,8 @@ impl<V: 'static> CollabPanelElement<V> {
                                     .text_sm()
                                     .child(
                                         div()
-                                            .w_4()
-                                            .h_4()
+                                            .w_3p5()
+                                            .h_3p5()
                                             .fill(theme.middle.negative.default.foreground),
                                     )
                                     .child("maxbrunsfeld"),
@@ -142,8 +142,8 @@ impl<V: 'static> CollabPanelElement<V> {
                                     .items_center()
                                     .child(
                                         div()
-                                            .w_3_5()
-                                            .h_3_5()
+                                            .w_4()
+                                            .h_4()
                                             .fill(theme.middle.negative.default.foreground),
                                     )
                                     .child("i"),
