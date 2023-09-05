@@ -138,6 +138,11 @@ fn tailwind_prefixes() -> Vec<(&'static str, bool, Vec<TokenStream2>)> {
             false,
             vec![quote! { padding.left }, quote! { padding.right }],
         ),
+        (
+            "py",
+            false,
+            vec![quote! { padding.top }, quote! { padding.bottom }],
+        ),
         ("pl", false, vec![quote! { padding.left }]),
         ("pr", false, vec![quote! { padding.right }]),
         ("top", true, vec![quote! { inset.top }]),

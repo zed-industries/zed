@@ -1,14 +1,15 @@
 #![allow(dead_code, unused_variables)]
 use crate::theme::Theme;
 use ::theme as legacy_theme;
+use collab_panel::collab_panel;
 use element_ext::ElementExt;
 use gpui2::{serde_json, vec2f, view, Element, RectF, ViewContext, WindowBounds};
 use legacy_theme::ThemeSettings;
 use log::LevelFilter;
 use settings::{default_settings, SettingsStore};
 use simplelog::SimpleLogger;
-use workspace::workspace;
 
+mod collab_panel;
 mod components;
 mod element_ext;
 mod theme;
@@ -27,7 +28,7 @@ fn main() {
 
         cx.add_window(
             gpui2::WindowOptions {
-                bounds: WindowBounds::Fixed(RectF::new(vec2f(0., 0.), vec2f(400., 300.))),
+                bounds: WindowBounds::Fixed(RectF::new(vec2f(0., 0.), vec2f(260., 800.))),
                 center: true,
                 ..Default::default()
             },
@@ -38,7 +39,7 @@ fn main() {
 }
 
 fn storybook<V: 'static>(cx: &mut ViewContext<V>) -> impl Element<V> {
-    workspace().themed(current_theme(cx))
+    collab_panel().themed(current_theme(cx))
 }
 
 // Nathan: During the transition, we will include the base theme on the legacy Theme struct.

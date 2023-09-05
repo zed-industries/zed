@@ -359,6 +359,46 @@ pub trait StyleHelpers: Styleable<Style = Style> {
         self
     }
 
+    fn justify_between(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().justify_content = Some(JustifyContent::SpaceBetween);
+        self
+    }
+
+    fn justify_center(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().justify_content = Some(JustifyContent::Center);
+        self
+    }
+
+    fn justify_start(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().justify_content = Some(JustifyContent::Start);
+        self
+    }
+
+    fn justify_end(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().justify_content = Some(JustifyContent::End);
+        self
+    }
+
+    fn justify_around(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().justify_content = Some(JustifyContent::SpaceAround);
+        self
+    }
+
     fn fill<F>(mut self, fill: F) -> Self
     where
         F: Into<Fill>,
