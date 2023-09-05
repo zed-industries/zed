@@ -417,7 +417,7 @@ impl SemanticIndex {
             return;
         };
         worktree_state.paths_changed(changes, Instant::now(), worktree);
-        if let WorktreeState::Registered(worktree_state) = worktree_state {
+        if let WorktreeState::Registered(_) = worktree_state {
             cx.spawn_weak(|this, mut cx| async move {
                 cx.background().timer(BACKGROUND_INDEXING_DELAY).await;
                 if let Some((this, project)) = this.upgrade(&cx).zip(project.upgrade(&cx)) {
@@ -842,18 +842,6 @@ impl SemanticIndex {
                 true
             });
 
-        let mut worktree_id_file_paths = HashMap::default();
-        for worktree in project_state.worktrees.values() {
-            if let WorktreeState::Registered(worktree_state) = worktree {
-                for (path, _) in &worktree_state.changed_paths {
-                    worktree_id_file_paths
-                        .entry(worktree_state.db_id)
-                        .or_insert(Vec::new())
-                        .push(path.clone());
-                }
-            }
-        }
-
         let db = self.db.clone();
         let language_registry = self.language_registry.clone();
         let parsing_files_tx = self.parsing_files_tx.clone();
@@ -862,12 +850,21 @@ impl SemanticIndex {
                 db.delete_file(worktree_db_id, path).await.log_err();
             }
 
-            let embeddings_for_digest = Arc::new(
-                db.embeddings_for_files(worktree_id_file_paths)
-                    .await
-                    .log_err()
-                    .unwrap_or_default(),
-            );
+            let embeddings_for_digest = {
+                let mut files = HashMap::default();
+                for pending_file in &pending_files {
+                    files
+                        .entry(pending_file.worktree_db_id)
+                        .or_insert(Vec::new())
+                        .push(pending_file.relative_path.clone());
+                }
+                Arc::new(
+                    db.embeddings_for_files(files)
+                        .await
+                        .log_err()
+                        .unwrap_or_default(),
+                )
+            };
 
             for mut pending_file in pending_files {
                 if let Ok(language) = language_registry
