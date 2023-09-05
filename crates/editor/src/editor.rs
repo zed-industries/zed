@@ -312,6 +312,10 @@ actions!(
         CopyPath,
         CopyRelativePath,
         CopyHighlightJson,
+        ContextMenuFirst,
+        ContextMenuPrev,
+        ContextMenuNext,
+        ContextMenuLast,
     ]
 );
 
@@ -468,6 +472,10 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::next_copilot_suggestion);
     cx.add_action(Editor::previous_copilot_suggestion);
     cx.add_action(Editor::copilot_suggest);
+    cx.add_action(Editor::context_menu_first);
+    cx.add_action(Editor::context_menu_prev);
+    cx.add_action(Editor::context_menu_next);
+    cx.add_action(Editor::context_menu_last);
 
     hover_popover::init(cx);
     scroll::actions::init(cx);
@@ -5166,12 +5174,6 @@ impl Editor {
             return;
         }
 
-        if let Some(context_menu) = self.context_menu.as_mut() {
-            if context_menu.select_prev(cx) {
-                return;
-            }
-        }
-
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate_action();
             return;
@@ -5191,15 +5193,6 @@ impl Editor {
 
     pub fn move_page_up(&mut self, action: &MovePageUp, cx: &mut ViewContext<Self>) {
         if self.take_rename(true, cx).is_some() {
-            return;
-        }
-
-        if self
-            .context_menu
-            .as_mut()
-            .map(|menu| menu.select_first(cx))
-            .unwrap_or(false)
-        {
             return;
         }
 
@@ -5241,12 +5234,6 @@ impl Editor {
 
     pub fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
         self.take_rename(true, cx);
-
-        if let Some(context_menu) = self.context_menu.as_mut() {
-            if context_menu.select_next(cx) {
-                return;
-            }
-        }
 
         if self.mode == EditorMode::SingleLine {
             cx.propagate_action();
@@ -5313,6 +5300,30 @@ impl Editor {
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_heads_with(|map, head, goal| movement::down(map, head, goal, false))
         });
+    }
+
+    pub fn context_menu_first(&mut self, _: &ContextMenuFirst, cx: &mut ViewContext<Self>) {
+        if let Some(context_menu) = self.context_menu.as_mut() {
+            context_menu.select_first(cx);
+        }
+    }
+
+    pub fn context_menu_prev(&mut self, _: &ContextMenuPrev, cx: &mut ViewContext<Self>) {
+        if let Some(context_menu) = self.context_menu.as_mut() {
+            context_menu.select_prev(cx);
+        }
+    }
+
+    pub fn context_menu_next(&mut self, _: &ContextMenuNext, cx: &mut ViewContext<Self>) {
+        if let Some(context_menu) = self.context_menu.as_mut() {
+            context_menu.select_next(cx);
+        }
+    }
+
+    pub fn context_menu_last(&mut self, _: &ContextMenuLast, cx: &mut ViewContext<Self>) {
+        if let Some(context_menu) = self.context_menu.as_mut() {
+            context_menu.select_last(cx);
+        }
     }
 
     pub fn move_to_previous_word_start(
@@ -8666,17 +8677,20 @@ impl View for Editor {
         if self.pending_rename.is_some() {
             keymap.add_identifier("renaming");
         }
-        match self.context_menu.as_ref() {
-            Some(ContextMenu::Completions(_)) => {
-                keymap.add_identifier("menu");
-                keymap.add_identifier("showing_completions")
+        if self.context_menu_visible() {
+            match self.context_menu.as_ref() {
+                Some(ContextMenu::Completions(_)) => {
+                    keymap.add_identifier("menu");
+                    keymap.add_identifier("showing_completions")
+                }
+                Some(ContextMenu::CodeActions(_)) => {
+                    keymap.add_identifier("menu");
+                    keymap.add_identifier("showing_code_actions")
+                }
+                None => {}
             }
-            Some(ContextMenu::CodeActions(_)) => {
-                keymap.add_identifier("menu");
-                keymap.add_identifier("showing_code_actions")
-            }
-            None => {}
         }
+
         for layer in self.keymap_context_layers.values() {
             keymap.extend(layer);
         }
