@@ -95,6 +95,7 @@ impl<V: 'static> CollabPanelElement<V> {
                             .px_2()
                             .flex()
                             .justify_between()
+                            .items_center()
                             // .hover()
                             // .fill(theme.middle.variant.hovered.background)
                             // .active()
@@ -109,7 +110,14 @@ impl<V: 'static> CollabPanelElement<V> {
                                     .child("#")
                                     .child("CRDB"),
                             )
-                            .child(div().flex().gap_1().child("v")),
+                            .child(
+                                div().flex().h_full().gap_1().items_center().child(
+                                    div()
+                                        .w_3p5()
+                                        .h_3p5()
+                                        .fill(theme.middle.positive.default.foreground),
+                                ),
+                            ),
                     )
                     // List Item Large
                     .child(
@@ -128,25 +136,19 @@ impl<V: 'static> CollabPanelElement<V> {
                                     .text_sm()
                                     .child(
                                         div()
-                                            .w_3p5()
-                                            .h_3p5()
+                                            .w_4()
+                                            .h_4()
                                             .fill(theme.middle.negative.default.foreground),
                                     )
                                     .child("maxbrunsfeld"),
                             )
                             .child(
-                                div()
-                                    .flex()
-                                    .h_full()
-                                    .gap_2()
-                                    .items_center()
-                                    .child(
-                                        div()
-                                            .w_4()
-                                            .h_4()
-                                            .fill(theme.middle.negative.default.foreground),
-                                    )
-                                    .child("i"),
+                                div().flex().h_full().gap_1().items_center().child(
+                                    div()
+                                        .w_3p5()
+                                        .h_3p5()
+                                        .fill(theme.middle.positive.default.foreground),
+                                ),
                             ),
                     ),
             )
@@ -165,7 +167,14 @@ impl<V: 'static> CollabPanelElement<V> {
                             .justify_between()
                             .items_center()
                             .child(div().flex().gap_1().text_sm().child("CHANNELS"))
-                            .child(div().flex().gap_1().text_sm().child("v")),
+                            .child(
+                                div().flex().h_full().gap_1().items_center().child(
+                                    div()
+                                        .w_3p5()
+                                        .h_3p5()
+                                        .fill(theme.middle.positive.default.foreground),
+                                ),
+                            ),
                     ),
             )
             // Large List Item
@@ -177,7 +186,14 @@ impl<V: 'static> CollabPanelElement<V> {
                     .justify_between()
                     .items_center()
                     .child(div().flex().gap_1().text_sm().child("CONTACTS"))
-                    .child(div().flex().gap_1().text_sm().child("v")),
+                    .child(
+                        div().flex().h_full().gap_1().items_center().child(
+                            div()
+                                .w_3p5()
+                                .h_3p5()
+                                .fill(theme.middle.positive.default.foreground),
+                        ),
+                    ),
             )
     }
 }
