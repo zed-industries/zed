@@ -1,5 +1,9 @@
-use crate::theme::theme;
-use gpui2::{elements::div, style::StyleHelpers, Element, IntoElement, ParentElement, ViewContext};
+use crate::theme::{theme, Theme};
+use gpui2::{
+    elements::{div, svg},
+    style::StyleHelpers,
+    Element, IntoElement, ParentElement, ViewContext,
+};
 use std::marker::PhantomData;
 
 #[derive(Element)]
@@ -112,10 +116,11 @@ impl<V: 'static> CollabPanelElement<V> {
                             )
                             .child(
                                 div().flex().h_full().gap_1().items_center().child(
-                                    div()
-                                        .w_3p5()
-                                        .h_3p5()
-                                        .fill(theme.middle.positive.default.foreground),
+                                    svg()
+                                        .path("icons/radix/caret-down.svg")
+                                        .h_3()
+                                        .w_3()
+                                        .fill(theme.middle.variant.default.foreground),
                                 ),
                             ),
                     )
@@ -159,23 +164,7 @@ impl<V: 'static> CollabPanelElement<V> {
                     .flex_col()
                     .gap_y_1()
                     // List Section Header
-                    .child(
-                        div()
-                            .h_7()
-                            .px_2()
-                            .flex()
-                            .justify_between()
-                            .items_center()
-                            .child(div().flex().gap_1().text_sm().child("CHANNELS"))
-                            .child(
-                                div().flex().h_full().gap_1().items_center().child(
-                                    div()
-                                        .w_3p5()
-                                        .h_3p5()
-                                        .fill(theme.middle.positive.default.foreground),
-                                ),
-                            ),
-                    ),
+                    .child(self.list_section_header(theme)),
             )
             // Large List Item
             .child(
@@ -194,6 +183,24 @@ impl<V: 'static> CollabPanelElement<V> {
                                 .fill(theme.middle.positive.default.foreground),
                         ),
                     ),
+            )
+    }
+
+    fn list_section_header(&self, theme: &Theme) -> impl Element<V> {
+        div()
+            .h_7()
+            .px_2()
+            .flex()
+            .justify_between()
+            .items_center()
+            .child(div().flex().gap_1().text_sm().child("CHANNELS"))
+            .child(
+                div().flex().h_full().gap_1().items_center().child(
+                    div()
+                        .w_3p5()
+                        .h_3p5()
+                        .fill(theme.middle.positive.default.foreground),
+                ),
             )
     }
 }

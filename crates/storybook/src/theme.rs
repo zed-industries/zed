@@ -2,7 +2,7 @@ use gpui2::{
     color::Hsla,
     element::{Element, PaintContext},
     layout_context::LayoutContext,
-    serde_json, AppContext, WindowContext,
+    serde_json, AppContext, IntoElement, WindowContext,
 };
 use serde::{de::Visitor, Deserialize, Deserializer};
 use std::{collections::HashMap, fmt, marker::PhantomData};
@@ -133,7 +133,8 @@ where
     deserializer.deserialize_map(SyntaxVisitor)
 }
 
-pub struct Themed<V: 'static, E> {
+#[derive(IntoElement)]
+pub struct Themed<V: 'static, E: Element<V>> {
     pub(crate) theme: Theme,
     pub(crate) child: E,
     pub(crate) view_type: PhantomData<V>,

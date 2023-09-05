@@ -69,6 +69,7 @@ use rust_embed::RustEmbed;
 #[folder = "../../assets"]
 #[include = "themes/**/*"]
 #[include = "fonts/**/*"]
+#[include = "icons/**/*"]
 #[exclude = "*.DS_Store"]
 pub struct Assets;
 

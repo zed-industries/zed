@@ -1291,9 +1291,6 @@ impl<'a> WindowContext<'a> {
     pub fn push_text_style(&mut self, refinement: &TextStyleRefinement) -> Result<()> {
         let mut style = self.text_style();
         style.refine(refinement, self.font_cache())?;
-
-        dbg!(&style);
-
         self.window.text_style_stack.push(style);
         Ok(())
     }

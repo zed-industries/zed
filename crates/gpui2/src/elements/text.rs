@@ -90,6 +90,14 @@ impl<V: 'static> Element<V> for Text {
     }
 }
 
+impl<V: 'static> IntoElement<V> for Text {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
 pub struct TextLayout {
     line_layout: Arc<LineLayout>,
     line_height: f32,

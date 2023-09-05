@@ -5,7 +5,7 @@ use gpui::geometry::vector::Vector2F;
 pub use gpui::{Layout, LayoutId};
 use smallvec::SmallVec;
 
-pub trait Element<V: 'static>: 'static {
+pub trait Element<V: 'static>: 'static + IntoElement<V> {
     type PaintState;
 
     fn layout(
