@@ -12,15 +12,13 @@ use editor::{
     SelectAll, MAX_TAB_TITLE_LEN,
 };
 use futures::StreamExt;
-
-use gpui::platform::PromptLevel;
-
 use gpui::{
-    actions, elements::*, platform::MouseButton, Action, AnyElement, AnyViewHandle, AppContext,
-    Entity, ModelContext, ModelHandle, Subscription, Task, View, ViewContext, ViewHandle,
-    WeakModelHandle, WeakViewHandle,
+    actions,
+    elements::*,
+    platform::{MouseButton, PromptLevel},
+    Action, AnyElement, AnyViewHandle, AppContext, Entity, ModelContext, ModelHandle, Subscription,
+    Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
-
 use menu::Confirm;
 use postage::stream::Stream;
 use project::{
@@ -132,8 +130,7 @@ pub struct ProjectSearchView {
 }
 
 struct SemanticSearchState {
-    file_count: usize,
-    outstanding_file_count: usize,
+    pending_file_count: usize,
     _progress_task: Task<()>,
 }
 
@@ -319,12 +316,8 @@ impl View for ProjectSearchView {
             };
 
             let semantic_status = if let Some(semantic) = &self.semantic_state {
-                if semantic.outstanding_file_count > 0 {
-                    format!(
-                        "Indexing: {} of {}...",
-                        semantic.file_count - semantic.outstanding_file_count,
-                        semantic.file_count
-                    )
+                if semantic.pending_file_count > 0 {
+                    format!("Remaining files to index: {}", semantic.pending_file_count)
                 } else {
                     "Indexing complete".to_string()
                 }
@@ -641,26 +634,25 @@ impl ProjectSearchView {
 
             let project = self.model.read(cx).project.clone();
 
-            let index_task = semantic_index.update(cx, |semantic_index, cx| {
-                semantic_index.index_project(project, cx)
+            let mut pending_file_count_rx = semantic_index.update(cx, |semantic_index, cx| {
+                semantic_index.index_project(project.clone(), cx);
+                semantic_index.pending_file_count(&project).unwrap()
             });
 
             cx.spawn(|search_view, mut cx| async move {
-                let (files_to_index, mut files_remaining_rx) = index_task.await?;
-
                 search_view.update(&mut cx, |search_view, cx| {
                     cx.notify();
+                    let pending_file_count = *pending_file_count_rx.borrow();
                     search_view.semantic_state = Some(SemanticSearchState {
-                        file_count: files_to_index,
-                        outstanding_file_count: files_to_index,
+                        pending_file_count,
                         _progress_task: cx.spawn(|search_view, mut cx| async move {
-                            while let Some(count) = files_remaining_rx.recv().await {
+                            while let Some(count) = pending_file_count_rx.recv().await {
                                 search_view
                                     .update(&mut cx, |search_view, cx| {
                                         if let Some(semantic_search_state) =
                                             &mut search_view.semantic_state
                                         {
-                                            semantic_search_state.outstanding_file_count = count;
+                                            semantic_search_state.pending_file_count = count;
                                             cx.notify();
                                             if count == 0 {
                                                 return;
@@ -959,7 +951,7 @@ impl ProjectSearchView {
         match mode {
             SearchMode::Semantic => {
                 if let Some(semantic) = &mut self.semantic_state {
-                    if semantic.outstanding_file_count > 0 {
+                    if semantic.pending_file_count > 0 {
                         return;
                     }
 

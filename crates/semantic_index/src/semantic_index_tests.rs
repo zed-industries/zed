@@ -87,16 +87,18 @@ async fn test_semantic_index(deterministic: Arc<Deterministic>, cx: &mut TestApp
 
     let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
 
-    semantic_index.update(cx, |store, cx| store.register_project(project.clone(), cx));
+    semantic_index.update(cx, |store, cx| {
+        store.register_project(project.clone(), cx);
+    });
     deterministic.run_until_parked();
 
-    let (file_count, outstanding_file_count) = semantic_index
-        .update(cx, |store, cx| store.index_project(project.clone(), cx))
-        .await
-        .unwrap();
-    assert_eq!(file_count, 3);
+    let pending_file_count =
+        semantic_index.read_with(cx, |index, _| index.pending_file_count(&project).unwrap());
+    semantic_index.update(cx, |store, cx| store.index_project(project.clone(), cx));
+    deterministic.run_until_parked();
+    assert_eq!(*pending_file_count.borrow(), 3);
     deterministic.advance_clock(EMBEDDING_QUEUE_FLUSH_TIMEOUT);
-    assert_eq!(*outstanding_file_count.borrow(), 0);
+    assert_eq!(*pending_file_count.borrow(), 0);
 
     let search_results = semantic_index
         .update(cx, |store, cx| {
@@ -188,14 +190,11 @@ async fn test_semantic_index(deterministic: Arc<Deterministic>, cx: &mut TestApp
     deterministic.advance_clock(EMBEDDING_QUEUE_FLUSH_TIMEOUT);
 
     let prev_embedding_count = embedding_provider.embedding_count();
-    let (file_count, outstanding_file_count) = semantic_index
-        .update(cx, |store, cx| store.index_project(project.clone(), cx))
-        .await
-        .unwrap();
-    assert_eq!(file_count, 1);
-
+    semantic_index.update(cx, |store, cx| store.index_project(project.clone(), cx));
+    deterministic.run_until_parked();
+    assert_eq!(*pending_file_count.borrow(), 1);
     deterministic.advance_clock(EMBEDDING_QUEUE_FLUSH_TIMEOUT);
-    assert_eq!(*outstanding_file_count.borrow(), 0);
+    assert_eq!(*pending_file_count.borrow(), 0);
 
     assert_eq!(
         embedding_provider.embedding_count() - prev_embedding_count,
