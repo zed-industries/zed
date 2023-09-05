@@ -285,11 +285,15 @@ impl Server {
                     .trace_err()
                 {
                     tracing::info!(stale_room_count = room_ids.len(), "retrieved stale rooms");
+                    tracing::info!(
+                        stale_channel_buffer_count = channel_ids.len(),
+                        "retrieved stale channel buffers"
+                    );
 
                     for channel_id in channel_ids {
                         if let Some(refreshed_channel_buffer) = app_state
                             .db
-                            .refresh_channel_buffer(channel_id, server_id)
+                            .clear_stale_channel_buffer_collaborators(channel_id, server_id)
                             .await
                             .trace_err()
                         {
@@ -309,7 +313,7 @@ impl Server {
 
                         if let Some(mut refreshed_room) = app_state
                             .db
-                            .refresh_room(room_id, server_id)
+                            .clear_stale_room_participants(room_id, server_id)
                             .await
                             .trace_err()
                         {
@@ -873,6 +877,7 @@ async fn connection_lost(
 
     futures::select_biased! {
         _ = executor.sleep(RECONNECT_TIMEOUT).fuse() => {
+            log::info!("connection lost, removing all resources for user:{}, connection:{:?}", session.user_id, session.connection_id);
             leave_room_for_session(&session).await.trace_err();
             leave_channel_buffers_for_session(&session)
                 .await

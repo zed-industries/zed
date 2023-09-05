@@ -118,6 +118,7 @@ impl Database {
                 // connection, then the client's buffer can be syncronized with
                 // the server's buffer.
                 if buffer.epoch as u64 != client_buffer.epoch {
+                    log::info!("can't rejoin buffer, epoch has changed");
                     continue;
                 }
 
@@ -128,6 +129,7 @@ impl Database {
                     c.user_id == user_id
                         && (c.connection_lost || c.connection_server_id != server_id)
                 }) else {
+                    log::info!("can't rejoin buffer, no previous collaborator found");
                     continue;
                 };
                 let old_connection_id = self_collaborator.connection();
@@ -196,16 +198,36 @@ impl Database {
         .await
     }
 
-    pub async fn refresh_channel_buffer(
+    pub async fn clear_stale_channel_buffer_collaborators(
         &self,
         channel_id: ChannelId,
         server_id: ServerId,
     ) -> Result<RefreshedChannelBuffer> {
         self.transaction(|tx| async move {
+            let collaborators = channel_buffer_collaborator::Entity::find()
+                .filter(channel_buffer_collaborator::Column::ChannelId.eq(channel_id))
+                .all(&*tx)
+                .await?;
+
             let mut connection_ids = Vec::new();
             let mut removed_collaborators = Vec::new();
+            let mut collaborator_ids_to_remove = Vec::new();
+            for collaborator in &collaborators {
+                if !collaborator.connection_lost && collaborator.connection_server_id == server_id {
+                    connection_ids.push(collaborator.connection());
+                } else {
+                    removed_collaborators.push(proto::RemoveChannelBufferCollaborator {
+                        channel_id: channel_id.to_proto(),
+                        peer_id: Some(collaborator.connection().into()),
+                    });
+                    collaborator_ids_to_remove.push(collaborator.id);
+                }
+            }
 
-            // TODO
+            channel_buffer_collaborator::Entity::delete_many()
+                .filter(channel_buffer_collaborator::Column::Id.is_in(collaborator_ids_to_remove))
+                .exec(&*tx)
+                .await?;
 
             Ok(RefreshedChannelBuffer {
                 connection_ids,

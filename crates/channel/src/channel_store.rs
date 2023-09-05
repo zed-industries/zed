@@ -500,6 +500,10 @@ impl ChannelStore {
             }
         }
 
+        if buffer_versions.is_empty() {
+            return Task::ready(Ok(()));
+        }
+
         let response = self.client.request(proto::RejoinChannelBuffers {
             buffers: buffer_versions,
         });

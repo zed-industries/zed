@@ -55,6 +55,7 @@ impl Database {
                 .into_values::<_, QueryChannelIds>()
                 .all(&*tx)
                 .await?;
+
             Ok((room_ids, channel_ids))
         })
         .await

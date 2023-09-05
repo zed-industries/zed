@@ -435,6 +435,7 @@ pub struct ChannelsForUser {
     pub channels_with_admin_privileges: HashSet<ChannelId>,
 }
 
+#[derive(Debug)]
 pub struct RejoinedChannelBuffer {
     pub buffer: proto::RejoinedChannelBuffer,
     pub old_connection_id: ConnectionId,

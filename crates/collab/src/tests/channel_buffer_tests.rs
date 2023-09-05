@@ -1,4 +1,7 @@
-use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
+use crate::{
+    rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
+    tests::TestServer,
+};
 use call::ActiveCall;
 use channel::Channel;
 use client::UserId;
@@ -467,6 +470,97 @@ async fn test_rejoin_channel_buffer(
 
     channel_buffer_a.read_with(cx_a, |buffer_a, _| {
         channel_buffer_b.read_with(cx_b, |buffer_b, _| {
+            assert_eq!(buffer_a.collaborators(), buffer_b.collaborators());
+        });
+    });
+}
+
+#[gpui::test]
+async fn test_channel_buffers_and_server_restarts(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
+
+    let channel_id = server
+        .make_channel(
+            "the-channel",
+            (&client_a, cx_a),
+            &mut [(&client_b, cx_b), (&client_c, cx_c)],
+        )
+        .await;
+
+    let channel_buffer_a = client_a
+        .channel_store()
+        .update(cx_a, |store, cx| store.open_channel_buffer(channel_id, cx))
+        .await
+        .unwrap();
+    let channel_buffer_b = client_b
+        .channel_store()
+        .update(cx_b, |store, cx| store.open_channel_buffer(channel_id, cx))
+        .await
+        .unwrap();
+    let _channel_buffer_c = client_c
+        .channel_store()
+        .update(cx_c, |store, cx| store.open_channel_buffer(channel_id, cx))
+        .await
+        .unwrap();
+
+    channel_buffer_a.update(cx_a, |buffer, cx| {
+        buffer.buffer().update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "1")], None, cx);
+        })
+    });
+    deterministic.run_until_parked();
+
+    // Client C can't reconnect.
+    client_c.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
+
+    // Server stops.
+    server.reset().await;
+    deterministic.advance_clock(RECEIVE_TIMEOUT);
+
+    // While the server is down, both clients make an edit.
+    channel_buffer_a.update(cx_a, |buffer, cx| {
+        buffer.buffer().update(cx, |buffer, cx| {
+            buffer.edit([(1..1, "2")], None, cx);
+        })
+    });
+    channel_buffer_b.update(cx_b, |buffer, cx| {
+        buffer.buffer().update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "0")], None, cx);
+        })
+    });
+
+    // Server restarts.
+    server.start().await.unwrap();
+    deterministic.advance_clock(CLEANUP_TIMEOUT);
+
+    // Clients reconnects. Clients A and B see each other's edits, and see
+    // that client C has disconnected.
+    channel_buffer_a.read_with(cx_a, |buffer, cx| {
+        assert_eq!(buffer.buffer().read(cx).text(), "012");
+    });
+    channel_buffer_b.read_with(cx_b, |buffer, cx| {
+        assert_eq!(buffer.buffer().read(cx).text(), "012");
+    });
+
+    channel_buffer_a.read_with(cx_a, |buffer_a, _| {
+        channel_buffer_b.read_with(cx_b, |buffer_b, _| {
+            assert_eq!(
+                buffer_a
+                    .collaborators()
+                    .iter()
+                    .map(|c| c.user_id)
+                    .collect::<Vec<_>>(),
+                vec![client_a.user_id().unwrap(), client_b.user_id().unwrap()]
+            );
             assert_eq!(buffer_a.collaborators(), buffer_b.collaborators());
         });
     });
