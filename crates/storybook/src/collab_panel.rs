@@ -1,7 +1,7 @@
 use crate::theme::{theme, Theme};
 use gpui2::{
-    elements::{div, svg},
-    style::StyleHelpers,
+    elements::div,
+    style::{StyleHelpers, Styleable},
     Element, IntoElement, ParentElement, ViewContext,
 };
 use std::marker::PhantomData;
@@ -17,175 +17,7 @@ pub fn collab_panel<V: 'static>() -> CollabPanelElement<V> {
     }
 }
 
-// #[derive(Element)]
-// struct ListItem {
-//     label: Option<ArcCow<'static, str>>,
-// }
-
-// pub fn list_item() -> ListItem {
-//     ListItem { label: None }
-// }
-
-// impl ListItem {
-//     pub fn render<V: 'static>(
-//         &mut self,
-//         view: &mut V,
-//         cx: &mut ViewContext<Self>,
-//     ) -> impl Element<V> {
-//         let theme = theme(cx);
-
-//         div()
-//             .px_2()
-//             .flex()
-//             .justify_between()
-//             .hover()
-//             .fill(theme.middle.variant.hovered.background)
-//             .active()
-//             .fill(theme.middle.variant.pressed.background)
-//             .child(div().flex().gap_1().child("#").child(self.label))
-//             .child(div().flex().gap_1().child("v"))
-//     }
-
-//     pub fn label(mut self, label: impl Into<ArcCow<'static, str>>) -> Self {
-//         self.label = Some(label.into());
-//         self
-//     }
-// }
-
-// fn list_item<V: 'static>(cx: &mut ViewContext<V>, label: &mut str) -> impl IntoElement<V> {
-//     let theme = theme(cx);
-//     div()
-//         .px_2()
-//         .flex()
-//         .justify_between()
-//         //:: States - https://tailwindcss.com/docs/hover-focus-and-other-states#hover-focus-and-active
-//         .hover()
-//         .fill(theme.middle.variant.hovered.background)
-//         .active()
-//         .fill(theme.middle.variant.pressed.background)
-//         .child(div().flex().gap_1().child("#").child("Collab Panel"))
-//         .child(div().flex().gap_1().child("v"))
-// }
-
-// Macros to impl:
-// - border (b, t, l, r, x, y)
-// - border_[foo]_[size] (border_b_2, border_t_4, etc)
-// - border_color
-
 impl<V: 'static> CollabPanelElement<V> {
-    fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
-        let theme = theme(cx);
-
-        // Panel
-        div()
-            .full()
-            .flex()
-            .flex_col()
-            .font("Zed Sans Extended")
-            .text_color(theme.middle.variant.default.foreground)
-            // .border_color(theme.middle.base.default.border)
-            .fill(theme.middle.base.default.background)
-            // List Container
-            .child(
-                div()
-                    .fill(theme.lowest.base.default.background)
-                    .pb_1()
-                    // .border_b()
-                    //:: https://tailwindcss.com/docs/hover-focus-and-other-states#styling-based-on-parent-state
-                    // .group()
-                    // List Section Header
-                    .child(
-                        div()
-                            .px_2()
-                            .flex()
-                            .justify_between()
-                            .items_center()
-                            // .hover()
-                            // .fill(theme.middle.variant.hovered.background)
-                            // .active()
-                            // .fill(theme.middle.variant.pressed.background)
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap_1()
-                                    //:: State based on group interaction state
-                                    // .group_hover().text_color(theme.middle.variant.hovered.foreground)
-                                    .text_sm()
-                                    .child("#")
-                                    .child("CRDB"),
-                            )
-                            .child(
-                                div().flex().h_full().gap_1().items_center().child(
-                                    svg()
-                                        .path("icons/radix/caret-down.svg")
-                                        .h_3()
-                                        .w_3()
-                                        .fill(theme.middle.variant.default.foreground),
-                                ),
-                            ),
-                    )
-                    // List Item Large
-                    .child(
-                        div()
-                            .px_2()
-                            .h_7()
-                            .flex()
-                            .justify_between()
-                            .items_center()
-                            .child(
-                                div()
-                                    .flex()
-                                    .h_full()
-                                    .gap_1()
-                                    .items_center()
-                                    .text_sm()
-                                    .child(
-                                        div()
-                                            .w_4()
-                                            .h_4()
-                                            .fill(theme.middle.negative.default.foreground),
-                                    )
-                                    .child("maxbrunsfeld"),
-                            )
-                            .child(
-                                div().flex().h_full().gap_1().items_center().child(
-                                    div()
-                                        .w_3p5()
-                                        .h_3p5()
-                                        .fill(theme.middle.positive.default.foreground),
-                                ),
-                            ),
-                    ),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .gap_y_1()
-                    // List Section Header
-                    .child(self.list_section_header(theme)),
-            )
-            // Large List Item
-            .child(
-                div()
-                    .h_7()
-                    .px_2()
-                    .flex()
-                    .justify_between()
-                    .items_center()
-                    .child(div().flex().gap_1().text_sm().child("CONTACTS"))
-                    .child(
-                        div().flex().h_full().gap_1().items_center().child(
-                            div()
-                                .w_3p5()
-                                .h_3p5()
-                                .fill(theme.middle.positive.default.foreground),
-                        ),
-                    ),
-            )
-    }
-
     fn list_section_header(&self, theme: &Theme) -> impl Element<V> {
         div()
             .h_7()
@@ -200,6 +32,182 @@ impl<V: 'static> CollabPanelElement<V> {
                         .w_3p5()
                         .h_3p5()
                         .fill(theme.middle.positive.default.foreground),
+                ),
+            )
+    }
+
+    fn list_item_channel(&self, theme: &Theme) -> impl Element<V> {
+        div()
+            .h_7()
+            .px_2()
+            .flex()
+            .items_center()
+            .hover()
+            .fill(theme.lowest.variant.hovered.background)
+            .active()
+            .fill(theme.lowest.variant.pressed.background)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .text_sm()
+                    .child(
+                        div()
+                            .w_3p5()
+                            .h_3p5()
+                            .fill(theme.middle.positive.default.foreground),
+                    )
+                    .child("zed-industries"),
+            )
+    }
+
+    fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
+        let theme = theme(cx);
+
+        // Panel
+        div()
+            .full()
+            .flex()
+            .flex_col()
+            .font("Zed Sans Extended")
+            .text_color(theme.middle.base.default.foreground)
+            // .border_color(theme.middle.base.default.border)
+            .fill(theme.middle.base.default.background)
+            .child(
+                div()
+                    .full()
+                    .flex()
+                    .flex_col()
+                    // List Container
+                    .child(
+                        div()
+                            .fill(theme.lowest.base.default.background)
+                            .pb_1()
+                            // .border_b()
+                            //:: https://tailwindcss.com/docs/hover-focus-and-other-states#styling-based-on-parent-state
+                            // .group()
+                            // List Section Header
+                            .child(
+                                div()
+                                    .px_2()
+                                    .flex()
+                                    .justify_between()
+                                    .items_center()
+                                    .hover()
+                                    .fill(theme.lowest.variant.hovered.background)
+                                    .active()
+                                    .fill(theme.lowest.variant.pressed.background)
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .gap_1()
+                                            //:: State based on group interaction state
+                                            // .group_hover().text_color(theme.middle.variant.hovered.foreground)
+                                            .text_sm()
+                                            .child("#")
+                                            .child("CRDB"),
+                                    )
+                                    .child(
+                                        div().flex().h_full().gap_1().items_center().child(
+                                            div()
+                                                .w_3p5()
+                                                .h_3p5()
+                                                .fill(theme.middle.positive.default.foreground),
+                                        ),
+                                    ),
+                            )
+                            // List Item Large
+                            .child(
+                                div()
+                                    .px_2()
+                                    .h_7()
+                                    .flex()
+                                    .justify_between()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .h_full()
+                                            .gap_1()
+                                            .items_center()
+                                            .text_sm()
+                                            .child(
+                                                div()
+                                                    .w_4()
+                                                    .h_4()
+                                                    .fill(theme.middle.negative.default.foreground),
+                                            )
+                                            .child("maxbrunsfeld"),
+                                    )
+                                    .child(
+                                        div().flex().h_full().gap_1().items_center().child(
+                                            div()
+                                                .w_3p5()
+                                                .h_3p5()
+                                                .fill(theme.middle.positive.default.foreground),
+                                        ),
+                                    ),
+                            ),
+                    )
+                    .child(self.list_section_header(theme))
+                    .child(
+                        div()
+                            .py_2()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .h_5()
+                                    .px_2()
+                                    .flex()
+                                    .justify_between()
+                                    .items_center()
+                                    .child(div().flex().gap_1().text_sm().child("CONTACTS"))
+                                    .child(
+                                        div().flex().h_full().gap_1().items_center().child(
+                                            div()
+                                                .w_3p5()
+                                                .h_3p5()
+                                                .fill(theme.middle.positive.default.foreground),
+                                        ),
+                                    ),
+                            )
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme))
+                            .child(self.list_item_channel(theme)),
+                    ),
+            )
+            .child(
+                div().h_7().px_2().flex().items_center().child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.middle.variant.default.foreground)
+                        .child("Find..."),
                 ),
             )
     }
