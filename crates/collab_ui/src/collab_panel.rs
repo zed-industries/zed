@@ -2249,6 +2249,9 @@ impl CollabPanel {
                 anyhow::Ok(())
             })
             .detach();
+            ActiveCall::global(cx).update(cx, |call, cx| {
+                call.report_call_event("open channel notes", cx)
+            });
         }
     }
 
