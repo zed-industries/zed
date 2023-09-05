@@ -403,7 +403,7 @@ impl ActiveCall {
         &self.pending_invites
     }
 
-    fn report_call_event(&self, operation: &'static str, cx: &AppContext) {
+    pub fn report_call_event(&self, operation: &'static str, cx: &AppContext) {
         if let Some(room) = self.room() {
             let room = room.read(cx);
             Self::report_call_event_for_room(
