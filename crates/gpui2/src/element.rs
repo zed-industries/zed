@@ -121,10 +121,9 @@ impl<V, E: Element<V>> AnyStatefulElement<V> for StatefulElement<V, E> {
                 Err(error) => ElementPhase::Error(error.to_string()),
             },
             ElementPhase::PostPaint {
-                mut layout,
+                layout,
                 mut paint_state,
             } => {
-                layout.bounds = layout.bounds + parent_origin;
                 self.element.paint(view, &layout, &mut paint_state, cx);
                 ElementPhase::PostPaint {
                     layout,
