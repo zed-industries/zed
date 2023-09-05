@@ -9,6 +9,7 @@ mod semantic_index_tests;
 
 use crate::semantic_index_settings::SemanticIndexSettings;
 use anyhow::{anyhow, Result};
+use collections::{BTreeMap, HashMap, HashSet};
 use db::VectorDatabase;
 use embedding::{Embedding, EmbeddingProvider, OpenAIEmbeddings};
 use embedding_queue::{EmbeddingQueue, FileToEmbed};
@@ -18,13 +19,10 @@ use language::{Anchor, Buffer, Language, LanguageRegistry};
 use parking_lot::Mutex;
 use parsing::{CodeContextRetriever, DocumentDigest, PARSEABLE_ENTIRE_FILE_TYPES};
 use postage::watch;
-use project::{
-    search::PathMatcher, Fs, PathChange, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId,
-};
+use project::{search::PathMatcher, Fs, PathChange, Project, ProjectEntryId, Worktree, WorktreeId};
 use smol::channel;
 use std::{
     cmp::Ordering,
-    collections::{BTreeMap, HashMap},
     ops::Range,
     path::{Path, PathBuf},
     sync::{Arc, Weak},
@@ -34,7 +32,7 @@ use util::{
     channel::{ReleaseChannel, RELEASE_CHANNEL, RELEASE_CHANNEL_NAME},
     http::HttpClient,
     paths::EMBEDDINGS_DIR,
-    ResultExt,
+    ResultExt, TryFutureExt,
 };
 use workspace::WorkspaceCreated;
 
@@ -68,9 +66,7 @@ pub fn init(
             if let Some(workspace) = workspace.upgrade(cx) {
                 let project = workspace.read(cx).project().clone();
                 if project.read(cx).is_local() {
-                    semantic_index.update(cx, |index, cx| {
-                        index.initialize_project(project, cx).detach_and_log_err(cx)
-                    });
+                    semantic_index.update(cx, |index, cx| index.register_project(project, cx));
                 }
             }
         }
@@ -111,11 +107,56 @@ pub struct SemanticIndex {
 }
 
 struct ProjectState {
-    worktree_db_ids: Vec<(WorktreeId, i64)>,
-    _subscription: gpui::Subscription,
+    worktrees: HashMap<WorktreeId, WorktreeState>,
     outstanding_job_count_rx: watch::Receiver<usize>,
     outstanding_job_count_tx: Arc<Mutex<watch::Sender<usize>>>,
-    changed_paths: BTreeMap<ProjectPath, ChangedPathInfo>,
+    _subscription: gpui::Subscription,
+}
+
+enum WorktreeState {
+    Registering(RegisteringWorktreeState),
+    Registered(RegisteredWorktreeState),
+}
+
+impl WorktreeState {
+    fn paths_changed(
+        &mut self,
+        changes: Arc<[(Arc<Path>, ProjectEntryId, PathChange)]>,
+        changed_at: Instant,
+        worktree: &Worktree,
+    ) {
+        let changed_paths = match self {
+            Self::Registering(state) => &mut state.changed_paths,
+            Self::Registered(state) => &mut state.changed_paths,
+        };
+
+        for (path, entry_id, change) in changes.iter() {
+            let Some(entry) = worktree.entry_for_id(*entry_id) else {
+                continue;
+            };
+            if entry.is_ignored || entry.is_symlink || entry.is_external || entry.is_dir() {
+                continue;
+            }
+            changed_paths.insert(
+                path.clone(),
+                ChangedPathInfo {
+                    changed_at,
+                    mtime: entry.mtime,
+                    is_deleted: *change == PathChange::Removed,
+                },
+            );
+        }
+    }
+}
+
+struct RegisteringWorktreeState {
+    changed_paths: BTreeMap<Arc<Path>, ChangedPathInfo>,
+    _registration: Task<Option<()>>,
+}
+
+struct RegisteredWorktreeState {
+    db_id: i64,
+    changed_paths: BTreeMap<Arc<Path>, ChangedPathInfo>,
 }
 
 struct ChangedPathInfo {
@@ -141,55 +182,42 @@ impl JobHandle {
 }
 
 impl ProjectState {
-    fn new(
-        subscription: gpui::Subscription,
-        worktree_db_ids: Vec<(WorktreeId, i64)>,
-        changed_paths: BTreeMap<ProjectPath, ChangedPathInfo>,
-    ) -> Self {
+    fn new(subscription: gpui::Subscription) -> Self {
         let (outstanding_job_count_tx, outstanding_job_count_rx) = watch::channel_with(0);
         let outstanding_job_count_tx = Arc::new(Mutex::new(outstanding_job_count_tx));
         Self {
-            worktree_db_ids,
+            worktrees: Default::default(),
             outstanding_job_count_rx,
             outstanding_job_count_tx,
-            changed_paths,
             _subscription: subscription,
         }
     }
 
-    pub fn get_outstanding_count(&self) -> usize {
-        self.outstanding_job_count_rx.borrow().clone()
-    }
-
     fn db_id_for_worktree_id(&self, id: WorktreeId) -> Option<i64> {
-        self.worktree_db_ids
-            .iter()
-            .find_map(|(worktree_id, db_id)| {
-                if *worktree_id == id {
-                    Some(*db_id)
-                } else {
-                    None
-                }
-            })
+        match self.worktrees.get(&id)? {
+            WorktreeState::Registering(_) => None,
+            WorktreeState::Registered(state) => Some(state.db_id),
+        }
     }
 
     fn worktree_id_for_db_id(&self, id: i64) -> Option<WorktreeId> {
-        self.worktree_db_ids
+        self.worktrees
             .iter()
-            .find_map(|(worktree_id, db_id)| {
-                if *db_id == id {
-                    Some(*worktree_id)
-                } else {
-                    None
-                }
+            .find_map(|(worktree_id, worktree_state)| match worktree_state {
+                WorktreeState::Registered(state) if state.db_id == id => Some(*worktree_id),
+                _ => None,
             })
+    }
+
+    fn worktree(&mut self, id: WorktreeId) -> Option<&mut WorktreeState> {
+        self.worktrees.get_mut(&id)
     }
 }
 
 #[derive(Clone)]
 pub struct PendingFile {
     worktree_db_id: i64,
-    relative_path: PathBuf,
+    relative_path: Arc<Path>,
     absolute_path: PathBuf,
     language: Option<Arc<Language>>,
     modified_time: SystemTime,
@@ -298,7 +326,7 @@ impl SemanticIndex {
                 parsing_files_tx,
                 _embedding_task,
                 _parsing_files_tasks,
-                projects: HashMap::new(),
+                projects: Default::default(),
             }
         }))
     }
@@ -369,9 +397,9 @@ impl SemanticIndex {
     fn project_entries_changed(
         &mut self,
         project: ModelHandle<Project>,
+        worktree_id: WorktreeId,
         changes: Arc<[(Arc<Path>, ProjectEntryId, PathChange)]>,
-        cx: &mut ModelContext<'_, SemanticIndex>,
-        worktree_id: &WorktreeId,
+        cx: &mut ModelContext<Self>,
     ) {
         let Some(worktree) = project.read(cx).worktree_for_id(worktree_id.clone(), cx) else {
             return;
@@ -381,131 +409,103 @@ impl SemanticIndex {
             return;
         };
 
-        let embeddings_for_digest = {
-            let mut worktree_id_file_paths = HashMap::new();
-            for (path, _) in &project_state.changed_paths {
-                if let Some(worktree_db_id) = project_state.db_id_for_worktree_id(path.worktree_id)
-                {
-                    worktree_id_file_paths
-                        .entry(worktree_db_id)
-                        .or_insert(Vec::new())
-                        .push(path.path.clone());
-                }
-            }
-            self.db.embeddings_for_files(worktree_id_file_paths)
-        };
-
-        let worktree = worktree.read(cx);
         let change_time = Instant::now();
-        for (path, entry_id, change) in changes.iter() {
-            let Some(entry) = worktree.entry_for_id(*entry_id) else {
-                continue;
+        let worktree = worktree.read(cx);
+        let worktree_state = if let Some(worktree_state) = project_state.worktree(worktree_id) {
+            worktree_state
+        } else {
+            return;
+        };
+        worktree_state.paths_changed(changes, Instant::now(), worktree);
+        if let WorktreeState::Registered(worktree_state) = worktree_state {
+            let embeddings_for_digest = {
+                let worktree_paths = worktree_state
+                    .changed_paths
+                    .iter()
+                    .map(|(path, _)| path.clone())
+                    .collect::<Vec<_>>();
+                let mut worktree_id_file_paths = HashMap::default();
+                worktree_id_file_paths.insert(worktree_state.db_id, worktree_paths);
+                self.db.embeddings_for_files(worktree_id_file_paths)
             };
-            if entry.is_ignored || entry.is_symlink || entry.is_external {
-                continue;
-            }
-            let project_path = ProjectPath {
-                worktree_id: *worktree_id,
-                path: path.clone(),
-            };
-            project_state.changed_paths.insert(
-                project_path,
-                ChangedPathInfo {
-                    changed_at: change_time,
-                    mtime: entry.mtime,
-                    is_deleted: *change == PathChange::Removed,
-                },
-            );
+
+            cx.spawn_weak(|this, mut cx| async move {
+                let embeddings_for_digest =
+                    embeddings_for_digest.await.log_err().unwrap_or_default();
+
+                cx.background().timer(BACKGROUND_INDEXING_DELAY).await;
+                if let Some((this, project)) = this.upgrade(&cx).zip(project.upgrade(&cx)) {
+                    Self::reindex_changed_paths(
+                        this,
+                        project,
+                        Some(change_time),
+                        &mut cx,
+                        Arc::new(embeddings_for_digest),
+                    )
+                    .await;
+                }
+            })
+            .detach();
         }
-
-        cx.spawn_weak(|this, mut cx| async move {
-            let embeddings_for_digest = embeddings_for_digest.await.log_err().unwrap_or_default();
-
-            cx.background().timer(BACKGROUND_INDEXING_DELAY).await;
-            if let Some((this, project)) = this.upgrade(&cx).zip(project.upgrade(&cx)) {
-                Self::reindex_changed_paths(
-                    this,
-                    project,
-                    Some(change_time),
-                    &mut cx,
-                    Arc::new(embeddings_for_digest),
-                )
-                .await;
-            }
-        })
-        .detach();
     }
 
-    pub fn initialize_project(
+    pub fn register_project(&mut self, project: ModelHandle<Project>, cx: &mut ModelContext<Self>) {
+        log::trace!("Registering Project for Semantic Index");
+
+        let subscription = cx.subscribe(&project, |this, project, event, cx| match event {
+            project::Event::WorktreeAdded | project::Event::WorktreeRemoved(_) => {
+                this.project_worktrees_changed(project.clone(), cx);
+            }
+            project::Event::WorktreeUpdatedEntries(worktree_id, changes) => {
+                this.project_entries_changed(project, *worktree_id, changes.clone(), cx);
+            }
+            _ => {}
+        });
+        self.projects
+            .insert(project.downgrade(), ProjectState::new(subscription));
+        self.project_worktrees_changed(project, cx);
+    }
+
+    fn register_worktree(
         &mut self,
         project: ModelHandle<Project>,
+        worktree: ModelHandle<Worktree>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
-        log::trace!("Initializing Project for Semantic Index");
-        let worktree_scans_complete = project
-            .read(cx)
-            .worktrees(cx)
-            .map(|worktree| {
-                let scan_complete = worktree.read(cx).as_local().unwrap().scan_complete();
-                async move {
-                    scan_complete.await;
-                }
-            })
-            .collect::<Vec<_>>();
-
-        let worktree_db_ids = project
-            .read(cx)
-            .worktrees(cx)
-            .map(|worktree| {
-                self.db
-                    .find_or_create_worktree(worktree.read(cx).abs_path().to_path_buf())
-            })
-            .collect::<Vec<_>>();
-
-        let _subscription = cx.subscribe(&project, |this, project, event, cx| {
-            if let project::Event::WorktreeUpdatedEntries(worktree_id, changes) = event {
-                this.project_entries_changed(project.clone(), changes.clone(), cx, worktree_id);
-            };
-        });
-
+    ) {
+        let project = project.downgrade();
+        let project_state = if let Some(project_state) = self.projects.get_mut(&project) {
+            project_state
+        } else {
+            return;
+        };
+        let worktree = if let Some(worktree) = worktree.read(cx).as_local() {
+            worktree
+        } else {
+            return;
+        };
+        let worktree_abs_path = worktree.abs_path().clone();
+        let scan_complete = worktree.scan_complete();
+        let worktree_id = worktree.id();
+        let db = self.db.clone();
         let language_registry = self.language_registry.clone();
-
-        cx.spawn(|this, mut cx| async move {
-            futures::future::join_all(worktree_scans_complete).await;
-
-            let worktree_db_ids = futures::future::join_all(worktree_db_ids).await;
-            let worktrees = project.read_with(&cx, |project, cx| {
-                project
-                    .worktrees(cx)
-                    .map(|worktree| worktree.read(cx).snapshot())
-                    .collect::<Vec<_>>()
-            });
-
-            let mut worktree_file_mtimes = HashMap::new();
-            let mut db_ids_by_worktree_id = HashMap::new();
-
-            for (worktree, db_id) in worktrees.iter().zip(worktree_db_ids) {
-                let db_id = db_id?;
-                db_ids_by_worktree_id.insert(worktree.id(), db_id);
-                worktree_file_mtimes.insert(
-                    worktree.id(),
-                    this.read_with(&cx, |this, _| this.db.get_file_mtimes(db_id))
-                        .await?,
-                );
-            }
-
-            let worktree_db_ids = db_ids_by_worktree_id
-                .iter()
-                .map(|(a, b)| (*a, *b))
-                .collect();
-
-            let changed_paths = cx
-                .background()
-                .spawn(async move {
-                    let mut changed_paths = BTreeMap::new();
-                    let now = Instant::now();
-                    for worktree in worktrees.into_iter() {
-                        let mut file_mtimes = worktree_file_mtimes.remove(&worktree.id()).unwrap();
+        let registration = cx.spawn(|this, mut cx| {
+            async move {
+                scan_complete.await;
+                let db_id = db.find_or_create_worktree(worktree_abs_path).await?;
+                let mut file_mtimes = db.get_file_mtimes(db_id).await?;
+                let worktree = if let Some(project) = project.upgrade(&cx) {
+                    project
+                        .read_with(&cx, |project, cx| project.worktree_for_id(worktree_id, cx))
+                        .ok_or_else(|| anyhow!("worktree not found"))?
+                } else {
+                    return anyhow::Ok(());
+                };
+                let worktree = worktree.read_with(&cx, |worktree, _| worktree.snapshot());
+                let mut changed_paths = cx
+                    .background()
+                    .spawn(async move {
+                        let mut changed_paths = BTreeMap::new();
+                        let now = Instant::now();
                         for file in worktree.files(false, 0) {
                             let absolute_path = worktree.absolutize(&file.path);
 
@@ -534,10 +534,7 @@ impl SemanticIndex {
 
                                 if !already_stored {
                                     changed_paths.insert(
-                                        ProjectPath {
-                                            worktree_id: worktree.id(),
-                                            path: file.path.clone(),
-                                        },
+                                        file.path.clone(),
                                         ChangedPathInfo {
                                             changed_at: now,
                                             mtime: file.mtime,
@@ -551,10 +548,7 @@ impl SemanticIndex {
                         // Clean up entries from database that are no longer in the worktree.
                         for (path, mtime) in file_mtimes {
                             changed_paths.insert(
-                                ProjectPath {
-                                    worktree_id: worktree.id(),
-                                    path: path.into(),
-                                },
+                                path.into(),
                                 ChangedPathInfo {
                                     changed_at: now,
                                     mtime,
@@ -562,20 +556,80 @@ impl SemanticIndex {
                                 },
                             );
                         }
+
+                        anyhow::Ok(changed_paths)
+                    })
+                    .await?;
+                this.update(&mut cx, |this, _| {
+                    let project_state = this
+                        .projects
+                        .get_mut(&project)
+                        .ok_or_else(|| anyhow!("project not registered"))?;
+
+                    if let Some(WorktreeState::Registering(state)) =
+                        project_state.worktrees.remove(&worktree_id)
+                    {
+                        changed_paths.extend(state.changed_paths);
                     }
+                    project_state.worktrees.insert(
+                        worktree_id,
+                        WorktreeState::Registered(RegisteredWorktreeState {
+                            db_id,
+                            changed_paths,
+                        }),
+                    );
 
-                    anyhow::Ok(changed_paths)
-                })
-                .await?;
+                    anyhow::Ok(())
+                })?;
 
-            this.update(&mut cx, |this, _| {
-                this.projects.insert(
-                    project.downgrade(),
-                    ProjectState::new(_subscription, worktree_db_ids, changed_paths),
-                );
-            });
-            Result::<(), _>::Ok(())
-        })
+                anyhow::Ok(())
+            }
+            .log_err()
+        });
+        project_state.worktrees.insert(
+            worktree_id,
+            WorktreeState::Registering(RegisteringWorktreeState {
+                changed_paths: Default::default(),
+                _registration: registration,
+            }),
+        );
+    }
+
+    fn project_worktrees_changed(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let project_state = if let Some(project_state) = self.projects.get_mut(&project.downgrade())
+        {
+            project_state
+        } else {
+            return;
+        };
+
+        let mut worktrees = project
+            .read(cx)
+            .worktrees(cx)
+            .filter(|worktree| worktree.read(cx).is_local())
+            .collect::<Vec<_>>();
+        let worktree_ids = worktrees
+            .iter()
+            .map(|worktree| worktree.read(cx).id())
+            .collect::<HashSet<_>>();
+
+        // Remove worktrees that are no longer present
+        project_state
+            .worktrees
+            .retain(|worktree_id, _| worktree_ids.contains(worktree_id));
+
+        // Register new worktrees
+        worktrees.retain(|worktree| {
+            let worktree_id = worktree.read(cx).id();
+            project_state.worktree(worktree_id).is_none()
+        });
+        for worktree in worktrees {
+            self.register_worktree(project.clone(), worktree, cx);
+        }
     }
 
     pub fn index_project(
@@ -583,28 +637,31 @@ impl SemanticIndex {
         project: ModelHandle<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<(usize, watch::Receiver<usize>)>> {
+        let project_state = if let Some(project_state) = self.projects.get_mut(&project.downgrade())
+        {
+            project_state
+        } else {
+            return Task::ready(Err(anyhow!("project was not registered")));
+        };
+        let outstanding_job_count_rx = project_state.outstanding_job_count_rx.clone();
+
+        let mut worktree_id_file_paths = HashMap::default();
+        for worktree in project_state.worktrees.values() {
+            if let WorktreeState::Registered(worktree_state) = worktree {
+                for (path, _) in &worktree_state.changed_paths {
+                    worktree_id_file_paths
+                        .entry(worktree_state.db_id)
+                        .or_insert(Vec::new())
+                        .push(path.clone());
+                }
+            }
+        }
+
         cx.spawn(|this, mut cx| async move {
             let embeddings_for_digest = this.read_with(&cx, |this, _| {
-                if let Some(state) = this.projects.get(&project.downgrade()) {
-                    let mut worktree_id_file_paths = HashMap::default();
-                    for (path, _) in &state.changed_paths {
-                        if let Some(worktree_db_id) = state.db_id_for_worktree_id(path.worktree_id)
-                        {
-                            worktree_id_file_paths
-                                .entry(worktree_db_id)
-                                .or_insert(Vec::new())
-                                .push(path.path.clone());
-                        }
-                    }
-
-                    Ok(this.db.embeddings_for_files(worktree_id_file_paths))
-                } else {
-                    Err(anyhow!("Project not yet initialized"))
-                }
-            })?;
-
+                this.db.embeddings_for_files(worktree_id_file_paths)
+            });
             let embeddings_for_digest = Arc::new(embeddings_for_digest.await?);
-
             Self::reindex_changed_paths(
                 this.clone(),
                 project.clone(),
@@ -613,15 +670,8 @@ impl SemanticIndex {
                 embeddings_for_digest,
             )
             .await;
-
-            this.update(&mut cx, |this, _cx| {
-                let Some(state) = this.projects.get(&project.downgrade()) else {
-                    return Err(anyhow!("Project not yet initialized"));
-                };
-                let job_count_rx = state.outstanding_job_count_rx.clone();
-                let count = state.get_outstanding_count();
-                Ok((count, job_count_rx))
-            })
+            let count = *outstanding_job_count_rx.borrow();
+            Ok((count, outstanding_job_count_rx))
         })
     }
 
@@ -784,50 +834,49 @@ impl SemanticIndex {
         let (db, language_registry, parsing_files_tx) = this.update(cx, |this, cx| {
             if let Some(project_state) = this.projects.get_mut(&project.downgrade()) {
                 let outstanding_job_count_tx = &project_state.outstanding_job_count_tx;
-                let db_ids = &project_state.worktree_db_ids;
-                let mut worktree: Option<ModelHandle<Worktree>> = None;
+                project_state
+                    .worktrees
+                    .retain(|worktree_id, worktree_state| {
+                        let worktree = if let Some(worktree) =
+                            project.read(cx).worktree_for_id(*worktree_id, cx)
+                        {
+                            worktree
+                        } else {
+                            return false;
+                        };
+                        let worktree_state =
+                            if let WorktreeState::Registered(worktree_state) = worktree_state {
+                                worktree_state
+                            } else {
+                                return true;
+                            };
 
-                project_state.changed_paths.retain(|path, info| {
-                    if let Some(last_changed_before) = last_changed_before {
-                        if info.changed_at > last_changed_before {
-                            return true;
-                        }
-                    }
+                        worktree_state.changed_paths.retain(|path, info| {
+                            if let Some(last_changed_before) = last_changed_before {
+                                if info.changed_at > last_changed_before {
+                                    return true;
+                                }
+                            }
 
-                    if worktree
-                        .as_ref()
-                        .map_or(true, |tree| tree.read(cx).id() != path.worktree_id)
-                    {
-                        worktree = project.read(cx).worktree_for_id(path.worktree_id, cx);
-                    }
-                    let Some(worktree) = &worktree else {
-                        return false;
-                    };
+                            if info.is_deleted {
+                                files_to_delete.push((worktree_state.db_id, path.clone()));
+                            } else {
+                                let absolute_path = worktree.read(cx).absolutize(path);
+                                let job_handle = JobHandle::new(&outstanding_job_count_tx);
+                                pending_files.push(PendingFile {
+                                    absolute_path,
+                                    relative_path: path.clone(),
+                                    language: None,
+                                    job_handle,
+                                    modified_time: info.mtime,
+                                    worktree_db_id: worktree_state.db_id,
+                                });
+                            }
 
-                    let Some(worktree_db_id) = db_ids
-                        .iter()
-                        .find_map(|entry| (entry.0 == path.worktree_id).then_some(entry.1))
-                    else {
-                        return false;
-                    };
-
-                    if info.is_deleted {
-                        files_to_delete.push((worktree_db_id, path.path.to_path_buf()));
-                    } else {
-                        let absolute_path = worktree.read(cx).absolutize(&path.path);
-                        let job_handle = JobHandle::new(&outstanding_job_count_tx);
-                        pending_files.push(PendingFile {
-                            absolute_path,
-                            relative_path: path.path.to_path_buf(),
-                            language: None,
-                            job_handle,
-                            modified_time: info.mtime,
-                            worktree_db_id,
+                            false
                         });
-                    }
-
-                    false
-                });
+                        true
+                    });
             }
 
             (

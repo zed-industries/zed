@@ -2,12 +2,12 @@ use crate::{embedding::EmbeddingProvider, parsing::Document, JobHandle};
 use gpui::executor::Background;
 use parking_lot::Mutex;
 use smol::channel;
-use std::{mem, ops::Range, path::PathBuf, sync::Arc, time::SystemTime};
+use std::{mem, ops::Range, path::Path, sync::Arc, time::SystemTime};
 
 #[derive(Clone)]
 pub struct FileToEmbed {
     pub worktree_id: i64,
-    pub path: PathBuf,
+    pub path: Arc<Path>,
     pub mtime: SystemTime,
     pub documents: Vec<Document>,
     pub job_handle: JobHandle,

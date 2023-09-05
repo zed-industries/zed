@@ -87,11 +87,8 @@ async fn test_semantic_index(deterministic: Arc<Deterministic>, cx: &mut TestApp
 
     let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
 
-    let _ = semantic_index
-        .update(cx, |store, cx| {
-            store.initialize_project(project.clone(), cx)
-        })
-        .await;
+    semantic_index.update(cx, |store, cx| store.register_project(project.clone(), cx));
+    deterministic.run_until_parked();
 
     let (file_count, outstanding_file_count) = semantic_index
         .update(cx, |store, cx| store.index_project(project.clone(), cx))
@@ -214,7 +211,7 @@ async fn test_embedding_batching(cx: &mut TestAppContext, mut rng: StdRng) {
     let files = (1..=3)
         .map(|file_ix| FileToEmbed {
             worktree_id: 5,
-            path: format!("path-{file_ix}").into(),
+            path: Path::new(&format!("path-{file_ix}")).into(),
             mtime: SystemTime::now(),
             documents: (0..rng.gen_range(4..22))
                 .map(|document_ix| {

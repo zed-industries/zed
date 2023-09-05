@@ -6713,6 +6713,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bincode",
+ "collections",
  "ctor",
  "editor",
  "env_logger 0.9.3",

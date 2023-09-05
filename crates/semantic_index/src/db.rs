@@ -4,6 +4,7 @@ use crate::{
     SEMANTIC_INDEX_VERSION,
 };
 use anyhow::{anyhow, Context, Result};
+use collections::HashMap;
 use futures::channel::oneshot;
 use gpui::executor;
 use project::{search::PathMatcher, Fs};
@@ -12,7 +13,6 @@ use rusqlite::params;
 use rusqlite::types::Value;
 use std::{
     cmp::Ordering,
-    collections::HashMap,
     future::Future,
     ops::Range,
     path::{Path, PathBuf},
@@ -195,7 +195,7 @@ impl VectorDatabase {
     pub fn delete_file(
         &self,
         worktree_id: i64,
-        delete_path: PathBuf,
+        delete_path: Arc<Path>,
     ) -> impl Future<Output = Result<()>> {
         self.transact(move |db| {
             db.execute(
@@ -209,7 +209,7 @@ impl VectorDatabase {
     pub fn insert_file(
         &self,
         worktree_id: i64,
-        path: PathBuf,
+        path: Arc<Path>,
         mtime: SystemTime,
         documents: Vec<Document>,
     ) -> impl Future<Output = Result<()>> {
@@ -288,7 +288,7 @@ impl VectorDatabase {
                 WHERE files.worktree_id = ? AND files.relative_path IN rarray(?)
             ",
             )?;
-            let mut embeddings_by_digest = HashMap::new();
+            let mut embeddings_by_digest = HashMap::default();
             for (worktree_id, file_paths) in worktree_id_file_paths {
                 let file_paths = Rc::new(
                     file_paths
@@ -316,7 +316,7 @@ impl VectorDatabase {
 
     pub fn find_or_create_worktree(
         &self,
-        worktree_root_path: PathBuf,
+        worktree_root_path: Arc<Path>,
     ) -> impl Future<Output = Result<i64>> {
         self.transact(move |db| {
             let mut worktree_query =
@@ -351,7 +351,7 @@ impl VectorDatabase {
                 WHERE worktree_id = ?1
                 ORDER BY relative_path",
             )?;
-            let mut result: HashMap<PathBuf, SystemTime> = HashMap::new();
+            let mut result: HashMap<PathBuf, SystemTime> = HashMap::default();
             for row in statement.query_map(params![worktree_id], |row| {
                 Ok((
                     row.get::<_, String>(0)?.into(),
