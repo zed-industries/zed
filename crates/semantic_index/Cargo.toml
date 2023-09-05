@@ -39,6 +39,7 @@ rand.workspace = true
 schemars.workspace = true
 globset.workspace = true
 sha1 = "0.10.5"
+parse_duration = "2.1.1"
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }

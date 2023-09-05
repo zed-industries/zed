@@ -1,5 +1,10 @@
-use anyhow::{anyhow, Ok, Result};
+use crate::embedding::{Embedding, EmbeddingProvider};
+use anyhow::{anyhow, Result};
 use language::{Grammar, Language};
+use rusqlite::{
+    types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef},
+    ToSql,
+};
 use sha1::{Digest, Sha1};
 use std::{
     cmp::{self, Reverse},
@@ -10,13 +15,44 @@ use std::{
 };
 use tree_sitter::{Parser, QueryCursor};
 
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+pub struct DocumentDigest([u8; 20]);
+
+impl FromSql for DocumentDigest {
+    fn column_result(value: ValueRef) -> FromSqlResult<Self> {
+        let blob = value.as_blob()?;
+        let bytes =
+            blob.try_into()
+                .map_err(|_| rusqlite::types::FromSqlError::InvalidBlobSize {
+                    expected_size: 20,
+                    blob_size: blob.len(),
+                })?;
+        return Ok(DocumentDigest(bytes));
+    }
+}
+
+impl ToSql for DocumentDigest {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput> {
+        self.0.to_sql()
+    }
+}
+
+impl From<&'_ str> for DocumentDigest {
+    fn from(value: &'_ str) -> Self {
+        let mut sha1 = Sha1::new();
+        sha1.update(value);
+        Self(sha1.finalize().into())
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct Document {
     pub name: String,
     pub range: Range<usize>,
     pub content: String,
-    pub embedding: Vec<f32>,
-    pub sha1: [u8; 20],
+    pub embedding: Option<Embedding>,
+    pub digest: DocumentDigest,
+    pub token_count: usize,
 }
 
 const CODE_CONTEXT_TEMPLATE: &str =
@@ -30,6 +66,7 @@ pub const PARSEABLE_ENTIRE_FILE_TYPES: &[&str] =
 pub struct CodeContextRetriever {
     pub parser: Parser,
     pub cursor: QueryCursor,
+    pub embedding_provider: Arc<dyn EmbeddingProvider>,
 }
 
 // Every match has an item, this represents the fundamental treesitter symbol and anchors the search
@@ -47,10 +84,11 @@ pub struct CodeContextMatch {
 }
 
 impl CodeContextRetriever {
-    pub fn new() -> Self {
+    pub fn new(embedding_provider: Arc<dyn EmbeddingProvider>) -> Self {
         Self {
             parser: Parser::new(),
             cursor: QueryCursor::new(),
+            embedding_provider,
         }
     }
 
@@ -64,16 +102,15 @@ impl CodeContextRetriever {
             .replace("<path>", relative_path.to_string_lossy().as_ref())
             .replace("<language>", language_name.as_ref())
             .replace("<item>", &content);
-
-        let mut sha1 = Sha1::new();
-        sha1.update(&document_span);
-
+        let digest = DocumentDigest::from(document_span.as_str());
+        let (document_span, token_count) = self.embedding_provider.truncate(&document_span);
         Ok(vec![Document {
             range: 0..content.len(),
             content: document_span,
-            embedding: Vec::new(),
+            embedding: Default::default(),
             name: language_name.to_string(),
-            sha1: sha1.finalize().into(),
+            digest,
+            token_count,
         }])
     }
 
@@ -81,16 +118,15 @@ impl CodeContextRetriever {
         let document_span = MARKDOWN_CONTEXT_TEMPLATE
             .replace("<path>", relative_path.to_string_lossy().as_ref())
             .replace("<item>", &content);
-
-        let mut sha1 = Sha1::new();
-        sha1.update(&document_span);
-
+        let digest = DocumentDigest::from(document_span.as_str());
+        let (document_span, token_count) = self.embedding_provider.truncate(&document_span);
         Ok(vec![Document {
             range: 0..content.len(),
             content: document_span,
-            embedding: Vec::new(),
+            embedding: None,
             name: "Markdown".to_string(),
-            sha1: sha1.finalize().into(),
+            digest,
+            token_count,
         }])
     }
 
@@ -166,10 +202,16 @@ impl CodeContextRetriever {
 
         let mut documents = self.parse_file(content, language)?;
         for document in &mut documents {
-            document.content = CODE_CONTEXT_TEMPLATE
+            let document_content = CODE_CONTEXT_TEMPLATE
                 .replace("<path>", relative_path.to_string_lossy().as_ref())
                 .replace("<language>", language_name.as_ref())
                 .replace("item", &document.content);
+
+            let (document_content, token_count) =
+                self.embedding_provider.truncate(&document_content);
+
+            document.content = document_content;
+            document.token_count = token_count;
         }
         Ok(documents)
     }
@@ -263,15 +305,14 @@ impl CodeContextRetriever {
                 );
             }
 
-            let mut sha1 = Sha1::new();
-            sha1.update(&document_content);
-
+            let sha1 = DocumentDigest::from(document_content.as_str());
             documents.push(Document {
                 name,
                 content: document_content,
                 range: item_range.clone(),
-                embedding: vec![],
-                sha1: sha1.finalize().into(),
+                embedding: None,
+                digest: sha1,
+                token_count: 0,
             })
         }
 
