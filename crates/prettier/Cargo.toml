@@ -12,7 +12,7 @@ gpui = { path = "../gpui" }
 fs = { path = "../fs" }
 
 anyhow.workspace = true
-
+futures.workspace = true
 
 [dev-dependencies]
 language = { path = "../language", features = ["test-support"] }

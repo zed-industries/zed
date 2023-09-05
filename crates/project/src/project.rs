@@ -50,7 +50,7 @@ use lsp::{
 };
 use lsp_command::*;
 use postage::watch;
-use prettier::{NodeRuntime, Prettier};
+use prettier::{LocateStart, NodeRuntime, Prettier};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use search::SearchQuery;
@@ -8189,14 +8189,61 @@ impl Project {
     ) -> Option<Task<Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>>> {
         let buffer_file = File::from_dyn(buffer.read(cx).file());
         let buffer_path = buffer_file.map(|file| Arc::clone(file.path()));
+        let worktree_path = buffer_file
+            .as_ref()
+            .map(|file| file.worktree.read(cx).abs_path());
         let worktree_id = buffer_file.map(|file| file.worktree_id(cx));
 
         // TODO kb return None if config opted out of prettier
+        if true {
+            let fs = Arc::clone(&self.fs);
+            let buffer_path = buffer_path.clone();
+            let worktree_path = worktree_path.clone();
+            cx.spawn(|_, _| async move {
+                let prettier_path = Prettier::locate(
+                    worktree_path
+                        .zip(buffer_path)
+                        .map(|(worktree_root_path, starting_path)| {
+                            dbg!(LocateStart {
+                                worktree_root_path,
+                                starting_path,
+                            })
+                        }),
+                    fs,
+                )
+                .await
+                .unwrap();
+                dbg!(prettier_path);
+            })
+            .detach();
+            return None;
+        }
 
         let task = cx.spawn(|this, mut cx| async move {
             let fs = this.update(&mut cx, |project, _| Arc::clone(&project.fs));
             // TODO kb can we have a cache for this instead?
-            let prettier_path = Prettier::locate(buffer_path.as_deref(), fs).await;
+            let prettier_path = match cx
+                .background()
+                .spawn(Prettier::locate(
+                    worktree_path
+                        .zip(buffer_path)
+                        .map(|(worktree_root_path, starting_path)| LocateStart {
+                            worktree_root_path,
+                            starting_path,
+                        }),
+                    fs,
+                ))
+                .await
+            {
+                Ok(path) => path,
+                Err(e) => {
+                    return Task::Ready(Some(Result::Err(Arc::new(
+                        e.context("determining prettier path for worktree {worktree_path:?}"),
+                    ))))
+                    .shared();
+                }
+            };
+
             if let Some(existing_prettier) = this.update(&mut cx, |project, _| {
                 project
                     .prettier_instances

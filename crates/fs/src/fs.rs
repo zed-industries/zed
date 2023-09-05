@@ -85,7 +85,7 @@ pub struct RemoveOptions {
     pub ignore_if_not_exists: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Metadata {
     pub inode: u64,
     pub mtime: SystemTime,
@@ -229,11 +229,12 @@ impl Fs for RealFs {
         } else {
             symlink_metadata
         };
+        let file_type_metadata = metadata.file_type();
         Ok(Some(Metadata {
             inode: metadata.ino(),
             mtime: metadata.modified().unwrap(),
             is_symlink,
-            is_dir: metadata.file_type().is_dir(),
+            is_dir: file_type_metadata.is_dir(),
         }))
     }
 

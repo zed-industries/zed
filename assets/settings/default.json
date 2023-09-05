@@ -199,7 +199,8 @@
   //         "arguments": ["--stdin-filepath", "{buffer_path}"]
   //       }
   //     }
-  "formatter": "language_server",
+  // TODO kb description
+  "formatter": "auto",
   // How to soft-wrap long lines of text. This setting can take
   // three values:
   //
