@@ -1,4 +1,5 @@
 pub mod adapter;
+mod arc_cow;
 pub mod color;
 pub mod element;
 pub mod elements;
@@ -8,6 +9,7 @@ pub mod paint_context;
 pub mod style;
 pub mod view;
 
+pub use arc_cow::ArcCow;
 pub use color::*;
 pub use element::{AnyElement, Element, IntoElement, Layout, ParentElement};
 pub use geometry::{

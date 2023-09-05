@@ -19,7 +19,7 @@ impl<V: 'static> CollabPanelElement<V> {
 
         div()
             .full()
-            .font("Zed Mono")
+            .font("Zed Sans")
             .text_color(theme.middle.variant.default.foreground)
             .fill(theme.middle.base.default.background)
             .py_2()

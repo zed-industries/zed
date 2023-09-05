@@ -44,7 +44,7 @@ fn storybook<V: 'static>(cx: &mut ViewContext<V>) -> impl Element<V> {
     collab_panel().themed(current_theme(cx))
 }
 
-// Nathan: During the transition, we will include the base theme on the legacy Theme struct.
+// Nathan: During the transition to gpui2, we will include the base theme on the legacy Theme struct.
 fn current_theme<V: 'static>(cx: &mut ViewContext<V>) -> Theme {
     settings::get::<ThemeSettings>(cx)
         .theme

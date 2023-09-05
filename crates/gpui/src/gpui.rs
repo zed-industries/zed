@@ -28,6 +28,7 @@ pub mod json;
 pub mod keymap_matcher;
 pub mod platform;
 pub use gpui_macros::{test, Element};
+pub use usvg;
 pub use window::{
     Axis, Layout, LayoutEngine, LayoutId, RectFExt, SizeConstraint, Vector2FExt, WindowContext,
 };

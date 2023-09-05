@@ -1,6 +1,6 @@
 use gpui2::{
-    elements::div, elements::text::ArcCow, interactive::Interactive, platform::MouseButton,
-    style::StyleHelpers, Element, IntoElement, ParentElement, ViewContext,
+    elements::div, interactive::Interactive, platform::MouseButton, style::StyleHelpers, ArcCow,
+    Element, IntoElement, ParentElement, ViewContext,
 };
 use std::{marker::PhantomData, rc::Rc};
 
