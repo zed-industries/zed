@@ -1,7 +1,8 @@
 import { useTheme } from "../common"
 import { toggleable_icon_button } from "../component/icon_button"
-import { interactive } from "../element"
+import { interactive, toggleable } from "../element"
 import { background, border, foreground, text } from "./components"
+import { text_button } from "../component";
 
 export const toolbar = () => {
     const theme = useTheme()
@@ -33,6 +34,25 @@ export const toolbar = () => {
                     background: background(theme.highest, "on", "hovered"),
                 },
             },
+        }),
+        toggleable_text_tool: toggleable({
+            state: {
+                inactive: text_button({
+                    disabled: true,
+                    variant: "ghost",
+                    layer: theme.highest,
+                    margin: { left: 4 },
+                    text_properties: { size: "sm" },
+                    border: border(theme.middle),
+                }),
+                active: text_button({
+                    variant: "ghost",
+                    layer: theme.highest,
+                    margin: { left: 4 },
+                    text_properties: { size: "sm" },
+                    border: border(theme.middle),
+                }),
+            }
         }),
     }
 }
