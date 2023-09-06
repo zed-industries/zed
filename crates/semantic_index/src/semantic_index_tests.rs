@@ -87,7 +87,16 @@ async fn test_semantic_index(deterministic: Arc<Deterministic>, cx: &mut TestApp
 
     let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
 
-    semantic_index.update(cx, |store, cx| store.index_project(project.clone(), cx));
+    let search_results = semantic_index.update(cx, |store, cx| {
+        store.search_project(
+            project.clone(),
+            "aaaaaabbbbzz".to_string(),
+            5,
+            vec![],
+            vec![],
+            cx,
+        )
+    });
     let pending_file_count =
         semantic_index.read_with(cx, |index, _| index.pending_file_count(&project).unwrap());
     deterministic.run_until_parked();
@@ -95,20 +104,7 @@ async fn test_semantic_index(deterministic: Arc<Deterministic>, cx: &mut TestApp
     deterministic.advance_clock(EMBEDDING_QUEUE_FLUSH_TIMEOUT);
     assert_eq!(*pending_file_count.borrow(), 0);
 
-    let search_results = semantic_index
-        .update(cx, |store, cx| {
-            store.search_project(
-                project.clone(),
-                "aaaaaabbbbzz".to_string(),
-                5,
-                vec![],
-                vec![],
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-
+    let search_results = search_results.await.unwrap();
     assert_search_results(
         &search_results,
         &[
@@ -185,11 +181,12 @@ async fn test_semantic_index(deterministic: Arc<Deterministic>, cx: &mut TestApp
     deterministic.advance_clock(EMBEDDING_QUEUE_FLUSH_TIMEOUT);
 
     let prev_embedding_count = embedding_provider.embedding_count();
-    semantic_index.update(cx, |store, cx| store.index_project(project.clone(), cx));
+    let index = semantic_index.update(cx, |store, cx| store.index_project(project.clone(), cx));
     deterministic.run_until_parked();
     assert_eq!(*pending_file_count.borrow(), 1);
     deterministic.advance_clock(EMBEDDING_QUEUE_FLUSH_TIMEOUT);
     assert_eq!(*pending_file_count.borrow(), 0);
+    index.await.unwrap();
 
     assert_eq!(
         embedding_provider.embedding_count() - prev_embedding_count,

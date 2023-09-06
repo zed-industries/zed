@@ -635,7 +635,9 @@ impl ProjectSearchView {
             let project = self.model.read(cx).project.clone();
 
             let mut pending_file_count_rx = semantic_index.update(cx, |semantic_index, cx| {
-                semantic_index.index_project(project.clone(), cx);
+                semantic_index
+                    .index_project(project.clone(), cx)
+                    .detach_and_log_err(cx);
                 semantic_index.pending_file_count(&project).unwrap()
             });
 
