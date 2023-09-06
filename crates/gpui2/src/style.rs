@@ -477,6 +477,15 @@ pub trait StyleHelpers: Styleable<Style = Style> {
         self
     }
 
+    fn border_color<C>(mut self, border_color: C) -> Self
+    where
+        C: Into<Hsla>,
+        Self: Sized,
+    {
+        self.declared_style().border_color = Some(border_color.into());
+        self
+    }
+
     fn text_color<C>(mut self, color: C) -> Self
     where
         C: Into<Hsla>,

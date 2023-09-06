@@ -27,8 +27,8 @@ pub fn styleable_helpers(input: TokenStream) -> TokenStream {
 fn generate_methods() -> Vec<TokenStream2> {
     let mut methods = Vec::new();
 
-    for (prefix, auto_allowed, fields) in tailwind_length_prefixes() {
-        for (suffix, length_tokens) in tailwind_lengths() {
+    for (prefix, auto_allowed, fields) in box_prefixes() {
+        for (suffix, length_tokens) in box_suffixes() {
             if auto_allowed || suffix != "auto" {
                 let method = generate_method(prefix, suffix, &fields, length_tokens);
                 methods.push(method);
@@ -36,9 +36,16 @@ fn generate_methods() -> Vec<TokenStream2> {
         }
     }
 
-    for (prefix, fields) in tailwind_corner_prefixes() {
-        for (suffix, radius_tokens) in tailwind_corner_radii() {
+    for (prefix, fields) in corner_prefixes() {
+        for (suffix, radius_tokens) in corner_suffixes() {
             let method = generate_method(prefix, suffix, &fields, radius_tokens);
+            methods.push(method);
+        }
+    }
+
+    for (prefix, fields) in border_prefixes() {
+        for (suffix, width_tokens) in border_suffixes() {
+            let method = generate_method(prefix, suffix, &fields, width_tokens);
             methods.push(method);
         }
     }
@@ -52,7 +59,12 @@ fn generate_method(
     fields: &Vec<TokenStream2>,
     length_tokens: TokenStream2,
 ) -> TokenStream2 {
-    let method_name = format_ident!("{}_{}", prefix, suffix);
+    let method_name = if suffix.is_empty() {
+        format_ident!("{}", prefix)
+    } else {
+        format_ident!("{}_{}", prefix, suffix)
+    };
+
     let field_assignments = fields
         .iter()
         .map(|field_tokens| {
@@ -73,7 +85,7 @@ fn generate_method(
     method
 }
 
-fn tailwind_length_prefixes() -> Vec<(&'static str, bool, Vec<TokenStream2>)> {
+fn box_prefixes() -> Vec<(&'static str, bool, Vec<TokenStream2>)> {
     vec![
         ("w", true, vec![quote! { size.width }]),
         ("h", true, vec![quote! { size.height }]),
@@ -133,7 +145,7 @@ fn tailwind_length_prefixes() -> Vec<(&'static str, bool, Vec<TokenStream2>)> {
     ]
 }
 
-fn tailwind_lengths() -> Vec<(&'static str, TokenStream2)> {
+fn box_suffixes() -> Vec<(&'static str, TokenStream2)> {
     vec![
         ("0", quote! { pixels(0.) }),
         ("0p5", quote! { rems(0.125) }),
@@ -185,7 +197,7 @@ fn tailwind_lengths() -> Vec<(&'static str, TokenStream2)> {
     ]
 }
 
-fn tailwind_corner_prefixes() -> Vec<(&'static str, Vec<TokenStream2>)> {
+fn corner_prefixes() -> Vec<(&'static str, Vec<TokenStream2>)> {
     vec![
         (
             "rounded",
@@ -231,7 +243,7 @@ fn tailwind_corner_prefixes() -> Vec<(&'static str, Vec<TokenStream2>)> {
     ]
 }
 
-fn tailwind_corner_radii() -> Vec<(&'static str, TokenStream2)> {
+fn corner_suffixes() -> Vec<(&'static str, TokenStream2)> {
     vec![
         ("none", quote! { pixels(0.) }),
         ("sm", quote! { rems(0.125) }),
@@ -241,5 +253,60 @@ fn tailwind_corner_radii() -> Vec<(&'static str, TokenStream2)> {
         ("2xl", quote! { rems(1.) }),
         ("3xl", quote! { rems(1.5) }),
         ("full", quote! {  pixels(9999.) }),
+    ]
+}
+
+fn border_prefixes() -> Vec<(&'static str, Vec<TokenStream2>)> {
+    vec![
+        (
+            "border",
+            vec![
+                quote! { border_widths.top },
+                quote! { border_widths.right },
+                quote! { border_widths.bottom },
+                quote! { border_widths.left },
+            ],
+        ),
+        ("border_t", vec![quote! { border_widths.top }]),
+        ("border_b", vec![quote! { border_widths.bottom }]),
+        ("border_r", vec![quote! { border_widths.right }]),
+        ("border_l", vec![quote! { border_widths.left }]),
+        (
+            "border_x",
+            vec![
+                quote! { border_widths.left },
+                quote! { border_widths.right },
+            ],
+        ),
+        (
+            "border_y",
+            vec![
+                quote! { border_widths.top },
+                quote! { border_widths.bottom },
+            ],
+        ),
+    ]
+}
+
+fn border_suffixes() -> Vec<(&'static str, TokenStream2)> {
+    vec![
+        ("", quote! { pixels(1.) }),
+        ("0", quote! { pixels(0.) }),
+        ("1", quote! { pixels(1.) }),
+        ("2", quote! { pixels(2.) }),
+        ("3", quote! { pixels(3.) }),
+        ("4", quote! { pixels(4.) }),
+        ("5", quote! { pixels(5.) }),
+        ("6", quote! { pixels(6.) }),
+        ("7", quote! { pixels(7.) }),
+        ("8", quote! { pixels(8.) }),
+        ("9", quote! { pixels(9.) }),
+        ("10", quote! { pixels(10.) }),
+        ("11", quote! { pixels(11.) }),
+        ("12", quote! { pixels(12.) }),
+        ("16", quote! { pixels(16.) }),
+        ("20", quote! { pixels(20.) }),
+        ("24", quote! { pixels(24.) }),
+        ("32", quote! { pixels(32.) }),
     ]
 }

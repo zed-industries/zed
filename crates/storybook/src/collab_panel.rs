@@ -28,7 +28,8 @@ impl<V: 'static> CollabPanelElement<V> {
             .flex_col()
             .font("Zed Sans Extended")
             .text_color(theme.middle.base.default.foreground)
-            // .border_color(theme.middle.base.default.border)
+            .border_color(theme.middle.base.default.border)
+            .border()
             .fill(theme.middle.base.default.background)
             .child(
                 div()
@@ -40,7 +41,8 @@ impl<V: 'static> CollabPanelElement<V> {
                         div()
                             .fill(theme.lowest.base.default.background)
                             .pb_1()
-                            // .border_b()
+                            .border_color(theme.lowest.base.default.border)
+                            .border_b()
                             //:: https://tailwindcss.com/docs/hover-focus-and-other-states#styling-based-on-parent-state
                             // .group()
                             // List Section Header

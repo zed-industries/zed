@@ -73,6 +73,7 @@ impl<V: 'static> Element<V> for Div<V> {
         for child in &mut self.children {
             child.paint(view, layout.bounds.origin(), cx);
         }
+        style.paint_foreground(layout.bounds, cx);
         if pop_text_style {
             cx.pop_text_style();
         }
