@@ -44,7 +44,7 @@ impl<V: 'static> CollabPanelElement<V> {
                             //:: https://tailwindcss.com/docs/hover-focus-and-other-states#styling-based-on-parent-state
                             // .group()
                             // List Section Header
-                            .child(self.list_section_header("#CRDB", theme))
+                            .child(self.list_section_header("#CRDB", true, theme))
                             // List Item Large
                             .child(self.list_item("maxbrunsfeld", theme)),
                     )
@@ -53,14 +53,14 @@ impl<V: 'static> CollabPanelElement<V> {
                             .py_2()
                             .flex()
                             .flex_col()
-                            .child(self.list_section_header("CHANNELS", theme)),
+                            .child(self.list_section_header("CHANNELS", true, theme)),
                     )
                     .child(
                         div()
                             .py_2()
                             .flex()
                             .flex_col()
-                            .child(self.list_section_header("CONTACTS", theme))
+                            .child(self.list_section_header("CONTACTS", true, theme))
                             .child(self.list_item("as-cii", theme))
                             .child(self.list_item("nathansobo", theme))
                             .child(self.list_item("maxbrunsfeld", theme)),
@@ -79,6 +79,7 @@ impl<V: 'static> CollabPanelElement<V> {
     fn list_section_header(
         &self,
         label: impl Into<ArcCow<'static, str>>,
+        expanded: bool,
         theme: &Theme,
     ) -> impl Element<V> {
         div()
@@ -91,7 +92,11 @@ impl<V: 'static> CollabPanelElement<V> {
             .child(
                 div().flex().h_full().gap_1().items_center().child(
                     svg()
-                        .path("icons/radix/caret-down.svg")
+                        .path(if expanded {
+                            "icons/radix/caret-down.svg"
+                        } else {
+                            "icons/radix/caret-up.svg"
+                        })
                         .w_3p5()
                         .h_3p5()
                         .fill(theme.middle.positive.default.foreground),
