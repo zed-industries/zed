@@ -31,7 +31,7 @@ preview_tag_name="v${major}.${minor}.${patch}-pre"
 
 git fetch origin ${prev_minor_branch_name}:${prev_minor_branch_name}
 git fetch origin --tags
-# cargo check -q
+cargo check -q
 
 function cleanup {
   git checkout -q main
@@ -89,7 +89,7 @@ git checkout -q main
 git clean -q -dff
 old_main_sha=$(git rev-parse HEAD)
 cargo set-version --package zed --bump minor
-# cargo check -q
+cargo check -q
 git commit -q --all --message "${next_minor_branch_name} dev"
 
 cat <<MESSAGE
