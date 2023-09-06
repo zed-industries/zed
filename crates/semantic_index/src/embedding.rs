@@ -181,18 +181,17 @@ impl EmbeddingProvider for OpenAIEmbeddings {
 
     fn truncate(&self, span: &str) -> (String, usize) {
         let mut tokens = OPENAI_BPE_TOKENIZER.encode_with_special_tokens(span);
-        let token_count = tokens.len();
-        let output = if token_count > OPENAI_INPUT_LIMIT {
+        let output = if tokens.len() > OPENAI_INPUT_LIMIT {
             tokens.truncate(OPENAI_INPUT_LIMIT);
             OPENAI_BPE_TOKENIZER
-                .decode(tokens)
+                .decode(tokens.clone())
                 .ok()
                 .unwrap_or_else(|| span.to_string())
         } else {
             span.to_string()
         };
 
-        (output, token_count)
+        (output, tokens.len())
     }
 
     async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>> {
