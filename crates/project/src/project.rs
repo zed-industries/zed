@@ -72,7 +72,7 @@ use std::{
     str,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
-        Arc, OnceLock,
+        Arc,
     },
     time::{Duration, Instant},
 };
@@ -154,6 +154,7 @@ pub struct Project {
     copilot_lsp_subscription: Option<gpui::Subscription>,
     copilot_log_subscription: Option<lsp::Subscription>,
     current_lsp_settings: HashMap<Arc<str>, LspSettings>,
+    node_runtime: Option<Arc<dyn NodeRuntime>>,
     prettier_instances: HashMap<
         (Option<WorktreeId>, PathBuf),
         Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>,
@@ -554,26 +555,13 @@ impl SearchMatchCandidate {
     }
 }
 
-static NODE_RUNTIME: OnceLock<Arc<dyn NodeRuntime>> = OnceLock::new();
-
 impl Project {
     pub fn init_settings(cx: &mut AppContext) {
         settings::register::<ProjectSettings>(cx);
     }
 
-    pub fn init(
-        client: &Arc<Client>,
-        node_runtime: Option<Arc<dyn NodeRuntime>>,
-        cx: &mut AppContext,
-    ) {
+    pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
         Self::init_settings(cx);
-
-        // TODO kb move it to Project::local and other constructors?
-        if let Some(node_runtime) = node_runtime {
-            NODE_RUNTIME
-                .set(node_runtime)
-                .unwrap_or_else(|_| panic!("multiple init calls tried to set node runtime"));
-        }
 
         client.add_model_message_handler(Self::handle_add_collaborator);
         client.add_model_message_handler(Self::handle_update_project_collaborator);
@@ -624,6 +612,7 @@ impl Project {
 
     pub fn local(
         client: Arc<Client>,
+        node_runtime: Arc<dyn NodeRuntime>,
         user_store: ModelHandle<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
@@ -679,6 +668,7 @@ impl Project {
                 copilot_lsp_subscription,
                 copilot_log_subscription: None,
                 current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
+                node_runtime: Some(node_runtime),
                 prettier_instances: HashMap::default(),
             }
         })
@@ -777,6 +767,7 @@ impl Project {
                 copilot_lsp_subscription,
                 copilot_log_subscription: None,
                 current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
+                node_runtime: None,
                 prettier_instances: HashMap::default(),
             };
             for worktree in worktrees {
@@ -811,13 +802,23 @@ impl Project {
         root_paths: impl IntoIterator<Item = &Path>,
         cx: &mut gpui::TestAppContext,
     ) -> ModelHandle<Project> {
+        use node_runtime::FakeNodeRuntime;
+
         let mut languages = LanguageRegistry::test();
         languages.set_executor(cx.background());
         let http_client = util::http::FakeHttpClient::with_404_response();
         let client = cx.update(|cx| client::Client::new(http_client.clone(), cx));
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        let project =
-            cx.update(|cx| Project::local(client, user_store, Arc::new(languages), fs, cx));
+        let project = cx.update(|cx| {
+            Project::local(
+                client,
+                FakeNodeRuntime::new(),
+                user_store,
+                Arc::new(languages),
+                fs,
+                cx,
+            )
+        });
         for path in root_paths {
             let (tree, _) = project
                 .update(cx, |project, cx| {
@@ -8201,7 +8202,7 @@ impl Project {
         buffer: &ModelHandle<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Option<Task<Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>>> {
-        let node_runtime = Arc::clone(NODE_RUNTIME.get()?);
+        let node_runtime = Arc::clone(self.node_runtime.as_ref()?);
         let buffer_file = File::from_dyn(buffer.read(cx).file());
         let buffer_path = buffer_file.map(|file| Arc::clone(file.path()));
         let worktree_path = buffer_file

@@ -138,7 +138,7 @@ fn main() {
 
         theme::init(Assets, cx);
         context_menu::init(cx);
-        project::Project::init(&client, Some(Arc::clone(&node_runtime)), cx);
+        project::Project::init(&client, cx);
         client::init(&client, cx);
         command_palette::init(cx);
         language::init(cx);
@@ -154,7 +154,12 @@ fn main() {
         semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
         vim::init(cx);
         terminal_view::init(cx);
-        copilot::init(copilot_language_server_id, http.clone(), node_runtime, cx);
+        copilot::init(
+            copilot_language_server_id,
+            http.clone(),
+            node_runtime.clone(),
+            cx,
+        );
         assistant::init(cx);
         component_test::init(cx);
 
@@ -181,6 +186,7 @@ fn main() {
             initialize_workspace,
             background_actions,
             workspace_store,
+            node_runtime,
         });
         cx.set_global(Arc::downgrade(&app_state));
 
