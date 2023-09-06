@@ -1,6 +1,6 @@
 use crate::theme::{theme, Theme};
 use gpui2::{
-    elements::{div, svg},
+    elements::{div, img, svg},
     style::{StyleHelpers, Styleable},
     ArcCow, Element, IntoElement, ParentElement, ViewContext,
 };
@@ -48,7 +48,11 @@ impl<V: 'static> CollabPanelElement<V> {
                             // List Section Header
                             .child(self.list_section_header("#CRDB", true, theme))
                             // List Item Large
-                            .child(self.list_item("maxbrunsfeld", theme)),
+                            .child(self.list_item(
+                                "http://github.com/maxbrunsfeld.png?s=50",
+                                "maxbrunsfeld",
+                                theme,
+                            )),
                     )
                     .child(
                         div()
@@ -63,9 +67,21 @@ impl<V: 'static> CollabPanelElement<V> {
                             .flex()
                             .flex_col()
                             .child(self.list_section_header("CONTACTS", true, theme))
-                            .child(self.list_item("as-cii", theme))
-                            .child(self.list_item("nathansobo", theme))
-                            .child(self.list_item("maxbrunsfeld", theme)),
+                            .child(self.list_item(
+                                "http://github.com/as-cii.png?s=50",
+                                "as-cii",
+                                theme,
+                            ))
+                            .child(self.list_item(
+                                "http://github.com/nathansobo.png?s=50",
+                                "nathansobo",
+                                theme,
+                            ))
+                            .child(self.list_item(
+                                "http://github.com/maxbrunsfeld.png?s=50",
+                                "maxbrunsfeld",
+                                theme,
+                            )),
                     ),
             )
             .child(
@@ -106,7 +122,12 @@ impl<V: 'static> CollabPanelElement<V> {
             )
     }
 
-    fn list_item(&self, label: impl Into<ArcCow<'static, str>>, theme: &Theme) -> impl Element<V> {
+    fn list_item(
+        &self,
+        avatar_uri: impl Into<ArcCow<'static, str>>,
+        label: impl Into<ArcCow<'static, str>>,
+        theme: &Theme,
+    ) -> impl Element<V> {
         div()
             .h_7()
             .px_2()
@@ -123,9 +144,9 @@ impl<V: 'static> CollabPanelElement<V> {
                     .gap_1()
                     .text_sm()
                     .child(
-                        div()
-                            .w_3p5()
-                            .h_3p5()
+                        img()
+                            .uri(avatar_uri)
+                            .size_3p5()
                             .fill(theme.middle.positive.default.foreground),
                     )
                     .child(label),

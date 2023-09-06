@@ -3177,6 +3177,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "derive_more",
+ "futures 0.3.28",
  "gpui",
  "gpui2_macros",
  "log",

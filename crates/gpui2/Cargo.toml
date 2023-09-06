@@ -16,6 +16,7 @@ anyhow.workspace = true
 derive_more.workspace = true
 gpui = { path = "../gpui" }
 log.workspace = true
+futures.workspace = true
 gpui2_macros = { path = "../gpui2_macros" }
 parking_lot.workspace = true
 refineable.workspace = true

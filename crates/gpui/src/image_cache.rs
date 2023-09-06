@@ -11,7 +11,6 @@ use parking_lot::Mutex;
 use thiserror::Error;
 use util::{
     arc_cow::ArcCow,
-    defer,
     http::{self, HttpClient},
 };
 
@@ -44,15 +43,10 @@ impl From<ImageError> for Error {
 
 pub struct ImageCache {
     client: Arc<dyn HttpClient>,
-    images: Arc<
-        Mutex<
-            HashMap<
-                ArcCow<'static, str>,
-                Shared<BoxFuture<'static, Result<Arc<ImageData>, Error>>>,
-            >,
-        >,
-    >,
+    images: Arc<Mutex<HashMap<ArcCow<'static, str>, FetchImageFuture>>>,
 }
+
+type FetchImageFuture = Shared<BoxFuture<'static, Result<Arc<ImageData>, Error>>>;
 
 impl ImageCache {
     pub fn new(client: Arc<dyn HttpClient>) -> Self {
@@ -64,24 +58,18 @@ impl ImageCache {
 
     pub fn get(
         &self,
-        uri: ArcCow<'static, str>,
+        uri: impl Into<ArcCow<'static, str>>,
     ) -> Shared<BoxFuture<'static, Result<Arc<ImageData>, Error>>> {
-        match self.images.lock().get(uri.as_ref()) {
+        let uri = uri.into();
+        let mut images = self.images.lock();
+
+        match images.get(uri.as_ref()) {
             Some(future) => future.clone(),
             None => {
                 let client = self.client.clone();
-                let images = self.images.clone();
                 let future = {
                     let uri = uri.clone();
                     async move {
-                        // If we error, remove the cached future. Otherwise we cancel before returning.
-                        let remove_cached_future = defer({
-                            let uri = uri.clone();
-                            move || {
-                                images.lock().remove(uri.as_ref());
-                            }
-                        });
-
                         let mut response = client.get(uri.as_ref(), ().into(), true).await?;
                         let mut body = Vec::new();
                         response.body_mut().read_to_end(&mut body).await?;
@@ -97,13 +85,13 @@ impl ImageCache {
                         let image =
                             image::load_from_memory_with_format(&body, format)?.into_bgra8();
 
-                        remove_cached_future.cancel();
                         Ok(ImageData::new(image))
                     }
                 }
                 .boxed()
                 .shared();
-                self.images.lock().insert(uri.clone(), future.clone());
+
+                images.insert(uri, future.clone());
                 future
             }
         }

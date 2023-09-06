@@ -1,9 +1,20 @@
 use std::sync::Arc;
 
-#[derive(PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq)]
 pub enum ArcCow<'a, T: ?Sized> {
     Borrowed(&'a T),
     Owned(Arc<T>),
+}
+
+use std::hash::{Hash, Hasher};
+
+impl<'a, T: ?Sized + Hash> Hash for ArcCow<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Self::Borrowed(borrowed) => Hash::hash(borrowed, state),
+            Self::Owned(owned) => Hash::hash(&**owned, state),
+        }
+    }
 }
 
 impl<'a, T: ?Sized> Clone for ArcCow<'a, T> {
