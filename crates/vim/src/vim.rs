@@ -18,13 +18,13 @@ use gpui::{
     actions, impl_actions, keymap_matcher::KeymapContext, keymap_matcher::MatchResult, AppContext,
     Subscription, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
-use language::{CursorShape, Selection, SelectionGoal};
+use language::{CursorShape, Point, Selection, SelectionGoal};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use normal::normal_replace;
 use serde::Deserialize;
 use settings::{Setting, SettingsStore};
-use state::{EditorState, Mode, Operator, WorkspaceState};
+use state::{EditorState, Mode, Operator, RecordedSelection, WorkspaceState};
 use std::{ops::Range, sync::Arc};
 use visual::{visual_block_motion, visual_replace};
 use workspace::{self, Workspace};
@@ -107,7 +107,7 @@ pub fn observe_keystrokes(cx: &mut WindowContext) {
             Vim::update(cx, |vim, _| {
                 if vim.workspace_state.recording {
                     vim.workspace_state
-                        .repeat_actions
+                        .recorded_actions
                         .push(ReplayableAction::Action(handled_by.boxed_clone()));
 
                     if vim.workspace_state.stop_recording_after_next_action {
@@ -204,7 +204,7 @@ impl Vim {
         Vim::update(cx, |vim, _| {
             if vim.workspace_state.recording {
                 vim.workspace_state
-                    .repeat_actions
+                    .recorded_actions
                     .push(ReplayableAction::Insertion {
                         text: text.clone(),
                         utf16_range_to_replace: range_to_replace,
@@ -232,16 +232,51 @@ impl Vim {
 
     // TODO: shift-j?
     //
-    pub fn start_recording(&mut self) {
+    pub fn start_recording(&mut self, cx: &mut WindowContext) {
         if !self.workspace_state.replaying {
             self.workspace_state.recording = true;
-            self.workspace_state.repeat_actions = Default::default();
+            self.workspace_state.recorded_actions = Default::default();
             self.workspace_state.recorded_count =
                 if let Some(Operator::Number(number)) = self.active_operator() {
                     Some(number)
                 } else {
                     None
+                };
+
+            let selections = self
+                .active_editor
+                .and_then(|editor| editor.upgrade(cx))
+                .map(|editor| {
+                    let editor = editor.read(cx);
+                    (
+                        editor.selections.oldest::<Point>(cx),
+                        editor.selections.newest::<Point>(cx),
+                    )
+                });
+
+            if let Some((oldest, newest)) = selections {
+                self.workspace_state.recorded_selection = match self.state().mode {
+                    Mode::Visual if newest.end.row == newest.start.row => {
+                        RecordedSelection::SingleLine {
+                            cols: newest.end.column - newest.start.column,
+                        }
+                    }
+                    Mode::Visual => RecordedSelection::Visual {
+                        rows: newest.end.row - newest.start.row,
+                        cols: newest.end.column,
+                    },
+                    Mode::VisualLine => RecordedSelection::VisualLine {
+                        rows: newest.end.row - newest.start.row,
+                    },
+                    Mode::VisualBlock => RecordedSelection::VisualBlock {
+                        rows: newest.end.row.abs_diff(oldest.start.row),
+                        cols: newest.end.column.abs_diff(oldest.start.column),
+                    },
+                    _ => RecordedSelection::None,
                 }
+            } else {
+                self.workspace_state.recorded_selection = RecordedSelection::None;
+            }
         }
     }
 
@@ -251,8 +286,8 @@ impl Vim {
         }
     }
 
-    pub fn record_current_action(&mut self) {
-        self.start_recording();
+    pub fn record_current_action(&mut self, cx: &mut WindowContext) {
+        self.start_recording(cx);
         self.stop_recording();
     }
 
@@ -322,7 +357,7 @@ impl Vim {
             operator,
             Operator::Change | Operator::Delete | Operator::Replace
         ) {
-            self.start_recording()
+            self.start_recording(cx)
         };
         self.update_state(|state| state.operator_stack.push(operator));
         self.sync_vim_settings(cx);

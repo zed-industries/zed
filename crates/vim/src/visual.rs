@@ -277,7 +277,7 @@ pub fn other_end(_: &mut Workspace, _: &OtherEnd, cx: &mut ViewContext<Workspace
 
 pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
-        vim.record_current_action();
+        vim.record_current_action(cx);
         vim.update_active_editor(cx, |editor, cx| {
             let mut original_columns: HashMap<_, _> = Default::default();
             let line_mode = editor.selections.line_mode;

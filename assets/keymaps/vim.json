@@ -446,12 +446,10 @@
       ],
       "s": "vim::Substitute",
       "shift-s": "vim::SubstituteLine",
+      "shift-r": "vim::SubstituteLine",
       "c": "vim::Substitute",
       "~": "vim::ChangeCase",
-      "shift-i": [
-        "vim::SwitchMode",
-        "Insert"
-      ],
+      "shift-i": "vim::InsertBefore",
       "shift-a": "vim::InsertAfter",
       "r": [
         "vim::PushOperator",

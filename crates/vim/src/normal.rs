@@ -66,21 +66,21 @@ pub fn init(cx: &mut AppContext) {
 
     cx.add_action(|_: &mut Workspace, _: &DeleteLeft, cx| {
         Vim::update(cx, |vim, cx| {
-            vim.record_current_action();
+            vim.record_current_action(cx);
             let times = vim.pop_number_operator(cx);
             delete_motion(vim, Motion::Left, times, cx);
         })
     });
     cx.add_action(|_: &mut Workspace, _: &DeleteRight, cx| {
         Vim::update(cx, |vim, cx| {
-            vim.record_current_action();
+            vim.record_current_action(cx);
             let times = vim.pop_number_operator(cx);
             delete_motion(vim, Motion::Right, times, cx);
         })
     });
     cx.add_action(|_: &mut Workspace, _: &ChangeToEndOfLine, cx| {
         Vim::update(cx, |vim, cx| {
-            vim.start_recording();
+            vim.start_recording(cx);
             let times = vim.pop_number_operator(cx);
             change_motion(
                 vim,
@@ -94,7 +94,7 @@ pub fn init(cx: &mut AppContext) {
     });
     cx.add_action(|_: &mut Workspace, _: &DeleteToEndOfLine, cx| {
         Vim::update(cx, |vim, cx| {
-            vim.record_current_action();
+            vim.record_current_action(cx);
             let times = vim.pop_number_operator(cx);
             delete_motion(
                 vim,
@@ -161,7 +161,7 @@ fn move_cursor(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut Win
 
 fn insert_after(_: &mut Workspace, _: &InsertAfter, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
-        vim.start_recording();
+        vim.start_recording(cx);
         vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
@@ -175,7 +175,7 @@ fn insert_after(_: &mut Workspace, _: &InsertAfter, cx: &mut ViewContext<Workspa
 
 fn insert_before(_: &mut Workspace, _: &InsertBefore, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
-        vim.start_recording();
+        vim.start_recording(cx);
         vim.switch_mode(Mode::Insert, false, cx);
     });
 }
@@ -186,7 +186,7 @@ fn insert_first_non_whitespace(
     cx: &mut ViewContext<Workspace>,
 ) {
     Vim::update(cx, |vim, cx| {
-        vim.start_recording();
+        vim.start_recording(cx);
         vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
@@ -203,7 +203,7 @@ fn insert_first_non_whitespace(
 
 fn insert_end_of_line(_: &mut Workspace, _: &InsertEndOfLine, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
-        vim.start_recording();
+        vim.start_recording(cx);
         vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
@@ -217,7 +217,7 @@ fn insert_end_of_line(_: &mut Workspace, _: &InsertEndOfLine, cx: &mut ViewConte
 
 fn insert_line_above(_: &mut Workspace, _: &InsertLineAbove, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
-        vim.start_recording();
+        vim.start_recording(cx);
         vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
@@ -250,7 +250,7 @@ fn insert_line_above(_: &mut Workspace, _: &InsertLineAbove, cx: &mut ViewContex
 
 fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
-        vim.start_recording();
+        vim.start_recording(cx);
         vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {

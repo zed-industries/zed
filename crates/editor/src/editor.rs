@@ -572,7 +572,7 @@ pub struct Editor {
     project: Option<ModelHandle<Project>>,
     focused: bool,
     blink_manager: ModelHandle<BlinkManager>,
-    show_local_selections: bool,
+    pub show_local_selections: bool,
     mode: EditorMode,
     replica_id_mapping: Option<HashMap<ReplicaId, ReplicaId>>,
     show_gutter: bool,

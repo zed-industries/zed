@@ -50,6 +50,26 @@ pub struct EditorState {
     pub operator_stack: Vec<Operator>,
 }
 
+#[derive(Default, Clone, Debug)]
+pub enum RecordedSelection {
+    #[default]
+    None,
+    Visual {
+        rows: u32,
+        cols: u32,
+    },
+    SingleLine {
+        cols: u32,
+    },
+    VisualBlock {
+        rows: u32,
+        cols: u32,
+    },
+    VisualLine {
+        rows: u32,
+    },
+}
+
 #[derive(Default, Clone)]
 pub struct WorkspaceState {
     pub search: SearchState,
@@ -59,7 +79,8 @@ pub struct WorkspaceState {
     pub stop_recording_after_next_action: bool,
     pub replaying: bool,
     pub recorded_count: Option<usize>,
-    pub repeat_actions: Vec<ReplayableAction>,
+    pub recorded_actions: Vec<ReplayableAction>,
+    pub recorded_selection: RecordedSelection,
 }
 
 #[derive(Debug)]
