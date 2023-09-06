@@ -299,6 +299,19 @@ pub trait StyleHelpers: Styleable<Style = Style> {
         self
     }
 
+    /// size_{n}: Sets width & height to {n}
+    ///
+    /// Example:
+    /// size_1: Sets width & height to 1
+    fn size(mut self, size: Length) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().size.height = Some(size);
+        self.declared_style().size.width = Some(size);
+        self
+    }
+
     fn full(mut self) -> Self
     where
         Self: Sized,

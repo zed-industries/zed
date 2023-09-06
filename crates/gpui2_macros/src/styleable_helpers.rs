@@ -27,36 +27,110 @@ pub fn styleable_helpers(input: TokenStream) -> TokenStream {
 fn generate_methods() -> Vec<TokenStream2> {
     let mut methods = Vec::new();
 
-    for (prefix, auto_allowed, fields) in tailwind_prefixes() {
+    for (prefix, auto_allowed, fields) in tailwind_length_prefixes() {
         for (suffix, length_tokens) in tailwind_lengths() {
-            if !auto_allowed && suffix == "auto" {
-                // Conditional to skip "auto"
-                continue;
+            if auto_allowed || suffix != "auto" {
+                let method = generate_method(prefix, suffix, &fields, length_tokens);
+                methods.push(method);
             }
+        }
+    }
 
-            let method_name = format_ident!("{}_{}", prefix, suffix);
-            let field_assignments = fields
-                .iter()
-                .map(|field_tokens| {
-                    quote! {
-                        style.#field_tokens = Some(gpui::geometry::#length_tokens);
-                    }
-                })
-                .collect::<Vec<_>>();
-
-            let method = quote! {
-                fn #method_name(mut self) -> Self where Self: std::marker::Sized {
-                    let mut style = self.declared_style();
-                    #(#field_assignments)*
-                    self
-                }
-            };
-
+    for (prefix, fields) in tailwind_corner_prefixes() {
+        for (suffix, radius_tokens) in tailwind_corner_radii() {
+            let method = generate_method(prefix, suffix, &fields, radius_tokens);
             methods.push(method);
         }
     }
 
     methods
+}
+
+fn generate_method(
+    prefix: &'static str,
+    suffix: &'static str,
+    fields: &Vec<TokenStream2>,
+    length_tokens: TokenStream2,
+) -> TokenStream2 {
+    let method_name = format_ident!("{}_{}", prefix, suffix);
+    let field_assignments = fields
+        .iter()
+        .map(|field_tokens| {
+            quote! {
+                style.#field_tokens = Some(gpui::geometry::#length_tokens);
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let method = quote! {
+        fn #method_name(mut self) -> Self where Self: std::marker::Sized {
+            let mut style = self.declared_style();
+            #(#field_assignments)*
+            self
+        }
+    };
+
+    method
+}
+
+fn tailwind_length_prefixes() -> Vec<(&'static str, bool, Vec<TokenStream2>)> {
+    vec![
+        ("w", true, vec![quote! { size.width }]),
+        ("h", true, vec![quote! { size.height }]),
+        (
+            "size",
+            true,
+            vec![quote! {size.width}, quote! {size.height}],
+        ),
+        ("min_w", false, vec![quote! { min_size.width }]),
+        ("min_h", false, vec![quote! { min_size.height }]),
+        ("max_w", false, vec![quote! { max_size.width }]),
+        ("max_h", false, vec![quote! { max_size.height }]),
+        (
+            "m",
+            true,
+            vec![quote! { margin.top }, quote! { margin.bottom }],
+        ),
+        ("mt", true, vec![quote! { margin.top }]),
+        ("mb", true, vec![quote! { margin.bottom }]),
+        (
+            "mx",
+            true,
+            vec![quote! { margin.left }, quote! { margin.right }],
+        ),
+        ("ml", true, vec![quote! { margin.left }]),
+        ("mr", true, vec![quote! { margin.right }]),
+        (
+            "p",
+            false,
+            vec![quote! { padding.top }, quote! { padding.bottom }],
+        ),
+        ("pt", false, vec![quote! { padding.top }]),
+        ("pb", false, vec![quote! { padding.bottom }]),
+        (
+            "px",
+            false,
+            vec![quote! { padding.left }, quote! { padding.right }],
+        ),
+        (
+            "py",
+            false,
+            vec![quote! { padding.top }, quote! { padding.bottom }],
+        ),
+        ("pl", false, vec![quote! { padding.left }]),
+        ("pr", false, vec![quote! { padding.right }]),
+        ("top", true, vec![quote! { inset.top }]),
+        ("bottom", true, vec![quote! { inset.bottom }]),
+        ("left", true, vec![quote! { inset.left }]),
+        ("right", true, vec![quote! { inset.right }]),
+        (
+            "gap",
+            false,
+            vec![quote! { gap.width }, quote! { gap.height }],
+        ),
+        ("gap_x", false, vec![quote! { gap.width }]),
+        ("gap_y", false, vec![quote! { gap.height }]),
+    ]
 }
 
 fn tailwind_lengths() -> Vec<(&'static str, TokenStream2)> {
@@ -111,57 +185,61 @@ fn tailwind_lengths() -> Vec<(&'static str, TokenStream2)> {
     ]
 }
 
-fn tailwind_prefixes() -> Vec<(&'static str, bool, Vec<TokenStream2>)> {
+fn tailwind_corner_prefixes() -> Vec<(&'static str, Vec<TokenStream2>)> {
     vec![
-        ("w", true, vec![quote! { size.width }]),
-        ("h", true, vec![quote! { size.height }]),
-        ("min_w", false, vec![quote! { min_size.width }]),
-        ("min_h", false, vec![quote! { min_size.height }]),
-        ("max_w", false, vec![quote! { max_size.width }]),
-        ("max_h", false, vec![quote! { max_size.height }]),
         (
-            "m",
-            true,
-            vec![quote! { margin.top }, quote! { margin.bottom }],
-        ),
-        ("mt", true, vec![quote! { margin.top }]),
-        ("mb", true, vec![quote! { margin.bottom }]),
-        (
-            "mx",
-            true,
-            vec![quote! { margin.left }, quote! { margin.right }],
-        ),
-        ("ml", true, vec![quote! { margin.left }]),
-        ("mr", true, vec![quote! { margin.right }]),
-        (
-            "p",
-            false,
-            vec![quote! { padding.top }, quote! { padding.bottom }],
-        ),
-        ("pt", false, vec![quote! { padding.top }]),
-        ("pb", false, vec![quote! { padding.bottom }]),
-        (
-            "px",
-            false,
-            vec![quote! { padding.left }, quote! { padding.right }],
+            "rounded",
+            vec![
+                quote! { corner_radii.top_left },
+                quote! { corner_radii.top_right },
+                quote! { corner_radii.bottom_right },
+                quote! { corner_radii.bottom_left },
+            ],
         ),
         (
-            "py",
-            false,
-            vec![quote! { padding.top }, quote! { padding.bottom }],
+            "rounded_t",
+            vec![
+                quote! { corner_radii.top_left },
+                quote! { corner_radii.top_right },
+            ],
         ),
-        ("pl", false, vec![quote! { padding.left }]),
-        ("pr", false, vec![quote! { padding.right }]),
-        ("top", true, vec![quote! { inset.top }]),
-        ("bottom", true, vec![quote! { inset.bottom }]),
-        ("left", true, vec![quote! { inset.left }]),
-        ("right", true, vec![quote! { inset.right }]),
         (
-            "gap",
-            false,
-            vec![quote! { gap.width }, quote! { gap.height }],
+            "rounded_b",
+            vec![
+                quote! { corner_radii.bottom_left },
+                quote! { corner_radii.bottom_right },
+            ],
         ),
-        ("gap_x", false, vec![quote! { gap.width }]),
-        ("gap_y", false, vec![quote! { gap.height }]),
+        (
+            "rounded_r",
+            vec![
+                quote! { corner_radii.top_right },
+                quote! { corner_radii.bottom_right },
+            ],
+        ),
+        (
+            "rounded_l",
+            vec![
+                quote! { corner_radii.top_left },
+                quote! { corner_radii.bottom_left },
+            ],
+        ),
+        ("rounded_tl", vec![quote! { corner_radii.top_left }]),
+        ("rounded_tr", vec![quote! { corner_radii.top_right }]),
+        ("rounded_bl", vec![quote! { corner_radii.bottom_left }]),
+        ("rounded_br", vec![quote! { corner_radii.bottom_right }]),
+    ]
+}
+
+fn tailwind_corner_radii() -> Vec<(&'static str, TokenStream2)> {
+    vec![
+        ("none", quote! { pixels(0.) }),
+        ("sm", quote! { rems(0.125) }),
+        ("md", quote! { rems(0.25) }),
+        ("lg", quote! { rems(0.5) }),
+        ("xl", quote! { rems(0.75) }),
+        ("2xl", quote! { rems(1.) }),
+        ("3xl", quote! { rems(1.5) }),
+        ("full", quote! {  pixels(9999.) }),
     ]
 }
