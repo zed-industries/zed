@@ -5526,6 +5526,9 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "language",
+ "serde",
+ "serde_derive",
+ "serde_json",
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 pub use std::path::{Path, PathBuf};
 pub use std::sync::Arc;
 
@@ -40,7 +40,7 @@ impl Prettier {
         starting_path: Option<LocateStart>,
         fs: Arc<dyn Fs>,
     ) -> anyhow::Result<PathBuf> {
-        let paths_to_check = match starting_path {
+        let paths_to_check = match starting_path.as_ref() {
             Some(starting_path) => {
                 let worktree_root = starting_path
                     .worktree_root_path
@@ -131,12 +131,16 @@ impl Prettier {
             None => Vec::new(),
         };
 
-        if dbg!(paths_to_check).is_empty() {
-            // TODO kb return the default prettier, how, without state?
-        } else {
-            // TODO kb now check all paths to check for prettier
+        match find_closest_prettier_path(paths_to_check, fs.as_ref())
+            .await
+            .with_context(|| format!("Finding prettier starting with {starting_path:?}"))?
+        {
+            Some(prettier_path) => Ok(prettier_path),
+            None => {
+                // TODO kb return the default prettier, how, without state?
+                Ok(PathBuf::new())
+            }
         }
-        Ok(PathBuf::new())
     }
 
     pub async fn start(prettier_path: &Path, node: Arc<NodeRuntime>) -> anyhow::Result<Self> {
@@ -150,4 +154,53 @@ impl Prettier {
     pub async fn clear_cache(&self) -> anyhow::Result<()> {
         todo!()
     }
+}
+
+const PRETTIER_PACKAGE_NAME: &str = "prettier";
+async fn find_closest_prettier_path(
+    paths_to_check: Vec<PathBuf>,
+    fs: &dyn Fs,
+) -> anyhow::Result<Option<PathBuf>> {
+    for path in paths_to_check {
+        let possible_package_json = path.join("package.json");
+        if let Some(package_json_metadata) = fs
+            .metadata(&path)
+            .await
+            .with_context(|| format!("Fetching metadata for {possible_package_json:?}"))?
+        {
+            if !package_json_metadata.is_dir && !package_json_metadata.is_symlink {
+                let package_json_contents = fs
+                    .load(&possible_package_json)
+                    .await
+                    .with_context(|| format!("reading {possible_package_json:?} file contents"))?;
+                if let Ok(json_contents) = serde_json::from_str::<HashMap<String, serde_json::Value>>(
+                    &package_json_contents,
+                ) {
+                    if let Some(serde_json::Value::Object(o)) = json_contents.get("dependencies") {
+                        if o.contains_key(PRETTIER_PACKAGE_NAME) {
+                            return Ok(Some(path));
+                        }
+                    }
+                    if let Some(serde_json::Value::Object(o)) = json_contents.get("devDependencies")
+                    {
+                        if o.contains_key(PRETTIER_PACKAGE_NAME) {
+                            return Ok(Some(path));
+                        }
+                    }
+                }
+            }
+        }
+
+        let possible_node_modules_location = path.join("node_modules").join(PRETTIER_PACKAGE_NAME);
+        if let Some(node_modules_location_metadata) = fs
+            .metadata(&path)
+            .await
+            .with_context(|| format!("fetching metadata for {possible_node_modules_location:?}"))?
+        {
+            if node_modules_location_metadata.is_dir {
+                return Ok(Some(path));
+            }
+        }
+    }
+    Ok(None)
 }
