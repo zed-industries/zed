@@ -9,7 +9,6 @@ const CARGO_TEST_ARGS = [
   '--release',
   '--lib',
   '--package', 'collab',
-  'random_collaboration',
 ]
 
 if (require.main === module) {
@@ -99,7 +98,7 @@ function buildTests() {
 }
 
 function runTests(env) {
-  const {status, stdout} = spawnSync('cargo', ['test', ...CARGO_TEST_ARGS], {
+  const {status, stdout} = spawnSync('cargo', ['test', ...CARGO_TEST_ARGS, 'random_project_collaboration'], {
     stdio: 'pipe',
     encoding: 'utf8',
     env: {
