@@ -380,6 +380,16 @@ impl Database {
                 .collect::<Vec<_>>();
             if !operations.is_empty() {
                 buffer_operation::Entity::insert_many(operations)
+                    .on_conflict(
+                        OnConflict::columns([
+                            buffer_operation::Column::BufferId,
+                            buffer_operation::Column::Epoch,
+                            buffer_operation::Column::LamportTimestamp,
+                            buffer_operation::Column::ReplicaId,
+                        ])
+                        .do_nothing()
+                        .to_owned(),
+                    )
                     .exec(&*tx)
                     .await?;
             }
