@@ -229,6 +229,8 @@ messages!(
     (StartLanguageServer, Foreground),
     (SynchronizeBuffers, Foreground),
     (SynchronizeBuffersResponse, Foreground),
+    (RejoinChannelBuffers, Foreground),
+    (RejoinChannelBuffersResponse, Foreground),
     (Test, Foreground),
     (Unfollow, Foreground),
     (UnshareProject, Foreground),
@@ -257,6 +259,7 @@ messages!(
     (UpdateChannelBuffer, Foreground),
     (RemoveChannelBufferCollaborator, Foreground),
     (AddChannelBufferCollaborator, Foreground),
+    (UpdateChannelBufferCollaborator, Foreground),
 );
 
 request_messages!(
@@ -319,6 +322,7 @@ request_messages!(
     (SearchProject, SearchProjectResponse),
     (ShareProject, ShareProjectResponse),
     (SynchronizeBuffers, SynchronizeBuffersResponse),
+    (RejoinChannelBuffers, RejoinChannelBuffersResponse),
     (Test, Test),
     (UpdateBuffer, Ack),
     (UpdateParticipantLocation, Ack),
@@ -386,7 +390,8 @@ entity_messages!(
     channel_id,
     UpdateChannelBuffer,
     RemoveChannelBufferCollaborator,
-    AddChannelBufferCollaborator
+    AddChannelBufferCollaborator,
+    UpdateChannelBufferCollaborator
 );
 
 const KIB: usize = 1024;

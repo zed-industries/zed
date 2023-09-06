@@ -35,7 +35,7 @@ use language::{
     point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
-        serialize_anchor, serialize_version,
+        serialize_anchor, serialize_version, split_operations,
     },
     range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeAction,
     CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Event as BufferEvent,
@@ -8198,31 +8198,6 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
     fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http_client.clone()
     }
-}
-
-fn split_operations(
-    mut operations: Vec<proto::Operation>,
-) -> impl Iterator<Item = Vec<proto::Operation>> {
-    #[cfg(any(test, feature = "test-support"))]
-    const CHUNK_SIZE: usize = 5;
-
-    #[cfg(not(any(test, feature = "test-support")))]
-    const CHUNK_SIZE: usize = 100;
-
-    let mut done = false;
-    std::iter::from_fn(move || {
-        if done {
-            return None;
-        }
-
-        let operations = operations
-            .drain(..cmp::min(CHUNK_SIZE, operations.len()))
-            .collect::<Vec<_>>();
-        if operations.is_empty() {
-            done = true;
-        }
-        Some(operations)
-    })
 }
 
 fn serialize_symbol(symbol: &Symbol) -> proto::Symbol {

@@ -435,6 +435,12 @@ pub struct ChannelsForUser {
     pub channels_with_admin_privileges: HashSet<ChannelId>,
 }
 
+#[derive(Debug)]
+pub struct RejoinedChannelBuffer {
+    pub buffer: proto::RejoinedChannelBuffer,
+    pub old_connection_id: ConnectionId,
+}
+
 #[derive(Clone)]
 pub struct JoinRoom {
     pub room: proto::Room,
@@ -496,6 +502,11 @@ pub struct RefreshedRoom {
     pub channel_members: Vec<UserId>,
     pub stale_participant_user_ids: Vec<UserId>,
     pub canceled_calls_to_user_ids: Vec<UserId>,
+}
+
+pub struct RefreshedChannelBuffer {
+    pub connection_ids: Vec<ConnectionId>,
+    pub removed_collaborators: Vec<proto::RemoveChannelBufferCollaborator>,
 }
 
 pub struct Project {

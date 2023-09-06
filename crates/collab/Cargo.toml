@@ -80,6 +80,7 @@ theme = { path = "../theme" }
 workspace = { path = "../workspace", features = ["test-support"] }
 collab_ui = { path = "../collab_ui", features = ["test-support"] }
 
+async-trait.workspace = true
 ctor.workspace = true
 env_logger.workspace = true
 indoc.workspace = true

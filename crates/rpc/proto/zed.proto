@@ -1,6 +1,8 @@
 syntax = "proto3";
 package zed.messages;
 
+// Looking for a number? Search "// Current max"
+
 message PeerId {
     uint32 owner_id = 1;
     uint32 id = 2;
@@ -151,6 +153,9 @@ message Envelope {
         LeaveChannelBuffer leave_channel_buffer = 134;
         AddChannelBufferCollaborator add_channel_buffer_collaborator = 135;
         RemoveChannelBufferCollaborator remove_channel_buffer_collaborator = 136;
+        UpdateChannelBufferCollaborator update_channel_buffer_collaborator = 139;
+        RejoinChannelBuffers rejoin_channel_buffers = 140;
+        RejoinChannelBuffersResponse rejoin_channel_buffers_response = 141; // Current max
     }
 }
 
@@ -430,6 +435,12 @@ message RemoveChannelBufferCollaborator {
     PeerId peer_id = 2;
 }
 
+message UpdateChannelBufferCollaborator {
+    uint64 channel_id = 1;
+    PeerId old_peer_id = 2;
+    PeerId new_peer_id = 3;
+}
+
 message GetDefinition {
      uint64 project_id = 1;
      uint64 buffer_id = 2;
@@ -614,6 +625,12 @@ message SynchronizeBuffersResponse {
 message BufferVersion {
     uint64 id = 1;
     repeated VectorClockEntry version = 2;
+}
+
+message ChannelBufferVersion {
+    uint64 channel_id = 1;
+    repeated VectorClockEntry version = 2;
+    uint64 epoch = 3;
 }
 
 enum FormatTrigger {
@@ -1008,12 +1025,28 @@ message JoinChannelBuffer {
     uint64 channel_id = 1;
 }
 
+message RejoinChannelBuffers {
+    repeated ChannelBufferVersion buffers = 1;
+}
+
+message RejoinChannelBuffersResponse {
+    repeated RejoinedChannelBuffer buffers = 1;
+}
+
 message JoinChannelBufferResponse {
     uint64 buffer_id = 1;
     uint32 replica_id = 2;
     string base_text = 3;
     repeated Operation operations = 4;
     repeated Collaborator collaborators = 5;
+    uint64 epoch = 6;
+}
+
+message RejoinedChannelBuffer {
+    uint64 channel_id = 1;
+    repeated VectorClockEntry version = 2;
+    repeated Operation operations = 3;
+    repeated Collaborator collaborators = 4;
 }
 
 message LeaveChannelBuffer {

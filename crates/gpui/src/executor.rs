@@ -106,6 +106,7 @@ pub struct Deterministic {
     parker: parking_lot::Mutex<parking::Parker>,
 }
 
+#[must_use]
 pub enum Timer {
     Production(smol::Timer),
     #[cfg(any(test, feature = "test-support"))]

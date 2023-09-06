@@ -1456,6 +1456,7 @@ name = "collab"
 version = "0.20.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "async-tungstenite",
  "audio",
  "axum",
