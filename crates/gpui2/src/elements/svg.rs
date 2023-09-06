@@ -5,6 +5,7 @@ use crate::{
 };
 use refineable::RefinementCascade;
 use std::borrow::Cow;
+use util::ResultExt;
 
 #[derive(IntoElement)]
 pub struct Svg {
@@ -52,7 +53,7 @@ impl<V: 'static> Element<V> for Svg {
     {
         let fill_color = self.computed_style().fill.and_then(|fill| fill.color());
         if let Some((path, fill_color)) = self.path.as_ref().zip(fill_color) {
-            if let Ok(svg_tree) = cx.asset_cache.svg(path) {
+            if let Some(svg_tree) = cx.asset_cache.svg(path).log_err() {
                 let icon = scene::Icon {
                     bounds: layout.bounds,
                     svg: svg_tree,

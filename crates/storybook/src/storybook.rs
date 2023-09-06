@@ -19,7 +19,7 @@ mod workspace;
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
-    gpui2::App::new(()).unwrap().run(|cx| {
+    gpui2::App::new(Assets).unwrap().run(|cx| {
         let mut store = SettingsStore::default();
         store
             .set_default_settings(default_settings().as_ref(), cx)
