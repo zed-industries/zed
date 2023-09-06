@@ -15,7 +15,7 @@ use embedding::{Embedding, EmbeddingProvider, OpenAIEmbeddings};
 use embedding_queue::{EmbeddingQueue, FileToEmbed};
 use futures::{FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
-use language::{Anchor, Buffer, Language, LanguageRegistry};
+use language::{Anchor, Bias, Buffer, Language, LanguageRegistry};
 use parking_lot::Mutex;
 use parsing::{CodeContextRetriever, DocumentDigest, PARSEABLE_ENTIRE_FILE_TYPES};
 use postage::watch;
@@ -713,7 +713,9 @@ impl SemanticIndex {
                 .filter_map(|(buffer, range)| {
                     let buffer = buffer.log_err()?;
                     let range = buffer.read_with(&cx, |buffer, _| {
-                        buffer.anchor_before(range.start)..buffer.anchor_after(range.end)
+                        let start = buffer.clip_offset(range.start, Bias::Left);
+                        let end = buffer.clip_offset(range.end, Bias::Right);
+                        buffer.anchor_before(start)..buffer.anchor_after(end)
                     });
                     Some(SearchResult { buffer, range })
                 })
