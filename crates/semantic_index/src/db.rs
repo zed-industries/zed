@@ -1,6 +1,6 @@
 use crate::{
     embedding::Embedding,
-    parsing::{Document, DocumentDigest},
+    parsing::{Span, SpanDigest},
     SEMANTIC_INDEX_VERSION,
 };
 use anyhow::{anyhow, Context, Result};
@@ -124,8 +124,8 @@ impl VectorDatabase {
             }
 
             log::trace!("vector database schema out of date. updating...");
-            db.execute("DROP TABLE IF EXISTS documents", [])
-                .context("failed to drop 'documents' table")?;
+            db.execute("DROP TABLE IF EXISTS spans", [])
+                .context("failed to drop 'spans' table")?;
             db.execute("DROP TABLE IF EXISTS files", [])
                 .context("failed to drop 'files' table")?;
             db.execute("DROP TABLE IF EXISTS worktrees", [])
@@ -174,7 +174,7 @@ impl VectorDatabase {
             )?;
 
             db.execute(
-                "CREATE TABLE documents (
+                "CREATE TABLE spans (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     file_id INTEGER NOT NULL,
                     start_byte INTEGER NOT NULL,
@@ -211,7 +211,7 @@ impl VectorDatabase {
         worktree_id: i64,
         path: Arc<Path>,
         mtime: SystemTime,
-        documents: Vec<Document>,
+        spans: Vec<Span>,
     ) -> impl Future<Output = Result<()>> {
         self.transact(move |db| {
             // Return the existing ID, if both the file and mtime match
@@ -231,7 +231,7 @@ impl VectorDatabase {
             let t0 = Instant::now();
             let mut query = db.prepare(
                 "
-                INSERT INTO documents
+                INSERT INTO spans
                 (file_id, start_byte, end_byte, name, embedding, digest)
                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                 ",
@@ -241,14 +241,14 @@ impl VectorDatabase {
                 t0.elapsed().as_millis()
             );
 
-            for document in documents {
+            for span in spans {
                 query.execute(params![
                     file_id,
-                    document.range.start.to_string(),
-                    document.range.end.to_string(),
-                    document.name,
-                    document.embedding,
-                    document.digest
+                    span.range.start.to_string(),
+                    span.range.end.to_string(),
+                    span.name,
+                    span.embedding,
+                    span.digest
                 ])?;
             }
 
@@ -278,13 +278,13 @@ impl VectorDatabase {
     pub fn embeddings_for_files(
         &self,
         worktree_id_file_paths: HashMap<i64, Vec<Arc<Path>>>,
-    ) -> impl Future<Output = Result<HashMap<DocumentDigest, Embedding>>> {
+    ) -> impl Future<Output = Result<HashMap<SpanDigest, Embedding>>> {
         self.transact(move |db| {
             let mut query = db.prepare(
                 "
                 SELECT digest, embedding
-                FROM documents
-                LEFT JOIN files ON files.id = documents.file_id
+                FROM spans
+                LEFT JOIN files ON files.id = spans.file_id
                 WHERE files.worktree_id = ? AND files.relative_path IN rarray(?)
             ",
             )?;
@@ -297,10 +297,7 @@ impl VectorDatabase {
                         .collect::<Vec<_>>(),
                 );
                 let rows = query.query_map(params![worktree_id, file_paths], |row| {
-                    Ok((
-                        row.get::<_, DocumentDigest>(0)?,
-                        row.get::<_, Embedding>(1)?,
-                    ))
+                    Ok((row.get::<_, SpanDigest>(0)?, row.get::<_, Embedding>(1)?))
                 })?;
 
                 for row in rows {
@@ -379,7 +376,7 @@ impl VectorDatabase {
         let file_ids = file_ids.to_vec();
         self.transact(move |db| {
             let mut results = Vec::<(i64, f32)>::with_capacity(limit + 1);
-            Self::for_each_document(db, &file_ids, |id, embedding| {
+            Self::for_each_span(db, &file_ids, |id, embedding| {
                 let similarity = embedding.similarity(&query_embedding);
                 let ix = match results.binary_search_by(|(_, s)| {
                     similarity.partial_cmp(&s).unwrap_or(Ordering::Equal)
@@ -434,7 +431,7 @@ impl VectorDatabase {
         })
     }
 
-    fn for_each_document(
+    fn for_each_span(
         db: &rusqlite::Connection,
         file_ids: &[i64],
         mut f: impl FnMut(i64, Embedding),
@@ -444,7 +441,7 @@ impl VectorDatabase {
             SELECT
                 id, embedding
             FROM
-                documents
+                spans
             WHERE
                 file_id IN rarray(?)
             ",
@@ -459,7 +456,7 @@ impl VectorDatabase {
         Ok(())
     }
 
-    pub fn get_documents_by_ids(
+    pub fn spans_for_ids(
         &self,
         ids: &[i64],
     ) -> impl Future<Output = Result<Vec<(i64, PathBuf, Range<usize>)>>> {
@@ -468,16 +465,16 @@ impl VectorDatabase {
             let mut statement = db.prepare(
                 "
                     SELECT
-                        documents.id,
+                        spans.id,
                         files.worktree_id,
                         files.relative_path,
-                        documents.start_byte,
-                        documents.end_byte
+                        spans.start_byte,
+                        spans.end_byte
                     FROM
-                        documents, files
+                        spans, files
                     WHERE
-                        documents.file_id = files.id AND
-                        documents.id in rarray(?)
+                        spans.file_id = files.id AND
+                        spans.id in rarray(?)
                 ",
             )?;
 
@@ -500,7 +497,7 @@ impl VectorDatabase {
             for id in &ids {
                 let value = values_by_id
                     .remove(id)
-                    .ok_or(anyhow!("missing document id {}", id))?;
+                    .ok_or(anyhow!("missing span id {}", id))?;
                 results.push(value);
             }
 

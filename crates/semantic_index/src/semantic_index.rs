@@ -17,7 +17,7 @@ use futures::{future, FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
 use language::{Anchor, Bias, Buffer, Language, LanguageRegistry};
 use parking_lot::Mutex;
-use parsing::{CodeContextRetriever, DocumentDigest, PARSEABLE_ENTIRE_FILE_TYPES};
+use parsing::{CodeContextRetriever, SpanDigest, PARSEABLE_ENTIRE_FILE_TYPES};
 use postage::watch;
 use project::{search::PathMatcher, Fs, PathChange, Project, ProjectEntryId, Worktree, WorktreeId};
 use smol::channel;
@@ -36,7 +36,7 @@ use util::{
     ResultExt,
 };
 
-const SEMANTIC_INDEX_VERSION: usize = 9;
+const SEMANTIC_INDEX_VERSION: usize = 10;
 const BACKGROUND_INDEXING_DELAY: Duration = Duration::from_secs(5 * 60);
 const EMBEDDING_QUEUE_FLUSH_TIMEOUT: Duration = Duration::from_millis(250);
 
@@ -84,7 +84,7 @@ pub struct SemanticIndex {
     db: VectorDatabase,
     embedding_provider: Arc<dyn EmbeddingProvider>,
     language_registry: Arc<LanguageRegistry>,
-    parsing_files_tx: channel::Sender<(Arc<HashMap<DocumentDigest, Embedding>>, PendingFile)>,
+    parsing_files_tx: channel::Sender<(Arc<HashMap<SpanDigest, Embedding>>, PendingFile)>,
     _embedding_task: Task<()>,
     _parsing_files_tasks: Vec<Task<()>>,
     projects: HashMap<WeakModelHandle<Project>, ProjectState>,
@@ -252,16 +252,16 @@ impl SemanticIndex {
                 let db = db.clone();
                 async move {
                     while let Ok(file) = embedded_files.recv().await {
-                        db.insert_file(file.worktree_id, file.path, file.mtime, file.documents)
+                        db.insert_file(file.worktree_id, file.path, file.mtime, file.spans)
                             .await
                             .log_err();
                     }
                 }
             });
 
-            // Parse files into embeddable documents.
+            // Parse files into embeddable spans.
             let (parsing_files_tx, parsing_files_rx) =
-                channel::unbounded::<(Arc<HashMap<DocumentDigest, Embedding>>, PendingFile)>();
+                channel::unbounded::<(Arc<HashMap<SpanDigest, Embedding>>, PendingFile)>();
             let embedding_queue = Arc::new(Mutex::new(embedding_queue));
             let mut _parsing_files_tasks = Vec::new();
             for _ in 0..cx.background().num_cpus() {
@@ -320,26 +320,26 @@ impl SemanticIndex {
         pending_file: PendingFile,
         retriever: &mut CodeContextRetriever,
         embedding_queue: &Arc<Mutex<EmbeddingQueue>>,
-        embeddings_for_digest: &HashMap<DocumentDigest, Embedding>,
+        embeddings_for_digest: &HashMap<SpanDigest, Embedding>,
     ) {
         let Some(language) = pending_file.language else {
             return;
         };
 
         if let Some(content) = fs.load(&pending_file.absolute_path).await.log_err() {
-            if let Some(mut documents) = retriever
+            if let Some(mut spans) = retriever
                 .parse_file_with_template(&pending_file.relative_path, &content, language)
                 .log_err()
             {
                 log::trace!(
-                    "parsed path {:?}: {} documents",
+                    "parsed path {:?}: {} spans",
                     pending_file.relative_path,
-                    documents.len()
+                    spans.len()
                 );
 
-                for document in documents.iter_mut() {
-                    if let Some(embedding) = embeddings_for_digest.get(&document.digest) {
-                        document.embedding = Some(embedding.to_owned());
+                for span in &mut spans {
+                    if let Some(embedding) = embeddings_for_digest.get(&span.digest) {
+                        span.embedding = Some(embedding.to_owned());
                     }
                 }
 
@@ -348,7 +348,7 @@ impl SemanticIndex {
                     path: pending_file.relative_path,
                     mtime: pending_file.modified_time,
                     job_handle: pending_file.job_handle,
-                    documents,
+                    spans: spans,
                 });
             }
         }
@@ -708,13 +708,13 @@ impl SemanticIndex {
             }
 
             let ids = results.into_iter().map(|(id, _)| id).collect::<Vec<i64>>();
-            let documents = database.get_documents_by_ids(ids.as_slice()).await?;
+            let spans = database.spans_for_ids(ids.as_slice()).await?;
 
             let mut tasks = Vec::new();
             let mut ranges = Vec::new();
             let weak_project = project.downgrade();
             project.update(&mut cx, |project, cx| {
-                for (worktree_db_id, file_path, byte_range) in documents {
+                for (worktree_db_id, file_path, byte_range) in spans {
                     let project_state =
                         if let Some(state) = this.read(cx).projects.get(&weak_project) {
                             state
