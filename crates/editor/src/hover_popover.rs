@@ -1,6 +1,6 @@
 use crate::{
     display_map::{InlayOffset, ToDisplayPoint},
-    link_go_to_definition::{InlayHighlight, RangeInEditor},
+    link_go_to_definition::{DocumentRange, InlayRange},
     Anchor, AnchorRangeExt, DisplayPoint, Editor, EditorSettings, EditorSnapshot, EditorStyle,
     ExcerptId, RangeToAnchorExt,
 };
@@ -8,12 +8,12 @@ use futures::FutureExt;
 use gpui::{
     actions,
     elements::{Flex, MouseEventHandler, Padding, ParentElement, Text},
+    fonts::{HighlightStyle, Underline, Weight},
     platform::{CursorStyle, MouseButton},
-    AnyElement, AppContext, Element, ModelHandle, Task, ViewContext,
+    AnyElement, AppContext, CursorRegion, Element, ModelHandle, MouseRegion, Task, ViewContext,
 };
 use language::{Bias, DiagnosticEntry, DiagnosticSeverity, Language, LanguageRegistry};
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart, Project};
-use rich_text::{new_paragraph, render_code, render_markdown_mut, RichText};
 use std::{ops::Range, sync::Arc, time::Duration};
 use util::TryFutureExt;
 
@@ -50,18 +50,19 @@ pub fn hover_at(editor: &mut Editor, point: Option<DisplayPoint>, cx: &mut ViewC
 
 pub struct InlayHover {
     pub excerpt: ExcerptId,
-    pub range: InlayHighlight,
+    pub triggered_from: InlayOffset,
+    pub range: InlayRange,
     pub tooltip: HoverBlock,
 }
 
 pub fn find_hovered_hint_part(
     label_parts: Vec<InlayHintLabelPart>,
-    hint_start: InlayOffset,
+    hint_range: Range<InlayOffset>,
     hovered_offset: InlayOffset,
 ) -> Option<(InlayHintLabelPart, Range<InlayOffset>)> {
-    if hovered_offset >= hint_start {
-        let mut hovered_character = (hovered_offset - hint_start).0;
-        let mut part_start = hint_start;
+    if hovered_offset >= hint_range.start && hovered_offset <= hint_range.end {
+        let mut hovered_character = (hovered_offset - hint_range.start).0;
+        let mut part_start = hint_range.start;
         for part in label_parts {
             let part_len = part.value.chars().count();
             if hovered_character > part_len {
@@ -87,13 +88,27 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
         };
 
         if let Some(InfoPopover { symbol_range, .. }) = &editor.hover_state.info_popover {
-            if let RangeInEditor::Inlay(range) = symbol_range {
-                if range == &inlay_hover.range {
+            if let DocumentRange::Inlay(range) = symbol_range {
+                if (range.highlight_start..range.highlight_end)
+                    .contains(&inlay_hover.triggered_from)
+                {
                     // Hover triggered from same location as last time. Don't show again.
                     return;
                 }
             }
             hide_hover(editor, cx);
+        }
+
+        let snapshot = editor.snapshot(cx);
+        // Don't request again if the location is the same as the previous request
+        if let Some(triggered_from) = editor.hover_state.triggered_from {
+            if inlay_hover.triggered_from
+                == snapshot
+                    .display_snapshot
+                    .anchor_to_inlay_offset(triggered_from)
+            {
+                return;
+            }
         }
 
         let task = cx.spawn(|this, mut cx| {
@@ -107,7 +122,7 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
 
                 let hover_popover = InfoPopover {
                     project: project.clone(),
-                    symbol_range: RangeInEditor::Inlay(inlay_hover.range.clone()),
+                    symbol_range: DocumentRange::Inlay(inlay_hover.range),
                     blocks: vec![inlay_hover.tooltip],
                     language: None,
                     rendered_content: None,
@@ -311,7 +326,7 @@ fn show_hover(
 
                 Some(InfoPopover {
                     project: project.clone(),
-                    symbol_range: RangeInEditor::Text(range),
+                    symbol_range: DocumentRange::Text(range),
                     blocks: hover_result.contents,
                     language: hover_result.language,
                     rendered_content: None,
@@ -346,43 +361,237 @@ fn show_hover(
 }
 
 fn render_blocks(
+    theme_id: usize,
     blocks: &[HoverBlock],
     language_registry: &Arc<LanguageRegistry>,
     language: Option<&Arc<Language>>,
-) -> RichText {
-    let mut data = RichText {
-        text: Default::default(),
-        highlights: Default::default(),
-        region_ranges: Default::default(),
-        regions: Default::default(),
-    };
+    style: &EditorStyle,
+) -> RenderedInfo {
+    let mut text = String::new();
+    let mut highlights = Vec::new();
+    let mut region_ranges = Vec::new();
+    let mut regions = Vec::new();
 
     for block in blocks {
         match &block.kind {
             HoverBlockKind::PlainText => {
-                new_paragraph(&mut data.text, &mut Vec::new());
-                data.text.push_str(&block.text);
+                new_paragraph(&mut text, &mut Vec::new());
+                text.push_str(&block.text);
             }
+
             HoverBlockKind::Markdown => {
-                render_markdown_mut(&block.text, language_registry, language, &mut data)
+                use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
+
+                let mut bold_depth = 0;
+                let mut italic_depth = 0;
+                let mut link_url = None;
+                let mut current_language = None;
+                let mut list_stack = Vec::new();
+
+                for event in Parser::new_ext(&block.text, Options::all()) {
+                    let prev_len = text.len();
+                    match event {
+                        Event::Text(t) => {
+                            if let Some(language) = &current_language {
+                                render_code(
+                                    &mut text,
+                                    &mut highlights,
+                                    t.as_ref(),
+                                    language,
+                                    style,
+                                );
+                            } else {
+                                text.push_str(t.as_ref());
+
+                                let mut style = HighlightStyle::default();
+                                if bold_depth > 0 {
+                                    style.weight = Some(Weight::BOLD);
+                                }
+                                if italic_depth > 0 {
+                                    style.italic = Some(true);
+                                }
+                                if let Some(link_url) = link_url.clone() {
+                                    region_ranges.push(prev_len..text.len());
+                                    regions.push(RenderedRegion {
+                                        link_url: Some(link_url),
+                                        code: false,
+                                    });
+                                    style.underline = Some(Underline {
+                                        thickness: 1.0.into(),
+                                        ..Default::default()
+                                    });
+                                }
+
+                                if style != HighlightStyle::default() {
+                                    let mut new_highlight = true;
+                                    if let Some((last_range, last_style)) = highlights.last_mut() {
+                                        if last_range.end == prev_len && last_style == &style {
+                                            last_range.end = text.len();
+                                            new_highlight = false;
+                                        }
+                                    }
+                                    if new_highlight {
+                                        highlights.push((prev_len..text.len(), style));
+                                    }
+                                }
+                            }
+                        }
+
+                        Event::Code(t) => {
+                            text.push_str(t.as_ref());
+                            region_ranges.push(prev_len..text.len());
+                            if link_url.is_some() {
+                                highlights.push((
+                                    prev_len..text.len(),
+                                    HighlightStyle {
+                                        underline: Some(Underline {
+                                            thickness: 1.0.into(),
+                                            ..Default::default()
+                                        }),
+                                        ..Default::default()
+                                    },
+                                ));
+                            }
+                            regions.push(RenderedRegion {
+                                code: true,
+                                link_url: link_url.clone(),
+                            });
+                        }
+
+                        Event::Start(tag) => match tag {
+                            Tag::Paragraph => new_paragraph(&mut text, &mut list_stack),
+
+                            Tag::Heading(_, _, _) => {
+                                new_paragraph(&mut text, &mut list_stack);
+                                bold_depth += 1;
+                            }
+
+                            Tag::CodeBlock(kind) => {
+                                new_paragraph(&mut text, &mut list_stack);
+                                current_language = if let CodeBlockKind::Fenced(language) = kind {
+                                    language_registry
+                                        .language_for_name(language.as_ref())
+                                        .now_or_never()
+                                        .and_then(Result::ok)
+                                } else {
+                                    language.cloned()
+                                }
+                            }
+
+                            Tag::Emphasis => italic_depth += 1,
+
+                            Tag::Strong => bold_depth += 1,
+
+                            Tag::Link(_, url, _) => link_url = Some(url.to_string()),
+
+                            Tag::List(number) => {
+                                list_stack.push((number, false));
+                            }
+
+                            Tag::Item => {
+                                let len = list_stack.len();
+                                if let Some((list_number, has_content)) = list_stack.last_mut() {
+                                    *has_content = false;
+                                    if !text.is_empty() && !text.ends_with('\n') {
+                                        text.push('\n');
+                                    }
+                                    for _ in 0..len - 1 {
+                                        text.push_str("  ");
+                                    }
+                                    if let Some(number) = list_number {
+                                        text.push_str(&format!("{}. ", number));
+                                        *number += 1;
+                                        *has_content = false;
+                                    } else {
+                                        text.push_str("- ");
+                                    }
+                                }
+                            }
+
+                            _ => {}
+                        },
+
+                        Event::End(tag) => match tag {
+                            Tag::Heading(_, _, _) => bold_depth -= 1,
+                            Tag::CodeBlock(_) => current_language = None,
+                            Tag::Emphasis => italic_depth -= 1,
+                            Tag::Strong => bold_depth -= 1,
+                            Tag::Link(_, _, _) => link_url = None,
+                            Tag::List(_) => drop(list_stack.pop()),
+                            _ => {}
+                        },
+
+                        Event::HardBreak => text.push('\n'),
+
+                        Event::SoftBreak => text.push(' '),
+
+                        _ => {}
+                    }
+                }
             }
+
             HoverBlockKind::Code { language } => {
                 if let Some(language) = language_registry
                     .language_for_name(language)
                     .now_or_never()
                     .and_then(Result::ok)
                 {
-                    render_code(&mut data.text, &mut data.highlights, &block.text, &language);
+                    render_code(&mut text, &mut highlights, &block.text, &language, style);
                 } else {
-                    data.text.push_str(&block.text);
+                    text.push_str(&block.text);
                 }
             }
         }
     }
 
-    data.text = data.text.trim().to_string();
+    RenderedInfo {
+        theme_id,
+        text: text.trim().to_string(),
+        highlights,
+        region_ranges,
+        regions,
+    }
+}
 
-    data
+fn render_code(
+    text: &mut String,
+    highlights: &mut Vec<(Range<usize>, HighlightStyle)>,
+    content: &str,
+    language: &Arc<Language>,
+    style: &EditorStyle,
+) {
+    let prev_len = text.len();
+    text.push_str(content);
+    for (range, highlight_id) in language.highlight_text(&content.into(), 0..content.len()) {
+        if let Some(style) = highlight_id.style(&style.syntax) {
+            highlights.push((prev_len + range.start..prev_len + range.end, style));
+        }
+    }
+}
+
+fn new_paragraph(text: &mut String, list_stack: &mut Vec<(Option<u64>, bool)>) {
+    let mut is_subsequent_paragraph_of_list = false;
+    if let Some((_, has_content)) = list_stack.last_mut() {
+        if *has_content {
+            is_subsequent_paragraph_of_list = true;
+        } else {
+            *has_content = true;
+            return;
+        }
+    }
+
+    if !text.is_empty() {
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push('\n');
+    }
+    for _ in 0..list_stack.len().saturating_sub(1) {
+        text.push_str("  ");
+    }
+    if is_subsequent_paragraph_of_list {
+        text.push_str("  ");
+    }
 }
 
 #[derive(Default)]
@@ -415,8 +624,8 @@ impl HoverState {
                 self.info_popover
                     .as_ref()
                     .map(|info_popover| match &info_popover.symbol_range {
-                        RangeInEditor::Text(range) => &range.start,
-                        RangeInEditor::Inlay(range) => &range.inlay_position,
+                        DocumentRange::Text(range) => &range.start,
+                        DocumentRange::Inlay(range) => &range.inlay_position,
                     })
             })?;
         let point = anchor.to_display_point(&snapshot.display_snapshot);
@@ -442,10 +651,25 @@ impl HoverState {
 #[derive(Debug, Clone)]
 pub struct InfoPopover {
     pub project: ModelHandle<Project>,
-    symbol_range: RangeInEditor,
+    symbol_range: DocumentRange,
     pub blocks: Vec<HoverBlock>,
     language: Option<Arc<Language>>,
-    rendered_content: Option<RichText>,
+    rendered_content: Option<RenderedInfo>,
+}
+
+#[derive(Debug, Clone)]
+struct RenderedInfo {
+    theme_id: usize,
+    text: String,
+    highlights: Vec<(Range<usize>, HighlightStyle)>,
+    region_ranges: Vec<Range<usize>>,
+    regions: Vec<RenderedRegion>,
+}
+
+#[derive(Debug, Clone)]
+struct RenderedRegion {
+    code: bool,
+    link_url: Option<String>,
 }
 
 impl InfoPopover {
@@ -454,24 +678,63 @@ impl InfoPopover {
         style: &EditorStyle,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement<Editor> {
+        if let Some(rendered) = &self.rendered_content {
+            if rendered.theme_id != style.theme_id {
+                self.rendered_content = None;
+            }
+        }
+
         let rendered_content = self.rendered_content.get_or_insert_with(|| {
             render_blocks(
+                style.theme_id,
                 &self.blocks,
                 self.project.read(cx).languages(),
                 self.language.as_ref(),
+                style,
             )
         });
 
-        MouseEventHandler::new::<InfoPopover, _>(0, cx, move |_, cx| {
+        MouseEventHandler::new::<InfoPopover, _>(0, cx, |_, cx| {
+            let mut region_id = 0;
+            let view_id = cx.view_id();
+
             let code_span_background_color = style.document_highlight_read_background;
+            let regions = rendered_content.regions.clone();
             Flex::column()
                 .scrollable::<HoverBlock>(1, None, cx)
-                .with_child(rendered_content.element(
-                    style.syntax.clone(),
-                    style.text.clone(),
-                    code_span_background_color,
-                    cx,
-                ))
+                .with_child(
+                    Text::new(rendered_content.text.clone(), style.text.clone())
+                        .with_highlights(rendered_content.highlights.clone())
+                        .with_custom_runs(
+                            rendered_content.region_ranges.clone(),
+                            move |ix, bounds, scene, _| {
+                                region_id += 1;
+                                let region = regions[ix].clone();
+                                if let Some(url) = region.link_url {
+                                    scene.push_cursor_region(CursorRegion {
+                                        bounds,
+                                        style: CursorStyle::PointingHand,
+                                    });
+                                    scene.push_mouse_region(
+                                        MouseRegion::new::<Self>(view_id, region_id, bounds)
+                                            .on_click::<Editor, _>(
+                                                MouseButton::Left,
+                                                move |_, _, cx| cx.platform().open_url(&url),
+                                            ),
+                                    );
+                                }
+                                if region.code {
+                                    scene.push_quad(gpui::Quad {
+                                        bounds,
+                                        background: Some(code_span_background_color),
+                                        border: Default::default(),
+                                        corner_radii: (2.0).into(),
+                                    });
+                                }
+                            },
+                        )
+                        .with_soft_wrap(true),
+                )
                 .contained()
                 .with_style(style.hover_popover.container)
         })
@@ -564,15 +827,13 @@ mod tests {
         inlay_hint_cache::tests::{cached_hint_labels, visible_hint_labels},
         link_go_to_definition::update_inlay_link_and_hover_points,
         test::editor_lsp_test_context::EditorLspTestContext,
-        InlayId,
     };
     use collections::BTreeSet;
-    use gpui::fonts::{HighlightStyle, Underline, Weight};
+    use gpui::fonts::Weight;
     use indoc::indoc;
     use language::{language_settings::InlayHintSettings, Diagnostic, DiagnosticSet};
     use lsp::LanguageServerId;
     use project::{HoverBlock, HoverBlockKind};
-    use rich_text::Highlight;
     use smol::stream::StreamExt;
     use unindent::Unindent;
     use util::test::marked_text_ranges;
@@ -783,7 +1044,7 @@ mod tests {
         .await;
 
         cx.condition(|editor, _| editor.hover_state.visible()).await;
-        cx.editor(|editor, _| {
+        cx.editor(|editor, cx| {
             let blocks = editor.hover_state.info_popover.clone().unwrap().blocks;
             assert_eq!(
                 blocks,
@@ -793,7 +1054,8 @@ mod tests {
                 }],
             );
 
-            let rendered = render_blocks(&blocks, &Default::default(), None);
+            let style = editor.style(cx);
+            let rendered = render_blocks(0, &blocks, &Default::default(), None, &style);
             assert_eq!(
                 rendered.text,
                 code_str.trim(),
@@ -985,7 +1247,7 @@ mod tests {
                 expected_styles,
             } in &rows[0..]
             {
-                let rendered = render_blocks(&blocks, &Default::default(), None);
+                let rendered = render_blocks(0, &blocks, &Default::default(), None, &style);
 
                 let (expected_text, ranges) = marked_text_ranges(expected_marked_text, false);
                 let expected_highlights = ranges
@@ -996,21 +1258,8 @@ mod tests {
                     rendered.text, expected_text,
                     "wrong text for input {blocks:?}"
                 );
-
-                let rendered_highlights: Vec<_> = rendered
-                    .highlights
-                    .iter()
-                    .filter_map(|(range, highlight)| {
-                        let style = match highlight {
-                            Highlight::Id(id) => id.style(&style.syntax)?,
-                            Highlight::Highlight(style) => style.clone(),
-                        };
-                        Some((range.clone(), style))
-                    })
-                    .collect();
-
                 assert_eq!(
-                    rendered_highlights, expected_highlights,
+                    rendered.highlights, expected_highlights,
                     "wrong highlights for input {blocks:?}"
                 );
             }
@@ -1244,16 +1493,25 @@ mod tests {
             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
         cx.foreground().run_until_parked();
         cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
             let hover_state = &editor.hover_state;
             assert!(hover_state.diagnostic_popover.is_none() && hover_state.info_popover.is_some());
             let popover = hover_state.info_popover.as_ref().unwrap();
             let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
+            let entire_inlay_start = snapshot.display_point_to_inlay_offset(
+                inlay_range.start.to_display_point(&snapshot),
+                Bias::Left,
+            );
+
+            let expected_new_type_label_start = InlayOffset(entire_inlay_start.0 + ": ".len());
             assert_eq!(
                 popover.symbol_range,
-                RangeInEditor::Inlay(InlayHighlight {
-                    inlay: InlayId::Hint(0),
+                DocumentRange::Inlay(InlayRange {
                     inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
-                    range: ": ".len()..": ".len() + new_type_label.len(),
+                    highlight_start: expected_new_type_label_start,
+                    highlight_end: InlayOffset(
+                        expected_new_type_label_start.0 + new_type_label.len()
+                    ),
                 }),
                 "Popover range should match the new type label part"
             );
@@ -1301,17 +1559,23 @@ mod tests {
             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
         cx.foreground().run_until_parked();
         cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
             let hover_state = &editor.hover_state;
             assert!(hover_state.diagnostic_popover.is_none() && hover_state.info_popover.is_some());
             let popover = hover_state.info_popover.as_ref().unwrap();
             let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
+            let entire_inlay_start = snapshot.display_point_to_inlay_offset(
+                inlay_range.start.to_display_point(&snapshot),
+                Bias::Left,
+            );
+            let expected_struct_label_start =
+                InlayOffset(entire_inlay_start.0 + ": ".len() + new_type_label.len() + "<".len());
             assert_eq!(
                 popover.symbol_range,
-                RangeInEditor::Inlay(InlayHighlight {
-                    inlay: InlayId::Hint(0),
+                DocumentRange::Inlay(InlayRange {
                     inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
-                    range: ": ".len() + new_type_label.len() + "<".len()
-                        ..": ".len() + new_type_label.len() + "<".len() + struct_label.len(),
+                    highlight_start: expected_struct_label_start,
+                    highlight_end: InlayOffset(expected_struct_label_start.0 + struct_label.len()),
                 }),
                 "Popover range should match the struct label part"
             );

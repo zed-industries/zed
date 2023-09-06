@@ -859,7 +859,6 @@ struct CompletionsMenu {
     id: CompletionId,
     initial_position: Anchor,
     buffer: ModelHandle<Buffer>,
-    project: Option<ModelHandle<Project>>,
     completions: Arc<[Completion]>,
     match_candidates: Vec<StringMatchCandidate>,
     matches: Arc<[StringMatch]>,
@@ -903,42 +902,17 @@ impl CompletionsMenu {
     fn render(&self, style: EditorStyle, cx: &mut ViewContext<Editor>) -> AnyElement<Editor> {
         enum CompletionTag {}
 
-        let language_servers = self.project.as_ref().map(|project| {
-            project
-                .read(cx)
-                .language_servers_for_buffer(self.buffer.read(cx), cx)
-                .filter(|(_, server)| server.capabilities().completion_provider.is_some())
-                .map(|(adapter, server)| (server.server_id(), adapter.short_name))
-                .collect::<Vec<_>>()
-        });
-        let needs_server_name = language_servers
-            .as_ref()
-            .map_or(false, |servers| servers.len() > 1);
-
-        let get_server_name =
-            move |lookup_server_id: lsp::LanguageServerId| -> Option<&'static str> {
-                language_servers
-                    .iter()
-                    .flatten()
-                    .find_map(|(server_id, server_name)| {
-                        if *server_id == lookup_server_id {
-                            Some(*server_name)
-                        } else {
-                            None
-                        }
-                    })
-            };
-
         let widest_completion_ix = self
             .matches
             .iter()
             .enumerate()
             .max_by_key(|(_, mat)| {
                 let completion = &self.completions[mat.candidate_id];
-                let mut len = completion.label.text.chars().count();
+                let documentation = &completion.lsp_completion.documentation;
 
-                if let Some(server_name) = get_server_name(completion.server_id) {
-                    len += server_name.chars().count();
+                let mut len = completion.label.text.chars().count();
+                if let Some(lsp::Documentation::String(text)) = documentation {
+                    len += text.chars().count();
                 }
 
                 len
@@ -948,8 +922,16 @@ impl CompletionsMenu {
         let completions = self.completions.clone();
         let matches = self.matches.clone();
         let selected_item = self.selected_item;
-        let container_style = style.autocomplete.container;
-        UniformList::new(
+
+        let alongside_docs_text_style = TextStyle {
+            soft_wrap: true,
+            ..style.text.clone()
+        };
+        let alongside_docs_width = style.autocomplete.alongside_docs_width;
+        let alongside_docs_container_style = style.autocomplete.alongside_docs_container;
+        let outer_container_style = style.autocomplete.container;
+
+        let list = UniformList::new(
             self.list.clone(),
             matches.len(),
             cx,
@@ -957,7 +939,9 @@ impl CompletionsMenu {
                 let start_ix = range.start;
                 for (ix, mat) in matches[range].iter().enumerate() {
                     let completion = &completions[mat.candidate_id];
+                    let documentation = &completion.lsp_completion.documentation;
                     let item_ix = start_ix + ix;
+
                     items.push(
                         MouseEventHandler::new::<CompletionTag, _>(
                             mat.candidate_id,
@@ -986,22 +970,18 @@ impl CompletionsMenu {
                                             ),
                                         );
 
-                                if let Some(server_name) = get_server_name(completion.server_id) {
+                                if let Some(lsp::Documentation::String(text)) = documentation {
                                     Flex::row()
                                         .with_child(completion_label)
                                         .with_children((|| {
-                                            if !needs_server_name {
-                                                return None;
-                                            }
-
                                             let text_style = TextStyle {
-                                                color: style.autocomplete.server_name_color,
+                                                color: style.autocomplete.inline_docs_color,
                                                 font_size: style.text.font_size
-                                                    * style.autocomplete.server_name_size_percent,
+                                                    * style.autocomplete.inline_docs_size_percent,
                                                 ..style.text.clone()
                                             };
 
-                                            let label = Text::new(server_name, text_style)
+                                            let label = Text::new(text.clone(), text_style)
                                                 .aligned()
                                                 .constrained()
                                                 .dynamically(move |constraint, _, _| {
@@ -1021,7 +1001,7 @@ impl CompletionsMenu {
                                                         .with_style(
                                                             style
                                                                 .autocomplete
-                                                                .server_name_container,
+                                                                .inline_docs_container,
                                                         )
                                                         .into_any(),
                                                 )
@@ -1065,10 +1045,29 @@ impl CompletionsMenu {
                 }
             },
         )
-        .with_width_from_item(widest_completion_ix)
-        .contained()
-        .with_style(container_style)
-        .into_any()
+        .with_width_from_item(widest_completion_ix);
+
+        Flex::row()
+            .with_child(list)
+            .with_children({
+                let completion = &self.completions[selected_item];
+                let documentation = &completion.lsp_completion.documentation;
+
+                if let Some(lsp::Documentation::MarkupContent(content)) = documentation {
+                    Some(
+                        Text::new(content.value.clone(), alongside_docs_text_style)
+                            .constrained()
+                            .with_width(alongside_docs_width)
+                            .contained()
+                            .with_style(alongside_docs_container_style),
+                    )
+                } else {
+                    None
+                }
+            })
+            .contained()
+            .with_style(outer_container_style)
+            .into_any()
     }
 
     pub async fn filter(&mut self, query: Option<&str>, executor: Arc<executor::Background>) {
@@ -3150,7 +3149,6 @@ impl Editor {
         });
 
         let id = post_inc(&mut self.next_completion_id);
-        let project = self.project.clone();
         let task = cx.spawn(|this, mut cx| {
             async move {
                 let menu = if let Some(completions) = completions.await.log_err() {
@@ -3169,7 +3167,6 @@ impl Editor {
                             })
                             .collect(),
                         buffer,
-                        project,
                         completions: completions.into(),
                         matches: Vec::new().into(),
                         selected_item: 0,

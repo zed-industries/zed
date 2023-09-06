@@ -206,9 +206,11 @@ export default function editor(): any {
                 match_highlight: foreground(theme.middle, "accent", "active"),
                 background: background(theme.middle, "active"),
             },
-            server_name_container: { padding: { left: 40 } },
-            server_name_color: text(theme.middle, "sans", "disabled", {}).color,
-            server_name_size_percent: 0.75,
+            inline_docs_container: { padding: { left: 40 } },
+            inline_docs_color: text(theme.middle, "sans", "disabled", {}).color,
+            inline_docs_size_percent: 0.75,
+            alongside_docs_width: 400,
+            alongside_docs_container: { padding: autocomplete_item.padding }
         },
         diagnostic_header: {
             background: background(theme.middle),
