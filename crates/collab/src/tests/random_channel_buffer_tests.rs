@@ -225,7 +225,17 @@ impl RandomizedTest for RandomChannelBufferTest {
     async fn on_quiesce(server: &mut TestServer, clients: &mut [(Rc<TestClient>, TestAppContext)]) {
         let channels = server.app_state.db.all_channels().await.unwrap();
 
+        for (client, client_cx) in clients.iter_mut() {
+            client_cx.update(|cx| {
+                client
+                    .channel_buffers()
+                    .retain(|b| b.read(cx).is_connected());
+            });
+        }
+
         for (channel_id, channel_name) in channels {
+            let mut prev_text: Option<(u64, String)> = None;
+
             let mut collaborator_user_ids = server
                 .app_state
                 .db
@@ -237,18 +247,30 @@ impl RandomizedTest for RandomChannelBufferTest {
                 .collect::<Vec<_>>();
             collaborator_user_ids.sort();
 
-            for (client, client_cx) in clients.iter_mut() {
-                client_cx.update(|cx| {
-                    client
-                        .channel_buffers()
-                        .retain(|b| b.read(cx).is_connected());
-
+            for (client, client_cx) in clients.iter() {
+                let user_id = client.user_id().unwrap();
+                client_cx.read(|cx| {
                     if let Some(channel_buffer) = client
                         .channel_buffers()
                         .iter()
                         .find(|b| b.read(cx).channel().id == channel_id.to_proto())
                     {
                         let channel_buffer = channel_buffer.read(cx);
+
+                        // Assert that channel buffer's text matches other clients' copies.
+                        let text = channel_buffer.buffer().read(cx).text();
+                        if let Some((prev_user_id, prev_text)) = &prev_text {
+                            assert_eq!(
+                                &text,
+                                prev_text,
+                                "client {user_id} has different text than client {prev_user_id} for channel {channel_name}",
+                            );
+                        } else {
+                            prev_text = Some((user_id, text.clone()));
+                        }
+
+                        // Assert that all clients and the server agree about who is present in the
+                        // channel buffer.
                         let collaborators = channel_buffer.collaborators();
                         let mut user_ids =
                             collaborators.iter().map(|c| c.user_id).collect::<Vec<_>>();
@@ -256,9 +278,7 @@ impl RandomizedTest for RandomChannelBufferTest {
                         assert_eq!(
                             user_ids,
                             collaborator_user_ids,
-                            "client {} has different user ids for channel {} than the server",
-                            client.user_id().unwrap(),
-                            channel_name
+                            "client {user_id} has different user ids for channel {channel_name} than the server",
                         );
                     }
                 });
