@@ -14,6 +14,7 @@ util = { path = "../util" }
 async-compression = { version = "0.3", features = ["gzip", "futures-bufread"] }
 async-tar = "0.4.2"
 futures.workspace = true
+async-trait.workspace = true
 anyhow.workspace = true
 parking_lot.workspace = true
 serde.workspace = true
