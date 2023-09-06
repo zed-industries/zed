@@ -74,7 +74,7 @@ impl<V: 'static> Element<V> for Img {
                         bottom: style.border_widths.bottom.to_pixels(rem_size),
                         left: style.border_widths.left.to_pixels(rem_size),
                     },
-                    corner_radii: style.corner_radii.to_gpui(rem_size),
+                    corner_radii: style.corner_radii.to_gpui(layout.bounds.size(), rem_size),
                     grayscale: false,
                     data,
                 })

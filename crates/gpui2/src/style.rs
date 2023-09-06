@@ -13,8 +13,8 @@ pub use gpui::taffy::style::{
 use gpui::{
     fonts::{self, TextStyleRefinement},
     geometry::{
-        rect::RectF, relative, AbsoluteLength, DefiniteLength, Edges, EdgesRefinement, Length,
-        Point, PointRefinement, Size, SizeRefinement,
+        rect::RectF, relative, vector::Vector2F, AbsoluteLength, DefiniteLength, Edges,
+        EdgesRefinement, Length, Point, PointRefinement, Size, SizeRefinement,
     },
     scene, taffy, WindowContext,
 };
@@ -169,7 +169,7 @@ impl Style {
             cx.scene.push_quad(gpui::Quad {
                 bounds,
                 background: Some(color.into()),
-                corner_radii: self.corner_radii.to_gpui(rem_size),
+                corner_radii: self.corner_radii.to_gpui(bounds.size(), rem_size),
                 border: Default::default(),
             });
         }
@@ -185,7 +185,7 @@ impl Style {
                 cx.scene.push_quad(gpui::Quad {
                     bounds,
                     background: None,
-                    corner_radii: self.corner_radii.to_gpui(rem_size),
+                    corner_radii: self.corner_radii.to_gpui(bounds.size(), rem_size),
                     border: scene::Border {
                         color: color.into(),
                         top: border.top,
@@ -275,12 +275,14 @@ pub struct CornerRadii {
 }
 
 impl CornerRadii {
-    pub fn to_gpui(&self, rem_size: f32) -> gpui::scene::CornerRadii {
+    pub fn to_gpui(&self, box_size: Vector2F, rem_size: f32) -> gpui::scene::CornerRadii {
+        let max_radius = box_size.x().min(box_size.y()) / 2.;
+
         gpui::scene::CornerRadii {
-            top_left: self.top_left.to_pixels(rem_size),
-            top_right: self.top_right.to_pixels(rem_size),
-            bottom_left: self.bottom_left.to_pixels(rem_size),
-            bottom_right: self.bottom_right.to_pixels(rem_size),
+            top_left: self.top_left.to_pixels(rem_size).min(max_radius),
+            top_right: self.top_right.to_pixels(rem_size).min(max_radius),
+            bottom_left: self.bottom_left.to_pixels(rem_size).min(max_radius),
+            bottom_right: self.bottom_right.to_pixels(rem_size).min(max_radius),
         }
     }
 }

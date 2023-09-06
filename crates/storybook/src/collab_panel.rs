@@ -147,6 +147,7 @@ impl<V: 'static> CollabPanelElement<V> {
                         img()
                             .uri(avatar_uri)
                             .size_3p5()
+                            .rounded_full()
                             .fill(theme.middle.positive.default.foreground),
                     )
                     .child(label),
