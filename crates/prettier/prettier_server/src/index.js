@@ -17,6 +17,7 @@ function handleData() {
 
     const length = buffer.readUInt32LE(0);
     console.log(length);
+    console.log(buffer.toString());
     if (buffer.length < 4 + length) {
         return;
     }

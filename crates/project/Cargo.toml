@@ -31,6 +31,7 @@ git = { path = "../git" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }
+node_runtime = { path = "../node_runtime" }
 prettier = { path = "../prettier" }
 rpc = { path = "../rpc" }
 settings = { path = "../settings" }

@@ -1,17 +1,16 @@
 use std::collections::{HashMap, VecDeque};
-pub use std::path::{Path, PathBuf};
-pub use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::Context;
 use fs::Fs;
 use gpui::ModelHandle;
 use language::{Buffer, Diff};
+use node_runtime::NodeRuntime;
 
 pub struct Prettier {
     _private: (),
 }
-
-pub struct NodeRuntime;
 
 #[derive(Debug)]
 pub struct LocateStart {
@@ -143,7 +142,7 @@ impl Prettier {
         }
     }
 
-    pub async fn start(prettier_path: &Path, node: Arc<NodeRuntime>) -> anyhow::Result<Self> {
+    pub async fn start(prettier_path: &Path, node: Arc<dyn NodeRuntime>) -> anyhow::Result<Self> {
         todo!()
     }
 

@@ -49,8 +49,9 @@ use lsp::{
     DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId, OneOf,
 };
 use lsp_command::*;
+use node_runtime::NodeRuntime;
 use postage::watch;
-use prettier::{LocateStart, NodeRuntime, Prettier};
+use prettier::{LocateStart, Prettier};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use search::SearchQuery;
@@ -71,7 +72,7 @@ use std::{
     str,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
-        Arc,
+        Arc, OnceLock,
     },
     time::{Duration, Instant},
 };
@@ -553,13 +554,26 @@ impl SearchMatchCandidate {
     }
 }
 
+static NODE_RUNTIME: OnceLock<Arc<dyn NodeRuntime>> = OnceLock::new();
+
 impl Project {
     pub fn init_settings(cx: &mut AppContext) {
         settings::register::<ProjectSettings>(cx);
     }
 
-    pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
+    pub fn init(
+        client: &Arc<Client>,
+        node_runtime: Option<Arc<dyn NodeRuntime>>,
+        cx: &mut AppContext,
+    ) {
         Self::init_settings(cx);
+
+        // TODO kb move it to Project::local and other constructors?
+        if let Some(node_runtime) = node_runtime {
+            NODE_RUNTIME
+                .set(node_runtime)
+                .unwrap_or_else(|_| panic!("multiple init calls tried to set node runtime"));
+        }
 
         client.add_model_message_handler(Self::handle_add_collaborator);
         client.add_model_message_handler(Self::handle_update_project_collaborator);
@@ -8187,6 +8201,7 @@ impl Project {
         buffer: &ModelHandle<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Option<Task<Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>>> {
+        let node_runtime = Arc::clone(NODE_RUNTIME.get()?);
         let buffer_file = File::from_dyn(buffer.read(cx).file());
         let buffer_path = buffer_file.map(|file| Arc::clone(file.path()));
         let worktree_path = buffer_file
@@ -8253,13 +8268,12 @@ impl Project {
                 return existing_prettier;
             }
 
-            let task_node_runtime = Arc::new(NodeRuntime);
             let task_prettier_path = prettier_path.clone();
             let new_prettier_task = cx
                 .background()
                 .spawn(async move {
                     Ok(Arc::new(
-                        Prettier::start(&task_prettier_path, task_node_runtime)
+                        Prettier::start(&task_prettier_path, node_runtime)
                             .await
                             .with_context(|| {
                                 format!("starting new prettier for path {task_prettier_path:?}")

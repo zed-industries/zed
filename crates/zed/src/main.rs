@@ -138,7 +138,7 @@ fn main() {
 
         theme::init(Assets, cx);
         context_menu::init(cx);
-        project::Project::init(&client, cx);
+        project::Project::init(&client, Some(Arc::clone(&node_runtime)), cx);
         client::init(&client, cx);
         command_palette::init(cx);
         language::init(cx);

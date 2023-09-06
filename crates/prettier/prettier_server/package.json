@@ -1,11 +1,14 @@
 {
-  "name": "prettier_server",
-  "version": "1.0.0",
-  "description": "",
-  "main": "src/index.js",
-  "scripts": {
-    "start": "node src/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "author": "Zed Industries"
+    "name": "prettier_server",
+    "version": "1.0.0",
+    "description": "",
+    "main": "src/index.js",
+    "scripts": {
+        "start": "node src/index.js",
+        "test": "echo \"Error: no test specified\" && exit 1"
+    },
+    "author": "Zed Industries",
+    "dependencies": {
+        "prettier": "^3.0"
+    }
 }
