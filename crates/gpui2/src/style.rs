@@ -16,7 +16,7 @@ use gpui::{
         rect::RectF, relative, AbsoluteLength, DefiniteLength, Edges, EdgesRefinement, Length,
         Point, PointRefinement, Size, SizeRefinement,
     },
-    taffy, WindowContext,
+    scene, taffy, WindowContext,
 };
 use gpui2_macros::styleable_helpers;
 use refineable::{Refineable, RefinementCascade};
@@ -63,7 +63,7 @@ pub struct Style {
     pub padding: Edges<DefiniteLength>,
     /// How large should the border be on each side?
     #[refineable]
-    pub border: Edges<DefiniteLength>,
+    pub border_widths: Edges<AbsoluteLength>,
 
     // Alignment properties
     /// How this node's children aligned in the cross/block axis?
@@ -92,6 +92,10 @@ pub struct Style {
 
     /// The fill color of this element
     pub fill: Option<Fill>,
+
+    /// The border color of this element
+    pub border_color: Option<Hsla>,
+
     /// The radius of the corners of this element
     #[refineable]
     pub corner_radii: CornerRadii,
@@ -143,7 +147,7 @@ impl Style {
             aspect_ratio: self.aspect_ratio,
             margin: self.margin.to_taffy(rem_size),
             padding: self.padding.to_taffy(rem_size),
-            border: self.border.to_taffy(rem_size),
+            border: self.border_widths.to_taffy(rem_size),
             align_items: self.align_items,
             align_self: self.align_self,
             align_content: self.align_content,
@@ -159,7 +163,6 @@ impl Style {
     }
 
     /// Paints the background of an element styled with this style.
-    /// Return the bounds in which to paint the content.
     pub fn paint_background<V: 'static>(&self, bounds: RectF, cx: &mut PaintContext<V>) {
         let rem_size = cx.rem_size();
         if let Some(color) = self.fill.as_ref().and_then(Fill::color) {
@@ -169,6 +172,29 @@ impl Style {
                 corner_radii: self.corner_radii.to_gpui(rem_size),
                 border: Default::default(),
             });
+        }
+    }
+
+    /// Paints the foreground of an element styled with this style.
+    pub fn paint_foreground<V: 'static>(&self, bounds: RectF, cx: &mut PaintContext<V>) {
+        let rem_size = cx.rem_size();
+
+        if let Some(color) = self.border_color {
+            let border = self.border_widths.to_pixels(rem_size);
+            if !border.is_empty() {
+                cx.scene.push_quad(gpui::Quad {
+                    bounds,
+                    background: None,
+                    corner_radii: self.corner_radii.to_gpui(rem_size),
+                    border: scene::Border {
+                        color: color.into(),
+                        top: border.top,
+                        right: border.right,
+                        bottom: border.bottom,
+                        left: border.left,
+                    },
+                });
+            }
         }
     }
 }
@@ -186,7 +212,7 @@ impl Default for Style {
             inset: Edges::auto(),
             margin: Edges::<Length>::zero(),
             padding: Edges::<DefiniteLength>::zero(),
-            border: Edges::<DefiniteLength>::zero(),
+            border_widths: Edges::<AbsoluteLength>::zero(),
             size: Size::auto(),
             min_size: Size::auto(),
             max_size: Size::auto(),
@@ -204,6 +230,7 @@ impl Default for Style {
             flex_shrink: 1.0,
             flex_basis: Length::Auto,
             fill: None,
+            border_color: None,
             corner_radii: CornerRadii::default(),
             text_color: None,
             font_size: Some(1.),

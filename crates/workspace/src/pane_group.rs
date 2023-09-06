@@ -9,7 +9,7 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::Vector2F},
     platform::{CursorStyle, MouseButton},
-    AnyViewHandle, Axis, Border, ModelHandle, ViewContext, ViewHandle,
+    AnyViewHandle, Axis, ModelHandle, ViewContext, ViewHandle,
 };
 use project::Project;
 use serde::Deserialize;

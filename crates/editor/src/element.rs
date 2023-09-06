@@ -32,8 +32,8 @@ use gpui::{
     json::{self, ToJson},
     platform::{CursorStyle, Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent},
     text_layout::{self, Line, RunStyle, TextLayoutCache},
-    AnyElement, Axis, Border, CursorRegion, Element, EventContext, FontCache, LayoutContext,
-    MouseRegion, PaintContext, Quad, SceneBuilder, SizeConstraint, ViewContext, WindowContext,
+    AnyElement, Axis, CursorRegion, Element, EventContext, FontCache, LayoutContext, MouseRegion,
+    PaintContext, Quad, SceneBuilder, SizeConstraint, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use json::json;
@@ -539,13 +539,13 @@ impl EditorElement {
         scene.push_quad(Quad {
             bounds: gutter_bounds,
             background: Some(self.style.gutter_background),
-            border: Border::new(0., Color::transparent_black()),
+            border: Border::new(0., Color::transparent_black()).into(),
             corner_radii: Default::default(),
         });
         scene.push_quad(Quad {
             bounds: text_bounds,
             background: Some(self.style.background),
-            border: Border::new(0., Color::transparent_black()),
+            border: Border::new(0., Color::transparent_black()).into(),
             corner_radii: Default::default(),
         });
 
@@ -573,7 +573,7 @@ impl EditorElement {
                     scene.push_quad(Quad {
                         bounds: RectF::new(origin, size),
                         background: Some(self.style.active_line_background),
-                        border: Border::default(),
+                        border: Border::default().into(),
                         corner_radii: Default::default(),
                     });
                 }
@@ -593,7 +593,7 @@ impl EditorElement {
                 scene.push_quad(Quad {
                     bounds: RectF::new(origin, size),
                     background: Some(self.style.highlighted_line_background),
-                    border: Border::default(),
+                    border: Border::default().into(),
                     corner_radii: Default::default(),
                 });
             }
@@ -623,7 +623,7 @@ impl EditorElement {
                         vec2f(1., text_bounds.height()),
                     ),
                     background: Some(color),
-                    border: Border::new(0., Color::transparent_black()),
+                    border: Border::new(0., Color::transparent_black()).into(),
                     corner_radii: Default::default(),
                 });
             }
@@ -724,7 +724,7 @@ impl EditorElement {
                     scene.push_quad(Quad {
                         bounds: highlight_bounds,
                         background: Some(diff_style.modified),
-                        border: Border::new(0., Color::transparent_black()),
+                        border: Border::new(0., Color::transparent_black()).into(),
                         corner_radii: (1. * line_height).into(),
                     });
 
@@ -757,7 +757,7 @@ impl EditorElement {
                     scene.push_quad(Quad {
                         bounds: highlight_bounds,
                         background: Some(diff_style.deleted),
-                        border: Border::new(0., Color::transparent_black()),
+                        border: Border::new(0., Color::transparent_black()).into(),
                         corner_radii: (1. * line_height).into(),
                     });
 
@@ -779,7 +779,7 @@ impl EditorElement {
             scene.push_quad(Quad {
                 bounds: highlight_bounds,
                 background: Some(color),
-                border: Border::new(0., Color::transparent_black()),
+                border: Border::new(0., Color::transparent_black()).into(),
                 corner_radii: (diff_style.corner_radius * line_height).into(),
             });
         }
@@ -1149,7 +1149,7 @@ impl EditorElement {
         if layout.show_scrollbars {
             scene.push_quad(Quad {
                 bounds: track_bounds,
-                border: style.track.border,
+                border: style.track.border.into(),
                 background: style.track.background_color,
                 ..Default::default()
             });
@@ -1180,7 +1180,7 @@ impl EditorElement {
                     scene.push_quad(Quad {
                         bounds,
                         background: Some(color),
-                        border,
+                        border: border.into(),
                         corner_radii: style.thumb.corner_radii.into(),
                     })
                 };
@@ -1240,7 +1240,7 @@ impl EditorElement {
                     scene.push_quad(Quad {
                         bounds,
                         background: Some(color),
-                        border,
+                        border: border.into(),
                         corner_radii: style.thumb.corner_radii.into(),
                     })
                 }
@@ -1248,7 +1248,7 @@ impl EditorElement {
 
             scene.push_quad(Quad {
                 bounds: thumb_bounds,
-                border: style.thumb.border,
+                border: style.thumb.border.into(),
                 background: style.thumb.background_color,
                 corner_radii: style.thumb.corner_radii.into(),
             });
@@ -2891,7 +2891,7 @@ impl Cursor {
             scene.push_quad(Quad {
                 bounds,
                 background: None,
-                border: Border::all(1., self.color),
+                border: Border::all(1., self.color).into(),
                 corner_radii: Default::default(),
             });
         } else {

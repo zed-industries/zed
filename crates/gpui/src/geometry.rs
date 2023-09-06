@@ -230,26 +230,6 @@ pub struct Edges<T: Clone + Default> {
     pub left: T,
 }
 
-impl Edges<DefiniteLength> {
-    pub fn zero() -> Self {
-        Self {
-            top: pixels(0.),
-            right: pixels(0.),
-            bottom: pixels(0.),
-            left: pixels(0.),
-        }
-    }
-
-    pub fn to_taffy(&self, rem_size: f32) -> taffy::geometry::Rect<taffy::style::LengthPercentage> {
-        taffy::geometry::Rect {
-            top: self.top.to_taffy(rem_size),
-            right: self.right.to_taffy(rem_size),
-            bottom: self.bottom.to_taffy(rem_size),
-            left: self.left.to_taffy(rem_size),
-        }
-    }
-}
-
 impl Edges<Length> {
     pub fn auto() -> Self {
         Self {
@@ -282,6 +262,61 @@ impl Edges<Length> {
     }
 }
 
+impl Edges<DefiniteLength> {
+    pub fn zero() -> Self {
+        Self {
+            top: pixels(0.),
+            right: pixels(0.),
+            bottom: pixels(0.),
+            left: pixels(0.),
+        }
+    }
+
+    pub fn to_taffy(&self, rem_size: f32) -> taffy::geometry::Rect<taffy::style::LengthPercentage> {
+        taffy::geometry::Rect {
+            top: self.top.to_taffy(rem_size),
+            right: self.right.to_taffy(rem_size),
+            bottom: self.bottom.to_taffy(rem_size),
+            left: self.left.to_taffy(rem_size),
+        }
+    }
+}
+
+impl Edges<AbsoluteLength> {
+    pub fn zero() -> Self {
+        Self {
+            top: pixels(0.),
+            right: pixels(0.),
+            bottom: pixels(0.),
+            left: pixels(0.),
+        }
+    }
+
+    pub fn to_taffy(&self, rem_size: f32) -> taffy::geometry::Rect<taffy::style::LengthPercentage> {
+        taffy::geometry::Rect {
+            top: self.top.to_taffy(rem_size),
+            right: self.right.to_taffy(rem_size),
+            bottom: self.bottom.to_taffy(rem_size),
+            left: self.left.to_taffy(rem_size),
+        }
+    }
+
+    pub fn to_pixels(&self, rem_size: f32) -> Edges<f32> {
+        Edges {
+            top: self.top.to_pixels(rem_size),
+            right: self.right.to_pixels(rem_size),
+            bottom: self.bottom.to_pixels(rem_size),
+            left: self.left.to_pixels(rem_size),
+        }
+    }
+}
+
+impl Edges<f32> {
+    pub fn is_empty(&self) -> bool {
+        self.top == 0.0 && self.right == 0.0 && self.bottom == 0.0 && self.left == 0.0
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum AbsoluteLength {
     Pixels(f32),
@@ -293,6 +328,13 @@ impl AbsoluteLength {
         match self {
             AbsoluteLength::Pixels(pixels) => *pixels,
             AbsoluteLength::Rems(rems) => rems * rem_size,
+        }
+    }
+
+    pub fn to_taffy(&self, rem_size: f32) -> taffy::style::LengthPercentage {
+        match self {
+            AbsoluteLength::Pixels(pixels) => taffy::style::LengthPercentage::Length(*pixels),
+            AbsoluteLength::Rems(rems) => taffy::style::LengthPercentage::Length(rems * rem_size),
         }
     }
 }

@@ -6,9 +6,9 @@ pub mod ui;
 use components::{action_button::ButtonStyle, disclosure::DisclosureStyle, ToggleIconButtonStyle};
 use gpui::{
     color::Color,
-    elements::{ContainerStyle, ImageStyle, LabelStyle, Shadow, SvgStyle, TooltipStyle},
+    elements::{Border, ContainerStyle, ImageStyle, LabelStyle, Shadow, SvgStyle, TooltipStyle},
     fonts::{HighlightStyle, TextStyle},
-    platform, AppContext, AssetSource, Border, MouseState,
+    platform, AppContext, AssetSource, MouseState,
 };
 use parking_lot::Mutex;
 use schemars::JsonSchema;

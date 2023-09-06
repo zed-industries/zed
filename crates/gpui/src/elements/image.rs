@@ -1,11 +1,11 @@
-use super::constrain_size_preserving_aspect_ratio;
+use super::{constrain_size_preserving_aspect_ratio, Border};
 use crate::{
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    scene, Border, Element, ImageData, LayoutContext, PaintContext, SceneBuilder, SizeConstraint,
+    scene, Element, ImageData, LayoutContext, PaintContext, SceneBuilder, SizeConstraint,
     ViewContext,
 };
 use schemars::JsonSchema;
@@ -102,7 +102,7 @@ impl<V: 'static> Element<V> for Image {
         if let Some(data) = layout {
             scene.push_image(scene::Image {
                 bounds,
-                border: self.style.border,
+                border: self.style.border.into(),
                 corner_radii: self.style.corner_radius.into(),
                 grayscale: self.style.grayscale,
                 data: data.clone(),
