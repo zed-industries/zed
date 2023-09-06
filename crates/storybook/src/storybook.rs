@@ -2,7 +2,6 @@
 
 use crate::theme::Theme;
 use ::theme as legacy_theme;
-use collab_panel::collab_panel;
 use element_ext::ElementExt;
 use gpui2::{serde_json, vec2f, view, Element, RectF, ViewContext, WindowBounds};
 use legacy_theme::ThemeSettings;
@@ -30,7 +29,7 @@ fn main() {
 
         cx.add_window(
             gpui2::WindowOptions {
-                bounds: WindowBounds::Fixed(RectF::new(vec2f(0., 0.), vec2f(260., 800.))),
+                bounds: WindowBounds::Fixed(RectF::new(vec2f(0., 0.), vec2f(1400., 900.))),
                 center: true,
                 ..Default::default()
             },
@@ -41,7 +40,7 @@ fn main() {
 }
 
 fn storybook<V: 'static>(cx: &mut ViewContext<V>) -> impl Element<V> {
-    collab_panel().themed(current_theme(cx))
+    workspace().themed(current_theme(cx))
 }
 
 // Nathan: During the transition to gpui2, we will include the base theme on the legacy Theme struct.
@@ -64,6 +63,7 @@ fn current_theme<V: 'static>(cx: &mut ViewContext<V>) -> Theme {
 use anyhow::{anyhow, Result};
 use gpui2::AssetSource;
 use rust_embed::RustEmbed;
+use workspace::workspace;
 
 #[derive(RustEmbed)]
 #[folder = "../../assets"]
