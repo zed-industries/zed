@@ -71,7 +71,7 @@ mod test {
     };
 
     #[gpui::test]
-    async fn test_dot_repeat(cx: &mut gpui::TestAppContext) {
+    async fn test_dot_repeat(deterministic: Arc<Deterministic>, cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         // "o"
@@ -80,26 +80,33 @@ mod test {
             .await;
         cx.assert_shared_state("hello\nworlˇd").await;
         cx.simulate_shared_keystrokes(["."]).await;
+        deterministic.run_until_parked();
         cx.assert_shared_state("hello\nworld\nworlˇd").await;
 
         // "d"
         cx.simulate_shared_keystrokes(["^", "d", "f", "o"]).await;
         cx.simulate_shared_keystrokes(["g", "g", "."]).await;
+        deterministic.run_until_parked();
         cx.assert_shared_state("ˇ\nworld\nrld").await;
 
         // "p" (note that it pastes the current clipboard)
         cx.simulate_shared_keystrokes(["j", "y", "y", "p"]).await;
         cx.simulate_shared_keystrokes(["shift-g", "y", "y", "."])
             .await;
+        deterministic.run_until_parked();
         cx.assert_shared_state("\nworld\nworld\nrld\nˇrld").await;
 
         // "~" (note that counts apply to the action taken, not . itself)
         cx.set_shared_state("ˇthe quick brown fox").await;
         cx.simulate_shared_keystrokes(["2", "~", "."]).await;
+        deterministic.run_until_parked();
         cx.set_shared_state("THE ˇquick brown fox").await;
         cx.simulate_shared_keystrokes(["3", "."]).await;
+        deterministic.run_until_parked();
         cx.set_shared_state("THE QUIˇck brown fox").await;
+        deterministic.run_until_parked();
         cx.simulate_shared_keystrokes(["."]).await;
+        deterministic.run_until_parked();
         cx.set_shared_state("THE QUICK ˇbrown fox").await;
     }
 
