@@ -1050,7 +1050,8 @@ impl CompletionsMenu {
         Flex::row()
             .with_child(list)
             .with_children({
-                let completion = &self.completions[selected_item];
+                let mat = &self.matches[selected_item];
+                let completion = &self.completions[mat.candidate_id];
                 let documentation = &completion.lsp_completion.documentation;
 
                 if let Some(lsp::Documentation::MarkupContent(content)) = documentation {
