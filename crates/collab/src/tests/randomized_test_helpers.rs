@@ -1,5 +1,5 @@
 use crate::{
-    db::{self, Database, NewUserParams, UserId},
+    db::{self, NewUserParams, UserId},
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
     tests::{TestClient, TestServer},
 };
@@ -107,15 +107,17 @@ pub trait RandomizedTest: 'static + Sized {
         cx: &TestAppContext,
     ) -> Self::Operation;
 
-    async fn on_client_added(client: &Rc<TestClient>);
-
-    fn on_clients_quiesced(client: &[(Rc<TestClient>, TestAppContext)]);
-
     async fn apply_operation(
         client: &TestClient,
         operation: Self::Operation,
         cx: &mut TestAppContext,
     ) -> Result<(), TestError>;
+
+    async fn initialize(server: &mut TestServer, users: &[UserTestPlan]);
+
+    async fn on_client_added(client: &Rc<TestClient>, cx: &mut TestAppContext);
+
+    async fn on_quiesce(server: &mut TestServer, client: &mut [(Rc<TestClient>, TestAppContext)]);
 }
 
 pub async fn run_randomized_test<T: RandomizedTest>(
@@ -125,7 +127,7 @@ pub async fn run_randomized_test<T: RandomizedTest>(
 ) {
     deterministic.forbid_parking();
     let mut server = TestServer::start(&deterministic).await;
-    let plan = TestPlan::<T>::new(server.app_state.db.clone(), rng).await;
+    let plan = TestPlan::<T>::new(&mut server, rng).await;
 
     LAST_PLAN.lock().replace({
         let plan = plan.clone();
@@ -162,7 +164,7 @@ pub async fn run_randomized_test<T: RandomizedTest>(
     deterministic.finish_waiting();
 
     deterministic.run_until_parked();
-    T::on_clients_quiesced(&clients);
+    T::on_quiesce(&mut server, &mut clients).await;
 
     for (client, mut cx) in clients {
         cx.update(|cx| {
@@ -190,7 +192,7 @@ pub fn save_randomized_test_plan() {
 }
 
 impl<T: RandomizedTest> TestPlan<T> {
-    pub async fn new(db: Arc<Database>, mut rng: StdRng) -> Arc<Mutex<Self>> {
+    pub async fn new(server: &mut TestServer, mut rng: StdRng) -> Arc<Mutex<Self>> {
         let allow_server_restarts = rng.gen_bool(0.7);
         let allow_client_reconnection = rng.gen_bool(0.7);
         let allow_client_disconnection = rng.gen_bool(0.1);
@@ -198,7 +200,9 @@ impl<T: RandomizedTest> TestPlan<T> {
         let mut users = Vec::new();
         for ix in 0..*MAX_PEERS {
             let username = format!("user-{}", ix + 1);
-            let user_id = db
+            let user_id = server
+                .app_state
+                .db
                 .create_user(
                     &format!("{username}@example.com"),
                     false,
@@ -222,16 +226,7 @@ impl<T: RandomizedTest> TestPlan<T> {
             });
         }
 
-        for (ix, user_a) in users.iter().enumerate() {
-            for user_b in &users[ix + 1..] {
-                db.send_contact_request(user_a.user_id, user_b.user_id)
-                    .await
-                    .unwrap();
-                db.respond_to_contact_request(user_b.user_id, user_a.user_id, true)
-                    .await
-                    .unwrap();
-            }
-        }
+        T::initialize(server, &users).await;
 
         let plan = Arc::new(Mutex::new(Self {
             replay: false,
@@ -619,7 +614,7 @@ impl<T: RandomizedTest> TestPlan<T> {
 
                 if quiesce && applied {
                     deterministic.run_until_parked();
-                    T::on_clients_quiesced(&clients);
+                    T::on_quiesce(server, clients).await;
                 }
 
                 return applied;
@@ -634,7 +629,7 @@ impl<T: RandomizedTest> TestPlan<T> {
         mut operation_rx: futures::channel::mpsc::UnboundedReceiver<usize>,
         mut cx: TestAppContext,
     ) {
-        T::on_client_added(&client).await;
+        T::on_client_added(&client, &mut cx).await;
 
         while let Some(batch_id) = operation_rx.next().await {
             let Some((operation, applied)) =

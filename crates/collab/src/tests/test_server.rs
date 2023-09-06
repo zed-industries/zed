@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::anyhow;
 use call::ActiveCall;
-use channel::ChannelStore;
+use channel::{channel_buffer::ChannelBuffer, ChannelStore};
 use client::{
     self, proto::PeerId, Client, Connection, Credentials, EstablishConnectionError, UserStore,
 };
@@ -51,6 +51,7 @@ struct TestClientState {
     local_projects: Vec<ModelHandle<Project>>,
     remote_projects: Vec<ModelHandle<Project>>,
     buffers: HashMap<ModelHandle<Project>, HashSet<ModelHandle<language::Buffer>>>,
+    channel_buffers: HashSet<ModelHandle<ChannelBuffer>>,
 }
 
 pub struct ContactsSummary {
@@ -466,6 +467,12 @@ impl TestClient {
     ) -> impl DerefMut<Target = HashMap<ModelHandle<Project>, HashSet<ModelHandle<language::Buffer>>>> + 'a
     {
         RefMut::map(self.state.borrow_mut(), |state| &mut state.buffers)
+    }
+
+    pub fn channel_buffers<'a>(
+        &'a self,
+    ) -> impl DerefMut<Target = HashSet<ModelHandle<ChannelBuffer>>> + 'a {
+        RefMut::map(self.state.borrow_mut(), |state| &mut state.channel_buffers)
     }
 
     pub fn summarize_contacts(&self, cx: &TestAppContext) -> ContactsSummary {

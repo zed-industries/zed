@@ -3,7 +3,7 @@ use anyhow::{anyhow, Result};
 use client::{Client, Subscription, User, UserId, UserStore};
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
-use gpui::{AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
+use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
 use rpc::{proto, TypedEnvelope};
 use std::{mem, sync::Arc, time::Duration};
 use util::ResultExt;
@@ -150,6 +150,15 @@ impl ChannelStore {
 
     pub fn channel_for_id(&self, channel_id: ChannelId) -> Option<&Arc<Channel>> {
         self.channels_by_id.get(&channel_id)
+    }
+
+    pub fn has_open_channel_buffer(&self, channel_id: ChannelId, cx: &AppContext) -> bool {
+        if let Some(buffer) = self.opened_buffers.get(&channel_id) {
+            if let OpenedChannelBuffer::Open(buffer) = buffer {
+                return buffer.upgrade(cx).is_some();
+            }
+        }
+        false
     }
 
     pub fn open_channel_buffer(

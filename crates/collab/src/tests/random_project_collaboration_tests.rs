@@ -1,7 +1,5 @@
-use crate::{
-    db::UserId,
-    tests::{run_randomized_test, RandomizedTest, TestClient, TestError, UserTestPlan},
-};
+use super::{run_randomized_test, RandomizedTest, TestClient, TestError, TestServer, UserTestPlan};
+use crate::db::UserId;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use call::ActiveCall;
@@ -144,6 +142,20 @@ struct ProjectCollaborationTest;
 #[async_trait(?Send)]
 impl RandomizedTest for ProjectCollaborationTest {
     type Operation = ClientOperation;
+
+    async fn initialize(server: &mut TestServer, users: &[UserTestPlan]) {
+        let db = &server.app_state.db;
+        for (ix, user_a) in users.iter().enumerate() {
+            for user_b in &users[ix + 1..] {
+                db.send_contact_request(user_a.user_id, user_b.user_id)
+                    .await
+                    .unwrap();
+                db.respond_to_contact_request(user_b.user_id, user_a.user_id, true)
+                    .await
+                    .unwrap();
+            }
+        }
+    }
 
     fn generate_operation(
         client: &TestClient,
@@ -1005,7 +1017,7 @@ impl RandomizedTest for ProjectCollaborationTest {
         Ok(())
     }
 
-    async fn on_client_added(client: &Rc<TestClient>) {
+    async fn on_client_added(client: &Rc<TestClient>, _: &mut TestAppContext) {
         let mut language = Language::new(
             LanguageConfig {
                 name: "Rust".into(),
@@ -1119,8 +1131,8 @@ impl RandomizedTest for ProjectCollaborationTest {
         client.app_state.languages.add(Arc::new(language));
     }
 
-    fn on_clients_quiesced(clients: &[(Rc<TestClient>, TestAppContext)]) {
-        for (client, client_cx) in clients {
+    async fn on_quiesce(_: &mut TestServer, clients: &mut [(Rc<TestClient>, TestAppContext)]) {
+        for (client, client_cx) in clients.iter() {
             for guest_project in client.remote_projects().iter() {
                 guest_project.read_with(client_cx, |guest_project, cx| {
                         let host_project = clients.iter().find_map(|(client, cx)| {
