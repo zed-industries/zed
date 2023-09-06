@@ -1011,9 +1011,9 @@ impl Client {
         credentials: &Credentials,
         cx: &AsyncAppContext,
     ) -> Task<Result<Connection, EstablishConnectionError>> {
-        let is_preview = cx.read(|cx| {
+        let use_preview_server = cx.read(|cx| {
             if cx.has_global::<ReleaseChannel>() {
-                *cx.global::<ReleaseChannel>() == ReleaseChannel::Preview
+                *cx.global::<ReleaseChannel>() != ReleaseChannel::Stable
             } else {
                 false
             }
@@ -1028,7 +1028,7 @@ impl Client {
 
         let http = self.http.clone();
         cx.background().spawn(async move {
-            let mut rpc_url = Self::get_rpc_url(http, is_preview).await?;
+            let mut rpc_url = Self::get_rpc_url(http, use_preview_server).await?;
             let rpc_host = rpc_url
                 .host_str()
                 .zip(rpc_url.port_or_known_default())
