@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+#[derive(PartialEq, Eq, Hash)]
 pub enum ArcCow<'a, T: ?Sized> {
     Borrowed(&'a T),
     Owned(Arc<T>),
@@ -29,6 +30,15 @@ impl<T> From<Arc<T>> for ArcCow<'_, T> {
 impl From<String> for ArcCow<'_, str> {
     fn from(value: String) -> Self {
         Self::Owned(value.into())
+    }
+}
+
+impl<'a, T: ?Sized + ToOwned> std::borrow::Borrow<T> for ArcCow<'a, T> {
+    fn borrow(&self) -> &T {
+        match self {
+            ArcCow::Borrowed(borrowed) => borrowed,
+            ArcCow::Owned(owned) => owned.as_ref(),
+        }
     }
 }
 

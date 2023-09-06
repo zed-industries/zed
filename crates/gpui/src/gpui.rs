@@ -1,4 +1,5 @@
 mod app;
+mod image_cache;
 pub use app::*;
 mod assets;
 #[cfg(any(test, feature = "test-support"))]

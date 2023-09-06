@@ -2,12 +2,12 @@ use crate::{
     element::{Element, IntoElement, Layout},
     layout_context::LayoutContext,
     paint_context::PaintContext,
-    ArcCow,
 };
 use anyhow::Result;
 use gpui::{geometry::Size, text_layout::LineLayout, LayoutId};
 use parking_lot::Mutex;
 use std::sync::Arc;
+use util::arc_cow::ArcCow;
 
 impl<V: 'static, S: Into<ArcCow<'static, str>>> IntoElement<V> for S {
     type Element = Text;

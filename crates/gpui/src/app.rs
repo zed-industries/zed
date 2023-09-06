@@ -10,6 +10,7 @@ mod window_input_handler;
 use crate::{
     elements::{AnyElement, AnyRootElement, RootElement},
     executor::{self, Task},
+    image_cache::ImageCache,
     json,
     keymap_matcher::{self, Binding, KeymapContext, KeymapMatcher, Keystroke, MatchResult},
     platform::{
@@ -50,7 +51,10 @@ use std::{
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use test_app_context::{ContextHandle, TestAppContext};
-use util::ResultExt;
+use util::{
+    http::{self, HttpClient},
+    ResultExt,
+};
 use uuid::Uuid;
 pub use window::MeasureParams;
 use window_input_handler::WindowInputHandler;
@@ -154,12 +158,14 @@ impl App {
         let platform = platform::current::platform();
         let foreground = Rc::new(executor::Foreground::platform(platform.dispatcher())?);
         let foreground_platform = platform::current::foreground_platform(foreground.clone());
+        let http_client = http::client();
         let app = Self(Rc::new(RefCell::new(AppContext::new(
             foreground,
             Arc::new(executor::Background::new()),
             platform.clone(),
             foreground_platform.clone(),
             Arc::new(FontCache::new(platform.fonts())),
+            http_client,
             Default::default(),
             asset_source,
         ))));
@@ -456,6 +462,7 @@ pub struct AppContext {
     pub asset_cache: Arc<AssetCache>,
     font_system: Arc<dyn FontSystem>,
     pub font_cache: Arc<FontCache>,
+    pub image_cache: Arc<ImageCache>,
     action_deserializers: HashMap<&'static str, (TypeId, DeserializeActionCallback)>,
     capture_actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
     // Entity Types -> { Action Types -> Action Handlers }
@@ -499,6 +506,7 @@ impl AppContext {
         platform: Arc<dyn platform::Platform>,
         foreground_platform: Rc<dyn platform::ForegroundPlatform>,
         font_cache: Arc<FontCache>,
+        http_client: Arc<dyn HttpClient>,
         ref_counts: RefCounts,
         asset_source: impl AssetSource,
     ) -> Self {
@@ -517,6 +525,7 @@ impl AppContext {
             platform,
             foreground_platform,
             font_cache,
+            image_cache: Arc::new(ImageCache::new(http_client)),
             asset_cache: Arc::new(AssetCache::new(asset_source)),
             action_deserializers: Default::default(),
             capture_actions: Default::default(),

@@ -3162,6 +3162,7 @@ dependencies = [
  "sqlez",
  "sum_tree",
  "taffy",
+ "thiserror",
  "time 0.3.27",
  "tiny-skia",
  "usvg",

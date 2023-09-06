@@ -57,6 +57,7 @@ impl TestAppContext {
             platform,
             foreground_platform.clone(),
             font_cache,
+            util::http::FakeHttpClient::with_404_response(),
             RefCounts::new(leak_detector),
             (),
         );
