@@ -203,7 +203,7 @@ impl EmbeddingProvider for OpenAIEmbeddings {
             .ok_or_else(|| anyhow!("no api key"))?;
 
         let mut request_number = 0;
-        let mut request_timeout: u64 = 10;
+        let mut request_timeout: u64 = 15;
         let mut response: Response<AsyncBody>;
         while request_number < MAX_RETRIES {
             response = self
