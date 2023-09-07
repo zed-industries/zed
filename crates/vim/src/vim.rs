@@ -295,14 +295,20 @@ impl Vim {
 
         match Vim::read(cx).active_operator() {
             Some(Operator::FindForward { before }) => {
-                let find = Motion::FindForward { before, text };
+                let find = Motion::FindForward {
+                    before,
+                    char: text.chars().next().unwrap(),
+                };
                 Vim::update(cx, |vim, _| {
                     vim.workspace_state.last_find = Some(find.clone())
                 });
                 motion::motion(find, cx)
             }
             Some(Operator::FindBackward { after }) => {
-                let find = Motion::FindBackward { after, text };
+                let find = Motion::FindBackward {
+                    after,
+                    char: text.chars().next().unwrap(),
+                };
                 Vim::update(cx, |vim, _| {
                     vim.workspace_state.last_find = Some(find.clone())
                 });
