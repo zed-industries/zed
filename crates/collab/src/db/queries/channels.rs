@@ -68,6 +68,8 @@ impl Database {
                     ],
                 );
                 tx.execute(channel_paths_stmt).await?;
+
+                dbg!(channel_path::Entity::find().all(&*tx).await?);
             } else {
                 channel_path::Entity::insert(channel_path::ActiveModel {
                     channel_id: ActiveValue::Set(channel.id),
@@ -336,6 +338,8 @@ impl Database {
                 .get_channel_descendants(channel_memberships.iter().map(|m| m.channel_id), &*tx)
                 .await?;
 
+            dbg!(&parents_by_child_id);
+
             let channels_with_admin_privileges = channel_memberships
                 .iter()
                 .filter_map(|membership| membership.admin.then_some(membership.channel_id))
@@ -349,11 +353,24 @@ impl Database {
                     .await?;
                 while let Some(row) = rows.next().await {
                     let row = row?;
-                    channels.push(Channel {
-                        id: row.id,
-                        name: row.name,
-                        parent_id: parents_by_child_id.get(&row.id).copied().flatten(),
-                    });
+
+                    // As these rows are pulled from the map's keys, this unwrap is safe.
+                    let parents = parents_by_child_id.get(&row.id).unwrap();
+                    if parents.len() > 0 {
+                        for parent in parents {
+                            channels.push(Channel {
+                                id: row.id,
+                                name: row.name.clone(),
+                                parent_id: Some(*parent),
+                            });
+                        }
+                    } else {
+                        channels.push(Channel {
+                            id: row.id,
+                            name: row.name,
+                            parent_id: None,
+                        });
+                    }
                 }
             }
 
@@ -559,6 +576,7 @@ impl Database {
         Ok(())
     }
 
+    /// Returns the channel ancestors, deepest first
     pub async fn get_channel_ancestors(
         &self,
         channel_id: ChannelId,
@@ -566,6 +584,7 @@ impl Database {
     ) -> Result<Vec<ChannelId>> {
         let paths = channel_path::Entity::find()
             .filter(channel_path::Column::ChannelId.eq(channel_id))
+            .order_by(channel_path::Column::IdPath, sea_query::Order::Desc)
             .all(tx)
             .await?;
         let mut channel_ids = Vec::new();
@@ -586,7 +605,7 @@ impl Database {
         &self,
         channel_ids: impl IntoIterator<Item = ChannelId>,
         tx: &DatabaseTransaction,
-    ) -> Result<HashMap<ChannelId, Option<ChannelId>>> {
+    ) -> Result<HashMap<ChannelId, HashSet<ChannelId>>> {
         let mut values = String::new();
         for id in channel_ids {
             if !values.is_empty() {
@@ -613,7 +632,7 @@ impl Database {
 
         let stmt = Statement::from_string(self.pool.get_database_backend(), sql);
 
-        let mut parents_by_child_id = HashMap::default();
+        let mut parents_by_child_id: HashMap<ChannelId, HashSet<ChannelId>> = HashMap::default();
         let mut paths = channel_path::Entity::find()
             .from_raw_sql(stmt)
             .stream(tx)
@@ -632,7 +651,10 @@ impl Database {
                     parent_id = Some(id);
                 }
             }
-            parents_by_child_id.insert(path.channel_id, parent_id);
+            let entry = parents_by_child_id.entry(path.channel_id).or_default();
+            if let Some(parent_id) = parent_id {
+                entry.insert(parent_id);
+            }
         }
 
         Ok(parents_by_child_id)
@@ -704,12 +726,74 @@ impl Database {
         .await
     }
 
+    pub async fn link_channel(&self, user: UserId, from: ChannelId, to: ChannelId) -> Result<()> {
+        self.transaction(|tx| async move {
+            self.check_user_is_channel_admin(to, user, &*tx).await?;
+
+            // TODO: Downgrade this check once our permissions system isn't busted
+            // You should be able to safely link a member channel for  your own uses. See:
+            // https://zed.dev/blog/this-week-at-zed-15 > Mikayla's section
+            //
+            // Note that even with these higher permissions, this linking operation
+            // is still insecure because you can't remove someone's permissions to a
+            // channel if they've linked the channel to one where they're an admin.
+            self.check_user_is_channel_admin(from, user, &*tx).await?;
+
+            let to_ancestors = self.get_channel_ancestors(to, &*tx).await?;
+            let from_descendants = self.get_channel_descendants([from], &*tx).await?;
+            for ancestor in to_ancestors {
+                if from_descendants.contains_key(&ancestor) {
+                    return Err(anyhow!("Cannot create a channel cycle").into());
+                }
+            }
+
+            let sql = r#"
+                INSERT INTO channel_paths
+                (id_path, channel_id)
+                SELECT
+                    id_path || $1 || '/', $2
+                FROM
+                    channel_paths
+                WHERE
+                    channel_id = $3
+                ON CONFLICT (id_path) DO NOTHING;
+            "#;
+            let channel_paths_stmt = Statement::from_sql_and_values(
+                self.pool.get_database_backend(),
+                sql,
+                [
+                    from.to_proto().into(),
+                    from.to_proto().into(),
+                    to.to_proto().into(),
+                ],
+            );
+            tx.execute(channel_paths_stmt).await?;
+
+            for (from_id, to_ids) in from_descendants.iter().filter(|(id, _)| id == &&from) {
+                for to_id in to_ids {
+                    let channel_paths_stmt = Statement::from_sql_and_values(
+                        self.pool.get_database_backend(),
+                        sql,
+                        [
+                            from_id.to_proto().into(),
+                            from_id.to_proto().into(),
+                            to_id.to_proto().into(),
+                        ],
+                    );
+                    tx.execute(channel_paths_stmt).await?;
+                }
+            }
+
+            Ok(())
+        })
+        .await
+    }
+
     pub async fn move_channel(
         &self,
         user: UserId,
         from: ChannelId,
         to: Option<ChannelId>,
-        link: bool,
     ) -> Result<()> {
         self.transaction(|tx| async move { todo!() }).await
     }

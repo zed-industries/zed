@@ -72,7 +72,6 @@ fs = { path = "../fs", features = ["test-support"] }
 git = { path = "../git", features = ["test-support"] }
 live_kit_client = { path = "../live_kit_client", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
-pretty_assertions.workspace = true
 project = { path = "../project", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
@@ -81,6 +80,7 @@ workspace = { path = "../workspace", features = ["test-support"] }
 collab_ui = { path = "../collab_ui", features = ["test-support"] }
 
 async-trait.workspace = true
+pretty_assertions.workspace = true
 ctor.workspace = true
 env_logger.workspace = true
 indoc.workspace = true
