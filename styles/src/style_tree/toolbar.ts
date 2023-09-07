@@ -8,7 +8,7 @@ export const toolbar = () => {
 
     return {
         height: 42,
-        padding: { left: 4, right: 4 },
+        padding: { left: 8, right: 8 },
         background: background(theme.highest),
         border: border(theme.highest, { bottom: true }),
         item_spacing: 4,
@@ -23,9 +23,9 @@ export const toolbar = () => {
                 ...text(theme.highest, "sans", "variant"),
                 corner_radius: 6,
                 padding: {
-                    left: 6,
-                    right: 6,
-                },
+                    left: 4,
+                    right: 4,
+                }
             },
             state: {
                 hovered: {

@@ -12,9 +12,6 @@ export default function feedback(): any {
                 background: background(theme.highest, "on"),
                 corner_radius: 6,
                 border: border(theme.highest, "on"),
-                margin: {
-                    right: 4,
-                },
                 padding: {
                     bottom: 2,
                     left: 10,
@@ -41,9 +38,15 @@ export default function feedback(): any {
             },
         }),
         button_margin: 8,
-        info_text_default: text(theme.highest, "sans", "default", {
-            size: "xs",
-        }),
+        info_text_default: {
+            padding: {
+                left: 4,
+                right: 4,
+            },
+            ...text(theme.highest, "sans", "default", {
+                size: "xs",
+            })
+        },
         link_text_default: text(theme.highest, "sans", "default", {
             size: "xs",
             underline: true,
