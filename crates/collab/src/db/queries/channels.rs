@@ -726,7 +726,7 @@ impl Database {
         .await
     }
 
-    pub async fn link_channel(&self, user: UserId, from: ChannelId, to: ChannelId) -> Result<()> {
+    async fn link_channel(&self, user: UserId, from: ChannelId, to: ChannelId) -> Result<()> {
         self.transaction(|tx| async move {
             self.check_user_is_channel_admin(to, user, &*tx).await?;
 
@@ -789,13 +789,33 @@ impl Database {
         .await
     }
 
+    async fn remove_channel_from_parent(&self, user: UserId, from: ChannelId, parent: ChannelId) -> Result<()> {
+        todo!()
+    }
+
+    /// Move a channel from one parent to another.
+    /// Note that this requires a valid parent_id in the 'from_parent' field.
+    /// As channels are a DAG, we need to know which parent to remove the channel from.
+    /// Here's a list of the parameters to this function and their behavior:
+    ///
+    /// - (`None`, `None`) Noop
+    /// - (`None`, `Some(id)`) Link the channel without removing it from any of it's parents
+    /// - (`Some(id)`, `None`) Remove a channel from a given parent, and leave other parents
+    /// - (`Some(id)`, `Some(id)`) Move channel from one parent to another, leaving other parents
     pub async fn move_channel(
         &self,
         user: UserId,
         from: ChannelId,
+        from_parent: Option<ChannelId>,
         to: Option<ChannelId>,
     ) -> Result<()> {
-        self.transaction(|tx| async move { todo!() }).await
+        if let Some(to) = to {
+            self.link_channel(user, from, to).await?;
+        }
+        if let Some(from_parent) = from_parent {
+            self.remove_channel_from_parent(user, from, from_parent).await?;
+        }
+        Ok(())
     }
 }
 
