@@ -2240,7 +2240,8 @@ impl CollabPanel {
     fn open_channel_buffer(&mut self, action: &OpenChannelBuffer, cx: &mut ViewContext<Self>) {
         if let Some(workspace) = self.workspace.upgrade(cx) {
             let pane = workspace.read(cx).active_pane().clone();
-            let channel_view = ChannelView::open(action.channel_id, pane.clone(), workspace, cx);
+            let channel_id = action.channel_id;
+            let channel_view = ChannelView::open(channel_id, pane.clone(), workspace, cx);
             cx.spawn(|_, mut cx| async move {
                 let channel_view = channel_view.await?;
                 pane.update(&mut cx, |pane, cx| {
@@ -2249,9 +2250,18 @@ impl CollabPanel {
                 anyhow::Ok(())
             })
             .detach();
-            ActiveCall::global(cx).update(cx, |call, cx| {
-                call.report_call_event("open channel notes", cx)
-            });
+            let room_id = ActiveCall::global(cx)
+                .read(cx)
+                .room()
+                .map(|room| room.read(cx).id());
+
+            ActiveCall::report_call_event_for_room(
+                "open channel notes",
+                room_id,
+                Some(channel_id),
+                &self.client,
+                cx,
+            );
         }
     }
 
