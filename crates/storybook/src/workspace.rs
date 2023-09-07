@@ -425,9 +425,11 @@ impl WorkspaceElement {
             )
             .child(
                 div()
+                    .flex()
                     .flex_1()
-                    .fill(theme.lowest.warning.default.background)
-                    .child(collab_panel()),
+                    .child(collab_panel())
+                    .child(div().flex_1().fill(theme.lowest.accent.default.background))
+                    .child(div().w_64().fill(theme.lowest.positive.default.background)),
             )
             .child(
                 div()
