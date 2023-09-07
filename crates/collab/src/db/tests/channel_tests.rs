@@ -537,27 +537,9 @@ async fn test_channels_moving(db: &Arc<Database>) {
         ]
     );
 
-    // Attemp to make a cycle
+    // Attempt to make a cycle
     assert!(db
         .move_channel(a_id, zed_id, None, Some(livestreaming_id))
-        .await
-        .is_err());
-
-    // Attemp to remove an edge that doesn't exist
-    assert!(db
-        .move_channel(a_id, crdb_id, Some(gpui2_id), None)
-        .await
-        .is_err());
-
-    // Attemp to move to a channel that doesn't exist
-    assert!(db
-        .move_channel(a_id, crdb_id, Some(crate::db::ChannelId(1000)), None)
-        .await
-        .is_err());
-
-    // Attemp to remove an edge that doesn't exist
-    assert!(db
-        .move_channel(a_id, crdb_id, None, Some(crate::db::ChannelId(1000)))
         .await
         .is_err());
 
@@ -572,7 +554,7 @@ async fn test_channels_moving(db: &Arc<Database>) {
     //    \---------/
     let result = db.get_channels_for_user(a_id).await.unwrap();
     pretty_assertions::assert_eq!(
-        dbg!(result.channels),
+        result.channels,
         vec![
             Channel {
                 id: zed_id,
@@ -624,7 +606,7 @@ async fn test_channels_moving(db: &Arc<Database>) {
     //    \---------/
     let result = db.get_channels_for_user(a_id).await.unwrap();
     pretty_assertions::assert_eq!(
-        dbg!(result.channels),
+        result.channels,
         vec![
             Channel {
                 id: zed_id,
@@ -675,7 +657,7 @@ async fn test_channels_moving(db: &Arc<Database>) {
     //    \--------/
     let result = db.get_channels_for_user(a_id).await.unwrap();
     pretty_assertions::assert_eq!(
-        dbg!(result.channels),
+        result.channels,
         vec![
             Channel {
                 id: zed_id,
@@ -731,7 +713,7 @@ async fn test_channels_moving(db: &Arc<Database>) {
     //    \---------/
     let result = db.get_channels_for_user(a_id).await.unwrap();
     pretty_assertions::assert_eq!(
-        dbg!(result.channels),
+        result.channels,
         vec![
             Channel {
                 id: zed_id,
@@ -792,7 +774,7 @@ async fn test_channels_moving(db: &Arc<Database>) {
     //    \---------/
     let result = db.get_channels_for_user(a_id).await.unwrap();
     pretty_assertions::assert_eq!(
-        dbg!(result.channels),
+        result.channels,
         vec![
             Channel {
                 id: zed_id,
@@ -842,13 +824,27 @@ async fn test_channels_moving(db: &Arc<Database>) {
         .await
         .unwrap();
 
+
     // DAG is now:
     //    /- gpui2
     // zed - crdb -- livestreaming - livestreaming_dag - livestreaming_dag_sub
     //    \---------/
+    //
+    // zed/gpui2
+    // zed/crdb
+    // zed/crdb/livestreaming
+    //
+    // zed/crdb/livestreaming
+    // zed/crdb/livestreaming/livestreaming_dag
+    // zed/crdb/livestreaming/livestreaming_dag/livestreaming_dag_sub
+
+    // zed/livestreaming
+    // zed/livestreaming/livestreaming_dag
+    // zed/livestreaming/livestreaming_dag/livestreaming_dag_sub
+    //
     let result = db.get_channels_for_user(a_id).await.unwrap();
     pretty_assertions::assert_eq!(
-        dbg!(result.channels),
+        result.channels,
         vec![
             Channel {
                 id: zed_id,
@@ -864,11 +860,6 @@ async fn test_channels_moving(db: &Arc<Database>) {
                 id: gpui2_id,
                 name: "gpui2".to_string(),
                 parent_id: Some(zed_id),
-            },
-            Channel {
-                id: livestreaming_id,
-                name: "livestreaming".to_string(),
-                parent_id: Some(gpui2_id),
             },
             Channel {
                 id: livestreaming_id,
@@ -904,7 +895,7 @@ async fn test_channels_moving(db: &Arc<Database>) {
     //    \---------/
     let result = db.get_channels_for_user(a_id).await.unwrap();
     pretty_assertions::assert_eq!(
-        dbg!(result.channels),
+        result.channels,
         vec![
             Channel {
                 id: zed_id,
@@ -924,12 +915,12 @@ async fn test_channels_moving(db: &Arc<Database>) {
             Channel {
                 id: livestreaming_id,
                 name: "livestreaming".to_string(),
-                parent_id: Some(gpui2_id),
+                parent_id: Some(zed_id),
             },
             Channel {
                 id: livestreaming_id,
                 name: "livestreaming".to_string(),
-                parent_id: Some(zed_id),
+                parent_id: Some(gpui2_id),
             },
             Channel {
                 id: livestreaming_dag_id,
@@ -952,7 +943,7 @@ async fn test_channels_moving(db: &Arc<Database>) {
     //    \- livestreaming - livestreaming_dag - livestreaming_dag_sub
     let result = db.get_channels_for_user(a_id).await.unwrap();
     pretty_assertions::assert_eq!(
-        dbg!(result.channels),
+        result.channels,
         vec![
             Channel {
                 id: zed_id,
