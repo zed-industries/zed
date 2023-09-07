@@ -1,4 +1,5 @@
 pub mod channel_view;
+pub mod chat_panel;
 pub mod collab_panel;
 mod collab_titlebar_item;
 mod contact_notification;

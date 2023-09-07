@@ -1,8 +1,5 @@
 use anyhow::{anyhow, Result};
-use channel::{
-    channel_buffer::{self, ChannelBuffer},
-    ChannelId,
-};
+use channel::{ChannelBuffer, ChannelBufferEvent, ChannelId};
 use client::proto;
 use clock::ReplicaId;
 use collections::HashMap;
@@ -118,14 +115,14 @@ impl ChannelView {
     fn handle_channel_buffer_event(
         &mut self,
         _: ModelHandle<ChannelBuffer>,
-        event: &channel_buffer::Event,
+        event: &ChannelBufferEvent,
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            channel_buffer::Event::CollaboratorsChanged => {
+            ChannelBufferEvent::CollaboratorsChanged => {
                 self.refresh_replica_id_map(cx);
             }
-            channel_buffer::Event::Disconnected => self.editor.update(cx, |editor, cx| {
+            ChannelBufferEvent::Disconnected => self.editor.update(cx, |editor, cx| {
                 editor.set_read_only(true);
                 cx.notify();
             }),

@@ -1553,6 +1553,7 @@ dependencies = [
  "settings",
  "theme",
  "theme_selector",
+ "time 0.3.27",
  "util",
  "vcs_menu",
  "workspace",

@@ -1,4 +1,4 @@
-use crate::channel_buffer::ChannelBuffer;
+use crate::{channel_buffer::ChannelBuffer, channel_chat::ChannelChat};
 use anyhow::{anyhow, Result};
 use client::{Client, Subscription, User, UserId, UserStore};
 use collections::{hash_map, HashMap, HashSet};
@@ -20,7 +20,8 @@ pub struct ChannelStore {
     channels_with_admin_privileges: HashSet<ChannelId>,
     outgoing_invites: HashSet<(ChannelId, UserId)>,
     update_channels_tx: mpsc::UnboundedSender<proto::UpdateChannels>,
-    opened_buffers: HashMap<ChannelId, OpenedChannelBuffer>,
+    opened_buffers: HashMap<ChannelId, OpenedModelHandle<ChannelBuffer>>,
+    opened_chats: HashMap<ChannelId, OpenedModelHandle<ChannelChat>>,
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
     _rpc_subscription: Subscription,
@@ -50,15 +51,9 @@ impl Entity for ChannelStore {
     type Event = ChannelEvent;
 }
 
-pub enum ChannelMemberStatus {
-    Invited,
-    Member,
-    NotMember,
-}
-
-enum OpenedChannelBuffer {
-    Open(WeakModelHandle<ChannelBuffer>),
-    Loading(Shared<Task<Result<ModelHandle<ChannelBuffer>, Arc<anyhow::Error>>>>),
+enum OpenedModelHandle<E: Entity> {
+    Open(WeakModelHandle<E>),
+    Loading(Shared<Task<Result<ModelHandle<E>, Arc<anyhow::Error>>>>),
 }
 
 impl ChannelStore {
@@ -94,6 +89,7 @@ impl ChannelStore {
             channels_with_admin_privileges: Default::default(),
             outgoing_invites: Default::default(),
             opened_buffers: Default::default(),
+            opened_chats: Default::default(),
             update_channels_tx,
             client,
             user_store,
@@ -154,7 +150,7 @@ impl ChannelStore {
 
     pub fn has_open_channel_buffer(&self, channel_id: ChannelId, cx: &AppContext) -> bool {
         if let Some(buffer) = self.opened_buffers.get(&channel_id) {
-            if let OpenedChannelBuffer::Open(buffer) = buffer {
+            if let OpenedModelHandle::Open(buffer) = buffer {
                 return buffer.upgrade(cx).is_some();
             }
         }
@@ -166,24 +162,58 @@ impl ChannelStore {
         channel_id: ChannelId,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<ChannelBuffer>>> {
-        // Make sure that a given channel buffer is only opened once per
+        let client = self.client.clone();
+        self.open_channel_resource(
+            channel_id,
+            |this| &mut this.opened_buffers,
+            |channel, cx| ChannelBuffer::new(channel, client, cx),
+            cx,
+        )
+    }
+
+    pub fn open_channel_chat(
+        &mut self,
+        channel_id: ChannelId,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ModelHandle<ChannelChat>>> {
+        let client = self.client.clone();
+        let user_store = self.user_store.clone();
+        self.open_channel_resource(
+            channel_id,
+            |this| &mut this.opened_chats,
+            |channel, cx| ChannelChat::new(channel, user_store, client, cx),
+            cx,
+        )
+    }
+
+    fn open_channel_resource<T: Entity, F, Fut>(
+        &mut self,
+        channel_id: ChannelId,
+        map: fn(&mut Self) -> &mut HashMap<ChannelId, OpenedModelHandle<T>>,
+        load: F,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ModelHandle<T>>>
+    where
+        F: 'static + FnOnce(Arc<Channel>, AsyncAppContext) -> Fut,
+        Fut: Future<Output = Result<ModelHandle<T>>>,
+    {
+        // Make sure that a given channel resource is only opened once per
         // app instance, even if this method is called multiple times
         // with the same channel id while the first task is still running.
         let task = loop {
-            match self.opened_buffers.entry(channel_id) {
+            match map(self).entry(channel_id) {
                 hash_map::Entry::Occupied(e) => match e.get() {
-                    OpenedChannelBuffer::Open(buffer) => {
+                    OpenedModelHandle::Open(buffer) => {
                         if let Some(buffer) = buffer.upgrade(cx) {
                             break Task::ready(Ok(buffer)).shared();
                         } else {
-                            self.opened_buffers.remove(&channel_id);
+                            map(self).remove(&channel_id);
                             continue;
                         }
                     }
-                    OpenedChannelBuffer::Loading(task) => break task.clone(),
+                    OpenedModelHandle::Loading(task) => break task.clone(),
                 },
                 hash_map::Entry::Vacant(e) => {
-                    let client = self.client.clone();
                     let task = cx
                         .spawn(|this, cx| async move {
                             let channel = this.read_with(&cx, |this, _| {
@@ -192,12 +222,10 @@ impl ChannelStore {
                                 })
                             })?;
 
-                            ChannelBuffer::new(channel, client, cx)
-                                .await
-                                .map_err(Arc::new)
+                            load(channel, cx).await.map_err(Arc::new)
                         })
                         .shared();
-                    e.insert(OpenedChannelBuffer::Loading(task.clone()));
+                    e.insert(OpenedModelHandle::Loading(task.clone()));
                     cx.spawn({
                         let task = task.clone();
                         |this, mut cx| async move {
@@ -208,14 +236,14 @@ impl ChannelStore {
                                         this.opened_buffers.remove(&channel_id);
                                     })
                                     .detach();
-                                    this.opened_buffers.insert(
+                                    map(this).insert(
                                         channel_id,
-                                        OpenedChannelBuffer::Open(buffer.downgrade()),
+                                        OpenedModelHandle::Open(buffer.downgrade()),
                                     );
                                 }
                                 Err(error) => {
                                     log::error!("failed to open channel buffer {error:?}");
-                                    this.opened_buffers.remove(&channel_id);
+                                    map(this).remove(&channel_id);
                                 }
                             });
                         }
@@ -496,7 +524,7 @@ impl ChannelStore {
 
         let mut buffer_versions = Vec::new();
         for buffer in self.opened_buffers.values() {
-            if let OpenedChannelBuffer::Open(buffer) = buffer {
+            if let OpenedModelHandle::Open(buffer) = buffer {
                 if let Some(buffer) = buffer.upgrade(cx) {
                     let channel_buffer = buffer.read(cx);
                     let buffer = channel_buffer.buffer().read(cx);
@@ -522,7 +550,7 @@ impl ChannelStore {
 
             this.update(&mut cx, |this, cx| {
                 this.opened_buffers.retain(|_, buffer| match buffer {
-                    OpenedChannelBuffer::Open(channel_buffer) => {
+                    OpenedModelHandle::Open(channel_buffer) => {
                         let Some(channel_buffer) = channel_buffer.upgrade(cx) else {
                             return false;
                         };
@@ -583,7 +611,7 @@ impl ChannelStore {
                             false
                         })
                     }
-                    OpenedChannelBuffer::Loading(_) => true,
+                    OpenedModelHandle::Loading(_) => true,
                 });
             });
             anyhow::Ok(())
@@ -605,7 +633,7 @@ impl ChannelStore {
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| {
                         for (_, buffer) in this.opened_buffers.drain() {
-                            if let OpenedChannelBuffer::Open(buffer) = buffer {
+                            if let OpenedModelHandle::Open(buffer) = buffer {
                                 if let Some(buffer) = buffer.upgrade(cx) {
                                     buffer.update(cx, |buffer, cx| buffer.disconnect(cx));
                                 }
@@ -654,7 +682,7 @@ impl ChannelStore {
 
                 for channel_id in &payload.remove_channels {
                     let channel_id = *channel_id;
-                    if let Some(OpenedChannelBuffer::Open(buffer)) =
+                    if let Some(OpenedModelHandle::Open(buffer)) =
                         self.opened_buffers.remove(&channel_id)
                     {
                         if let Some(buffer) = buffer.upgrade(cx) {

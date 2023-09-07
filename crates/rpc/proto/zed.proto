@@ -155,7 +155,16 @@ message Envelope {
         RemoveChannelBufferCollaborator remove_channel_buffer_collaborator = 136;
         UpdateChannelBufferCollaborator update_channel_buffer_collaborator = 139;
         RejoinChannelBuffers rejoin_channel_buffers = 140;
-        RejoinChannelBuffersResponse rejoin_channel_buffers_response = 141; // Current max
+        RejoinChannelBuffersResponse rejoin_channel_buffers_response = 141;
+
+        JoinChannelChat join_channel_chat = 142;
+        JoinChannelChatResponse join_channel_chat_response = 143;
+        LeaveChannelChat leave_channel_chat = 144;
+        SendChannelMessage send_channel_message = 145;
+        SendChannelMessageResponse send_channel_message_response = 146;
+        ChannelMessageSent channel_message_sent = 147;
+        GetChannelMessages get_channel_messages = 148;
+        GetChannelMessagesResponse get_channel_messages_response = 149; // Current max
     }
 }
 
@@ -1021,8 +1030,54 @@ message RenameChannel {
     string name = 2;
 }
 
+message JoinChannelChat {
+    uint64 channel_id = 1;
+}
+
+message JoinChannelChatResponse {
+    repeated ChannelMessage messages = 1;
+    bool done = 2;
+}
+
+message LeaveChannelChat {
+    uint64 channel_id = 1;
+}
+
+message SendChannelMessage {
+    uint64 channel_id = 1;
+    string body = 2;
+    Nonce nonce = 3;
+}
+
+message SendChannelMessageResponse {
+    ChannelMessage message = 1;
+}
+
+message ChannelMessageSent {
+    uint64 channel_id = 1;
+    ChannelMessage message = 2;
+}
+
+message GetChannelMessages {
+    uint64 channel_id = 1;
+    uint64 before_message_id = 2;
+}
+
+message GetChannelMessagesResponse {
+    repeated ChannelMessage messages = 1;
+    bool done = 2;
+}
+
 message JoinChannelBuffer {
     uint64 channel_id = 1;
+}
+
+message ChannelMessage {
+    uint64 id = 1;
+    string body = 2;
+    uint64 timestamp = 3;
+    uint64 sender_id = 4;
+    Nonce nonce = 5;
 }
 
 message RejoinChannelBuffers {
