@@ -9762,7 +9762,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.103.0"
+version = "0.103.1"
 dependencies = [
  "activity_indicator",
  "ai",
