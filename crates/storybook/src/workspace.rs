@@ -416,9 +416,50 @@ impl WorkspaceElement {
             .items_start()
             .text_color(theme.lowest.base.default.foreground)
             .fill(theme.middle.warning.default.background)
-            .child(titlebar())
-            .child(collab_panel())
-            .child(statusbar())
+            .child(
+                div()
+                    .w_full()
+                    .h_8()
+                    .fill(theme.lowest.negative.default.background)
+                    .child(titlebar()),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .fill(theme.lowest.warning.default.background)
+                    .child(collab_panel()),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .h_9()
+                    .fill(theme.lowest.positive.default.background)
+                    .child(statusbar())
+                    .child(
+                        div()
+                            .h_px()
+                            .w_full()
+                            .fill(theme.lowest.negative.default.background),
+                    )
+                    .child(
+                        div()
+                            .h_px()
+                            .w_full()
+                            .fill(theme.lowest.positive.default.background),
+                    )
+                    .child(
+                        div()
+                            .h_px()
+                            .w_full()
+                            .fill(theme.lowest.accent.default.background),
+                    )
+                    .child(
+                        div()
+                            .h_px()
+                            .w_full()
+                            .fill(theme.lowest.warning.default.background),
+                    ),
+            )
     }
 }
 
