@@ -1,6 +1,20 @@
 use super::*;
 
 impl Database {
+    #[cfg(test)]
+    pub async fn all_channels(&self) -> Result<Vec<(ChannelId, String)>> {
+        self.transaction(move |tx| async move {
+            let mut channels = Vec::new();
+            let mut rows = channel::Entity::find().stream(&*tx).await?;
+            while let Some(row) = rows.next().await {
+                let row = row?;
+                channels.push((row.id, row.name));
+            }
+            Ok(channels)
+        })
+        .await
+    }
+
     pub async fn create_root_channel(
         &self,
         name: &str,

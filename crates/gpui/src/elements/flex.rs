@@ -88,8 +88,7 @@ impl<V: 'static> Flex<V> {
         cx: &mut LayoutContext<V>,
     ) {
         let cross_axis = self.axis.invert();
-        let last = self.children.len() - 1;
-        for (ix, child) in &mut self.children.iter_mut().enumerate() {
+        for child in self.children.iter_mut() {
             if let Some(metadata) = child.metadata::<FlexParentData>() {
                 if let Some((flex, expanded)) = metadata.flex {
                     if expanded != layout_expanded {
@@ -101,10 +100,6 @@ impl<V: 'static> Flex<V> {
                     } else {
                         let space_per_flex = *remaining_space / *remaining_flex;
                         space_per_flex * flex
-                    } - if ix == 0 || ix == last {
-                        self.spacing / 2.
-                    } else {
-                        self.spacing
                     };
                     let child_min = if expanded { child_max } else { 0. };
                     let child_constraint = match self.axis {
@@ -144,13 +139,12 @@ impl<V: 'static> Element<V> for Flex<V> {
         cx: &mut LayoutContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let mut total_flex = None;
-        let mut fixed_space = 0.0;
+        let mut fixed_space = self.children.len().saturating_sub(1) as f32 * self.spacing;
         let mut contains_float = false;
 
         let cross_axis = self.axis.invert();
         let mut cross_axis_max: f32 = 0.0;
-        let last = self.children.len().saturating_sub(1);
-        for (ix, child) in &mut self.children.iter_mut().enumerate() {
+        for child in self.children.iter_mut() {
             let metadata = child.metadata::<FlexParentData>();
             contains_float |= metadata.map_or(false, |metadata| metadata.float);
 
@@ -168,12 +162,7 @@ impl<V: 'static> Element<V> for Flex<V> {
                     ),
                 };
                 let size = child.layout(child_constraint, view, cx);
-                fixed_space += size.along(self.axis)
-                    + if ix == 0 || ix == last {
-                        self.spacing / 2.
-                    } else {
-                        self.spacing
-                    };
+                fixed_space += size.along(self.axis);
                 cross_axis_max = cross_axis_max.max(size.along(cross_axis));
             }
         }
@@ -333,8 +322,7 @@ impl<V: 'static> Element<V> for Flex<V> {
             }
         }
 
-        let last = self.children.len().saturating_sub(1);
-        for (ix, child) in &mut self.children.iter_mut().enumerate() {
+        for child in self.children.iter_mut() {
             if remaining_space > 0. {
                 if let Some(metadata) = child.metadata::<FlexParentData>() {
                     if metadata.float {
@@ -372,11 +360,9 @@ impl<V: 'static> Element<V> for Flex<V> {
 
             child.paint(scene, aligned_child_origin, visible_bounds, view, cx);
 
-            let spacing = if ix == last { 0. } else { self.spacing };
-
             match self.axis {
-                Axis::Horizontal => child_origin += vec2f(child.size().x() + spacing, 0.0),
-                Axis::Vertical => child_origin += vec2f(0.0, child.size().y() + spacing),
+                Axis::Horizontal => child_origin += vec2f(child.size().x() + self.spacing, 0.0),
+                Axis::Vertical => child_origin += vec2f(0.0, child.size().y() + self.spacing),
             }
         }
 

@@ -15,7 +15,6 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 pub use clock::ReplicaId;
-use fs::LineEnding;
 use futures::FutureExt as _;
 use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, Task};
 use lsp::LanguageServerId;
@@ -149,6 +148,7 @@ pub struct Completion {
     pub old_range: Range<Anchor>,
     pub new_text: String,
     pub label: CodeLabel,
+    pub server_id: LanguageServerId,
     pub lsp_completion: lsp::CompletionItem,
 }
 
@@ -439,7 +439,7 @@ impl Buffer {
             operations.extend(
                 text_operations
                     .iter()
-                    .filter(|(_, op)| !since.observed(op.local_timestamp()))
+                    .filter(|(_, op)| !since.observed(op.timestamp()))
                     .map(|(_, op)| proto::serialize_operation(&Operation::Buffer(op.clone()))),
             );
             operations.sort_unstable_by_key(proto::lamport_timestamp_for_operation);
@@ -1298,9 +1298,13 @@ impl Buffer {
         self.text.forget_transaction(transaction_id);
     }
 
+    pub fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
+        self.text.merge_transactions(transaction, destination);
+    }
+
     pub fn wait_for_edits(
         &mut self,
-        edit_ids: impl IntoIterator<Item = clock::Local>,
+        edit_ids: impl IntoIterator<Item = clock::Lamport>,
     ) -> impl Future<Output = Result<()>> {
         self.text.wait_for_edits(edit_ids)
     }
@@ -1358,7 +1362,7 @@ impl Buffer {
         }
     }
 
-    pub fn set_text<T>(&mut self, text: T, cx: &mut ModelContext<Self>) -> Option<clock::Local>
+    pub fn set_text<T>(&mut self, text: T, cx: &mut ModelContext<Self>) -> Option<clock::Lamport>
     where
         T: Into<Arc<str>>,
     {
@@ -1371,7 +1375,7 @@ impl Buffer {
         edits_iter: I,
         autoindent_mode: Option<AutoindentMode>,
         cx: &mut ModelContext<Self>,
-    ) -> Option<clock::Local>
+    ) -> Option<clock::Lamport>
     where
         I: IntoIterator<Item = (Range<S>, T)>,
         S: ToOffset,
@@ -1408,7 +1412,7 @@ impl Buffer {
             .and_then(|mode| self.language.as_ref().map(|_| (self.snapshot(), mode)));
 
         let edit_operation = self.text.edit(edits.iter().cloned());
-        let edit_id = edit_operation.local_timestamp();
+        let edit_id = edit_operation.timestamp();
 
         if let Some((before_edit, mode)) = autoindent_request {
             let mut delta = 0isize;
@@ -1661,6 +1665,22 @@ impl Buffer {
             Some(transaction_id)
         } else {
             None
+        }
+    }
+
+    pub fn undo_transaction(
+        &mut self,
+        transaction_id: TransactionId,
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
+        let was_dirty = self.is_dirty();
+        let old_version = self.version.clone();
+        if let Some(operation) = self.text.undo_transaction(transaction_id) {
+            self.send_operation(Operation::Buffer(operation), cx);
+            self.did_edit(&old_version, was_dirty, cx);
+            true
+        } else {
+            false
         }
     }
 
@@ -2197,8 +2217,8 @@ impl BufferSnapshot {
         let mut next_chars = self.chars_at(start).peekable();
         let mut prev_chars = self.reversed_chars_at(start).peekable();
 
-        let language = self.language_at(start);
-        let kind = |c| char_kind(language, c);
+        let scope = self.language_scope_at(start);
+        let kind = |c| char_kind(&scope, c);
         let word_kind = cmp::max(
             prev_chars.peek().copied().map(kind),
             next_chars.peek().copied().map(kind),
@@ -3012,17 +3032,21 @@ pub fn contiguous_ranges(
     })
 }
 
-pub fn char_kind(language: Option<&Arc<Language>>, c: char) -> CharKind {
+pub fn char_kind(scope: &Option<LanguageScope>, c: char) -> CharKind {
     if c.is_whitespace() {
         return CharKind::Whitespace;
     } else if c.is_alphanumeric() || c == '_' {
         return CharKind::Word;
     }
-    if let Some(language) = language {
-        if language.config.word_characters.contains(&c) {
-            return CharKind::Word;
+
+    if let Some(scope) = scope {
+        if let Some(characters) = scope.word_characters() {
+            if characters.contains(&c) {
+                return CharKind::Word;
+            }
         }
     }
+
     CharKind::Punctuation
 }
 

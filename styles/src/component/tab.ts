@@ -9,7 +9,7 @@ type TabProps = {
 export const tab = ({ layer }: TabProps) => {
     const active_color = text(layer, "sans", "base").color
     const inactive_border: Border = {
-        color: '#FFFFFF00',
+        color: "#FFFFFF00",
         width: 1,
         bottom: true,
         left: false,
@@ -27,7 +27,7 @@ export const tab = ({ layer }: TabProps) => {
             top: 8,
             left: 8,
             right: 8,
-            bottom: 6
+            bottom: 6,
         },
         border: inactive_border,
     }
@@ -35,17 +35,17 @@ export const tab = ({ layer }: TabProps) => {
     const i = interactive({
         state: {
             default: {
-                ...base
+                ...base,
             },
             hovered: {
                 ...base,
-                ...text(layer, "sans", "base", "hovered")
+                ...text(layer, "sans", "base", "hovered"),
             },
             clicked: {
                 ...base,
-                ...text(layer, "sans", "base", "pressed")
+                ...text(layer, "sans", "base", "pressed"),
             },
-        }
+        },
     })
 
     return toggleable({
@@ -60,14 +60,14 @@ export const tab = ({ layer }: TabProps) => {
                 hovered: {
                     ...i,
                     ...text(layer, "sans", "base", "hovered"),
-                    border: active_border
+                    border: active_border,
                 },
                 clicked: {
                     ...i,
                     ...text(layer, "sans", "base", "pressed"),
-                    border: active_border
+                    border: active_border,
                 },
-            }
-        }
+            },
+        },
     })
 }

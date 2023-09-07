@@ -12,7 +12,7 @@ import tabBar from "./tab_bar"
 import { interactive } from "../element"
 import { titlebar } from "./titlebar"
 import { useTheme } from "../theme"
-import { toggleable_icon_button } from "../component/icon_button"
+import { toolbar } from "./toolbar"
 
 export default function workspace(): any {
     const theme = useTheme()
@@ -128,35 +128,7 @@ export default function workspace(): any {
         },
         status_bar: statusBar(),
         titlebar: titlebar(),
-        toolbar: {
-            height: 34,
-            background: background(theme.highest),
-            border: border(theme.highest, { bottom: true }),
-            item_spacing: 8,
-            toggleable_tool: toggleable_icon_button(theme, {
-                margin: { left: 8 },
-                variant: "ghost",
-                active_color: "accent",
-            }),
-            padding: { left: 8, right: 8, top: 4, bottom: 4 },
-        },
-        breadcrumb_height: 24,
-        breadcrumbs: interactive({
-            base: {
-                ...text(theme.highest, "sans", "variant"),
-                corner_radius: 6,
-                padding: {
-                    left: 6,
-                    right: 6,
-                },
-            },
-            state: {
-                hovered: {
-                    color: foreground(theme.highest, "on", "hovered"),
-                    background: background(theme.highest, "on", "hovered"),
-                },
-            },
-        }),
+        toolbar: toolbar(),
         disconnected_overlay: {
             ...text(theme.lowest, "sans"),
             background: with_opacity(background(theme.lowest), 0.8),

@@ -3,7 +3,8 @@ use std::{cmp, sync::Arc};
 use editor::{
     char_kind,
     display_map::{DisplaySnapshot, FoldPoint, ToDisplayPoint},
-    movement, Bias, CharKind, DisplayPoint, ToOffset,
+    movement::{self, FindRange},
+    Bias, CharKind, DisplayPoint, ToOffset,
 };
 use gpui::{actions, impl_actions, AppContext, WindowContext};
 use language::{Point, Selection, SelectionGoal};
@@ -589,12 +590,12 @@ pub(crate) fn next_word_start(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
-    let language = map.buffer_snapshot.language_at(point.to_point(map));
+    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
     for _ in 0..times {
         let mut crossed_newline = false;
-        point = movement::find_boundary(map, point, |left, right| {
-            let left_kind = char_kind(language, left).coerce_punctuation(ignore_punctuation);
-            let right_kind = char_kind(language, right).coerce_punctuation(ignore_punctuation);
+        point = movement::find_boundary(map, point, FindRange::MultiLine, |left, right| {
+            let left_kind = char_kind(&scope, left).coerce_punctuation(ignore_punctuation);
+            let right_kind = char_kind(&scope, right).coerce_punctuation(ignore_punctuation);
             let at_newline = right == '\n';
 
             let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
@@ -614,12 +615,17 @@ fn next_word_end(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
-    let language = map.buffer_snapshot.language_at(point.to_point(map));
+    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
     for _ in 0..times {
-        *point.column_mut() += 1;
-        point = movement::find_boundary(map, point, |left, right| {
-            let left_kind = char_kind(language, left).coerce_punctuation(ignore_punctuation);
-            let right_kind = char_kind(language, right).coerce_punctuation(ignore_punctuation);
+        if point.column() < map.line_len(point.row()) {
+            *point.column_mut() += 1;
+        } else if point.row() < map.max_buffer_row() {
+            *point.row_mut() += 1;
+            *point.column_mut() = 0;
+        }
+        point = movement::find_boundary(map, point, FindRange::MultiLine, |left, right| {
+            let left_kind = char_kind(&scope, left).coerce_punctuation(ignore_punctuation);
+            let right_kind = char_kind(&scope, right).coerce_punctuation(ignore_punctuation);
 
             left_kind != right_kind && left_kind != CharKind::Whitespace
         });
@@ -645,16 +651,17 @@ fn previous_word_start(
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
-    let language = map.buffer_snapshot.language_at(point.to_point(map));
+    let scope = map.buffer_snapshot.language_scope_at(point.to_point(map));
     for _ in 0..times {
         // This works even though find_preceding_boundary is called for every character in the line containing
         // cursor because the newline is checked only once.
-        point = movement::find_preceding_boundary(map, point, |left, right| {
-            let left_kind = char_kind(language, left).coerce_punctuation(ignore_punctuation);
-            let right_kind = char_kind(language, right).coerce_punctuation(ignore_punctuation);
+        point =
+            movement::find_preceding_boundary(map, point, FindRange::MultiLine, |left, right| {
+                let left_kind = char_kind(&scope, left).coerce_punctuation(ignore_punctuation);
+                let right_kind = char_kind(&scope, right).coerce_punctuation(ignore_punctuation);
 
-            (left_kind != right_kind && !right.is_whitespace()) || left == '\n'
-        });
+                (left_kind != right_kind && !right.is_whitespace()) || left == '\n'
+            });
     }
     point
 }
@@ -665,7 +672,7 @@ fn first_non_whitespace(
     from: DisplayPoint,
 ) -> DisplayPoint {
     let mut last_point = start_of_line(map, display_lines, from);
-    let language = map.buffer_snapshot.language_at(from.to_point(map));
+    let scope = map.buffer_snapshot.language_scope_at(from.to_point(map));
     for (ch, point) in map.chars_at(last_point) {
         if ch == '\n' {
             return from;
@@ -673,7 +680,7 @@ fn first_non_whitespace(
 
         last_point = point;
 
-        if char_kind(language, ch) != CharKind::Whitespace {
+        if char_kind(&scope, ch) != CharKind::Whitespace {
             break;
         }
     }

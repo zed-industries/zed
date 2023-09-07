@@ -7,13 +7,11 @@ use std::process::{Output, Stdio};
 use std::{
     env::consts,
     path::{Path, PathBuf},
-    sync::{Arc, OnceLock},
+    sync::Arc,
 };
 use util::http::HttpClient;
 
 const VERSION: &str = "v18.15.0";
-
-static RUNTIME_INSTANCE: OnceLock<Arc<NodeRuntime>> = OnceLock::new();
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -28,23 +26,88 @@ pub struct NpmInfoDistTags {
     latest: Option<String>,
 }
 
-pub struct NodeRuntime {
+#[async_trait::async_trait]
+pub trait NodeRuntime: Send + Sync {
+    async fn binary_path(&self) -> Result<PathBuf>;
+
+    async fn run_npm_subcommand(
+        &self,
+        directory: Option<&Path>,
+        subcommand: &str,
+        args: &[&str],
+    ) -> Result<Output>;
+
+    async fn npm_package_latest_version(&self, name: &str) -> Result<String>;
+
+    async fn npm_install_packages(&self, directory: &Path, packages: &[(&str, &str)])
+        -> Result<()>;
+}
+
+pub struct RealNodeRuntime {
     http: Arc<dyn HttpClient>,
 }
 
-impl NodeRuntime {
-    pub fn instance(http: Arc<dyn HttpClient>) -> Arc<NodeRuntime> {
-        RUNTIME_INSTANCE
-            .get_or_init(|| Arc::new(NodeRuntime { http }))
-            .clone()
+impl RealNodeRuntime {
+    pub fn new(http: Arc<dyn HttpClient>) -> Arc<dyn NodeRuntime> {
+        Arc::new(RealNodeRuntime { http })
     }
 
-    pub async fn binary_path(&self) -> Result<PathBuf> {
+    async fn install_if_needed(&self) -> Result<PathBuf> {
+        log::info!("Node runtime install_if_needed");
+
+        let arch = match consts::ARCH {
+            "x86_64" => "x64",
+            "aarch64" => "arm64",
+            other => bail!("Running on unsupported platform: {other}"),
+        };
+
+        let folder_name = format!("node-{VERSION}-darwin-{arch}");
+        let node_containing_dir = util::paths::SUPPORT_DIR.join("node");
+        let node_dir = node_containing_dir.join(folder_name);
+        let node_binary = node_dir.join("bin/node");
+        let npm_file = node_dir.join("bin/npm");
+
+        let result = Command::new(&node_binary)
+            .arg(npm_file)
+            .arg("--version")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await;
+        let valid = matches!(result, Ok(status) if status.success());
+
+        if !valid {
+            _ = fs::remove_dir_all(&node_containing_dir).await;
+            fs::create_dir(&node_containing_dir)
+                .await
+                .context("error creating node containing dir")?;
+
+            let file_name = format!("node-{VERSION}-darwin-{arch}.tar.gz");
+            let url = format!("https://nodejs.org/dist/{VERSION}/{file_name}");
+            let mut response = self
+                .http
+                .get(&url, Default::default(), true)
+                .await
+                .context("error downloading Node binary tarball")?;
+
+            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+            let archive = Archive::new(decompressed_bytes);
+            archive.unpack(&node_containing_dir).await?;
+        }
+
+        anyhow::Ok(node_dir)
+    }
+}
+
+#[async_trait::async_trait]
+impl NodeRuntime for RealNodeRuntime {
+    async fn binary_path(&self) -> Result<PathBuf> {
         let installation_path = self.install_if_needed().await?;
         Ok(installation_path.join("bin/node"))
     }
 
-    pub async fn run_npm_subcommand(
+    async fn run_npm_subcommand(
         &self,
         directory: Option<&Path>,
         subcommand: &str,
@@ -106,7 +169,7 @@ impl NodeRuntime {
         output.map_err(|e| anyhow!("{e}"))
     }
 
-    pub async fn npm_package_latest_version(&self, name: &str) -> Result<String> {
+    async fn npm_package_latest_version(&self, name: &str) -> Result<String> {
         let output = self
             .run_npm_subcommand(
                 None,
@@ -131,10 +194,10 @@ impl NodeRuntime {
             .ok_or_else(|| anyhow!("no version found for npm package {}", name))
     }
 
-    pub async fn npm_install_packages(
+    async fn npm_install_packages(
         &self,
         directory: &Path,
-        packages: impl IntoIterator<Item = (&str, &str)>,
+        packages: &[(&str, &str)],
     ) -> Result<()> {
         let packages: Vec<_> = packages
             .into_iter()
@@ -155,51 +218,31 @@ impl NodeRuntime {
             .await?;
         Ok(())
     }
+}
 
-    async fn install_if_needed(&self) -> Result<PathBuf> {
-        log::info!("Node runtime install_if_needed");
+pub struct FakeNodeRuntime;
 
-        let arch = match consts::ARCH {
-            "x86_64" => "x64",
-            "aarch64" => "arm64",
-            other => bail!("Running on unsupported platform: {other}"),
-        };
+impl FakeNodeRuntime {
+    pub fn new() -> Arc<dyn NodeRuntime> {
+        Arc::new(FakeNodeRuntime)
+    }
+}
 
-        let folder_name = format!("node-{VERSION}-darwin-{arch}");
-        let node_containing_dir = util::paths::SUPPORT_DIR.join("node");
-        let node_dir = node_containing_dir.join(folder_name);
-        let node_binary = node_dir.join("bin/node");
-        let npm_file = node_dir.join("bin/npm");
+#[async_trait::async_trait]
+impl NodeRuntime for FakeNodeRuntime {
+    async fn binary_path(&self) -> Result<PathBuf> {
+        unreachable!()
+    }
 
-        let result = Command::new(&node_binary)
-            .arg(npm_file)
-            .arg("--version")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await;
-        let valid = matches!(result, Ok(status) if status.success());
+    async fn run_npm_subcommand(&self, _: Option<&Path>, _: &str, _: &[&str]) -> Result<Output> {
+        unreachable!()
+    }
 
-        if !valid {
-            _ = fs::remove_dir_all(&node_containing_dir).await;
-            fs::create_dir(&node_containing_dir)
-                .await
-                .context("error creating node containing dir")?;
+    async fn npm_package_latest_version(&self, _: &str) -> Result<String> {
+        unreachable!()
+    }
 
-            let file_name = format!("node-{VERSION}-darwin-{arch}.tar.gz");
-            let url = format!("https://nodejs.org/dist/{VERSION}/{file_name}");
-            let mut response = self
-                .http
-                .get(&url, Default::default(), true)
-                .await
-                .context("error downloading Node binary tarball")?;
-
-            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-            let archive = Archive::new(decompressed_bytes);
-            archive.unpack(&node_containing_dir).await?;
-        }
-
-        anyhow::Ok(node_dir)
+    async fn npm_install_packages(&self, _: &Path, _: &[(&str, &str)]) -> Result<()> {
+        unreachable!()
     }
 }

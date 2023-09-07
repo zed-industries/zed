@@ -251,6 +251,7 @@ impl Server {
             .add_request_handler(join_channel_buffer)
             .add_request_handler(leave_channel_buffer)
             .add_message_handler(update_channel_buffer)
+            .add_request_handler(rejoin_channel_buffers)
             .add_request_handler(get_channel_members)
             .add_request_handler(respond_to_channel_invite)
             .add_request_handler(join_channel)
@@ -277,13 +278,33 @@ impl Server {
                 tracing::info!("waiting for cleanup timeout");
                 timeout.await;
                 tracing::info!("cleanup timeout expired, retrieving stale rooms");
-                if let Some(room_ids) = app_state
+                if let Some((room_ids, channel_ids)) = app_state
                     .db
-                    .stale_room_ids(&app_state.config.zed_environment, server_id)
+                    .stale_server_resource_ids(&app_state.config.zed_environment, server_id)
                     .await
                     .trace_err()
                 {
                     tracing::info!(stale_room_count = room_ids.len(), "retrieved stale rooms");
+                    tracing::info!(
+                        stale_channel_buffer_count = channel_ids.len(),
+                        "retrieved stale channel buffers"
+                    );
+
+                    for channel_id in channel_ids {
+                        if let Some(refreshed_channel_buffer) = app_state
+                            .db
+                            .clear_stale_channel_buffer_collaborators(channel_id, server_id)
+                            .await
+                            .trace_err()
+                        {
+                            for connection_id in refreshed_channel_buffer.connection_ids {
+                                for message in &refreshed_channel_buffer.removed_collaborators {
+                                    peer.send(connection_id, message.clone()).trace_err();
+                                }
+                            }
+                        }
+                    }
+
                     for room_id in room_ids {
                         let mut contacts_to_update = HashSet::default();
                         let mut canceled_calls_to_user_ids = Vec::new();
@@ -292,7 +313,7 @@ impl Server {
 
                         if let Some(mut refreshed_room) = app_state
                             .db
-                            .refresh_room(room_id, server_id)
+                            .clear_stale_room_participants(room_id, server_id)
                             .await
                             .trace_err()
                         {
@@ -854,13 +875,13 @@ async fn connection_lost(
         .await
         .trace_err();
 
-    leave_channel_buffers_for_session(&session)
-        .await
-        .trace_err();
-
     futures::select_biased! {
         _ = executor.sleep(RECONNECT_TIMEOUT).fuse() => {
+            log::info!("connection lost, removing all resources for user:{}, connection:{:?}", session.user_id, session.connection_id);
             leave_room_for_session(&session).await.trace_err();
+            leave_channel_buffers_for_session(&session)
+                .await
+                .trace_err();
 
             if !session
                 .connection_pool()
@@ -2544,6 +2565,41 @@ async fn update_channel_buffer(
         },
         &session.peer,
     );
+    Ok(())
+}
+
+async fn rejoin_channel_buffers(
+    request: proto::RejoinChannelBuffers,
+    response: Response<proto::RejoinChannelBuffers>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+    let buffers = db
+        .rejoin_channel_buffers(&request.buffers, session.user_id, session.connection_id)
+        .await?;
+
+    for buffer in &buffers {
+        let collaborators_to_notify = buffer
+            .buffer
+            .collaborators
+            .iter()
+            .filter_map(|c| Some(c.peer_id?.into()));
+        channel_buffer_updated(
+            session.connection_id,
+            collaborators_to_notify,
+            &proto::UpdateChannelBufferCollaborator {
+                channel_id: buffer.buffer.channel_id,
+                old_peer_id: Some(buffer.old_connection_id.into()),
+                new_peer_id: Some(session.connection_id.into()),
+            },
+            &session.peer,
+        );
+    }
+
+    response.send(proto::RejoinChannelBuffersResponse {
+        buffers: buffers.into_iter().map(|b| b.buffer).collect(),
+    })?;
+
     Ok(())
 }
 

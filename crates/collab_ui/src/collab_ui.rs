@@ -49,7 +49,7 @@ pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
             if room.is_screen_sharing() {
                 ActiveCall::report_call_event_for_room(
                     "disable screen share",
-                    room.id(),
+                    Some(room.id()),
                     room.channel_id(),
                     &client,
                     cx,
@@ -58,7 +58,7 @@ pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
             } else {
                 ActiveCall::report_call_event_for_room(
                     "enable screen share",
-                    room.id(),
+                    Some(room.id()),
                     room.channel_id(),
                     &client,
                     cx,
@@ -78,7 +78,7 @@ pub fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
             if room.is_muted(cx) {
                 ActiveCall::report_call_event_for_room(
                     "enable microphone",
-                    room.id(),
+                    Some(room.id()),
                     room.channel_id(),
                     &client,
                     cx,
@@ -86,7 +86,7 @@ pub fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
             } else {
                 ActiveCall::report_call_event_for_room(
                     "disable microphone",
-                    room.id(),
+                    Some(room.id()),
                     room.channel_id(),
                     &client,
                     cx,

@@ -67,7 +67,8 @@ fn scroll_editor(editor: &mut Editor, amount: &ScrollAmount, cx: &mut ViewContex
         let top_anchor = editor.scroll_manager.anchor().anchor;
 
         editor.change_selections(None, cx, |s| {
-            s.move_heads_with(|map, head, goal| {
+            s.move_with(|map, selection| {
+                let head = selection.head();
                 let top = top_anchor.to_display_point(map);
                 let min_row = top.row() + VERTICAL_SCROLL_MARGIN as u32;
                 let max_row = top.row() + visible_rows - VERTICAL_SCROLL_MARGIN as u32 - 1;
@@ -79,7 +80,11 @@ fn scroll_editor(editor: &mut Editor, amount: &ScrollAmount, cx: &mut ViewContex
                 } else {
                     head
                 };
-                (new_head, goal)
+                if selection.is_empty() {
+                    selection.collapse_to(new_head, selection.goal)
+                } else {
+                    selection.set_head(new_head, selection.goal)
+                };
             })
         });
     }
@@ -90,12 +95,35 @@ mod test {
     use crate::{state::Mode, test::VimTestContext};
     use gpui::geometry::vector::vec2f;
     use indoc::indoc;
+    use language::Point;
 
     #[gpui::test]
     async fn test_scroll(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
-        cx.set_state(indoc! {"ˇa\nb\nc\nd\ne\n"}, Mode::Normal);
+        let window = cx.window;
+        let line_height =
+            cx.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
+        window.simulate_resize(vec2f(1000., 8.0 * line_height - 1.0), &mut cx);
+
+        cx.set_state(
+            indoc!(
+                "ˇone
+                two
+                three
+                four
+                five
+                six
+                seven
+                eight
+                nine
+                ten
+                eleven
+                twelve
+            "
+            ),
+            Mode::Normal,
+        );
 
         cx.update_editor(|editor, cx| {
             assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 0.))
@@ -111,6 +139,34 @@ mod test {
         cx.simulate_keystrokes(["ctrl-y"]);
         cx.update_editor(|editor, cx| {
             assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 2.))
+        });
+
+        // does not select in normal mode
+        cx.simulate_keystrokes(["g", "g"]);
+        cx.update_editor(|editor, cx| {
+            assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 0.))
+        });
+        cx.simulate_keystrokes(["ctrl-d"]);
+        cx.update_editor(|editor, cx| {
+            assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 2.0));
+            assert_eq!(
+                editor.selections.newest(cx).range(),
+                Point::new(5, 0)..Point::new(5, 0)
+            )
+        });
+
+        // does select in visual mode
+        cx.simulate_keystrokes(["g", "g"]);
+        cx.update_editor(|editor, cx| {
+            assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 0.))
+        });
+        cx.simulate_keystrokes(["v", "ctrl-d"]);
+        cx.update_editor(|editor, cx| {
+            assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 2.0));
+            assert_eq!(
+                editor.selections.newest(cx).range(),
+                Point::new(0, 0)..Point::new(5, 1)
+            )
         });
     }
 }

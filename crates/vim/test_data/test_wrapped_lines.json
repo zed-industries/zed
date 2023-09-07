@@ -48,3 +48,8 @@
 {"Key":"o"}
 {"Key":"escape"}
 {"Get":{"state":"twelve char\nˇo\ntwelve char twelve char\ntwelve char\n","mode":"Normal"}}
+{"Put":{"state":"fourteen chaˇr\nfourteen char\n"}}
+{"Key":"d"}
+{"Key":"i"}
+{"Key":"w"}
+{"Get":{"state":"fourteenˇ \nfourteen char\n","mode":"Normal"}}

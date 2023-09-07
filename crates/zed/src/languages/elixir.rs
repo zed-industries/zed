@@ -27,6 +27,10 @@ impl LspAdapter for ElixirLspAdapter {
         LanguageServerName("elixir-ls".into())
     }
 
+    fn short_name(&self) -> &'static str {
+        "elixir-ls"
+    }
+
     fn will_start_server(
         &self,
         delegate: &Arc<dyn LspAdapterDelegate>,

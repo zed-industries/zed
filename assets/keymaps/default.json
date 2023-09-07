@@ -515,6 +515,17 @@
       "enter": "editor::ConfirmCodeAction"
     }
   },
+  {
+    "context": "Editor && (showing_code_actions || showing_completions)",
+    "bindings": {
+      "up": "editor::ContextMenuPrev",
+      "ctrl-p": "editor::ContextMenuPrev",
+      "down": "editor::ContextMenuNext",
+      "ctrl-n": "editor::ContextMenuNext",
+      "pageup": "editor::ContextMenuFirst",
+      "pagedown": "editor::ContextMenuLast"
+    }
+  },
   // Custom bindings
   {
     "bindings": {
@@ -522,7 +533,7 @@
       // TODO: Move this to a dock open action
       "cmd-shift-c": "collab_panel::ToggleFocus",
       "cmd-alt-i": "zed::DebugElements",
-      "ctrl-shift-:": "editor::ToggleInlayHints",
+      "ctrl-:": "editor::ToggleInlayHints",
     }
   },
   {
@@ -530,7 +541,8 @@
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",
       "cmd-f8": "editor::GoToHunk",
-      "cmd-shift-f8": "editor::GoToPrevHunk"
+      "cmd-shift-f8": "editor::GoToPrevHunk",
+      "ctrl-enter": "assistant::InlineAssist"
     }
   },
   {

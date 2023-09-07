@@ -22,11 +22,11 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 }
 
 pub struct HtmlLspAdapter {
-    node: Arc<NodeRuntime>,
+    node: Arc<dyn NodeRuntime>,
 }
 
 impl HtmlLspAdapter {
-    pub fn new(node: Arc<NodeRuntime>) -> Self {
+    pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
         HtmlLspAdapter { node }
     }
 }
@@ -35,6 +35,10 @@ impl HtmlLspAdapter {
 impl LspAdapter for HtmlLspAdapter {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("vscode-html-language-server".into())
+    }
+
+    fn short_name(&self) -> &'static str {
+        "html"
     }
 
     async fn fetch_latest_server_version(
@@ -61,7 +65,7 @@ impl LspAdapter for HtmlLspAdapter {
             self.node
                 .npm_install_packages(
                     &container_dir,
-                    [("vscode-langservers-extracted", version.as_str())],
+                    &[("vscode-langservers-extracted", version.as_str())],
                 )
                 .await?;
         }
@@ -77,14 +81,14 @@ impl LspAdapter for HtmlLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &self.node).await
+        get_cached_server_binary(container_dir, &*self.node).await
     }
 
     async fn installation_test_binary(
         &self,
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &self.node).await
+        get_cached_server_binary(container_dir, &*self.node).await
     }
 
     async fn initialization_options(&self) -> Option<serde_json::Value> {
@@ -96,7 +100,7 @@ impl LspAdapter for HtmlLspAdapter {
 
 async fn get_cached_server_binary(
     container_dir: PathBuf,
-    node: &NodeRuntime,
+    node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
     (|| async move {
         let mut last_version_dir = None;

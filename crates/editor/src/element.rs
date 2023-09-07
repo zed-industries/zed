@@ -2251,7 +2251,7 @@ impl Element<Editor> for EditorElement {
             let replica_id = if let Some(mapping) = &editor.replica_id_mapping {
                 mapping.get(&replica_id).copied()
             } else {
-                None
+                Some(replica_id)
             };
 
             // The local selections match the leader's selections.

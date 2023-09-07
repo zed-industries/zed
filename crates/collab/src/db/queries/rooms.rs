@@ -1,7 +1,7 @@
 use super::*;
 
 impl Database {
-    pub async fn refresh_room(
+    pub async fn clear_stale_room_participants(
         &self,
         room_id: RoomId,
         new_server_id: ServerId,

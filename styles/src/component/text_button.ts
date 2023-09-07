@@ -1,5 +1,6 @@
 import { interactive, toggleable } from "../element"
 import {
+    Border,
     TextProperties,
     background,
     foreground,
@@ -10,14 +11,13 @@ import { Button } from "./button"
 import { Margin } from "./icon_button"
 
 interface TextButtonOptions {
-    layer?:
-    | Theme["lowest"]
-    | Theme["middle"]
-    | Theme["highest"]
+    layer?: Theme["lowest"] | Theme["middle"] | Theme["highest"]
     variant?: Button.Variant
     color?: keyof Theme["lowest"]
     margin?: Partial<Margin>
+    disabled?: boolean
     text_properties?: TextProperties
+    border?: Border
 }
 
 type ToggleableTextButtonOptions = TextButtonOptions & {
@@ -29,12 +29,17 @@ export function text_button({
     color,
     layer,
     margin,
+    disabled,
     text_properties,
+    border,
 }: TextButtonOptions = {}) {
     const theme = useTheme()
     if (!color) color = "base"
 
-    const background_color = variant === Button.variant.Ghost ? null : background(layer ?? theme.lowest, color)
+    const background_color =
+        variant === Button.variant.Ghost
+            ? null
+            : background(layer ?? theme.lowest, color)
 
     const text_options: TextProperties = {
         size: "xs",
@@ -64,17 +69,42 @@ export function text_button({
         },
         state: {
             default: {
+                border,
                 background: background_color,
-                color: foreground(layer ?? theme.lowest, color),
+                color: disabled
+                    ? foreground(layer ?? theme.lowest, "disabled")
+                    : foreground(layer ?? theme.lowest, color),
             },
-            hovered: {
-                background: background(layer ?? theme.lowest, color, "hovered"),
-                color: foreground(layer ?? theme.lowest, color, "hovered"),
-            },
-            clicked: {
-                background: background(layer ?? theme.lowest, color, "pressed"),
-                color: foreground(layer ?? theme.lowest, color, "pressed"),
-            },
+            hovered: disabled
+                ? {}
+                : {
+                    border,
+                    background: background(
+                        layer ?? theme.lowest,
+                        color,
+                        "hovered"
+                    ),
+                    color: foreground(
+                        layer ?? theme.lowest,
+                        color,
+                        "hovered"
+                    ),
+                },
+            clicked: disabled
+                ? {}
+                : {
+                    border,
+                    background: background(
+                        layer ?? theme.lowest,
+                        color,
+                        "pressed"
+                    ),
+                    color: foreground(
+                        layer ?? theme.lowest,
+                        color,
+                        "pressed"
+                    ),
+                },
         },
     })
 }

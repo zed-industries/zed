@@ -371,6 +371,7 @@
         "Replace"
       ],
       "s": "vim::Substitute",
+      "shift-s": "vim::SubstituteLine",
       "> >": "editor::Indent",
       "< <": "editor::Outdent",
       "ctrl-pagedown": "pane::ActivateNextItem",
@@ -446,6 +447,7 @@
         }
       ],
       "s": "vim::Substitute",
+      "shift-s": "vim::SubstituteLine",
       "c": "vim::Substitute",
       "~": "vim::ChangeCase",
       "shift-i": [

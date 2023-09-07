@@ -384,6 +384,16 @@ impl<'a> From<&'a str> for Rope {
     }
 }
 
+impl<'a> FromIterator<&'a str> for Rope {
+    fn from_iter<T: IntoIterator<Item = &'a str>>(iter: T) -> Self {
+        let mut rope = Rope::new();
+        for chunk in iter {
+            rope.push(chunk);
+        }
+        rope
+    }
+}
+
 impl From<String> for Rope {
     fn from(text: String) -> Self {
         Rope::from(text.as_str())

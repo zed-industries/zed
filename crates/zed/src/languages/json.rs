@@ -27,12 +27,12 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 }
 
 pub struct JsonLspAdapter {
-    node: Arc<NodeRuntime>,
+    node: Arc<dyn NodeRuntime>,
     languages: Arc<LanguageRegistry>,
 }
 
 impl JsonLspAdapter {
-    pub fn new(node: Arc<NodeRuntime>, languages: Arc<LanguageRegistry>) -> Self {
+    pub fn new(node: Arc<dyn NodeRuntime>, languages: Arc<LanguageRegistry>) -> Self {
         JsonLspAdapter { node, languages }
     }
 }
@@ -41,6 +41,10 @@ impl JsonLspAdapter {
 impl LspAdapter for JsonLspAdapter {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("json-language-server".into())
+    }
+
+    fn short_name(&self) -> &'static str {
+        "json"
     }
 
     async fn fetch_latest_server_version(
@@ -67,7 +71,7 @@ impl LspAdapter for JsonLspAdapter {
             self.node
                 .npm_install_packages(
                     &container_dir,
-                    [("vscode-json-languageserver", version.as_str())],
+                    &[("vscode-json-languageserver", version.as_str())],
                 )
                 .await?;
         }
@@ -83,14 +87,14 @@ impl LspAdapter for JsonLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &self.node).await
+        get_cached_server_binary(container_dir, &*self.node).await
     }
 
     async fn installation_test_binary(
         &self,
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &self.node).await
+        get_cached_server_binary(container_dir, &*self.node).await
     }
 
     async fn initialization_options(&self) -> Option<serde_json::Value> {
@@ -102,7 +106,7 @@ impl LspAdapter for JsonLspAdapter {
     fn workspace_configuration(
         &self,
         cx: &mut AppContext,
-    ) -> Option<BoxFuture<'static, serde_json::Value>> {
+    ) -> BoxFuture<'static, serde_json::Value> {
         let action_names = cx.all_action_names().collect::<Vec<_>>();
         let staff_mode = cx.is_staff();
         let language_names = &self.languages.language_names();
@@ -113,29 +117,28 @@ impl LspAdapter for JsonLspAdapter {
             },
             cx,
         );
-        Some(
-            future::ready(serde_json::json!({
-                "json": {
-                    "format": {
-                        "enable": true,
+
+        future::ready(serde_json::json!({
+            "json": {
+                "format": {
+                    "enable": true,
+                },
+                "schemas": [
+                    {
+                        "fileMatch": [
+                            schema_file_match(&paths::SETTINGS),
+                            &*paths::LOCAL_SETTINGS_RELATIVE_PATH,
+                        ],
+                        "schema": settings_schema,
                     },
-                    "schemas": [
-                        {
-                            "fileMatch": [
-                                schema_file_match(&paths::SETTINGS),
-                                &*paths::LOCAL_SETTINGS_RELATIVE_PATH,
-                            ],
-                            "schema": settings_schema,
-                        },
-                        {
-                            "fileMatch": [schema_file_match(&paths::KEYMAP)],
-                            "schema": KeymapFile::generate_json_schema(&action_names),
-                        }
-                    ]
-                }
-            }))
-            .boxed(),
-        )
+                    {
+                        "fileMatch": [schema_file_match(&paths::KEYMAP)],
+                        "schema": KeymapFile::generate_json_schema(&action_names),
+                    }
+                ]
+            }
+        }))
+        .boxed()
     }
 
     async fn language_ids(&self) -> HashMap<String, String> {
@@ -145,7 +148,7 @@ impl LspAdapter for JsonLspAdapter {
 
 async fn get_cached_server_binary(
     container_dir: PathBuf,
-    node: &NodeRuntime,
+    node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
     (|| async move {
         let mut last_version_dir = None;

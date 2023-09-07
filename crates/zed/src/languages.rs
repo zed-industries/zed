@@ -6,6 +6,7 @@ use std::{borrow::Cow, str, sync::Arc};
 use util::asset_str;
 
 mod c;
+mod css;
 mod elixir;
 mod go;
 mod html;
@@ -18,6 +19,7 @@ mod python;
 mod ruby;
 mod rust;
 mod svelte;
+mod tailwind;
 mod typescript;
 mod yaml;
 
@@ -35,7 +37,7 @@ mod yaml;
 #[exclude = "*.rs"]
 struct LanguageDir;
 
-pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
+pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<dyn NodeRuntime>) {
     let language = |name, grammar, adapters| {
         languages.register(name, load_config(name), grammar, adapters, load_queries)
     };
@@ -51,7 +53,14 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
         tree_sitter_cpp::language(),
         vec![Arc::new(c::CLspAdapter)],
     );
-    language("css", tree_sitter_css::language(), vec![]);
+    language(
+        "css",
+        tree_sitter_css::language(),
+        vec![
+            Arc::new(css::CssLspAdapter::new(node_runtime.clone())),
+            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+        ],
+    );
     language(
         "elixir",
         tree_sitter_elixir::language(),
@@ -95,6 +104,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
         vec![
             Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
             Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
+            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
     );
     language(
@@ -111,12 +121,16 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<NodeRuntime>) {
         vec![
             Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
             Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
+            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
     );
     language(
         "html",
         tree_sitter_html::language(),
-        vec![Arc::new(html::HtmlLspAdapter::new(node_runtime.clone()))],
+        vec![
+            Arc::new(html::HtmlLspAdapter::new(node_runtime.clone())),
+            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+        ],
     );
     language(
         "ruby",

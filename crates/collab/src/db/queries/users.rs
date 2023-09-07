@@ -241,7 +241,6 @@ impl Database {
         result
     }
 
-    #[cfg(debug_assertions)]
     pub async fn create_user_flag(&self, flag: &str) -> Result<FlagId> {
         self.transaction(|tx| async move {
             let flag = feature_flag::Entity::insert(feature_flag::ActiveModel {
@@ -257,7 +256,6 @@ impl Database {
         .await
     }
 
-    #[cfg(debug_assertions)]
     pub async fn add_user_flag(&self, user: UserId, flag: FlagId) -> Result<()> {
         self.transaction(|tx| async move {
             user_feature::Entity::insert(user_feature::ActiveModel {

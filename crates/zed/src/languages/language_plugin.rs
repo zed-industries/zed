@@ -70,6 +70,10 @@ impl LspAdapter for PluginLspAdapter {
         LanguageServerName(name.into())
     }
 
+    fn short_name(&self) -> &'static str {
+        "PluginLspAdapter"
+    }
+
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,

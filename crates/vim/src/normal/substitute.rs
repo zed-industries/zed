@@ -1,10 +1,32 @@
-use gpui::WindowContext;
+use editor::movement;
+use gpui::{actions, AppContext, WindowContext};
 use language::Point;
+use workspace::Workspace;
 
 use crate::{motion::Motion, utils::copy_selections_content, Mode, Vim};
 
-pub fn substitute(vim: &mut Vim, count: Option<usize>, cx: &mut WindowContext) {
-    let line_mode = vim.state().mode == Mode::VisualLine;
+actions!(vim, [Substitute, SubstituteLine]);
+
+pub(crate) fn init(cx: &mut AppContext) {
+    cx.add_action(|_: &mut Workspace, _: &Substitute, cx| {
+        Vim::update(cx, |vim, cx| {
+            let count = vim.pop_number_operator(cx);
+            substitute(vim, count, vim.state().mode == Mode::VisualLine, cx);
+        })
+    });
+
+    cx.add_action(|_: &mut Workspace, _: &SubstituteLine, cx| {
+        Vim::update(cx, |vim, cx| {
+            if matches!(vim.state().mode, Mode::VisualBlock | Mode::Visual) {
+                vim.switch_mode(Mode::VisualLine, false, cx)
+            }
+            let count = vim.pop_number_operator(cx);
+            substitute(vim, count, true, cx)
+        })
+    });
+}
+
+pub fn substitute(vim: &mut Vim, count: Option<usize>, line_mode: bool, cx: &mut WindowContext) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.set_clip_at_line_ends(false, cx);
         editor.transact(cx, |editor, cx| {
@@ -14,6 +36,11 @@ pub fn substitute(vim: &mut Vim, count: Option<usize>, cx: &mut WindowContext) {
                         Motion::Right.expand_selection(map, selection, count, true);
                     }
                     if line_mode {
+                        // in Visual mode when the selection contains the newline at the end
+                        // of the line, we should exclude it.
+                        if !selection.is_empty() && selection.end.column() == 0 {
+                            selection.end = movement::left(map, selection.end);
+                        }
                         Motion::CurrentLine.expand_selection(map, selection, None, false);
                         if let Some((point, _)) = (Motion::FirstNonWhitespace {
                             display_lines: false,
@@ -164,6 +191,70 @@ mod test {
             The quick brown
             fox juˇmps over
             the laˇzy dog"})
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_substitute_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        let initial_state = indoc! {"
+                    The quick brown
+                    fox juˇmps over
+                    the lazy dog
+                    "};
+
+        // normal mode
+        cx.set_shared_state(initial_state).await;
+        cx.simulate_shared_keystrokes(["shift-s", "o"]).await;
+        cx.assert_shared_state(indoc! {"
+            The quick brown
+            oˇ
+            the lazy dog
+            "})
+            .await;
+
+        // visual mode
+        cx.set_shared_state(initial_state).await;
+        cx.simulate_shared_keystrokes(["v", "k", "shift-s", "o"])
+            .await;
+        cx.assert_shared_state(indoc! {"
+            oˇ
+            the lazy dog
+            "})
+            .await;
+
+        // visual block mode
+        cx.set_shared_state(initial_state).await;
+        cx.simulate_shared_keystrokes(["ctrl-v", "j", "shift-s", "o"])
+            .await;
+        cx.assert_shared_state(indoc! {"
+            The quick brown
+            oˇ
+            "})
+            .await;
+
+        // visual mode including newline
+        cx.set_shared_state(initial_state).await;
+        cx.simulate_shared_keystrokes(["v", "$", "shift-s", "o"])
+            .await;
+        cx.assert_shared_state(indoc! {"
+            The quick brown
+            oˇ
+            the lazy dog
+            "})
+            .await;
+
+        // indentation
+        cx.set_neovim_option("shiftwidth=4").await;
+        cx.set_shared_state(initial_state).await;
+        cx.simulate_shared_keystrokes([">", ">", "shift-s", "o"])
+            .await;
+        cx.assert_shared_state(indoc! {"
+            The quick brown
+                oˇ
+            the lazy dog
+            "})
             .await;
     }
 }

@@ -93,7 +93,7 @@ export default function tab_bar(): any {
             border: border(theme.lowest, "on", {
                 bottom: true,
                 overlay: true,
-            })
+            }),
         },
         state: {
             hovered: {
@@ -101,7 +101,7 @@ export default function tab_bar(): any {
                 background: background(theme.highest, "on", "hovered"),
             },
             disabled: {
-                color: foreground(theme.highest, "on", "disabled")
+                color: foreground(theme.highest, "on", "disabled"),
             },
         },
     })
@@ -162,6 +162,6 @@ export default function tab_bar(): any {
                 right: false,
             },
         },
-        nav_button: nav_button
+        nav_button: nav_button,
     }
 }

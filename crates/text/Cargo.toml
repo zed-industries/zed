@@ -14,7 +14,6 @@ test-support = ["rand"]
 [dependencies]
 clock = { path = "../clock" }
 collections = { path = "../collections" }
-fs = { path = "../fs" }
 rope = { path = "../rope" }
 sum_tree = { path = "../sum_tree" }
 util = { path = "../util" }
@@ -32,6 +31,7 @@ regex.workspace = true
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
+util = { path = "../util", features = ["test-support"] }
 ctor.workspace = true
 env_logger.workspace = true
 rand.workspace = true

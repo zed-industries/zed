@@ -44,7 +44,7 @@ use gpui::{
     elements::*,
     executor,
     fonts::{self, HighlightStyle, TextStyle},
-    geometry::vector::Vector2F,
+    geometry::vector::{vec2f, Vector2F},
     impl_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton},
@@ -312,6 +312,10 @@ actions!(
         CopyPath,
         CopyRelativePath,
         CopyHighlightJson,
+        ContextMenuFirst,
+        ContextMenuPrev,
+        ContextMenuNext,
+        ContextMenuLast,
     ]
 );
 
@@ -468,6 +472,10 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::next_copilot_suggestion);
     cx.add_action(Editor::previous_copilot_suggestion);
     cx.add_action(Editor::copilot_suggest);
+    cx.add_action(Editor::context_menu_first);
+    cx.add_action(Editor::context_menu_prev);
+    cx.add_action(Editor::context_menu_next);
+    cx.add_action(Editor::context_menu_last);
 
     hover_popover::init(cx);
     scroll::actions::init(cx);
@@ -820,6 +828,7 @@ struct CompletionsMenu {
     id: CompletionId,
     initial_position: Anchor,
     buffer: ModelHandle<Buffer>,
+    project: Option<ModelHandle<Project>>,
     completions: Arc<[Completion]>,
     match_candidates: Vec<StringMatchCandidate>,
     matches: Arc<[StringMatch]>,
@@ -863,6 +872,48 @@ impl CompletionsMenu {
     fn render(&self, style: EditorStyle, cx: &mut ViewContext<Editor>) -> AnyElement<Editor> {
         enum CompletionTag {}
 
+        let language_servers = self.project.as_ref().map(|project| {
+            project
+                .read(cx)
+                .language_servers_for_buffer(self.buffer.read(cx), cx)
+                .filter(|(_, server)| server.capabilities().completion_provider.is_some())
+                .map(|(adapter, server)| (server.server_id(), adapter.short_name))
+                .collect::<Vec<_>>()
+        });
+        let needs_server_name = language_servers
+            .as_ref()
+            .map_or(false, |servers| servers.len() > 1);
+
+        let get_server_name =
+            move |lookup_server_id: lsp::LanguageServerId| -> Option<&'static str> {
+                language_servers
+                    .iter()
+                    .flatten()
+                    .find_map(|(server_id, server_name)| {
+                        if *server_id == lookup_server_id {
+                            Some(*server_name)
+                        } else {
+                            None
+                        }
+                    })
+            };
+
+        let widest_completion_ix = self
+            .matches
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, mat)| {
+                let completion = &self.completions[mat.candidate_id];
+                let mut len = completion.label.text.chars().count();
+
+                if let Some(server_name) = get_server_name(completion.server_id) {
+                    len += server_name.chars().count();
+                }
+
+                len
+            })
+            .map(|(ix, _)| ix);
+
         let completions = self.completions.clone();
         let matches = self.matches.clone();
         let selected_item = self.selected_item;
@@ -889,19 +940,83 @@ impl CompletionsMenu {
                                     style.autocomplete.item
                                 };
 
-                                Text::new(completion.label.text.clone(), style.text.clone())
-                                    .with_soft_wrap(false)
-                                    .with_highlights(combine_syntax_and_fuzzy_match_highlights(
-                                        &completion.label.text,
-                                        style.text.color.into(),
-                                        styled_runs_for_code_label(
-                                            &completion.label,
-                                            &style.syntax,
-                                        ),
-                                        &mat.positions,
-                                    ))
-                                    .contained()
-                                    .with_style(item_style)
+                                let completion_label =
+                                    Text::new(completion.label.text.clone(), style.text.clone())
+                                        .with_soft_wrap(false)
+                                        .with_highlights(
+                                            combine_syntax_and_fuzzy_match_highlights(
+                                                &completion.label.text,
+                                                style.text.color.into(),
+                                                styled_runs_for_code_label(
+                                                    &completion.label,
+                                                    &style.syntax,
+                                                ),
+                                                &mat.positions,
+                                            ),
+                                        );
+
+                                if let Some(server_name) = get_server_name(completion.server_id) {
+                                    Flex::row()
+                                        .with_child(completion_label)
+                                        .with_children((|| {
+                                            if !needs_server_name {
+                                                return None;
+                                            }
+
+                                            let text_style = TextStyle {
+                                                color: style.autocomplete.server_name_color,
+                                                font_size: style.text.font_size
+                                                    * style.autocomplete.server_name_size_percent,
+                                                ..style.text.clone()
+                                            };
+
+                                            let label = Text::new(server_name, text_style)
+                                                .aligned()
+                                                .constrained()
+                                                .dynamically(move |constraint, _, _| {
+                                                    gpui::SizeConstraint {
+                                                        min: constraint.min,
+                                                        max: vec2f(
+                                                            constraint.max.x(),
+                                                            constraint.min.y(),
+                                                        ),
+                                                    }
+                                                });
+
+                                            if Some(item_ix) == widest_completion_ix {
+                                                Some(
+                                                    label
+                                                        .contained()
+                                                        .with_style(
+                                                            style
+                                                                .autocomplete
+                                                                .server_name_container,
+                                                        )
+                                                        .into_any(),
+                                                )
+                                            } else {
+                                                Some(label.flex_float().into_any())
+                                            }
+                                        })())
+                                        .into_any()
+                                } else {
+                                    completion_label.into_any()
+                                }
+                                .contained()
+                                .with_style(item_style)
+                                .constrained()
+                                .dynamically(
+                                    move |constraint, _, _| {
+                                        if Some(item_ix) == widest_completion_ix {
+                                            constraint
+                                        } else {
+                                            gpui::SizeConstraint {
+                                                min: constraint.min,
+                                                max: constraint.min,
+                                            }
+                                        }
+                                    },
+                                )
                             },
                         )
                         .with_cursor_style(CursorStyle::PointingHand)
@@ -918,19 +1033,7 @@ impl CompletionsMenu {
                 }
             },
         )
-        .with_width_from_item(
-            self.matches
-                .iter()
-                .enumerate()
-                .max_by_key(|(_, mat)| {
-                    self.completions[mat.candidate_id]
-                        .label
-                        .text
-                        .chars()
-                        .count()
-                })
-                .map(|(ix, _)| ix),
-        )
+        .with_width_from_item(widest_completion_ix)
         .contained()
         .with_style(container_style)
         .into_any()
@@ -1454,6 +1557,16 @@ impl Editor {
                 cx.observe(&display_map, Self::on_display_map_changed),
                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
                 cx.observe_global::<SettingsStore, _>(Self::settings_changed),
+                cx.observe_window_activation(|editor, active, cx| {
+                    editor.blink_manager.update(cx, |blink_manager, cx| {
+                        if active {
+                            blink_manager.enable(cx);
+                        } else {
+                            blink_manager.show_cursor(cx);
+                            blink_manager.disable(cx);
+                        }
+                    });
+                }),
             ],
         };
 
@@ -1549,7 +1662,7 @@ impl Editor {
             .excerpt_containing(self.selections.newest_anchor().head(), cx)
     }
 
-    fn style(&self, cx: &AppContext) -> EditorStyle {
+    pub fn style(&self, cx: &AppContext) -> EditorStyle {
         build_style(
             settings::get::<ThemeSettings>(cx),
             self.get_field_editor_theme.as_deref(),
@@ -1623,6 +1736,15 @@ impl Editor {
 
     pub fn set_read_only(&mut self, read_only: bool) {
         self.read_only = read_only;
+    }
+
+    pub fn set_field_editor_style(
+        &mut self,
+        style: Option<Arc<GetFieldEditorTheme>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.get_field_editor_theme = style;
+        cx.notify();
     }
 
     pub fn replica_id_map(&self) -> Option<&HashMap<ReplicaId, ReplicaId>> {
@@ -2964,6 +3086,7 @@ impl Editor {
         });
 
         let id = post_inc(&mut self.next_completion_id);
+        let project = self.project.clone();
         let task = cx.spawn(|this, mut cx| {
             async move {
                 let menu = if let Some(completions) = completions.await.log_err() {
@@ -2982,6 +3105,7 @@ impl Editor {
                             })
                             .collect(),
                         buffer,
+                        project,
                         completions: completions.into(),
                         matches: Vec::new().into(),
                         selected_item: 0,
@@ -4979,6 +5103,9 @@ impl Editor {
             self.unmark_text(cx);
             self.refresh_copilot_suggestions(true, cx);
             cx.emit(Event::Edited);
+            cx.emit(Event::TransactionUndone {
+                transaction_id: tx_id,
+            });
         }
     }
 
@@ -5047,12 +5174,6 @@ impl Editor {
             return;
         }
 
-        if let Some(context_menu) = self.context_menu.as_mut() {
-            if context_menu.select_prev(cx) {
-                return;
-            }
-        }
-
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate_action();
             return;
@@ -5072,15 +5193,6 @@ impl Editor {
 
     pub fn move_page_up(&mut self, action: &MovePageUp, cx: &mut ViewContext<Self>) {
         if self.take_rename(true, cx).is_some() {
-            return;
-        }
-
-        if self
-            .context_menu
-            .as_mut()
-            .map(|menu| menu.select_first(cx))
-            .unwrap_or(false)
-        {
             return;
         }
 
@@ -5122,12 +5234,6 @@ impl Editor {
 
     pub fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
         self.take_rename(true, cx);
-
-        if let Some(context_menu) = self.context_menu.as_mut() {
-            if context_menu.select_next(cx) {
-                return;
-            }
-        }
 
         if self.mode == EditorMode::SingleLine {
             cx.propagate_action();
@@ -5194,6 +5300,30 @@ impl Editor {
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_heads_with(|map, head, goal| movement::down(map, head, goal, false))
         });
+    }
+
+    pub fn context_menu_first(&mut self, _: &ContextMenuFirst, cx: &mut ViewContext<Self>) {
+        if let Some(context_menu) = self.context_menu.as_mut() {
+            context_menu.select_first(cx);
+        }
+    }
+
+    pub fn context_menu_prev(&mut self, _: &ContextMenuPrev, cx: &mut ViewContext<Self>) {
+        if let Some(context_menu) = self.context_menu.as_mut() {
+            context_menu.select_prev(cx);
+        }
+    }
+
+    pub fn context_menu_next(&mut self, _: &ContextMenuNext, cx: &mut ViewContext<Self>) {
+        if let Some(context_menu) = self.context_menu.as_mut() {
+            context_menu.select_next(cx);
+        }
+    }
+
+    pub fn context_menu_last(&mut self, _: &ContextMenuLast, cx: &mut ViewContext<Self>) {
+        if let Some(context_menu) = self.context_menu.as_mut() {
+            context_menu.select_last(cx);
+        }
     }
 
     pub fn move_to_previous_word_start(
@@ -8418,6 +8548,9 @@ pub enum Event {
         local: bool,
         autoscroll: bool,
     },
+    TransactionUndone {
+        transaction_id: TransactionId,
+    },
     Closed,
 }
 
@@ -8458,7 +8591,7 @@ impl View for Editor {
         "Editor"
     }
 
-    fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+    fn focus_in(&mut self, focused: AnyViewHandle, cx: &mut ViewContext<Self>) {
         if cx.is_self_focused() {
             let focused_event = EditorFocused(cx.handle());
             cx.emit(Event::Focused);
@@ -8466,7 +8599,7 @@ impl View for Editor {
         }
         if let Some(rename) = self.pending_rename.as_ref() {
             cx.focus(&rename.editor);
-        } else {
+        } else if cx.is_self_focused() || !focused.is::<Editor>() {
             if !self.focused {
                 self.blink_manager.update(cx, BlinkManager::enable);
             }
@@ -8544,17 +8677,20 @@ impl View for Editor {
         if self.pending_rename.is_some() {
             keymap.add_identifier("renaming");
         }
-        match self.context_menu.as_ref() {
-            Some(ContextMenu::Completions(_)) => {
-                keymap.add_identifier("menu");
-                keymap.add_identifier("showing_completions")
+        if self.context_menu_visible() {
+            match self.context_menu.as_ref() {
+                Some(ContextMenu::Completions(_)) => {
+                    keymap.add_identifier("menu");
+                    keymap.add_identifier("showing_completions")
+                }
+                Some(ContextMenu::CodeActions(_)) => {
+                    keymap.add_identifier("menu");
+                    keymap.add_identifier("showing_code_actions")
+                }
+                None => {}
             }
-            Some(ContextMenu::CodeActions(_)) => {
-                keymap.add_identifier("menu");
-                keymap.add_identifier("showing_code_actions")
-            }
-            None => {}
         }
+
         for layer in self.keymap_context_layers.values() {
             keymap.extend(layer);
         }
@@ -9161,6 +9297,7 @@ pub fn split_words<'a>(text: &'a str) -> impl std::iter::Iterator<Item = &'a str
         None
     })
     .flat_map(|word| word.split_inclusive('_'))
+    .flat_map(|word| word.split_inclusive('-'))
 }
 
 trait RangeToAnchorExt {

@@ -37,10 +37,7 @@ impl BlinkManager {
     }
 
     pub fn pause_blinking(&mut self, cx: &mut ModelContext<Self>) {
-        if !self.visible {
-            self.visible = true;
-            cx.notify();
-        }
+        self.show_cursor(cx);
 
         let epoch = self.next_blink_epoch();
         let interval = self.blink_interval;
@@ -82,7 +79,13 @@ impl BlinkManager {
                 })
                 .detach();
             }
-        } else if !self.visible {
+        } else {
+            self.show_cursor(cx);
+        }
+    }
+
+    pub fn show_cursor(&mut self, cx: &mut ModelContext<'_, BlinkManager>) {
+        if !self.visible {
             self.visible = true;
             cx.notify();
         }

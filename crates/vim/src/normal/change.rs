@@ -1,7 +1,10 @@
 use crate::{motion::Motion, object::Object, state::Mode, utils::copy_selections_content, Vim};
 use editor::{
-    char_kind, display_map::DisplaySnapshot, movement, scroll::autoscroll::Autoscroll, CharKind,
-    DisplayPoint,
+    char_kind,
+    display_map::DisplaySnapshot,
+    movement::{self, FindRange},
+    scroll::autoscroll::Autoscroll,
+    CharKind, DisplayPoint,
 };
 use gpui::WindowContext;
 use language::Selection;
@@ -86,22 +89,24 @@ fn expand_changed_word_selection(
     ignore_punctuation: bool,
 ) -> bool {
     if times.is_none() || times.unwrap() == 1 {
-        let language = map
+        let scope = map
             .buffer_snapshot
-            .language_at(selection.start.to_point(map));
+            .language_scope_at(selection.start.to_point(map));
         let in_word = map
             .chars_at(selection.head())
             .next()
-            .map(|(c, _)| char_kind(language, c) != CharKind::Whitespace)
+            .map(|(c, _)| char_kind(&scope, c) != CharKind::Whitespace)
             .unwrap_or_default();
 
         if in_word {
-            selection.end = movement::find_boundary(map, selection.end, |left, right| {
-                let left_kind = char_kind(language, left).coerce_punctuation(ignore_punctuation);
-                let right_kind = char_kind(language, right).coerce_punctuation(ignore_punctuation);
+            selection.end =
+                movement::find_boundary(map, selection.end, FindRange::MultiLine, |left, right| {
+                    let left_kind = char_kind(&scope, left).coerce_punctuation(ignore_punctuation);
+                    let right_kind =
+                        char_kind(&scope, right).coerce_punctuation(ignore_punctuation);
 
-                left_kind != right_kind && left_kind != CharKind::Whitespace
-            });
+                    left_kind != right_kind && left_kind != CharKind::Whitespace
+                });
             true
         } else {
             Motion::NextWordStart { ignore_punctuation }

@@ -10,6 +10,7 @@ pub(crate) fn init(client: &Arc<Client>) {
     client.add_model_message_handler(ChannelBuffer::handle_update_channel_buffer);
     client.add_model_message_handler(ChannelBuffer::handle_add_channel_buffer_collaborator);
     client.add_model_message_handler(ChannelBuffer::handle_remove_channel_buffer_collaborator);
+    client.add_model_message_handler(ChannelBuffer::handle_update_channel_buffer_collaborator);
 }
 
 pub struct ChannelBuffer {
@@ -17,6 +18,7 @@ pub struct ChannelBuffer {
     connected: bool,
     collaborators: Vec<proto::Collaborator>,
     buffer: ModelHandle<language::Buffer>,
+    buffer_epoch: u64,
     client: Arc<Client>,
     subscription: Option<client::Subscription>,
 }
@@ -73,6 +75,7 @@ impl ChannelBuffer {
 
             Self {
                 buffer,
+                buffer_epoch: response.epoch,
                 client,
                 connected: true,
                 collaborators,
@@ -80,6 +83,26 @@ impl ChannelBuffer {
                 subscription: Some(subscription.set_model(&cx.handle(), &mut cx.to_async())),
             }
         }))
+    }
+
+    pub(crate) fn replace_collaborators(
+        &mut self,
+        collaborators: Vec<proto::Collaborator>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        for old_collaborator in &self.collaborators {
+            if collaborators
+                .iter()
+                .any(|c| c.replica_id == old_collaborator.replica_id)
+            {
+                self.buffer.update(cx, |buffer, cx| {
+                    buffer.remove_peer(old_collaborator.replica_id as u16, cx)
+                });
+            }
+        }
+        self.collaborators = collaborators;
+        cx.emit(Event::CollaboratorsChanged);
+        cx.notify();
     }
 
     async fn handle_update_channel_buffer(
@@ -149,6 +172,26 @@ impl ChannelBuffer {
         Ok(())
     }
 
+    async fn handle_update_channel_buffer_collaborator(
+        this: ModelHandle<Self>,
+        message: TypedEnvelope<proto::UpdateChannelBufferCollaborator>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            for collaborator in &mut this.collaborators {
+                if collaborator.peer_id == message.payload.old_peer_id {
+                    collaborator.peer_id = message.payload.new_peer_id;
+                    break;
+                }
+            }
+            cx.emit(Event::CollaboratorsChanged);
+            cx.notify();
+        });
+
+        Ok(())
+    }
+
     fn on_buffer_update(
         &mut self,
         _: ModelHandle<language::Buffer>,
@@ -166,6 +209,10 @@ impl ChannelBuffer {
         }
     }
 
+    pub fn epoch(&self) -> u64 {
+        self.buffer_epoch
+    }
+
     pub fn buffer(&self) -> ModelHandle<language::Buffer> {
         self.buffer.clone()
     }
@@ -179,6 +226,7 @@ impl ChannelBuffer {
     }
 
     pub(crate) fn disconnect(&mut self, cx: &mut ModelContext<Self>) {
+        log::info!("channel buffer {} disconnected", self.channel.id);
         if self.connected {
             self.connected = false;
             self.subscription.take();

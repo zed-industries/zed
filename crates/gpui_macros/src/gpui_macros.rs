@@ -37,8 +37,14 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                         Some("seed") => starting_seed = parse_int(&meta.lit)?,
                         Some("on_failure") => {
                             if let Lit::Str(name) = meta.lit {
-                                let ident = Ident::new(&name.value(), name.span());
-                                on_failure_fn_name = quote!(Some(#ident));
+                                let mut path = syn::Path {
+                                    leading_colon: None,
+                                    segments: Default::default(),
+                                };
+                                for part in name.value().split("::") {
+                                    path.segments.push(Ident::new(part, name.span()).into());
+                                }
+                                on_failure_fn_name = quote!(Some(#path));
                             } else {
                                 return Err(TokenStream::from(
                                     syn::Error::new(

@@ -431,6 +431,24 @@ async fn test_wrapped_lines(cx: &mut gpui::TestAppContext) {
         twelve char
     "})
         .await;
+
+    // line wraps as:
+    // fourteen ch
+    // ar
+    // fourteen ch
+    // ar
+    cx.set_shared_state(indoc! { "
+        fourteen chaˇr
+        fourteen char
+    "})
+        .await;
+
+    cx.simulate_shared_keystrokes(["d", "i", "w"]).await;
+    cx.assert_shared_state(indoc! {"
+        fourteenˇ•
+        fourteen char
+    "})
+        .await;
 }
 
 #[gpui::test]

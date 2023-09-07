@@ -1106,23 +1106,17 @@ impl CollabPanel {
     ) -> AnyElement<Self> {
         enum OpenSharedScreen {}
 
-        let font_cache = cx.font_cache();
-        let host_avatar_height = theme
+        let host_avatar_width = theme
             .contact_avatar
             .width
             .or(theme.contact_avatar.height)
             .unwrap_or(0.);
-        let row = &theme.project_row.inactive_state().default;
         let tree_branch = theme.tree_branch;
-        let line_height = row.name.text.line_height(font_cache);
-        let cap_height = row.name.text.cap_height(font_cache);
-        let baseline_offset =
-            row.name.text.baseline_offset(font_cache) + (theme.row_height - line_height) / 2.;
 
         MouseEventHandler::new::<OpenSharedScreen, _>(
             peer_id.as_u64() as usize,
             cx,
-            |mouse_state, _| {
+            |mouse_state, cx| {
                 let tree_branch = *tree_branch.in_state(is_selected).style_for(mouse_state);
                 let row = theme
                     .project_row
@@ -1130,49 +1124,20 @@ impl CollabPanel {
                     .style_for(mouse_state);
 
                 Flex::row()
-                    .with_child(
-                        Stack::new()
-                            .with_child(Canvas::new(move |scene, bounds, _, _, _| {
-                                let start_x = bounds.min_x() + (bounds.width() / 2.)
-                                    - (tree_branch.width / 2.);
-                                let end_x = bounds.max_x();
-                                let start_y = bounds.min_y();
-                                let end_y = bounds.min_y() + baseline_offset - (cap_height / 2.);
-
-                                scene.push_quad(gpui::Quad {
-                                    bounds: RectF::from_points(
-                                        vec2f(start_x, start_y),
-                                        vec2f(
-                                            start_x + tree_branch.width,
-                                            if is_last { end_y } else { bounds.max_y() },
-                                        ),
-                                    ),
-                                    background: Some(tree_branch.color),
-                                    border: gpui::Border::default(),
-                                    corner_radii: (0.).into(),
-                                });
-                                scene.push_quad(gpui::Quad {
-                                    bounds: RectF::from_points(
-                                        vec2f(start_x, end_y),
-                                        vec2f(end_x, end_y + tree_branch.width),
-                                    ),
-                                    background: Some(tree_branch.color),
-                                    border: gpui::Border::default(),
-                                    corner_radii: (0.).into(),
-                                });
-                            }))
-                            .constrained()
-                            .with_width(host_avatar_height),
-                    )
+                    .with_child(render_tree_branch(
+                        tree_branch,
+                        &row.name.text,
+                        is_last,
+                        vec2f(host_avatar_width, theme.row_height),
+                        cx.font_cache(),
+                    ))
                     .with_child(
                         Svg::new("icons/disable_screen_sharing_12.svg")
-                            .with_color(row.icon.color)
+                            .with_color(theme.channel_hash.color)
                             .constrained()
-                            .with_width(row.icon.width)
+                            .with_width(theme.channel_hash.width)
                             .aligned()
-                            .left()
-                            .contained()
-                            .with_style(row.icon.container),
+                            .left(),
                     )
                     .with_child(
                         Label::new("Screen", row.name.text.clone())
@@ -2275,7 +2240,8 @@ impl CollabPanel {
     fn open_channel_buffer(&mut self, action: &OpenChannelBuffer, cx: &mut ViewContext<Self>) {
         if let Some(workspace) = self.workspace.upgrade(cx) {
             let pane = workspace.read(cx).active_pane().clone();
-            let channel_view = ChannelView::open(action.channel_id, pane.clone(), workspace, cx);
+            let channel_id = action.channel_id;
+            let channel_view = ChannelView::open(channel_id, pane.clone(), workspace, cx);
             cx.spawn(|_, mut cx| async move {
                 let channel_view = channel_view.await?;
                 pane.update(&mut cx, |pane, cx| {
@@ -2284,6 +2250,18 @@ impl CollabPanel {
                 anyhow::Ok(())
             })
             .detach();
+            let room_id = ActiveCall::global(cx)
+                .read(cx)
+                .room()
+                .map(|room| room.read(cx).id());
+
+            ActiveCall::report_call_event_for_room(
+                "open channel notes",
+                room_id,
+                Some(channel_id),
+                &self.client,
+                cx,
+            );
         }
     }
 
@@ -2553,27 +2531,16 @@ impl View for CollabPanel {
                 .with_child(
                     Flex::column()
                         .with_child(
-                            Flex::row()
-                                .with_child(
-                                    ChildView::new(&self.filter_editor, cx)
-                                        .contained()
-                                        .with_style(theme.user_query_editor.container)
-                                        .flex(1.0, true),
-                                )
-                                .constrained()
-                                .with_width(self.size(cx)),
+                            Flex::row().with_child(
+                                ChildView::new(&self.filter_editor, cx)
+                                    .contained()
+                                    .with_style(theme.user_query_editor.container)
+                                    .flex(1.0, true),
+                            ),
                         )
-                        .with_child(
-                            List::new(self.list_state.clone())
-                                .constrained()
-                                .with_width(self.size(cx))
-                                .flex(1., true)
-                                .into_any(),
-                        )
+                        .with_child(List::new(self.list_state.clone()).flex(1., true).into_any())
                         .contained()
                         .with_style(theme.container)
-                        .constrained()
-                        .with_width(self.size(cx))
                         .into_any(),
                 )
                 .with_children(

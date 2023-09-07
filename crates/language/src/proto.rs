@@ -20,17 +20,17 @@ pub fn deserialize_fingerprint(fingerprint: &str) -> Result<RopeFingerprint> {
         .map_err(|error| anyhow!("invalid fingerprint: {}", error))
 }
 
-pub fn deserialize_line_ending(message: proto::LineEnding) -> fs::LineEnding {
+pub fn deserialize_line_ending(message: proto::LineEnding) -> text::LineEnding {
     match message {
-        proto::LineEnding::Unix => fs::LineEnding::Unix,
-        proto::LineEnding::Windows => fs::LineEnding::Windows,
+        proto::LineEnding::Unix => text::LineEnding::Unix,
+        proto::LineEnding::Windows => text::LineEnding::Windows,
     }
 }
 
-pub fn serialize_line_ending(message: fs::LineEnding) -> proto::LineEnding {
+pub fn serialize_line_ending(message: text::LineEnding) -> proto::LineEnding {
     match message {
-        fs::LineEnding::Unix => proto::LineEnding::Unix,
-        fs::LineEnding::Windows => proto::LineEnding::Windows,
+        text::LineEnding::Unix => proto::LineEnding::Unix,
+        text::LineEnding::Windows => proto::LineEnding::Windows,
     }
 }
 
@@ -41,24 +41,22 @@ pub fn serialize_operation(operation: &crate::Operation) -> proto::Operation {
                 proto::operation::Variant::Edit(serialize_edit_operation(edit))
             }
 
-            crate::Operation::Buffer(text::Operation::Undo {
-                undo,
-                lamport_timestamp,
-            }) => proto::operation::Variant::Undo(proto::operation::Undo {
-                replica_id: undo.id.replica_id as u32,
-                local_timestamp: undo.id.value,
-                lamport_timestamp: lamport_timestamp.value,
-                version: serialize_version(&undo.version),
-                counts: undo
-                    .counts
-                    .iter()
-                    .map(|(edit_id, count)| proto::UndoCount {
-                        replica_id: edit_id.replica_id as u32,
-                        local_timestamp: edit_id.value,
-                        count: *count,
-                    })
-                    .collect(),
-            }),
+            crate::Operation::Buffer(text::Operation::Undo(undo)) => {
+                proto::operation::Variant::Undo(proto::operation::Undo {
+                    replica_id: undo.timestamp.replica_id as u32,
+                    lamport_timestamp: undo.timestamp.value,
+                    version: serialize_version(&undo.version),
+                    counts: undo
+                        .counts
+                        .iter()
+                        .map(|(edit_id, count)| proto::UndoCount {
+                            replica_id: edit_id.replica_id as u32,
+                            lamport_timestamp: edit_id.value,
+                            count: *count,
+                        })
+                        .collect(),
+                })
+            }
 
             crate::Operation::UpdateSelections {
                 selections,
@@ -101,8 +99,7 @@ pub fn serialize_operation(operation: &crate::Operation) -> proto::Operation {
 pub fn serialize_edit_operation(operation: &EditOperation) -> proto::operation::Edit {
     proto::operation::Edit {
         replica_id: operation.timestamp.replica_id as u32,
-        local_timestamp: operation.timestamp.local,
-        lamport_timestamp: operation.timestamp.lamport,
+        lamport_timestamp: operation.timestamp.value,
         version: serialize_version(&operation.version),
         ranges: operation.ranges.iter().map(serialize_range).collect(),
         new_text: operation
@@ -114,7 +111,7 @@ pub fn serialize_edit_operation(operation: &EditOperation) -> proto::operation::
 }
 
 pub fn serialize_undo_map_entry(
-    (edit_id, counts): (&clock::Local, &[(clock::Local, u32)]),
+    (edit_id, counts): (&clock::Lamport, &[(clock::Lamport, u32)]),
 ) -> proto::UndoMapEntry {
     proto::UndoMapEntry {
         replica_id: edit_id.replica_id as u32,
@@ -123,11 +120,36 @@ pub fn serialize_undo_map_entry(
             .iter()
             .map(|(undo_id, count)| proto::UndoCount {
                 replica_id: undo_id.replica_id as u32,
-                local_timestamp: undo_id.value,
+                lamport_timestamp: undo_id.value,
                 count: *count,
             })
             .collect(),
     }
+}
+
+pub fn split_operations(
+    mut operations: Vec<proto::Operation>,
+) -> impl Iterator<Item = Vec<proto::Operation>> {
+    #[cfg(any(test, feature = "test-support"))]
+    const CHUNK_SIZE: usize = 5;
+
+    #[cfg(not(any(test, feature = "test-support")))]
+    const CHUNK_SIZE: usize = 100;
+
+    let mut done = false;
+    std::iter::from_fn(move || {
+        if done {
+            return None;
+        }
+
+        let operations = operations
+            .drain(..std::cmp::min(CHUNK_SIZE, operations.len()))
+            .collect::<Vec<_>>();
+        if operations.is_empty() {
+            done = true;
+        }
+        Some(operations)
+    })
 }
 
 pub fn serialize_selections(selections: &Arc<[Selection<Anchor>]>) -> Vec<proto::Selection> {
@@ -197,7 +219,7 @@ pub fn serialize_diagnostics<'a>(
 pub fn serialize_anchor(anchor: &Anchor) -> proto::Anchor {
     proto::Anchor {
         replica_id: anchor.timestamp.replica_id as u32,
-        local_timestamp: anchor.timestamp.value,
+        timestamp: anchor.timestamp.value,
         offset: anchor.offset as u64,
         bias: match anchor.bias {
             Bias::Left => proto::Bias::Left as i32,
@@ -218,32 +240,26 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operati
                 crate::Operation::Buffer(text::Operation::Edit(deserialize_edit_operation(edit)))
             }
             proto::operation::Variant::Undo(undo) => {
-                crate::Operation::Buffer(text::Operation::Undo {
-                    lamport_timestamp: clock::Lamport {
+                crate::Operation::Buffer(text::Operation::Undo(UndoOperation {
+                    timestamp: clock::Lamport {
                         replica_id: undo.replica_id as ReplicaId,
                         value: undo.lamport_timestamp,
                     },
-                    undo: UndoOperation {
-                        id: clock::Local {
-                            replica_id: undo.replica_id as ReplicaId,
-                            value: undo.local_timestamp,
-                        },
-                        version: deserialize_version(&undo.version),
-                        counts: undo
-                            .counts
-                            .into_iter()
-                            .map(|c| {
-                                (
-                                    clock::Local {
-                                        replica_id: c.replica_id as ReplicaId,
-                                        value: c.local_timestamp,
-                                    },
-                                    c.count,
-                                )
-                            })
-                            .collect(),
-                    },
-                })
+                    version: deserialize_version(&undo.version),
+                    counts: undo
+                        .counts
+                        .into_iter()
+                        .map(|c| {
+                            (
+                                clock::Lamport {
+                                    replica_id: c.replica_id as ReplicaId,
+                                    value: c.lamport_timestamp,
+                                },
+                                c.count,
+                            )
+                        })
+                        .collect(),
+                }))
             }
             proto::operation::Variant::UpdateSelections(message) => {
                 let selections = message
@@ -298,10 +314,9 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operati
 
 pub fn deserialize_edit_operation(edit: proto::operation::Edit) -> EditOperation {
     EditOperation {
-        timestamp: InsertionTimestamp {
+        timestamp: clock::Lamport {
             replica_id: edit.replica_id as ReplicaId,
-            local: edit.local_timestamp,
-            lamport: edit.lamport_timestamp,
+            value: edit.lamport_timestamp,
         },
         version: deserialize_version(&edit.version),
         ranges: edit.ranges.into_iter().map(deserialize_range).collect(),
@@ -311,9 +326,9 @@ pub fn deserialize_edit_operation(edit: proto::operation::Edit) -> EditOperation
 
 pub fn deserialize_undo_map_entry(
     entry: proto::UndoMapEntry,
-) -> (clock::Local, Vec<(clock::Local, u32)>) {
+) -> (clock::Lamport, Vec<(clock::Lamport, u32)>) {
     (
-        clock::Local {
+        clock::Lamport {
             replica_id: entry.replica_id as u16,
             value: entry.local_timestamp,
         },
@@ -322,9 +337,9 @@ pub fn deserialize_undo_map_entry(
             .into_iter()
             .map(|undo_count| {
                 (
-                    clock::Local {
+                    clock::Lamport {
                         replica_id: undo_count.replica_id as u16,
-                        value: undo_count.local_timestamp,
+                        value: undo_count.lamport_timestamp,
                     },
                     undo_count.count,
                 )
@@ -384,9 +399,9 @@ pub fn deserialize_diagnostics(
 
 pub fn deserialize_anchor(anchor: proto::Anchor) -> Option<Anchor> {
     Some(Anchor {
-        timestamp: clock::Local {
+        timestamp: clock::Lamport {
             replica_id: anchor.replica_id as ReplicaId,
-            value: anchor.local_timestamp,
+            value: anchor.timestamp,
         },
         offset: anchor.offset as usize,
         bias: match proto::Bias::from_i32(anchor.bias)? {
@@ -434,6 +449,7 @@ pub fn serialize_completion(completion: &Completion) -> proto::Completion {
         old_start: Some(serialize_anchor(&completion.old_range.start)),
         old_end: Some(serialize_anchor(&completion.old_range.end)),
         new_text: completion.new_text.clone(),
+        server_id: completion.server_id.0 as u64,
         lsp_completion: serde_json::to_vec(&completion.lsp_completion).unwrap(),
     }
 }
@@ -466,6 +482,7 @@ pub async fn deserialize_completion(
                 lsp_completion.filter_text.as_deref(),
             )
         }),
+        server_id: LanguageServerId(completion.server_id as usize),
         lsp_completion,
     })
 }
@@ -498,12 +515,12 @@ pub fn deserialize_code_action(action: proto::CodeAction) -> Result<CodeAction> 
 
 pub fn serialize_transaction(transaction: &Transaction) -> proto::Transaction {
     proto::Transaction {
-        id: Some(serialize_local_timestamp(transaction.id)),
+        id: Some(serialize_timestamp(transaction.id)),
         edit_ids: transaction
             .edit_ids
             .iter()
             .copied()
-            .map(serialize_local_timestamp)
+            .map(serialize_timestamp)
             .collect(),
         start: serialize_version(&transaction.start),
     }
@@ -511,7 +528,7 @@ pub fn serialize_transaction(transaction: &Transaction) -> proto::Transaction {
 
 pub fn deserialize_transaction(transaction: proto::Transaction) -> Result<Transaction> {
     Ok(Transaction {
-        id: deserialize_local_timestamp(
+        id: deserialize_timestamp(
             transaction
                 .id
                 .ok_or_else(|| anyhow!("missing transaction id"))?,
@@ -519,21 +536,21 @@ pub fn deserialize_transaction(transaction: proto::Transaction) -> Result<Transa
         edit_ids: transaction
             .edit_ids
             .into_iter()
-            .map(deserialize_local_timestamp)
+            .map(deserialize_timestamp)
             .collect(),
         start: deserialize_version(&transaction.start),
     })
 }
 
-pub fn serialize_local_timestamp(timestamp: clock::Local) -> proto::LocalTimestamp {
-    proto::LocalTimestamp {
+pub fn serialize_timestamp(timestamp: clock::Lamport) -> proto::LamportTimestamp {
+    proto::LamportTimestamp {
         replica_id: timestamp.replica_id as u32,
         value: timestamp.value,
     }
 }
 
-pub fn deserialize_local_timestamp(timestamp: proto::LocalTimestamp) -> clock::Local {
-    clock::Local {
+pub fn deserialize_timestamp(timestamp: proto::LamportTimestamp) -> clock::Lamport {
+    clock::Lamport {
         replica_id: timestamp.replica_id as ReplicaId,
         value: timestamp.value,
     }
@@ -553,7 +570,7 @@ pub fn deserialize_range(range: proto::Range) -> Range<FullOffset> {
 pub fn deserialize_version(message: &[proto::VectorClockEntry]) -> clock::Global {
     let mut version = clock::Global::new();
     for entry in message {
-        version.observe(clock::Local {
+        version.observe(clock::Lamport {
             replica_id: entry.replica_id as ReplicaId,
             value: entry.timestamp,
         });

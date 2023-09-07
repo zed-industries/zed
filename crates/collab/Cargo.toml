@@ -3,7 +3,7 @@ authors = ["Nathan Sobo <nathan@zed.dev>"]
 default-run = "collab"
 edition = "2021"
 name = "collab"
-version = "0.18.0"
+version = "0.20.0"
 publish = false
 
 [[bin]]
@@ -80,6 +80,7 @@ theme = { path = "../theme" }
 workspace = { path = "../workspace", features = ["test-support"] }
 collab_ui = { path = "../collab_ui", features = ["test-support"] }
 
+async-trait.workspace = true
 ctor.workspace = true
 env_logger.workspace = true
 indoc.workspace = true
