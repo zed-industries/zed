@@ -398,11 +398,42 @@ pub trait StyleHelpers: Styleable<Style = Style> {
         self
     }
 
-    fn flex_grow(mut self) -> Self
+    fn flex_1(mut self) -> Self
     where
         Self: Sized,
     {
         self.declared_style().flex_grow = Some(1.);
+        self.declared_style().flex_shrink = Some(1.);
+        self.declared_style().flex_basis = Some(relative(0.));
+        self
+    }
+
+    fn flex_auto(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().flex_grow = Some(1.);
+        self.declared_style().flex_shrink = Some(1.);
+        self.declared_style().flex_basis = Some(Length::Auto);
+        self
+    }
+
+    fn flex_initial(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().flex_grow = Some(0.);
+        self.declared_style().flex_shrink = Some(1.);
+        self.declared_style().flex_basis = Some(Length::Auto);
+        self
+    }
+
+    fn flex_none(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().flex_grow = Some(0.);
+        self.declared_style().flex_shrink = Some(0.);
         self
     }
 
