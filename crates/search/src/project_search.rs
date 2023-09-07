@@ -20,12 +20,11 @@ use gpui::{
     Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use menu::Confirm;
-use postage::stream::Stream;
 use project::{
     search::{PathMatcher, SearchInputs, SearchQuery},
     Entry, Project,
 };
-use semantic_index::SemanticIndex;
+use semantic_index::{SemanticIndex, SemanticIndexStatus};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
@@ -116,7 +115,7 @@ pub struct ProjectSearchView {
     model: ModelHandle<ProjectSearch>,
     query_editor: ViewHandle<Editor>,
     results_editor: ViewHandle<Editor>,
-    semantic_state: Option<SemanticSearchState>,
+    semantic_state: Option<SemanticState>,
     semantic_permissioned: Option<bool>,
     search_options: SearchOptions,
     panels_with_errors: HashSet<InputPanel>,
@@ -129,9 +128,9 @@ pub struct ProjectSearchView {
     current_mode: SearchMode,
 }
 
-struct SemanticSearchState {
-    pending_file_count: usize,
-    _progress_task: Task<()>,
+struct SemanticState {
+    index_status: SemanticIndexStatus,
+    _subscription: Subscription,
 }
 
 pub struct ProjectSearchBar {
@@ -230,7 +229,7 @@ impl ProjectSearch {
         self.search_id += 1;
         self.match_ranges.clear();
         self.search_history.add(inputs.as_str().to_string());
-        self.no_results = Some(true);
+        self.no_results = None;
         self.pending_search = Some(cx.spawn(|this, mut cx| async move {
             let results = search?.await.log_err()?;
             let matches = results
@@ -238,9 +237,10 @@ impl ProjectSearch {
                 .map(|result| (result.buffer, vec![result.range.start..result.range.start]));
 
             this.update(&mut cx, |this, cx| {
+                this.no_results = Some(true);
                 this.excerpts.update(cx, |excerpts, cx| {
                     excerpts.clear(cx);
-                })
+                });
             });
             for (buffer, ranges) in matches {
                 let mut match_ranges = this.update(&mut cx, |this, cx| {
@@ -315,15 +315,20 @@ impl View for ProjectSearchView {
                 }
             };
 
-            let semantic_status = if let Some(semantic) = &self.semantic_state {
-                if semantic.pending_file_count > 0 {
-                    format!("Remaining files to index: {}", semantic.pending_file_count)
-                } else {
-                    "Indexing complete".to_string()
+            let semantic_status = self.semantic_state.as_ref().and_then(|semantic| {
+                let status = semantic.index_status;
+                match status {
+                    SemanticIndexStatus::Indexed => Some("Indexing complete".to_string()),
+                    SemanticIndexStatus::Indexing { remaining_files } => {
+                        if remaining_files == 0 {
+                            Some(format!("Indexing..."))
+                        } else {
+                            Some(format!("Remaining files to index: {}", remaining_files))
+                        }
+                    }
+                    SemanticIndexStatus::NotIndexed => None,
                 }
-            } else {
-                "Indexing: ...".to_string()
-            };
+            });
 
             let minor_text = if let Some(no_results) = model.no_results {
                 if model.pending_search.is_none() && no_results {
@@ -333,12 +338,16 @@ impl View for ProjectSearchView {
                 }
             } else {
                 match current_mode {
-                    SearchMode::Semantic => vec![
-                        "".to_owned(),
-                        semantic_status,
-                        "Simply explain the code you are looking to find.".to_owned(),
-                        "ex. 'prompt user for permissions to index their project'".to_owned(),
-                    ],
+                    SearchMode::Semantic => {
+                        let mut minor_text = Vec::new();
+                        minor_text.push("".into());
+                        minor_text.extend(semantic_status);
+                        minor_text.push("Simply explain the code you are looking to find.".into());
+                        minor_text.push(
+                            "ex. 'prompt user for permissions to index their project'".into(),
+                        );
+                        minor_text
+                    }
                     _ => vec![
                         "".to_owned(),
                         "Include/exclude specific paths with the filter option.".to_owned(),
@@ -634,41 +643,29 @@ impl ProjectSearchView {
 
             let project = self.model.read(cx).project.clone();
 
-            let mut pending_file_count_rx = semantic_index.update(cx, |semantic_index, cx| {
+            semantic_index.update(cx, |semantic_index, cx| {
                 semantic_index
                     .index_project(project.clone(), cx)
                     .detach_and_log_err(cx);
-                semantic_index.pending_file_count(&project).unwrap()
             });
 
-            cx.spawn(|search_view, mut cx| async move {
-                search_view.update(&mut cx, |search_view, cx| {
-                    cx.notify();
-                    let pending_file_count = *pending_file_count_rx.borrow();
-                    search_view.semantic_state = Some(SemanticSearchState {
-                        pending_file_count,
-                        _progress_task: cx.spawn(|search_view, mut cx| async move {
-                            while let Some(count) = pending_file_count_rx.recv().await {
-                                search_view
-                                    .update(&mut cx, |search_view, cx| {
-                                        if let Some(semantic_search_state) =
-                                            &mut search_view.semantic_state
-                                        {
-                                            semantic_search_state.pending_file_count = count;
-                                            cx.notify();
-                                            if count == 0 {
-                                                return;
-                                            }
-                                        }
-                                    })
-                                    .ok();
-                            }
-                        }),
-                    });
-                })?;
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
+            self.semantic_state = Some(SemanticState {
+                index_status: semantic_index.read(cx).status(&project),
+                _subscription: cx.observe(&semantic_index, Self::semantic_index_changed),
+            });
+            cx.notify();
+        }
+    }
+
+    fn semantic_index_changed(
+        &mut self,
+        semantic_index: ModelHandle<SemanticIndex>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let project = self.model.read(cx).project.clone();
+        if let Some(semantic_state) = self.semantic_state.as_mut() {
+            semantic_state.index_status = semantic_index.read(cx).status(&project);
+            cx.notify();
         }
     }
 
@@ -867,7 +864,7 @@ impl ProjectSearchView {
         SemanticIndex::global(cx)
             .map(|semantic| {
                 let project = self.model.read(cx).project.clone();
-                semantic.update(cx, |this, cx| this.project_previously_indexed(project, cx))
+                semantic.update(cx, |this, cx| this.project_previously_indexed(&project, cx))
             })
             .unwrap_or(Task::ready(Ok(false)))
     }
@@ -952,11 +949,7 @@ impl ProjectSearchView {
         let mode = self.current_mode;
         match mode {
             SearchMode::Semantic => {
-                if let Some(semantic) = &mut self.semantic_state {
-                    if semantic.pending_file_count > 0 {
-                        return;
-                    }
-
+                if self.semantic_state.is_some() {
                     if let Some(query) = self.build_search_query(cx) {
                         self.model
                             .update(cx, |model, cx| model.semantic_search(query.as_inner(), cx));
