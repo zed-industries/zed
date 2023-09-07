@@ -92,8 +92,8 @@ pub struct SemanticIndex {
 
 struct ProjectState {
     worktrees: HashMap<WorktreeId, WorktreeState>,
-    outstanding_job_count_rx: watch::Receiver<usize>,
-    outstanding_job_count_tx: Arc<Mutex<watch::Sender<usize>>>,
+    pending_file_count_rx: watch::Receiver<usize>,
+    pending_file_count_tx: Arc<Mutex<watch::Sender<usize>>>,
     _subscription: gpui::Subscription,
 }
 
@@ -178,12 +178,12 @@ impl JobHandle {
 
 impl ProjectState {
     fn new(subscription: gpui::Subscription) -> Self {
-        let (outstanding_job_count_tx, outstanding_job_count_rx) = watch::channel_with(0);
-        let outstanding_job_count_tx = Arc::new(Mutex::new(outstanding_job_count_tx));
+        let (pending_file_count_tx, pending_file_count_rx) = watch::channel_with(0);
+        let pending_file_count_tx = Arc::new(Mutex::new(pending_file_count_tx));
         Self {
             worktrees: Default::default(),
-            outstanding_job_count_rx,
-            outstanding_job_count_tx,
+            pending_file_count_rx,
+            pending_file_count_tx,
             _subscription: subscription,
         }
     }
@@ -605,7 +605,7 @@ impl SemanticIndex {
         Some(
             self.projects
                 .get(&project.downgrade())?
-                .outstanding_job_count_rx
+                .pending_file_count_rx
                 .clone(),
         )
     }
@@ -774,8 +774,8 @@ impl SemanticIndex {
                 .insert(project.downgrade(), ProjectState::new(subscription));
             self.project_worktrees_changed(project.clone(), cx);
         }
-        let project_state = self.projects.get(&project.downgrade()).unwrap();
-        let mut outstanding_job_count_rx = project_state.outstanding_job_count_rx.clone();
+        let project_state = &self.projects[&project.downgrade()];
+        let mut pending_file_count_rx = project_state.pending_file_count_rx.clone();
 
         let db = self.db.clone();
         let language_registry = self.language_registry.clone();
@@ -792,7 +792,7 @@ impl SemanticIndex {
                     .projects
                     .get_mut(&project.downgrade())
                     .ok_or_else(|| anyhow!("project was dropped"))?;
-                let outstanding_job_count_tx = &project_state.outstanding_job_count_tx;
+                let pending_file_count_tx = &project_state.pending_file_count_tx;
 
                 project_state
                     .worktrees
@@ -816,7 +816,7 @@ impl SemanticIndex {
                                 files_to_delete.push((worktree_state.db_id, path.clone()));
                             } else {
                                 let absolute_path = worktree.read(cx).absolutize(path);
-                                let job_handle = JobHandle::new(outstanding_job_count_tx);
+                                let job_handle = JobHandle::new(pending_file_count_tx);
                                 pending_files.push(PendingFile {
                                     absolute_path,
                                     relative_path: path.clone(),
@@ -879,7 +879,7 @@ impl SemanticIndex {
                     }
 
                     // Wait until we're done indexing.
-                    while let Some(count) = outstanding_job_count_rx.next().await {
+                    while let Some(count) = pending_file_count_rx.next().await {
                         if count == 0 {
                             break;
                         }

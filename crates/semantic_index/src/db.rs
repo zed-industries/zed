@@ -124,6 +124,10 @@ impl VectorDatabase {
             }
 
             log::trace!("vector database schema out of date. updating...");
+            // We renamed the `documents` table to `spans`, so we want to drop
+            // `documents` without recreating it if it exists.
+            db.execute("DROP TABLE IF EXISTS documents", [])
+                .context("failed to drop 'documents' table")?;
             db.execute("DROP TABLE IF EXISTS spans", [])
                 .context("failed to drop 'spans' table")?;
             db.execute("DROP TABLE IF EXISTS files", [])
