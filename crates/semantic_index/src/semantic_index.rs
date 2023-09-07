@@ -703,6 +703,10 @@ impl SemanticIndex {
             let database =
                 VectorDatabase::new(fs.clone(), db_path.clone(), cx.background()).await?;
 
+            if phrase.len() == 0 {
+                return Ok(Vec::new());
+            }
+
             let phrase_embedding = embedding_provider
                 .embed_batch(vec![phrase])
                 .await?
