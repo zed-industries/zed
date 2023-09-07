@@ -35,6 +35,7 @@ use util::{
     paths::EMBEDDINGS_DIR,
     ResultExt,
 };
+use workspace::WorkspaceCreated;
 
 const SEMANTIC_INDEX_VERSION: usize = 10;
 const BACKGROUND_INDEXING_DELAY: Duration = Duration::from_secs(5 * 60);
@@ -56,6 +57,35 @@ pub fn init(
     if *RELEASE_CHANNEL == ReleaseChannel::Stable {
         return;
     }
+
+    cx.subscribe_global::<WorkspaceCreated, _>({
+        move |event, cx| {
+            let Some(semantic_index) = SemanticIndex::global(cx) else {
+                return;
+            };
+            let workspace = &event.0;
+            if let Some(workspace) = workspace.upgrade(cx) {
+                let project = workspace.read(cx).project().clone();
+                if project.read(cx).is_local() {
+                    cx.spawn(|mut cx| async move {
+                        let previously_indexed = semantic_index
+                            .update(&mut cx, |index, cx| {
+                                index.project_previously_indexed(&project, cx)
+                            })
+                            .await?;
+                        if previously_indexed {
+                            semantic_index
+                                .update(&mut cx, |index, cx| index.index_project(project, cx))
+                                .await?;
+                        }
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+                }
+            }
+        }
+    })
+    .detach();
 
     cx.spawn(move |mut cx| async move {
         let semantic_index = SemanticIndex::new(
@@ -79,6 +109,13 @@ pub fn init(
     .detach();
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum SemanticIndexStatus {
+    NotIndexed,
+    Indexed,
+    Indexing { remaining_files: usize },
+}
+
 pub struct SemanticIndex {
     fs: Arc<dyn Fs>,
     db: VectorDatabase,
@@ -94,7 +131,9 @@ struct ProjectState {
     worktrees: HashMap<WorktreeId, WorktreeState>,
     pending_file_count_rx: watch::Receiver<usize>,
     pending_file_count_tx: Arc<Mutex<watch::Sender<usize>>>,
+    pending_index: usize,
     _subscription: gpui::Subscription,
+    _observe_pending_file_count: Task<()>,
 }
 
 enum WorktreeState {
@@ -103,6 +142,10 @@ enum WorktreeState {
 }
 
 impl WorktreeState {
+    fn is_registered(&self) -> bool {
+        matches!(self, Self::Registered(_))
+    }
+
     fn paths_changed(
         &mut self,
         changes: Arc<[(Arc<Path>, ProjectEntryId, PathChange)]>,
@@ -177,14 +220,25 @@ impl JobHandle {
 }
 
 impl ProjectState {
-    fn new(subscription: gpui::Subscription) -> Self {
+    fn new(subscription: gpui::Subscription, cx: &mut ModelContext<SemanticIndex>) -> Self {
         let (pending_file_count_tx, pending_file_count_rx) = watch::channel_with(0);
         let pending_file_count_tx = Arc::new(Mutex::new(pending_file_count_tx));
         Self {
             worktrees: Default::default(),
-            pending_file_count_rx,
+            pending_file_count_rx: pending_file_count_rx.clone(),
             pending_file_count_tx,
+            pending_index: 0,
             _subscription: subscription,
+            _observe_pending_file_count: cx.spawn_weak({
+                let mut pending_file_count_rx = pending_file_count_rx.clone();
+                |this, mut cx| async move {
+                    while let Some(_) = pending_file_count_rx.next().await {
+                        if let Some(this) = this.upgrade(&cx) {
+                            this.update(&mut cx, |_, cx| cx.notify());
+                        }
+                    }
+                }
+            }),
         }
     }
 
@@ -225,6 +279,25 @@ impl SemanticIndex {
     pub fn enabled(cx: &AppContext) -> bool {
         settings::get::<SemanticIndexSettings>(cx).enabled
             && *RELEASE_CHANNEL != ReleaseChannel::Stable
+    }
+
+    pub fn status(&self, project: &ModelHandle<Project>) -> SemanticIndexStatus {
+        if let Some(project_state) = self.projects.get(&project.downgrade()) {
+            if project_state
+                .worktrees
+                .values()
+                .all(|worktree| worktree.is_registered())
+                && project_state.pending_index == 0
+            {
+                SemanticIndexStatus::Indexed
+            } else {
+                SemanticIndexStatus::Indexing {
+                    remaining_files: project_state.pending_file_count_rx.borrow().clone(),
+                }
+            }
+        } else {
+            SemanticIndexStatus::NotIndexed
+        }
     }
 
     async fn new(
@@ -356,7 +429,7 @@ impl SemanticIndex {
 
     pub fn project_previously_indexed(
         &mut self,
-        project: ModelHandle<Project>,
+        project: &ModelHandle<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<bool>> {
         let worktrees_indexed_previously = project
@@ -770,13 +843,15 @@ impl SemanticIndex {
                 }
                 _ => {}
             });
-            self.projects
-                .insert(project.downgrade(), ProjectState::new(subscription));
+            let project_state = ProjectState::new(subscription, cx);
+            self.projects.insert(project.downgrade(), project_state);
             self.project_worktrees_changed(project.clone(), cx);
         }
-        let project_state = &self.projects[&project.downgrade()];
-        let mut pending_file_count_rx = project_state.pending_file_count_rx.clone();
+        let project_state = self.projects.get_mut(&project.downgrade()).unwrap();
+        project_state.pending_index += 1;
+        cx.notify();
 
+        let mut pending_file_count_rx = project_state.pending_file_count_rx.clone();
         let db = self.db.clone();
         let language_registry = self.language_registry.clone();
         let parsing_files_tx = self.parsing_files_tx.clone();
@@ -886,6 +961,16 @@ impl SemanticIndex {
                     }
                 })
                 .await;
+
+            this.update(&mut cx, |this, cx| {
+                let project_state = this
+                    .projects
+                    .get_mut(&project.downgrade())
+                    .ok_or_else(|| anyhow!("project was dropped"))?;
+                project_state.pending_index -= 1;
+                cx.notify();
+                anyhow::Ok(())
+            })?;
 
             Ok(())
         })
