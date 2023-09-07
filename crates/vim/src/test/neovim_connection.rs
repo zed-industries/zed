@@ -237,6 +237,9 @@ impl NeovimConnection {
 
     #[cfg(not(feature = "neovim"))]
     pub async fn set_option(&mut self, value: &str) {
+        if let Some(NeovimData::Get { .. }) = self.data.front() {
+            self.data.pop_front();
+        };
         assert_eq!(
             self.data.pop_front(),
             Some(NeovimData::SetOption {

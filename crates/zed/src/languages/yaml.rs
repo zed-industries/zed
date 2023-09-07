@@ -25,11 +25,11 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 }
 
 pub struct YamlLspAdapter {
-    node: Arc<NodeRuntime>,
+    node: Arc<dyn NodeRuntime>,
 }
 
 impl YamlLspAdapter {
-    pub fn new(node: Arc<NodeRuntime>) -> Self {
+    pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
         YamlLspAdapter { node }
     }
 }
@@ -66,7 +66,10 @@ impl LspAdapter for YamlLspAdapter {
 
         if fs::metadata(&server_path).await.is_err() {
             self.node
-                .npm_install_packages(&container_dir, [("yaml-language-server", version.as_str())])
+                .npm_install_packages(
+                    &container_dir,
+                    &[("yaml-language-server", version.as_str())],
+                )
                 .await?;
         }
 
@@ -81,14 +84,14 @@ impl LspAdapter for YamlLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &self.node).await
+        get_cached_server_binary(container_dir, &*self.node).await
     }
 
     async fn installation_test_binary(
         &self,
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &self.node).await
+        get_cached_server_binary(container_dir, &*self.node).await
     }
     fn workspace_configuration(&self, cx: &mut AppContext) -> BoxFuture<'static, Value> {
         let tab_size = all_language_settings(None, cx)
@@ -109,7 +112,7 @@ impl LspAdapter for YamlLspAdapter {
 
 async fn get_cached_server_binary(
     container_dir: PathBuf,
-    node: &NodeRuntime,
+    node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
     (|| async move {
         let mut last_version_dir = None;

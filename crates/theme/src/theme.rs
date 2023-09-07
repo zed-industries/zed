@@ -417,6 +417,7 @@ pub struct Toolbar {
     pub height: f32,
     pub item_spacing: f32,
     pub toggleable_tool: Toggleable<Interactive<IconButton>>,
+    pub toggleable_text_tool: Toggleable<Interactive<ContainedText>>,
     pub breadcrumb_height: f32,
     pub breadcrumbs: Interactive<ContainedText>,
 }

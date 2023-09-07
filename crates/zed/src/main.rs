@@ -19,7 +19,7 @@ use gpui::{Action, App, AppContext, AssetSource, AsyncAppContext, Task};
 use isahc::{config::Configurable, Request};
 use language::{LanguageRegistry, Point};
 use log::LevelFilter;
-use node_runtime::NodeRuntime;
+use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
 use project::Fs;
 use serde::{Deserialize, Serialize};
@@ -138,7 +138,7 @@ fn main() {
         languages.set_executor(cx.background().clone());
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
-        let node_runtime = NodeRuntime::instance(http.clone());
+        let node_runtime = RealNodeRuntime::new(http.clone());
 
         languages::init(languages.clone(), node_runtime.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));

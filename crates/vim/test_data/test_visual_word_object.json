@@ -1,9 +1,9 @@
-{"Put":{"state":"The quick ˇbrown\nfox"}}
+{"Put":{"state":"The quick brown\nˇ\nfox"}}
 {"Key":"v"}
-{"Get":{"state":"The quick «bˇ»rown\nfox","mode":"Visual"}}
+{"Get":{"state":"The quick brown\n«\nˇ»fox","mode":"Visual"}}
 {"Key":"i"}
 {"Key":"w"}
-{"Get":{"state":"The quick «brownˇ»\nfox","mode":"Visual"}}
+{"Get":{"state":"The quick brown\n«\nˇ»fox","mode":"Visual"}}
 {"Put":{"state":"The quick ˇbrown   \nfox jumps over\nthe lazy dog  \n\n\n\nThe-quick brown \n  \n  \n  fox-jumps over\nthe lazy dog \n\n"}}
 {"Key":"v"}
 {"Key":"i"}

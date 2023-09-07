@@ -1,14 +1,15 @@
 use crate::{
-    db::dot,
-    embedding::EmbeddingProvider,
-    parsing::{subtract_ranges, CodeContextRetriever, Document},
+    embedding::{DummyEmbeddings, Embedding, EmbeddingProvider},
+    embedding_queue::EmbeddingQueue,
+    parsing::{subtract_ranges, CodeContextRetriever, Span, SpanDigest},
     semantic_index_settings::SemanticIndexSettings,
-    SearchResult, SemanticIndex,
+    FileToEmbed, JobHandle, SearchResult, SemanticIndex, EMBEDDING_QUEUE_FLUSH_TIMEOUT,
 };
 use anyhow::Result;
 use async_trait::async_trait;
-use gpui::{Task, TestAppContext};
+use gpui::{executor::Deterministic, Task, TestAppContext};
 use language::{Language, LanguageConfig, LanguageRegistry, ToOffset};
+use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use project::{project_settings::ProjectSettings, search::PathMatcher, FakeFs, Fs, Project};
 use rand::{rngs::StdRng, Rng};
@@ -20,8 +21,10 @@ use std::{
         atomic::{self, AtomicUsize},
         Arc,
     },
+    time::SystemTime,
 };
 use unindent::Unindent;
+use util::RandomCharIter;
 
 #[ctor::ctor]
 fn init_logger() {
@@ -31,12 +34,8 @@ fn init_logger() {
 }
 
 #[gpui::test]
-async fn test_semantic_index(cx: &mut TestAppContext) {
-    cx.update(|cx| {
-        cx.set_global(SettingsStore::test(cx));
-        settings::register::<SemanticIndexSettings>(cx);
-        settings::register::<ProjectSettings>(cx);
-    });
+async fn test_semantic_index(deterministic: Arc<Deterministic>, cx: &mut TestAppContext) {
+    init_test(cx);
 
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
@@ -56,6 +55,7 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
                     fn bbb() {
                         println!(\"bbbbbbbbbbbbb!\");
                     }
+                    struct pqpqpqp {}
                 ".unindent(),
                 "file3.toml": "
                     ZZZZZZZZZZZZZZZZZZ = 5
@@ -75,7 +75,7 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
     let db_path = db_dir.path().join("db.sqlite");
 
     let embedding_provider = Arc::new(FakeEmbeddingProvider::default());
-    let store = SemanticIndex::new(
+    let semantic_index = SemanticIndex::new(
         fs.clone(),
         db_path,
         embedding_provider.clone(),
@@ -87,34 +87,24 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
 
     let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
 
-    let _ = store
-        .update(cx, |store, cx| {
-            store.initialize_project(project.clone(), cx)
-        })
-        .await;
+    let search_results = semantic_index.update(cx, |store, cx| {
+        store.search_project(
+            project.clone(),
+            "aaaaaabbbbzz".to_string(),
+            5,
+            vec![],
+            vec![],
+            cx,
+        )
+    });
+    let pending_file_count =
+        semantic_index.read_with(cx, |index, _| index.pending_file_count(&project).unwrap());
+    deterministic.run_until_parked();
+    assert_eq!(*pending_file_count.borrow(), 3);
+    deterministic.advance_clock(EMBEDDING_QUEUE_FLUSH_TIMEOUT);
+    assert_eq!(*pending_file_count.borrow(), 0);
 
-    let (file_count, outstanding_file_count) = store
-        .update(cx, |store, cx| store.index_project(project.clone(), cx))
-        .await
-        .unwrap();
-    assert_eq!(file_count, 3);
-    cx.foreground().run_until_parked();
-    assert_eq!(*outstanding_file_count.borrow(), 0);
-
-    let search_results = store
-        .update(cx, |store, cx| {
-            store.search_project(
-                project.clone(),
-                "aaaaaabbbbzz".to_string(),
-                5,
-                vec![],
-                vec![],
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-
+    let search_results = search_results.await.unwrap();
     assert_search_results(
         &search_results,
         &[
@@ -122,6 +112,7 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
             (Path::new("src/file2.rs").into(), 0),
             (Path::new("src/file3.toml").into(), 0),
             (Path::new("src/file1.rs").into(), 45),
+            (Path::new("src/file2.rs").into(), 45),
         ],
         cx,
     );
@@ -129,7 +120,7 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
     // Test Include Files Functonality
     let include_files = vec![PathMatcher::new("*.rs").unwrap()];
     let exclude_files = vec![PathMatcher::new("*.rs").unwrap()];
-    let rust_only_search_results = store
+    let rust_only_search_results = semantic_index
         .update(cx, |store, cx| {
             store.search_project(
                 project.clone(),
@@ -149,11 +140,12 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
             (Path::new("src/file1.rs").into(), 0),
             (Path::new("src/file2.rs").into(), 0),
             (Path::new("src/file1.rs").into(), 45),
+            (Path::new("src/file2.rs").into(), 45),
         ],
         cx,
     );
 
-    let no_rust_search_results = store
+    let no_rust_search_results = semantic_index
         .update(cx, |store, cx| {
             store.search_project(
                 project.clone(),
@@ -186,22 +178,83 @@ async fn test_semantic_index(cx: &mut TestAppContext) {
     .await
     .unwrap();
 
-    cx.foreground().run_until_parked();
+    deterministic.advance_clock(EMBEDDING_QUEUE_FLUSH_TIMEOUT);
 
     let prev_embedding_count = embedding_provider.embedding_count();
-    let (file_count, outstanding_file_count) = store
-        .update(cx, |store, cx| store.index_project(project.clone(), cx))
-        .await
-        .unwrap();
-    assert_eq!(file_count, 1);
-
-    cx.foreground().run_until_parked();
-    assert_eq!(*outstanding_file_count.borrow(), 0);
+    let index = semantic_index.update(cx, |store, cx| store.index_project(project.clone(), cx));
+    deterministic.run_until_parked();
+    assert_eq!(*pending_file_count.borrow(), 1);
+    deterministic.advance_clock(EMBEDDING_QUEUE_FLUSH_TIMEOUT);
+    assert_eq!(*pending_file_count.borrow(), 0);
+    index.await.unwrap();
 
     assert_eq!(
         embedding_provider.embedding_count() - prev_embedding_count,
-        2
+        1
     );
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_embedding_batching(cx: &mut TestAppContext, mut rng: StdRng) {
+    let (outstanding_job_count, _) = postage::watch::channel_with(0);
+    let outstanding_job_count = Arc::new(Mutex::new(outstanding_job_count));
+
+    let files = (1..=3)
+        .map(|file_ix| FileToEmbed {
+            worktree_id: 5,
+            path: Path::new(&format!("path-{file_ix}")).into(),
+            mtime: SystemTime::now(),
+            spans: (0..rng.gen_range(4..22))
+                .map(|document_ix| {
+                    let content_len = rng.gen_range(10..100);
+                    let content = RandomCharIter::new(&mut rng)
+                        .with_simple_text()
+                        .take(content_len)
+                        .collect::<String>();
+                    let digest = SpanDigest::from(content.as_str());
+                    Span {
+                        range: 0..10,
+                        embedding: None,
+                        name: format!("document {document_ix}"),
+                        content,
+                        digest,
+                        token_count: rng.gen_range(10..30),
+                    }
+                })
+                .collect(),
+            job_handle: JobHandle::new(&outstanding_job_count),
+        })
+        .collect::<Vec<_>>();
+
+    let embedding_provider = Arc::new(FakeEmbeddingProvider::default());
+
+    let mut queue = EmbeddingQueue::new(embedding_provider.clone(), cx.background());
+    for file in &files {
+        queue.push(file.clone());
+    }
+    queue.flush();
+
+    cx.foreground().run_until_parked();
+    let finished_files = queue.finished_files();
+    let mut embedded_files: Vec<_> = files
+        .iter()
+        .map(|_| finished_files.try_recv().expect("no finished file"))
+        .collect();
+
+    let expected_files: Vec<_> = files
+        .iter()
+        .map(|file| {
+            let mut file = file.clone();
+            for doc in &mut file.spans {
+                doc.embedding = Some(embedding_provider.embed_sync(doc.content.as_ref()));
+            }
+            file
+        })
+        .collect();
+
+    embedded_files.sort_by_key(|f| f.path.clone());
+
+    assert_eq!(embedded_files, expected_files);
 }
 
 #[track_caller]
@@ -227,7 +280,8 @@ fn assert_search_results(
 #[gpui::test]
 async fn test_code_context_retrieval_rust() {
     let language = rust_lang();
-    let mut retriever = CodeContextRetriever::new();
+    let embedding_provider = Arc::new(DummyEmbeddings {});
+    let mut retriever = CodeContextRetriever::new(embedding_provider);
 
     let text = "
         /// A doc comment
@@ -314,7 +368,8 @@ async fn test_code_context_retrieval_rust() {
 #[gpui::test]
 async fn test_code_context_retrieval_json() {
     let language = json_lang();
-    let mut retriever = CodeContextRetriever::new();
+    let embedding_provider = Arc::new(DummyEmbeddings {});
+    let mut retriever = CodeContextRetriever::new(embedding_provider);
 
     let text = r#"
         {
@@ -382,7 +437,7 @@ async fn test_code_context_retrieval_json() {
 }
 
 fn assert_documents_eq(
-    documents: &[Document],
+    documents: &[Span],
     expected_contents_and_start_offsets: &[(String, usize)],
 ) {
     assert_eq!(
@@ -397,7 +452,8 @@ fn assert_documents_eq(
 #[gpui::test]
 async fn test_code_context_retrieval_javascript() {
     let language = js_lang();
-    let mut retriever = CodeContextRetriever::new();
+    let embedding_provider = Arc::new(DummyEmbeddings {});
+    let mut retriever = CodeContextRetriever::new(embedding_provider);
 
     let text = "
         /* globals importScripts, backend */
@@ -495,7 +551,8 @@ async fn test_code_context_retrieval_javascript() {
 #[gpui::test]
 async fn test_code_context_retrieval_lua() {
     let language = lua_lang();
-    let mut retriever = CodeContextRetriever::new();
+    let embedding_provider = Arc::new(DummyEmbeddings {});
+    let mut retriever = CodeContextRetriever::new(embedding_provider);
 
     let text = r#"
         -- Creates a new class
@@ -568,7 +625,8 @@ async fn test_code_context_retrieval_lua() {
 #[gpui::test]
 async fn test_code_context_retrieval_elixir() {
     let language = elixir_lang();
-    let mut retriever = CodeContextRetriever::new();
+    let embedding_provider = Arc::new(DummyEmbeddings {});
+    let mut retriever = CodeContextRetriever::new(embedding_provider);
 
     let text = r#"
         defmodule File.Stream do
@@ -684,7 +742,8 @@ async fn test_code_context_retrieval_elixir() {
 #[gpui::test]
 async fn test_code_context_retrieval_cpp() {
     let language = cpp_lang();
-    let mut retriever = CodeContextRetriever::new();
+    let embedding_provider = Arc::new(DummyEmbeddings {});
+    let mut retriever = CodeContextRetriever::new(embedding_provider);
 
     let text = "
     /**
@@ -836,7 +895,8 @@ async fn test_code_context_retrieval_cpp() {
 #[gpui::test]
 async fn test_code_context_retrieval_ruby() {
     let language = ruby_lang();
-    let mut retriever = CodeContextRetriever::new();
+    let embedding_provider = Arc::new(DummyEmbeddings {});
+    let mut retriever = CodeContextRetriever::new(embedding_provider);
 
     let text = r#"
         # This concern is inspired by "sudo mode" on GitHub. It
@@ -1026,7 +1086,8 @@ async fn test_code_context_retrieval_ruby() {
 #[gpui::test]
 async fn test_code_context_retrieval_php() {
     let language = php_lang();
-    let mut retriever = CodeContextRetriever::new();
+    let embedding_provider = Arc::new(DummyEmbeddings {});
+    let mut retriever = CodeContextRetriever::new(embedding_provider);
 
     let text = r#"
         <?php
@@ -1173,36 +1234,6 @@ async fn test_code_context_retrieval_php() {
     );
 }
 
-#[gpui::test]
-fn test_dot_product(mut rng: StdRng) {
-    assert_eq!(dot(&[1., 0., 0., 0., 0.], &[0., 1., 0., 0., 0.]), 0.);
-    assert_eq!(dot(&[2., 0., 0., 0., 0.], &[3., 1., 0., 0., 0.]), 6.);
-
-    for _ in 0..100 {
-        let size = 1536;
-        let mut a = vec![0.; size];
-        let mut b = vec![0.; size];
-        for (a, b) in a.iter_mut().zip(b.iter_mut()) {
-            *a = rng.gen();
-            *b = rng.gen();
-        }
-
-        assert_eq!(
-            round_to_decimals(dot(&a, &b), 1),
-            round_to_decimals(reference_dot(&a, &b), 1)
-        );
-    }
-
-    fn round_to_decimals(n: f32, decimal_places: i32) -> f32 {
-        let factor = (10.0 as f32).powi(decimal_places);
-        (n * factor).round() / factor
-    }
-
-    fn reference_dot(a: &[f32], b: &[f32]) -> f32 {
-        a.iter().zip(b.iter()).map(|(a, b)| a * b).sum()
-    }
-}
-
 #[derive(Default)]
 struct FakeEmbeddingProvider {
     embedding_count: AtomicUsize,
@@ -1212,35 +1243,42 @@ impl FakeEmbeddingProvider {
     fn embedding_count(&self) -> usize {
         self.embedding_count.load(atomic::Ordering::SeqCst)
     }
+
+    fn embed_sync(&self, span: &str) -> Embedding {
+        let mut result = vec![1.0; 26];
+        for letter in span.chars() {
+            let letter = letter.to_ascii_lowercase();
+            if letter as u32 >= 'a' as u32 {
+                let ix = (letter as u32) - ('a' as u32);
+                if ix < 26 {
+                    result[ix as usize] += 1.0;
+                }
+            }
+        }
+
+        let norm = result.iter().map(|x| x * x).sum::<f32>().sqrt();
+        for x in &mut result {
+            *x /= norm;
+        }
+
+        result.into()
+    }
 }
 
 #[async_trait]
 impl EmbeddingProvider for FakeEmbeddingProvider {
-    async fn embed_batch(&self, spans: Vec<&str>) -> Result<Vec<Vec<f32>>> {
+    fn truncate(&self, span: &str) -> (String, usize) {
+        (span.to_string(), 1)
+    }
+
+    fn max_tokens_per_batch(&self) -> usize {
+        200
+    }
+
+    async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>> {
         self.embedding_count
             .fetch_add(spans.len(), atomic::Ordering::SeqCst);
-        Ok(spans
-            .iter()
-            .map(|span| {
-                let mut result = vec![1.0; 26];
-                for letter in span.chars() {
-                    let letter = letter.to_ascii_lowercase();
-                    if letter as u32 >= 'a' as u32 {
-                        let ix = (letter as u32) - ('a' as u32);
-                        if ix < 26 {
-                            result[ix as usize] += 1.0;
-                        }
-                    }
-                }
-
-                let norm = result.iter().map(|x| x * x).sum::<f32>().sqrt();
-                for x in &mut result {
-                    *x /= norm;
-                }
-
-                result
-            })
-            .collect())
+        Ok(spans.iter().map(|span| self.embed_sync(span)).collect())
     }
 }
 
@@ -1683,4 +1721,12 @@ fn test_subtract_ranges() {
     );
 
     assert_eq!(subtract_ranges(&[0..5], &[1..2]), &[0..1, 2..5]);
+}
+
+fn init_test(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        cx.set_global(SettingsStore::test(cx));
+        settings::register::<SemanticIndexSettings>(cx);
+        settings::register::<ProjectSettings>(cx);
+    });
 }

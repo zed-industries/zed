@@ -723,7 +723,6 @@ mod tests {
         AppContext, AssetSource, Element, Entity, TestAppContext, View, ViewHandle,
     };
     use language::LanguageRegistry;
-    use node_runtime::NodeRuntime;
     use project::{Project, ProjectPath};
     use serde_json::json;
     use settings::{handle_settings_file_changes, watch_config_file, SettingsStore};
@@ -732,7 +731,6 @@ mod tests {
         path::{Path, PathBuf},
     };
     use theme::{ThemeRegistry, ThemeSettings};
-    use util::http::FakeHttpClient;
     use workspace::{
         item::{Item, ItemHandle},
         open_new, open_paths, pane, NewFile, SplitDirection, WorkspaceHandle,
@@ -2364,8 +2362,7 @@ mod tests {
         let mut languages = LanguageRegistry::test();
         languages.set_executor(cx.background().clone());
         let languages = Arc::new(languages);
-        let http = FakeHttpClient::with_404_response();
-        let node_runtime = NodeRuntime::instance(http);
+        let node_runtime = node_runtime::FakeNodeRuntime::new();
         languages::init(languages.clone(), node_runtime);
         for name in languages.language_names() {
             languages.language_for_name(&name);

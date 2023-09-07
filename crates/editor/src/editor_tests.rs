@@ -5340,7 +5340,7 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     let apply_additional_edits = cx.update_editor(|editor, cx| {
-        editor.move_down(&MoveDown, cx);
+        editor.context_menu_next(&Default::default(), cx);
         editor
             .confirm_completion(&ConfirmCompletion::default(), cx)
             .unwrap()
