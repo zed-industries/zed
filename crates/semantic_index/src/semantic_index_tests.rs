@@ -1,7 +1,7 @@
 use crate::{
     embedding::{DummyEmbeddings, Embedding, EmbeddingProvider},
     embedding_queue::EmbeddingQueue,
-    parsing::{subtract_ranges, CodeContextRetriever, Document, DocumentDigest},
+    parsing::{subtract_ranges, CodeContextRetriever, Span, SpanDigest},
     semantic_index_settings::SemanticIndexSettings,
     FileToEmbed, JobHandle, SearchResult, SemanticIndex, EMBEDDING_QUEUE_FLUSH_TIMEOUT,
 };
@@ -87,34 +87,24 @@ async fn test_semantic_index(deterministic: Arc<Deterministic>, cx: &mut TestApp
 
     let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
 
-    let _ = semantic_index
-        .update(cx, |store, cx| {
-            store.initialize_project(project.clone(), cx)
-        })
-        .await;
-
-    let (file_count, outstanding_file_count) = semantic_index
-        .update(cx, |store, cx| store.index_project(project.clone(), cx))
-        .await
-        .unwrap();
-    assert_eq!(file_count, 3);
+    let search_results = semantic_index.update(cx, |store, cx| {
+        store.search_project(
+            project.clone(),
+            "aaaaaabbbbzz".to_string(),
+            5,
+            vec![],
+            vec![],
+            cx,
+        )
+    });
+    let pending_file_count =
+        semantic_index.read_with(cx, |index, _| index.pending_file_count(&project).unwrap());
+    deterministic.run_until_parked();
+    assert_eq!(*pending_file_count.borrow(), 3);
     deterministic.advance_clock(EMBEDDING_QUEUE_FLUSH_TIMEOUT);
-    assert_eq!(*outstanding_file_count.borrow(), 0);
+    assert_eq!(*pending_file_count.borrow(), 0);
 
-    let search_results = semantic_index
-        .update(cx, |store, cx| {
-            store.search_project(
-                project.clone(),
-                "aaaaaabbbbzz".to_string(),
-                5,
-                vec![],
-                vec![],
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-
+    let search_results = search_results.await.unwrap();
     assert_search_results(
         &search_results,
         &[
@@ -191,14 +181,12 @@ async fn test_semantic_index(deterministic: Arc<Deterministic>, cx: &mut TestApp
     deterministic.advance_clock(EMBEDDING_QUEUE_FLUSH_TIMEOUT);
 
     let prev_embedding_count = embedding_provider.embedding_count();
-    let (file_count, outstanding_file_count) = semantic_index
-        .update(cx, |store, cx| store.index_project(project.clone(), cx))
-        .await
-        .unwrap();
-    assert_eq!(file_count, 1);
-
+    let index = semantic_index.update(cx, |store, cx| store.index_project(project.clone(), cx));
+    deterministic.run_until_parked();
+    assert_eq!(*pending_file_count.borrow(), 1);
     deterministic.advance_clock(EMBEDDING_QUEUE_FLUSH_TIMEOUT);
-    assert_eq!(*outstanding_file_count.borrow(), 0);
+    assert_eq!(*pending_file_count.borrow(), 0);
+    index.await.unwrap();
 
     assert_eq!(
         embedding_provider.embedding_count() - prev_embedding_count,
@@ -214,17 +202,17 @@ async fn test_embedding_batching(cx: &mut TestAppContext, mut rng: StdRng) {
     let files = (1..=3)
         .map(|file_ix| FileToEmbed {
             worktree_id: 5,
-            path: format!("path-{file_ix}").into(),
+            path: Path::new(&format!("path-{file_ix}")).into(),
             mtime: SystemTime::now(),
-            documents: (0..rng.gen_range(4..22))
+            spans: (0..rng.gen_range(4..22))
                 .map(|document_ix| {
                     let content_len = rng.gen_range(10..100);
                     let content = RandomCharIter::new(&mut rng)
                         .with_simple_text()
                         .take(content_len)
                         .collect::<String>();
-                    let digest = DocumentDigest::from(content.as_str());
-                    Document {
+                    let digest = SpanDigest::from(content.as_str());
+                    Span {
                         range: 0..10,
                         embedding: None,
                         name: format!("document {document_ix}"),
@@ -257,7 +245,7 @@ async fn test_embedding_batching(cx: &mut TestAppContext, mut rng: StdRng) {
         .iter()
         .map(|file| {
             let mut file = file.clone();
-            for doc in &mut file.documents {
+            for doc in &mut file.spans {
                 doc.embedding = Some(embedding_provider.embed_sync(doc.content.as_ref()));
             }
             file
@@ -449,7 +437,7 @@ async fn test_code_context_retrieval_json() {
 }
 
 fn assert_documents_eq(
-    documents: &[Document],
+    documents: &[Span],
     expected_contents_and_start_offsets: &[(String, usize)],
 ) {
     assert_eq!(

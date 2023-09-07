@@ -1,15 +1,15 @@
-use crate::{embedding::EmbeddingProvider, parsing::Document, JobHandle};
+use crate::{embedding::EmbeddingProvider, parsing::Span, JobHandle};
 use gpui::executor::Background;
 use parking_lot::Mutex;
 use smol::channel;
-use std::{mem, ops::Range, path::PathBuf, sync::Arc, time::SystemTime};
+use std::{mem, ops::Range, path::Path, sync::Arc, time::SystemTime};
 
 #[derive(Clone)]
 pub struct FileToEmbed {
     pub worktree_id: i64,
-    pub path: PathBuf,
+    pub path: Arc<Path>,
     pub mtime: SystemTime,
-    pub documents: Vec<Document>,
+    pub spans: Vec<Span>,
     pub job_handle: JobHandle,
 }
 
@@ -19,7 +19,7 @@ impl std::fmt::Debug for FileToEmbed {
             .field("worktree_id", &self.worktree_id)
             .field("path", &self.path)
             .field("mtime", &self.mtime)
-            .field("document", &self.documents)
+            .field("spans", &self.spans)
             .finish_non_exhaustive()
     }
 }
@@ -29,13 +29,13 @@ impl PartialEq for FileToEmbed {
         self.worktree_id == other.worktree_id
             && self.path == other.path
             && self.mtime == other.mtime
-            && self.documents == other.documents
+            && self.spans == other.spans
     }
 }
 
 pub struct EmbeddingQueue {
     embedding_provider: Arc<dyn EmbeddingProvider>,
-    pending_batch: Vec<FileToEmbedFragment>,
+    pending_batch: Vec<FileFragmentToEmbed>,
     executor: Arc<Background>,
     pending_batch_token_count: usize,
     finished_files_tx: channel::Sender<FileToEmbed>,
@@ -43,9 +43,9 @@ pub struct EmbeddingQueue {
 }
 
 #[derive(Clone)]
-pub struct FileToEmbedFragment {
+pub struct FileFragmentToEmbed {
     file: Arc<Mutex<FileToEmbed>>,
-    document_range: Range<usize>,
+    span_range: Range<usize>,
 }
 
 impl EmbeddingQueue {
@@ -62,43 +62,40 @@ impl EmbeddingQueue {
     }
 
     pub fn push(&mut self, file: FileToEmbed) {
-        if file.documents.is_empty() {
+        if file.spans.is_empty() {
             self.finished_files_tx.try_send(file).unwrap();
             return;
         }
 
         let file = Arc::new(Mutex::new(file));
 
-        self.pending_batch.push(FileToEmbedFragment {
+        self.pending_batch.push(FileFragmentToEmbed {
             file: file.clone(),
-            document_range: 0..0,
+            span_range: 0..0,
         });
 
-        let mut fragment_range = &mut self.pending_batch.last_mut().unwrap().document_range;
-        let mut saved_tokens = 0;
-        for (ix, document) in file.lock().documents.iter().enumerate() {
-            let document_token_count = if document.embedding.is_none() {
-                document.token_count
+        let mut fragment_range = &mut self.pending_batch.last_mut().unwrap().span_range;
+        for (ix, span) in file.lock().spans.iter().enumerate() {
+            let span_token_count = if span.embedding.is_none() {
+                span.token_count
             } else {
-                saved_tokens += document.token_count;
                 0
             };
 
-            let next_token_count = self.pending_batch_token_count + document_token_count;
+            let next_token_count = self.pending_batch_token_count + span_token_count;
             if next_token_count > self.embedding_provider.max_tokens_per_batch() {
                 let range_end = fragment_range.end;
                 self.flush();
-                self.pending_batch.push(FileToEmbedFragment {
+                self.pending_batch.push(FileFragmentToEmbed {
                     file: file.clone(),
-                    document_range: range_end..range_end,
+                    span_range: range_end..range_end,
                 });
-                fragment_range = &mut self.pending_batch.last_mut().unwrap().document_range;
+                fragment_range = &mut self.pending_batch.last_mut().unwrap().span_range;
             }
 
             fragment_range.end = ix + 1;
-            self.pending_batch_token_count += document_token_count;
+            self.pending_batch_token_count += span_token_count;
         }
-        log::trace!("Saved Tokens: {:?}", saved_tokens);
     }
 
     pub fn flush(&mut self) {
@@ -111,60 +108,55 @@ impl EmbeddingQueue {
         let finished_files_tx = self.finished_files_tx.clone();
         let embedding_provider = self.embedding_provider.clone();
 
-        self.executor.spawn(async move {
-            let mut spans = Vec::new();
-            let mut document_count = 0;
-            for fragment in &batch {
-                let file = fragment.file.lock();
-                document_count += file.documents[fragment.document_range.clone()].len();
-                spans.extend(
-                    {
-                        file.documents[fragment.document_range.clone()]
-                            .iter().filter(|d| d.embedding.is_none())
-                            .map(|d| d.content.clone())
-                        }
-                );
-            }
-
-            log::trace!("Documents Length: {:?}", document_count);
-            log::trace!("Span Length: {:?}", spans.clone().len());
-
-            // If spans is 0, just send the fragment to the finished files if its the last one.
-            if spans.len() == 0 {
-                for fragment in batch.clone() {
-                    if let Some(file) = Arc::into_inner(fragment.file) {
-                        finished_files_tx.try_send(file.into_inner()).unwrap();
-                    }
+        self.executor
+            .spawn(async move {
+                let mut spans = Vec::new();
+                for fragment in &batch {
+                    let file = fragment.file.lock();
+                    spans.extend(
+                        file.spans[fragment.span_range.clone()]
+                            .iter()
+                            .filter(|d| d.embedding.is_none())
+                            .map(|d| d.content.clone()),
+                    );
                 }
-                return;
-            };
 
-            match embedding_provider.embed_batch(spans).await {
-                Ok(embeddings) => {
-                    let mut embeddings = embeddings.into_iter();
-                    for fragment in batch {
-                        for document in
-                            &mut fragment.file.lock().documents[fragment.document_range.clone()].iter_mut().filter(|d| d.embedding.is_none())
-                        {
-                            if let Some(embedding) = embeddings.next() {
-                                document.embedding = Some(embedding);
-                            } else {
-                                //
-                                log::error!("number of embeddings returned different from number of documents");
-                            }
-                        }
-
+                // If spans is 0, just send the fragment to the finished files if its the last one.
+                if spans.is_empty() {
+                    for fragment in batch.clone() {
                         if let Some(file) = Arc::into_inner(fragment.file) {
                             finished_files_tx.try_send(file.into_inner()).unwrap();
                         }
                     }
+                    return;
+                };
+
+                match embedding_provider.embed_batch(spans).await {
+                    Ok(embeddings) => {
+                        let mut embeddings = embeddings.into_iter();
+                        for fragment in batch {
+                            for span in &mut fragment.file.lock().spans[fragment.span_range.clone()]
+                                .iter_mut()
+                                .filter(|d| d.embedding.is_none())
+                            {
+                                if let Some(embedding) = embeddings.next() {
+                                    span.embedding = Some(embedding);
+                                } else {
+                                    log::error!("number of embeddings != number of documents");
+                                }
+                            }
+
+                            if let Some(file) = Arc::into_inner(fragment.file) {
+                                finished_files_tx.try_send(file.into_inner()).unwrap();
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        log::error!("{:?}", error);
+                    }
                 }
-                Err(error) => {
-                    log::error!("{:?}", error);
-                }
-            }
-        })
-        .detach();
+            })
+            .detach();
     }
 
     pub fn finished_files(&self) -> channel::Receiver<FileToEmbed> {

@@ -16,9 +16,9 @@ use std::{
 use tree_sitter::{Parser, QueryCursor};
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-pub struct DocumentDigest([u8; 20]);
+pub struct SpanDigest([u8; 20]);
 
-impl FromSql for DocumentDigest {
+impl FromSql for SpanDigest {
     fn column_result(value: ValueRef) -> FromSqlResult<Self> {
         let blob = value.as_blob()?;
         let bytes =
@@ -27,17 +27,17 @@ impl FromSql for DocumentDigest {
                     expected_size: 20,
                     blob_size: blob.len(),
                 })?;
-        return Ok(DocumentDigest(bytes));
+        return Ok(SpanDigest(bytes));
     }
 }
 
-impl ToSql for DocumentDigest {
+impl ToSql for SpanDigest {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput> {
         self.0.to_sql()
     }
 }
 
-impl From<&'_ str> for DocumentDigest {
+impl From<&'_ str> for SpanDigest {
     fn from(value: &'_ str) -> Self {
         let mut sha1 = Sha1::new();
         sha1.update(value);
@@ -46,12 +46,12 @@ impl From<&'_ str> for DocumentDigest {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct Document {
+pub struct Span {
     pub name: String,
     pub range: Range<usize>,
     pub content: String,
     pub embedding: Option<Embedding>,
-    pub digest: DocumentDigest,
+    pub digest: SpanDigest,
     pub token_count: usize,
 }
 
@@ -97,14 +97,14 @@ impl CodeContextRetriever {
         relative_path: &Path,
         language_name: Arc<str>,
         content: &str,
-    ) -> Result<Vec<Document>> {
+    ) -> Result<Vec<Span>> {
         let document_span = ENTIRE_FILE_TEMPLATE
             .replace("<path>", relative_path.to_string_lossy().as_ref())
             .replace("<language>", language_name.as_ref())
             .replace("<item>", &content);
-        let digest = DocumentDigest::from(document_span.as_str());
+        let digest = SpanDigest::from(document_span.as_str());
         let (document_span, token_count) = self.embedding_provider.truncate(&document_span);
-        Ok(vec![Document {
+        Ok(vec![Span {
             range: 0..content.len(),
             content: document_span,
             embedding: Default::default(),
@@ -114,13 +114,13 @@ impl CodeContextRetriever {
         }])
     }
 
-    fn parse_markdown_file(&self, relative_path: &Path, content: &str) -> Result<Vec<Document>> {
+    fn parse_markdown_file(&self, relative_path: &Path, content: &str) -> Result<Vec<Span>> {
         let document_span = MARKDOWN_CONTEXT_TEMPLATE
             .replace("<path>", relative_path.to_string_lossy().as_ref())
             .replace("<item>", &content);
-        let digest = DocumentDigest::from(document_span.as_str());
+        let digest = SpanDigest::from(document_span.as_str());
         let (document_span, token_count) = self.embedding_provider.truncate(&document_span);
-        Ok(vec![Document {
+        Ok(vec![Span {
             range: 0..content.len(),
             content: document_span,
             embedding: None,
@@ -191,32 +191,32 @@ impl CodeContextRetriever {
         relative_path: &Path,
         content: &str,
         language: Arc<Language>,
-    ) -> Result<Vec<Document>> {
+    ) -> Result<Vec<Span>> {
         let language_name = language.name();
 
         if PARSEABLE_ENTIRE_FILE_TYPES.contains(&language_name.as_ref()) {
             return self.parse_entire_file(relative_path, language_name, &content);
-        } else if &language_name.to_string() == &"Markdown".to_string() {
+        } else if language_name.as_ref() == "Markdown" {
             return self.parse_markdown_file(relative_path, &content);
         }
 
-        let mut documents = self.parse_file(content, language)?;
-        for document in &mut documents {
+        let mut spans = self.parse_file(content, language)?;
+        for span in &mut spans {
             let document_content = CODE_CONTEXT_TEMPLATE
                 .replace("<path>", relative_path.to_string_lossy().as_ref())
                 .replace("<language>", language_name.as_ref())
-                .replace("item", &document.content);
+                .replace("item", &span.content);
 
             let (document_content, token_count) =
                 self.embedding_provider.truncate(&document_content);
 
-            document.content = document_content;
-            document.token_count = token_count;
+            span.content = document_content;
+            span.token_count = token_count;
         }
-        Ok(documents)
+        Ok(spans)
     }
 
-    pub fn parse_file(&mut self, content: &str, language: Arc<Language>) -> Result<Vec<Document>> {
+    pub fn parse_file(&mut self, content: &str, language: Arc<Language>) -> Result<Vec<Span>> {
         let grammar = language
             .grammar()
             .ok_or_else(|| anyhow!("no grammar for language"))?;
@@ -227,7 +227,7 @@ impl CodeContextRetriever {
         let language_scope = language.default_scope();
         let placeholder = language_scope.collapsed_placeholder();
 
-        let mut documents = Vec::new();
+        let mut spans = Vec::new();
         let mut collapsed_ranges_within = Vec::new();
         let mut parsed_name_ranges = HashSet::new();
         for (i, context_match) in matches.iter().enumerate() {
@@ -267,22 +267,22 @@ impl CodeContextRetriever {
 
             collapsed_ranges_within.sort_by_key(|r| (r.start, Reverse(r.end)));
 
-            let mut document_content = String::new();
+            let mut span_content = String::new();
             for context_range in &context_match.context_ranges {
                 add_content_from_range(
-                    &mut document_content,
+                    &mut span_content,
                     content,
                     context_range.clone(),
                     context_match.start_col,
                 );
-                document_content.push_str("\n");
+                span_content.push_str("\n");
             }
 
             let mut offset = item_range.start;
             for collapsed_range in &collapsed_ranges_within {
                 if collapsed_range.start > offset {
                     add_content_from_range(
-                        &mut document_content,
+                        &mut span_content,
                         content,
                         offset..collapsed_range.start,
                         context_match.start_col,
@@ -291,24 +291,24 @@ impl CodeContextRetriever {
                 }
 
                 if collapsed_range.end > offset {
-                    document_content.push_str(placeholder);
+                    span_content.push_str(placeholder);
                     offset = collapsed_range.end;
                 }
             }
 
             if offset < item_range.end {
                 add_content_from_range(
-                    &mut document_content,
+                    &mut span_content,
                     content,
                     offset..item_range.end,
                     context_match.start_col,
                 );
             }
 
-            let sha1 = DocumentDigest::from(document_content.as_str());
-            documents.push(Document {
+            let sha1 = SpanDigest::from(span_content.as_str());
+            spans.push(Span {
                 name,
-                content: document_content,
+                content: span_content,
                 range: item_range.clone(),
                 embedding: None,
                 digest: sha1,
@@ -316,7 +316,7 @@ impl CodeContextRetriever {
             })
         }
 
-        return Ok(documents);
+        return Ok(spans);
     }
 }
 
