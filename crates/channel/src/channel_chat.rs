@@ -57,6 +57,10 @@ pub enum ChannelChatEvent {
     },
 }
 
+pub fn init(client: &Arc<Client>) {
+    client.add_model_message_handler(ChannelChat::handle_message_sent);
+}
+
 impl Entity for ChannelChat {
     type Event = ChannelChatEvent;
 
@@ -70,10 +74,6 @@ impl Entity for ChannelChat {
 }
 
 impl ChannelChat {
-    pub fn init(rpc: &Arc<Client>) {
-        rpc.add_model_message_handler(Self::handle_message_sent);
-    }
-
     pub async fn new(
         channel: Arc<Channel>,
         user_store: ModelHandle<UserStore>,

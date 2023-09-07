@@ -2,7 +2,10 @@ mod connection_pool;
 
 use crate::{
     auth,
-    db::{self, ChannelId, ChannelsForUser, Database, ProjectId, RoomId, ServerId, User, UserId},
+    db::{
+        self, ChannelId, ChannelsForUser, Database, MessageId, ProjectId, RoomId, ServerId, User,
+        UserId,
+    },
     executor::Executor,
     AppState, Result,
 };
@@ -56,12 +59,16 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use time::OffsetDateTime;
 use tokio::sync::{watch, Semaphore};
 use tower::ServiceBuilder;
 use tracing::{info_span, instrument, Instrument};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
+
+const MESSAGE_COUNT_PER_PAGE: usize = 100;
+const MAX_MESSAGE_LEN: usize = 1024;
 
 lazy_static! {
     static ref METRIC_CONNECTIONS: IntGauge =
@@ -255,6 +262,10 @@ impl Server {
             .add_request_handler(get_channel_members)
             .add_request_handler(respond_to_channel_invite)
             .add_request_handler(join_channel)
+            .add_request_handler(join_channel_chat)
+            .add_message_handler(leave_channel_chat)
+            .add_request_handler(send_channel_message)
+            .add_request_handler(get_channel_messages)
             .add_request_handler(follow)
             .add_message_handler(unfollow)
             .add_message_handler(update_followers)
@@ -2639,6 +2650,112 @@ fn channel_buffer_updated<T: EnvelopedMessage>(
     broadcast(Some(sender_id), collaborators.into_iter(), |peer_id| {
         peer.send(peer_id.into(), message.clone())
     });
+}
+
+async fn send_channel_message(
+    request: proto::SendChannelMessage,
+    response: Response<proto::SendChannelMessage>,
+    session: Session,
+) -> Result<()> {
+    // Validate the message body.
+    let body = request.body.trim().to_string();
+    if body.len() > MAX_MESSAGE_LEN {
+        return Err(anyhow!("message is too long"))?;
+    }
+    if body.is_empty() {
+        return Err(anyhow!("message can't be blank"))?;
+    }
+
+    let timestamp = OffsetDateTime::now_utc();
+    let nonce = request
+        .nonce
+        .ok_or_else(|| anyhow!("nonce can't be blank"))?;
+
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let (message_id, connection_ids) = session
+        .db()
+        .await
+        .create_channel_message(
+            channel_id,
+            session.user_id,
+            &body,
+            timestamp,
+            nonce.clone().into(),
+        )
+        .await?;
+    let message = proto::ChannelMessage {
+        sender_id: session.user_id.to_proto(),
+        id: message_id.to_proto(),
+        body,
+        timestamp: timestamp.unix_timestamp() as u64,
+        nonce: Some(nonce),
+    };
+    broadcast(Some(session.connection_id), connection_ids, |connection| {
+        session.peer.send(
+            connection,
+            proto::ChannelMessageSent {
+                channel_id: channel_id.to_proto(),
+                message: Some(message.clone()),
+            },
+        )
+    });
+    response.send(proto::SendChannelMessageResponse {
+        message: Some(message),
+    })?;
+    Ok(())
+}
+
+async fn join_channel_chat(
+    request: proto::JoinChannelChat,
+    response: Response<proto::JoinChannelChat>,
+    session: Session,
+) -> Result<()> {
+    let channel_id = ChannelId::from_proto(request.channel_id);
+
+    let db = session.db().await;
+    db.join_channel_chat(channel_id, session.connection_id, session.user_id)
+        .await?;
+    let messages = db
+        .get_channel_messages(channel_id, session.user_id, MESSAGE_COUNT_PER_PAGE, None)
+        .await?;
+    response.send(proto::JoinChannelChatResponse {
+        done: messages.len() < MESSAGE_COUNT_PER_PAGE,
+        messages,
+    })?;
+    Ok(())
+}
+
+async fn leave_channel_chat(request: proto::LeaveChannelChat, session: Session) -> Result<()> {
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    session
+        .db()
+        .await
+        .leave_channel_chat(channel_id, session.connection_id, session.user_id)
+        .await?;
+    Ok(())
+}
+
+async fn get_channel_messages(
+    request: proto::GetChannelMessages,
+    response: Response<proto::GetChannelMessages>,
+    session: Session,
+) -> Result<()> {
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let messages = session
+        .db()
+        .await
+        .get_channel_messages(
+            channel_id,
+            session.user_id,
+            MESSAGE_COUNT_PER_PAGE,
+            Some(MessageId::from_proto(request.before_message_id)),
+        )
+        .await?;
+    response.send(proto::GetChannelMessagesResponse {
+        done: messages.len() < MESSAGE_COUNT_PER_PAGE,
+        messages,
+    })?;
+    Ok(())
 }
 
 async fn update_diff_base(request: proto::UpdateDiffBase, session: Session) -> Result<()> {
