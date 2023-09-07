@@ -42,14 +42,14 @@ impl View for FeedbackInfoText {
             )
             .with_child(
                 MouseEventHandler::new::<OpenZedCommunityRepo, _>(0, cx, |state, _| {
-                    let contained_text = if state.hovered() {
+                    let style = if state.hovered() {
                         &theme.feedback.link_text_hover
                     } else {
                         &theme.feedback.link_text_default
                     };
-
-                    Label::new("community repo", contained_text.text.clone())
+                    Label::new("community repo", style.text.clone())
                         .contained()
+                        .with_style(style.container)
                         .aligned()
                         .left()
                         .clipped()
@@ -64,6 +64,8 @@ impl View for FeedbackInfoText {
                     .with_soft_wrap(false)
                     .aligned(),
             )
+            .contained()
+            .with_style(theme.feedback.info_text_default.container)
             .aligned()
             .left()
             .clipped()
