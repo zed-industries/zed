@@ -85,12 +85,19 @@ impl<V: 'static> CollabPanelElement<V> {
                     ),
             )
             .child(
-                div().h_7().px_2().flex().items_center().child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.middle.variant.default.foreground)
-                        .child("Find..."),
-                ),
+                div()
+                    .h_7()
+                    .px_2()
+                    .border_t()
+                    .border_color(theme.middle.variant.default.border)
+                    .flex()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.middle.variant.default.foreground)
+                            .child("Find..."),
+                    ),
             )
     }
 
@@ -117,7 +124,7 @@ impl<V: 'static> CollabPanelElement<V> {
                         })
                         .w_3p5()
                         .h_3p5()
-                        .fill(theme.middle.positive.default.foreground),
+                        .fill(theme.middle.variant.default.foreground),
                 ),
             )
     }

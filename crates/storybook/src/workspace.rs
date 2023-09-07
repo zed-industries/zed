@@ -74,7 +74,8 @@ impl TitleBar {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .px_1()
+                            .px_2()
+                            .rounded_md()
                             .hover()
                             .fill(theme.lowest.base.hovered.background)
                             .active()
@@ -87,7 +88,8 @@ impl TitleBar {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .px_1()
+                            .px_2()
+                            .rounded_md()
                             .text_color(theme.lowest.variant.default.foreground)
                             .hover()
                             .fill(theme.lowest.base.hovered.background)
@@ -342,16 +344,24 @@ impl WorkspaceElement {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
         div()
-            .h_full()
-            .w_full()
+            .size_full()
             .flex()
             .flex_col()
             .gap_y_0()
             .font("Zed Sans Extended")
             .text_color(theme.lowest.base.default.foreground)
-            .fill(theme.middle.base.default.background)
+            .fill(theme.middle.warning.default.background)
             .child(titlebar())
             .child(collab_panel())
             .child(statusbar())
     }
 }
+
+// Hover over things
+// Paint its space... padding, margin, border, content
+
+/*
+* h_8, grow_0/flex_grow_0, shrink_0/flex_shrink_0
+* flex_grow
+* h_8, grow_0/flex_grow_0, shrink_0/flex_shrink_0
+*/
