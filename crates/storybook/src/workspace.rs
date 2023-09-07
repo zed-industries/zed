@@ -1,7 +1,6 @@
 use crate::{collab_panel::collab_panel, theme::theme};
 use gpui2::{
     elements::{div, svg},
-    geometry::pixels,
     style::{StyleHelpers, Styleable},
     Element, IntoElement, ParentElement, ViewContext,
 };
@@ -45,21 +44,21 @@ impl TitleBar {
                         div()
                             .w_3()
                             .h_3()
-                            // .rounded_full()
+                            .rounded_full()
                             .fill(theme.lowest.positive.default.foreground),
                     )
                     .child(
                         div()
                             .w_3()
                             .h_3()
-                            // .rounded_full()
+                            .rounded_full()
                             .fill(theme.lowest.warning.default.foreground),
                     )
                     .child(
                         div()
                             .w_3()
                             .h_3()
-                            // .rounded_full()
+                            .rounded_full()
                             .fill(theme.lowest.negative.default.foreground),
                     ),
             )
