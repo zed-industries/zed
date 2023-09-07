@@ -20,12 +20,11 @@ use gpui::{
     Task, View, ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use menu::Confirm;
-use postage::stream::Stream;
 use project::{
     search::{PathMatcher, SearchInputs, SearchQuery},
     Entry, Project,
 };
-use semantic_index::SemanticIndex;
+use semantic_index::{SemanticIndex, SemanticIndexStatus};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
@@ -116,7 +115,7 @@ pub struct ProjectSearchView {
     model: ModelHandle<ProjectSearch>,
     query_editor: ViewHandle<Editor>,
     results_editor: ViewHandle<Editor>,
-    semantic_state: Option<SemanticSearchState>,
+    semantic_state: Option<SemanticState>,
     semantic_permissioned: Option<bool>,
     search_options: SearchOptions,
     panels_with_errors: HashSet<InputPanel>,
@@ -129,9 +128,9 @@ pub struct ProjectSearchView {
     current_mode: SearchMode,
 }
 
-struct SemanticSearchState {
-    pending_file_count: usize,
-    _progress_task: Task<()>,
+struct SemanticState {
+    index_status: SemanticIndexStatus,
+    _subscription: Subscription,
 }
 
 pub struct ProjectSearchBar {
@@ -316,11 +315,18 @@ impl View for ProjectSearchView {
                 }
             };
 
-            let semantic_status = self.semantic_state.as_ref().map(|semantic| {
-                if semantic.pending_file_count > 0 {
-                    format!("Remaining files to index: {}", semantic.pending_file_count)
-                } else {
-                    "Indexing complete".to_string()
+            let semantic_status = self.semantic_state.as_ref().and_then(|semantic| {
+                let status = semantic.index_status;
+                match status {
+                    SemanticIndexStatus::Indexed => Some("Indexing complete".to_string()),
+                    SemanticIndexStatus::Indexing { remaining_files } => {
+                        if remaining_files == 0 {
+                            Some(format!("Indexing..."))
+                        } else {
+                            Some(format!("Remaining files to index: {}", remaining_files))
+                        }
+                    }
+                    SemanticIndexStatus::NotIndexed => None,
                 }
             });
 
@@ -637,41 +643,29 @@ impl ProjectSearchView {
 
             let project = self.model.read(cx).project.clone();
 
-            let mut pending_file_count_rx = semantic_index.update(cx, |semantic_index, cx| {
+            semantic_index.update(cx, |semantic_index, cx| {
                 semantic_index
                     .index_project(project.clone(), cx)
                     .detach_and_log_err(cx);
-                semantic_index.pending_file_count(&project).unwrap()
             });
 
-            cx.spawn(|search_view, mut cx| async move {
-                search_view.update(&mut cx, |search_view, cx| {
-                    cx.notify();
-                    let pending_file_count = *pending_file_count_rx.borrow();
-                    search_view.semantic_state = Some(SemanticSearchState {
-                        pending_file_count,
-                        _progress_task: cx.spawn(|search_view, mut cx| async move {
-                            while let Some(count) = pending_file_count_rx.recv().await {
-                                search_view
-                                    .update(&mut cx, |search_view, cx| {
-                                        if let Some(semantic_search_state) =
-                                            &mut search_view.semantic_state
-                                        {
-                                            semantic_search_state.pending_file_count = count;
-                                            cx.notify();
-                                            if count == 0 {
-                                                return;
-                                            }
-                                        }
-                                    })
-                                    .ok();
-                            }
-                        }),
-                    });
-                })?;
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
+            self.semantic_state = Some(SemanticState {
+                index_status: semantic_index.read(cx).status(&project),
+                _subscription: cx.observe(&semantic_index, Self::semantic_index_changed),
+            });
+            cx.notify();
+        }
+    }
+
+    fn semantic_index_changed(
+        &mut self,
+        semantic_index: ModelHandle<SemanticIndex>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let project = self.model.read(cx).project.clone();
+        if let Some(semantic_state) = self.semantic_state.as_mut() {
+            semantic_state.index_status = semantic_index.read(cx).status(&project);
+            cx.notify();
         }
     }
 
