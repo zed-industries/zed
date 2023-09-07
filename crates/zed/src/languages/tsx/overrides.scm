@@ -1,5 +1,10 @@
 (comment) @comment
-(string) @string
+
+[
+  (string)
+  (template_string)
+] @string
+
 [
   (jsx_element)
   (jsx_fragment)
