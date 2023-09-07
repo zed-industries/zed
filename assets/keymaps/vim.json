@@ -327,7 +327,7 @@
         "Delete"
       ],
       "shift-d": "vim::DeleteToEndOfLine",
-      "shift-j": "editor::JoinLines",
+      "shift-j": "vim::JoinLines",
       "y": [
         "vim::PushOperator",
         "Yank"

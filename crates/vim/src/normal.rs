@@ -46,6 +46,7 @@ actions!(
         DeleteToEndOfLine,
         Yank,
         ChangeCase,
+        JoinLines,
     ]
 );
 
@@ -106,6 +107,19 @@ pub fn init(cx: &mut AppContext) {
             );
         })
     });
+    cx.add_action(|_: &mut Workspace, _: &JoinLines, cx| {
+        Vim::update(cx, |vim, cx| {
+            vim.record_current_action(cx);
+            let times = vim.pop_number_operator(cx).unwrap_or(1);
+            vim.update_active_editor(cx, |editor, cx| {
+                editor.transact(cx, |editor, cx| {
+                    for _ in 0..times {
+                        editor.join_lines(editor::JoinLines, cx)
+                    }
+                })
+            })
+        })
+    })
 }
 
 pub fn normal_motion(
