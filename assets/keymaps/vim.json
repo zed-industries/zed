@@ -451,6 +451,7 @@
       "~": "vim::ChangeCase",
       "shift-i": "vim::InsertBefore",
       "shift-a": "vim::InsertAfter",
+      "shift-j": "vim::JoinLines",
       "r": [
         "vim::PushOperator",
         "Replace"

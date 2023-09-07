@@ -110,11 +110,18 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(|_: &mut Workspace, _: &JoinLines, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
-            let times = vim.pop_number_operator(cx).unwrap_or(1);
+            let mut times = vim.pop_number_operator(cx).unwrap_or(1);
+            if vim.state().mode.is_visual() {
+                times = 1;
+            } else if times > 1 {
+                // 2J joins two lines together (same as J or 1J)
+                times -= 1;
+            }
+
             vim.update_active_editor(cx, |editor, cx| {
                 editor.transact(cx, |editor, cx| {
                     for _ in 0..times {
-                        editor.join_lines(editor::JoinLines, cx)
+                        editor.join_lines(&Default::default(), cx)
                     }
                 })
             })
