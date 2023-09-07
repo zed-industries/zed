@@ -106,6 +106,11 @@ fn box_prefixes() -> Vec<(&'static str, bool, Vec<TokenStream2>)> {
         ("mt", true, vec![quote! { margin.top }]),
         ("mb", true, vec![quote! { margin.bottom }]),
         (
+            "my",
+            true,
+            vec![quote! { margin.top }, quote! { margin.bottom }],
+        ),
+        (
             "mx",
             true,
             vec![quote! { margin.left }, quote! { margin.right }],

@@ -1,6 +1,6 @@
 use crate::{collab_panel::collab_panel, theme::theme};
 use gpui2::{
-    elements::{div, svg},
+    elements::{div, img, svg},
     style::{StyleHelpers, Styleable},
     Element, IntoElement, ParentElement, ViewContext,
 };
@@ -106,59 +106,122 @@ impl TitleBar {
             .flex()
             .items_center()
             .h_full()
-            .gap_4()
+            .gap_3()
             .px_2()
+            // === Actions === //
+            .child(
+                div().child(
+                    div().flex().items_center().gap_1().child(
+                        div().size_4().flex().items_center().justify_center().child(
+                            svg()
+                                .path("icons/exit.svg")
+                                .size_4()
+                                .fill(theme.lowest.base.default.foreground),
+                        ),
+                    ),
+                ),
+            )
+            .child(div().w_px().h_3().fill(theme.lowest.base.default.border))
             // === Comms === //
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .child(
-                        div()
-                            .w_6()
-                            .h_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                svg()
-                                    .path("icons/microphone.svg")
-                                    .w_4()
-                                    .h_4()
-                                    .fill(theme.lowest.base.default.foreground),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .w_6()
-                            .h_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                svg()
-                                    .path("icons/screen.svg")
-                                    .w_4()
-                                    .h_4()
-                                    .fill(theme.lowest.base.default.foreground),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .w_6()
-                            .h_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                svg()
-                                    .path("icons/exit.svg")
-                                    .w_4()
-                                    .h_4()
-                                    .fill(theme.lowest.base.default.foreground),
-                            ),
-                    ),
+                div().child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_px()
+                        .child(
+                            div()
+                                .px_2()
+                                .py_1()
+                                .rounded_md()
+                                .h_full()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .hover()
+                                .fill(theme.lowest.base.hovered.background)
+                                .active()
+                                .fill(theme.lowest.base.pressed.background)
+                                .child(
+                                    svg()
+                                        .path("icons/microphone.svg")
+                                        .size_3p5()
+                                        .fill(theme.lowest.base.default.foreground),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .px_2()
+                                .py_1()
+                                .rounded_md()
+                                .h_full()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .hover()
+                                .fill(theme.lowest.base.hovered.background)
+                                .active()
+                                .fill(theme.lowest.base.pressed.background)
+                                .child(
+                                    svg()
+                                        .path("icons/radix/speaker-loud.svg")
+                                        .size_3p5()
+                                        .fill(theme.lowest.base.default.foreground),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .px_2()
+                                .py_1()
+                                .rounded_md()
+                                .h_full()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .hover()
+                                .fill(theme.lowest.base.hovered.background)
+                                .active()
+                                .fill(theme.lowest.base.pressed.background)
+                                .child(
+                                    svg()
+                                        .path("icons/radix/desktop.svg")
+                                        .size_3p5()
+                                        .fill(theme.lowest.base.default.foreground),
+                                ),
+                        ),
+                ),
+            )
+            .child(div().w_px().h_3().fill(theme.lowest.base.default.border))
+            // User Group
+            .child(
+                div().child(
+                    div()
+                        .px_1()
+                        .py_1()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_md()
+                        .gap_0p5()
+                        .hover()
+                        .fill(theme.lowest.base.hovered.background)
+                        .active()
+                        .fill(theme.lowest.base.pressed.background)
+                        .child(
+                            img()
+                                .uri("https://avatars.githubusercontent.com/u/1714999?v=4")
+                                .size_4()
+                                .rounded_md()
+                                .fill(theme.middle.on.default.foreground),
+                        )
+                        .child(
+                            svg()
+                                .path("icons/caret_down_8.svg")
+                                .w_2()
+                                .h_2()
+                                .fill(theme.lowest.variant.default.foreground),
+                        ),
+                ),
             )
     }
 }
