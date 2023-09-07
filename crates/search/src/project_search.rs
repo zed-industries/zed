@@ -230,7 +230,7 @@ impl ProjectSearch {
         self.search_id += 1;
         self.match_ranges.clear();
         self.search_history.add(inputs.as_str().to_string());
-        self.no_results = Some(true);
+        self.no_results = None;
         self.pending_search = Some(cx.spawn(|this, mut cx| async move {
             let results = search?.await.log_err()?;
             let matches = results
@@ -238,9 +238,10 @@ impl ProjectSearch {
                 .map(|result| (result.buffer, vec![result.range.start..result.range.start]));
 
             this.update(&mut cx, |this, cx| {
+                this.no_results = Some(true);
                 this.excerpts.update(cx, |excerpts, cx| {
                     excerpts.clear(cx);
-                })
+                });
             });
             for (buffer, ranges) in matches {
                 let mut match_ranges = this.update(&mut cx, |this, cx| {
@@ -315,15 +316,13 @@ impl View for ProjectSearchView {
                 }
             };
 
-            let semantic_status = if let Some(semantic) = &self.semantic_state {
+            let semantic_status = self.semantic_state.as_ref().map(|semantic| {
                 if semantic.pending_file_count > 0 {
                     format!("Remaining files to index: {}", semantic.pending_file_count)
                 } else {
                     "Indexing complete".to_string()
                 }
-            } else {
-                "Indexing: ...".to_string()
-            };
+            });
 
             let minor_text = if let Some(no_results) = model.no_results {
                 if model.pending_search.is_none() && no_results {
@@ -333,12 +332,16 @@ impl View for ProjectSearchView {
                 }
             } else {
                 match current_mode {
-                    SearchMode::Semantic => vec![
-                        "".to_owned(),
-                        semantic_status,
-                        "Simply explain the code you are looking to find.".to_owned(),
-                        "ex. 'prompt user for permissions to index their project'".to_owned(),
-                    ],
+                    SearchMode::Semantic => {
+                        let mut minor_text = Vec::new();
+                        minor_text.push("".into());
+                        minor_text.extend(semantic_status);
+                        minor_text.push("Simply explain the code you are looking to find.".into());
+                        minor_text.push(
+                            "ex. 'prompt user for permissions to index their project'".into(),
+                        );
+                        minor_text
+                    }
                     _ => vec![
                         "".to_owned(),
                         "Include/exclude specific paths with the filter option.".to_owned(),
@@ -952,11 +955,7 @@ impl ProjectSearchView {
         let mode = self.current_mode;
         match mode {
             SearchMode::Semantic => {
-                if let Some(semantic) = &mut self.semantic_state {
-                    if semantic.pending_file_count > 0 {
-                        return;
-                    }
-
+                if self.semantic_state.is_some() {
                     if let Some(query) = self.build_search_query(cx) {
                         self.model
                             .update(cx, |model, cx| model.semantic_search(query.as_inner(), cx));
