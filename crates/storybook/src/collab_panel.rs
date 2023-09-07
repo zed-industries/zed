@@ -23,7 +23,7 @@ impl<V: 'static> CollabPanelElement<V> {
 
         // Panel
         div()
-            .full()
+            .w_96()
             .flex()
             .flex_col()
             .font("Zed Sans Extended")
