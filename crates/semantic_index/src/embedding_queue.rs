@@ -75,12 +75,10 @@ impl EmbeddingQueue {
         });
 
         let mut fragment_range = &mut self.pending_batch.last_mut().unwrap().span_range;
-        let mut saved_tokens = 0;
         for (ix, span) in file.lock().spans.iter().enumerate() {
             let span_token_count = if span.embedding.is_none() {
                 span.token_count
             } else {
-                saved_tokens += span.token_count;
                 0
             };
 
@@ -98,7 +96,6 @@ impl EmbeddingQueue {
             fragment_range.end = ix + 1;
             self.pending_batch_token_count += span_token_count;
         }
-        log::trace!("Saved Tokens: {:?}", saved_tokens);
     }
 
     pub fn flush(&mut self) {
@@ -113,10 +110,8 @@ impl EmbeddingQueue {
 
         self.executor.spawn(async move {
             let mut spans = Vec::new();
-            let mut span_count = 0;
             for fragment in &batch {
                 let file = fragment.file.lock();
-                span_count += file.spans[fragment.span_range.clone()].len();
                 spans.extend(
                     {
                         file.spans[fragment.span_range.clone()]
@@ -125,9 +120,6 @@ impl EmbeddingQueue {
                         }
                 );
             }
-
-            log::trace!("Documents Length: {:?}", span_count);
-            log::trace!("Span Length: {:?}", spans.clone().len());
 
             // If spans is 0, just send the fragment to the finished files if its the last one.
             if spans.len() == 0 {
@@ -149,7 +141,6 @@ impl EmbeddingQueue {
                             if let Some(embedding) = embeddings.next() {
                                 span.embedding = Some(embedding);
                             } else {
-                                //
                                 log::error!("number of embeddings returned different from number of documents");
                             }
                         }
