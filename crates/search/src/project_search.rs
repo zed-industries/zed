@@ -867,7 +867,7 @@ impl ProjectSearchView {
         SemanticIndex::global(cx)
             .map(|semantic| {
                 let project = self.model.read(cx).project.clone();
-                semantic.update(cx, |this, cx| this.project_previously_indexed(project, cx))
+                semantic.update(cx, |this, cx| this.project_previously_indexed(&project, cx))
             })
             .unwrap_or(Task::ready(Ok(false)))
     }

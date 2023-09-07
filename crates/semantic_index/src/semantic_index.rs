@@ -35,6 +35,7 @@ use util::{
     paths::EMBEDDINGS_DIR,
     ResultExt,
 };
+use workspace::WorkspaceCreated;
 
 const SEMANTIC_INDEX_VERSION: usize = 10;
 const BACKGROUND_INDEXING_DELAY: Duration = Duration::from_secs(5 * 60);
@@ -56,6 +57,35 @@ pub fn init(
     if *RELEASE_CHANNEL == ReleaseChannel::Stable {
         return;
     }
+
+    cx.subscribe_global::<WorkspaceCreated, _>({
+        move |event, cx| {
+            let Some(semantic_index) = SemanticIndex::global(cx) else {
+                return;
+            };
+            let workspace = &event.0;
+            if let Some(workspace) = workspace.upgrade(cx) {
+                let project = workspace.read(cx).project().clone();
+                if project.read(cx).is_local() {
+                    cx.spawn(|mut cx| async move {
+                        let previously_indexed = semantic_index
+                            .update(&mut cx, |index, cx| {
+                                index.project_previously_indexed(&project, cx)
+                            })
+                            .await?;
+                        if previously_indexed {
+                            semantic_index
+                                .update(&mut cx, |index, cx| index.index_project(project, cx))
+                                .await?;
+                        }
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+                }
+            }
+        }
+    })
+    .detach();
 
     cx.spawn(move |mut cx| async move {
         let semantic_index = SemanticIndex::new(
@@ -356,7 +386,7 @@ impl SemanticIndex {
 
     pub fn project_previously_indexed(
         &mut self,
-        project: ModelHandle<Project>,
+        project: &ModelHandle<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<bool>> {
         let worktrees_indexed_previously = project

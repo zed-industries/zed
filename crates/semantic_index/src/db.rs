@@ -18,7 +18,7 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
-    time::{Instant, SystemTime},
+    time::SystemTime,
 };
 use util::TryFutureExt;
 
@@ -232,7 +232,6 @@ impl VectorDatabase {
 
             let file_id = db.last_insert_rowid();
 
-            let t0 = Instant::now();
             let mut query = db.prepare(
                 "
                 INSERT INTO spans
@@ -240,10 +239,6 @@ impl VectorDatabase {
                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                 ",
             )?;
-            log::trace!(
-                "Preparing Query Took: {:?} milliseconds",
-                t0.elapsed().as_millis()
-            );
 
             for span in spans {
                 query.execute(params![
