@@ -150,6 +150,21 @@ impl Database {
                 .exec(&*tx)
                 .await?;
 
+            // Delete any other paths that incldue this channel
+            let sql = r#"
+                    DELETE FROM channel_paths
+                    WHERE
+                        id_path LIKE '%' || $1 || '%'
+                "#;
+            let channel_paths_stmt = Statement::from_sql_and_values(
+                self.pool.get_database_backend(),
+                sql,
+                [
+                    channel_id.to_proto().into(),
+                ],
+            );
+            tx.execute(channel_paths_stmt).await?;
+
             Ok((channels_to_remove.into_keys().collect(), members_to_notify))
         })
         .await
@@ -844,19 +859,18 @@ impl Database {
             // channel if they've linked the channel to one where they're an admin.
             self.check_user_is_channel_admin(from, user, &*tx).await?;
 
-            if let Some(to) = to {
-                self.check_user_is_channel_admin(to, user, &*tx).await?;
-
-                self.link_channel(from, to, &*tx).await?;
-            }
-            // The removal must come after the linking so that we don't leave
-            // sub channels stranded
             if let Some(from_parent) = from_parent {
                 self.check_user_is_channel_admin(from_parent, user, &*tx)
                     .await?;
 
                 self.remove_channel_from_parent(from, from_parent, &*tx)
                     .await?;
+            }
+
+            if let Some(to) = to {
+                self.check_user_is_channel_admin(to, user, &*tx).await?;
+
+                self.link_channel(from, to, &*tx).await?;
             }
 
             Ok(())
