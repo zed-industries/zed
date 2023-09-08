@@ -1258,7 +1258,7 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let window = cx.window();
-        let prepare = self.prepare_to_close(false, SaveBehavior::PromptOnWrite, cx);
+        let prepare = self.prepare_to_close(false, cx);
         Some(cx.spawn(|_, mut cx| async move {
             if prepare.await? {
                 window.remove(&mut cx);
@@ -1270,7 +1270,6 @@ impl Workspace {
     pub fn prepare_to_close(
         &mut self,
         quitting: bool,
-        save_behavior: SaveBehavior,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
         let active_call = self.active_call().cloned();
@@ -1310,7 +1309,7 @@ impl Workspace {
 
             Ok(this
                 .update(&mut cx, |this, cx| {
-                    this.save_all_internal(save_behavior, cx)
+                    this.save_all_internal(SaveBehavior::PromptOnWrite, cx)
                 })?
                 .await?)
         })
@@ -1407,7 +1406,7 @@ impl Workspace {
         let close_task = if is_remote || has_worktree || has_dirty_items {
             None
         } else {
-            Some(self.prepare_to_close(false, SaveBehavior::PromptOnWrite, cx))
+            Some(self.prepare_to_close(false, cx))
         };
         let app_state = self.app_state.clone();
 
@@ -4102,7 +4101,7 @@ pub fn restart(_: &Restart, cx: &mut AppContext) {
         // If the user cancels any save prompt, then keep the app open.
         for window in workspace_windows {
             if let Some(should_close) = window.update_root(&mut cx, |workspace, cx| {
-                workspace.prepare_to_close(true, SaveBehavior::PromptOnWrite, cx)
+                workspace.prepare_to_close(true, cx)
             }) {
                 if !should_close.await? {
                     return Ok(());
@@ -4292,9 +4291,7 @@ mod tests {
         // When there are no dirty items, there's nothing to do.
         let item1 = window.add_view(cx, |_| TestItem::new());
         workspace.update(cx, |w, cx| w.add_item(Box::new(item1.clone()), cx));
-        let task = workspace.update(cx, |w, cx| {
-            w.prepare_to_close(false, SaveBehavior::PromptOnWrite, cx)
-        });
+        let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
         assert!(task.await.unwrap());
 
         // When there are dirty untitled items, prompt to save each one. If the user
@@ -4309,9 +4306,7 @@ mod tests {
             w.add_item(Box::new(item2.clone()), cx);
             w.add_item(Box::new(item3.clone()), cx);
         });
-        let task = workspace.update(cx, |w, cx| {
-            w.prepare_to_close(false, SaveBehavior::PromptOnWrite, cx)
-        });
+        let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
         cx.foreground().run_until_parked();
         window.simulate_prompt_answer(2, cx); // cancel
         cx.foreground().run_until_parked();

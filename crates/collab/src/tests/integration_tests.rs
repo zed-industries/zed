@@ -1530,9 +1530,7 @@ async fn test_host_disconnect(
 
     // Ensure client B is not prompted to save edits when closing window after disconnecting.
     let can_close = workspace_b
-        .update(cx_b, |workspace, cx| {
-            workspace.prepare_to_close(true, workspace::SaveBehavior::PromptOnWrite, cx)
-        })
+        .update(cx_b, |workspace, cx| workspace.prepare_to_close(true, cx))
         .await
         .unwrap();
     assert!(can_close);

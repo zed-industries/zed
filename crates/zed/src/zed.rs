@@ -438,7 +438,7 @@ fn quit(_: &Quit, cx: &mut gpui::AppContext) {
         // If the user cancels any save prompt, then keep the app open.
         for window in workspace_windows {
             if let Some(should_close) = window.update_root(&mut cx, |workspace, cx| {
-                workspace.prepare_to_close(true, workspace::SaveBehavior::PromptOnWrite, cx)
+                workspace.prepare_to_close(true, cx)
             }) {
                 if !should_close.await? {
                     return Ok(());
