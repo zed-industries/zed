@@ -10,7 +10,7 @@ use crate::{
     json::ToJson,
     platform::CursorStyle,
     scene::{self, CornerRadii, CursorRegion, Quad},
-    AnyElement, Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, ViewContext,
+    AnyElement, Element, LayoutContext, PaintContext, SizeConstraint, ViewContext,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -387,7 +387,6 @@ impl<V: 'static> Element<V> for Container<V> {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
@@ -400,7 +399,7 @@ impl<V: 'static> Element<V> for Container<V> {
         );
 
         if let Some(shadow) = self.style.shadow.as_ref() {
-            scene.push_shadow(scene::Shadow {
+            cx.scene().push_shadow(scene::Shadow {
                 bounds: quad_bounds + shadow.offset,
                 corner_radii: self.style.corner_radii,
                 sigma: shadow.blur,
@@ -410,7 +409,7 @@ impl<V: 'static> Element<V> for Container<V> {
 
         if let Some(hit_bounds) = quad_bounds.intersection(visible_bounds) {
             if let Some(style) = self.style.cursor {
-                scene.push_cursor_region(CursorRegion {
+                cx.scene().push_cursor_region(CursorRegion {
                     bounds: hit_bounds,
                     style,
                 });
@@ -421,26 +420,25 @@ impl<V: 'static> Element<V> for Container<V> {
             quad_bounds.origin() + vec2f(self.style.padding.left, self.style.padding.top);
 
         if self.style.border.overlay {
-            scene.push_quad(Quad {
+            cx.scene().push_quad(Quad {
                 bounds: quad_bounds,
                 background: self.style.background_color,
                 border: Default::default(),
                 corner_radii: self.style.corner_radii.into(),
             });
 
-            self.child
-                .paint(scene, child_origin, visible_bounds, view, cx);
+            self.child.paint(child_origin, visible_bounds, view, cx);
 
-            scene.push_layer(None);
-            scene.push_quad(Quad {
+            cx.scene().push_layer(None);
+            cx.scene().push_quad(Quad {
                 bounds: quad_bounds,
                 background: self.style.overlay_color,
                 border: self.style.border.into(),
                 corner_radii: self.style.corner_radii.into(),
             });
-            scene.pop_layer();
+            cx.scene().pop_layer();
         } else {
-            scene.push_quad(Quad {
+            cx.scene().push_quad(Quad {
                 bounds: quad_bounds,
                 background: self.style.background_color,
                 border: self.style.border.into(),
@@ -452,18 +450,17 @@ impl<V: 'static> Element<V> for Container<V> {
                     self.style.border.left_width(),
                     self.style.border.top_width(),
                 );
-            self.child
-                .paint(scene, child_origin, visible_bounds, view, cx);
+            self.child.paint(child_origin, visible_bounds, view, cx);
 
             if self.style.overlay_color.is_some() {
-                scene.push_layer(None);
-                scene.push_quad(Quad {
+                cx.scene().push_layer(None);
+                cx.scene().push_quad(Quad {
                     bounds: quad_bounds,
                     background: self.style.overlay_color,
                     border: Default::default(),
                     corner_radii: self.style.corner_radii.into(),
                 });
-                scene.pop_layer();
+                cx.scene().pop_layer();
             }
         }
     }

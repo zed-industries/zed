@@ -11,15 +11,11 @@ pub struct PaintContext<'a, 'b, 'c, 'd, V> {
     #[deref]
     #[deref_mut]
     pub(crate) legacy_cx: &'d mut LegacyPaintContext<'a, 'b, 'c, V>,
-    pub(crate) scene: &'d mut gpui::SceneBuilder,
 }
 
 impl<'a, 'b, 'c, 'd, V: 'static> PaintContext<'a, 'b, 'c, 'd, V> {
-    pub fn new(
-        legacy_cx: &'d mut LegacyPaintContext<'a, 'b, 'c, V>,
-        scene: &'d mut gpui::SceneBuilder,
-    ) -> Self {
-        Self { legacy_cx, scene }
+    pub fn new(legacy_cx: &'d mut LegacyPaintContext<'a, 'b, 'c, V>) -> Self {
+        Self { legacy_cx }
     }
 
     pub fn on_event<E: 'static>(
@@ -29,7 +25,7 @@ impl<'a, 'b, 'c, 'd, V: 'static> PaintContext<'a, 'b, 'c, 'd, V> {
     ) {
         let view = self.weak_handle();
 
-        self.scene.event_handlers.push(EventHandler {
+        self.scene().event_handlers.push(EventHandler {
             order,
             handler: Rc::new(move |event, window_cx| {
                 if let Some(view) = view.upgrade(window_cx) {

@@ -92,13 +92,7 @@ impl<V: 'static> Element<V> for Text {
 
         // TODO: We haven't added visible bounds to the new element system yet, so this is a placeholder.
         let visible_bounds = bounds;
-        line.paint(
-            cx.scene,
-            bounds.origin(),
-            visible_bounds,
-            line_height,
-            cx.legacy_cx,
-        );
+        line.paint(bounds.origin(), visible_bounds, line_height, cx.legacy_cx);
     }
 }
 

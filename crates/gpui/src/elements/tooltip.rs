@@ -6,8 +6,8 @@ use crate::{
     fonts::TextStyle,
     geometry::{rect::RectF, vector::Vector2F},
     json::json,
-    Action, Axis, ElementStateHandle, LayoutContext, PaintContext, SceneBuilder, SizeConstraint,
-    Task, TypeTag, ViewContext,
+    Action, Axis, ElementStateHandle, LayoutContext, PaintContext, SizeConstraint, Task, TypeTag,
+    ViewContext,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -204,17 +204,15 @@ impl<V: 'static> Element<V> for Tooltip<V> {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
         cx: &mut PaintContext<V>,
     ) {
-        self.child
-            .paint(scene, bounds.origin(), visible_bounds, view, cx);
+        self.child.paint(bounds.origin(), visible_bounds, view, cx);
         if let Some(tooltip) = self.tooltip.as_mut() {
-            tooltip.paint(scene, bounds.origin(), visible_bounds, view, cx);
+            tooltip.paint(bounds.origin(), visible_bounds, view, cx);
         }
     }
 

@@ -6,7 +6,7 @@ use crate::{
     },
     json::{self, json},
     platform::ScrollWheelEvent,
-    AnyElement, LayoutContext, MouseRegion, PaintContext, SceneBuilder, ViewContext,
+    AnyElement, LayoutContext, MouseRegion, PaintContext, ViewContext,
 };
 use json::ToJson;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -272,7 +272,6 @@ impl<V: 'static> Element<V> for UniformList<V> {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
@@ -281,9 +280,9 @@ impl<V: 'static> Element<V> for UniformList<V> {
     ) -> Self::PaintState {
         let visible_bounds = visible_bounds.intersection(bounds).unwrap_or_default();
 
-        scene.push_layer(Some(visible_bounds));
+        cx.scene().push_layer(Some(visible_bounds));
 
-        scene.push_mouse_region(
+        cx.scene().push_mouse_region(
             MouseRegion::new::<Self>(self.view_id, 0, visible_bounds).on_scroll({
                 let scroll_max = layout.scroll_max;
                 let state = self.state.clone();
@@ -312,11 +311,11 @@ impl<V: 'static> Element<V> for UniformList<V> {
             );
 
         for item in &mut layout.items {
-            item.paint(scene, item_origin, visible_bounds, view, cx);
+            item.paint(item_origin, visible_bounds, view, cx);
             item_origin += vec2f(0.0, layout.item_height);
         }
 
-        scene.pop_layer();
+        cx.scene().pop_layer();
     }
 
     fn rect_for_text_range(

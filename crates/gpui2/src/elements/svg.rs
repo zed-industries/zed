@@ -63,7 +63,7 @@ impl<V: 'static> Element<V> for Svg {
                     color: Rgba::from(fill_color).into(),
                 };
 
-                cx.scene.push_icon(icon);
+                cx.scene().push_icon(icon);
             }
         }
     }

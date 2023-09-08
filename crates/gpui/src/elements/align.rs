@@ -1,7 +1,6 @@
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    json, AnyElement, Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint,
-    ViewContext,
+    json, AnyElement, Element, LayoutContext, PaintContext, SizeConstraint, ViewContext,
 };
 use json::ToJson;
 
@@ -65,7 +64,6 @@ impl<V: 'static> Element<V> for Align<V> {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
@@ -79,7 +77,6 @@ impl<V: 'static> Element<V> for Align<V> {
         let child_target = child_center + child_center * self.alignment;
 
         self.child.paint(
-            scene,
             bounds.origin() - (child_target - my_target),
             visible_bounds,
             view,

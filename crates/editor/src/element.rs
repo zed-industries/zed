@@ -33,7 +33,7 @@ use gpui::{
     platform::{CursorStyle, Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent},
     text_layout::{self, Line, RunStyle, TextLayoutCache},
     AnyElement, Axis, CursorRegion, Element, EventContext, FontCache, LayoutContext, MouseRegion,
-    PaintContext, Quad, SceneBuilder, SizeConstraint, ViewContext, WindowContext,
+    PaintContext, Quad, SizeConstraint, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use json::json;
@@ -131,7 +131,6 @@ impl EditorElement {
     }
 
     fn attach_mouse_handlers(
-        scene: &mut SceneBuilder,
         position_map: &Arc<PositionMap>,
         has_popovers: bool,
         visible_bounds: RectF,
@@ -141,124 +140,124 @@ impl EditorElement {
         cx: &mut ViewContext<Editor>,
     ) {
         enum EditorElementMouseHandlers {}
-        scene.push_mouse_region(
-            MouseRegion::new::<EditorElementMouseHandlers>(
-                cx.view_id(),
-                cx.view_id(),
-                visible_bounds,
-            )
-            .on_down(MouseButton::Left, {
-                let position_map = position_map.clone();
-                move |event, editor, cx| {
-                    if !Self::mouse_down(
-                        editor,
-                        event.platform_event,
-                        position_map.as_ref(),
-                        text_bounds,
-                        gutter_bounds,
-                        cx,
-                    ) {
-                        cx.propagate_event();
+        let view_id = cx.view_id();
+        cx.scene().push_mouse_region(
+            MouseRegion::new::<EditorElementMouseHandlers>(view_id, view_id, visible_bounds)
+                .on_down(MouseButton::Left, {
+                    let position_map = position_map.clone();
+                    move |event, editor, cx| {
+                        if !Self::mouse_down(
+                            editor,
+                            event.platform_event,
+                            position_map.as_ref(),
+                            text_bounds,
+                            gutter_bounds,
+                            cx,
+                        ) {
+                            cx.propagate_event();
+                        }
                     }
-                }
-            })
-            .on_down(MouseButton::Right, {
-                let position_map = position_map.clone();
-                move |event, editor, cx| {
-                    if !Self::mouse_right_down(
-                        editor,
-                        event.position,
-                        position_map.as_ref(),
-                        text_bounds,
-                        cx,
-                    ) {
-                        cx.propagate_event();
+                })
+                .on_down(MouseButton::Right, {
+                    let position_map = position_map.clone();
+                    move |event, editor, cx| {
+                        if !Self::mouse_right_down(
+                            editor,
+                            event.position,
+                            position_map.as_ref(),
+                            text_bounds,
+                            cx,
+                        ) {
+                            cx.propagate_event();
+                        }
                     }
-                }
-            })
-            .on_up(MouseButton::Left, {
-                let position_map = position_map.clone();
-                move |event, editor, cx| {
-                    if !Self::mouse_up(
-                        editor,
-                        event.position,
-                        event.cmd,
-                        event.shift,
-                        event.alt,
-                        position_map.as_ref(),
-                        text_bounds,
-                        cx,
-                    ) {
-                        cx.propagate_event()
+                })
+                .on_up(MouseButton::Left, {
+                    let position_map = position_map.clone();
+                    move |event, editor, cx| {
+                        if !Self::mouse_up(
+                            editor,
+                            event.position,
+                            event.cmd,
+                            event.shift,
+                            event.alt,
+                            position_map.as_ref(),
+                            text_bounds,
+                            cx,
+                        ) {
+                            cx.propagate_event()
+                        }
                     }
-                }
-            })
-            .on_drag(MouseButton::Left, {
-                let position_map = position_map.clone();
-                move |event, editor, cx| {
-                    if event.end {
-                        return;
-                    }
+                })
+                .on_drag(MouseButton::Left, {
+                    let position_map = position_map.clone();
+                    move |event, editor, cx| {
+                        if event.end {
+                            return;
+                        }
 
-                    if !Self::mouse_dragged(
-                        editor,
-                        event.platform_event,
-                        position_map.as_ref(),
-                        text_bounds,
-                        cx,
-                    ) {
-                        cx.propagate_event()
+                        if !Self::mouse_dragged(
+                            editor,
+                            event.platform_event,
+                            position_map.as_ref(),
+                            text_bounds,
+                            cx,
+                        ) {
+                            cx.propagate_event()
+                        }
                     }
-                }
-            })
-            .on_move({
-                let position_map = position_map.clone();
-                move |event, editor, cx| {
-                    if !Self::mouse_moved(
-                        editor,
-                        event.platform_event,
-                        &position_map,
-                        text_bounds,
-                        cx,
-                    ) {
-                        cx.propagate_event()
+                })
+                .on_move({
+                    let position_map = position_map.clone();
+                    move |event, editor, cx| {
+                        if !Self::mouse_moved(
+                            editor,
+                            event.platform_event,
+                            &position_map,
+                            text_bounds,
+                            cx,
+                        ) {
+                            cx.propagate_event()
+                        }
                     }
-                }
-            })
-            .on_move_out(move |_, editor: &mut Editor, cx| {
-                if has_popovers {
-                    hide_hover(editor, cx);
-                }
-            })
-            .on_scroll({
-                let position_map = position_map.clone();
-                move |event, editor, cx| {
-                    if !Self::scroll(
-                        editor,
-                        event.position,
-                        *event.delta.raw(),
-                        event.delta.precise(),
-                        &position_map,
-                        bounds,
-                        cx,
-                    ) {
-                        cx.propagate_event()
+                })
+                .on_move_out(move |_, editor: &mut Editor, cx| {
+                    if has_popovers {
+                        hide_hover(editor, cx);
                     }
-                }
-            }),
+                })
+                .on_scroll({
+                    let position_map = position_map.clone();
+                    move |event, editor, cx| {
+                        if !Self::scroll(
+                            editor,
+                            event.position,
+                            *event.delta.raw(),
+                            event.delta.precise(),
+                            &position_map,
+                            bounds,
+                            cx,
+                        ) {
+                            cx.propagate_event()
+                        }
+                    }
+                }),
         );
 
         enum GutterHandlers {}
-        scene.push_mouse_region(
-            MouseRegion::new::<GutterHandlers>(cx.view_id(), cx.view_id() + 1, gutter_bounds)
-                .on_hover(|hover, editor: &mut Editor, cx| {
+        let view_id = cx.view_id();
+        let region_id = cx.view_id() + 1;
+        cx.scene().push_mouse_region(
+            MouseRegion::new::<GutterHandlers>(view_id, region_id, gutter_bounds).on_hover(
+                |hover, editor: &mut Editor, cx| {
                     editor.gutter_hover(
                         &GutterHover {
                             hovered: hover.started,
                         },
                         cx,
                     );
-                }),
+                },
+            ),
         )
     }
 
@@ -528,21 +527,21 @@ impl EditorElement {
 
     fn paint_background(
         &self,
-        scene: &mut SceneBuilder,
         gutter_bounds: RectF,
         text_bounds: RectF,
         layout: &LayoutState,
+        cx: &mut ViewContext<Editor>,
     ) {
         let bounds = gutter_bounds.union_rect(text_bounds);
         let scroll_top =
             layout.position_map.snapshot.scroll_position().y() * layout.position_map.line_height;
-        scene.push_quad(Quad {
+        cx.scene().push_quad(Quad {
             bounds: gutter_bounds,
             background: Some(self.style.gutter_background),
             border: Border::new(0., Color::transparent_black()).into(),
             corner_radii: Default::default(),
         });
-        scene.push_quad(Quad {
+        cx.scene().push_quad(Quad {
             bounds: text_bounds,
             background: Some(self.style.background),
             border: Border::new(0., Color::transparent_black()).into(),
@@ -570,7 +569,7 @@ impl EditorElement {
                         bounds.width(),
                         layout.position_map.line_height * (end_row - start_row + 1) as f32,
                     );
-                    scene.push_quad(Quad {
+                    cx.scene().push_quad(Quad {
                         bounds: RectF::new(origin, size),
                         background: Some(self.style.active_line_background),
                         border: Border::default().into(),
@@ -590,7 +589,7 @@ impl EditorElement {
                     bounds.width(),
                     layout.position_map.line_height * highlighted_rows.len() as f32,
                 );
-                scene.push_quad(Quad {
+                cx.scene().push_quad(Quad {
                     bounds: RectF::new(origin, size),
                     background: Some(self.style.highlighted_line_background),
                     border: Border::default().into(),
@@ -617,7 +616,7 @@ impl EditorElement {
                 } else {
                     self.style.wrap_guide
                 };
-                scene.push_quad(Quad {
+                cx.scene().push_quad(Quad {
                     bounds: RectF::new(
                         vec2f(x, text_bounds.origin_y()),
                         vec2f(1., text_bounds.height()),
@@ -632,7 +631,6 @@ impl EditorElement {
 
     fn paint_gutter(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut LayoutState,
@@ -650,7 +648,7 @@ impl EditorElement {
         );
 
         if show_gutter {
-            Self::paint_diff_hunks(scene, bounds, layout, cx);
+            Self::paint_diff_hunks(bounds, layout, cx);
         }
 
         for (ix, line) in layout.line_number_layouts.iter().enumerate() {
@@ -661,7 +659,7 @@ impl EditorElement {
                         ix as f32 * line_height - (scroll_top % line_height),
                     );
 
-                line.paint(scene, line_origin, visible_bounds, line_height, cx);
+                line.paint(line_origin, visible_bounds, line_height, cx);
             }
         }
 
@@ -678,7 +676,7 @@ impl EditorElement {
 
                 let indicator_origin = bounds.origin() + position + centering_offset;
 
-                indicator.paint(scene, indicator_origin, visible_bounds, editor, cx);
+                indicator.paint(indicator_origin, visible_bounds, editor, cx);
             }
         }
 
@@ -687,22 +685,11 @@ impl EditorElement {
             let mut y = *row as f32 * line_height - scroll_top;
             x += ((layout.gutter_padding + layout.gutter_margin) - indicator.size().x()) / 2.;
             y += (line_height - indicator.size().y()) / 2.;
-            indicator.paint(
-                scene,
-                bounds.origin() + vec2f(x, y),
-                visible_bounds,
-                editor,
-                cx,
-            );
+            indicator.paint(bounds.origin() + vec2f(x, y), visible_bounds, editor, cx);
         }
     }
 
-    fn paint_diff_hunks(
-        scene: &mut SceneBuilder,
-        bounds: RectF,
-        layout: &mut LayoutState,
-        cx: &mut ViewContext<Editor>,
-    ) {
+    fn paint_diff_hunks(bounds: RectF, layout: &mut LayoutState, cx: &mut ViewContext<Editor>) {
         let diff_style = &theme::current(cx).editor.diff.clone();
         let line_height = layout.position_map.line_height;
 
@@ -721,7 +708,7 @@ impl EditorElement {
                     let highlight_size = vec2f(width * 2., end_y - start_y);
                     let highlight_bounds = RectF::new(highlight_origin, highlight_size);
 
-                    scene.push_quad(Quad {
+                    cx.scene().push_quad(Quad {
                         bounds: highlight_bounds,
                         background: Some(diff_style.modified),
                         border: Border::new(0., Color::transparent_black()).into(),
@@ -754,7 +741,7 @@ impl EditorElement {
                     let highlight_size = vec2f(width * 2., end_y - start_y);
                     let highlight_bounds = RectF::new(highlight_origin, highlight_size);
 
-                    scene.push_quad(Quad {
+                    cx.scene().push_quad(Quad {
                         bounds: highlight_bounds,
                         background: Some(diff_style.deleted),
                         border: Border::new(0., Color::transparent_black()).into(),
@@ -776,7 +763,7 @@ impl EditorElement {
             let highlight_size = vec2f(width * 2., end_y - start_y);
             let highlight_bounds = RectF::new(highlight_origin, highlight_size);
 
-            scene.push_quad(Quad {
+            cx.scene().push_quad(Quad {
                 bounds: highlight_bounds,
                 background: Some(color),
                 border: Border::new(0., Color::transparent_black()).into(),
@@ -787,7 +774,6 @@ impl EditorElement {
 
     fn paint_text(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut LayoutState,
@@ -804,9 +790,9 @@ impl EditorElement {
         let line_end_overshoot = 0.15 * layout.position_map.line_height;
         let whitespace_setting = editor.buffer.read(cx).settings_at(0, cx).show_whitespaces;
 
-        scene.push_layer(Some(bounds));
+        cx.scene().push_layer(Some(bounds));
 
-        scene.push_cursor_region(CursorRegion {
+        cx.scene().push_cursor_region(CursorRegion {
             bounds,
             style: if !editor.link_go_to_definition_state.definitions.is_empty() {
                 CursorStyle::PointingHand
@@ -819,7 +805,6 @@ impl EditorElement {
             self.style.folds.ellipses.corner_radius_factor * layout.position_map.line_height;
         for (id, range, color) in layout.fold_ranges.iter() {
             self.paint_highlighted_range(
-                scene,
                 range.clone(),
                 *color,
                 fold_corner_radius,
@@ -829,6 +814,7 @@ impl EditorElement {
                 scroll_top,
                 scroll_left,
                 bounds,
+                cx,
             );
 
             for bound in range_to_bounds(
@@ -840,7 +826,7 @@ impl EditorElement {
                 line_end_overshoot,
                 &layout.position_map,
             ) {
-                scene.push_cursor_region(CursorRegion {
+                cx.scene().push_cursor_region(CursorRegion {
                     bounds: bound,
                     style: CursorStyle::PointingHand,
                 });
@@ -851,8 +837,9 @@ impl EditorElement {
                     .to_point(&layout.position_map.snapshot.display_snapshot)
                     .row;
 
-                scene.push_mouse_region(
-                    MouseRegion::new::<FoldMarkers>(cx.view_id(), *id as usize, bound)
+                let view_id = cx.view_id();
+                cx.scene().push_mouse_region(
+                    MouseRegion::new::<FoldMarkers>(view_id, *id as usize, bound)
                         .on_click(MouseButton::Left, move |_, editor: &mut Editor, cx| {
                             editor.unfold_at(&UnfoldAt { buffer_row }, cx)
                         })
@@ -864,7 +851,6 @@ impl EditorElement {
 
         for (range, color) in &layout.highlighted_ranges {
             self.paint_highlighted_range(
-                scene,
                 range.clone(),
                 *color,
                 0.,
@@ -874,6 +860,7 @@ impl EditorElement {
                 scroll_top,
                 scroll_left,
                 bounds,
+                cx,
             );
         }
 
@@ -891,7 +878,6 @@ impl EditorElement {
 
             for selection in selections {
                 self.paint_highlighted_range(
-                    scene,
                     selection.range.clone(),
                     selection_style.selection,
                     corner_radius,
@@ -901,6 +887,7 @@ impl EditorElement {
                     scroll_top,
                     scroll_left,
                     bounds,
+                    cx,
                 );
 
                 if selection.is_local && !selection.range.is_empty() {
@@ -980,7 +967,6 @@ impl EditorElement {
                     layout,
                     row,
                     scroll_top,
-                    scene,
                     content_origin,
                     scroll_left,
                     visible_text_bounds,
@@ -992,14 +978,14 @@ impl EditorElement {
             }
         }
 
-        scene.paint_layer(Some(bounds), |scene| {
-            for cursor in cursors {
-                cursor.paint(scene, content_origin, cx);
-            }
-        });
+        cx.scene().push_layer(Some(bounds));
+        for cursor in cursors {
+            cursor.paint(content_origin, cx);
+        }
+        cx.scene().pop_layer();
 
         if let Some((position, context_menu)) = layout.context_menu.as_mut() {
-            scene.push_stacking_context(None, None);
+            cx.scene().push_stacking_context(None, None);
             let cursor_row_layout =
                 &layout.position_map.line_layouts[(position.row() - start_row) as usize].line;
             let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_left;
@@ -1019,18 +1005,17 @@ impl EditorElement {
             }
 
             context_menu.paint(
-                scene,
                 list_origin,
                 RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
                 editor,
                 cx,
             );
 
-            scene.pop_stacking_context();
+            cx.scene().pop_stacking_context();
         }
 
         if let Some((position, hover_popovers)) = layout.hover_popovers.as_mut() {
-            scene.push_stacking_context(None, None);
+            cx.scene().push_stacking_context(None, None);
 
             // This is safe because we check on layout whether the required row is available
             let hovered_row_layout =
@@ -1061,7 +1046,6 @@ impl EditorElement {
                     }
 
                     hover_popover.paint(
-                        scene,
                         popover_origin,
                         RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
                         editor,
@@ -1083,7 +1067,6 @@ impl EditorElement {
                     }
 
                     hover_popover.paint(
-                        scene,
                         popover_origin,
                         RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
                         editor,
@@ -1094,10 +1077,10 @@ impl EditorElement {
                 }
             }
 
-            scene.pop_stacking_context();
+            cx.scene().pop_stacking_context();
         }
 
-        scene.pop_layer();
+        cx.scene().pop_layer();
     }
 
     fn scrollbar_left(&self, bounds: &RectF) -> f32 {
@@ -1106,11 +1089,10 @@ impl EditorElement {
 
     fn paint_scrollbar(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         layout: &mut LayoutState,
-        cx: &mut ViewContext<Editor>,
         editor: &Editor,
+        cx: &mut ViewContext<Editor>,
     ) {
         enum ScrollbarMouseHandlers {}
         if layout.mode != EditorMode::Full {
@@ -1147,7 +1129,7 @@ impl EditorElement {
         let thumb_bounds = RectF::from_points(vec2f(left, thumb_top), vec2f(right, thumb_bottom));
 
         if layout.show_scrollbars {
-            scene.push_quad(Quad {
+            cx.scene().push_quad(Quad {
                 bounds: track_bounds,
                 border: style.track.border.into(),
                 background: style.track.background_color,
@@ -1177,7 +1159,7 @@ impl EditorElement {
                     }
                     let bounds = RectF::from_points(vec2f(left, start_y), vec2f(right, end_y));
 
-                    scene.push_quad(Quad {
+                    cx.scene().push_quad(Quad {
                         bounds,
                         background: Some(color),
                         border: border.into(),
@@ -1237,7 +1219,7 @@ impl EditorElement {
                         left: true,
                     };
 
-                    scene.push_quad(Quad {
+                    cx.scene().push_quad(Quad {
                         bounds,
                         background: Some(color),
                         border: border.into(),
@@ -1246,7 +1228,7 @@ impl EditorElement {
                 }
             }
 
-            scene.push_quad(Quad {
+            cx.scene().push_quad(Quad {
                 bounds: thumb_bounds,
                 border: style.thumb.border.into(),
                 background: style.thumb.background_color,
@@ -1254,12 +1236,13 @@ impl EditorElement {
             });
         }
 
-        scene.push_cursor_region(CursorRegion {
+        cx.scene().push_cursor_region(CursorRegion {
             bounds: track_bounds,
             style: CursorStyle::Arrow,
         });
-        scene.push_mouse_region(
-            MouseRegion::new::<ScrollbarMouseHandlers>(cx.view_id(), cx.view_id(), track_bounds)
+        let region_id = cx.view_id();
+        cx.scene().push_mouse_region(
+            MouseRegion::new::<ScrollbarMouseHandlers>(region_id, region_id, track_bounds)
                 .on_move(move |event, editor: &mut Editor, cx| {
                     if event.pressed_button.is_none() {
                         editor.scroll_manager.show_scrollbar(cx);
@@ -1305,7 +1288,6 @@ impl EditorElement {
     #[allow(clippy::too_many_arguments)]
     fn paint_highlighted_range(
         &self,
-        scene: &mut SceneBuilder,
         range: Range<DisplayPoint>,
         color: Color,
         corner_radius: f32,
@@ -1315,6 +1297,7 @@ impl EditorElement {
         scroll_top: f32,
         scroll_left: f32,
         bounds: RectF,
+        cx: &mut ViewContext<Editor>,
     ) {
         let start_row = layout.visible_display_row_range.start;
         let end_row = layout.visible_display_row_range.end;
@@ -1358,13 +1341,12 @@ impl EditorElement {
                     .collect(),
             };
 
-            highlighted_range.paint(bounds, scene);
+            highlighted_range.paint(bounds, cx);
         }
     }
 
     fn paint_blocks(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut LayoutState,
@@ -1384,9 +1366,7 @@ impl EditorElement {
             if !matches!(block.style, BlockStyle::Sticky) {
                 origin += vec2f(-scroll_left, 0.);
             }
-            block
-                .element
-                .paint(scene, origin, visible_bounds, editor, cx);
+            block.element.paint(origin, visible_bounds, editor, cx);
         }
     }
 
@@ -2022,7 +2002,6 @@ impl LineWithInvisibles {
         layout: &LayoutState,
         row: u32,
         scroll_top: f32,
-        scene: &mut SceneBuilder,
         content_origin: Vector2F,
         scroll_left: f32,
         visible_text_bounds: RectF,
@@ -2035,7 +2014,6 @@ impl LineWithInvisibles {
         let line_y = row as f32 * line_height - scroll_top;
 
         self.line.paint(
-            scene,
             content_origin + vec2f(-scroll_left, line_y),
             visible_text_bounds,
             line_height,
@@ -2049,7 +2027,6 @@ impl LineWithInvisibles {
             scroll_left,
             line_y,
             row,
-            scene,
             visible_bounds,
             line_height,
             whitespace_setting,
@@ -2065,7 +2042,6 @@ impl LineWithInvisibles {
         scroll_left: f32,
         line_y: f32,
         row: u32,
-        scene: &mut SceneBuilder,
         visible_bounds: RectF,
         line_height: f32,
         whitespace_setting: ShowWhitespaceSetting,
@@ -2097,7 +2073,7 @@ impl LineWithInvisibles {
                     continue;
                 }
             }
-            invisible_symbol.paint(scene, origin, visible_bounds, line_height, cx);
+            invisible_symbol.paint(origin, visible_bounds, line_height, cx);
         }
     }
 }
@@ -2590,7 +2566,6 @@ impl Element<Editor> for EditorElement {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
@@ -2598,7 +2573,7 @@ impl Element<Editor> for EditorElement {
         cx: &mut PaintContext<Editor>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
-        scene.push_layer(Some(visible_bounds));
+        cx.scene().push_layer(Some(visible_bounds));
 
         let gutter_bounds = RectF::new(bounds.origin(), layout.gutter_size);
         let text_bounds = RectF::new(
@@ -2607,7 +2582,6 @@ impl Element<Editor> for EditorElement {
         );
 
         Self::attach_mouse_handlers(
-            scene,
             &layout.position_map,
             layout.hover_popovers.is_some(),
             visible_bounds,
@@ -2617,20 +2591,19 @@ impl Element<Editor> for EditorElement {
             cx,
         );
 
-        self.paint_background(scene, gutter_bounds, text_bounds, layout);
+        self.paint_background(gutter_bounds, text_bounds, layout, cx);
         if layout.gutter_size.x() > 0. {
-            self.paint_gutter(scene, gutter_bounds, visible_bounds, layout, editor, cx);
+            self.paint_gutter(gutter_bounds, visible_bounds, layout, editor, cx);
         }
-        self.paint_text(scene, text_bounds, visible_bounds, layout, editor, cx);
+        self.paint_text(text_bounds, visible_bounds, layout, editor, cx);
 
-        scene.push_layer(Some(bounds));
+        cx.scene().push_layer(Some(bounds));
         if !layout.blocks.is_empty() {
-            self.paint_blocks(scene, bounds, visible_bounds, layout, editor, cx);
+            self.paint_blocks(bounds, visible_bounds, layout, editor, cx);
         }
-        self.paint_scrollbar(scene, bounds, layout, cx, &editor);
-        scene.pop_layer();
-
-        scene.pop_layer();
+        self.paint_scrollbar(bounds, layout, &editor, cx);
+        cx.scene().pop_layer();
+        cx.scene().pop_layer();
     }
 
     fn rect_for_text_range(
@@ -2873,7 +2846,7 @@ impl Cursor {
         )
     }
 
-    pub fn paint(&self, scene: &mut SceneBuilder, origin: Vector2F, cx: &mut WindowContext) {
+    pub fn paint(&self, origin: Vector2F, cx: &mut WindowContext) {
         let bounds = match self.shape {
             CursorShape::Bar => RectF::new(self.origin + origin, vec2f(2.0, self.line_height)),
             CursorShape::Block | CursorShape::Hollow => RectF::new(
@@ -2888,14 +2861,14 @@ impl Cursor {
 
         //Draw background or border quad
         if matches!(self.shape, CursorShape::Hollow) {
-            scene.push_quad(Quad {
+            cx.scene().push_quad(Quad {
                 bounds,
                 background: None,
                 border: Border::all(1., self.color).into(),
                 corner_radii: Default::default(),
             });
         } else {
-            scene.push_quad(Quad {
+            cx.scene().push_quad(Quad {
                 bounds,
                 background: Some(self.color),
                 border: Default::default(),
@@ -2904,7 +2877,7 @@ impl Cursor {
         }
 
         if let Some(block_text) = &self.block_text {
-            block_text.paint(scene, self.origin + origin, bounds, self.line_height, cx);
+            block_text.paint(self.origin + origin, bounds, self.line_height, cx);
         }
     }
 
@@ -2929,17 +2902,17 @@ pub struct HighlightedRangeLine {
 }
 
 impl HighlightedRange {
-    pub fn paint(&self, bounds: RectF, scene: &mut SceneBuilder) {
+    pub fn paint(&self, bounds: RectF, cx: &mut WindowContext) {
         if self.lines.len() >= 2 && self.lines[0].start_x > self.lines[1].end_x {
-            self.paint_lines(self.start_y, &self.lines[0..1], bounds, scene);
+            self.paint_lines(self.start_y, &self.lines[0..1], bounds, cx);
             self.paint_lines(
                 self.start_y + self.line_height,
                 &self.lines[1..],
                 bounds,
-                scene,
+                cx,
             );
         } else {
-            self.paint_lines(self.start_y, &self.lines, bounds, scene);
+            self.paint_lines(self.start_y, &self.lines, bounds, cx);
         }
     }
 
@@ -2948,7 +2921,7 @@ impl HighlightedRange {
         start_y: f32,
         lines: &[HighlightedRangeLine],
         bounds: RectF,
-        scene: &mut SceneBuilder,
+        cx: &mut WindowContext,
     ) {
         if lines.is_empty() {
             return;
@@ -3046,7 +3019,7 @@ impl HighlightedRange {
         }
         path.line_to(first_top_right - top_curve_width);
 
-        scene.push_path(path.build(self.color, Some(bounds)));
+        cx.scene().push_path(path.build(self.color, Some(bounds)));
     }
 }
 
@@ -3368,11 +3341,9 @@ mod tests {
         );
 
         // Don't panic.
-        let mut scene = SceneBuilder::new(1.0);
         let bounds = RectF::new(Default::default(), size);
         editor.update(cx, |editor, cx| {
             element.paint(
-                &mut scene,
                 bounds,
                 bounds,
                 &mut state,

@@ -13,8 +13,8 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
     json::{self, ToJson},
     platform::{CursorStyle, MouseButton},
-    AppContext, Entity, ImageData, LayoutContext, ModelHandle, PaintContext, SceneBuilder,
-    Subscription, View, ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, Entity, ImageData, LayoutContext, ModelHandle, PaintContext, Subscription, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use picker::PickerEvent;
 use project::{Project, RepositoryEntry};
@@ -1172,12 +1172,11 @@ impl Element<CollabTitlebarItem> for AvatarRibbon {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         _: RectF,
         _: &mut Self::LayoutState,
         _: &mut CollabTitlebarItem,
-        _: &mut PaintContext<CollabTitlebarItem>,
+        cx: &mut PaintContext<CollabTitlebarItem>,
     ) -> Self::PaintState {
         let mut path = PathBuilder::new();
         path.reset(bounds.lower_left());
@@ -1188,7 +1187,7 @@ impl Element<CollabTitlebarItem> for AvatarRibbon {
         path.line_to(bounds.upper_right() - vec2f(bounds.height(), 0.));
         path.curve_to(bounds.lower_right(), bounds.upper_right());
         path.line_to(bounds.lower_left());
-        scene.push_path(path.build(self.color, None));
+        cx.scene().push_path(path.build(self.color, None));
     }
 
     fn rect_for_text_range(

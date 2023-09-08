@@ -88,7 +88,7 @@ impl<V: 'static> Element<V> for Div<V> {
         // TODO: Support only one dimension being hidden
         let mut pop_layer = false;
         if style.overflow.y != Overflow::Visible || style.overflow.x != Overflow::Visible {
-            cx.scene.push_layer(Some(bounds));
+            cx.scene().push_layer(Some(bounds));
             pop_layer = true;
         }
 
@@ -97,7 +97,7 @@ impl<V: 'static> Element<V> for Div<V> {
         }
 
         if pop_layer {
-            cx.scene.pop_layer();
+            cx.scene().pop_layer();
         }
 
         style.paint_foreground(bounds, cx);
@@ -221,7 +221,7 @@ impl<V: 'static> Div<V> {
         let hovered = bounds.contains_point(cx.mouse_position());
         if hovered {
             let rem_size = cx.rem_size();
-            cx.scene.push_quad(scene::Quad {
+            cx.scene().push_quad(scene::Quad {
                 bounds,
                 background: Some(hsla(0., 0., 1., 0.05).into()),
                 border: gpui::Border {

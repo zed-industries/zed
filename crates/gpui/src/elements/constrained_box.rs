@@ -5,8 +5,7 @@ use serde_json::json;
 
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    json, AnyElement, Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint,
-    ViewContext,
+    json, AnyElement, Element, LayoutContext, PaintContext, SizeConstraint, ViewContext,
 };
 
 pub struct ConstrainedBox<V> {
@@ -152,17 +151,15 @@ impl<V: 'static> Element<V> for ConstrainedBox<V> {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
         cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
-        scene.paint_layer(Some(visible_bounds), |scene| {
-            self.child
-                .paint(scene, bounds.origin(), visible_bounds, view, cx);
-        })
+        cx.scene().push_layer(Some(visible_bounds));
+        self.child.paint(bounds.origin(), visible_bounds, view, cx);
+        cx.scene().pop_layer();
     }
 
     fn rect_for_text_range(

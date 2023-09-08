@@ -2,9 +2,7 @@ use std::{any::Any, marker::PhantomData};
 
 use pathfinder_geometry::{rect::RectF, vector::Vector2F};
 
-use crate::{
-    AnyElement, Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, ViewContext,
-};
+use crate::{AnyElement, Element, LayoutContext, PaintContext, SizeConstraint, ViewContext};
 
 use super::Empty;
 
@@ -300,7 +298,6 @@ impl<V: 'static, C: StatefulComponent<V> + 'static> Element<V> for ComponentAdap
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
@@ -310,7 +307,7 @@ impl<V: 'static, C: StatefulComponent<V> + 'static> Element<V> for ComponentAdap
         self.element
             .as_mut()
             .expect("Layout should always be called before paint")
-            .paint(scene, bounds.origin(), visible_bounds, view, cx)
+            .paint(bounds.origin(), visible_bounds, view, cx)
     }
 
     fn rect_for_text_range(

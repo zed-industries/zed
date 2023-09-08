@@ -4,8 +4,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::json,
-    AnyElement, Element, LayoutContext, MouseRegion, PaintContext, SceneBuilder, SizeConstraint,
-    ViewContext,
+    AnyElement, Element, LayoutContext, MouseRegion, PaintContext, SizeConstraint, ViewContext,
 };
 use std::{cell::RefCell, collections::VecDeque, fmt::Debug, ops::Range, rc::Rc};
 use sum_tree::{Bias, SumTree};
@@ -250,7 +249,6 @@ impl<V: 'static> Element<V> for List<V> {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         scroll_top: &mut ListOffset,
@@ -258,9 +256,10 @@ impl<V: 'static> Element<V> for List<V> {
         cx: &mut PaintContext<V>,
     ) {
         let visible_bounds = visible_bounds.intersection(bounds).unwrap_or_default();
-        scene.push_layer(Some(visible_bounds));
-        scene.push_mouse_region(
-            MouseRegion::new::<Self>(cx.view_id(), 0, bounds).on_scroll({
+        cx.scene().push_layer(Some(visible_bounds));
+        let view_id = cx.view_id();
+        cx.scene()
+            .push_mouse_region(MouseRegion::new::<Self>(view_id, 0, bounds).on_scroll({
                 let state = self.state.clone();
                 let height = bounds.height();
                 let scroll_top = scroll_top.clone();
@@ -274,17 +273,14 @@ impl<V: 'static> Element<V> for List<V> {
                         cx,
                     )
                 }
-            }),
-        );
+            }));
 
         let state = &mut *self.state.0.borrow_mut();
         for (element, origin) in state.visible_elements(bounds, scroll_top) {
-            element
-                .borrow_mut()
-                .paint(scene, origin, visible_bounds, view, cx);
+            element.borrow_mut().paint(origin, visible_bounds, view, cx);
         }
 
-        scene.pop_layer();
+        cx.scene().pop_layer();
     }
 
     fn rect_for_text_range(
@@ -957,15 +953,7 @@ mod tests {
             (self.size, ())
         }
 
-        fn paint(
-            &mut self,
-            _: &mut SceneBuilder,
-            _: RectF,
-            _: RectF,
-            _: &mut (),
-            _: &mut V,
-            _: &mut PaintContext<V>,
-        ) {
+        fn paint(&mut self, _: RectF, _: RectF, _: &mut (), _: &mut V, _: &mut PaintContext<V>) {
             unimplemented!()
         }
 

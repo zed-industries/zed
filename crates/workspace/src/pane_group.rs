@@ -595,7 +595,7 @@ mod element {
         platform::{CursorStyle, MouseButton},
         scene::MouseDrag,
         AnyElement, Axis, CursorRegion, Element, EventContext, LayoutContext, MouseRegion,
-        PaintContext, RectFExt, SceneBuilder, SizeConstraint, Vector2FExt, ViewContext,
+        PaintContext, RectFExt, SizeConstraint, Vector2FExt, ViewContext,
     };
 
     use crate::{
@@ -851,7 +851,6 @@ mod element {
 
         fn paint(
             &mut self,
-            scene: &mut SceneBuilder,
             bounds: RectF,
             visible_bounds: RectF,
             remaining_space: &mut Self::LayoutState,
@@ -863,7 +862,7 @@ mod element {
 
             let overflowing = *remaining_space < 0.;
             if overflowing {
-                scene.push_layer(Some(visible_bounds));
+                cx.scene().push_layer(Some(visible_bounds));
             }
 
             let mut child_origin = bounds.origin();
@@ -874,7 +873,7 @@ mod element {
             let mut children_iter = self.children.iter_mut().enumerate().peekable();
             while let Some((ix, child)) = children_iter.next() {
                 let child_start = child_origin.clone();
-                child.paint(scene, child_origin, visible_bounds, view, cx);
+                child.paint(child_origin, visible_bounds, view, cx);
 
                 bounding_boxes.push(Some(RectF::new(child_origin, child.size())));
 
@@ -884,7 +883,7 @@ mod element {
                 }
 
                 if can_resize && children_iter.peek().is_some() {
-                    scene.push_stacking_context(None, None);
+                    cx.scene().push_stacking_context(None, None);
 
                     let handle_origin = match self.axis {
                         Axis::Horizontal => child_origin - vec2f(HANDLE_HITBOX_SIZE / 2., 0.0),
@@ -907,7 +906,7 @@ mod element {
                         Axis::Vertical => CursorStyle::ResizeUpDown,
                     };
 
-                    scene.push_cursor_region(CursorRegion {
+                    cx.scene().push_cursor_region(CursorRegion {
                         bounds: handle_bounds,
                         style,
                     });
@@ -940,14 +939,14 @@ mod element {
                                 }
                             }
                         });
-                    scene.push_mouse_region(mouse_region);
+                    cx.scene().push_mouse_region(mouse_region);
 
-                    scene.pop_stacking_context();
+                    cx.scene().pop_stacking_context();
                 }
             }
 
             if overflowing {
-                scene.pop_layer();
+                cx.scene().pop_layer();
             }
         }
 

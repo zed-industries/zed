@@ -7,7 +7,7 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    scene, Element, LayoutContext, SceneBuilder, SizeConstraint, ViewContext,
+    scene, Element, LayoutContext, SizeConstraint, ViewContext,
 };
 use schemars::JsonSchema;
 use serde_derive::Deserialize;
@@ -69,15 +69,14 @@ impl<V: 'static> Element<V> for Svg {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         _visible_bounds: RectF,
         svg: &mut Self::LayoutState,
         _: &mut V,
-        _: &mut PaintContext<V>,
+        cx: &mut PaintContext<V>,
     ) {
         if let Some(svg) = svg.clone() {
-            scene.push_icon(scene::Icon {
+            cx.scene().push_icon(scene::Icon {
                 bounds,
                 svg,
                 path: self.path.clone(),

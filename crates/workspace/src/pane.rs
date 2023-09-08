@@ -1440,10 +1440,10 @@ impl Pane {
                 None
             };
 
-            Canvas::new(move |scene, bounds, _, _, _| {
+            Canvas::new(move |bounds, _, _, cx| {
                 if let Some(color) = icon_color {
                     let square = RectF::new(bounds.origin(), vec2f(diameter, diameter));
-                    scene.push_quad(Quad {
+                    cx.scene().push_quad(Quad {
                         bounds: square,
                         background: Some(color),
                         border: Default::default(),
@@ -2007,7 +2007,6 @@ impl<V: 'static> Element<V> for PaneBackdrop<V> {
 
     fn paint(
         &mut self,
-        scene: &mut gpui::SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
@@ -2018,14 +2017,14 @@ impl<V: 'static> Element<V> for PaneBackdrop<V> {
 
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
-        scene.push_quad(gpui::Quad {
+        cx.scene().push_quad(gpui::Quad {
             bounds: RectF::new(bounds.origin(), bounds.size()),
             background: Some(background),
             ..Default::default()
         });
 
         let child_view_id = self.child_view;
-        scene.push_mouse_region(
+        cx.scene().push_mouse_region(
             MouseRegion::new::<Self>(child_view_id, 0, visible_bounds).on_down(
                 gpui::platform::MouseButton::Left,
                 move |_, _: &mut V, cx| {
@@ -2035,10 +2034,9 @@ impl<V: 'static> Element<V> for PaneBackdrop<V> {
             ),
         );
 
-        scene.paint_layer(Some(bounds), |scene| {
-            self.child
-                .paint(scene, bounds.origin(), visible_bounds, view, cx)
-        })
+        cx.scene().push_layer(Some(bounds));
+        self.child.paint(bounds.origin(), visible_bounds, view, cx);
+        cx.scene().pop_layer();
     }
 
     fn rect_for_text_range(

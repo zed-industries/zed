@@ -36,7 +36,6 @@ impl<V: 'static> gpui::Element<V> for AdapterElement<V> {
 
     fn paint(
         &mut self,
-        scene: &mut gpui::SceneBuilder,
         bounds: RectF,
         _visible_bounds: RectF,
         layout_data: &mut Option<(LayoutEngine, LayoutId)>,
@@ -45,7 +44,7 @@ impl<V: 'static> gpui::Element<V> for AdapterElement<V> {
     ) -> Self::PaintState {
         let (layout_engine, layout_id) = layout_data.take().unwrap();
         legacy_cx.push_layout_engine(layout_engine);
-        let mut cx = PaintContext::new(legacy_cx, scene);
+        let mut cx = PaintContext::new(legacy_cx);
         self.0.paint(view, bounds.origin(), &mut cx);
         *layout_data = legacy_cx.pop_layout_engine().zip(Some(layout_id));
         debug_assert!(layout_data.is_some());
