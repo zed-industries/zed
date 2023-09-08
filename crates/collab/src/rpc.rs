@@ -243,7 +243,7 @@ impl Server {
             .add_request_handler(remove_contact)
             .add_request_handler(respond_to_contact_request)
             .add_request_handler(create_channel)
-            .add_request_handler(remove_channel)
+            .add_request_handler(delete_channel)
             .add_request_handler(invite_channel_member)
             .add_request_handler(remove_channel_member)
             .add_request_handler(set_channel_member_admin)
@@ -255,6 +255,7 @@ impl Server {
             .add_request_handler(get_channel_members)
             .add_request_handler(respond_to_channel_invite)
             .add_request_handler(join_channel)
+            .add_request_handler(move_channel)
             .add_request_handler(follow)
             .add_message_handler(unfollow)
             .add_message_handler(update_followers)
@@ -2227,23 +2228,23 @@ async fn create_channel(
     Ok(())
 }
 
-async fn remove_channel(
-    request: proto::RemoveChannel,
-    response: Response<proto::RemoveChannel>,
+async fn delete_channel(
+    request: proto::DeleteChannel,
+    response: Response<proto::DeleteChannel>,
     session: Session,
 ) -> Result<()> {
     let db = session.db().await;
 
     let channel_id = request.channel_id;
     let (removed_channels, member_ids) = db
-        .remove_channel(ChannelId::from_proto(channel_id), session.user_id)
+        .delete_channel(ChannelId::from_proto(channel_id), session.user_id)
         .await?;
     response.send(proto::Ack {})?;
 
     // Notify members of removed channels
     let mut update = proto::UpdateChannels::default();
     update
-        .remove_channels
+        .delete_channels
         .extend(removed_channels.into_iter().map(|id| id.to_proto()));
 
     let connection_pool = session.connection_pool().await;
@@ -2303,7 +2304,7 @@ async fn remove_channel_member(
         .await?;
 
     let mut update = proto::UpdateChannels::default();
-    update.remove_channels.push(channel_id.to_proto());
+    update.delete_channels.push(channel_id.to_proto());
 
     for connection_id in session
         .connection_pool()
@@ -2383,6 +2384,66 @@ async fn rename_channel(
             session.peer.send(connection_id, update.clone())?;
         }
     }
+
+    Ok(())
+}
+
+async fn move_channel(
+    request: proto::MoveChannel,
+    response: Response<proto::MoveChannel>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let from_parent = request.from_parent.map(ChannelId::from_proto);
+    let to = request.to.map(ChannelId::from_proto);
+    let channels = db
+        .move_channel(
+            session.user_id,
+            channel_id,
+            from_parent,
+            to,
+        )
+        .await?;
+
+
+    if let Some(from_parent) = from_parent {
+        let members = db.get_channel_members(from_parent).await?;
+        let update = proto::UpdateChannels {
+            delete_channel_edge: vec![proto::ChannelEdge {
+                channel_id: channel_id.to_proto(),
+                parent_id: from_parent.to_proto(),
+            }],
+            ..Default::default()
+        };
+        let connection_pool = session.connection_pool().await;
+        for member_id in members {
+            for connection_id in connection_pool.user_connection_ids(member_id) {
+                session.peer.send(connection_id, update.clone())?;
+            }
+        }
+
+    }
+
+    if let Some(to) = to {
+        let members = db.get_channel_members(to).await?;
+        let connection_pool = session.connection_pool().await;
+        let update = proto::UpdateChannels {
+            channels: channels.into_iter().map(|channel| proto::Channel {
+                id: channel.id.to_proto(),
+                name: channel.name,
+                parent_id: channel.parent_id.map(ChannelId::to_proto),
+            }).collect(),
+            ..Default::default()
+        };
+        for member_id in members {
+            for connection_id in connection_pool.user_connection_ids(member_id) {
+                session.peer.send(connection_id, update.clone())?;
+            }
+        }
+    }
+
+    response.send(Ack {})?;
 
     Ok(())
 }

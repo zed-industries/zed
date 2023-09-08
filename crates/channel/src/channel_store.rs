@@ -285,6 +285,18 @@ impl ChannelStore {
         })
     }
 
+
+    pub fn move_channel(&mut self, channel_id: ChannelId, from_parent: Option<ChannelId>, to: Option<ChannelId>, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        let client = self.client.clone();
+        cx.spawn(|_, _| async move {
+            let _ = client
+                .request(proto::MoveChannel { channel_id, from_parent, to })
+                .await?;
+
+           Ok(())
+        })
+    }
+
     pub fn invite_member(
         &mut self,
         channel_id: ChannelId,
@@ -464,7 +476,7 @@ impl ChannelStore {
     pub fn remove_channel(&self, channel_id: ChannelId) -> impl Future<Output = Result<()>> {
         let client = self.client.clone();
         async move {
-            client.request(proto::RemoveChannel { channel_id }).await?;
+            client.request(proto::DeleteChannel { channel_id }).await?;
             Ok(())
         }
     }
@@ -642,17 +654,17 @@ impl ChannelStore {
             }
         }
 
-        let channels_changed = !payload.channels.is_empty() || !payload.remove_channels.is_empty();
+        let channels_changed = !payload.channels.is_empty() || !payload.delete_channels.is_empty();
         if channels_changed {
-            if !payload.remove_channels.is_empty() {
+            if !payload.delete_channels.is_empty() {
                 self.channels_by_id
-                    .retain(|channel_id, _| !payload.remove_channels.contains(channel_id));
+                    .retain(|channel_id, _| !payload.delete_channels.contains(channel_id));
                 self.channel_participants
-                    .retain(|channel_id, _| !payload.remove_channels.contains(channel_id));
+                    .retain(|channel_id, _| !payload.delete_channels.contains(channel_id));
                 self.channels_with_admin_privileges
-                    .retain(|channel_id| !payload.remove_channels.contains(channel_id));
+                    .retain(|channel_id| !payload.delete_channels.contains(channel_id));
 
-                for channel_id in &payload.remove_channels {
+                for channel_id in &payload.delete_channels {
                     let channel_id = *channel_id;
                     if let Some(OpenedChannelBuffer::Open(buffer)) =
                         self.opened_buffers.remove(&channel_id)
