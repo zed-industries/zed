@@ -53,3 +53,9 @@
 {"Key":"i"}
 {"Key":"w"}
 {"Get":{"state":"fourteenˇ \nfourteen char\n","mode":"Normal"}}
+{"Key":"j"}
+{"Key":"shift-f"}
+{"Key":"e"}
+{"Key":"f"}
+{"Key":"r"}
+{"Get":{"state":"fourteen \nfourteen chaˇr\n","mode":"Normal"}}

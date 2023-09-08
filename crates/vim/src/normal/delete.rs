@@ -4,6 +4,7 @@ use editor::{display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Bias};
 use gpui::WindowContext;
 
 pub fn delete_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
+    vim.stop_recording();
     vim.update_active_editor(cx, |editor, cx| {
         editor.transact(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
@@ -37,6 +38,7 @@ pub fn delete_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
 }
 
 pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut WindowContext) {
+    vim.stop_recording();
     vim.update_active_editor(cx, |editor, cx| {
         editor.transact(cx, |editor, cx| {
             editor.set_clip_at_line_ends(false, cx);

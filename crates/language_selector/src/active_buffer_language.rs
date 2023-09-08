@@ -52,6 +52,7 @@ impl View for ActiveBufferLanguage {
             } else {
                 "Unknown".to_string()
             };
+            let theme = theme::current(cx).clone();
 
             MouseEventHandler::new::<Self, _>(0, cx, |state, cx| {
                 let theme = &theme::current(cx).workspace.status_bar;
@@ -68,6 +69,7 @@ impl View for ActiveBufferLanguage {
                     });
                 }
             })
+            .with_tooltip::<Self>(0, "Select Language", None, theme.tooltip.clone(), cx)
             .into_any()
         } else {
             Empty::new().into_any()

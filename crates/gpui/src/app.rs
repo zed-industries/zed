@@ -3387,14 +3387,12 @@ impl<'a, 'b, V: 'static> ViewContext<'a, 'b, V> {
             handler_depth = Some(contexts.len())
         }
 
-        let action_contexts = if let Some(depth) = handler_depth {
-            &contexts[depth..]
-        } else {
-            &contexts
-        };
-
-        self.keystroke_matcher
-            .keystrokes_for_action(action, action_contexts)
+        let handler_depth = handler_depth.unwrap_or(0);
+        (0..=handler_depth).find_map(|depth| {
+            let contexts = &contexts[depth..];
+            self.keystroke_matcher
+                .keystrokes_for_action(action, contexts)
+        })
     }
 
     fn notify_if_view_ancestors_change(&mut self, view_id: usize) {
@@ -6422,7 +6420,7 @@ mod tests {
 
     #[crate::test(self)]
     fn test_keystrokes_for_action(cx: &mut TestAppContext) {
-        actions!(test, [Action1, Action2, GlobalAction]);
+        actions!(test, [Action1, Action2, Action3, GlobalAction]);
 
         struct View1 {
             child: ViewHandle<View2>,
@@ -6465,12 +6463,14 @@ mod tests {
 
         cx.update(|cx| {
             cx.add_action(|_: &mut View1, _: &Action1, _cx| {});
+            cx.add_action(|_: &mut View1, _: &Action3, _cx| {});
             cx.add_action(|_: &mut View2, _: &Action2, _cx| {});
             cx.add_global_action(|_: &GlobalAction, _| {});
             cx.add_bindings(vec![
                 Binding::new("a", Action1, Some("View1")),
                 Binding::new("b", Action2, Some("View1 > View2")),
-                Binding::new("c", GlobalAction, Some("View3")), // View 3 does not exist
+                Binding::new("c", Action3, Some("View2")),
+                Binding::new("d", GlobalAction, Some("View3")), // View 3 does not exist
             ]);
         });
 
@@ -6492,6 +6492,14 @@ mod tests {
                         .unwrap()
                         .as_slice(),
                     &[Keystroke::parse("b").unwrap()]
+                );
+                assert_eq!(layout_cx.keystrokes_for_action(view_1.id(), &Action3), None);
+                assert_eq!(
+                    layout_cx
+                        .keystrokes_for_action(view_2.id(), &Action3)
+                        .unwrap()
+                        .as_slice(),
+                    &[Keystroke::parse("c").unwrap()]
                 );
 
                 // The 'a' keystroke propagates up the view tree from view_2
@@ -6520,7 +6528,8 @@ mod tests {
             &available_actions(window.into(), view_1.id(), cx),
             &[
                 ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
-                ("test::GlobalAction", vec![])
+                ("test::Action3", vec![]),
+                ("test::GlobalAction", vec![]),
             ],
         );
 
@@ -6530,6 +6539,7 @@ mod tests {
             &[
                 ("test::Action1", vec![Keystroke::parse("a").unwrap()]),
                 ("test::Action2", vec![Keystroke::parse("b").unwrap()]),
+                ("test::Action3", vec![Keystroke::parse("c").unwrap()]),
                 ("test::GlobalAction", vec![]),
             ],
         );
