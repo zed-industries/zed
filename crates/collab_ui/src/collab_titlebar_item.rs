@@ -771,7 +771,7 @@ impl CollabTitlebarItem {
                 })
                 .with_tooltip::<ToggleUserMenu>(
                     0,
-                    "Toggle user menu".to_owned(),
+                    "Toggle User Menu".to_owned(),
                     Some(Box::new(ToggleUserMenu)),
                     tooltip,
                     cx,
