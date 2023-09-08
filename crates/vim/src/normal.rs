@@ -780,6 +780,7 @@ mod test {
     #[gpui::test]
     async fn test_f_and_t(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
+
         for count in 1..=3 {
             let test_case = indoc! {"
                 ˇaaaˇbˇ ˇbˇ   ˇbˇbˇ aˇaaˇbaaa
