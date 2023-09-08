@@ -201,6 +201,8 @@
   //     }
   // TODO kb description
   "formatter": "auto",
+  // TODO kb description + better settings
+  "prettier": true,
   // How to soft-wrap long lines of text. This setting can take
   // three values:
   //

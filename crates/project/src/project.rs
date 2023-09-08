@@ -154,7 +154,7 @@ pub struct Project {
     copilot_lsp_subscription: Option<gpui::Subscription>,
     copilot_log_subscription: Option<lsp::Subscription>,
     current_lsp_settings: HashMap<Arc<str>, LspSettings>,
-    node_runtime: Option<Arc<dyn NodeRuntime>>,
+    node: Option<Arc<dyn NodeRuntime>>,
     prettier_instances: HashMap<
         (Option<WorktreeId>, PathBuf),
         Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>,
@@ -612,7 +612,7 @@ impl Project {
 
     pub fn local(
         client: Arc<Client>,
-        node_runtime: Arc<dyn NodeRuntime>,
+        node: Arc<dyn NodeRuntime>,
         user_store: ModelHandle<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
@@ -668,7 +668,7 @@ impl Project {
                 copilot_lsp_subscription,
                 copilot_log_subscription: None,
                 current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
-                node_runtime: Some(node_runtime),
+                node: Some(node),
                 prettier_instances: HashMap::default(),
             }
         })
@@ -767,7 +767,7 @@ impl Project {
                 copilot_lsp_subscription,
                 copilot_log_subscription: None,
                 current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
-                node_runtime: None,
+                node: None,
                 prettier_instances: HashMap::default(),
             };
             for worktree in worktrees {
@@ -802,8 +802,6 @@ impl Project {
         root_paths: impl IntoIterator<Item = &Path>,
         cx: &mut gpui::TestAppContext,
     ) -> ModelHandle<Project> {
-        use node_runtime::FakeNodeRuntime;
-
         let mut languages = LanguageRegistry::test();
         languages.set_executor(cx.background());
         let http_client = util::http::FakeHttpClient::with_404_response();
@@ -812,7 +810,7 @@ impl Project {
         let project = cx.update(|cx| {
             Project::local(
                 client,
-                FakeNodeRuntime::new(),
+                node_runtime::FakeNodeRuntime::new(),
                 user_store,
                 Arc::new(languages),
                 fs,
@@ -8202,43 +8200,25 @@ impl Project {
         buffer: &ModelHandle<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Option<Task<Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>>> {
-        let node_runtime = Arc::clone(self.node_runtime.as_ref()?);
-        let buffer_file = File::from_dyn(buffer.read(cx).file());
+        let buffer = buffer.read(cx);
+        let buffer_file = buffer.file();
+        let language_settings = language_settings(buffer.language(), buffer_file, cx).clone();
+        if !language_settings.prettier {
+            return None;
+        }
+
+        let node = Arc::clone(self.node.as_ref()?);
+        let buffer_file = File::from_dyn(buffer_file);
         let buffer_path = buffer_file.map(|file| Arc::clone(file.path()));
         let worktree_path = buffer_file
             .as_ref()
             .map(|file| file.worktree.read(cx).abs_path());
         let worktree_id = buffer_file.map(|file| file.worktree_id(cx));
 
-        // TODO kb return None if config opted out of prettier
-        if true {
-            let fs = Arc::clone(&self.fs);
-            let buffer_path = buffer_path.clone();
-            let worktree_path = worktree_path.clone();
-            cx.spawn(|_, _| async move {
-                let prettier_path = Prettier::locate(
-                    worktree_path
-                        .zip(buffer_path)
-                        .map(|(worktree_root_path, starting_path)| {
-                            dbg!(LocateStart {
-                                worktree_root_path,
-                                starting_path,
-                            })
-                        }),
-                    fs,
-                )
-                .await
-                .unwrap();
-                dbg!(prettier_path);
-            })
-            .detach();
-            return None;
-        }
-
         let task = cx.spawn(|this, mut cx| async move {
             let fs = this.update(&mut cx, |project, _| Arc::clone(&project.fs));
             // TODO kb can we have a cache for this instead?
-            let prettier_path = match cx
+            let prettier_dir = match cx
                 .background()
                 .spawn(Prettier::locate(
                     worktree_path
@@ -8263,21 +8243,21 @@ impl Project {
             if let Some(existing_prettier) = this.update(&mut cx, |project, _| {
                 project
                     .prettier_instances
-                    .get(&(worktree_id, prettier_path.clone()))
+                    .get(&(worktree_id, prettier_dir.clone()))
                     .cloned()
             }) {
                 return existing_prettier;
             }
 
-            let task_prettier_path = prettier_path.clone();
+            let task_prettier_dir = prettier_dir.clone();
             let new_prettier_task = cx
                 .background()
                 .spawn(async move {
                     Ok(Arc::new(
-                        Prettier::start(&task_prettier_path, node_runtime)
+                        Prettier::start(&task_prettier_dir, node)
                             .await
                             .with_context(|| {
-                                format!("starting new prettier for path {task_prettier_path:?}")
+                                format!("starting new prettier for path {task_prettier_dir:?}")
                             })?,
                     ))
                     .map_err(Arc::new)
@@ -8286,7 +8266,7 @@ impl Project {
             this.update(&mut cx, |project, _| {
                 project
                     .prettier_instances
-                    .insert((worktree_id, prettier_path), new_prettier_task.clone());
+                    .insert((worktree_id, prettier_dir), new_prettier_task.clone());
             });
             new_prettier_task
         });

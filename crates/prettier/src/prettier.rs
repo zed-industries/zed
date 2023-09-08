@@ -130,20 +130,21 @@ impl Prettier {
             None => Vec::new(),
         };
 
-        match find_closest_prettier_path(paths_to_check, fs.as_ref())
+        match find_closest_prettier_dir(paths_to_check, fs.as_ref())
             .await
-            .with_context(|| format!("Finding prettier starting with {starting_path:?}"))?
+            .with_context(|| format!("finding prettier starting with {starting_path:?}"))?
         {
-            Some(prettier_path) => Ok(prettier_path),
-            None => {
-                // TODO kb return the default prettier, how, without state?
-                Ok(PathBuf::new())
-            }
+            Some(prettier_dir) => Ok(prettier_dir),
+            None => Ok(util::paths::DEFAULT_PRETTIER_DIR.to_path_buf()),
         }
     }
 
-    pub async fn start(prettier_path: &Path, node: Arc<dyn NodeRuntime>) -> anyhow::Result<Self> {
-        todo!()
+    pub async fn start(prettier_dir: &Path, node: Arc<dyn NodeRuntime>) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            prettier_dir.is_dir(),
+            "Prettier dir {prettier_dir:?} is not a directory"
+        );
+        anyhow::bail!("TODO kb: start prettier server in {prettier_dir:?}")
     }
 
     pub async fn format(&self, buffer: &ModelHandle<Buffer>) -> anyhow::Result<Diff> {
@@ -156,14 +157,14 @@ impl Prettier {
 }
 
 const PRETTIER_PACKAGE_NAME: &str = "prettier";
-async fn find_closest_prettier_path(
+async fn find_closest_prettier_dir(
     paths_to_check: Vec<PathBuf>,
     fs: &dyn Fs,
 ) -> anyhow::Result<Option<PathBuf>> {
     for path in paths_to_check {
         let possible_package_json = path.join("package.json");
         if let Some(package_json_metadata) = fs
-            .metadata(&path)
+            .metadata(&possible_package_json)
             .await
             .with_context(|| format!("Fetching metadata for {possible_package_json:?}"))?
         {
@@ -192,7 +193,7 @@ async fn find_closest_prettier_path(
 
         let possible_node_modules_location = path.join("node_modules").join(PRETTIER_PACKAGE_NAME);
         if let Some(node_modules_location_metadata) = fs
-            .metadata(&path)
+            .metadata(&possible_node_modules_location)
             .await
             .with_context(|| format!("fetching metadata for {possible_node_modules_location:?}"))?
         {
@@ -202,4 +203,11 @@ async fn find_closest_prettier_path(
         }
     }
     Ok(None)
+}
+
+async fn prepare_default_prettier(
+    fs: Arc<dyn Fs>,
+    node: Arc<dyn NodeRuntime>,
+) -> anyhow::Result<PathBuf> {
+    todo!("TODO kb need to call per language that supports it, and have to use extra packages sometimes")
 }

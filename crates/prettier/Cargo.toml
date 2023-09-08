@@ -11,6 +11,7 @@ language = { path = "../language" }
 gpui = { path = "../gpui" }
 fs = { path = "../fs" }
 node_runtime = { path = "../node_runtime"}
+util = { path = "../util" }
 
 serde.workspace = true
 serde_derive.workspace = true
