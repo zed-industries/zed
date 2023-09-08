@@ -172,7 +172,7 @@ impl Room {
             cx.spawn(|this, mut cx| async move {
                 connect.await?;
 
-                if !cx.read(|cx| settings::get::<CallSettings>(cx).mute_on_join) {
+                if !cx.read(Self::mute_on_join) {
                     this.update(&mut cx, |this, cx| this.share_microphone(cx))
                         .await?;
                 }
@@ -299,6 +299,10 @@ impl Room {
                 cx,
             )
         })
+    }
+
+    pub fn mute_on_join(cx: &AppContext) -> bool {
+        settings::get::<CallSettings>(cx).mute_on_join || client::IMPERSONATE_LOGIN.is_some()
     }
 
     fn from_join_response(
@@ -1124,7 +1128,7 @@ impl Room {
         self.live_kit
             .as_ref()
             .and_then(|live_kit| match &live_kit.microphone_track {
-                LocalTrack::None => Some(settings::get::<CallSettings>(cx).mute_on_join),
+                LocalTrack::None => Some(Self::mute_on_join(cx)),
                 LocalTrack::Pending { muted, .. } => Some(*muted),
                 LocalTrack::Published { muted, .. } => Some(*muted),
             })
