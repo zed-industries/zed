@@ -1308,13 +1308,15 @@ impl Workspace {
             }
 
             Ok(this
-                .update(&mut cx, |this, cx| this.save_all_internal(true, cx))?
+                .update(&mut cx, |this, cx| {
+                    this.save_all_internal(SaveBehavior::PromptOnWrite, cx)
+                })?
                 .await?)
         })
     }
 
     fn save_all(&mut self, _: &SaveAll, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
-        let save_all = self.save_all_internal(false, cx);
+        let save_all = self.save_all_internal(SaveBehavior::PromptOnConflict, cx);
         Some(cx.foreground().spawn(async move {
             save_all.await?;
             Ok(())
@@ -1323,7 +1325,7 @@ impl Workspace {
 
     fn save_all_internal(
         &mut self,
-        should_prompt_to_save: bool,
+        save_behaviour: SaveBehavior,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
         if self.project.read(cx).is_read_only() {
@@ -1358,7 +1360,7 @@ impl Workspace {
                             &pane,
                             ix,
                             &*item,
-                            should_prompt_to_save,
+                            save_behaviour,
                             &mut cx,
                         )
                         .await?
@@ -4358,7 +4360,9 @@ mod tests {
             let item1_id = item1.id();
             let item3_id = item3.id();
             let item4_id = item4.id();
-            pane.close_items(cx, move |id| [item1_id, item3_id, item4_id].contains(&id))
+            pane.close_items(cx, SaveBehavior::PromptOnWrite, move |id| {
+                [item1_id, item3_id, item4_id].contains(&id)
+            })
         });
         cx.foreground().run_until_parked();
 
@@ -4493,7 +4497,9 @@ mod tests {
         // once for project entry 0, and once for project entry 2. After those two
         // prompts, the task should complete.
 
-        let close = left_pane.update(cx, |pane, cx| pane.close_items(cx, |_| true));
+        let close = left_pane.update(cx, |pane, cx| {
+            pane.close_items(cx, SaveBehavior::PromptOnWrite, move |_| true)
+        });
         cx.foreground().run_until_parked();
         left_pane.read_with(cx, |pane, cx| {
             assert_eq!(
@@ -4609,9 +4615,11 @@ mod tests {
             item.is_dirty = true;
         });
 
-        pane.update(cx, |pane, cx| pane.close_items(cx, move |id| id == item_id))
-            .await
-            .unwrap();
+        pane.update(cx, |pane, cx| {
+            pane.close_items(cx, SaveBehavior::PromptOnWrite, move |id| id == item_id)
+        })
+        .await
+        .unwrap();
         assert!(!window.has_pending_prompt(cx));
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
 
@@ -4630,8 +4638,9 @@ mod tests {
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
 
         // Ensure autosave is prevented for deleted files also when closing the buffer.
-        let _close_items =
-            pane.update(cx, |pane, cx| pane.close_items(cx, move |id| id == item_id));
+        let _close_items = pane.update(cx, |pane, cx| {
+            pane.close_items(cx, SaveBehavior::PromptOnWrite, move |id| id == item_id)
+        });
         deterministic.run_until_parked();
         assert!(window.has_pending_prompt(cx));
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
