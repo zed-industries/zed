@@ -47,7 +47,6 @@ pub struct LanguageSettings {
     pub show_wrap_guides: bool,
     pub wrap_guides: Vec<usize>,
     pub format_on_save: FormatOnSave,
-    pub prettier: bool,
     pub remove_trailing_whitespace_on_save: bool,
     pub ensure_final_newline_on_save: bool,
     pub formatter: Formatter,
@@ -92,8 +91,6 @@ pub struct LanguageSettingsContent {
     pub wrap_guides: Option<Vec<usize>>,
     #[serde(default)]
     pub format_on_save: Option<FormatOnSave>,
-    #[serde(default)]
-    pub prettier: Option<bool>,
     #[serde(default)]
     pub remove_trailing_whitespace_on_save: Option<bool>,
     #[serde(default)]
@@ -401,7 +398,6 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     );
     merge(&mut settings.formatter, src.formatter.clone());
     merge(&mut settings.format_on_save, src.format_on_save.clone());
-    merge(&mut settings.prettier, src.prettier);
     merge(
         &mut settings.remove_trailing_whitespace_on_save,
         src.remove_trailing_whitespace_on_save,

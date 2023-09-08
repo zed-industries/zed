@@ -227,6 +227,10 @@ impl CachedLspAdapter {
     ) -> Option<CodeLabel> {
         self.adapter.label_for_symbol(name, kind, language).await
     }
+
+    pub fn enabled_formatters(&self) -> Vec<BundledFormatter> {
+        self.adapter.enabled_formatters()
+    }
 }
 
 pub trait LspAdapterDelegate: Send + Sync {
@@ -332,6 +336,26 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     async fn language_ids(&self) -> HashMap<String, String> {
         Default::default()
+    }
+
+    // TODO kb enable this for
+    // markdown somehow?
+    // tailwind (needs a css plugin, there are 2 of them)
+    fn enabled_formatters(&self) -> Vec<BundledFormatter> {
+        Vec::new()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BundledFormatter {
+    Prettier { plugin_names: Vec<String> },
+}
+
+impl BundledFormatter {
+    pub fn prettier() -> Self {
+        Self::Prettier {
+            plugin_names: Vec::new(),
+        }
     }
 }
 

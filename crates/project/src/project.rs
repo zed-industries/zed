@@ -37,11 +37,11 @@ use language::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
         serialize_anchor, serialize_version, split_operations,
     },
-    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeAction,
-    CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Event as BufferEvent,
-    File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapterDelegate,
-    OffsetRangeExt, Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot,
-    ToOffset, ToPointUtf16, Transaction, Unclipped,
+    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, BundledFormatter, CachedLspAdapter,
+    CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff,
+    Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile,
+    LspAdapterDelegate, OffsetRangeExt, Operation, Patch, PendingLanguageServer, PointUtf16,
+    TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use log::error;
 use lsp::{
@@ -2651,6 +2651,8 @@ impl Project {
         }
     }
 
+    // TODO kb 2 usages of this method (buffer language select + settings change) should take care of
+    // `LspAdapter::enabled_formatters` collecting and initializing. Remove `Option<WorktreeId>` for prettier instances?
     fn start_language_servers(
         &mut self,
         worktree: &ModelHandle<Worktree>,
@@ -8202,8 +8204,13 @@ impl Project {
     ) -> Option<Task<Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>>> {
         let buffer = buffer.read(cx);
         let buffer_file = buffer.file();
-        let language_settings = language_settings(buffer.language(), buffer_file, cx).clone();
-        if !language_settings.prettier {
+        let buffer_language = buffer.language()?;
+        if !buffer_language
+            .lsp_adapters()
+            .iter()
+            .flat_map(|adapter| adapter.enabled_formatters())
+            .any(|formatter| matches!(formatter, BundledFormatter::Prettier { .. }))
+        {
             return None;
         }
 

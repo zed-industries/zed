@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
-use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
+use language::{BundledFormatter, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 use serde_json::json;
@@ -94,6 +94,10 @@ impl LspAdapter for SvelteLspAdapter {
         Some(json!({
             "provideFormatter": true
         }))
+    }
+
+    fn enabled_formatters(&self) -> Vec<BundledFormatter> {
+        vec![BundledFormatter::prettier()]
     }
 }
 

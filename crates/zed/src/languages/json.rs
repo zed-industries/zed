@@ -4,7 +4,9 @@ use collections::HashMap;
 use feature_flags::FeatureFlagAppExt;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::AppContext;
-use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
+use language::{
+    BundledFormatter, LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate,
+};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 use serde_json::json;
@@ -143,6 +145,10 @@ impl LspAdapter for JsonLspAdapter {
 
     async fn language_ids(&self) -> HashMap<String, String> {
         [("JSON".into(), "jsonc".into())].into_iter().collect()
+    }
+
+    fn enabled_formatters(&self) -> Vec<BundledFormatter> {
+        vec![BundledFormatter::prettier()]
     }
 }
 
