@@ -846,7 +846,8 @@ impl Database {
     /// - (`Some(id)`, `None`) Remove a channel from a given parent, and leave other parents
     /// - (`Some(id)`, `Some(id)`) Move channel from one parent to another, leaving other parents
     ///
-    /// Returns the channel that was moved + it's sub channels
+    /// Returns the channel that was moved + it's sub channels for use
+    /// by the members for `to`
     pub async fn move_channel(
         &self,
         user: UserId,
@@ -861,14 +862,9 @@ impl Database {
             self.check_user_is_channel_admin(from, user, &*tx).await?;
 
             let mut channel_descendants = None;
-            if let Some(from_parent) = from_parent {
-                self.check_user_is_channel_admin(from_parent, user, &*tx)
-                    .await?;
 
-                self.remove_channel_from_parent(from, from_parent, &*tx)
-                    .await?;
-            }
-
+            // Note that we have to do the linking before the removal, so that we
+            // can leave the channel_path table in a consistent state.
             if let Some(to) = to {
                 self.check_user_is_channel_admin(to, user, &*tx).await?;
 
@@ -880,20 +876,28 @@ impl Database {
                 None => self.get_channel_descendants([from], &*tx).await?,
             };
 
-            // Repair the parent ID of the channel in case it was from a cached call
-            if let Some(channel) = channel_descendants.get_mut(&from) {
-                if let Some(from_parent) = from_parent {
-                    channel.remove(&from_parent);
-                }
-                if let Some(to) = to {
-                    channel.insert(to);
-                }
+            if let Some(from_parent) = from_parent {
+                self.check_user_is_channel_admin(from_parent, user, &*tx)
+                    .await?;
+
+                self.remove_channel_from_parent(from, from_parent, &*tx)
+                    .await?;
             }
 
+            let channels;
+            if let Some(to) = to {
+                if let Some(channel) = channel_descendants.get_mut(&from) {
+                    // Remove the other parents
+                    channel.clear();
+                    channel.insert(to);
+                }
 
-            let channels = self
-                .get_all_channels(channel_descendants, &*tx)
-                .await?;
+                 channels = self
+                    .get_all_channels(channel_descendants, &*tx)
+                    .await?;
+            } else {
+                channels = vec![];
+            }
 
             Ok(channels)
         })

@@ -2397,7 +2397,7 @@ async fn move_channel(
     let channel_id = ChannelId::from_proto(request.channel_id);
     let from_parent = request.from_parent.map(ChannelId::from_proto);
     let to = request.to.map(ChannelId::from_proto);
-    let channels = db
+    let channels_to_send = db
         .move_channel(
             session.user_id,
             channel_id,
@@ -2429,7 +2429,7 @@ async fn move_channel(
         let members = db.get_channel_members(to).await?;
         let connection_pool = session.connection_pool().await;
         let update = proto::UpdateChannels {
-            channels: channels.into_iter().map(|channel| proto::Channel {
+            channels: channels_to_send.into_iter().map(|channel| proto::Channel {
                 id: channel.id.to_proto(),
                 name: channel.name,
                 parent_id: channel.parent_id.map(ChannelId::to_proto),
