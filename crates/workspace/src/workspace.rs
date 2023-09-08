@@ -1258,7 +1258,7 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let window = cx.window();
-        let prepare = self.prepare_to_close(false, cx);
+        let prepare = self.prepare_to_close(false, SaveBehavior::PromptOnWrite, cx);
         Some(cx.spawn(|_, mut cx| async move {
             if prepare.await? {
                 window.remove(&mut cx);
@@ -1270,6 +1270,7 @@ impl Workspace {
     pub fn prepare_to_close(
         &mut self,
         quitting: bool,
+        save_behavior: SaveBehavior,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
         let active_call = self.active_call().cloned();
@@ -1308,13 +1309,15 @@ impl Workspace {
             }
 
             Ok(this
-                .update(&mut cx, |this, cx| this.save_all_internal(true, cx))?
+                .update(&mut cx, |this, cx| {
+                    this.save_all_internal(save_behavior, cx)
+                })?
                 .await?)
         })
     }
 
     fn save_all(&mut self, _: &SaveAll, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
-        let save_all = self.save_all_internal(false, cx);
+        let save_all = self.save_all_internal(SaveBehavior::PromptOnConflict, cx);
         Some(cx.foreground().spawn(async move {
             save_all.await?;
             Ok(())
@@ -1323,7 +1326,7 @@ impl Workspace {
 
     fn save_all_internal(
         &mut self,
-        should_prompt_to_save: bool,
+        save_behaviour: SaveBehavior,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
         if self.project.read(cx).is_read_only() {
@@ -1358,7 +1361,7 @@ impl Workspace {
                             &pane,
                             ix,
                             &*item,
-                            should_prompt_to_save,
+                            save_behaviour,
                             &mut cx,
                         )
                         .await?
@@ -1404,7 +1407,7 @@ impl Workspace {
         let close_task = if is_remote || has_worktree || has_dirty_items {
             None
         } else {
-            Some(self.prepare_to_close(false, cx))
+            Some(self.prepare_to_close(false, SaveBehavior::PromptOnWrite, cx))
         };
         let app_state = self.app_state.clone();
 
@@ -4099,7 +4102,7 @@ pub fn restart(_: &Restart, cx: &mut AppContext) {
         // If the user cancels any save prompt, then keep the app open.
         for window in workspace_windows {
             if let Some(should_close) = window.update_root(&mut cx, |workspace, cx| {
-                workspace.prepare_to_close(true, cx)
+                workspace.prepare_to_close(true, SaveBehavior::PromptOnWrite, cx)
             }) {
                 if !should_close.await? {
                     return Ok(());
@@ -4289,7 +4292,9 @@ mod tests {
         // When there are no dirty items, there's nothing to do.
         let item1 = window.add_view(cx, |_| TestItem::new());
         workspace.update(cx, |w, cx| w.add_item(Box::new(item1.clone()), cx));
-        let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
+        let task = workspace.update(cx, |w, cx| {
+            w.prepare_to_close(false, SaveBehavior::PromptOnWrite, cx)
+        });
         assert!(task.await.unwrap());
 
         // When there are dirty untitled items, prompt to save each one. If the user
@@ -4304,7 +4309,9 @@ mod tests {
             w.add_item(Box::new(item2.clone()), cx);
             w.add_item(Box::new(item3.clone()), cx);
         });
-        let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
+        let task = workspace.update(cx, |w, cx| {
+            w.prepare_to_close(false, SaveBehavior::PromptOnWrite, cx)
+        });
         cx.foreground().run_until_parked();
         window.simulate_prompt_answer(2, cx); // cancel
         cx.foreground().run_until_parked();
@@ -4358,7 +4365,9 @@ mod tests {
             let item1_id = item1.id();
             let item3_id = item3.id();
             let item4_id = item4.id();
-            pane.close_items(cx, move |id| [item1_id, item3_id, item4_id].contains(&id))
+            pane.close_items(cx, SaveBehavior::PromptOnWrite, move |id| {
+                [item1_id, item3_id, item4_id].contains(&id)
+            })
         });
         cx.foreground().run_until_parked();
 
@@ -4493,7 +4502,9 @@ mod tests {
         // once for project entry 0, and once for project entry 2. After those two
         // prompts, the task should complete.
 
-        let close = left_pane.update(cx, |pane, cx| pane.close_items(cx, |_| true));
+        let close = left_pane.update(cx, |pane, cx| {
+            pane.close_items(cx, SaveBehavior::PromptOnWrite, move |_| true)
+        });
         cx.foreground().run_until_parked();
         left_pane.read_with(cx, |pane, cx| {
             assert_eq!(
@@ -4609,9 +4620,11 @@ mod tests {
             item.is_dirty = true;
         });
 
-        pane.update(cx, |pane, cx| pane.close_items(cx, move |id| id == item_id))
-            .await
-            .unwrap();
+        pane.update(cx, |pane, cx| {
+            pane.close_items(cx, SaveBehavior::PromptOnWrite, move |id| id == item_id)
+        })
+        .await
+        .unwrap();
         assert!(!window.has_pending_prompt(cx));
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
 
@@ -4630,8 +4643,9 @@ mod tests {
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
 
         // Ensure autosave is prevented for deleted files also when closing the buffer.
-        let _close_items =
-            pane.update(cx, |pane, cx| pane.close_items(cx, move |id| id == item_id));
+        let _close_items = pane.update(cx, |pane, cx| {
+            pane.close_items(cx, SaveBehavior::PromptOnWrite, move |id| id == item_id)
+        });
         deterministic.run_until_parked();
         assert!(window.has_pending_prompt(cx));
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));

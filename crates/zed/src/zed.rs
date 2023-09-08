@@ -438,7 +438,7 @@ fn quit(_: &Quit, cx: &mut gpui::AppContext) {
         // If the user cancels any save prompt, then keep the app open.
         for window in workspace_windows {
             if let Some(should_close) = window.update_root(&mut cx, |workspace, cx| {
-                workspace.prepare_to_close(true, cx)
+                workspace.prepare_to_close(true, workspace::SaveBehavior::PromptOnWrite, cx)
             }) {
                 if !should_close.await? {
                     return Ok(());
@@ -733,7 +733,7 @@ mod tests {
     use theme::{ThemeRegistry, ThemeSettings};
     use workspace::{
         item::{Item, ItemHandle},
-        open_new, open_paths, pane, NewFile, SplitDirection, WorkspaceHandle,
+        open_new, open_paths, pane, NewFile, SaveBehavior, SplitDirection, WorkspaceHandle,
     };
 
     #[gpui::test]
@@ -1495,7 +1495,12 @@ mod tests {
 
             pane2_item.downcast::<Editor>().unwrap().downgrade()
         });
-        cx.dispatch_action(window.into(), workspace::CloseActiveItem);
+        cx.dispatch_action(
+            window.into(),
+            workspace::CloseActiveItem {
+                save_behavior: None,
+            },
+        );
 
         cx.foreground().run_until_parked();
         workspace.read_with(cx, |workspace, _| {
@@ -1503,7 +1508,12 @@ mod tests {
             assert_eq!(workspace.active_pane(), &pane_1);
         });
 
-        cx.dispatch_action(window.into(), workspace::CloseActiveItem);
+        cx.dispatch_action(
+            window.into(),
+            workspace::CloseActiveItem {
+                save_behavior: None,
+            },
+        );
         cx.foreground().run_until_parked();
         window.simulate_prompt_answer(1, cx);
         cx.foreground().run_until_parked();
@@ -1661,7 +1671,7 @@ mod tests {
         pane.update(cx, |pane, cx| {
             let editor3_id = editor3.id();
             drop(editor3);
-            pane.close_item_by_id(editor3_id, cx)
+            pane.close_item_by_id(editor3_id, SaveBehavior::PromptOnWrite, cx)
         })
         .await
         .unwrap();
@@ -1696,7 +1706,7 @@ mod tests {
         pane.update(cx, |pane, cx| {
             let editor2_id = editor2.id();
             drop(editor2);
-            pane.close_item_by_id(editor2_id, cx)
+            pane.close_item_by_id(editor2_id, SaveBehavior::PromptOnWrite, cx)
         })
         .await
         .unwrap();
@@ -1852,24 +1862,32 @@ mod tests {
         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
         // Close all the pane items in some arbitrary order.
-        pane.update(cx, |pane, cx| pane.close_item_by_id(file1_item_id, cx))
-            .await
-            .unwrap();
+        pane.update(cx, |pane, cx| {
+            pane.close_item_by_id(file1_item_id, SaveBehavior::PromptOnWrite, cx)
+        })
+        .await
+        .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
-        pane.update(cx, |pane, cx| pane.close_item_by_id(file4_item_id, cx))
-            .await
-            .unwrap();
+        pane.update(cx, |pane, cx| {
+            pane.close_item_by_id(file4_item_id, SaveBehavior::PromptOnWrite, cx)
+        })
+        .await
+        .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
-        pane.update(cx, |pane, cx| pane.close_item_by_id(file2_item_id, cx))
-            .await
-            .unwrap();
+        pane.update(cx, |pane, cx| {
+            pane.close_item_by_id(file2_item_id, SaveBehavior::PromptOnWrite, cx)
+        })
+        .await
+        .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
-        pane.update(cx, |pane, cx| pane.close_item_by_id(file3_item_id, cx))
-            .await
-            .unwrap();
+        pane.update(cx, |pane, cx| {
+            pane.close_item_by_id(file3_item_id, SaveBehavior::PromptOnWrite, cx)
+        })
+        .await
+        .unwrap();
         assert_eq!(active_path(&workspace, cx), None);
 
         // Reopen all the closed items, ensuring they are reopened in the same order
