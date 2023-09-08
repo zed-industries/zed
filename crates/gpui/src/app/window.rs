@@ -51,6 +51,7 @@ pub struct Window {
     pub(crate) parents: HashMap<usize, usize>,
     pub(crate) is_active: bool,
     pub(crate) is_fullscreen: bool,
+    inspector_enabled: bool,
     pub(crate) invalidation: Option<WindowInvalidation>,
     pub(crate) platform_window: Box<dyn platform::Window>,
     pub(crate) rendered_views: HashMap<usize, Box<dyn AnyRootElement>>,
@@ -65,6 +66,7 @@ pub struct Window {
     event_handlers: Vec<EventHandler>,
     last_mouse_moved_event: Option<Event>,
     last_mouse_position: Vector2F,
+    pressed_buttons: HashSet<MouseButton>,
     pub(crate) hovered_region_ids: Vec<MouseRegionId>,
     pub(crate) clicked_region_ids: Vec<MouseRegionId>,
     pub(crate) clicked_region: Option<(MouseRegionId, MouseButton)>,
@@ -92,6 +94,7 @@ impl Window {
             is_active: false,
             invalidation: None,
             is_fullscreen: false,
+            inspector_enabled: false,
             platform_window,
             rendered_views: Default::default(),
             text_style_stack: Vec::new(),
@@ -104,6 +107,7 @@ impl Window {
             text_layout_cache: TextLayoutCache::new(cx.font_system.clone()),
             last_mouse_moved_event: None,
             last_mouse_position: Vector2F::zero(),
+            pressed_buttons: Default::default(),
             hovered_region_ids: Default::default(),
             clicked_region_ids: Default::default(),
             clicked_region: None,
@@ -233,6 +237,18 @@ impl<'a> WindowContext<'a> {
         let window = self.window();
         self.pending_effects
             .push_back(Effect::RepaintWindow { window });
+    }
+
+    pub fn enable_inspector(&mut self) {
+        self.window.inspector_enabled = true;
+    }
+
+    pub fn is_inspector_enabled(&self) -> bool {
+        self.window.inspector_enabled
+    }
+
+    pub fn is_mouse_down(&self, button: MouseButton) -> bool {
+        self.window.pressed_buttons.contains(&button)
     }
 
     pub fn rem_size(&self) -> f32 {
@@ -521,7 +537,7 @@ impl<'a> WindowContext<'a> {
 
     pub(crate) fn dispatch_event(&mut self, event: Event, event_reused: bool) -> bool {
         if !event_reused {
-            self.dispatch_to_new_event_handlers(&event);
+            self.dispatch_event_2(&event);
         }
 
         let mut mouse_events = SmallVec::<[_; 2]>::new();
@@ -898,12 +914,24 @@ impl<'a> WindowContext<'a> {
         any_event_handled
     }
 
-    fn dispatch_to_new_event_handlers(&mut self, event: &Event) {
+    fn dispatch_event_2(&mut self, event: &Event) {
+        match event {
+            Event::MouseDown(event) => {
+                self.window.pressed_buttons.insert(event.button);
+            }
+            Event::MouseUp(event) => {
+                self.window.pressed_buttons.remove(&event.button);
+            }
+            _ => {}
+        }
+
         if let Some(mouse_event) = event.mouse_event() {
             let event_handlers = self.window.take_event_handlers();
             for event_handler in event_handlers.iter().rev() {
                 if event_handler.event_type == mouse_event.type_id() {
-                    (event_handler.handler)(mouse_event, self);
+                    if !(event_handler.handler)(mouse_event, self) {
+                        break;
+                    }
                 }
             }
             self.window.event_handlers = event_handlers;
@@ -1394,7 +1422,7 @@ pub struct MeasureParams {
     pub available_space: Size<AvailableSpace>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum AvailableSpace {
     /// The amount of space available is the specified number of pixels
     Pixels(f32),

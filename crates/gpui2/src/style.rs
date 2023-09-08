@@ -22,7 +22,8 @@ use gpui2_macros::styleable_helpers;
 use refineable::{Refineable, RefinementCascade};
 use std::sync::Arc;
 
-#[derive(Clone, Refineable)]
+#[derive(Clone, Refineable, Debug)]
+#[refineable(debug)]
 pub struct Style {
     /// What layout strategy should be used?
     pub display: Display,
@@ -266,7 +267,8 @@ impl From<Hsla> for Fill {
     }
 }
 
-#[derive(Clone, Refineable, Default)]
+#[derive(Clone, Refineable, Default, Debug)]
+#[refineable(debug)]
 pub struct CornerRadii {
     top_left: AbsoluteLength,
     top_right: AbsoluteLength,

@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use super::scene::{Path, PathVertex};
 use crate::{color::Color, json::ToJson};
 pub use pathfinder_geometry::*;
@@ -133,13 +135,14 @@ impl ToJson for RectF {
     }
 }
 
-#[derive(Refineable)]
-pub struct Point<T: Clone + Default> {
+#[derive(Refineable, Debug)]
+#[refineable(debug)]
+pub struct Point<T: Clone + Default + Debug> {
     pub x: T,
     pub y: T,
 }
 
-impl<T: Clone + Default> Clone for Point<T> {
+impl<T: Clone + Default + Debug> Clone for Point<T> {
     fn clone(&self) -> Self {
         Self {
             x: self.x.clone(),
@@ -148,7 +151,7 @@ impl<T: Clone + Default> Clone for Point<T> {
     }
 }
 
-impl<T: Clone + Default> Into<taffy::geometry::Point<T>> for Point<T> {
+impl<T: Clone + Default + Debug> Into<taffy::geometry::Point<T>> for Point<T> {
     fn into(self) -> taffy::geometry::Point<T> {
         taffy::geometry::Point {
             x: self.x,
@@ -157,13 +160,14 @@ impl<T: Clone + Default> Into<taffy::geometry::Point<T>> for Point<T> {
     }
 }
 
-#[derive(Clone, Refineable, Debug)]
-pub struct Size<T: Clone + Default> {
+#[derive(Refineable, Clone, Debug)]
+#[refineable(debug)]
+pub struct Size<T: Clone + Default + Debug> {
     pub width: T,
     pub height: T,
 }
 
-impl<S, T: Clone + Default> From<taffy::geometry::Size<S>> for Size<T>
+impl<S, T: Clone + Default + Debug> From<taffy::geometry::Size<S>> for Size<T>
 where
     S: Into<T>,
 {
@@ -175,7 +179,7 @@ where
     }
 }
 
-impl<S, T: Clone + Default> Into<taffy::geometry::Size<S>> for Size<T>
+impl<S, T: Clone + Default + Debug> Into<taffy::geometry::Size<S>> for Size<T>
 where
     T: Into<S>,
 {
@@ -222,8 +226,9 @@ impl Size<Length> {
     }
 }
 
-#[derive(Clone, Default, Refineable)]
-pub struct Edges<T: Clone + Default> {
+#[derive(Clone, Default, Refineable, Debug)]
+#[refineable(debug)]
+pub struct Edges<T: Clone + Default + Debug> {
     pub top: T,
     pub right: T,
     pub bottom: T,
@@ -323,6 +328,15 @@ pub enum AbsoluteLength {
     Rems(f32),
 }
 
+impl std::fmt::Debug for AbsoluteLength {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AbsoluteLength::Pixels(pixels) => write!(f, "{}px", pixels),
+            AbsoluteLength::Rems(rems) => write!(f, "{}rems", rems),
+        }
+    }
+}
+
 impl AbsoluteLength {
     pub fn to_pixels(&self, rem_size: f32) -> f32 {
         match self {
@@ -349,7 +363,7 @@ impl Default for AbsoluteLength {
 #[derive(Clone, Copy)]
 pub enum DefiniteLength {
     Absolute(AbsoluteLength),
-    Relative(f32), // Percent, from 0 to 100.
+    Relative(f32), // 0. to 1.
 }
 
 impl DefiniteLength {
@@ -364,6 +378,15 @@ impl DefiniteLength {
             DefiniteLength::Relative(fraction) => {
                 taffy::style::LengthPercentage::Percent(*fraction)
             }
+        }
+    }
+}
+
+impl std::fmt::Debug for DefiniteLength {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DefiniteLength::Absolute(length) => std::fmt::Debug::fmt(length, f),
+            DefiniteLength::Relative(fract) => write!(f, "{}%", (fract * 100.0) as i32),
         }
     }
 }
@@ -385,6 +408,15 @@ impl Default for DefiniteLength {
 pub enum Length {
     Definite(DefiniteLength),
     Auto,
+}
+
+impl std::fmt::Debug for Length {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Length::Definite(definite_length) => write!(f, "{:?}", definite_length),
+            Length::Auto => write!(f, "auto"),
+        }
+    }
 }
 
 pub fn relative<T: From<DefiniteLength>>(fraction: f32) -> T {

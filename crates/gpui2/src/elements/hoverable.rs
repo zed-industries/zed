@@ -72,6 +72,7 @@ impl<V: 'static, E: Element<V> + Styleable> Element<V> for Hoverable<E> {
         let hovered = self.hovered.clone();
         let bounds = layout.bounds;
         cx.on_event(layout.order, move |_view, _: &MouseMovedEvent, cx| {
+            cx.bubble_event();
             if bounds.contains_point(cx.mouse_position()) != hovered.get() {
                 cx.repaint();
             }

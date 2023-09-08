@@ -1,12 +1,19 @@
+use std::cell::Cell;
+
 use crate::{
     element::{AnyElement, Element, IntoElement, Layout, ParentElement},
+    hsla,
     layout_context::LayoutContext,
     paint_context::PaintContext,
-    style::{Style, StyleHelpers, Styleable},
+    style::{CornerRadii, Style, StyleHelpers, Styleable},
     InteractionHandlers, Interactive,
 };
 use anyhow::Result;
-use gpui::LayoutId;
+use gpui::{
+    platform::{MouseButton, MouseButtonEvent, MouseMovedEvent},
+    scene::{self},
+    LayoutId,
+};
 use refineable::{Refineable, RefinementCascade};
 use smallvec::SmallVec;
 use util::ResultExt;
@@ -63,7 +70,7 @@ impl<V: 'static> Element<V> for Div<V> {
     ) where
         Self: Sized,
     {
-        let style = &self.computed_style();
+        let style = self.computed_style();
         let pop_text_style = style.text_style(cx).map_or(false, |style| {
             cx.push_text_style(&style).log_err().is_some()
         });
@@ -77,6 +84,58 @@ impl<V: 'static> Element<V> for Div<V> {
         if pop_text_style {
             cx.pop_text_style();
         }
+
+        if cx.is_inspector_enabled() {
+            self.paint_inspector(layout, cx);
+        }
+    }
+}
+
+impl<V: 'static> Div<V> {
+    fn paint_inspector(&self, layout: &Layout, cx: &mut PaintContext<V>) {
+        let style = self.styles.merged();
+
+        let hovered = layout.bounds.contains_point(cx.mouse_position());
+        if hovered {
+            let rem_size = cx.rem_size();
+            cx.scene.push_quad(scene::Quad {
+                bounds: layout.bounds,
+                background: Some(hsla(0., 0., 1., 0.05).into()),
+                border: gpui::Border {
+                    color: hsla(0., 0., 1., 0.2).into(),
+                    top: 1.,
+                    right: 1.,
+                    bottom: 1.,
+                    left: 1.,
+                },
+                corner_radii: CornerRadii::default()
+                    .refined(&style.corner_radii)
+                    .to_gpui(layout.bounds.size(), rem_size),
+            })
+        }
+
+        let bounds = layout.bounds;
+        let pressed = Cell::new(hovered && cx.is_mouse_down(MouseButton::Left));
+        cx.on_event(layout.order, move |_, event: &MouseButtonEvent, _| {
+            if bounds.contains_point(event.position) {
+                if event.is_down {
+                    pressed.set(true);
+                } else if pressed.get() {
+                    pressed.set(false);
+                    eprintln!("clicked div {:?} {:#?}", bounds, style);
+                }
+            }
+        });
+
+        let hovered = Cell::new(hovered);
+        cx.on_event(layout.order, move |_, event: &MouseMovedEvent, cx| {
+            cx.bubble_event();
+            let hovered_now = bounds.contains_point(event.position);
+            if hovered.get() != hovered_now {
+                hovered.set(hovered_now);
+                cx.repaint();
+            }
+        });
     }
 }
 

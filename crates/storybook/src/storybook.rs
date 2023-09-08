@@ -15,6 +15,11 @@ mod element_ext;
 mod theme;
 mod workspace;
 
+gpui2::actions! {
+    storybook,
+    [ToggleInspector]
+}
+
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
@@ -33,7 +38,12 @@ fn main() {
                 center: true,
                 ..Default::default()
             },
-            |_| view(|cx| storybook(cx)),
+            |cx| {
+                view(|cx| {
+                    cx.enable_inspector();
+                    storybook(cx)
+                })
+            },
         );
         cx.platform().activate(true);
     });
