@@ -1,4 +1,4 @@
-use crate::collab_panel::{CollaborationPanelDockPosition, CollaborationPanelSettings};
+use crate::ChatPanelSettings;
 use anyhow::Result;
 use channel::{ChannelChat, ChannelChatEvent, ChannelMessage, ChannelStore};
 use client::Client;
@@ -17,6 +17,7 @@ use language::language_settings::SoftWrap;
 use menu::Confirm;
 use project::Fs;
 use serde::{Deserialize, Serialize};
+use settings::SettingsStore;
 use std::sync::Arc;
 use theme::Theme;
 use time::{OffsetDateTime, UtcOffset};
@@ -40,6 +41,7 @@ pub struct ChatPanel {
     fs: Arc<dyn Fs>,
     width: Option<f32>,
     pending_serialization: Task<Option<()>>,
+    subscriptions: Vec<gpui::Subscription>,
     has_focus: bool,
 }
 
@@ -124,8 +126,22 @@ impl ChatPanel {
                 channel_select,
                 local_timezone: cx.platform().local_timezone(),
                 has_focus: false,
+                subscriptions: Vec::new(),
                 width: None,
             };
+
+            let mut old_dock_position = this.position(cx);
+            this.subscriptions
+                .push(
+                    cx.observe_global::<SettingsStore, _>(move |this: &mut Self, cx| {
+                        let new_dock_position = this.position(cx);
+                        if new_dock_position != old_dock_position {
+                            old_dock_position = new_dock_position;
+                            cx.emit(Event::DockPositionChanged);
+                        }
+                        cx.notify();
+                    }),
+                );
 
             this.init_active_channel(cx);
             cx.observe(&this.channel_store, |this, _, cx| {
@@ -446,10 +462,7 @@ impl View for ChatPanel {
 
 impl Panel for ChatPanel {
     fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
-        match settings::get::<CollaborationPanelSettings>(cx).dock {
-            CollaborationPanelDockPosition::Left => DockPosition::Left,
-            CollaborationPanelDockPosition::Right => DockPosition::Right,
-        }
+        settings::get::<ChatPanelSettings>(cx).dock
     }
 
     fn position_is_valid(&self, position: DockPosition) -> bool {
@@ -457,24 +470,14 @@ impl Panel for ChatPanel {
     }
 
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
-        settings::update_settings_file::<CollaborationPanelSettings>(
-            self.fs.clone(),
-            cx,
-            move |settings| {
-                let dock = match position {
-                    DockPosition::Left | DockPosition::Bottom => {
-                        CollaborationPanelDockPosition::Left
-                    }
-                    DockPosition::Right => CollaborationPanelDockPosition::Right,
-                };
-                settings.dock = Some(dock);
-            },
-        );
+        settings::update_settings_file::<ChatPanelSettings>(self.fs.clone(), cx, move |settings| {
+            settings.dock = Some(position)
+        });
     }
 
     fn size(&self, cx: &gpui::WindowContext) -> f32 {
         self.width
-            .unwrap_or_else(|| settings::get::<CollaborationPanelSettings>(cx).default_width)
+            .unwrap_or_else(|| settings::get::<ChatPanelSettings>(cx).default_width)
     }
 
     fn set_size(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>) {
@@ -484,7 +487,7 @@ impl Panel for ChatPanel {
     }
 
     fn icon_path(&self, cx: &gpui::WindowContext) -> Option<&'static str> {
-        settings::get::<CollaborationPanelSettings>(cx)
+        settings::get::<ChatPanelSettings>(cx)
             .button
             .then(|| "icons/conversations.svg")
     }

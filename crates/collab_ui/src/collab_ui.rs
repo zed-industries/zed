@@ -6,11 +6,11 @@ mod contact_notification;
 mod face_pile;
 mod incoming_call_notification;
 mod notifications;
+mod panel_settings;
 mod project_shared_notification;
 mod sharing_status_indicator;
 
 use call::{ActiveCall, Room};
-pub use collab_titlebar_item::CollabTitlebarItem;
 use gpui::{
     actions,
     geometry::{
@@ -24,12 +24,18 @@ use std::{rc::Rc, sync::Arc};
 use util::ResultExt;
 use workspace::AppState;
 
+pub use collab_titlebar_item::CollabTitlebarItem;
+pub use panel_settings::{ChatPanelSettings, CollaborationPanelSettings};
+
 actions!(
     collab,
     [ToggleScreenSharing, ToggleMute, ToggleDeafen, LeaveCall]
 );
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
+    settings::register::<CollaborationPanelSettings>(cx);
+    settings::register::<ChatPanelSettings>(cx);
+
     vcs_menu::init(cx);
     collab_titlebar_item::init(cx);
     collab_panel::init(cx);

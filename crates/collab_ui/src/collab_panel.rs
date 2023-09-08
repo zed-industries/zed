@@ -1,16 +1,17 @@
 mod channel_modal;
 mod contact_finder;
-mod panel_settings;
 
 use crate::{
     channel_view::{self, ChannelView},
     face_pile::FacePile,
+    CollaborationPanelSettings,
 };
 use anyhow::Result;
 use call::ActiveCall;
 use channel::{Channel, ChannelEvent, ChannelId, ChannelStore};
 use channel_modal::ChannelModal;
 use client::{proto::PeerId, Client, Contact, User, UserStore};
+use contact_finder::ContactFinder;
 use context_menu::{ContextMenu, ContextMenuItem};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Cancel, Editor};
@@ -46,10 +47,6 @@ use workspace::{
     item::ItemHandle,
     Workspace,
 };
-
-pub use panel_settings::{CollaborationPanelDockPosition, CollaborationPanelSettings};
-
-use self::contact_finder::ContactFinder;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct RemoveChannel {
@@ -113,7 +110,6 @@ impl_actions!(
 const COLLABORATION_PANEL_KEY: &'static str = "CollaborationPanel";
 
 pub fn init(cx: &mut AppContext) {
-    settings::register::<panel_settings::CollaborationPanelSettings>(cx);
     contact_finder::init(cx);
     channel_modal::init(cx);
     channel_view::init(cx);
@@ -451,7 +447,7 @@ impl CollabPanel {
             let mut old_dock_position = this.position(cx);
             this.subscriptions
                 .push(
-                    cx.observe_global::<SettingsStore, _>(move |this: &mut CollabPanel, cx| {
+                    cx.observe_global::<SettingsStore, _>(move |this: &mut Self, cx| {
                         let new_dock_position = this.position(cx);
                         if new_dock_position != old_dock_position {
                             old_dock_position = new_dock_position;
@@ -2555,10 +2551,7 @@ impl View for CollabPanel {
 
 impl Panel for CollabPanel {
     fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
-        match settings::get::<CollaborationPanelSettings>(cx).dock {
-            CollaborationPanelDockPosition::Left => DockPosition::Left,
-            CollaborationPanelDockPosition::Right => DockPosition::Right,
-        }
+        settings::get::<CollaborationPanelSettings>(cx).dock
     }
 
     fn position_is_valid(&self, position: DockPosition) -> bool {
@@ -2569,15 +2562,7 @@ impl Panel for CollabPanel {
         settings::update_settings_file::<CollaborationPanelSettings>(
             self.fs.clone(),
             cx,
-            move |settings| {
-                let dock = match position {
-                    DockPosition::Left | DockPosition::Bottom => {
-                        CollaborationPanelDockPosition::Left
-                    }
-                    DockPosition::Right => CollaborationPanelDockPosition::Right,
-                };
-                settings.dock = Some(dock);
-            },
+            move |settings| settings.dock = Some(position),
         );
     }
 
@@ -2595,7 +2580,7 @@ impl Panel for CollabPanel {
     fn icon_path(&self, cx: &gpui::WindowContext) -> Option<&'static str> {
         settings::get::<CollaborationPanelSettings>(cx)
             .button
-            .then(|| "icons/conversations.svg")
+            .then(|| "icons/user_group_16.svg")
     }
 
     fn icon_tooltip(&self) -> (String, Option<Box<dyn gpui::Action>>) {
