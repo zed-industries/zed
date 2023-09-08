@@ -14,8 +14,9 @@ use rusqlite::types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef};
 use rusqlite::ToSql;
 use serde::{Deserialize, Serialize};
 use std::env;
+use std::ops::Add;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tiktoken_rs::{cl100k_base, CoreBPE};
 use util::http::{HttpClient, Request};
 
@@ -84,8 +85,8 @@ impl ToSql for Embedding {
 pub struct OpenAIEmbeddings {
     pub client: Arc<dyn HttpClient>,
     pub executor: Arc<Background>,
-    rate_limit_count_rx: watch::Receiver<(Duration, usize)>,
-    rate_limit_count_tx: Arc<Mutex<watch::Sender<(Duration, usize)>>>,
+    rate_limit_count_rx: watch::Receiver<(Option<SystemTime>, usize)>,
+    rate_limit_count_tx: Arc<Mutex<watch::Sender<(Option<SystemTime>, usize)>>>,
 }
 
 #[derive(Serialize)]
@@ -118,15 +119,15 @@ pub trait EmbeddingProvider: Sync + Send {
     async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>>;
     fn max_tokens_per_batch(&self) -> usize;
     fn truncate(&self, span: &str) -> (String, usize);
-    fn rate_limit_expiration(&self) -> Duration;
+    fn rate_limit_expiration(&self) -> Option<SystemTime>;
 }
 
 pub struct DummyEmbeddings {}
 
 #[async_trait]
 impl EmbeddingProvider for DummyEmbeddings {
-    fn rate_limit_expiration(&self) -> Duration {
-        Duration::ZERO
+    fn rate_limit_expiration(&self) -> Option<SystemTime> {
+        None
     }
     async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>> {
         // 1024 is the OpenAI Embeddings size for ada models.
@@ -158,7 +159,7 @@ const OPENAI_INPUT_LIMIT: usize = 8190;
 
 impl OpenAIEmbeddings {
     pub fn new(client: Arc<dyn HttpClient>, executor: Arc<Background>) -> Self {
-        let (rate_limit_count_tx, rate_limit_count_rx) = watch::channel_with((Duration::ZERO, 0));
+        let (rate_limit_count_tx, rate_limit_count_rx) = watch::channel_with((None, 0));
         let rate_limit_count_tx = Arc::new(Mutex::new(rate_limit_count_tx));
 
         OpenAIEmbeddings {
@@ -170,39 +171,32 @@ impl OpenAIEmbeddings {
     }
 
     fn resolve_rate_limit(&self) {
-        let (current_delay, delay_count) = *self.rate_limit_count_tx.lock().borrow();
+        let (reset_time, delay_count) = *self.rate_limit_count_tx.lock().borrow();
         let updated_count = delay_count - 1;
-        let updated_duration = if updated_count == 0 {
-            Duration::ZERO
-        } else {
-            current_delay
-        };
+        let updated_time = if updated_count == 0 { None } else { reset_time };
 
-        log::trace!(
-            "resolving rate limit: Count: {:?} Duration: {:?}",
-            updated_count,
-            updated_duration
-        );
+        log::trace!("resolving rate limit: Count: {:?}", updated_count);
 
-        *self.rate_limit_count_tx.lock().borrow_mut() = (updated_duration, updated_count);
+        *self.rate_limit_count_tx.lock().borrow_mut() = (updated_time, updated_count);
     }
 
-    fn update_rate_limit(&self, delay_duration: Duration, count_increase: usize) {
-        let (current_delay, delay_count) = *self.rate_limit_count_tx.lock().borrow();
-        let updated_count = delay_count + count_increase;
-        let updated_duration = if current_delay < delay_duration {
-            delay_duration
+    fn update_rate_limit(&self, reset_time: SystemTime, count_increase: usize) {
+        let (original_time, original_count) = *self.rate_limit_count_tx.lock().borrow();
+        let updated_count = original_count + count_increase;
+
+        let updated_time = if let Some(original_time) = original_time {
+            if reset_time < original_time {
+                Some(reset_time)
+            } else {
+                Some(original_time)
+            }
         } else {
-            current_delay
+            Some(reset_time)
         };
 
-        log::trace!(
-            "updating rate limit: Count: {:?} Duration: {:?}",
-            updated_count,
-            updated_duration
-        );
+        log::trace!("updating rate limit: Count: {:?}", updated_count);
 
-        *self.rate_limit_count_tx.lock().borrow_mut() = (updated_duration, updated_count);
+        *self.rate_limit_count_tx.lock().borrow_mut() = (updated_time, updated_count);
     }
     async fn send_request(
         &self,
@@ -234,9 +228,9 @@ impl EmbeddingProvider for OpenAIEmbeddings {
         50000
     }
 
-    fn rate_limit_expiration(&self) -> Duration {
-        let (duration, _) = *self.rate_limit_count_rx.borrow();
-        duration
+    fn rate_limit_expiration(&self) -> Option<SystemTime> {
+        let (expiration_time, _) = *self.rate_limit_count_rx.borrow();
+        expiration_time
     }
     fn truncate(&self, span: &str) -> (String, usize) {
         let mut tokens = OPENAI_BPE_TOKENIZER.encode_with_special_tokens(span);
@@ -321,10 +315,11 @@ impl EmbeddingProvider for OpenAIEmbeddings {
                     };
 
                     // If we've previously rate limited, increment the duration but not the count
+                    let reset_time = SystemTime::now().add(delay_duration);
                     if rate_limiting {
-                        self.update_rate_limit(delay_duration, 0);
+                        self.update_rate_limit(reset_time, 0);
                     } else {
-                        self.update_rate_limit(delay_duration, 1);
+                        self.update_rate_limit(reset_time, 1);
                     }
 
                     rate_limiting = true;

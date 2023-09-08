@@ -21,7 +21,7 @@ use std::{
         atomic::{self, AtomicUsize},
         Arc,
     },
-    time::{Duration, SystemTime},
+    time::SystemTime,
 };
 use unindent::Unindent;
 use util::RandomCharIter;
@@ -1275,8 +1275,8 @@ impl EmbeddingProvider for FakeEmbeddingProvider {
         200
     }
 
-    fn rate_limit_expiration(&self) -> Duration {
-        Duration::ZERO
+    fn rate_limit_expiration(&self) -> Option<SystemTime> {
+        None
     }
 
     async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>> {

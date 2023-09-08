@@ -112,7 +112,7 @@ pub enum SemanticIndexStatus {
     Indexed,
     Indexing {
         remaining_files: usize,
-        rate_limiting: Duration,
+        rate_limit_expiration_time: Option<SystemTime>,
     },
 }
 
@@ -132,8 +132,6 @@ struct ProjectState {
     pending_file_count_rx: watch::Receiver<usize>,
     pending_file_count_tx: Arc<Mutex<watch::Sender<usize>>>,
     pending_index: usize,
-    rate_limiting_count_rx: watch::Receiver<usize>,
-    rate_limiting_count_tx: Arc<Mutex<watch::Sender<usize>>>,
     _subscription: gpui::Subscription,
     _observe_pending_file_count: Task<()>,
 }
@@ -225,15 +223,11 @@ impl ProjectState {
     fn new(subscription: gpui::Subscription, cx: &mut ModelContext<SemanticIndex>) -> Self {
         let (pending_file_count_tx, pending_file_count_rx) = watch::channel_with(0);
         let pending_file_count_tx = Arc::new(Mutex::new(pending_file_count_tx));
-        let (rate_limiting_count_tx, rate_limiting_count_rx) = watch::channel_with(0);
-        let rate_limiting_count_tx = Arc::new(Mutex::new(rate_limiting_count_tx));
         Self {
             worktrees: Default::default(),
             pending_file_count_rx: pending_file_count_rx.clone(),
             pending_file_count_tx,
             pending_index: 0,
-            rate_limiting_count_rx: rate_limiting_count_rx.clone(),
-            rate_limiting_count_tx,
             _subscription: subscription,
             _observe_pending_file_count: cx.spawn_weak({
                 let mut pending_file_count_rx = pending_file_count_rx.clone();
@@ -299,7 +293,7 @@ impl SemanticIndex {
             } else {
                 SemanticIndexStatus::Indexing {
                     remaining_files: project_state.pending_file_count_rx.borrow().clone(),
-                    rate_limiting: self.embedding_provider.rate_limit_expiration(),
+                    rate_limit_expiration_time: self.embedding_provider.rate_limit_expiration(),
                 }
             }
         } else {
