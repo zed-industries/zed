@@ -1,6 +1,6 @@
 use crate::theme::{theme, Theme};
 use gpui2::{
-    elements::{div, img, svg},
+    elements::{div, div::ScrollState, img, svg},
     style::{StyleHelpers, Styleable},
     ArcCow, Element, IntoElement, ParentElement, ViewContext,
 };
@@ -9,11 +9,15 @@ use std::marker::PhantomData;
 #[derive(Element)]
 pub struct CollabPanelElement<V: 'static> {
     view_type: PhantomData<V>,
+    scroll_state: ScrollState,
 }
 
-pub fn collab_panel<V: 'static>() -> CollabPanelElement<V> {
+// When I improve child view rendering, I'd like to have V implement a trait  that
+// provides the scroll state, among other things.
+pub fn collab_panel<V: 'static>(scroll_state: ScrollState) -> CollabPanelElement<V> {
     CollabPanelElement {
         view_type: PhantomData,
+        scroll_state,
     }
 }
 
@@ -24,6 +28,7 @@ impl<V: 'static> CollabPanelElement<V> {
         // Panel
         div()
             .w_64()
+            .h_full()
             .flex()
             .flex_col()
             .font("Zed Sans Extended")
@@ -36,6 +41,7 @@ impl<V: 'static> CollabPanelElement<V> {
                     .w_full()
                     .flex()
                     .flex_col()
+                    .overflow_y_scroll(self.scroll_state.clone())
                     // List Container
                     .child(
                         div()
@@ -67,21 +73,29 @@ impl<V: 'static> CollabPanelElement<V> {
                             .flex()
                             .flex_col()
                             .child(self.list_section_header("CONTACTS", true, theme))
-                            .child(self.list_item(
-                                "http://github.com/as-cii.png?s=50",
-                                "as-cii",
-                                theme,
-                            ))
-                            .child(self.list_item(
-                                "http://github.com/nathansobo.png?s=50",
-                                "nathansobo",
-                                theme,
-                            ))
-                            .child(self.list_item(
-                                "http://github.com/maxbrunsfeld.png?s=50",
-                                "maxbrunsfeld",
-                                theme,
-                            )),
+                            .children(
+                                std::iter::repeat_with(|| {
+                                    vec![
+                                        self.list_item(
+                                            "http://github.com/as-cii.png?s=50",
+                                            "as-cii",
+                                            theme,
+                                        ),
+                                        self.list_item(
+                                            "http://github.com/nathansobo.png?s=50",
+                                            "nathansobo",
+                                            theme,
+                                        ),
+                                        self.list_item(
+                                            "http://github.com/maxbrunsfeld.png?s=50",
+                                            "maxbrunsfeld",
+                                            theme,
+                                        ),
+                                    ]
+                                })
+                                .take(10)
+                                .flatten(),
+                            ),
                     ),
             )
             .child(

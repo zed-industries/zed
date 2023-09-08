@@ -1,9 +1,49 @@
 use crate::{collab_panel::collab_panel, theme::theme};
 use gpui2::{
-    elements::{div, img, svg},
+    elements::{div, div::ScrollState, img, svg},
     style::{StyleHelpers, Styleable},
     Element, IntoElement, ParentElement, ViewContext,
 };
+
+#[derive(Element, Default)]
+struct WorkspaceElement {
+    left_scroll_state: ScrollState,
+    right_scroll_state: ScrollState,
+}
+
+pub fn workspace<V: 'static>() -> impl Element<V> {
+    WorkspaceElement::default()
+}
+
+impl WorkspaceElement {
+    fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
+        let theme = theme(cx);
+
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .font("Zed Sans Extended")
+            .gap_0()
+            .justify_start()
+            .items_start()
+            .text_color(theme.lowest.base.default.foreground)
+            .fill(theme.middle.base.default.background)
+            .child(titlebar())
+            .child(
+                div()
+                    .flex_1()
+                    .w_full()
+                    .flex()
+                    .flex_row()
+                    .overflow_hidden()
+                    .child(collab_panel(self.left_scroll_state.clone()))
+                    .child(div().h_full().flex_1())
+                    .child(collab_panel(self.right_scroll_state.clone())),
+            )
+            .child(statusbar())
+    }
+}
 
 #[derive(Element)]
 struct TitleBar;
@@ -393,50 +433,3 @@ impl StatusBar {
             )
     }
 }
-
-// ================================================================================ //
-
-#[derive(Element)]
-struct WorkspaceElement;
-
-pub fn workspace<V: 'static>() -> impl Element<V> {
-    WorkspaceElement
-}
-
-impl WorkspaceElement {
-    fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
-        let theme = theme(cx);
-
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .font("Zed Sans Extended")
-            .gap_0()
-            .justify_start()
-            .items_start()
-            .text_color(theme.lowest.base.default.foreground)
-            // .fill(theme.middle.warning.default.background)
-            .child(titlebar())
-            .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .flex_row()
-                    .w_full()
-                    .child(collab_panel())
-                    .child(div().h_full().flex_1())
-                    .child(collab_panel()),
-            )
-            .child(statusbar())
-    }
-}
-
-// Hover over things
-// Paint its space... padding, margin, border, content
-
-/*
-* h_8, grow_0/flex_grow_0, shrink_0/flex_shrink_0
-* flex_grow
-* h_8, grow_0/flex_grow_0, shrink_0/flex_shrink_0
-*/

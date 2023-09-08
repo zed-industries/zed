@@ -439,6 +439,14 @@ pub trait StyleHelpers: Styleable<Style = Style> {
         self
     }
 
+    fn grow(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().flex_grow = Some(1.);
+        self
+    }
+
     fn items_start(mut self) -> Self
     where
         Self: Sized,
