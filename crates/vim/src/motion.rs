@@ -65,9 +65,9 @@ struct PreviousWordStart {
 
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-struct Up {
+pub(crate) struct Up {
     #[serde(default)]
-    display_lines: bool,
+    pub(crate) display_lines: bool,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -93,9 +93,9 @@ struct EndOfLine {
 
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-struct StartOfLine {
+pub struct StartOfLine {
     #[serde(default)]
-    display_lines: bool,
+    pub(crate) display_lines: bool,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]

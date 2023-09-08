@@ -287,6 +287,55 @@ async fn test_word_characters(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_join_lines(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state(indoc! {"
+      ˇone
+      two
+      three
+      four
+      five
+      six
+      "})
+        .await;
+    cx.simulate_shared_keystrokes(["shift-j"]).await;
+    cx.assert_shared_state(indoc! {"
+          oneˇ two
+          three
+          four
+          five
+          six
+          "})
+        .await;
+    cx.simulate_shared_keystrokes(["3", "shift-j"]).await;
+    cx.assert_shared_state(indoc! {"
+          one two threeˇ four
+          five
+          six
+          "})
+        .await;
+
+    cx.set_shared_state(indoc! {"
+      ˇone
+      two
+      three
+      four
+      five
+      six
+      "})
+        .await;
+    cx.simulate_shared_keystrokes(["j", "v", "3", "j", "shift-j"])
+        .await;
+    cx.assert_shared_state(indoc! {"
+      one
+      two three fourˇ five
+      six
+      "})
+        .await;
+}
+
+#[gpui::test]
 async fn test_wrapped_lines(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
 
