@@ -122,7 +122,7 @@ fn test_dangling_channel_paths(cx: &mut AppContext) {
     update_channels(
         &channel_store,
         proto::UpdateChannels {
-            remove_channels: vec![1, 2],
+            delete_channels: vec![1, 2],
             ..Default::default()
         },
         cx,

@@ -141,7 +141,7 @@ message Envelope {
         RespondToChannelInvite respond_to_channel_invite = 123;
         UpdateChannels update_channels = 124;
         JoinChannel join_channel = 125;
-        RemoveChannel remove_channel = 126;
+        DeleteChannel delete_channel = 126;
         GetChannelMembers get_channel_members = 127;
         GetChannelMembersResponse get_channel_members_response = 128;
         SetChannelMemberAdmin set_channel_member_admin = 129;
@@ -165,7 +165,9 @@ message Envelope {
         ChannelMessageSent channel_message_sent = 147;
         GetChannelMessages get_channel_messages = 148;
         GetChannelMessagesResponse get_channel_messages_response = 149;
-        RemoveChannelMessage remove_channel_message = 150; // Current max
+        RemoveChannelMessage remove_channel_message = 150;
+
+        MoveChannel move_channel = 151; // Current max
     }
 }
 
@@ -955,11 +957,17 @@ message LspDiskBasedDiagnosticsUpdated {}
 
 message UpdateChannels {
     repeated Channel channels = 1;
-    repeated uint64 remove_channels = 2;
-    repeated Channel channel_invitations = 3;
-    repeated uint64 remove_channel_invitations = 4;
-    repeated ChannelParticipants channel_participants = 5;
-    repeated ChannelPermission channel_permissions = 6;
+    repeated ChannelEdge delete_channel_edge = 2;
+    repeated uint64 delete_channels = 3;
+    repeated Channel channel_invitations = 4;
+    repeated uint64 remove_channel_invitations = 5;
+    repeated ChannelParticipants channel_participants = 6;
+    repeated ChannelPermission channel_permissions = 7;
+}
+
+message ChannelEdge {
+    uint64 channel_id = 1;
+    uint64 parent_id = 2;
 }
 
 message ChannelPermission {
@@ -976,7 +984,7 @@ message JoinChannel {
     uint64 channel_id = 1;
 }
 
-message RemoveChannel {
+message DeleteChannel {
     uint64 channel_id = 1;
 }
 
@@ -1072,6 +1080,12 @@ message GetChannelMessages {
 message GetChannelMessagesResponse {
     repeated ChannelMessage messages = 1;
     bool done = 2;
+}
+
+message MoveChannel {
+    uint64 channel_id = 1;
+    optional uint64 from_parent = 2;
+    optional uint64 to = 3;
 }
 
 message JoinChannelBuffer {

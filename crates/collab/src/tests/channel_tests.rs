@@ -874,6 +874,143 @@ async fn test_lost_channel_creation(
     );
 }
 
+#[gpui::test]
+async fn test_channel_moving(deterministic: Arc<Deterministic>, cx_a: &mut TestAppContext) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+
+    let channel_a_id = client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.create_channel("channel-a", None, cx)
+        })
+        .await
+        .unwrap();
+    let channel_b_id = client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.create_channel("channel-b", Some(channel_a_id), cx)
+        })
+        .await
+        .unwrap();
+    let channel_c_id = client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.create_channel("channel-c", Some(channel_b_id), cx)
+        })
+        .await
+        .unwrap();
+
+    // Current shape:
+    // a - b - c
+    deterministic.run_until_parked();
+    assert_channels(
+        client_a.channel_store(),
+        cx_a,
+        &[
+            ExpectedChannel {
+                id: channel_a_id,
+                name: "channel-a".to_string(),
+                depth: 0,
+                user_is_admin: true,
+            },
+            ExpectedChannel {
+                id: channel_b_id,
+                name: "channel-b".to_string(),
+                depth: 1,
+                user_is_admin: true,
+            },
+            ExpectedChannel {
+                id: channel_c_id,
+                name: "channel-c".to_string(),
+                depth: 2,
+                user_is_admin: true,
+            },
+        ],
+    );
+
+    client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.move_channel(channel_c_id, Some(channel_b_id), Some(channel_a_id), cx)
+        })
+        .await
+        .unwrap();
+
+    // Current shape:
+    //   /- c
+    // a -- b
+    deterministic.run_until_parked();
+    assert_channels(
+        client_a.channel_store(),
+        cx_a,
+        &[
+            ExpectedChannel {
+                id: channel_a_id,
+                name: "channel-a".to_string(),
+                depth: 0,
+                user_is_admin: true,
+            },
+            ExpectedChannel {
+                id: channel_b_id,
+                name: "channel-b".to_string(),
+                depth: 1,
+                user_is_admin: true,
+            },
+            ExpectedChannel {
+                id: channel_c_id,
+                name: "channel-c".to_string(),
+                depth: 1,
+                user_is_admin: true,
+            },
+        ],
+    );
+
+    client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.move_channel(channel_c_id, None, Some(channel_b_id), cx)
+        })
+        .await
+        .unwrap();
+
+    // Current shape:
+    //   /------\
+    // a -- b -- c
+    deterministic.run_until_parked();
+    assert_channels(
+        client_a.channel_store(),
+        cx_a,
+        &[
+            ExpectedChannel {
+                id: channel_a_id,
+                name: "channel-a".to_string(),
+                depth: 0,
+                user_is_admin: true,
+            },
+            ExpectedChannel {
+                id: channel_b_id,
+                name: "channel-b".to_string(),
+                depth: 1,
+                user_is_admin: true,
+            },
+            ExpectedChannel {
+                id: channel_c_id,
+                name: "channel-c".to_string(),
+                depth: 2,
+                user_is_admin: true,
+            },
+            ExpectedChannel {
+                id: channel_c_id,
+                name: "channel-c".to_string(),
+                depth: 1,
+                user_is_admin: true,
+            },
+        ],
+    );
+}
+
 #[derive(Debug, PartialEq)]
 struct ExpectedChannel {
     depth: usize,
@@ -920,5 +1057,5 @@ fn assert_channels(
             })
             .collect::<Vec<_>>()
     });
-    assert_eq!(actual, expected_channels);
+    pretty_assertions::assert_eq!(actual, expected_channels);
 }
