@@ -19,6 +19,7 @@ pub trait Element<V: 'static>: 'static + IntoElement<V> {
     fn paint(
         &mut self,
         view: &mut V,
+        parent_origin: Vector2F,
         layout: &Layout,
         state: &mut Self::PaintState,
         cx: &mut PaintContext<V>,
@@ -110,9 +111,9 @@ impl<V, E: Element<V>> AnyStatefulElement<V> for StatefulElement<V, E> {
                 layout_id,
                 mut paint_state,
             } => match cx.computed_layout(layout_id) {
-                Ok(mut layout) => {
-                    layout.bounds = layout.bounds + parent_origin;
-                    self.element.paint(view, &layout, &mut paint_state, cx);
+                Ok(layout) => {
+                    self.element
+                        .paint(view, parent_origin, &layout, &mut paint_state, cx);
                     ElementPhase::PostPaint {
                         layout,
                         paint_state,
@@ -124,7 +125,8 @@ impl<V, E: Element<V>> AnyStatefulElement<V> for StatefulElement<V, E> {
                 layout,
                 mut paint_state,
             } => {
-                self.element.paint(view, &layout, &mut paint_state, cx);
+                self.element
+                    .paint(view, parent_origin, &layout, &mut paint_state, cx);
                 ElementPhase::PostPaint {
                     layout,
                     paint_state,

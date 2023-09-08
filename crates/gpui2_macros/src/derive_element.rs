@@ -77,11 +77,12 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
             fn paint(
                 &mut self,
                 view: &mut V,
-                layout: &gpui2::element::Layout,
+                parent_origin: gpui2::Vector2F,
+                _: &gpui2::element::Layout,
                 rendered_element: &mut Self::PaintState,
                 cx: &mut gpui2::element::PaintContext<V>,
             ) {
-                rendered_element.paint(view, layout.bounds.origin(), cx);
+                rendered_element.paint(view, parent_origin, cx);
             }
         }
 

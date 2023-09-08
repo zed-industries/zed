@@ -10,6 +10,7 @@ use crate::{
 };
 use anyhow::Result;
 use gpui::{
+    geometry::vector::Vector2F,
     platform::{MouseButton, MouseButtonEvent, MouseMovedEvent},
     scene::{self},
     LayoutId,
@@ -64,42 +65,45 @@ impl<V: 'static> Element<V> for Div<V> {
     fn paint(
         &mut self,
         view: &mut V,
+        parent_origin: Vector2F,
         layout: &Layout,
         _: &mut Self::PaintState,
         cx: &mut PaintContext<V>,
     ) where
         Self: Sized,
     {
+        let order = layout.order;
+        let bounds = layout.bounds + parent_origin;
         let style = self.computed_style();
         let pop_text_style = style.text_style(cx).map_or(false, |style| {
             cx.push_text_style(&style).log_err().is_some()
         });
-        style.paint_background(layout.bounds, cx);
-        self.interaction_handlers()
-            .paint(layout.order, layout.bounds, cx);
+        style.paint_background(bounds, cx);
+        self.interaction_handlers().paint(order, bounds, cx);
         for child in &mut self.children {
-            child.paint(view, layout.bounds.origin(), cx);
+            child.paint(view, bounds.origin(), cx);
         }
-        style.paint_foreground(layout.bounds, cx);
+        style.paint_foreground(bounds, cx);
         if pop_text_style {
             cx.pop_text_style();
         }
 
         if cx.is_inspector_enabled() {
-            self.paint_inspector(layout, cx);
+            self.paint_inspector(parent_origin, layout, cx);
         }
     }
 }
 
 impl<V: 'static> Div<V> {
-    fn paint_inspector(&self, layout: &Layout, cx: &mut PaintContext<V>) {
+    fn paint_inspector(&self, parent_origin: Vector2F, layout: &Layout, cx: &mut PaintContext<V>) {
         let style = self.styles.merged();
+        let bounds = layout.bounds + parent_origin;
 
-        let hovered = layout.bounds.contains_point(cx.mouse_position());
+        let hovered = bounds.contains_point(cx.mouse_position());
         if hovered {
             let rem_size = cx.rem_size();
             cx.scene.push_quad(scene::Quad {
-                bounds: layout.bounds,
+                bounds,
                 background: Some(hsla(0., 0., 1., 0.05).into()),
                 border: gpui::Border {
                     color: hsla(0., 0., 1., 0.2).into(),
@@ -110,7 +114,7 @@ impl<V: 'static> Div<V> {
                 },
                 corner_radii: CornerRadii::default()
                     .refined(&style.corner_radii)
-                    .to_gpui(layout.bounds.size(), rem_size),
+                    .to_gpui(bounds.size(), rem_size),
             })
         }
 

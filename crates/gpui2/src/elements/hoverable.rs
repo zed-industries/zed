@@ -6,7 +6,7 @@ use crate::{
     style::{Style, StyleHelpers, Styleable},
 };
 use anyhow::Result;
-use gpui::{platform::MouseMovedEvent, LayoutId};
+use gpui::{geometry::vector::Vector2F, platform::MouseMovedEvent, LayoutId};
 use refineable::{CascadeSlot, Refineable, RefinementCascade};
 use smallvec::SmallVec;
 use std::{cell::Cell, rc::Rc};
@@ -56,6 +56,7 @@ impl<V: 'static, E: Element<V> + Styleable> Element<V> for Hoverable<E> {
     fn paint(
         &mut self,
         view: &mut V,
+        parent_origin: Vector2F,
         layout: &Layout,
         paint_state: &mut Self::PaintState,
         cx: &mut PaintContext<V>,
@@ -78,7 +79,8 @@ impl<V: 'static, E: Element<V> + Styleable> Element<V> for Hoverable<E> {
             }
         });
 
-        self.child.paint(view, layout, paint_state, cx);
+        self.child
+            .paint(view, parent_origin, layout, paint_state, cx);
     }
 }
 

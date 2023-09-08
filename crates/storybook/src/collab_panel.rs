@@ -33,7 +33,7 @@ impl<V: 'static> CollabPanelElement<V> {
             .fill(theme.middle.base.default.background)
             .child(
                 div()
-                    .full()
+                    .w_full()
                     .flex()
                     .flex_col()
                     // List Container

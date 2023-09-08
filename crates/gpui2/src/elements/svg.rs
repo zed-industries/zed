@@ -3,6 +3,7 @@ use crate::{
     style::{Style, StyleHelpers, Styleable},
     Element, IntoElement, Layout, LayoutId, Rgba,
 };
+use gpui::geometry::vector::Vector2F;
 use refineable::RefinementCascade;
 use std::borrow::Cow;
 use util::ResultExt;
@@ -45,6 +46,7 @@ impl<V: 'static> Element<V> for Svg {
     fn paint(
         &mut self,
         _: &mut V,
+        parent_origin: Vector2F,
         layout: &Layout,
         _: &mut Self::PaintState,
         cx: &mut crate::paint_context::PaintContext<V>,
@@ -55,7 +57,7 @@ impl<V: 'static> Element<V> for Svg {
         if let Some((path, fill_color)) = self.path.as_ref().zip(fill_color) {
             if let Some(svg_tree) = cx.asset_cache.svg(path).log_err() {
                 let icon = scene::Icon {
-                    bounds: layout.bounds,
+                    bounds: layout.bounds + parent_origin,
                     svg: svg_tree,
                     path: path.clone(),
                     color: Rgba::from(fill_color).into(),

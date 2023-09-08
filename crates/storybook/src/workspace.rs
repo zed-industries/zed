@@ -410,37 +410,25 @@ impl WorkspaceElement {
         div()
             .size_full()
             .flex()
-            .flex_row()
-            .child(collab_panel())
-            .child(collab_panel())
-
-        // div()
-        //     .size_full()
-        //     .flex()
-        //     .flex_col()
-        //     .font("Zed Sans Extended")
-        //     .gap_0()
-        //     .justify_start()
-        //     .items_start()
-        //     .text_color(theme.lowest.base.default.foreground)
-        //     // .fill(theme.middle.warning.default.background)
-        //     .child(titlebar())
-        //     .child(
-        //         div()
-        //             .flex_1()
-        //             .w_full()
-        //             .flex()
-        //             .flex_row()
-        //             .child(collab_panel())
-        //             // .child(
-        //             //     div()
-        //             //         .h_full()
-        //             //         .flex_1()
-        //             //         .fill(theme.highest.accent.default.background),
-        //             // )
-        //             .child(collab_panel()),
-        //     )
-        //     .child(statusbar())
+            .flex_col()
+            .font("Zed Sans Extended")
+            .gap_0()
+            .justify_start()
+            .items_start()
+            .text_color(theme.lowest.base.default.foreground)
+            // .fill(theme.middle.warning.default.background)
+            .child(titlebar())
+            .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .flex_row()
+                    .w_full()
+                    .child(collab_panel())
+                    .child(div().h_full().flex_1())
+                    .child(collab_panel()),
+            )
+            .child(statusbar())
     }
 }
 

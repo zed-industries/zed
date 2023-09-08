@@ -4,7 +4,11 @@ use crate::{
     paint_context::PaintContext,
 };
 use anyhow::Result;
-use gpui::{geometry::Size, text_layout::LineLayout, LayoutId};
+use gpui::{
+    geometry::{vector::Vector2F, Size},
+    text_layout::LineLayout,
+    LayoutId,
+};
 use parking_lot::Mutex;
 use std::sync::Arc;
 use util::arc_cow::ArcCow;
@@ -64,10 +68,13 @@ impl<V: 'static> Element<V> for Text {
     fn paint<'a>(
         &mut self,
         _view: &mut V,
+        parent_origin: Vector2F,
         layout: &Layout,
         paint_state: &mut Self::PaintState,
         cx: &mut PaintContext<V>,
     ) {
+        let bounds = layout.bounds + parent_origin;
+
         let line_layout;
         let line_height;
         {
@@ -83,10 +90,15 @@ impl<V: 'static> Element<V> for Text {
         let line =
             gpui::text_layout::Line::new(line_layout, &[(self.text.len(), text_style.to_run())]);
 
-        let origin = layout.bounds.origin();
         // TODO: We haven't added visible bounds to the new element system yet, so this is a placeholder.
-        let visible_bounds = layout.bounds;
-        line.paint(cx.scene, origin, visible_bounds, line_height, cx.legacy_cx);
+        let visible_bounds = bounds;
+        line.paint(
+            cx.scene,
+            bounds.origin(),
+            visible_bounds,
+            line_height,
+            cx.legacy_cx,
+        );
     }
 }
 

@@ -2,6 +2,7 @@ use crate as gpui2;
 use crate::style::{StyleHelpers, Styleable};
 use crate::{style::Style, Element};
 use futures::FutureExt;
+use gpui::geometry::vector::Vector2F;
 use gpui::scene;
 use gpui2_macros::IntoElement;
 use refineable::RefinementCascade;
@@ -47,6 +48,7 @@ impl<V: 'static> Element<V> for Img {
     fn paint(
         &mut self,
         _: &mut V,
+        parent_origin: Vector2F,
         layout: &gpui::Layout,
         _: &mut Self::PaintState,
         cx: &mut crate::paint_context::PaintContext<V>,
@@ -54,8 +56,9 @@ impl<V: 'static> Element<V> for Img {
         Self: Sized,
     {
         let style = self.computed_style();
+        let bounds = layout.bounds + parent_origin;
 
-        style.paint_background(layout.bounds, cx);
+        style.paint_background(bounds, cx);
 
         if let Some(uri) = &self.uri {
             let image_future = cx.image_cache.get(uri.clone());
@@ -66,7 +69,7 @@ impl<V: 'static> Element<V> for Img {
             {
                 let rem_size = cx.rem_size();
                 cx.scene.push_image(scene::Image {
-                    bounds: layout.bounds,
+                    bounds,
                     border: gpui::Border {
                         color: style.border_color.unwrap_or_default().into(),
                         top: style.border_widths.top.to_pixels(rem_size),
@@ -74,7 +77,7 @@ impl<V: 'static> Element<V> for Img {
                         bottom: style.border_widths.bottom.to_pixels(rem_size),
                         left: style.border_widths.left.to_pixels(rem_size),
                     },
-                    corner_radii: style.corner_radii.to_gpui(layout.bounds.size(), rem_size),
+                    corner_radii: style.corner_radii.to_gpui(bounds.size(), rem_size),
                     grayscale: false,
                     data,
                 })
