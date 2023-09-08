@@ -18,6 +18,7 @@
           }
         }
       ],
+      ":": "command_palette::Toggle",
       "h": "vim::Left",
       "left": "vim::Left",
       "backspace": "vim::Backspace",

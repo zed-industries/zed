@@ -122,13 +122,11 @@ actions!(
         Open,
         NewFile,
         NewWindow,
-        CloseWindow,
         CloseInactiveTabsAndPanes,
         AddFolderToProject,
         Unfollow,
-        Save,
         SaveAs,
-        SaveAll,
+        ReloadActiveItem,
         ActivatePreviousPane,
         ActivateNextPane,
         FollowNextCollaborator,
@@ -157,6 +155,30 @@ pub struct ActivatePane(pub usize);
 
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct ActivatePaneInDirection(pub SplitDirection);
+
+#[derive(Clone, PartialEq, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveAll {
+    pub save_behavior: Option<SaveBehavior>,
+}
+
+#[derive(Clone, PartialEq, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Save {
+    pub save_behavior: Option<SaveBehavior>,
+}
+
+#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CloseWindow {
+    pub save_behavior: Option<SaveBehavior>,
+}
+
+#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CloseAllItemsAndPanes {
+    pub save_behavior: Option<SaveBehavior>,
+}
 
 #[derive(Deserialize)]
 pub struct Toast {
@@ -210,7 +232,16 @@ pub struct OpenTerminal {
 
 impl_actions!(
     workspace,
-    [ActivatePane, ActivatePaneInDirection, Toast, OpenTerminal]
+    [
+        ActivatePane,
+        ActivatePaneInDirection,
+        Toast,
+	OpenTerminal,
+        SaveAll,
+        Save,
+        CloseWindow,
+        CloseAllItemsAndPanes,
+    ]
 );
 
 pub type WorkspaceId = i64;
@@ -251,6 +282,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     cx.add_async_action(Workspace::follow_next_collaborator);
     cx.add_async_action(Workspace::close);
     cx.add_async_action(Workspace::close_inactive_items_and_panes);
+    cx.add_async_action(Workspace::close_all_items_and_panes);
     cx.add_global_action(Workspace::close_global);
     cx.add_global_action(restart);
     cx.add_async_action(Workspace::save_all);
@@ -1262,11 +1294,15 @@ impl Workspace {
 
     pub fn close(
         &mut self,
-        _: &CloseWindow,
+        action: &CloseWindow,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let window = cx.window();
-        let prepare = self.prepare_to_close(false, cx);
+        let prepare = self.prepare_to_close(
+            false,
+            action.save_behavior.unwrap_or(SaveBehavior::PromptOnWrite),
+            cx,
+        );
         Some(cx.spawn(|_, mut cx| async move {
             if prepare.await? {
                 window.remove(&mut cx);
@@ -1323,8 +1359,17 @@ impl Workspace {
         })
     }
 
-    fn save_all(&mut self, _: &SaveAll, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
-        let save_all = self.save_all_internal(SaveBehavior::PromptOnConflict, cx);
+    fn save_all(
+        &mut self,
+        action: &SaveAll,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let save_all = self.save_all_internal(
+            action
+                .save_behavior
+                .unwrap_or(SaveBehavior::PromptOnConflict),
+            cx,
+        );
         Some(cx.foreground().spawn(async move {
             save_all.await?;
             Ok(())
@@ -1692,23 +1737,51 @@ impl Workspace {
         _: &CloseInactiveTabsAndPanes,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
+        self.close_all_internal(true, SaveBehavior::PromptOnWrite, cx)
+    }
+
+    pub fn close_all_items_and_panes(
+        &mut self,
+        action: &CloseAllItemsAndPanes,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        self.close_all_internal(
+            false,
+            action.save_behavior.unwrap_or(SaveBehavior::PromptOnWrite),
+            cx,
+        )
+    }
+
+    fn close_all_internal(
+        &mut self,
+        retain_active_pane: bool,
+        save_behavior: SaveBehavior,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
         let current_pane = self.active_pane();
 
         let mut tasks = Vec::new();
 
-        if let Some(current_pane_close) = current_pane.update(cx, |pane, cx| {
-            pane.close_inactive_items(&CloseInactiveItems, cx)
-        }) {
-            tasks.push(current_pane_close);
-        };
+        if retain_active_pane {
+            if let Some(current_pane_close) = current_pane.update(cx, |pane, cx| {
+                pane.close_inactive_items(&CloseInactiveItems, cx)
+            }) {
+                tasks.push(current_pane_close);
+            };
+        }
 
         for pane in self.panes() {
-            if pane.id() == current_pane.id() {
+            if retain_active_pane && pane.id() == current_pane.id() {
                 continue;
             }
 
             if let Some(close_pane_items) = pane.update(cx, |pane: &mut Pane, cx| {
-                pane.close_all_items(&CloseAllItems, cx)
+                pane.close_all_items(
+                    &CloseAllItems {
+                        save_behavior: Some(save_behavior),
+                    },
+                    cx,
+                )
             }) {
                 tasks.push(close_pane_items)
             }

@@ -78,7 +78,14 @@ pub struct CloseItemsToTheRightById {
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct CloseActiveItem {
+    pub save_behavior: Option<SaveBehavior>,
+}
+
+#[derive(Clone, PartialEq, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloseAllItems {
     pub save_behavior: Option<SaveBehavior>,
 }
 
@@ -92,7 +99,6 @@ actions!(
         CloseCleanItems,
         CloseItemsToTheLeft,
         CloseItemsToTheRight,
-        CloseAllItems,
         GoBack,
         GoForward,
         ReopenClosedItem,
@@ -103,7 +109,7 @@ actions!(
     ]
 );
 
-impl_actions!(pane, [ActivateItem, CloseActiveItem]);
+impl_actions!(pane, [ActivateItem, CloseActiveItem, CloseAllItems]);
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
@@ -829,14 +835,18 @@ impl Pane {
 
     pub fn close_all_items(
         &mut self,
-        _: &CloseAllItems,
+        action: &CloseAllItems,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         if self.items.is_empty() {
             return None;
         }
 
-        Some(self.close_items(cx, SaveBehavior::PromptOnWrite, |_| true))
+        Some(self.close_items(
+            cx,
+            action.save_behavior.unwrap_or(SaveBehavior::PromptOnWrite),
+            |_| true,
+        ))
     }
 
     pub fn close_items(
@@ -1175,7 +1185,12 @@ impl Pane {
                         ContextMenuItem::action("Close Clean Items", CloseCleanItems),
                         ContextMenuItem::action("Close Items To The Left", CloseItemsToTheLeft),
                         ContextMenuItem::action("Close Items To The Right", CloseItemsToTheRight),
-                        ContextMenuItem::action("Close All Items", CloseAllItems),
+                        ContextMenuItem::action(
+                            "Close All Items",
+                            CloseAllItems {
+                                save_behavior: None,
+                            },
+                        ),
                     ]
                 } else {
                     // In the case of the user right clicking on a non-active tab, for some item-closing commands, we need to provide the id of the tab, for the others, we can reuse the existing command.
@@ -1219,7 +1234,12 @@ impl Pane {
                                 }
                             }
                         }),
-                        ContextMenuItem::action("Close All Items", CloseAllItems),
+                        ContextMenuItem::action(
+                            "Close All Items",
+                            CloseAllItems {
+                                save_behavior: None,
+                            },
+                        ),
                     ]
                 },
                 cx,

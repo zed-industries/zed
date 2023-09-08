@@ -18,6 +18,15 @@ actions!(command_palette, [Toggle]);
 
 pub type CommandPalette = Picker<CommandPaletteDelegate>;
 
+pub type CommandPaletteInterceptor =
+    Box<dyn Fn(&str, &AppContext) -> Option<CommandInterceptResult>>;
+
+pub struct CommandInterceptResult {
+    pub action: Box<dyn Action>,
+    pub string: String,
+    pub positions: Vec<usize>,
+}
+
 pub struct CommandPaletteDelegate {
     actions: Vec<Command>,
     matches: Vec<StringMatch>,
@@ -136,7 +145,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                     char_bag: command.name.chars().collect(),
                 })
                 .collect::<Vec<_>>();
-            let matches = if query.is_empty() {
+            let mut matches = if query.is_empty() {
                 candidates
                     .into_iter()
                     .enumerate()
@@ -158,6 +167,40 @@ impl PickerDelegate for CommandPaletteDelegate {
                 )
                 .await
             };
+            let intercept_result = cx.read(|cx| {
+                if cx.has_global::<CommandPaletteInterceptor>() {
+                    cx.global::<CommandPaletteInterceptor>()(&query, cx)
+                } else {
+                    None
+                }
+            });
+            if let Some(CommandInterceptResult {
+                action,
+                string,
+                positions,
+            }) = intercept_result
+            {
+                if let Some(idx) = matches
+                    .iter()
+                    .position(|m| actions[m.candidate_id].action.id() == action.id())
+                {
+                    matches.remove(idx);
+                }
+                actions.push(Command {
+                    name: string.clone(),
+                    action,
+                    keystrokes: vec![],
+                });
+                matches.insert(
+                    0,
+                    StringMatch {
+                        candidate_id: actions.len() - 1,
+                        string,
+                        positions,
+                        score: 0.0,
+                    },
+                )
+            }
             picker
                 .update(&mut cx, |picker, _| {
                     let delegate = picker.delegate_mut();
@@ -254,7 +297,7 @@ impl PickerDelegate for CommandPaletteDelegate {
     }
 }
 
-fn humanize_action_name(name: &str) -> String {
+pub fn humanize_action_name(name: &str) -> String {
     let capacity = name.len() + name.chars().filter(|c| c.is_uppercase()).count();
     let mut result = String::with_capacity(capacity);
     for char in name.chars() {
