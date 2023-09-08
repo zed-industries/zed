@@ -34,6 +34,7 @@ use std::{
     ops::{Not, Range},
     path::PathBuf,
     sync::Arc,
+    time::Duration,
 };
 use util::ResultExt as _;
 use workspace::{
@@ -319,11 +320,22 @@ impl View for ProjectSearchView {
                 let status = semantic.index_status;
                 match status {
                     SemanticIndexStatus::Indexed => Some("Indexing complete".to_string()),
-                    SemanticIndexStatus::Indexing { remaining_files } => {
+                    SemanticIndexStatus::Indexing {
+                        remaining_files,
+                        rate_limiting,
+                    } => {
                         if remaining_files == 0 {
                             Some(format!("Indexing..."))
                         } else {
-                            Some(format!("Remaining files to index: {}", remaining_files))
+                            if rate_limiting > Duration::ZERO {
+                                Some(format!(
+                                    "Remaining files to index (rate limit resets in {}s): {}",
+                                    rate_limiting.as_secs(),
+                                    remaining_files
+                                ))
+                            } else {
+                                Some(format!("Remaining files to index: {}", remaining_files))
+                            }
                         }
                     }
                     SemanticIndexStatus::NotIndexed => None,
