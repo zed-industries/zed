@@ -4,10 +4,18 @@ use crate::{
     visual::visual_motion,
     Vim,
 };
-use gpui::{actions, AppContext};
+use gpui::{actions, Action, AppContext};
 use workspace::Workspace;
 
 actions!(vim, [Repeat, EndRepeat,]);
+
+fn should_replay(action: &Box<dyn Action>) -> bool {
+    // skip so that we don't leave the character palette open
+    if editor::ShowCharacterPalette.id() == action.id() {
+        return false;
+    }
+    true
+}
 
 pub(crate) fn init(cx: &mut AppContext) {
     cx.add_action(|_: &mut Workspace, _: &EndRepeat, cx| {
@@ -118,9 +126,15 @@ pub(crate) fn init(cx: &mut AppContext) {
             .spawn(move |mut cx| async move {
                 for action in actions {
                     match action {
-                        ReplayableAction::Action(action) => window
-                            .dispatch_action(editor.id(), action.as_ref(), &mut cx)
-                            .ok_or_else(|| anyhow::anyhow!("window was closed")),
+                        ReplayableAction::Action(action) => {
+                            if should_replay(&action) {
+                                window
+                                    .dispatch_action(editor.id(), action.as_ref(), &mut cx)
+                                    .ok_or_else(|| anyhow::anyhow!("window was closed"))
+                            } else {
+                                Ok(())
+                            }
+                        }
                         ReplayableAction::Insertion {
                             text,
                             utf16_range_to_replace,
