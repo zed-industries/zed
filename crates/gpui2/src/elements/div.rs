@@ -118,7 +118,6 @@ impl<V: 'static> Div<V> {
             })
         }
 
-        let bounds = layout.bounds;
         let pressed = Cell::new(hovered && cx.is_mouse_down(MouseButton::Left));
         cx.on_event(layout.order, move |_, event: &MouseButtonEvent, _| {
             if bounds.contains_point(event.position) {

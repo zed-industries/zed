@@ -63,15 +63,14 @@ impl<V: 'static, E: Element<V> + Styleable> Element<V> for Hoverable<E> {
     ) where
         Self: Sized,
     {
-        self.hovered
-            .set(layout.bounds.contains_point(cx.mouse_position()));
+        let bounds = layout.bounds + parent_origin;
+        self.hovered.set(bounds.contains_point(cx.mouse_position()));
 
         let slot = self.cascade_slot;
         let style = self.hovered.get().then_some(self.hovered_style.clone());
         self.style_cascade().set(slot, style);
 
         let hovered = self.hovered.clone();
-        let bounds = layout.bounds;
         cx.on_event(layout.order, move |_view, _: &MouseMovedEvent, cx| {
             cx.bubble_event();
             if bounds.contains_point(cx.mouse_position()) != hovered.get() {

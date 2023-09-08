@@ -68,7 +68,7 @@ impl<V: 'static, E: Element<V> + Styleable> Element<V> for Pressable<E> {
         self.style_cascade().set(slot, style);
 
         let pressed = self.pressed.clone();
-        let bounds = layout.bounds;
+        let bounds = layout.bounds + parent_origin;
         cx.on_event(layout.order, move |_view, event: &MouseButtonEvent, cx| {
             if event.is_down {
                 if bounds.contains_point(event.position) {
