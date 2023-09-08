@@ -3360,6 +3360,51 @@ impl<'a, 'b, V: 'static> ViewContext<'a, 'b, V> {
     ) -> ElementStateHandle<T> {
         self.element_state_dynamic::<T>(tag, element_id, T::default())
     }
+
+    /// Return keystrokes that would dispatch the given action on the given view.
+    pub(crate) fn keystrokes_for_action(
+        &mut self,
+        view_id: usize,
+        action: &dyn Action,
+    ) -> Option<SmallVec<[Keystroke; 2]>> {
+        self.notify_if_view_ancestors_change(view_id);
+
+        let window = self.window_handle;
+        let mut contexts = Vec::new();
+        let mut handler_depth = None;
+        for (i, view_id) in self.ancestors(view_id).enumerate() {
+            if let Some(view_metadata) = self.views_metadata.get(&(window, view_id)) {
+                if let Some(actions) = self.actions.get(&view_metadata.type_id) {
+                    if actions.contains_key(&action.id()) {
+                        handler_depth = Some(i);
+                    }
+                }
+                contexts.push(view_metadata.keymap_context.clone());
+            }
+        }
+
+        if self.global_actions.contains_key(&action.id()) {
+            handler_depth = Some(contexts.len())
+        }
+
+        let action_contexts = if let Some(depth) = handler_depth {
+            &contexts[depth..]
+        } else {
+            &contexts
+        };
+
+        self.keystroke_matcher
+            .keystrokes_for_action(action, action_contexts)
+    }
+
+    fn notify_if_view_ancestors_change(&mut self, view_id: usize) {
+        let self_view_id = self.view_id;
+        self.window
+            .views_to_notify_if_ancestors_change
+            .entry(view_id)
+            .or_default()
+            .push(self_view_id);
+    }
 }
 
 impl<V: View> ViewContext<'_, '_, V> {
@@ -3463,51 +3508,6 @@ impl<'a, 'b, 'c, V> LayoutContext<'a, 'b, 'c, V> {
 
     pub fn view_context(&mut self) -> &mut ViewContext<'a, 'b, V> {
         self.view_context
-    }
-
-    /// Return keystrokes that would dispatch the given action on the given view.
-    pub(crate) fn keystrokes_for_action(
-        &mut self,
-        view_id: usize,
-        action: &dyn Action,
-    ) -> Option<SmallVec<[Keystroke; 2]>> {
-        self.notify_if_view_ancestors_change(view_id);
-
-        let window = self.window_handle;
-        let mut contexts = Vec::new();
-        let mut handler_depth = None;
-        for (i, view_id) in self.ancestors(view_id).enumerate() {
-            if let Some(view_metadata) = self.views_metadata.get(&(window, view_id)) {
-                if let Some(actions) = self.actions.get(&view_metadata.type_id) {
-                    if actions.contains_key(&action.id()) {
-                        handler_depth = Some(i);
-                    }
-                }
-                contexts.push(view_metadata.keymap_context.clone());
-            }
-        }
-
-        if self.global_actions.contains_key(&action.id()) {
-            handler_depth = Some(contexts.len())
-        }
-
-        let action_contexts = if let Some(depth) = handler_depth {
-            &contexts[depth..]
-        } else {
-            &contexts
-        };
-
-        self.keystroke_matcher
-            .keystrokes_for_action(action, action_contexts)
-    }
-
-    fn notify_if_view_ancestors_change(&mut self, view_id: usize) {
-        let self_view_id = self.view_id;
-        self.window
-            .views_to_notify_if_ancestors_change
-            .entry(view_id)
-            .or_default()
-            .push(self_view_id);
     }
 }
 
