@@ -644,12 +644,7 @@ impl<V> RootElement<V> {
 }
 
 pub trait AnyRootElement {
-    fn layout(
-        &mut self,
-        constraint: SizeConstraint,
-        refreshing: bool,
-        cx: &mut WindowContext,
-    ) -> Result<Vector2F>;
+    fn layout(&mut self, constraint: SizeConstraint, cx: &mut WindowContext) -> Result<Vector2F>;
     fn paint(
         &mut self,
         scene: &mut SceneBuilder,
@@ -667,18 +662,13 @@ pub trait AnyRootElement {
 }
 
 impl<V: View> AnyRootElement for RootElement<V> {
-    fn layout(
-        &mut self,
-        constraint: SizeConstraint,
-        refreshing: bool,
-        cx: &mut WindowContext,
-    ) -> Result<Vector2F> {
+    fn layout(&mut self, constraint: SizeConstraint, cx: &mut WindowContext) -> Result<Vector2F> {
         let view = self
             .view
             .upgrade(cx)
             .ok_or_else(|| anyhow!("layout called on a root element for a dropped view"))?;
         view.update(cx, |view, cx| {
-            let mut cx = LayoutContext::new(cx, refreshing);
+            let mut cx = LayoutContext::new(cx);
             Ok(self.element.layout(constraint, view, &mut cx))
         })
     }

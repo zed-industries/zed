@@ -3204,7 +3204,7 @@ mod tests {
                     Point::new(5, 6)..Point::new(6, 0),
                 ]);
             });
-            let mut layout_cx = LayoutContext::new(cx, false);
+            let mut layout_cx = LayoutContext::new(cx);
             element.layout(
                 SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
                 editor,
@@ -3289,7 +3289,7 @@ mod tests {
                     DisplayPoint::new(10, 0)..DisplayPoint::new(13, 0),
                 ]);
             });
-            let mut layout_cx = LayoutContext::new(cx, false);
+            let mut layout_cx = LayoutContext::new(cx);
             element.layout(
                 SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
                 editor,
@@ -3349,7 +3349,7 @@ mod tests {
 
         let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
         let (size, mut state) = editor.update(cx, |editor, cx| {
-            let mut layout_cx = LayoutContext::new(cx, false);
+            let mut layout_cx = LayoutContext::new(cx);
             element.layout(
                 SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
                 editor,
@@ -3546,7 +3546,7 @@ mod tests {
             editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
             editor.set_wrap_width(Some(editor_width), cx);
 
-            let mut layout_cx = LayoutContext::new(cx, false);
+            let mut layout_cx = LayoutContext::new(cx);
             element.layout(
                 SizeConstraint::new(vec2f(editor_width, 500.), vec2f(editor_width, 500.)),
                 editor,

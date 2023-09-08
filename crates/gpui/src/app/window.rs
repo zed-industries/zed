@@ -71,6 +71,7 @@ pub struct Window {
     pub(crate) clicked_region_ids: Vec<MouseRegionId>,
     pub(crate) clicked_region: Option<(MouseRegionId, MouseButton)>,
     text_layout_cache: TextLayoutCache,
+    refreshing: bool,
 }
 
 impl Window {
@@ -113,6 +114,7 @@ impl Window {
             clicked_region: None,
             titlebar_height,
             appearance,
+            refreshing: false,
         };
 
         let mut window_context = WindowContext::mutable(cx, &mut window, handle);
@@ -289,6 +291,10 @@ impl<'a> WindowContext<'a> {
 
     pub fn mouse_position(&self) -> Vector2F {
         self.window.platform_window.mouse_position()
+    }
+
+    pub fn refreshing(&self) -> bool {
+        self.window.refreshing
     }
 
     pub fn text_layout_cache(&self) -> &TextLayoutCache {
@@ -1034,7 +1040,9 @@ impl<'a> WindowContext<'a> {
 
         let mut rendered_root = self.window.rendered_views.remove(&root_view_id).unwrap();
 
-        rendered_root.layout(SizeConstraint::strict(window_size), refreshing, self)?;
+        self.window.refreshing = refreshing;
+        rendered_root.layout(SizeConstraint::strict(window_size), self)?;
+        self.window.refreshing = false;
 
         let views_to_notify_if_ancestors_change =
             mem::take(&mut self.window.views_to_notify_if_ancestors_change);
@@ -1671,7 +1679,7 @@ impl<V: 'static> Element<V> for ChildView {
             let parent_id = cx.view_id();
             cx.window.new_parents.insert(self.view_id, parent_id);
             let size = rendered_view
-                .layout(constraint, cx.refreshing, cx.view_context)
+                .layout(constraint, cx.view_context)
                 .log_err()
                 .unwrap_or(Vector2F::zero());
             cx.window.rendered_views.insert(self.view_id, rendered_view);

@@ -3454,15 +3454,11 @@ impl<V> BorrowWindowContext for ViewContext<'_, '_, V> {
 pub struct LayoutContext<'a, 'b, 'c, V> {
     // Nathan: Making this is public while I work on gpui2.
     pub view_context: &'c mut ViewContext<'a, 'b, V>,
-    pub refreshing: bool,
 }
 
 impl<'a, 'b, 'c, V> LayoutContext<'a, 'b, 'c, V> {
-    pub fn new(view_context: &'c mut ViewContext<'a, 'b, V>, refreshing: bool) -> Self {
-        Self {
-            view_context,
-            refreshing,
-        }
+    pub fn new(view_context: &'c mut ViewContext<'a, 'b, V>) -> Self {
+        Self { view_context }
     }
 
     pub fn view_context(&mut self) -> &mut ViewContext<'a, 'b, V> {
@@ -6482,7 +6478,7 @@ mod tests {
         view_1.update(cx, |_, cx| {
             view_2.update(cx, |_, cx| {
                 // Sanity check
-                let mut layout_cx = LayoutContext::new(cx, false);
+                let mut layout_cx = LayoutContext::new(cx);
                 assert_eq!(
                     layout_cx
                         .keystrokes_for_action(view_1_id, &Action1)

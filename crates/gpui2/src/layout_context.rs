@@ -1,7 +1,7 @@
 use crate::{element::LayoutId, style::Style};
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
-use gpui::{geometry::Size, taffy::style::Overflow, MeasureParams};
+use gpui::{geometry::Size, MeasureParams};
 pub use gpui::{taffy::tree::NodeId, LayoutContext as LegacyLayoutContext};
 
 #[derive(Deref, DerefMut)]

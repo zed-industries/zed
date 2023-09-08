@@ -108,7 +108,7 @@ impl<V: 'static> Element<V> for List<V> {
         item_constraint.min.set_y(0.);
         item_constraint.max.set_y(f32::INFINITY);
 
-        if cx.refreshing || state.last_layout_width != Some(size.x()) {
+        if cx.refreshing() || state.last_layout_width != Some(size.x()) {
             state.rendered_range = 0..0;
             state.items = SumTree::from_iter(
                 (0..state.items.summary().count).map(|_| ListItem::Unrendered),
@@ -666,7 +666,7 @@ mod tests {
             });
 
             let mut list = List::new(state.clone());
-            let mut layout_cx = LayoutContext::new(cx, false);
+            let mut layout_cx = LayoutContext::new(cx);
             let (size, _) = list.layout(constraint, &mut view, &mut layout_cx);
             assert_eq!(size, vec2f(100., 40.));
             assert_eq!(
@@ -691,7 +691,7 @@ mod tests {
                 cx,
             );
 
-            let mut layout_cx = LayoutContext::new(cx, false);
+            let mut layout_cx = LayoutContext::new(cx);
             let (_, logical_scroll_top) = list.layout(constraint, &mut view, &mut layout_cx);
             assert_eq!(
                 logical_scroll_top,
@@ -716,7 +716,7 @@ mod tests {
                 }
             );
 
-            let mut layout_cx = LayoutContext::new(cx, false);
+            let mut layout_cx = LayoutContext::new(cx);
             let (size, logical_scroll_top) = list.layout(constraint, &mut view, &mut layout_cx);
             assert_eq!(size, vec2f(100., 40.));
             assert_eq!(
@@ -835,7 +835,7 @@ mod tests {
 
                 let mut list = List::new(state.clone());
                 let window_size = vec2f(width, height);
-                let mut layout_cx = LayoutContext::new(cx, false);
+                let mut layout_cx = LayoutContext::new(cx);
                 let (size, logical_scroll_top) = list.layout(
                     SizeConstraint::new(vec2f(0., 0.), window_size),
                     &mut view,

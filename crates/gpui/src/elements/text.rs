@@ -411,7 +411,7 @@ mod tests {
             let mut view = TestView;
             fonts::with_font_cache(cx.font_cache().clone(), || {
                 let mut text = Text::new("Hello\r\n", Default::default()).with_soft_wrap(true);
-                let mut layout_cx = LayoutContext::new(cx, false);
+                let mut layout_cx = LayoutContext::new(cx);
                 let (_, state) = text.layout(
                     SizeConstraint::new(Default::default(), vec2f(f32::INFINITY, f32::INFINITY)),
                     &mut view,
