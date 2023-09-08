@@ -171,6 +171,7 @@ pub trait Item: View {
             None
         }
     }
+
     fn as_searchable(&self, _: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         None
     }
