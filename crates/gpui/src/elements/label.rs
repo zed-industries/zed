@@ -8,7 +8,7 @@ use crate::{
     },
     json::{ToJson, Value},
     text_layout::{Line, RunStyle},
-    Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, ViewContext,
+    Element, LayoutContext, PaintContext, SizeConstraint, ViewContext,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -158,7 +158,6 @@ impl<V: 'static> Element<V> for Label {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         line: &mut Self::LayoutState,
@@ -166,13 +165,7 @@ impl<V: 'static> Element<V> for Label {
         cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
-        line.paint(
-            scene,
-            bounds.origin(),
-            visible_bounds,
-            bounds.size().y(),
-            cx,
-        )
+        line.paint(bounds.origin(), visible_bounds, bounds.size().y(), cx)
     }
 
     fn rect_for_text_range(

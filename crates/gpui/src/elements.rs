@@ -34,8 +34,8 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    json, Action, Entity, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, TypeTag, View,
-    ViewContext, WeakViewHandle, WindowContext,
+    json, Action, Entity, LayoutContext, PaintContext, SizeConstraint, TypeTag, View, ViewContext,
+    WeakViewHandle, WindowContext,
 };
 use anyhow::{anyhow, Result};
 use core::panic;
@@ -64,7 +64,6 @@ pub trait Element<V: 'static>: 'static {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
@@ -265,7 +264,6 @@ trait AnyElementState<V> {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         origin: Vector2F,
         visible_bounds: RectF,
         view: &mut V,
@@ -346,7 +344,6 @@ impl<V, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         origin: Vector2F,
         visible_bounds: RectF,
         view: &mut V,
@@ -361,7 +358,6 @@ impl<V, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
             } => {
                 let bounds = RectF::new(origin, size);
                 let paint = element.paint(
-                    scene,
                     bounds,
                     visible_bounds,
                     &mut layout,
@@ -386,7 +382,6 @@ impl<V, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
             } => {
                 let bounds = RectF::new(origin, bounds.size());
                 let paint = element.paint(
-                    scene,
                     bounds,
                     visible_bounds,
                     &mut layout,
@@ -522,13 +517,12 @@ impl<V> AnyElement<V> {
 
     pub fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         origin: Vector2F,
         visible_bounds: RectF,
         view: &mut V,
         cx: &mut PaintContext<V>,
     ) {
-        self.state.paint(scene, origin, visible_bounds, view, cx);
+        self.state.paint(origin, visible_bounds, view, cx);
     }
 
     pub fn rect_for_text_range(
@@ -584,14 +578,13 @@ impl<V: 'static> Element<V> for AnyElement<V> {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
         cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
-        self.paint(scene, bounds.origin(), visible_bounds, view, cx);
+        self.paint(bounds.origin(), visible_bounds, view, cx);
     }
 
     fn rect_for_text_range(
@@ -647,7 +640,6 @@ pub trait AnyRootElement {
     fn layout(&mut self, constraint: SizeConstraint, cx: &mut WindowContext) -> Result<Vector2F>;
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         origin: Vector2F,
         visible_bounds: RectF,
         cx: &mut WindowContext,
@@ -675,7 +667,6 @@ impl<V: View> AnyRootElement for RootElement<V> {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         origin: Vector2F,
         visible_bounds: RectF,
         cx: &mut WindowContext,
@@ -687,8 +678,7 @@ impl<V: View> AnyRootElement for RootElement<V> {
 
         view.update(cx, |view, cx| {
             let mut cx = PaintContext::new(cx);
-            self.element
-                .paint(scene, origin, visible_bounds, view, &mut cx);
+            self.element.paint(origin, visible_bounds, view, &mut cx);
             Ok(())
         })
     }

@@ -50,7 +50,7 @@ where
         Stack::new()
             .with_child(render_child(state, cx))
             .with_children(drag_position.map(|drag_position| {
-                Canvas::new(move |scene, bounds, _, _, cx| {
+                Canvas::new(move |bounds, _, _, cx| {
                     if bounds.contains_point(drag_position) {
                         let overlay_region = split_margin
                             .and_then(|split_margin| {
@@ -60,14 +60,15 @@ where
                             .map(|(dir, margin)| dir.along_edge(bounds, margin))
                             .unwrap_or(bounds);
 
-                        scene.paint_stacking_context(None, None, |scene| {
-                            scene.push_quad(Quad {
-                                bounds: overlay_region,
-                                background: Some(overlay_color(cx)),
-                                border: Default::default(),
-                                corner_radii: Default::default(),
-                            });
+                        cx.scene().push_stacking_context(None, None);
+                        let background = overlay_color(cx);
+                        cx.scene().push_quad(Quad {
+                            bounds: overlay_region,
+                            background: Some(background),
+                            border: Default::default(),
+                            corner_radii: Default::default(),
                         });
+                        cx.scene().pop_stacking_context();
                     }
                 })
             }))

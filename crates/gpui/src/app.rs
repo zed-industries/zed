@@ -28,6 +28,7 @@ use collections::{hash_map::Entry, BTreeMap, HashMap, HashSet, VecDeque};
 use derive_more::Deref;
 pub use menu::*;
 use parking_lot::Mutex;
+use pathfinder_geometry::rect::RectF;
 use platform::Event;
 use postage::oneshot;
 #[cfg(any(test, feature = "test-support"))]
@@ -3570,6 +3571,16 @@ pub struct PaintContext<'a, 'b, 'c, V> {
 impl<'a, 'b, 'c, V> PaintContext<'a, 'b, 'c, V> {
     pub fn new(view_context: &'c mut ViewContext<'a, 'b, V>) -> Self {
         Self { view_context }
+    }
+
+    pub fn paint_layer<F, R>(&mut self, clip_bounds: Option<RectF>, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        self.scene().push_layer(clip_bounds);
+        let result = f(self);
+        self.scene().pop_layer();
+        result
     }
 }
 

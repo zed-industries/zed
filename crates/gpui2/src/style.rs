@@ -167,7 +167,7 @@ impl Style {
     pub fn paint_background<V: 'static>(&self, bounds: RectF, cx: &mut PaintContext<V>) {
         let rem_size = cx.rem_size();
         if let Some(color) = self.fill.as_ref().and_then(Fill::color) {
-            cx.scene.push_quad(gpui::Quad {
+            cx.scene().push_quad(gpui::Quad {
                 bounds,
                 background: Some(color.into()),
                 corner_radii: self.corner_radii.to_gpui(bounds.size(), rem_size),
@@ -183,7 +183,7 @@ impl Style {
         if let Some(color) = self.border_color {
             let border = self.border_widths.to_pixels(rem_size);
             if !border.is_empty() {
-                cx.scene.push_quad(gpui::Quad {
+                cx.scene().push_quad(gpui::Quad {
                     bounds,
                     background: None,
                     corner_radii: self.corner_radii.to_gpui(bounds.size(), rem_size),

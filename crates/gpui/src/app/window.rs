@@ -55,6 +55,7 @@ pub struct Window {
     pub(crate) invalidation: Option<WindowInvalidation>,
     pub(crate) platform_window: Box<dyn platform::Window>,
     pub(crate) rendered_views: HashMap<usize, Box<dyn AnyRootElement>>,
+    scene: SceneBuilder,
     pub(crate) text_style_stack: Vec<TextStyle>,
     pub(crate) theme_stack: Vec<Box<dyn Any>>,
     pub(crate) new_parents: HashMap<usize, usize>,
@@ -98,6 +99,7 @@ impl Window {
             inspector_enabled: false,
             platform_window,
             rendered_views: Default::default(),
+            scene: SceneBuilder::new(),
             text_style_stack: Vec::new(),
             theme_stack: Vec::new(),
             new_parents: HashMap::default(),
@@ -239,6 +241,10 @@ impl<'a> WindowContext<'a> {
         let window = self.window();
         self.pending_effects
             .push_back(Effect::RepaintWindow { window });
+    }
+
+    pub fn scene(&mut self) -> &mut SceneBuilder {
+        &mut self.window.scene
     }
 
     pub fn enable_inspector(&mut self) {
@@ -1080,9 +1086,7 @@ impl<'a> WindowContext<'a> {
         let root_view_id = self.window.root_view().id();
         let mut rendered_root = self.window.rendered_views.remove(&root_view_id).unwrap();
 
-        let mut scene_builder = SceneBuilder::new(scale_factor);
         rendered_root.paint(
-            &mut scene_builder,
             Vector2F::zero(),
             RectF::from_points(Vector2F::zero(), window_size),
             self,
@@ -1092,7 +1096,7 @@ impl<'a> WindowContext<'a> {
             .insert(root_view_id, rendered_root);
 
         self.window.text_layout_cache.finish_frame();
-        let mut scene = scene_builder.build();
+        let mut scene = self.window.scene.build(scale_factor);
         self.window.cursor_regions = scene.cursor_regions();
         self.window.mouse_regions = scene.mouse_regions();
         self.window.event_handlers = scene.take_event_handlers();
@@ -1696,7 +1700,6 @@ impl<V: 'static> Element<V> for ChildView {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
@@ -1705,7 +1708,7 @@ impl<V: 'static> Element<V> for ChildView {
     ) {
         if let Some(mut rendered_view) = cx.window.rendered_views.remove(&self.view_id) {
             rendered_view
-                .paint(scene, bounds.origin(), visible_bounds, cx)
+                .paint(bounds.origin(), visible_bounds, cx)
                 .log_err();
             cx.window.rendered_views.insert(self.view_id, rendered_view);
         } else {

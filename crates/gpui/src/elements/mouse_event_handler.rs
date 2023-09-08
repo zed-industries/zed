@@ -11,7 +11,7 @@ use crate::{
         MouseHover, MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut,
     },
     AnyElement, Element, EventContext, LayoutContext, MouseRegion, MouseState, PaintContext,
-    SceneBuilder, SizeConstraint, TypeTag, ViewContext,
+    SizeConstraint, TypeTag, ViewContext,
 };
 use serde_json::json;
 use std::ops::Range;
@@ -236,26 +236,21 @@ impl<V: 'static> MouseEventHandler<V> {
         .round_out()
     }
 
-    fn paint_regions(
-        &self,
-        scene: &mut SceneBuilder,
-        bounds: RectF,
-        visible_bounds: RectF,
-        cx: &mut ViewContext<V>,
-    ) {
+    fn paint_regions(&self, bounds: RectF, visible_bounds: RectF, cx: &mut ViewContext<V>) {
         let visible_bounds = visible_bounds.intersection(bounds).unwrap_or_default();
         let hit_bounds = self.hit_bounds(visible_bounds);
 
         if let Some(style) = self.cursor_style {
-            scene.push_cursor_region(CursorRegion {
+            cx.scene().push_cursor_region(CursorRegion {
                 bounds: hit_bounds,
                 style,
             });
         }
-        scene.push_mouse_region(
+        let view_id = cx.view_id();
+        cx.scene().push_mouse_region(
             MouseRegion::from_handlers(
                 self.tag,
-                cx.view_id(),
+                view_id,
                 self.region_id,
                 hit_bounds,
                 self.handlers.clone(),
@@ -282,7 +277,6 @@ impl<V: 'static> Element<V> for MouseEventHandler<V> {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
@@ -290,16 +284,13 @@ impl<V: 'static> Element<V> for MouseEventHandler<V> {
         cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
         if self.above {
-            self.child
-                .paint(scene, bounds.origin(), visible_bounds, view, cx);
-
-            scene.paint_layer(None, |scene| {
-                self.paint_regions(scene, bounds, visible_bounds, cx);
-            });
+            self.child.paint(bounds.origin(), visible_bounds, view, cx);
+            cx.scene().push_layer(None);
+            self.paint_regions(bounds, visible_bounds, cx);
+            cx.scene().pop_layer();
         } else {
-            self.paint_regions(scene, bounds, visible_bounds, cx);
-            self.child
-                .paint(scene, bounds.origin(), visible_bounds, view, cx);
+            self.paint_regions(bounds, visible_bounds, cx);
+            self.child.paint(bounds.origin(), visible_bounds, view, cx);
         }
     }
 

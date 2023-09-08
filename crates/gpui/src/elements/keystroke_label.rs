@@ -61,14 +61,13 @@ impl<V: 'static> Element<V> for KeystrokeLabel {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         element: &mut AnyElement<V>,
         view: &mut V,
         cx: &mut PaintContext<V>,
     ) {
-        element.paint(scene, bounds.origin(), visible_bounds, view, cx);
+        element.paint(bounds.origin(), visible_bounds, view, cx);
     }
 
     fn rect_for_text_range(

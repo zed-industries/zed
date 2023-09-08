@@ -7,7 +7,7 @@ use gpui::{
     },
     json::ToJson,
     serde_json::{self, json},
-    AnyElement, Axis, Element, LayoutContext, PaintContext, SceneBuilder, View, ViewContext,
+    AnyElement, Axis, Element, LayoutContext, PaintContext, View, ViewContext,
 };
 
 pub(crate) struct FacePile<V: View> {
@@ -53,7 +53,6 @@ impl<V: View> Element<V> for FacePile<V> {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _layout: &mut Self::LayoutState,
@@ -69,9 +68,10 @@ impl<V: View> Element<V> for FacePile<V> {
             let size = face.size();
             origin_x -= size.x();
             let origin_y = origin_y + (bounds.height() - size.y()) / 2.0;
-            scene.paint_layer(None, |scene| {
-                face.paint(scene, vec2f(origin_x, origin_y), visible_bounds, view, cx);
-            });
+
+            cx.scene().push_layer(None);
+            face.paint(vec2f(origin_x, origin_y), visible_bounds, view, cx);
+            cx.scene().pop_layer();
             origin_x += self.overlap;
         }
 

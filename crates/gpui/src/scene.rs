@@ -26,7 +26,6 @@ pub use mouse_event::*;
 pub use mouse_region::*;
 
 pub struct SceneBuilder {
-    scale_factor: f32,
     stacking_contexts: Vec<StackingContext>,
     active_stacking_context_stack: Vec<usize>,
     /// Used by the gpui2 crate.
@@ -245,43 +244,36 @@ impl Scene {
 }
 
 impl SceneBuilder {
-    pub fn new(scale_factor: f32) -> Self {
-        let stacking_context = StackingContext::new(None, 0);
-        SceneBuilder {
-            scale_factor,
-            stacking_contexts: vec![stacking_context],
-            active_stacking_context_stack: vec![0],
+    pub fn new() -> Self {
+        let mut this = SceneBuilder {
+            stacking_contexts: Vec::new(),
+            active_stacking_context_stack: Vec::new(),
             #[cfg(debug_assertions)]
-            mouse_region_ids: Default::default(),
+            mouse_region_ids: HashSet::default(),
             event_handlers: Vec::new(),
-        }
+        };
+        this.clear();
+        this
     }
 
-    pub fn build(mut self) -> Scene {
-        self.stacking_contexts
-            .sort_by_key(|context| context.z_index);
+    pub fn clear(&mut self) {
+        self.stacking_contexts.clear();
+        self.stacking_contexts.push(StackingContext::new(None, 0));
+        self.active_stacking_context_stack.clear();
+        self.active_stacking_context_stack.push(0);
+    }
+
+    pub fn build(&mut self, scale_factor: f32) -> Scene {
+        let mut stacking_contexts = std::mem::take(&mut self.stacking_contexts);
+        stacking_contexts.sort_by_key(|context| context.z_index);
+        let event_handlers = std::mem::take(&mut self.event_handlers);
+        self.clear();
+
         Scene {
-            scale_factor: self.scale_factor,
-            stacking_contexts: self.stacking_contexts,
-            event_handlers: self.event_handlers,
+            scale_factor,
+            stacking_contexts,
+            event_handlers,
         }
-    }
-
-    pub fn scale_factor(&self) -> f32 {
-        self.scale_factor
-    }
-
-    pub fn paint_stacking_context<F>(
-        &mut self,
-        clip_bounds: Option<RectF>,
-        z_index: Option<usize>,
-        f: F,
-    ) where
-        F: FnOnce(&mut Self),
-    {
-        self.push_stacking_context(clip_bounds, z_index);
-        f(self);
-        self.pop_stacking_context();
     }
 
     pub fn push_stacking_context(&mut self, clip_bounds: Option<RectF>, z_index: Option<usize>) {
@@ -295,15 +287,6 @@ impl SceneBuilder {
     pub fn pop_stacking_context(&mut self) {
         self.active_stacking_context_stack.pop();
         assert!(!self.active_stacking_context_stack.is_empty());
-    }
-
-    pub fn paint_layer<F>(&mut self, clip_bounds: Option<RectF>, f: F)
-    where
-        F: FnOnce(&mut Self),
-    {
-        self.push_layer(clip_bounds);
-        f(self);
-        self.pop_layer();
     }
 
     pub fn push_layer(&mut self, clip_bounds: Option<RectF>) {

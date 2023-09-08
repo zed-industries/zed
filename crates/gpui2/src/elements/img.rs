@@ -70,7 +70,7 @@ impl<V: 'static> Element<V> for Img {
                 .and_then(ResultExt::log_err)
             {
                 let rem_size = cx.rem_size();
-                cx.scene.push_image(scene::Image {
+                cx.scene().push_image(scene::Image {
                     bounds,
                     border: gpui::Border {
                         color: style.border_color.unwrap_or_default().into(),

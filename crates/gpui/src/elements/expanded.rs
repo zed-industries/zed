@@ -2,8 +2,7 @@ use std::ops::Range;
 
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    json, AnyElement, Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint,
-    ViewContext,
+    json, AnyElement, Element, LayoutContext, PaintContext, SizeConstraint, ViewContext,
 };
 use serde_json::json;
 
@@ -57,15 +56,13 @@ impl<V: 'static> Element<V> for Expanded<V> {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
         cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
-        self.child
-            .paint(scene, bounds.origin(), visible_bounds, view, cx);
+        self.child.paint(bounds.origin(), visible_bounds, view, cx);
     }
 
     fn rect_for_text_range(

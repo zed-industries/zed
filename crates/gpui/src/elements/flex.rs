@@ -2,8 +2,8 @@ use std::{any::Any, cell::Cell, f32::INFINITY, ops::Range, rc::Rc};
 
 use crate::{
     json::{self, ToJson, Value},
-    AnyElement, Axis, Element, ElementStateHandle, LayoutContext, PaintContext, SceneBuilder,
-    SizeConstraint, Vector2FExt, ViewContext,
+    AnyElement, Axis, Element, ElementStateHandle, LayoutContext, PaintContext, SizeConstraint,
+    Vector2FExt, ViewContext,
 };
 use pathfinder_geometry::{
     rect::RectF,
@@ -260,7 +260,6 @@ impl<V: 'static> Element<V> for Flex<V> {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         remaining_space: &mut Self::LayoutState,
@@ -272,14 +271,14 @@ impl<V: 'static> Element<V> for Flex<V> {
         let mut remaining_space = *remaining_space;
         let overflowing = remaining_space < 0.;
         if overflowing {
-            scene.push_layer(Some(visible_bounds));
+            cx.scene().push_layer(Some(visible_bounds));
         }
 
-        if let Some(scroll_state) = &self.scroll_state {
-            scene.push_mouse_region(
-                crate::MouseRegion::new::<Self>(scroll_state.1, 0, bounds)
+        if let Some((scroll_state, id)) = &self.scroll_state {
+            let scroll_state = scroll_state.read(cx).clone();
+            cx.scene().push_mouse_region(
+                crate::MouseRegion::new::<Self>(*id, 0, bounds)
                     .on_scroll({
-                        let scroll_state = scroll_state.0.read(cx).clone();
                         let axis = self.axis;
                         move |e, _: &mut V, cx| {
                             if remaining_space < 0. {
@@ -358,7 +357,7 @@ impl<V: 'static> Element<V> for Flex<V> {
                 aligned_child_origin
             };
 
-            child.paint(scene, aligned_child_origin, visible_bounds, view, cx);
+            child.paint(aligned_child_origin, visible_bounds, view, cx);
 
             match self.axis {
                 Axis::Horizontal => child_origin += vec2f(child.size().x() + self.spacing, 0.0),
@@ -367,7 +366,7 @@ impl<V: 'static> Element<V> for Flex<V> {
         }
 
         if overflowing {
-            scene.pop_layer();
+            cx.scene().pop_layer();
         }
     }
 
@@ -451,15 +450,13 @@ impl<V: 'static> Element<V> for FlexItem<V> {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
         cx: &mut PaintContext<V>,
     ) -> Self::PaintState {
-        self.child
-            .paint(scene, bounds.origin(), visible_bounds, view, cx)
+        self.child.paint(bounds.origin(), visible_bounds, view, cx)
     }
 
     fn rect_for_text_range(
