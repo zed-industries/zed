@@ -67,7 +67,7 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
             fn layout(
                 &mut self,
                 view: &mut V,
-                cx: &mut gpui2::element::LayoutContext<V>,
+                cx: &mut gpui2::ViewContext<V>,
             ) -> anyhow::Result<(gpui2::element::LayoutId, Self::PaintState)> {
                 let mut rendered_element = self.render(view, cx).into_element().into_any();
                 let layout_id = rendered_element.layout(view, cx)?;

@@ -2,17 +2,17 @@ use crate::{element::LayoutId, style::Style};
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
 use gpui::{geometry::Size, MeasureParams};
-pub use gpui::{taffy::tree::NodeId, LayoutContext as LegacyLayoutContext};
+pub use gpui::{taffy::tree::NodeId, ViewContext as LegacyViewContext};
 
 #[derive(Deref, DerefMut)]
-pub struct LayoutContext<'a, 'b, 'c, 'd, V> {
+pub struct ViewContext<'a, 'b, 'c, V> {
     #[deref]
     #[deref_mut]
-    pub(crate) legacy_cx: &'d mut LegacyLayoutContext<'a, 'b, 'c, V>,
+    pub(crate) legacy_cx: &'c mut LegacyViewContext<'a, 'b, V>,
 }
 
-impl<'a, 'b, 'c, 'd, V: 'static> LayoutContext<'a, 'b, 'c, 'd, V> {
-    pub fn new(legacy_cx: &'d mut LegacyLayoutContext<'a, 'b, 'c, V>) -> Self {
+impl<'a, 'b, 'c, V: 'static> ViewContext<'a, 'b, 'c, V> {
+    pub fn new(legacy_cx: &'c mut LegacyViewContext<'a, 'b, V>) -> Self {
         Self { legacy_cx }
     }
 

@@ -1,7 +1,7 @@
 use crate::{
     element::{Element, IntoElement, Layout},
-    layout_context::LayoutContext,
     paint_context::PaintContext,
+    ViewContext,
 };
 use anyhow::Result;
 use gpui::{
@@ -31,7 +31,7 @@ impl<V: 'static> Element<V> for Text {
     fn layout(
         &mut self,
         _view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Result<(LayoutId, Self::PaintState)> {
         let fonts = cx.platform().fonts();
         let text_style = cx.text_style();

@@ -1,11 +1,11 @@
 use gpui2::{
     elements::div, interactive::Interactive, platform::MouseButton, style::StyleHelpers, ArcCow,
-    Element, IntoElement, ParentElement, ViewContext,
+    Element, EventContext, IntoElement, ParentElement, ViewContext,
 };
 use std::{marker::PhantomData, rc::Rc};
 
 struct ButtonHandlers<V, D> {
-    click: Option<Rc<dyn Fn(&mut V, &D, &mut ViewContext<V>)>>,
+    click: Option<Rc<dyn Fn(&mut V, &D, &mut EventContext<V>)>>,
 }
 
 impl<V, D> Default for ButtonHandlers<V, D> {
@@ -59,7 +59,10 @@ impl<V: 'static, D: 'static> Button<V, D> {
         self
     }
 
-    pub fn on_click(mut self, handler: impl Fn(&mut V, &D, &mut ViewContext<V>) + 'static) -> Self {
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&mut V, &D, &mut EventContext<V>) + 'static,
+    ) -> Self {
         self.handlers.click = Some(Rc::new(handler));
         self
     }

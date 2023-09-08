@@ -3,10 +3,9 @@ use std::{cell::Cell, rc::Rc};
 use crate::{
     element::{AnyElement, Element, IntoElement, Layout, ParentElement},
     hsla,
-    layout_context::LayoutContext,
     paint_context::PaintContext,
     style::{CornerRadii, Overflow, Style, StyleHelpers, Styleable},
-    InteractionHandlers, Interactive,
+    InteractionHandlers, Interactive, ViewContext,
 };
 use anyhow::Result;
 use gpui::{
@@ -41,7 +40,7 @@ impl<V: 'static> Element<V> for Div<V> {
     fn layout(
         &mut self,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Result<(LayoutId, Self::PaintState)>
     where
         Self: Sized,

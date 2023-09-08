@@ -1,9 +1,9 @@
 use crate::{
     element::{AnyElement, Element, IntoElement, Layout, ParentElement},
     interactive::{InteractionHandlers, Interactive},
-    layout_context::LayoutContext,
     paint_context::PaintContext,
     style::{Style, StyleHelpers, Styleable},
+    ViewContext,
 };
 use anyhow::Result;
 use gpui::{geometry::vector::Vector2F, platform::MouseMovedEvent, LayoutId};
@@ -45,7 +45,7 @@ impl<V: 'static, E: Element<V> + Styleable> Element<V> for Hoverable<E> {
     fn layout(
         &mut self,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Result<(LayoutId, Self::PaintState)>
     where
         Self: Sized,

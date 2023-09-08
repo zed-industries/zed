@@ -41,7 +41,7 @@ fn main() {
             |cx| {
                 view(|cx| {
                     cx.enable_inspector();
-                    storybook(cx)
+                    storybook(&mut ViewContext::new(cx))
                 })
             },
         );

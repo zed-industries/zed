@@ -1,5 +1,5 @@
-pub use crate::layout_context::LayoutContext;
 pub use crate::paint_context::PaintContext;
+pub use crate::ViewContext;
 use anyhow::Result;
 use gpui::geometry::vector::Vector2F;
 pub use gpui::{Layout, LayoutId};
@@ -11,7 +11,7 @@ pub trait Element<V: 'static>: 'static + IntoElement<V> {
     fn layout(
         &mut self,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Result<(LayoutId, Self::PaintState)>
     where
         Self: Sized;
@@ -39,7 +39,7 @@ pub trait Element<V: 'static>: 'static + IntoElement<V> {
 
 /// Used to make ElementState<V, E> into a trait object, so we can wrap it in AnyElement<V>.
 trait AnyStatefulElement<V> {
-    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<LayoutId>;
+    fn layout(&mut self, view: &mut V, cx: &mut ViewContext<V>) -> Result<LayoutId>;
     fn paint(&mut self, view: &mut V, parent_origin: Vector2F, cx: &mut PaintContext<V>);
 }
 
@@ -86,7 +86,7 @@ impl<V: 'static, E: Element<V>> Default for ElementPhase<V, E> {
 
 /// We blanket-implement the object-safe ElementStateObject interface to make ElementStates into trait objects
 impl<V, E: Element<V>> AnyStatefulElement<V> for StatefulElement<V, E> {
-    fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<LayoutId> {
+    fn layout(&mut self, view: &mut V, cx: &mut ViewContext<V>) -> Result<LayoutId> {
         let result;
         self.phase = match self.element.layout(view, cx) {
             Ok((layout_id, paint_state)) => {
@@ -145,7 +145,7 @@ impl<V, E: Element<V>> AnyStatefulElement<V> for StatefulElement<V, E> {
 pub struct AnyElement<V>(Box<dyn AnyStatefulElement<V>>);
 
 impl<V> AnyElement<V> {
-    pub fn layout(&mut self, view: &mut V, cx: &mut LayoutContext<V>) -> Result<LayoutId> {
+    pub fn layout(&mut self, view: &mut V, cx: &mut ViewContext<V>) -> Result<LayoutId> {
         self.0.layout(view, cx)
     }
 

@@ -34,7 +34,7 @@ impl<V: 'static> Element<V> for Svg {
     fn layout(
         &mut self,
         _: &mut V,
-        cx: &mut crate::LayoutContext<V>,
+        cx: &mut crate::ViewContext<V>,
     ) -> anyhow::Result<(LayoutId, Self::PaintState)>
     where
         Self: Sized,

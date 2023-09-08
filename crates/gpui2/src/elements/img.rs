@@ -1,6 +1,8 @@
 use crate as gpui2;
-use crate::style::{StyleHelpers, Styleable};
-use crate::{style::Style, Element};
+use crate::{
+    style::{Style, StyleHelpers, Styleable},
+    Element,
+};
 use futures::FutureExt;
 use gpui::geometry::vector::Vector2F;
 use gpui::scene;
@@ -35,7 +37,7 @@ impl<V: 'static> Element<V> for Img {
     fn layout(
         &mut self,
         _: &mut V,
-        cx: &mut crate::LayoutContext<V>,
+        cx: &mut crate::ViewContext<V>,
     ) -> anyhow::Result<(gpui::LayoutId, Self::PaintState)>
     where
         Self: Sized,

@@ -1,4 +1,4 @@
-use crate::{layout_context::LayoutContext, paint_context::PaintContext};
+use crate::{paint_context::PaintContext, ViewContext};
 use gpui::{geometry::rect::RectF, LayoutEngine, LayoutId};
 use util::ResultExt;
 
@@ -17,7 +17,7 @@ impl<V: 'static> gpui::Element<V> for AdapterElement<V> {
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
         cx.push_layout_engine(LayoutEngine::new());
 
-        let mut cx = LayoutContext::new(cx);
+        let mut cx = ViewContext::new(cx);
         let layout_id = self.0.layout(view, &mut cx).log_err();
         if let Some(layout_id) = layout_id {
             cx.layout_engine()
