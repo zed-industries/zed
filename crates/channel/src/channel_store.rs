@@ -111,6 +111,10 @@ impl ChannelStore {
         }
     }
 
+    pub fn client(&self) -> Arc<Client> {
+        self.client.clone()
+    }
+
     pub fn has_children(&self, channel_id: ChannelId) -> bool {
         self.channel_paths.iter().any(|path| {
             if let Some(ix) = path.iter().position(|id| *id == channel_id) {

@@ -1,21 +1,33 @@
+use crate::collab_panel::{CollaborationPanelDockPosition, CollaborationPanelSettings};
+use anyhow::Result;
 use channel::{ChannelChat, ChannelChatEvent, ChannelMessage, ChannelStore};
 use client::Client;
+use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
     actions,
     elements::*,
     platform::{CursorStyle, MouseButton},
+    serde_json,
     views::{ItemType, Select, SelectStyle},
-    AnyViewHandle, AppContext, Entity, ModelHandle, Subscription, View, ViewContext, ViewHandle,
+    AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelHandle, Subscription, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::language_settings::SoftWrap;
 use menu::Confirm;
+use project::Fs;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use theme::Theme;
 use time::{OffsetDateTime, UtcOffset};
 use util::{ResultExt, TryFutureExt};
+use workspace::{
+    dock::{DockPosition, Panel},
+    Workspace,
+};
 
 const MESSAGE_LOADING_THRESHOLD: usize = 50;
+const CHAT_PANEL_KEY: &'static str = "ChatPanel";
 
 pub struct ChatPanel {
     client: Arc<Client>,
@@ -25,11 +37,25 @@ pub struct ChatPanel {
     input_editor: ViewHandle<Editor>,
     channel_select: ViewHandle<Select>,
     local_timezone: UtcOffset,
+    fs: Arc<dyn Fs>,
+    width: Option<f32>,
+    pending_serialization: Task<Option<()>>,
+    has_focus: bool,
 }
 
-pub enum Event {}
+#[derive(Serialize, Deserialize)]
+struct SerializedChatPanel {
+    width: Option<f32>,
+}
 
-actions!(chat_panel, [LoadMoreMessages]);
+#[derive(Debug)]
+pub enum Event {
+    DockPositionChanged,
+    Focus,
+    Dismissed,
+}
+
+actions!(chat_panel, [LoadMoreMessages, ToggleFocus]);
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(ChatPanel::send);
@@ -37,11 +63,11 @@ pub fn init(cx: &mut AppContext) {
 }
 
 impl ChatPanel {
-    pub fn new(
-        rpc: Arc<Client>,
-        channel_list: ModelHandle<ChannelStore>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
+    pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> ViewHandle<Self> {
+        let fs = workspace.app_state().fs.clone();
+        let client = workspace.app_state().client.clone();
+        let channel_store = workspace.app_state().channel_store.clone();
+
         let input_editor = cx.add_view(|cx| {
             let mut editor = Editor::auto_height(
                 4,
@@ -51,12 +77,13 @@ impl ChatPanel {
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor
         });
+
         let channel_select = cx.add_view(|cx| {
-            let channel_list = channel_list.clone();
+            let channel_store = channel_store.clone();
             Select::new(0, cx, {
                 move |ix, item_type, is_hovered, cx| {
                     Self::render_channel_name(
-                        &channel_list,
+                        &channel_store,
                         ix,
                         item_type,
                         is_hovered,
@@ -85,45 +112,97 @@ impl ChatPanel {
             }
         });
 
-        let mut this = Self {
-            client: rpc,
-            channel_store: channel_list,
-            active_channel: Default::default(),
-            message_list,
-            input_editor,
-            channel_select,
-            local_timezone: cx.platform().local_timezone(),
-        };
+        cx.add_view(|cx| {
+            let mut this = Self {
+                fs,
+                client,
+                channel_store,
+                active_channel: Default::default(),
+                pending_serialization: Task::ready(None),
+                message_list,
+                input_editor,
+                channel_select,
+                local_timezone: cx.platform().local_timezone(),
+                has_focus: false,
+                width: None,
+            };
 
-        this.init_active_channel(cx);
-        cx.observe(&this.channel_store, |this, _, cx| {
             this.init_active_channel(cx);
-        })
-        .detach();
+            cx.observe(&this.channel_store, |this, _, cx| {
+                this.init_active_channel(cx);
+            })
+            .detach();
 
-        cx.observe(&this.channel_select, |this, channel_select, cx| {
-            let selected_ix = channel_select.read(cx).selected_index();
-            let selected_channel_id = this
-                .channel_store
-                .read(cx)
-                .channel_at_index(selected_ix)
-                .map(|e| e.1.id);
-            if let Some(selected_channel_id) = selected_channel_id {
-                let open_chat = this.channel_store.update(cx, |store, cx| {
-                    store.open_channel_chat(selected_channel_id, cx)
-                });
-                cx.spawn(|this, mut cx| async move {
-                    let chat = open_chat.await?;
-                    this.update(&mut cx, |this, cx| {
-                        this.set_active_channel(chat, cx);
+            cx.observe(&this.channel_select, |this, channel_select, cx| {
+                let selected_ix = channel_select.read(cx).selected_index();
+                let selected_channel_id = this
+                    .channel_store
+                    .read(cx)
+                    .channel_at_index(selected_ix)
+                    .map(|e| e.1.id);
+                if let Some(selected_channel_id) = selected_channel_id {
+                    let open_chat = this.channel_store.update(cx, |store, cx| {
+                        store.open_channel_chat(selected_channel_id, cx)
+                    });
+                    cx.spawn(|this, mut cx| async move {
+                        let chat = open_chat.await?;
+                        this.update(&mut cx, |this, cx| {
+                            this.set_active_channel(chat, cx);
+                        })
                     })
-                })
-                .detach_and_log_err(cx);
-            }
-        })
-        .detach();
+                    .detach_and_log_err(cx);
+                }
+            })
+            .detach();
 
-        this
+            this
+        })
+    }
+
+    pub fn load(
+        workspace: WeakViewHandle<Workspace>,
+        cx: AsyncAppContext,
+    ) -> Task<Result<ViewHandle<Self>>> {
+        cx.spawn(|mut cx| async move {
+            let serialized_panel = if let Some(panel) = cx
+                .background()
+                .spawn(async move { KEY_VALUE_STORE.read_kvp(CHAT_PANEL_KEY) })
+                .await
+                .log_err()
+                .flatten()
+            {
+                Some(serde_json::from_str::<SerializedChatPanel>(&panel)?)
+            } else {
+                None
+            };
+
+            workspace.update(&mut cx, |workspace, cx| {
+                let panel = Self::new(workspace, cx);
+                if let Some(serialized_panel) = serialized_panel {
+                    panel.update(cx, |panel, cx| {
+                        panel.width = serialized_panel.width;
+                        cx.notify();
+                    });
+                }
+                panel
+            })
+        })
+    }
+
+    fn serialize(&mut self, cx: &mut ViewContext<Self>) {
+        let width = self.width;
+        self.pending_serialization = cx.background().spawn(
+            async move {
+                KEY_VALUE_STORE
+                    .write_kvp(
+                        CHAT_PANEL_KEY.into(),
+                        serde_json::to_string(&SerializedChatPanel { width })?,
+                    )
+                    .await?;
+                anyhow::Ok(())
+            }
+            .log_err(),
+        );
     }
 
     fn init_active_channel(&mut self, cx: &mut ViewContext<Self>) {
@@ -362,6 +441,68 @@ impl View for ChatPanel {
         ) {
             cx.focus(&self.input_editor);
         }
+    }
+}
+
+impl Panel for ChatPanel {
+    fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
+        match settings::get::<CollaborationPanelSettings>(cx).dock {
+            CollaborationPanelDockPosition::Left => DockPosition::Left,
+            CollaborationPanelDockPosition::Right => DockPosition::Right,
+        }
+    }
+
+    fn position_is_valid(&self, position: DockPosition) -> bool {
+        matches!(position, DockPosition::Left | DockPosition::Right)
+    }
+
+    fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
+        settings::update_settings_file::<CollaborationPanelSettings>(
+            self.fs.clone(),
+            cx,
+            move |settings| {
+                let dock = match position {
+                    DockPosition::Left | DockPosition::Bottom => {
+                        CollaborationPanelDockPosition::Left
+                    }
+                    DockPosition::Right => CollaborationPanelDockPosition::Right,
+                };
+                settings.dock = Some(dock);
+            },
+        );
+    }
+
+    fn size(&self, cx: &gpui::WindowContext) -> f32 {
+        self.width
+            .unwrap_or_else(|| settings::get::<CollaborationPanelSettings>(cx).default_width)
+    }
+
+    fn set_size(&mut self, size: Option<f32>, cx: &mut ViewContext<Self>) {
+        self.width = size;
+        self.serialize(cx);
+        cx.notify();
+    }
+
+    fn icon_path(&self, cx: &gpui::WindowContext) -> Option<&'static str> {
+        settings::get::<CollaborationPanelSettings>(cx)
+            .button
+            .then(|| "icons/conversations.svg")
+    }
+
+    fn icon_tooltip(&self) -> (String, Option<Box<dyn gpui::Action>>) {
+        ("Chat Panel".to_string(), Some(Box::new(ToggleFocus)))
+    }
+
+    fn should_change_position_on_event(event: &Self::Event) -> bool {
+        matches!(event, Event::DockPositionChanged)
+    }
+
+    fn has_focus(&self, _cx: &gpui::WindowContext) -> bool {
+        self.has_focus
+    }
+
+    fn is_focus_event(event: &Self::Event) -> bool {
+        matches!(event, Event::Focus)
     }
 }
 

@@ -2,14 +2,18 @@ mod channel_modal;
 mod contact_finder;
 mod panel_settings;
 
+use crate::{
+    channel_view::{self, ChannelView},
+    face_pile::FacePile,
+};
 use anyhow::Result;
 use call::ActiveCall;
 use channel::{Channel, ChannelEvent, ChannelId, ChannelStore};
+use channel_modal::ChannelModal;
 use client::{proto::PeerId, Client, Contact, User, UserStore};
 use context_menu::{ContextMenu, ContextMenuItem};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Cancel, Editor};
-
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
 use futures::StreamExt;
 use fuzzy::{match_strings, StringMatchCandidate};
@@ -31,7 +35,6 @@ use gpui::{
     Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
-use panel_settings::{CollaborationPanelDockPosition, CollaborationPanelSettings};
 use project::{Fs, Project};
 use serde_derive::{Deserialize, Serialize};
 use settings::SettingsStore;
@@ -44,11 +47,7 @@ use workspace::{
     Workspace,
 };
 
-use crate::{
-    channel_view::{self, ChannelView},
-    face_pile::FacePile,
-};
-use channel_modal::ChannelModal;
+pub use panel_settings::{CollaborationPanelDockPosition, CollaborationPanelSettings};
 
 use self::contact_finder::ContactFinder;
 
@@ -113,7 +112,7 @@ impl_actions!(
 
 const COLLABORATION_PANEL_KEY: &'static str = "CollaborationPanel";
 
-pub fn init(_client: Arc<Client>, cx: &mut AppContext) {
+pub fn init(cx: &mut AppContext) {
     settings::register::<panel_settings::CollaborationPanelSettings>(cx);
     contact_finder::init(cx);
     channel_modal::init(cx);

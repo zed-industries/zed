@@ -1,6 +1,6 @@
 use crate::db::{ChannelId, MessageId, UserId};
 use sea_orm::entity::prelude::*;
-use time::OffsetDateTime;
+use time::PrimitiveDateTime;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "channel_messages")]
@@ -10,7 +10,7 @@ pub struct Model {
     pub channel_id: ChannelId,
     pub sender_id: UserId,
     pub body: String,
-    pub sent_at: OffsetDateTime,
+    pub sent_at: PrimitiveDateTime,
     pub nonce: Uuid,
 }
 

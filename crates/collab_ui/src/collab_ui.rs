@@ -32,7 +32,8 @@ actions!(
 pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     vcs_menu::init(cx);
     collab_titlebar_item::init(cx);
-    collab_panel::init(app_state.client.clone(), cx);
+    collab_panel::init(cx);
+    chat_panel::init(cx);
     incoming_call_notification::init(&app_state, cx);
     project_shared_notification::init(&app_state, cx);
     sharing_status_indicator::init(cx);

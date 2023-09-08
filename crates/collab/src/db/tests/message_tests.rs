@@ -30,6 +30,12 @@ async fn test_channel_message_nonces(db: &Arc<Database>) {
         .await
         .unwrap();
 
+    let owner_id = db.create_server("test").await.unwrap().0 as u32;
+
+    db.join_channel_chat(channel, rpc::ConnectionId { owner_id, id: 0 }, user)
+        .await
+        .unwrap();
+
     let msg1_id = db
         .create_channel_message(channel, user, "1", OffsetDateTime::now_utc(), 1)
         .await

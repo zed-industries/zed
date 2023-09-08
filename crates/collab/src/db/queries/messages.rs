@@ -82,7 +82,7 @@ impl Database {
                     id: row.id.to_proto(),
                     sender_id: row.sender_id.to_proto(),
                     body: row.body,
-                    timestamp: row.sent_at.unix_timestamp() as u64,
+                    timestamp: row.sent_at.assume_utc().unix_timestamp() as u64,
                     nonce: Some(proto::Nonce {
                         upper_half: nonce.0,
                         lower_half: nonce.1,
@@ -123,6 +123,9 @@ impl Database {
             if !is_participant {
                 Err(anyhow!("not a chat participant"))?;
             }
+
+            let timestamp = timestamp.to_offset(time::UtcOffset::UTC);
+            let timestamp = time::PrimitiveDateTime::new(timestamp.date(), timestamp.time());
 
             let message = channel_message::Entity::insert(channel_message::ActiveModel {
                 channel_id: ActiveValue::Set(channel_id),
