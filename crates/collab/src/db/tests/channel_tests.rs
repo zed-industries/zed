@@ -657,7 +657,7 @@ async fn test_channels_moving(db: &Arc<Database>) {
     // zed - crdb - livestreaming - livestreaming_dag - livestreaming_dag_sub_id
     //    \--------/
 
-    // make sure we're getting the new link
+    // make sure we're getting just the new link
     pretty_assertions::assert_eq!(
         channels,
         vec![
@@ -665,12 +665,7 @@ async fn test_channels_moving(db: &Arc<Database>) {
                 id: livestreaming_dag_sub_id,
                 name: "livestreaming_dag_sub".to_string(),
                 parent_id: Some(livestreaming_id),
-            },
-            Channel {
-                id: livestreaming_dag_sub_id,
-                name: "livestreaming_dag_sub".to_string(),
-                parent_id: Some(livestreaming_dag_id),
-            },
+            }
         ]
     );
 
@@ -737,16 +732,6 @@ async fn test_channels_moving(db: &Arc<Database>) {
             id: livestreaming_id,
             name: "livestreaming".to_string(),
             parent_id: Some(gpui2_id),
-        },
-        Channel {
-            id: livestreaming_id,
-            name: "livestreaming".to_string(),
-            parent_id: Some(zed_id),
-        },
-        Channel {
-            id: livestreaming_id,
-            name: "livestreaming".to_string(),
-            parent_id: Some(crdb_id),
         },
         Channel {
             id: livestreaming_dag_id,
@@ -826,16 +811,10 @@ async fn test_channels_moving(db: &Arc<Database>) {
     // zed - crdb -- livestreaming - livestreaming_dag - livestreaming_dag_sub
     //    \---------/
 
-    // Make sure the recently removed link isn't returned
+    // Since we're not moving it to anywhere, there's nothing to notify anyone about
     pretty_assertions::assert_eq!(
         channels,
-        vec![
-            Channel {
-                id: livestreaming_dag_sub_id,
-                name: "livestreaming_dag_sub".to_string(),
-                parent_id: Some(livestreaming_dag_id),
-            },
-        ]
+        vec![]
     );
 
 

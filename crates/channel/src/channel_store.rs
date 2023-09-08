@@ -1,3 +1,5 @@
+mod channel_index;
+
 use crate::{channel_buffer::ChannelBuffer, channel_chat::ChannelChat};
 use anyhow::{anyhow, Result};
 use client::{Client, Subscription, User, UserId, UserStore};
@@ -8,13 +10,14 @@ use rpc::{proto, TypedEnvelope};
 use std::{mem, sync::Arc, time::Duration};
 use util::ResultExt;
 
+use self::channel_index::ChannelIndex;
+
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub type ChannelId = u64;
 
 pub struct ChannelStore {
-    channels_by_id: HashMap<ChannelId, Arc<Channel>>,
-    channel_paths: Vec<Vec<ChannelId>>,
+    channel_index: ChannelIndex,
     channel_invitations: Vec<Arc<Channel>>,
     channel_participants: HashMap<ChannelId, Vec<Arc<User>>>,
     channels_with_admin_privileges: HashSet<ChannelId>,
@@ -82,9 +85,8 @@ impl ChannelStore {
         });
 
         Self {
-            channels_by_id: HashMap::default(),
             channel_invitations: Vec::default(),
-            channel_paths: Vec::default(),
+            channel_index: ChannelIndex::default(),
             channel_participants: Default::default(),
             channels_with_admin_privileges: Default::default(),
             outgoing_invites: Default::default(),
@@ -116,7 +118,7 @@ impl ChannelStore {
     }
 
     pub fn has_children(&self, channel_id: ChannelId) -> bool {
-        self.channel_paths.iter().any(|path| {
+        self.channel_index.iter().any(|path| {
             if let Some(ix) = path.iter().position(|id| *id == channel_id) {
                 path.len() > ix + 1
             } else {
@@ -126,7 +128,7 @@ impl ChannelStore {
     }
 
     pub fn channel_count(&self) -> usize {
-        self.channel_paths.len()
+        self.channel_index.len()
     }
 
     pub fn index_of_channel(&self, channel_id: ChannelId) -> Option<usize> {
@@ -136,7 +138,7 @@ impl ChannelStore {
     }
 
     pub fn channels(&self) -> impl '_ + Iterator<Item = (usize, &Arc<Channel>)> {
-        self.channel_paths.iter().map(move |path| {
+        self.channel_index.iter().map(move |path| {
             let id = path.last().unwrap();
             let channel = self.channel_for_id(*id).unwrap();
             (path.len() - 1, channel)
@@ -144,7 +146,7 @@ impl ChannelStore {
     }
 
     pub fn channel_at_index(&self, ix: usize) -> Option<(usize, &Arc<Channel>)> {
-        let path = self.channel_paths.get(ix)?;
+        let path = self.channel_index.get(ix)?;
         let id = path.last().unwrap();
         let channel = self.channel_for_id(*id).unwrap();
         Some((path.len() - 1, channel))
@@ -155,7 +157,7 @@ impl ChannelStore {
     }
 
     pub fn channel_for_id(&self, channel_id: ChannelId) -> Option<&Arc<Channel>> {
-        self.channels_by_id.get(&channel_id)
+        self.channel_index.by_id().get(&channel_id)
     }
 
     pub fn has_open_channel_buffer(&self, channel_id: ChannelId, cx: &AppContext) -> bool {
@@ -268,7 +270,7 @@ impl ChannelStore {
     }
 
     pub fn is_user_admin(&self, channel_id: ChannelId) -> bool {
-        self.channel_paths.iter().any(|path| {
+        self.channel_index.iter().any(|path| {
             if let Some(ix) = path.iter().position(|id| *id == channel_id) {
                 path[..=ix]
                     .iter()
@@ -323,15 +325,24 @@ impl ChannelStore {
         })
     }
 
-
-    pub fn move_channel(&mut self, channel_id: ChannelId, from_parent: Option<ChannelId>, to: Option<ChannelId>, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn move_channel(
+        &mut self,
+        channel_id: ChannelId,
+        from_parent: Option<ChannelId>,
+        to: Option<ChannelId>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
         let client = self.client.clone();
         cx.spawn(|_, _| async move {
             let _ = client
-                .request(proto::MoveChannel { channel_id, from_parent, to })
+                .request(proto::MoveChannel {
+                    channel_id,
+                    from_parent,
+                    to,
+                })
                 .await?;
 
-           Ok(())
+            Ok(())
         })
     }
 
@@ -651,11 +662,11 @@ impl ChannelStore {
     }
 
     fn handle_disconnect(&mut self, cx: &mut ModelContext<Self>) {
-        self.channels_by_id.clear();
+        self.channel_index.clear();
         self.channel_invitations.clear();
         self.channel_participants.clear();
         self.channels_with_admin_privileges.clear();
-        self.channel_paths.clear();
+        self.channel_index.clear();
         self.outgoing_invites.clear();
         cx.notify();
 
@@ -705,8 +716,7 @@ impl ChannelStore {
         let channels_changed = !payload.channels.is_empty() || !payload.delete_channels.is_empty();
         if channels_changed {
             if !payload.delete_channels.is_empty() {
-                self.channels_by_id
-                    .retain(|channel_id, _| !payload.delete_channels.contains(channel_id));
+                self.channel_index.delete_channels(&payload.delete_channels);
                 self.channel_participants
                     .retain(|channel_id, _| !payload.delete_channels.contains(channel_id));
                 self.channels_with_admin_privileges
@@ -724,44 +734,12 @@ impl ChannelStore {
                 }
             }
 
-            for channel_proto in payload.channels {
-                if let Some(existing_channel) = self.channels_by_id.get_mut(&channel_proto.id) {
-                    Arc::make_mut(existing_channel).name = channel_proto.name;
-                } else {
-                    let channel = Arc::new(Channel {
-                        id: channel_proto.id,
-                        name: channel_proto.name,
-                    });
-                    self.channels_by_id.insert(channel.id, channel.clone());
+            self.channel_index.insert_channels(payload.channels);
+        }
 
-                    if let Some(parent_id) = channel_proto.parent_id {
-                        let mut ix = 0;
-                        while ix < self.channel_paths.len() {
-                            let path = &self.channel_paths[ix];
-                            if path.ends_with(&[parent_id]) {
-                                let mut new_path = path.clone();
-                                new_path.push(channel.id);
-                                self.channel_paths.insert(ix + 1, new_path);
-                                ix += 1;
-                            }
-                            ix += 1;
-                        }
-                    } else {
-                        self.channel_paths.push(vec![channel.id]);
-                    }
-                }
-            }
-
-            self.channel_paths.sort_by(|a, b| {
-                let a = Self::channel_path_sorting_key(a, &self.channels_by_id);
-                let b = Self::channel_path_sorting_key(b, &self.channels_by_id);
-                a.cmp(b)
-            });
-            self.channel_paths.dedup();
-            self.channel_paths.retain(|path| {
-                path.iter()
-                    .all(|channel_id| self.channels_by_id.contains_key(channel_id))
-            });
+        for edge in payload.delete_channel_edge {
+            self.channel_index
+                .remove_edge(edge.parent_id, edge.channel_id);
         }
 
         for permission in payload.channel_permissions {
@@ -820,11 +798,5 @@ impl ChannelStore {
         }))
     }
 
-    fn channel_path_sorting_key<'a>(
-        path: &'a [ChannelId],
-        channels_by_id: &'a HashMap<ChannelId, Arc<Channel>>,
-    ) -> impl 'a + Iterator<Item = Option<&'a str>> {
-        path.iter()
-            .map(|id| Some(channels_by_id.get(id)?.name.as_str()))
-    }
+
 }
