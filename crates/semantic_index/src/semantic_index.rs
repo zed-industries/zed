@@ -232,9 +232,20 @@ impl ProjectState {
             _observe_pending_file_count: cx.spawn_weak({
                 let mut pending_file_count_rx = pending_file_count_rx.clone();
                 |this, mut cx| async move {
-                    while let Some(_) = pending_file_count_rx.next().await {
-                        if let Some(this) = this.upgrade(&cx) {
-                            this.update(&mut cx, |_, cx| cx.notify());
+                    loop {
+                        let mut timer = cx.background().timer(Duration::from_millis(350)).fuse();
+                        let mut pending_file_count = pending_file_count_rx.next().fuse();
+                        futures::select_biased! {
+                            _ = pending_file_count => {
+                                if let Some(this) = this.upgrade(&cx) {
+                                    this.update(&mut cx, |_, cx| cx.notify());
+                                }
+                            },
+                            _ = timer => {
+                                if let Some(this) = this.upgrade(&cx) {
+                                    this.update(&mut cx, |_, cx| cx.notify());
+                                }
+                            }
                         }
                     }
                 }

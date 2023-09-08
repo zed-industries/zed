@@ -332,7 +332,7 @@ impl View for ProjectSearchView {
                                     rate_limit_expiration_time.duration_since(SystemTime::now())
                                 {
                                     Some(format!(
-                                        "Remaining files to index(rate limit resets in {}s): {}",
+                                        "Remaining files to index (rate limit resets in {}s): {}",
                                         remaining_seconds.as_secs(),
                                         remaining_files
                                     ))
