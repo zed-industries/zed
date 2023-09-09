@@ -29,17 +29,15 @@ impl<V: 'static> TabBar<V> {
             .w_full()
             .flex()
             .items_center()
+            .overflow_hidden()
+            .justify_between()
             .fill(theme.highest.base.default.background)
             // Left Side
             .child(
                 div()
                     .px_1()
                     .flex()
-                    // Nate
-                    // This isn't what I wanted, but I wanted to try to get at least SOME x overflow scroll working
-                    // Ideally this should be on the "Tabs" div below
-                    // So only the tabs scroll, and the nav buttons stay pinned left, and the other controls stay pinned right
-                    .overflow_x_scroll(self.scroll_state.clone())
+                    .flex_none()
                     .gap_2()
                     // Nav Buttons
                     .child(
@@ -49,14 +47,21 @@ impl<V: 'static> TabBar<V> {
                             .gap_px()
                             .child(icon_button("icons/arrow_left.svg", ButtonVariant::Ghost))
                             .child(icon_button("icons/arrow_right.svg", ButtonVariant::Ghost)),
-                    )
-                    // Tabs
+                    ),
+            )
+            // Tabs
+            .child(
+                div()
+                    .flex_1()
+                    .py_1()
+                    .overflow_hidden()
+                    .items_center()
+                    .fill(theme.highest.accent.default.background)
                     .child(
                         div()
-                            .py_1()
                             .flex()
-                            .items_center()
                             .gap_px()
+                            .overflow_x_scroll(self.scroll_state.clone())
                             .child(tab("Cargo.toml", false))
                             .child(tab("Channels Panel", true))
                             .child(tab("channels_panel.rs", false))
@@ -73,7 +78,7 @@ impl<V: 'static> TabBar<V> {
                 div()
                     .px_1()
                     .flex()
-                    .flex_initial()
+                    .flex_none()
                     .gap_2()
                     // Nav Buttons
                     .child(

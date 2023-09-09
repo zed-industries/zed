@@ -11,9 +11,9 @@ use simplelog::SimpleLogger;
 
 mod collab_panel;
 mod component;
-mod module;
 mod components;
 mod element_ext;
+mod module;
 mod theme;
 mod workspace;
 
@@ -36,7 +36,7 @@ fn main() {
 
         cx.add_window(
             gpui2::WindowOptions {
-                bounds: WindowBounds::Fixed(RectF::new(vec2f(0., 0.), vec2f(1400., 900.))),
+                bounds: WindowBounds::Fixed(RectF::new(vec2f(0., 0.), vec2f(700., 900.))),
                 center: true,
                 ..Default::default()
             },
