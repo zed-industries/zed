@@ -1,4 +1,4 @@
-use std::{ops::Deref, sync::Arc};
+use std::sync::Arc;
 
 use collections::HashMap;
 use rpc::proto;
@@ -25,6 +25,18 @@ impl ChannelIndex {
         self.channels_by_id.clear();
     }
 
+    pub fn len(&self) -> usize {
+        self.paths.len()
+    }
+
+    pub fn get(&self, idx: usize) -> Option<&ChannelPath> {
+        self.paths.get(idx)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &ChannelPath> {
+        self.paths.iter()
+    }
+
     /// Remove the given edge from this index. This will not remove the channel
     /// and may result in dangling channels.
     pub fn delete_edge(&mut self, parent_id: ChannelId, channel_id: ChannelId) {
@@ -47,14 +59,6 @@ impl ChannelIndex {
             paths: &mut self.paths,
             channels_by_id: &mut self.channels_by_id,
         }
-    }
-}
-
-impl Deref for ChannelIndex {
-    type Target = Vec<ChannelPath>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.paths
     }
 }
 
