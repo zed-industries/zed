@@ -11,6 +11,7 @@ use simplelog::SimpleLogger;
 
 mod collab_panel;
 mod component;
+mod module;
 mod components;
 mod element_ext;
 mod theme;

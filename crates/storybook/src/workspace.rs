@@ -1,8 +1,4 @@
-use crate::{
-    collab_panel::collab_panel,
-    component::icon_button::{icon_button, Variant},
-    theme::theme,
-};
+use crate::{collab_panel::collab_panel, module::tab_bar::tab_bar, theme::theme};
 use gpui2::{
     elements::{div, div::ScrollState, img, svg},
     style::{StyleHelpers, Styleable},
@@ -13,6 +9,7 @@ use gpui2::{
 struct WorkspaceElement {
     left_scroll_state: ScrollState,
     right_scroll_state: ScrollState,
+    tab_bar_scroll_state: ScrollState,
 }
 
 pub fn workspace<V: 'static>() -> impl Element<V> {
@@ -41,17 +38,20 @@ impl WorkspaceElement {
                     .flex()
                     .flex_row()
                     .overflow_hidden()
-                    .child(collab_panel(self.left_scroll_state.clone()))
+                    // .child(collab_panel(self.left_scroll_state.clone()))
                     .child(
-                        div().h_full().flex_1().child(
-                            div()
-                                .w_24()
-                                .h_24()
-                                .child(icon_button("icons/plus.svg", Variant::Ghost))
-                                .child(icon_button("icons/x.svg", Variant::Filled)),
-                        ),
-                    )
-                    .child(collab_panel(self.right_scroll_state.clone())),
+                        div()
+                            .h_full()
+                            .flex_1()
+                            .fill(theme.highest.base.default.background)
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .child(tab_bar(self.tab_bar_scroll_state.clone())),
+                            ),
+                    ), // .child(collab_panel(self.right_scroll_state.clone())),
             )
             .child(statusbar())
     }

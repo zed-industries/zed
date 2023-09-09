@@ -7,16 +7,16 @@ use gpui2::{Element, ParentElement, ViewContext};
 #[derive(Element)]
 struct IconButton {
     path: &'static str,
-    variant: Variant,
+    variant: ButtonVariant,
 }
 
 #[derive(PartialEq)]
-pub enum Variant {
+pub enum ButtonVariant {
     Ghost,
     Filled,
 }
 
-pub fn icon_button<V: 'static>(path: &'static str, variant: Variant) -> impl Element<V> {
+pub fn icon_button<V: 'static>(path: &'static str, variant: ButtonVariant) -> impl Element<V> {
     IconButton { path, variant }
 }
 
@@ -25,8 +25,8 @@ impl IconButton {
         let theme = theme(cx);
         let mut div = div();
 
-        if self.variant == Variant::Filled {
-            div = div.fill(theme.middle.base.default.background);
+        if self.variant == ButtonVariant::Filled {
+            div = div.fill(theme.highest.base.default.background);
         }
 
         div.w_7()
@@ -35,20 +35,16 @@ impl IconButton {
             .items_center()
             .justify_center()
             .rounded_md()
-            .border()
-            .border_color(theme.middle.base.default.background)
             .hover()
-            .fill(theme.middle.base.hovered.background)
-            .border_color(theme.middle.variant.hovered.border)
+            .fill(theme.highest.base.hovered.background)
             .active()
-            .fill(theme.middle.base.pressed.background)
-            .border_color(theme.middle.variant.pressed.border)
+            .fill(theme.highest.base.pressed.background)
             .child(
                 svg()
                     .path(self.path)
                     .w_4()
                     .h_4()
-                    .fill(theme.middle.variant.default.foreground),
+                    .fill(theme.highest.variant.default.foreground),
             )
     }
 }
