@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::Result;
 use call::ActiveCall;
-use channel::{Channel, ChannelEvent, ChannelId, ChannelStore};
+use channel::{Channel, ChannelEvent, ChannelId, ChannelStore, ChannelPath};
 use channel_modal::ChannelModal;
 use client::{proto::PeerId, Client, Contact, User, UserStore};
 use contact_finder::ContactFinder;
@@ -40,7 +40,7 @@ use menu::{Confirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
 use serde_derive::{Deserialize, Serialize};
 use settings::SettingsStore;
-use std::{borrow::Cow, mem, sync::Arc};
+use std::{borrow::Cow, mem, sync::Arc, hash::Hash};
 use theme::{components::ComponentExt, IconButton};
 use util::{iife, ResultExt, TryFutureExt};
 use workspace::{
@@ -51,32 +51,32 @@ use workspace::{
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct RemoveChannel {
-    channel_id: u64,
+    channel_id: ChannelId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct ToggleCollapse {
-    channel_id: u64,
+    location: ChannelLocation<'static>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct NewChannel {
-    channel_id: u64,
+    location: ChannelLocation<'static>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct InviteMembers {
-    channel_id: u64,
+    channel_id: ChannelId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct ManageMembers {
-    channel_id: u64,
+    channel_id: ChannelId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct RenameChannel {
-    channel_id: u64,
+    location: ChannelLocation<'static>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -87,6 +87,26 @@ pub struct OpenChannelNotes {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct JoinChannelCall {
     pub channel_id: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct OpenChannelBuffer {
+    channel_id: ChannelId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct CopyChannel {
+    channel_id: ChannelId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct CutChannel {
+    channel_id: ChannelId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct PasteChannel {
+    channel_id: ChannelId,
 }
 
 actions!(
@@ -111,12 +131,35 @@ impl_actions!(
         ToggleCollapse,
         OpenChannelNotes,
         JoinChannelCall,
+        OpenChannelBuffer,
+        CopyChannel,
+        CutChannel,
+        PasteChannel,
     ]
 );
 
 const COLLABORATION_PANEL_KEY: &'static str = "CollaborationPanel";
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct ChannelLocation<'a> {
+    channel: ChannelId,
+    parent: Cow<'a, ChannelPath>,
+}
+
+impl From<(ChannelId, ChannelPath)> for ChannelLocation<'static> {
+    fn from(value: (ChannelId, ChannelPath)) -> Self {
+        ChannelLocation { channel: value.0, parent: Cow::Owned(value.1) }
+    }
+}
+
+impl<'a> From<(ChannelId, &'a ChannelPath)> for ChannelLocation<'a> {
+    fn from(value: (ChannelId, &'a ChannelPath)) -> Self {
+        ChannelLocation { channel: value.0, parent: Cow::Borrowed(value.1) }
+    }
+}
+
 pub fn init(cx: &mut AppContext) {
+    settings::register::<panel_settings::CollaborationPanelSettings>(cx);
     contact_finder::init(cx);
     channel_modal::init(cx);
     channel_view::init(cx);
@@ -137,16 +180,37 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(CollabPanel::collapse_selected_channel);
     cx.add_action(CollabPanel::expand_selected_channel);
     cx.add_action(CollabPanel::open_channel_notes);
+    cx.add_action(CollabPanel::open_channel_buffer);
+
+    cx.add_action(|panel: &mut CollabPanel, action: &CopyChannel, _: &mut ViewContext<CollabPanel>| {
+        panel.copy = Some(ChannelCopy::Copy(action.channel_id));
+    });
+
+    cx.add_action(|panel: &mut CollabPanel, action: &CutChannel, _: &mut ViewContext<CollabPanel>| {
+        // panel.copy = Some(ChannelCopy::Cut(action.channel_id));
+    });
+
+    cx.add_action(|panel: &mut CollabPanel, action: &PasteChannel, cx: &mut ViewContext<CollabPanel>| {
+        if let Some(copy) = &panel.copy {
+            match copy {
+                ChannelCopy::Cut {..} => todo!(),
+                ChannelCopy::Copy(channel) => panel.channel_store.update(cx, |channel_store, cx| {
+                    channel_store.move_channel(*channel, None, Some(action.channel_id), cx).detach_and_log_err(cx)
+                }),
+            }
+        }
+    });
+
 }
 
 #[derive(Debug)]
 pub enum ChannelEditingState {
     Create {
-        parent_id: Option<u64>,
+        location: Option<ChannelLocation<'static>>,
         pending_name: Option<String>,
     },
     Rename {
-        channel_id: u64,
+        location: ChannelLocation<'static>,
         pending_name: Option<String>,
     },
 }
@@ -160,10 +224,19 @@ impl ChannelEditingState {
     }
 }
 
+enum ChannelCopy {
+    Cut {
+        channel_id: u64,
+        parent_id: Option<u64>,
+    },
+    Copy(u64),
+}
+
 pub struct CollabPanel {
     width: Option<f32>,
     fs: Arc<dyn Fs>,
     has_focus: bool,
+    copy: Option<ChannelCopy>,
     pending_serialization: Task<Option<()>>,
     context_menu: ViewHandle<ContextMenu>,
     filter_editor: ViewHandle<Editor>,
@@ -179,7 +252,7 @@ pub struct CollabPanel {
     list_state: ListState<Self>,
     subscriptions: Vec<Subscription>,
     collapsed_sections: Vec<Section>,
-    collapsed_channels: Vec<ChannelId>,
+    collapsed_channels: Vec<ChannelLocation<'static>>,
     workspace: WeakViewHandle<Workspace>,
     context_menu_on_selected: bool,
 }
@@ -187,7 +260,7 @@ pub struct CollabPanel {
 #[derive(Serialize, Deserialize)]
 struct SerializedCollabPanel {
     width: Option<f32>,
-    collapsed_channels: Option<Vec<ChannelId>>,
+    collapsed_channels: Option<Vec<ChannelLocation<'static>>>,
 }
 
 #[derive(Debug)]
@@ -231,6 +304,7 @@ enum ListEntry {
     Channel {
         channel: Arc<Channel>,
         depth: usize,
+        path: Arc<[ChannelId]>,
     },
     ChannelNotes {
         channel_id: ChannelId,
@@ -348,10 +422,11 @@ impl CollabPanel {
                                 cx,
                             )
                         }
-                        ListEntry::Channel { channel, depth } => {
+                        ListEntry::Channel { channel, depth, path } => {
                             let channel_row = this.render_channel(
                                 &*channel,
                                 *depth,
+                                path.to_owned(),
                                 &theme.collab_panel,
                                 is_selected,
                                 cx,
@@ -420,6 +495,7 @@ impl CollabPanel {
             let mut this = Self {
                 width: None,
                 has_focus: false,
+                copy: None,
                 fs: workspace.app_state().fs.clone(),
                 pending_serialization: Task::ready(None),
                 context_menu: cx.add_view(|cx| ContextMenu::new(view_id, cx)),
@@ -700,7 +776,7 @@ impl CollabPanel {
                     if matches!(
                         state,
                         ChannelEditingState::Create {
-                            parent_id: None,
+                            location: None,
                             ..
                         }
                     ) {
@@ -709,16 +785,18 @@ impl CollabPanel {
                 }
                 let mut collapse_depth = None;
                 for mat in matches {
-                    let (depth, channel) =
+                    let (depth, channel, path) =
                         channel_store.channel_at_index(mat.candidate_id).unwrap();
 
-                    if collapse_depth.is_none() && self.is_channel_collapsed(channel.id) {
+                    let location: ChannelLocation<'_> = (channel.id, path).into();
+
+                    if collapse_depth.is_none() && self.is_channel_collapsed(&location) {
                         collapse_depth = Some(depth);
                     } else if let Some(collapsed_depth) = collapse_depth {
                         if depth > collapsed_depth {
                             continue;
                         }
-                        if self.is_channel_collapsed(channel.id) {
+                        if self.is_channel_collapsed(&location) {
                             collapse_depth = Some(depth);
                         } else {
                             collapse_depth = None;
@@ -726,18 +804,19 @@ impl CollabPanel {
                     }
 
                     match &self.channel_editing_state {
-                        Some(ChannelEditingState::Create { parent_id, .. })
-                            if *parent_id == Some(channel.id) =>
+                        Some(ChannelEditingState::Create { location: parent_id, .. })
+                            if *parent_id == Some(location) =>
                         {
                             self.entries.push(ListEntry::Channel {
                                 channel: channel.clone(),
                                 depth,
+                                path: path.clone(),
                             });
                             self.entries
                                 .push(ListEntry::ChannelEditor { depth: depth + 1 });
                         }
-                        Some(ChannelEditingState::Rename { channel_id, .. })
-                            if *channel_id == channel.id =>
+                        Some(ChannelEditingState::Rename { location, .. })
+                            if location.channel == channel.id && location.parent == Cow::Borrowed(path) =>
                         {
                             self.entries.push(ListEntry::ChannelEditor { depth });
                         }
@@ -745,6 +824,7 @@ impl CollabPanel {
                             self.entries.push(ListEntry::Channel {
                                 channel: channel.clone(),
                                 depth,
+                                path: path.clone()
                             });
                         }
                     }
@@ -1546,14 +1626,21 @@ impl CollabPanel {
         &self,
         channel: &Channel,
         depth: usize,
+        path: ChannelPath,
         theme: &theme::CollabPanel,
         is_selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
         let channel_id = channel.id;
         let has_children = self.channel_store.read(cx).has_children(channel_id);
-        let disclosed =
-            has_children.then(|| !self.collapsed_channels.binary_search(&channel_id).is_ok());
+
+        let disclosed = {
+            let location = ChannelLocation {
+                channel: channel_id,
+                parent: Cow::Borrowed(&path),
+            };
+            has_children.then(|| !self.collapsed_channels.binary_search(&location).is_ok())
+        };
 
         let is_active = iife!({
             let call_channel = ActiveCall::global(cx)
@@ -1569,7 +1656,7 @@ impl CollabPanel {
 
         enum ChannelCall {}
 
-        MouseEventHandler::new::<Channel, _>(channel.id as usize, cx, |state, cx| {
+        MouseEventHandler::new::<Channel, _>(id(&path) as usize, cx, |state, cx| {
             let row_hovered = state.hovered();
 
             Flex::<Self>::row()
@@ -1637,8 +1724,8 @@ impl CollabPanel {
                 )
                 .align_children_center()
                 .styleable_component()
-                .disclosable(disclosed, Box::new(ToggleCollapse { channel_id }))
-                .with_id(channel_id as usize)
+                .disclosable(disclosed, Box::new(ToggleCollapse { location: (channel_id, path.clone()).into() }))
+                .with_id(id(&path) as usize)
                 .with_style(theme.disclosure.clone())
                 .element()
                 .constrained()
@@ -1654,7 +1741,7 @@ impl CollabPanel {
             this.join_channel_chat(channel_id, cx);
         })
         .on_click(MouseButton::Right, move |e, this, cx| {
-            this.deploy_channel_context_menu(Some(e.position), channel_id, cx);
+            this.deploy_channel_context_menu(Some(e.position), &(channel_id, path.clone()).into(), cx);
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .into_any()
@@ -1901,7 +1988,7 @@ impl CollabPanel {
     fn deploy_channel_context_menu(
         &mut self,
         position: Option<Vector2F>,
-        channel_id: u64,
+        location: &ChannelLocation<'static>,
         cx: &mut ViewContext<Self>,
     ) {
         self.context_menu_on_selected = position.is_none();
@@ -1913,27 +2000,29 @@ impl CollabPanel {
                 OverlayPositionMode::Window
             });
 
-            let expand_action_name = if self.is_channel_collapsed(channel_id) {
+            let expand_action_name = if self.is_channel_collapsed(&location) {
                 "Expand Subchannels"
             } else {
                 "Collapse Subchannels"
             };
 
             let mut items = vec![
-                ContextMenuItem::action(expand_action_name, ToggleCollapse { channel_id }),
-                ContextMenuItem::action("Open Notes", OpenChannelNotes { channel_id }),
+                ContextMenuItem::action(expand_action_name, ToggleCollapse { location: location.clone() }),
+                ContextMenuItem::action("Open Notes", OpenChannelBuffer { channel_id: location.channel }),
             ];
 
-            if self.channel_store.read(cx).is_user_admin(channel_id) {
+            if self.channel_store.read(cx).is_user_admin(location.channel) {
                 items.extend([
                     ContextMenuItem::Separator,
-                    ContextMenuItem::action("New Subchannel", NewChannel { channel_id }),
-                    ContextMenuItem::action("Rename", RenameChannel { channel_id }),
+                    ContextMenuItem::action("New Subchannel", NewChannel { location: location.clone() }),
+                    ContextMenuItem::action("Rename", RenameChannel { location: location.clone() }),
+                    ContextMenuItem::action("Copy", CopyChannel { channel_id: location.channel }),
+                    ContextMenuItem::action("Paste", PasteChannel { channel_id: location.channel }),
                     ContextMenuItem::Separator,
-                    ContextMenuItem::action("Invite Members", InviteMembers { channel_id }),
-                    ContextMenuItem::action("Manage Members", ManageMembers { channel_id }),
+                    ContextMenuItem::action("Invite Members", InviteMembers { channel_id: location.channel }),
+                    ContextMenuItem::action("Manage Members", ManageMembers { channel_id: location.channel }),
                     ContextMenuItem::Separator,
-                    ContextMenuItem::action("Delete", RemoveChannel { channel_id }),
+                    ContextMenuItem::action("Delete", RemoveChannel { channel_id: location.channel }),
                 ]);
             }
 
@@ -2059,7 +2148,7 @@ impl CollabPanel {
         if let Some(editing_state) = &mut self.channel_editing_state {
             match editing_state {
                 ChannelEditingState::Create {
-                    parent_id,
+                    location,
                     pending_name,
                     ..
                 } => {
@@ -2072,13 +2161,13 @@ impl CollabPanel {
 
                     self.channel_store
                         .update(cx, |channel_store, cx| {
-                            channel_store.create_channel(&channel_name, *parent_id, cx)
+                            channel_store.create_channel(&channel_name, location.as_ref().map(|location| location.channel), cx)
                         })
                         .detach();
                     cx.notify();
                 }
                 ChannelEditingState::Rename {
-                    channel_id,
+                    location,
                     pending_name,
                 } => {
                     if pending_name.is_some() {
@@ -2089,7 +2178,7 @@ impl CollabPanel {
 
                     self.channel_store
                         .update(cx, |channel_store, cx| {
-                            channel_store.rename(*channel_id, &channel_name, cx)
+                            channel_store.rename(location.channel, &channel_name, cx)
                         })
                         .detach();
                     cx.notify();
@@ -2116,38 +2205,42 @@ impl CollabPanel {
         _: &CollapseSelectedChannel,
         cx: &mut ViewContext<Self>,
     ) {
-        let Some(channel_id) = self.selected_channel().map(|channel| channel.id) else {
+        let Some((channel_id, path)) = self.selected_channel().map(|(channel, parent)| (channel.id, parent)) else {
             return;
         };
 
-        if self.is_channel_collapsed(channel_id) {
+        let path = path.to_owned();
+
+        if self.is_channel_collapsed(&(channel_id, path.clone()).into()) {
             return;
         }
 
-        self.toggle_channel_collapsed(&ToggleCollapse { channel_id }, cx)
+        self.toggle_channel_collapsed(&ToggleCollapse { location: (channel_id, path).into() }, cx)
     }
 
     fn expand_selected_channel(&mut self, _: &ExpandSelectedChannel, cx: &mut ViewContext<Self>) {
-        let Some(channel_id) = self.selected_channel().map(|channel| channel.id) else {
+        let Some((channel_id, path)) = self.selected_channel().map(|(channel, parent)| (channel.id, parent)) else {
             return;
         };
 
-        if !self.is_channel_collapsed(channel_id) {
+        let path = path.to_owned();
+
+        if !self.is_channel_collapsed(&(channel_id, path.clone()).into()) {
             return;
         }
 
-        self.toggle_channel_collapsed(&ToggleCollapse { channel_id }, cx)
+        self.toggle_channel_collapsed(&ToggleCollapse { location: (channel_id, path).into() }, cx)
     }
 
     fn toggle_channel_collapsed(&mut self, action: &ToggleCollapse, cx: &mut ViewContext<Self>) {
-        let channel_id = action.channel_id;
+        let location = action.location.clone();
 
-        match self.collapsed_channels.binary_search(&channel_id) {
+        match self.collapsed_channels.binary_search(&location) {
             Ok(ix) => {
                 self.collapsed_channels.remove(ix);
             }
             Err(ix) => {
-                self.collapsed_channels.insert(ix, channel_id);
+                self.collapsed_channels.insert(ix, location);
             }
         };
         self.serialize(cx);
@@ -2156,8 +2249,8 @@ impl CollabPanel {
         cx.focus_self();
     }
 
-    fn is_channel_collapsed(&self, channel: ChannelId) -> bool {
-        self.collapsed_channels.binary_search(&channel).is_ok()
+    fn is_channel_collapsed(&self, location: &ChannelLocation) -> bool {
+        self.collapsed_channels.binary_search(location).is_ok()
     }
 
     fn leave_call(cx: &mut ViewContext<Self>) {
@@ -2182,7 +2275,7 @@ impl CollabPanel {
 
     fn new_root_channel(&mut self, cx: &mut ViewContext<Self>) {
         self.channel_editing_state = Some(ChannelEditingState::Create {
-            parent_id: None,
+            location: None,
             pending_name: None,
         });
         self.update_entries(false, cx);
@@ -2200,9 +2293,9 @@ impl CollabPanel {
 
     fn new_subchannel(&mut self, action: &NewChannel, cx: &mut ViewContext<Self>) {
         self.collapsed_channels
-            .retain(|&channel| channel != action.channel_id);
+            .retain(|channel| *channel != action.location);
         self.channel_editing_state = Some(ChannelEditingState::Create {
-            parent_id: Some(action.channel_id),
+            location: Some(action.location.to_owned()),
             pending_name: None,
         });
         self.update_entries(false, cx);
@@ -2220,16 +2313,16 @@ impl CollabPanel {
     }
 
     fn remove(&mut self, _: &Remove, cx: &mut ViewContext<Self>) {
-        if let Some(channel) = self.selected_channel() {
+        if let Some((channel, _)) = self.selected_channel() {
             self.remove_channel(channel.id, cx)
         }
     }
 
     fn rename_selected_channel(&mut self, _: &menu::SecondaryConfirm, cx: &mut ViewContext<Self>) {
-        if let Some(channel) = self.selected_channel() {
+        if let Some((channel, parent)) = self.selected_channel() {
             self.rename_channel(
                 &RenameChannel {
-                    channel_id: channel.id,
+                    location: (channel.id, parent.to_owned()).into(),
                 },
                 cx,
             );
@@ -2238,12 +2331,12 @@ impl CollabPanel {
 
     fn rename_channel(&mut self, action: &RenameChannel, cx: &mut ViewContext<Self>) {
         let channel_store = self.channel_store.read(cx);
-        if !channel_store.is_user_admin(action.channel_id) {
+        if !channel_store.is_user_admin(action.location.channel) {
             return;
         }
-        if let Some(channel) = channel_store.channel_for_id(action.channel_id).cloned() {
+        if let Some(channel) = channel_store.channel_for_id(action.location.channel).cloned() {
             self.channel_editing_state = Some(ChannelEditingState::Rename {
-                channel_id: action.channel_id,
+                location: action.location.to_owned(),
                 pending_name: None,
             });
             self.channel_name_editor.update(cx, |editor, cx| {
@@ -2263,18 +2356,18 @@ impl CollabPanel {
     }
 
     fn show_inline_context_menu(&mut self, _: &menu::ShowContextMenu, cx: &mut ViewContext<Self>) {
-        let Some(channel) = self.selected_channel() else {
+        let Some((channel, path)) = self.selected_channel() else {
             return;
         };
 
-        self.deploy_channel_context_menu(None, channel.id, cx);
+        self.deploy_channel_context_menu(None, &(channel.id, path.to_owned()).into(), cx);
     }
 
-    fn selected_channel(&self) -> Option<&Arc<Channel>> {
+    fn selected_channel(&self) -> Option<(&Arc<Channel>, &ChannelPath)> {
         self.selection
             .and_then(|ix| self.entries.get(ix))
             .and_then(|entry| match entry {
-                ListEntry::Channel { channel, .. } => Some(channel),
+                ListEntry::Channel { channel, path: parent, .. } => Some((channel, parent)),
                 _ => None,
             })
     }
@@ -2657,13 +2750,15 @@ impl PartialEq for ListEntry {
             ListEntry::Channel {
                 channel: channel_1,
                 depth: depth_1,
+                path: parent_1,
             } => {
                 if let ListEntry::Channel {
                     channel: channel_2,
                     depth: depth_2,
+                    path: parent_2,
                 } = other
                 {
-                    return channel_1.id == channel_2.id && depth_1 == depth_2;
+                    return channel_1.id == channel_2.id && depth_1 == depth_2 && parent_1 == parent_2;
                 }
             }
             ListEntry::ChannelNotes { channel_id } => {
@@ -2725,4 +2820,27 @@ fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Elemen
         .with_height(style.button_width)
         .contained()
         .with_style(style.container)
+}
+
+/// Hash a channel path to a u64, for use as a mouse id
+/// Based on the Fowler–Noll–Vo hash:
+/// https://en.wikipedia.org/wiki/Fowler%E2%80%93Noll%E2%80%93Vo_hash_function
+fn id(path: &[ChannelId]) -> u64 {
+    // I probably should have done this, but I didn't
+    // let hasher = DefaultHasher::new();
+    // let path = path.hash(&mut hasher);
+    // let x = hasher.finish();
+
+    const OFFSET: u64 = 14695981039346656037;
+    const PRIME: u64 = 1099511628211;
+
+    let mut hash = OFFSET;
+    for id in path.iter() {
+        for id in id.to_ne_bytes() {
+            hash = hash ^ (id as u64);
+            hash = (hash as u128 * PRIME as u128) as u64;
+        }
+    }
+
+    hash
 }

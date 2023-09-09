@@ -328,7 +328,6 @@ request_messages!(
     (GetChannelMessages, GetChannelMessagesResponse),
     (GetChannelMembers, GetChannelMembersResponse),
     (JoinChannel, JoinRoomResponse),
-    (RemoveChannel, Ack),
     (RemoveChannelMessage, Ack),
     (DeleteChannel, Ack),
     (RenameProjectEntry, ProjectEntryResponse),
