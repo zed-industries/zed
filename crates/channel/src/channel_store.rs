@@ -140,7 +140,7 @@ impl ChannelStore {
         })
     }
 
-    pub fn channel_at_index(&self, ix: usize) -> Option<(&Arc<Channel>, &Arc<[ChannelId]>)> {
+    pub fn channel_at_index(&self, ix: usize) -> Option<(&Arc<Channel>, &ChannelPath)> {
         let path = self.channel_index.get(ix)?;
         let id = path.last().unwrap();
         let channel = self.channel_for_id(*id).unwrap();
