@@ -1,12 +1,37 @@
-use std::sync::Arc;
+use std::{sync::Arc, ops::Deref};
 
 use collections::HashMap;
 use rpc::proto;
+use serde_derive::{Serialize, Deserialize};
 
 use crate::{ChannelId, Channel};
 
-pub type ChannelPath = Arc<[ChannelId]>;
 pub type ChannelsById = HashMap<ChannelId, Arc<Channel>>;
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
+pub struct ChannelPath(Arc<[ChannelId]>);
+
+impl Deref for ChannelPath {
+    type Target = [ChannelId];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl ChannelPath {
+    pub fn parent_id(&self) -> Option<ChannelId> {
+        self.0.len().checked_sub(2).map(|i| {
+            self.0[i]
+        })
+    }
+}
+
+impl Default for ChannelPath {
+    fn default() -> Self {
+        ChannelPath(Arc::from([]))
+    }
+}
 
 #[derive(Default, Debug)]
 pub struct ChannelIndex {
@@ -99,7 +124,7 @@ impl<'a> ChannelPathsUpsertGuard<'a> {
             if path.ends_with(&[parent_id]) {
                 let mut new_path = path.to_vec();
                 new_path.push(channel_id);
-                self.paths.insert(ix + 1, new_path.into());
+                self.paths.insert(ix + 1, ChannelPath(new_path.into()));
                 ix += 1;
             }
             ix += 1;
@@ -107,7 +132,7 @@ impl<'a> ChannelPathsUpsertGuard<'a> {
     }
 
     fn insert_root(&mut self, channel_id: ChannelId) {
-        self.paths.push(Arc::from([channel_id]));
+        self.paths.push(ChannelPath(Arc::from([channel_id])));
     }
 }
 
