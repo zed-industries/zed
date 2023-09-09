@@ -240,6 +240,7 @@ impl ChatPanel {
                     select.set_selected_index(ix, cx);
                 }
             });
+            cx.notify();
         }
     }
 
