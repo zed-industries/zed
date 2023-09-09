@@ -785,8 +785,9 @@ impl CollabPanel {
                 }
                 let mut collapse_depth = None;
                 for mat in matches {
-                    let (depth, channel, path) =
+                    let (channel, path) =
                         channel_store.channel_at_index(mat.candidate_id).unwrap();
+                    let depth = path.len() - 1;
 
                     let location: ChannelLocation<'_> = (channel.id, path).into();
 
