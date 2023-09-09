@@ -1,8 +1,5 @@
-use serde::Deserialize;
-
 use crate::{
-    actions, elements::*, impl_actions, platform::MouseButton, AppContext, Entity, View,
-    ViewContext, WeakViewHandle,
+    elements::*, platform::MouseButton, AppContext, Entity, View, ViewContext, WeakViewHandle,
 };
 
 pub struct Select {
@@ -27,18 +24,7 @@ pub enum ItemType {
     Unselected,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
-pub struct SelectItem(pub usize);
-
-actions!(select, [ToggleSelect]);
-impl_actions!(select, [SelectItem]);
-
 pub enum Event {}
-
-pub fn init(cx: &mut AppContext) {
-    cx.add_action(Select::toggle);
-    cx.add_action(Select::select_item);
-}
 
 impl Select {
     pub fn new<F: 'static + Fn(usize, ItemType, bool, &AppContext) -> AnyElement<Self>>(
@@ -67,13 +53,13 @@ impl Select {
         cx.notify();
     }
 
-    fn toggle(&mut self, _: &ToggleSelect, cx: &mut ViewContext<Self>) {
+    fn toggle(&mut self, cx: &mut ViewContext<Self>) {
         self.is_open = !self.is_open;
         cx.notify();
     }
 
-    fn select_item(&mut self, action: &SelectItem, cx: &mut ViewContext<Self>) {
-        self.selected_item_ix = action.0;
+    pub fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Self>) {
+        self.selected_item_ix = ix;
         self.is_open = false;
         cx.notify();
     }
@@ -117,7 +103,7 @@ impl View for Select {
                 .with_style(style.header)
             })
             .on_click(MouseButton::Left, move |_, this, cx| {
-                this.toggle(&Default::default(), cx);
+                this.toggle(cx);
             }),
         );
         if self.is_open {
@@ -143,7 +129,7 @@ impl View for Select {
                                 )
                             })
                             .on_click(MouseButton::Left, move |_, this, cx| {
-                                this.select_item(&SelectItem(ix), cx);
+                                this.set_selected_index(ix, cx);
                             })
                             .into_any()
                         }))

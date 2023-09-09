@@ -106,8 +106,8 @@ impl ChannelChat {
         }))
     }
 
-    pub fn name(&self) -> &str {
-        &self.channel.name
+    pub fn channel(&self) -> &Arc<Channel> {
+        &self.channel
     }
 
     pub fn send_message(

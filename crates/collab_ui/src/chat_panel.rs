@@ -157,16 +157,8 @@ impl ChatPanel {
                     .channel_at_index(selected_ix)
                     .map(|e| e.1.id);
                 if let Some(selected_channel_id) = selected_channel_id {
-                    let open_chat = this.channel_store.update(cx, |store, cx| {
-                        store.open_channel_chat(selected_channel_id, cx)
-                    });
-                    cx.spawn(|this, mut cx| async move {
-                        let chat = open_chat.await?;
-                        this.update(&mut cx, |this, cx| {
-                            this.set_active_channel(chat, cx);
-                        })
-                    })
-                    .detach_and_log_err(cx);
+                    this.select_channel(selected_channel_id, cx)
+                        .detach_and_log_err(cx);
                 }
             })
             .detach();
@@ -230,22 +222,24 @@ impl ChatPanel {
         });
     }
 
-    fn set_active_channel(
-        &mut self,
-        channel: ModelHandle<ChannelChat>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        if self.active_channel.as_ref().map(|e| &e.0) != Some(&channel) {
+    fn set_active_channel(&mut self, chat: ModelHandle<ChannelChat>, cx: &mut ViewContext<Self>) {
+        if self.active_channel.as_ref().map(|e| &e.0) != Some(&chat) {
+            let id = chat.read(cx).channel().id;
             {
-                let channel = channel.read(cx);
-                self.message_list.reset(channel.message_count());
-                let placeholder = format!("Message #{}", channel.name());
+                let chat = chat.read(cx);
+                self.message_list.reset(chat.message_count());
+                let placeholder = format!("Message #{}", chat.channel().name);
                 self.input_editor.update(cx, move |editor, cx| {
                     editor.set_placeholder_text(placeholder, cx);
                 });
             }
-            let subscription = cx.subscribe(&channel, Self::channel_did_change);
-            self.active_channel = Some((channel, subscription));
+            let subscription = cx.subscribe(&chat, Self::channel_did_change);
+            self.active_channel = Some((chat, subscription));
+            self.channel_select.update(cx, |select, cx| {
+                if let Some(ix) = self.channel_store.read(cx).index_of_channel(id) {
+                    select.set_selected_index(ix, cx);
+                }
+            });
         }
     }
 
@@ -423,6 +417,22 @@ impl ChatPanel {
                 channel.load_more_messages(cx);
             })
         }
+    }
+
+    pub fn select_channel(
+        &mut self,
+        selected_channel_id: u64,
+        cx: &mut ViewContext<ChatPanel>,
+    ) -> Task<Result<()>> {
+        let open_chat = self.channel_store.update(cx, |store, cx| {
+            store.open_channel_chat(selected_channel_id, cx)
+        });
+        cx.spawn(|this, mut cx| async move {
+            let chat = open_chat.await?;
+            this.update(&mut cx, |this, cx| {
+                this.set_active_channel(chat, cx);
+            })
+        })
     }
 }
 

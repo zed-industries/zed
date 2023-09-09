@@ -129,6 +129,12 @@ impl ChannelStore {
         self.channel_paths.len()
     }
 
+    pub fn index_of_channel(&self, channel_id: ChannelId) -> Option<usize> {
+        self.channel_paths
+            .iter()
+            .position(|path| path.ends_with(&[channel_id]))
+    }
+
     pub fn channels(&self) -> impl '_ + Iterator<Item = (usize, &Arc<Channel>)> {
         self.channel_paths.iter().map(move |path| {
             let id = path.last().unwrap();
