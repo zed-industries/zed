@@ -11,6 +11,7 @@ use std::{mem, sync::Arc, time::Duration};
 use util::ResultExt;
 
 use self::channel_index::ChannelIndex;
+pub use self::channel_index::ChannelPath;
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -139,11 +140,13 @@ impl ChannelStore {
         })
     }
 
-    pub fn channel_at_index(&self, ix: usize) -> Option<(usize, &Arc<Channel>)> {
+    pub fn channel_at_index(&self, ix: usize) -> Option<(usize, &Arc<Channel>, &Arc<[ChannelId]>)> {
         let path = self.channel_index.get(ix)?;
         let id = path.last().unwrap();
         let channel = self.channel_for_id(*id).unwrap();
-        Some((path.len() - 1, channel))
+
+
+        Some((path.len() - 1, channel, path))
     }
 
     pub fn channel_invitations(&self) -> &[Arc<Channel>] {
@@ -686,12 +689,15 @@ impl ChannelStore {
                 }
             }
 
-            self.channel_index.insert_channels(payload.channels);
+            let mut channel_index = self.channel_index.start_upsert();
+            for channel in payload.channels {
+                channel_index.upsert(channel)
+            }
         }
 
         for edge in payload.delete_channel_edge {
             self.channel_index
-                .remove_edge(edge.parent_id, edge.channel_id);
+                .delete_edge(edge.parent_id, edge.channel_id);
         }
 
         for permission in payload.channel_permissions {
