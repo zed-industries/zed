@@ -10,6 +10,7 @@ use settings::{default_settings, SettingsStore};
 use simplelog::SimpleLogger;
 
 mod collab_panel;
+mod component;
 mod components;
 mod element_ext;
 mod theme;
@@ -40,7 +41,7 @@ fn main() {
             },
             |cx| {
                 view(|cx| {
-                    cx.enable_inspector();
+                    // cx.enable_inspector();
                     storybook(&mut ViewContext::new(cx))
                 })
             },
