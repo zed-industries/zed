@@ -106,7 +106,7 @@ struct PutChannel {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct UnlinkChannel {
     channel_id: ChannelId,
-    parent_id: ChannelId,
+    parent_id: Option<ChannelId>,
 }
 
 actions!(
@@ -188,13 +188,13 @@ pub fn init(_client: Arc<Client>, cx: &mut AppContext) {
 
     cx.add_action(
         |panel: &mut CollabPanel, action: &LinkChannel, _: &mut ViewContext<CollabPanel>| {
-            panel.copy = Some(ChannelCopy::Link(action.channel_id));
+            panel.link_or_move = Some(ChannelCopy::Link(action.channel_id));
         },
     );
 
     cx.add_action(
         |panel: &mut CollabPanel, action: &MoveChannel, _: &mut ViewContext<CollabPanel>| {
-            panel.copy = Some(ChannelCopy::Move {
+            panel.link_or_move = Some(ChannelCopy::Move {
                 channel_id: action.channel_id,
                 parent_id: action.parent_id,
             });
@@ -203,20 +203,20 @@ pub fn init(_client: Arc<Client>, cx: &mut AppContext) {
 
     cx.add_action(
         |panel: &mut CollabPanel, action: &PutChannel, cx: &mut ViewContext<CollabPanel>| {
-            if let Some(copy) = panel.copy.take() {
+            if let Some(copy) = panel.link_or_move.take() {
                 match copy {
                     ChannelCopy::Move {
                         channel_id,
                         parent_id,
                     } => panel.channel_store.update(cx, |channel_store, cx| {
                         channel_store
-                            .move_channel(channel_id, parent_id, Some(action.to), cx)
+                            .move_channel(channel_id, parent_id, action.to, cx)
                             .detach_and_log_err(cx)
                     }),
                     ChannelCopy::Link(channel) => {
                         panel.channel_store.update(cx, |channel_store, cx| {
                             channel_store
-                                .move_channel(channel, None, Some(action.to), cx)
+                                .link_channel(channel, action.to, cx)
                                 .detach_and_log_err(cx)
                         })
                     }
@@ -229,7 +229,7 @@ pub fn init(_client: Arc<Client>, cx: &mut AppContext) {
         |panel: &mut CollabPanel, action: &UnlinkChannel, cx: &mut ViewContext<CollabPanel>| {
             panel.channel_store.update(cx, |channel_store, cx| {
                 channel_store
-                    .move_channel(action.channel_id, Some(action.parent_id), None, cx)
+                    .unlink_channel(action.channel_id, action.parent_id, cx)
                     .detach_and_log_err(cx)
             })
         },
@@ -273,13 +273,20 @@ impl ChannelCopy {
             ChannelCopy::Link(channel_id) => *channel_id,
         }
     }
+
+    fn is_move(&self) -> bool {
+        match self {
+            ChannelCopy::Move { .. } => true,
+            ChannelCopy::Link(_) => false,
+        }
+    }
 }
 
 pub struct CollabPanel {
     width: Option<f32>,
     fs: Arc<dyn Fs>,
     has_focus: bool,
-    copy: Option<ChannelCopy>,
+    link_or_move: Option<ChannelCopy>,
     pending_serialization: Task<Option<()>>,
     context_menu: ViewHandle<ContextMenu>,
     filter_editor: ViewHandle<Editor>,
@@ -549,7 +556,7 @@ impl CollabPanel {
             let mut this = Self {
                 width: None,
                 has_focus: false,
-                copy: None,
+                link_or_move: None,
                 fs: workspace.app_state().fs.clone(),
                 pending_serialization: Task::ready(None),
                 context_menu: cx.add_view(|cx| ContextMenu::new(view_id, cx)),
@@ -2034,15 +2041,14 @@ impl CollabPanel {
     ) {
         self.context_menu_on_selected = position.is_none();
 
-        let copy_channel = self
-            .copy
-            .as_ref()
-            .and_then(|copy| {
-                self.channel_store
-                    .read(cx)
-                    .channel_for_id(copy.channel_id())
-            })
-            .map(|channel| channel.name.clone());
+        let operation_details = self.link_or_move.as_ref().and_then(|link_or_move| {
+            let channel_name = self
+                .channel_store
+                .read(cx)
+                .channel_for_id(link_or_move.channel_id())
+                .map(|channel| channel.name.clone())?;
+            Some((channel_name, link_or_move.is_move()))
+        });
 
         self.context_menu.update(cx, |context_menu, cx| {
             context_menu.set_position_mode(if self.context_menu_on_selected {
@@ -2051,13 +2057,29 @@ impl CollabPanel {
                 OverlayPositionMode::Window
             });
 
+            let mut items = Vec::new();
+
+            if let Some((channel_name, is_move)) = operation_details {
+                items.push(ContextMenuItem::action(
+                    format!(
+                        "{} '#{}' here",
+                        if is_move { "Move" } else { "Link" },
+                        channel_name
+                    ),
+                    PutChannel {
+                        to: location.channel,
+                    },
+                ));
+                items.push(ContextMenuItem::Separator)
+            }
+
             let expand_action_name = if self.is_channel_collapsed(&location) {
                 "Expand Subchannels"
             } else {
                 "Collapse Subchannels"
             };
 
-            let mut items = vec![
+            items.extend([
                 ContextMenuItem::action(
                     expand_action_name,
                     ToggleCollapse {
@@ -2070,7 +2092,7 @@ impl CollabPanel {
                         channel_id: location.channel,
                     },
                 ),
-            ];
+            ]);
 
             if self.channel_store.read(cx).is_user_admin(location.channel) {
                 let parent_id = location.path.parent_id();
@@ -2092,40 +2114,33 @@ impl CollabPanel {
                     ContextMenuItem::Separator,
                 ]);
 
-                if let Some(parent) = parent_id {
-                    items.push(ContextMenuItem::action(
-                        "Unlink from parent",
-                        UnlinkChannel {
-                            channel_id: location.channel,
-                            parent_id: parent,
-                        },
-                    ))
-                }
+                items.push(ContextMenuItem::action(
+                    if parent_id.is_some() {
+                        "Unlink from parent"
+                    } else {
+                        "Unlink from root"
+                    },
+                    UnlinkChannel {
+                        channel_id: location.channel,
+                        parent_id,
+                    },
+                ));
 
                 items.extend([
                     ContextMenuItem::action(
-                        "Link to new parent",
+                        "Link this channel",
                         LinkChannel {
                             channel_id: location.channel,
                         },
                     ),
                     ContextMenuItem::action(
-                        "Move",
+                        "Move this channel",
                         MoveChannel {
                             channel_id: location.channel,
                             parent_id,
                         },
                     ),
                 ]);
-
-                if let Some(copy_channel) = copy_channel {
-                    items.push(ContextMenuItem::action(
-                        format!("Put '#{}'", copy_channel),
-                        PutChannel {
-                            to: location.channel,
-                        },
-                    ));
-                }
 
                 items.extend([
                     ContextMenuItem::Separator,

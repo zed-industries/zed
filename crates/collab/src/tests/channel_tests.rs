@@ -933,7 +933,7 @@ async fn test_channel_moving(deterministic: Arc<Deterministic>, cx_a: &mut TestA
     client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
-            channel_store.move_channel(channel_c_id, Some(channel_b_id), Some(channel_a_id), cx)
+            channel_store.move_channel(channel_c_id, Some(channel_b_id), channel_a_id, cx)
         })
         .await
         .unwrap();
@@ -970,7 +970,7 @@ async fn test_channel_moving(deterministic: Arc<Deterministic>, cx_a: &mut TestA
     client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
-            channel_store.move_channel(channel_c_id, None, Some(channel_b_id), cx)
+            channel_store.link_channel(channel_c_id, channel_b_id, cx)
         })
         .await
         .unwrap();

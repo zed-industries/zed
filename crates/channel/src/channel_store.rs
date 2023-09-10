@@ -289,11 +289,43 @@ impl ChannelStore {
         })
     }
 
+    pub fn link_channel(
+        &mut self,
+        channel_id: ChannelId,
+        to: ChannelId,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let client = self.client.clone();
+        cx.spawn(|_, _| async move {
+            let _ = client
+                .request(proto::LinkChannel { channel_id, to })
+                .await?;
+
+            Ok(())
+        })
+    }
+
+    pub fn unlink_channel(
+        &mut self,
+        channel_id: ChannelId,
+        from: Option<ChannelId>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let client = self.client.clone();
+        cx.spawn(|_, _| async move {
+            let _ = client
+                .request(proto::UnlinkChannel { channel_id, from })
+                .await?;
+
+            Ok(())
+        })
+    }
+
     pub fn move_channel(
         &mut self,
         channel_id: ChannelId,
-        from_parent: Option<ChannelId>,
-        to: Option<ChannelId>,
+        from: Option<ChannelId>,
+        to: ChannelId,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let client = self.client.clone();
@@ -301,7 +333,7 @@ impl ChannelStore {
             let _ = client
                 .request(proto::MoveChannel {
                     channel_id,
-                    from_parent,
+                    from,
                     to,
                 })
                 .await?;
@@ -754,6 +786,4 @@ impl ChannelStore {
             anyhow::Ok(())
         }))
     }
-
-
 }

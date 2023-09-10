@@ -2,7 +2,10 @@ mod connection_pool;
 
 use crate::{
     auth,
-    db::{self, ChannelId, ChannelsForUser, Database, ProjectId, RoomId, ServerId, User, UserId},
+    db::{
+        self, Channel, ChannelId, ChannelsForUser, Database, ProjectId, RoomId, ServerId, User,
+        UserId,
+    },
     executor::Executor,
     AppState, Result,
 };
@@ -255,6 +258,8 @@ impl Server {
             .add_request_handler(get_channel_members)
             .add_request_handler(respond_to_channel_invite)
             .add_request_handler(join_channel)
+            .add_request_handler(link_channel)
+            .add_request_handler(unlink_channel)
             .add_request_handler(move_channel)
             .add_request_handler(follow)
             .add_message_handler(unfollow)
@@ -2388,6 +2393,72 @@ async fn rename_channel(
     Ok(())
 }
 
+async fn link_channel(
+    request: proto::LinkChannel,
+    response: Response<proto::LinkChannel>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let to = ChannelId::from_proto(request.to);
+    let channels_to_send = db.link_channel(session.user_id, channel_id, to).await?;
+
+    let members = db.get_channel_members(to).await?;
+    let connection_pool = session.connection_pool().await;
+    let update = proto::UpdateChannels {
+        channels: channels_to_send
+            .into_iter()
+            .map(|channel| proto::Channel {
+                id: channel.id.to_proto(),
+                name: channel.name,
+                parent_id: channel.parent_id.map(ChannelId::to_proto),
+            })
+            .collect(),
+        ..Default::default()
+    };
+    for member_id in members {
+        for connection_id in connection_pool.user_connection_ids(member_id) {
+            session.peer.send(connection_id, update.clone())?;
+        }
+    }
+
+    response.send(Ack {})?;
+
+    Ok(())
+}
+
+async fn unlink_channel(
+    request: proto::UnlinkChannel,
+    response: Response<proto::UnlinkChannel>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let from = request.from.map(ChannelId::from_proto);
+    db.unlink_channel(session.user_id, channel_id, from).await?;
+
+    if let Some(from_parent) = from {
+        let members = db.get_channel_members(from_parent).await?;
+        let update = proto::UpdateChannels {
+            delete_channel_edge: vec![proto::ChannelEdge {
+                channel_id: channel_id.to_proto(),
+                parent_id: from_parent.to_proto(),
+            }],
+            ..Default::default()
+        };
+        let connection_pool = session.connection_pool().await;
+        for member_id in members {
+            for connection_id in connection_pool.user_connection_ids(member_id) {
+                session.peer.send(connection_id, update.clone())?;
+            }
+        }
+    }
+
+    response.send(Ack {})?;
+
+    Ok(())
+}
+
 async fn move_channel(
     request: proto::MoveChannel,
     response: Response<proto::MoveChannel>,
@@ -2395,17 +2466,11 @@ async fn move_channel(
 ) -> Result<()> {
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
-    let from_parent = request.from_parent.map(ChannelId::from_proto);
-    let to = request.to.map(ChannelId::from_proto);
-    let channels_to_send = db
-        .move_channel(
-            session.user_id,
-            channel_id,
-            from_parent,
-            to,
-        )
+    let from_parent = request.from.map(ChannelId::from_proto);
+    let to = ChannelId::from_proto(request.to);
+    let channels_to_send: Vec<Channel> = db
+        .move_channel(session.user_id, channel_id, from_parent, to)
         .await?;
-
 
     if let Some(from_parent) = from_parent {
         let members = db.get_channel_members(from_parent).await?;
@@ -2422,24 +2487,24 @@ async fn move_channel(
                 session.peer.send(connection_id, update.clone())?;
             }
         }
-
     }
 
-    if let Some(to) = to {
-        let members = db.get_channel_members(to).await?;
-        let connection_pool = session.connection_pool().await;
-        let update = proto::UpdateChannels {
-            channels: channels_to_send.into_iter().map(|channel| proto::Channel {
+    let members = db.get_channel_members(to).await?;
+    let connection_pool = session.connection_pool().await;
+    let update = proto::UpdateChannels {
+        channels: channels_to_send
+            .into_iter()
+            .map(|channel| proto::Channel {
                 id: channel.id.to_proto(),
                 name: channel.name,
                 parent_id: channel.parent_id.map(ChannelId::to_proto),
-            }).collect(),
-            ..Default::default()
-        };
-        for member_id in members {
-            for connection_id in connection_pool.user_connection_ids(member_id) {
-                session.peer.send(connection_id, update.clone())?;
-            }
+            })
+            .collect(),
+        ..Default::default()
+    };
+    for member_id in members {
+        for connection_id in connection_pool.user_connection_ids(member_id) {
+            session.peer.send(connection_id, update.clone())?;
         }
     }
 

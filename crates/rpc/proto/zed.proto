@@ -156,7 +156,9 @@ message Envelope {
         UpdateChannelBufferCollaborator update_channel_buffer_collaborator = 139;
         RejoinChannelBuffers rejoin_channel_buffers = 140;
         RejoinChannelBuffersResponse rejoin_channel_buffers_response = 141;
-        MoveChannel move_channel = 142; // Current max
+        LinkChannel link_channel = 142;
+        UnlinkChannel unlink_channel = 143;
+        MoveChannel move_channel = 144; // Current max
     }
 }
 
@@ -1028,10 +1030,20 @@ message RenameChannel {
     string name = 2;
 }
 
+message LinkChannel {
+    uint64 channel_id = 1;
+    uint64 to = 2;
+}
+
+message UnlinkChannel {
+    uint64 channel_id = 1;
+    optional uint64 from = 2;
+}
+
 message MoveChannel {
     uint64 channel_id = 1;
-    optional uint64 from_parent = 2;
-    optional uint64 to = 3;
+    optional uint64 from = 2;
+    uint64 to = 3;
 }
 
 message JoinChannelBuffer {
