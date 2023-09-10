@@ -761,20 +761,41 @@ impl Database {
         .await
     }
 
-    async fn link_channel(
+    // Insert an edge from the given channel to the given other channel.
+    pub async fn link_channel(
         &self,
-        from: ChannelId,
+        user: UserId,
+        channel: ChannelId,
+        to: ChannelId,
+    ) -> Result<Vec<Channel>> {
+        self.transaction(|tx| async move {
+            // Note that even with these maxed permissions, this linking operation
+            // is still insecure because you can't remove someone's permissions to a
+            // channel if they've linked the channel to one where they're an admin.
+            self.check_user_is_channel_admin(channel, user, &*tx)
+                .await?;
+
+            self.link_channel_internal(user, channel, to, &*tx).await
+        })
+        .await
+    }
+
+    pub async fn link_channel_internal(
+        &self,
+        user: UserId,
+        channel: ChannelId,
         to: ChannelId,
         tx: &DatabaseTransaction,
-    ) -> Result<ChannelDescendants> {
+    ) -> Result<Vec<Channel>> {
+        self.check_user_is_channel_admin(to, user, &*tx).await?;
+
         let to_ancestors = self.get_channel_ancestors(to, &*tx).await?;
-        let from_descendants = self.get_channel_descendants([from], &*tx).await?;
+        let mut from_descendants = self.get_channel_descendants([channel], &*tx).await?;
         for ancestor in to_ancestors {
             if from_descendants.contains_key(&ancestor) {
                 return Err(anyhow!("Cannot create a channel cycle").into());
             }
         }
-
         let sql = r#"
                 INSERT INTO channel_paths
                 (id_path, channel_id)
@@ -790,14 +811,13 @@ impl Database {
             self.pool.get_database_backend(),
             sql,
             [
-                from.to_proto().into(),
-                from.to_proto().into(),
+                channel.to_proto().into(),
+                channel.to_proto().into(),
                 to.to_proto().into(),
             ],
         );
         tx.execute(channel_paths_stmt).await?;
-
-        for (from_id, to_ids) in from_descendants.iter().filter(|(id, _)| id != &&from) {
+        for (from_id, to_ids) in from_descendants.iter().filter(|(id, _)| id != &&channel) {
             for to_id in to_ids {
                 let channel_paths_stmt = Statement::from_sql_and_values(
                     self.pool.get_database_backend(),
@@ -812,94 +832,116 @@ impl Database {
             }
         }
 
-        Ok(from_descendants)
+        if let Some(channel) = from_descendants.get_mut(&channel) {
+            // Remove the other parents
+            channel.clear();
+            channel.insert(to);
+        }
+
+        let channels = self.get_all_channels(from_descendants, &*tx).await?;
+
+        Ok(channels)
     }
 
-    async fn remove_channel_from_parent(
+    /// Unlink a channel from a given parent. This will add in a root edge if
+    /// the channel has no other parents after this operation.
+    pub async fn unlink_channel(
         &self,
-        from: ChannelId,
-        parent: ChannelId,
+        user: UserId,
+        channel: ChannelId,
+        from: Option<ChannelId>,
+    ) -> Result<()> {
+        self.transaction(|tx| async move {
+            // Note that even with these maxed permissions, this linking operation
+            // is still insecure because you can't remove someone's permissions to a
+            // channel if they've linked the channel to one where they're an admin.
+            self.check_user_is_channel_admin(channel, user, &*tx)
+                .await?;
+
+            self.unlink_channel_internal(user, channel, from, &*tx)
+                .await?;
+
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn unlink_channel_internal(
+        &self,
+        user: UserId,
+        channel: ChannelId,
+        from: Option<ChannelId>,
         tx: &DatabaseTransaction,
     ) -> Result<()> {
-        let sql = r#"
+        if let Some(from) = from {
+            self.check_user_is_channel_admin(from, user, &*tx).await?;
+
+            let sql = r#"
                 DELETE FROM channel_paths
                 WHERE
                     id_path LIKE '%' || $1 || '/' || $2 || '%'
             "#;
+            let channel_paths_stmt = Statement::from_sql_and_values(
+                self.pool.get_database_backend(),
+                sql,
+                [from.to_proto().into(), channel.to_proto().into()],
+            );
+            tx.execute(channel_paths_stmt).await?;
+        } else {
+            let sql = r#"
+                DELETE FROM channel_paths
+                WHERE
+                    id_path = '/' || $1 || '/'
+            "#;
+            let channel_paths_stmt = Statement::from_sql_and_values(
+                self.pool.get_database_backend(),
+                sql,
+                [channel.to_proto().into()],
+            );
+            tx.execute(channel_paths_stmt).await?;
+        }
+
+        // Make sure that there is always at least one path to the channel
+        let sql = r#"
+            INSERT INTO channel_paths
+            (id_path, channel_id)
+            SELECT
+                '/' || $1 || '/', $2
+            WHERE NOT EXISTS
+                (SELECT *
+                 FROM channel_paths
+                 WHERE channel_id = $2)
+            "#;
+
         let channel_paths_stmt = Statement::from_sql_and_values(
             self.pool.get_database_backend(),
             sql,
-            [parent.to_proto().into(), from.to_proto().into()],
+            [channel.to_proto().into(), channel.to_proto().into()],
         );
         tx.execute(channel_paths_stmt).await?;
 
         Ok(())
     }
 
-    /// Move a channel from one parent to another.
-    /// Note that this requires a valid parent_id in the 'from_parent' field.
-    /// As channels are a DAG, we need to know which parent to remove the channel from.
-    /// Here's a list of the parameters to this function and their behavior:
-    ///
-    /// - (`None`, `None`) No op
-    /// - (`None`, `Some(id)`) Link the channel without removing it from any of it's parents
-    /// - (`Some(id)`, `None`) Remove a channel from a given parent, and leave other parents
-    /// - (`Some(id)`, `Some(id)`) Move channel from one parent to another, leaving other parents
-    ///
-    /// Returns the channel that was moved + it's sub channels for use
-    /// by the members for `to`
+    /// Move a channel from one parent to another, returns the
+    /// Channels that were moved for notifying clients
     pub async fn move_channel(
         &self,
         user: UserId,
-        from: ChannelId,
-        from_parent: Option<ChannelId>,
-        to: Option<ChannelId>,
+        channel: ChannelId,
+        from: Option<ChannelId>,
+        to: ChannelId,
     ) -> Result<Vec<Channel>> {
         self.transaction(|tx| async move {
-            // Note that even with these maxed permissions, this linking operation
-            // is still insecure because you can't remove someone's permissions to a
-            // channel if they've linked the channel to one where they're an admin.
-            self.check_user_is_channel_admin(from, user, &*tx).await?;
+            self.check_user_is_channel_admin(channel, user, &*tx)
+                .await?;
 
-            let mut channel_descendants = None;
+            let moved_channels = self.link_channel_internal(user, channel, to, &*tx).await?;
 
-            // Note that we have to do the linking before the removal, so that we
-            // can leave the channel_path table in a consistent state.
-            if let Some(to) = to {
-                self.check_user_is_channel_admin(to, user, &*tx).await?;
+            self.unlink_channel_internal(user, channel, from, &*tx)
+                .await?;
 
-                channel_descendants = Some(self.link_channel(from, to, &*tx).await?);
-            }
-
-            let mut channel_descendants = match channel_descendants {
-                Some(channel_descendants) => channel_descendants,
-                None => self.get_channel_descendants([from], &*tx).await?,
-            };
-
-            if let Some(from_parent) = from_parent {
-                self.check_user_is_channel_admin(from_parent, user, &*tx)
-                    .await?;
-
-                self.remove_channel_from_parent(from, from_parent, &*tx)
-                    .await?;
-            }
-
-            let channels;
-            if let Some(to) = to {
-                if let Some(channel) = channel_descendants.get_mut(&from) {
-                    // Remove the other parents
-                    channel.clear();
-                    channel.insert(to);
-                }
-
-                 channels = self
-                    .get_all_channels(channel_descendants, &*tx)
-                    .await?;
-            } else {
-                channels = vec![];
-            }
-
-            Ok(channels)
+            Ok(moved_channels)
         })
         .await
     }
