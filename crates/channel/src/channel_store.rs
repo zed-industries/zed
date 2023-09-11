@@ -196,10 +196,15 @@ impl ChannelStore {
         )
     }
 
+    /// Asynchronously open a given resource associated with a channel.
+    ///
+    /// Make sure that the resource is only opened once, even if this method
+    /// is called multiple times with the same channel id while the first task
+    /// is still running.
     fn open_channel_resource<T: Entity, F, Fut>(
         &mut self,
         channel_id: ChannelId,
-        map: fn(&mut Self) -> &mut HashMap<ChannelId, OpenedModelHandle<T>>,
+        get_map: fn(&mut Self) -> &mut HashMap<ChannelId, OpenedModelHandle<T>>,
         load: F,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<T>>>
@@ -207,21 +212,20 @@ impl ChannelStore {
         F: 'static + FnOnce(Arc<Channel>, AsyncAppContext) -> Fut,
         Fut: Future<Output = Result<ModelHandle<T>>>,
     {
-        // Make sure that a given channel resource is only opened once per
-        // app instance, even if this method is called multiple times
-        // with the same channel id while the first task is still running.
         let task = loop {
-            match map(self).entry(channel_id) {
+            match get_map(self).entry(channel_id) {
                 hash_map::Entry::Occupied(e) => match e.get() {
-                    OpenedModelHandle::Open(buffer) => {
-                        if let Some(buffer) = buffer.upgrade(cx) {
-                            break Task::ready(Ok(buffer)).shared();
+                    OpenedModelHandle::Open(model) => {
+                        if let Some(model) = model.upgrade(cx) {
+                            break Task::ready(Ok(model)).shared();
                         } else {
-                            map(self).remove(&channel_id);
+                            get_map(self).remove(&channel_id);
                             continue;
                         }
                     }
-                    OpenedModelHandle::Loading(task) => break task.clone(),
+                    OpenedModelHandle::Loading(task) => {
+                        break task.clone();
+                    }
                 },
                 hash_map::Entry::Vacant(e) => {
                     let task = cx
@@ -235,25 +239,21 @@ impl ChannelStore {
                             load(channel, cx).await.map_err(Arc::new)
                         })
                         .shared();
+
                     e.insert(OpenedModelHandle::Loading(task.clone()));
                     cx.spawn({
                         let task = task.clone();
                         |this, mut cx| async move {
                             let result = task.await;
-                            this.update(&mut cx, |this, cx| match result {
-                                Ok(buffer) => {
-                                    cx.observe_release(&buffer, move |this, _, _| {
-                                        this.opened_buffers.remove(&channel_id);
-                                    })
-                                    .detach();
-                                    map(this).insert(
+                            this.update(&mut cx, |this, _| match result {
+                                Ok(model) => {
+                                    get_map(this).insert(
                                         channel_id,
-                                        OpenedModelHandle::Open(buffer.downgrade()),
+                                        OpenedModelHandle::Open(model.downgrade()),
                                     );
                                 }
-                                Err(error) => {
-                                    log::error!("failed to open channel buffer {error:?}");
-                                    map(this).remove(&channel_id);
+                                Err(_) => {
+                                    get_map(this).remove(&channel_id);
                                 }
                             });
                         }

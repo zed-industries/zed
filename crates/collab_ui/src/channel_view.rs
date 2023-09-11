@@ -53,6 +53,7 @@ impl ChannelView {
 
         cx.spawn(|mut cx| async move {
             let channel_buffer = channel_buffer.await?;
+
             let markdown = markdown.await?;
             channel_buffer.update(&mut cx, |buffer, cx| {
                 buffer.buffer().update(cx, |buffer, cx| {
@@ -75,7 +76,6 @@ impl ChannelView {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let buffer = channel_buffer.read(cx).buffer();
-        // buffer.update(cx, |buffer, cx| buffer.set_language(language, cx));
         let editor = cx.add_view(|cx| Editor::for_buffer(buffer, None, cx));
         let _editor_event_subscription = cx.subscribe(&editor, |_, _, e, cx| cx.emit(e.clone()));
 

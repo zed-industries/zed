@@ -33,7 +33,7 @@ const CHAT_PANEL_KEY: &'static str = "ChatPanel";
 pub struct ChatPanel {
     client: Arc<Client>,
     channel_store: ModelHandle<ChannelStore>,
-    active_channel: Option<(ModelHandle<ChannelChat>, Subscription)>,
+    active_chat: Option<(ModelHandle<ChannelChat>, Subscription)>,
     message_list: ListState<ChatPanel>,
     input_editor: ViewHandle<Editor>,
     channel_select: ViewHandle<Select>,
@@ -105,7 +105,7 @@ impl ChatPanel {
 
         let mut message_list =
             ListState::<Self>::new(0, Orientation::Bottom, 1000., move |this, ix, cx| {
-                let message = this.active_channel.as_ref().unwrap().0.read(cx).message(ix);
+                let message = this.active_chat.as_ref().unwrap().0.read(cx).message(ix);
                 this.render_message(message, cx)
             });
         message_list.set_scroll_handler(|visible_range, this, cx| {
@@ -119,7 +119,7 @@ impl ChatPanel {
                 fs,
                 client,
                 channel_store,
-                active_channel: Default::default(),
+                active_chat: Default::default(),
                 pending_serialization: Task::ready(None),
                 message_list,
                 input_editor,
@@ -151,6 +151,7 @@ impl ChatPanel {
 
             cx.observe(&this.channel_select, |this, channel_select, cx| {
                 let selected_ix = channel_select.read(cx).selected_index();
+
                 let selected_channel_id = this
                     .channel_store
                     .read(cx)
@@ -216,14 +217,14 @@ impl ChatPanel {
     fn init_active_channel(&mut self, cx: &mut ViewContext<Self>) {
         let channel_count = self.channel_store.read(cx).channel_count();
         self.message_list.reset(0);
-        self.active_channel = None;
+        self.active_chat = None;
         self.channel_select.update(cx, |select, cx| {
             select.set_item_count(channel_count, cx);
         });
     }
 
-    fn set_active_channel(&mut self, chat: ModelHandle<ChannelChat>, cx: &mut ViewContext<Self>) {
-        if self.active_channel.as_ref().map(|e| &e.0) != Some(&chat) {
+    fn set_active_chat(&mut self, chat: ModelHandle<ChannelChat>, cx: &mut ViewContext<Self>) {
+        if self.active_chat.as_ref().map(|e| &e.0) != Some(&chat) {
             let id = chat.read(cx).channel().id;
             {
                 let chat = chat.read(cx);
@@ -234,7 +235,7 @@ impl ChatPanel {
                 });
             }
             let subscription = cx.subscribe(&chat, Self::channel_did_change);
-            self.active_channel = Some((chat, subscription));
+            self.active_chat = Some((chat, subscription));
             self.channel_select.update(cx, |select, cx| {
                 if let Some(ix) = self.channel_store.read(cx).index_of_channel(id) {
                     select.set_selected_index(ix, cx);
@@ -275,7 +276,7 @@ impl ChatPanel {
     }
 
     fn render_active_channel_messages(&self) -> AnyElement<Self> {
-        let messages = if self.active_channel.is_some() {
+        let messages = if self.active_chat.is_some() {
             List::new(self.message_list.clone()).into_any()
         } else {
             Empty::new().into_any()
@@ -396,15 +397,15 @@ impl ChatPanel {
     }
 
     fn send(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
-        if let Some((channel, _)) = self.active_channel.as_ref() {
+        if let Some((chat, _)) = self.active_chat.as_ref() {
             let body = self.input_editor.update(cx, |editor, cx| {
                 let body = editor.text(cx);
                 editor.clear(cx);
                 body
             });
 
-            if let Some(task) = channel
-                .update(cx, |channel, cx| channel.send_message(body, cx))
+            if let Some(task) = chat
+                .update(cx, |chat, cx| chat.send_message(body, cx))
                 .log_err()
             {
                 task.detach();
@@ -413,8 +414,8 @@ impl ChatPanel {
     }
 
     fn load_more_messages(&mut self, _: &LoadMoreMessages, cx: &mut ViewContext<Self>) {
-        if let Some((channel, _)) = self.active_channel.as_ref() {
-            channel.update(cx, |channel, cx| {
+        if let Some((chat, _)) = self.active_chat.as_ref() {
+            chat.update(cx, |channel, cx| {
                 channel.load_more_messages(cx);
             })
         }
@@ -425,13 +426,19 @@ impl ChatPanel {
         selected_channel_id: u64,
         cx: &mut ViewContext<ChatPanel>,
     ) -> Task<Result<()>> {
+        if let Some((chat, _)) = &self.active_chat {
+            if chat.read(cx).channel().id == selected_channel_id {
+                return Task::ready(Ok(()));
+            }
+        }
+
         let open_chat = self.channel_store.update(cx, |store, cx| {
             store.open_channel_chat(selected_channel_id, cx)
         });
         cx.spawn(|this, mut cx| async move {
             let chat = open_chat.await?;
             this.update(&mut cx, |this, cx| {
-                this.set_active_channel(chat, cx);
+                this.set_active_chat(chat, cx);
             })
         })
     }
