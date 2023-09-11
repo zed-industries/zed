@@ -10,10 +10,9 @@ use settings::{default_settings, SettingsStore};
 use simplelog::SimpleLogger;
 
 mod collab_panel;
-mod component;
 mod components;
 mod element_ext;
-mod module;
+mod modules;
 mod theme;
 mod workspace;
 

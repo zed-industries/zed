@@ -5,7 +5,7 @@ use gpui2::{elements::div, IntoElement};
 use gpui2::{Element, ParentElement, ViewContext};
 
 #[derive(Element)]
-struct IconButton {
+pub(crate) struct IconButton {
     path: &'static str,
     variant: ButtonVariant,
 }

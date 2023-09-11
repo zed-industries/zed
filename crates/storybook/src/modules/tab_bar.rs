@@ -1,7 +1,6 @@
 use std::marker::PhantomData;
 
-use crate::component::icon_button::{icon_button, ButtonVariant};
-use crate::component::tab::tab;
+use crate::components::{icon_button, tab, ButtonVariant};
 use crate::theme::theme;
 use gpui2::elements::div::ScrollState;
 use gpui2::style::StyleHelpers;

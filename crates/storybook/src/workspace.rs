@@ -1,4 +1,4 @@
-use crate::{collab_panel::collab_panel, module::tab_bar::tab_bar, theme::theme};
+use crate::{collab_panel::collab_panel, modules::tab_bar, theme::theme};
 use gpui2::{
     elements::{div, div::ScrollState, img, svg},
     style::{StyleHelpers, Styleable},
