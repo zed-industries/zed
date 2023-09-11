@@ -1,10 +1,11 @@
-use std::{sync::Arc, ops::Deref};
+use std::{ops::Deref, sync::Arc};
 
 use collections::HashMap;
 use rpc::proto;
-use serde_derive::{Serialize, Deserialize};
+use serde_derive::{Deserialize, Serialize};
 
-use crate::{ChannelId, Channel};
+
+use crate::{Channel, ChannelId};
 
 pub type ChannelsById = HashMap<ChannelId, Arc<Channel>>;
 
@@ -21,9 +22,7 @@ impl Deref for ChannelPath {
 
 impl ChannelPath {
     pub fn parent_id(&self) -> Option<ChannelId> {
-        self.0.len().checked_sub(2).map(|i| {
-            self.0[i]
-        })
+        self.0.len().checked_sub(2).map(|i| self.0[i])
     }
 }
 
@@ -38,7 +37,6 @@ pub struct ChannelIndex {
     paths: Vec<ChannelPath>,
     channels_by_id: ChannelsById,
 }
-
 
 impl ChannelIndex {
     pub fn by_id(&self) -> &ChannelsById {
@@ -62,24 +60,53 @@ impl ChannelIndex {
         self.paths.iter()
     }
 
-    /// Remove the given edge from this index. This will not remove the channel
-    /// and may result in dangling channels.
-    pub fn delete_edge(&mut self, parent_id: ChannelId, channel_id: ChannelId) {
-        self.paths.retain(|path| {
-            !path
-                .windows(2)
-                .any(|window| window == [parent_id, channel_id])
-        });
+    /// Remove the given edge from this index. This will not remove the channel.
+    /// If this operation would result in a dangling edge, re-insert it.
+    pub fn delete_edge(&mut self, parent_id: Option<ChannelId>, channel_id: ChannelId) {
+        if let Some(parent_id) = parent_id {
+            self.paths.retain(|path| {
+                !path
+                    .windows(2)
+                    .any(|window| window == [parent_id, channel_id])
+            });
+        } else {
+            self.paths.retain(|path| path.first() != Some(&channel_id));
+        }
+
+        // Ensure that there is at least one channel path in the index
+        if !self
+            .paths
+            .iter()
+            .any(|path| path.iter().any(|id| id == &channel_id))
+        {
+            let path = ChannelPath(Arc::from([channel_id]));
+            let current_item: Vec<_> =
+                channel_path_sorting_key(&path, &self.channels_by_id).collect();
+            match self.paths.binary_search_by(|channel_path| {
+                current_item
+                    .iter()
+                    .copied()
+                    .cmp(channel_path_sorting_key(channel_path, &self.channels_by_id))
+            }) {
+                Ok(ix) => self.paths.insert(ix, path),
+                Err(ix) => self.paths.insert(ix, path),
+            }
+        }
     }
 
     /// Delete the given channels from this index.
     pub fn delete_channels(&mut self, channels: &[ChannelId]) {
-        self.channels_by_id.retain(|channel_id, _| !channels.contains(channel_id));
-        self.paths.retain(|channel_path| !channel_path.iter().any(|channel_id| {channels.contains(channel_id)}))
+        self.channels_by_id
+            .retain(|channel_id, _| !channels.contains(channel_id));
+        self.paths.retain(|channel_path| {
+            !channel_path
+                .iter()
+                .any(|channel_id| channels.contains(channel_id))
+        })
     }
 
     /// Upsert one or more channels into this index.
-    pub fn start_upsert(& mut self) -> ChannelPathsUpsertGuard {
+    pub fn start_upsert(&mut self) -> ChannelPathsUpsertGuard {
         ChannelPathsUpsertGuard {
             paths: &mut self.paths,
             channels_by_id: &mut self.channels_by_id,
@@ -90,7 +117,7 @@ impl ChannelIndex {
 /// A guard for ensuring that the paths index maintains its sort and uniqueness
 /// invariants after a series of insertions
 pub struct ChannelPathsUpsertGuard<'a> {
-    paths:  &'a mut Vec<ChannelPath>,
+    paths: &'a mut Vec<ChannelPath>,
     channels_by_id: &'a mut ChannelsById,
 }
 
@@ -150,7 +177,6 @@ impl<'a> Drop for ChannelPathsUpsertGuard<'a> {
         });
     }
 }
-
 
 fn channel_path_sorting_key<'a>(
     path: &'a [ChannelId],

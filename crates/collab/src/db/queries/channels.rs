@@ -870,36 +870,22 @@ impl Database {
         &self,
         user: UserId,
         channel: ChannelId,
-        from: Option<ChannelId>,
+        from: ChannelId,
         tx: &DatabaseTransaction,
     ) -> Result<()> {
-        if let Some(from) = from {
-            self.check_user_is_channel_admin(from, user, &*tx).await?;
+        self.check_user_is_channel_admin(from, user, &*tx).await?;
 
-            let sql = r#"
+        let sql = r#"
                 DELETE FROM channel_paths
                 WHERE
                     id_path LIKE '%' || $1 || '/' || $2 || '%'
             "#;
-            let channel_paths_stmt = Statement::from_sql_and_values(
-                self.pool.get_database_backend(),
-                sql,
-                [from.to_proto().into(), channel.to_proto().into()],
-            );
-            tx.execute(channel_paths_stmt).await?;
-        } else {
-            let sql = r#"
-                DELETE FROM channel_paths
-                WHERE
-                    id_path = '/' || $1 || '/'
-            "#;
-            let channel_paths_stmt = Statement::from_sql_and_values(
-                self.pool.get_database_backend(),
-                sql,
-                [channel.to_proto().into()],
-            );
-            tx.execute(channel_paths_stmt).await?;
-        }
+        let channel_paths_stmt = Statement::from_sql_and_values(
+            self.pool.get_database_backend(),
+            sql,
+            [from.to_proto().into(), channel.to_proto().into()],
+        );
+        tx.execute(channel_paths_stmt).await?;
 
         // Make sure that there is always at least one path to the channel
         let sql = r#"
@@ -929,7 +915,7 @@ impl Database {
         &self,
         user: UserId,
         channel: ChannelId,
-        from: Option<ChannelId>,
+        from: ChannelId,
         to: ChannelId,
     ) -> Result<Vec<Channel>> {
         self.transaction(|tx| async move {
@@ -940,6 +926,10 @@ impl Database {
 
             self.unlink_channel_internal(user, channel, from, &*tx)
                 .await?;
+
+            dbg!(channel_path::Entity::find().all(&*tx).await);
+
+            dbg!(&moved_channels);
 
             Ok(moved_channels)
         })

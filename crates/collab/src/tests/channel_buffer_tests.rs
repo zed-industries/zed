@@ -25,7 +25,7 @@ async fn test_core_channel_buffers(
     let client_b = server.create_client(cx_b, "user_b").await;
 
     let channel_id = server
-        .make_channel("zed", (&client_a, cx_a), &mut [(&client_b, cx_b)])
+        .make_channel("zed", None, (&client_a, cx_a), &mut [(&client_b, cx_b)])
         .await;
 
     // Client A joins the channel buffer
@@ -135,6 +135,7 @@ async fn test_channel_buffer_replica_ids(
     let channel_id = server
         .make_channel(
             "the-channel",
+            None,
             (&client_a, cx_a),
             &mut [(&client_b, cx_b), (&client_c, cx_c)],
         )
@@ -279,7 +280,7 @@ async fn test_reopen_channel_buffer(deterministic: Arc<Deterministic>, cx_a: &mu
     let client_a = server.create_client(cx_a, "user_a").await;
 
     let channel_id = server
-        .make_channel("the-channel", (&client_a, cx_a), &mut [])
+        .make_channel("the-channel", None, (&client_a, cx_a), &mut [])
         .await;
 
     let channel_buffer_1 = client_a
@@ -341,7 +342,7 @@ async fn test_channel_buffer_disconnect(
     let client_b = server.create_client(cx_b, "user_b").await;
 
     let channel_id = server
-        .make_channel("the-channel", (&client_a, cx_a), &mut [(&client_b, cx_b)])
+        .make_channel("the-channel", None, (&client_a, cx_a), &mut [(&client_b, cx_b)])
         .await;
 
     let channel_buffer_a = client_a
@@ -411,7 +412,7 @@ async fn test_rejoin_channel_buffer(
     let client_b = server.create_client(cx_b, "user_b").await;
 
     let channel_id = server
-        .make_channel("the-channel", (&client_a, cx_a), &mut [(&client_b, cx_b)])
+        .make_channel("the-channel", None, (&client_a, cx_a), &mut [(&client_b, cx_b)])
         .await;
 
     let channel_buffer_a = client_a
@@ -491,6 +492,7 @@ async fn test_channel_buffers_and_server_restarts(
     let channel_id = server
         .make_channel(
             "the-channel",
+            None,
             (&client_a, cx_a),
             &mut [(&client_b, cx_b), (&client_c, cx_c)],
         )

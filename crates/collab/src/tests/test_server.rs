@@ -288,6 +288,7 @@ impl TestServer {
     pub async fn make_channel(
         &self,
         channel: &str,
+        parent: Option<u64>,
         admin: (&TestClient, &mut TestAppContext),
         members: &mut [(&TestClient, &mut TestAppContext)],
     ) -> u64 {
@@ -296,7 +297,7 @@ impl TestServer {
             .app_state
             .channel_store
             .update(admin_cx, |channel_store, cx| {
-                channel_store.create_channel(channel, None, cx)
+                channel_store.create_channel(channel, parent, cx)
             })
             .await
             .unwrap();
@@ -329,6 +330,39 @@ impl TestServer {
         }
 
         channel_id
+    }
+
+    pub async fn make_channel_tree(
+        &self,
+        channels: &[(&str, Option<&str>)],
+        creator: (&TestClient, &mut TestAppContext),
+    ) -> Vec<u64> {
+        let mut observed_channels = HashMap::default();
+        let mut result = Vec::new();
+        for (channel, parent) in channels {
+            let id;
+            if let Some(parent) = parent {
+                if let Some(parent_id) = observed_channels.get(parent) {
+                    id = self
+                        .make_channel(channel, Some(*parent_id), (creator.0, creator.1), &mut [])
+                        .await;
+                } else {
+                    panic!(
+                        "Edge {}->{} referenced before {} was created",
+                        parent, channel, parent
+                    )
+                }
+            } else {
+                id = self
+                    .make_channel(channel, None, (creator.0, creator.1), &mut [])
+                    .await;
+            }
+
+            observed_channels.insert(channel, id);
+            result.push(id);
+        }
+
+        result
     }
 
     pub async fn create_room(&self, clients: &mut [(&TestClient, &mut TestAppContext)]) {
@@ -548,6 +582,41 @@ impl TestClient {
         cx: &mut TestAppContext,
     ) -> WindowHandle<Workspace> {
         cx.add_window(|cx| Workspace::new(0, project.clone(), self.app_state.clone(), cx))
+    }
+
+    pub async fn add_admin_to_channel(
+        &self,
+        user: (&TestClient, &mut TestAppContext),
+        channel: u64,
+        cx_self: &mut TestAppContext,
+    ) {
+        let (other_client, other_cx) = user;
+
+        self
+            .app_state
+            .channel_store
+            .update(cx_self, |channel_store, cx| {
+                channel_store.invite_member(
+                    channel,
+                    other_client.user_id().unwrap(),
+                    true,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        cx_self.foreground().run_until_parked();
+
+        other_client
+            .app_state
+            .channel_store
+            .update(other_cx, |channels, _| {
+                channels.respond_to_channel_invite(channel, true)
+            })
+            .await
+            .unwrap();
+
     }
 }
 
