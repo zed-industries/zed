@@ -1,11 +1,11 @@
-use collections::CommandPaletteFilter;
+use collections::{CommandPaletteFilter, HashMap};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, anyhow::anyhow, elements::*, keymap_matcher::Keystroke, Action, AnyWindowHandle,
     AppContext, Element, MouseState, ViewContext,
 };
 use picker::{Picker, PickerDelegate, PickerEvent};
-use std::cmp;
+use std::cmp::{self, Reverse};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -33,12 +33,17 @@ pub enum Event {
         action: Box<dyn Action>,
     },
 }
-
 struct Command {
     name: String,
     action: Box<dyn Action>,
     keystrokes: Vec<Keystroke>,
 }
+
+/// Hit count for each command in the palette.
+/// We only account for commands triggered directly via command palette and not by e.g. keystrokes because
+/// if an user already knows a keystroke for a command, they are unlikely to use a command palette to look for it.
+#[derive(Default)]
+struct HitCounts(HashMap<String, usize>);
 
 fn toggle_command_palette(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
     let focused_view_id = cx.focused_view_id().unwrap_or_else(|| cx.view_id());
@@ -83,7 +88,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         let view_id = self.focused_view_id;
         let window = cx.window();
         cx.spawn(move |picker, mut cx| async move {
-            let actions = window
+            let mut actions = window
                 .available_actions(view_id, &cx)
                 .into_iter()
                 .flatten()
@@ -112,6 +117,16 @@ impl PickerDelegate for CommandPaletteDelegate {
                     }
                 })
                 .collect::<Vec<_>>();
+            let actions = cx.read(move |cx| {
+                let hit_counts = cx.optional_global::<HitCounts>();
+                actions.sort_by_key(|action| {
+                    (
+                        Reverse(hit_counts.and_then(|map| map.0.get(&action.name)).cloned()),
+                        action.name.clone(),
+                    )
+                });
+                actions
+            });
             let candidates = actions
                 .iter()
                 .enumerate()
@@ -166,7 +181,12 @@ impl PickerDelegate for CommandPaletteDelegate {
             let window = cx.window();
             let focused_view_id = self.focused_view_id;
             let action_ix = self.matches[self.selected_ix].candidate_id;
-            let action = self.actions.remove(action_ix).action;
+            let command = self.actions.remove(action_ix);
+            cx.update_default_global(|hit_counts: &mut HitCounts, _| {
+                *hit_counts.0.entry(command.name).or_default() += 1;
+            });
+            let action = command.action;
+
             cx.app_context()
                 .spawn(move |mut cx| async move {
                     window
@@ -317,6 +337,21 @@ mod tests {
 
         let palette = workspace.read_with(cx, |workspace, _| {
             workspace.modal::<CommandPalette>().unwrap()
+        });
+
+        palette
+            .update(cx, |palette, cx| {
+                // Fill up palette's command list by running an empty query;
+                // we only need it to subsequently assert that the palette is initially
+                // sorted by command's name.
+                palette.delegate_mut().update_matches("".to_string(), cx)
+            })
+            .await;
+
+        palette.update(cx, |palette, _| {
+            let is_sorted =
+                |actions: &[Command]| actions.windows(2).all(|pair| pair[0].name <= pair[1].name);
+            assert!(is_sorted(&palette.delegate().actions));
         });
 
         palette
