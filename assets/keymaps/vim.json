@@ -198,6 +198,18 @@
       "z c": "editor::Fold",
       "z o": "editor::UnfoldLines",
       "z f": "editor::FoldSelectedRanges",
+      "shift-z shift-q": [
+        "pane::CloseActiveItem",
+        {
+          "saveBehavior": "dontSave"
+        }
+      ],
+      "shift-z shift-z": [
+        "pane::CloseActiveItem",
+        {
+          "saveBehavior": "promptOnConflict"
+        }
+      ],
       // Count support
       "1": [
         "vim::Number",

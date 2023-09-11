@@ -8426,6 +8426,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-nu"
+version = "0.0.1"
+source = "git+https://github.com/nushell/tree-sitter-nu?rev=786689b0562b9799ce53e824cb45a1a2a04dc673#786689b0562b9799ce53e824cb45a1a2a04dc673"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-php"
 version = "0.19.1"
 source = "git+https://github.com/tree-sitter/tree-sitter-php?rev=d43130fd1525301e9826f420c5393a4d169819fc#d43130fd1525301e9826f420c5393a4d169819fc"
@@ -9887,6 +9896,7 @@ dependencies = [
  "tree-sitter-lua",
  "tree-sitter-markdown",
  "tree-sitter-nix",
+ "tree-sitter-nu",
  "tree-sitter-php",
  "tree-sitter-python",
  "tree-sitter-racket",
