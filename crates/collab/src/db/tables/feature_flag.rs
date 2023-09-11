@@ -1,8 +1,9 @@
 use sea_orm::entity::prelude::*;
+use serde_derive::Serialize;
 
 use crate::db::FlagId;
 
-#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, DeriveEntityModel, Serialize)]
 #[sea_orm(table_name = "feature_flags")]
 pub struct Model {
     #[sea_orm(primary_key)]

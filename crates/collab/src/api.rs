@@ -1,6 +1,6 @@
 use crate::{
     auth,
-    db::{Invite, NewSignup, NewUserParams, User, UserId, WaitlistSummary},
+    db::{FeatureFlag, FlagId, Invite, NewSignup, NewUserParams, User, UserId, WaitlistSummary},
     rpc::{self, ResultExt},
     AppState, Error, Result,
 };
@@ -26,6 +26,7 @@ pub fn routes(rpc_server: Arc<rpc::Server>, state: Arc<AppState>) -> Router<Body
         .route("/users", get(get_users).post(create_user))
         .route("/users/:id", put(update_user).delete(destroy_user))
         .route("/users/:id/access_tokens", post(create_access_token))
+        .route("/users/:id/feature_flags", post(add_user_flag))
         .route("/users_with_no_invites", get(get_users_with_no_invites))
         .route("/invite_codes/:code", get(get_user_for_invite_code))
         .route("/panic", post(trace_panic))
@@ -35,6 +36,11 @@ pub fn routes(rpc_server: Arc<rpc::Server>, state: Arc<AppState>) -> Router<Body
         .route("/user_invites", post(create_invite_from_code))
         .route("/unsent_invites", get(get_unsent_invites))
         .route("/sent_invites", post(record_sent_invites))
+        .route(
+            "/feature_flags",
+            get(feature_flags).post(create_feature_flag),
+        )
+        .route("/feature_flags/:id", get(users_for_feature_flag))
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(state))
@@ -326,6 +332,55 @@ async fn create_access_token(
         user_id,
         encrypted_access_token,
     }))
+}
+
+#[derive(Serialize, Deserialize)]
+struct FlagIdField {
+    flag_id: FlagId,
+}
+
+async fn add_user_flag(
+    Path(user_id): Path<UserId>,
+    Json(params): Json<FlagIdField>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<()> {
+    let user = app
+        .db
+        .get_user_by_id(user_id)
+        .await?
+        .ok_or_else(|| anyhow!("user not found"))?;
+
+    let user_id = user.id;
+
+    app.db.add_user_flag(user_id, params.flag_id).await?;
+
+    Ok(())
+}
+
+async fn feature_flags(Extension(app): Extension<Arc<AppState>>) -> Result<Json<Vec<FeatureFlag>>> {
+    Ok(Json(app.db.get_feature_flags().await?))
+}
+
+#[derive(Deserialize)]
+struct CreateFeatureFlagParam {
+    flag: String,
+}
+
+async fn create_feature_flag(
+    Json(params): Json<CreateFeatureFlagParam>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<Json<FlagIdField>> {
+    let id = app.db.create_feature_flag(&params.flag).await?;
+
+    Ok(Json(FlagIdField { flag_id: id }))
+}
+
+async fn users_for_feature_flag(
+    Query(params): Query<FlagIdField>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<Json<Vec<User>>> {
+    let users = app.db.get_flag_users(params.flag_id).await?;
+    Ok(Json(users))
 }
 
 async fn get_user_for_invite_code(

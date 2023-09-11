@@ -41,6 +41,7 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 
 pub use ids::*;
 pub use sea_orm::ConnectOptions;
+pub use tables::feature_flag::Model as FeatureFlag;
 pub use tables::user::Model as User;
 
 pub struct Database {

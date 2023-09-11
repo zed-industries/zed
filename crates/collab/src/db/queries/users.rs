@@ -241,7 +241,7 @@ impl Database {
         result
     }
 
-    pub async fn create_user_flag(&self, flag: &str) -> Result<FlagId> {
+    pub async fn create_feature_flag(&self, flag: &str) -> Result<FlagId> {
         self.transaction(|tx| async move {
             let flag = feature_flag::Entity::insert(feature_flag::ActiveModel {
                 flag: ActiveValue::set(flag.to_string()),
@@ -256,6 +256,11 @@ impl Database {
         .await
     }
 
+    pub async fn get_feature_flags(&self) -> Result<Vec<FeatureFlag>> {
+        self.transaction(|tx| async move { Ok(feature_flag::Entity::find().all(&*tx).await?) })
+            .await
+    }
+
     pub async fn add_user_flag(&self, user: UserId, flag: FlagId) -> Result<()> {
         self.transaction(|tx| async move {
             user_feature::Entity::insert(user_feature::ActiveModel {
@@ -266,6 +271,21 @@ impl Database {
             .await?;
 
             Ok(())
+        })
+        .await
+    }
+
+    pub async fn get_flag_users(&self, id: FlagId) -> Result<Vec<User>> {
+        self.transaction(|tx| async move {
+            let users = FeatureFlag {
+                id,
+                ..Default::default()
+            }
+            .find_linked(feature_flag::FlaggedUsers)
+            .all(&*tx)
+            .await?;
+
+            Ok(users)
         })
         .await
     }
