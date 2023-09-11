@@ -328,7 +328,7 @@
     }
   },
   {
-    "context": "Editor && vim_mode == normal && (vim_operator == none || vim_operator == n) && !VimWaiting",
+    "context": "Editor && vim_mode == normal && vim_operator == none && !VimWaiting",
     "bindings": {
       ".": "vim::Repeat",
       "c": [
@@ -391,7 +391,7 @@
     }
   },
   {
-    "context": "Editor && vim_operator == n",
+    "context": "Editor && VimCount",
     "bindings": {
       "0": [
         "vim::Number",

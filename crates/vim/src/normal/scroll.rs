@@ -48,7 +48,7 @@ pub fn init(cx: &mut AppContext) {
 
 fn scroll(cx: &mut ViewContext<Workspace>, by: fn(c: Option<f32>) -> ScrollAmount) {
     Vim::update(cx, |vim, cx| {
-        let amount = by(vim.pop_number_operator(cx).map(|c| c as f32));
+        let amount = by(vim.take_count().map(|c| c as f32));
         vim.update_active_editor(cx, |editor, cx| scroll_editor(editor, &amount, cx));
     })
 }

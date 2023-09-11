@@ -8,7 +8,7 @@ use crate::{normal::ChangeCase, state::Mode, Vim};
 pub fn change_case(_: &mut Workspace, _: &ChangeCase, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.record_current_action(cx);
-        let count = vim.pop_number_operator(cx).unwrap_or(1) as u32;
+        let count = vim.take_count().unwrap_or(1) as u32;
         vim.update_active_editor(cx, |editor, cx| {
             let mut ranges = Vec::new();
             let mut cursor_positions = Vec::new();

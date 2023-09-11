@@ -68,21 +68,21 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(|_: &mut Workspace, _: &DeleteLeft, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
-            let times = vim.pop_number_operator(cx);
+            let times = vim.take_count();
             delete_motion(vim, Motion::Left, times, cx);
         })
     });
     cx.add_action(|_: &mut Workspace, _: &DeleteRight, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
-            let times = vim.pop_number_operator(cx);
+            let times = vim.take_count();
             delete_motion(vim, Motion::Right, times, cx);
         })
     });
     cx.add_action(|_: &mut Workspace, _: &ChangeToEndOfLine, cx| {
         Vim::update(cx, |vim, cx| {
             vim.start_recording(cx);
-            let times = vim.pop_number_operator(cx);
+            let times = vim.take_count();
             change_motion(
                 vim,
                 Motion::EndOfLine {
@@ -96,7 +96,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(|_: &mut Workspace, _: &DeleteToEndOfLine, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
-            let times = vim.pop_number_operator(cx);
+            let times = vim.take_count();
             delete_motion(
                 vim,
                 Motion::EndOfLine {
@@ -110,7 +110,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(|_: &mut Workspace, _: &JoinLines, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
-            let mut times = vim.pop_number_operator(cx).unwrap_or(1);
+            let mut times = vim.take_count().unwrap_or(1);
             if vim.state().mode.is_visual() {
                 times = 1;
             } else if times > 1 {

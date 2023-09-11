@@ -34,7 +34,7 @@ pub(crate) fn init(cx: &mut AppContext) {
             let Some(editor) = vim.active_editor.clone() else {
                 return None;
             };
-            let count = vim.pop_number_operator(cx);
+            let count = vim.take_count();
 
             vim.workspace_state.replaying = true;
 
@@ -421,6 +421,44 @@ mod test {
             "o
             ˇo
             the lazy dog"
+        })
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_repeat_motion_counts(
+        deterministic: Arc<Deterministic>,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {
+            "ˇthe quick brown
+            fox jumps over
+            the lazy dog"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["3", "d", "3", "l"]).await;
+        cx.assert_shared_state(indoc! {
+            "ˇ brown
+            fox jumps over
+            the lazy dog"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["j", "."]).await;
+        deterministic.run_until_parked();
+        cx.assert_shared_state(indoc! {
+            " brown
+            ˇ over
+            the lazy dog"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["j", "2", "."]).await;
+        deterministic.run_until_parked();
+        cx.assert_shared_state(indoc! {
+            " brown
+             over
+            ˇe lazy dog"
         })
         .await;
     }

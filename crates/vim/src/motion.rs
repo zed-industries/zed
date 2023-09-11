@@ -229,11 +229,11 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
         Vim::update(cx, |vim, cx| vim.pop_operator(cx));
     }
 
-    let times = Vim::update(cx, |vim, cx| vim.pop_number_operator(cx));
+    let count = Vim::update(cx, |vim, _| vim.take_count());
     let operator = Vim::read(cx).active_operator();
     match Vim::read(cx).state().mode {
-        Mode::Normal => normal_motion(motion, operator, times, cx),
-        Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_motion(motion, times, cx),
+        Mode::Normal => normal_motion(motion, operator, count, cx),
+        Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_motion(motion, count, cx),
         Mode::Insert => {
             // Shouldn't execute a motion in insert mode. Ignoring
         }
@@ -412,7 +412,7 @@ impl Motion {
                 map.clip_at_line_end(movement::end_of_paragraph(map, point, times)),
                 SelectionGoal::None,
             ),
-            CurrentLine => (next_line_end(map, point, 1), SelectionGoal::None),
+            CurrentLine => (next_line_end(map, point, times), SelectionGoal::None),
             StartOfDocument => (start_of_document(map, point, times), SelectionGoal::None),
             EndOfDocument => (
                 end_of_document(map, point, maybe_times),

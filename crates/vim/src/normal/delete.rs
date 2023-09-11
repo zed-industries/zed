@@ -387,4 +387,40 @@ mod test {
         assert_eq!(cx.active_operator(), None);
         assert_eq!(cx.mode(), Mode::Normal);
     }
+
+    #[gpui::test]
+    async fn test_delete_with_counts(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {"
+                The ˇquick brown
+                fox jumps over
+                the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes(["d", "2", "d"]).await;
+        cx.assert_shared_state(indoc! {"
+        the ˇlazy dog"})
+            .await;
+
+        cx.set_shared_state(indoc! {"
+                The ˇquick brown
+                fox jumps over
+                the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes(["2", "d", "d"]).await;
+        cx.assert_shared_state(indoc! {"
+        the ˇlazy dog"})
+            .await;
+
+        cx.set_shared_state(indoc! {"
+                The ˇquick brown
+                fox jumps over
+                the moon,
+                a star, and
+                the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes(["2", "d", "2", "d"]).await;
+        cx.assert_shared_state(indoc! {"
+        the ˇlazy dog"})
+            .await;
+    }
 }
