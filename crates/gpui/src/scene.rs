@@ -8,7 +8,6 @@ use derive_more::Mul;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
-use serde_json::json;
 use std::{
     any::{Any, TypeId},
     borrow::Cow,
@@ -20,7 +19,6 @@ use crate::{
     color::Color,
     fonts::{FontId, GlyphId},
     geometry::{rect::RectF, vector::Vector2F},
-    json::ToJson,
     platform::{current::Surface, CursorStyle},
     ImageData, WindowContext,
 };
@@ -28,10 +26,9 @@ pub use mouse_event::*;
 pub use mouse_region::*;
 
 pub struct SceneBuilder {
-    scale_factor: f32,
     stacking_contexts: Vec<StackingContext>,
     active_stacking_context_stack: Vec<usize>,
-    /// Used by the playground crate.
+    /// Used by the gpui2 crate.
     pub event_handlers: Vec<EventHandler>,
     #[cfg(debug_assertions)]
     mouse_region_ids: HashSet<MouseRegionId>,
@@ -171,15 +168,13 @@ pub struct Icon {
     pub color: Color,
 }
 
-#[derive(Clone, Copy, Default, Debug, JsonSchema)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct Border {
-    pub width: f32,
     pub color: Color,
-    pub overlay: bool,
-    pub top: bool,
-    pub right: bool,
-    pub bottom: bool,
-    pub left: bool,
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+    pub left: f32,
 }
 
 #[derive(Clone, Copy, Default, Debug)]
@@ -189,47 +184,6 @@ pub struct Underline {
     pub thickness: f32,
     pub color: Color,
     pub squiggly: bool,
-}
-
-impl<'de> Deserialize<'de> for Border {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct BorderData {
-            pub width: f32,
-            pub color: Color,
-            #[serde(default)]
-            pub overlay: bool,
-            #[serde(default)]
-            pub top: bool,
-            #[serde(default)]
-            pub right: bool,
-            #[serde(default)]
-            pub bottom: bool,
-            #[serde(default)]
-            pub left: bool,
-        }
-
-        let data = BorderData::deserialize(deserializer)?;
-        let mut border = Border {
-            width: data.width,
-            color: data.color,
-            overlay: data.overlay,
-            top: data.top,
-            bottom: data.bottom,
-            left: data.left,
-            right: data.right,
-        };
-        if !border.top && !border.bottom && !border.left && !border.right {
-            border.top = true;
-            border.bottom = true;
-            border.left = true;
-            border.right = true;
-        }
-        Ok(border)
-    }
 }
 
 #[derive(Debug)]
@@ -290,43 +244,38 @@ impl Scene {
 }
 
 impl SceneBuilder {
-    pub fn new(scale_factor: f32) -> Self {
-        let stacking_context = StackingContext::new(None, 0);
-        SceneBuilder {
-            scale_factor,
-            stacking_contexts: vec![stacking_context],
-            active_stacking_context_stack: vec![0],
+    pub fn new() -> Self {
+        let mut this = SceneBuilder {
+            stacking_contexts: Vec::new(),
+            active_stacking_context_stack: Vec::new(),
             #[cfg(debug_assertions)]
-            mouse_region_ids: Default::default(),
+            mouse_region_ids: HashSet::default(),
             event_handlers: Vec::new(),
-        }
+        };
+        this.clear();
+        this
     }
 
-    pub fn build(mut self) -> Scene {
-        self.stacking_contexts
-            .sort_by_key(|context| context.z_index);
+    pub fn clear(&mut self) {
+        self.stacking_contexts.clear();
+        self.stacking_contexts.push(StackingContext::new(None, 0));
+        self.active_stacking_context_stack.clear();
+        self.active_stacking_context_stack.push(0);
+        #[cfg(debug_assertions)]
+        self.mouse_region_ids.clear();
+    }
+
+    pub fn build(&mut self, scale_factor: f32) -> Scene {
+        let mut stacking_contexts = std::mem::take(&mut self.stacking_contexts);
+        stacking_contexts.sort_by_key(|context| context.z_index);
+        let event_handlers = std::mem::take(&mut self.event_handlers);
+        self.clear();
+
         Scene {
-            scale_factor: self.scale_factor,
-            stacking_contexts: self.stacking_contexts,
-            event_handlers: self.event_handlers,
+            scale_factor,
+            stacking_contexts,
+            event_handlers,
         }
-    }
-
-    pub fn scale_factor(&self) -> f32 {
-        self.scale_factor
-    }
-
-    pub fn paint_stacking_context<F>(
-        &mut self,
-        clip_bounds: Option<RectF>,
-        z_index: Option<usize>,
-        f: F,
-    ) where
-        F: FnOnce(&mut Self),
-    {
-        self.push_stacking_context(clip_bounds, z_index);
-        f(self);
-        self.pop_stacking_context();
     }
 
     pub fn push_stacking_context(&mut self, clip_bounds: Option<RectF>, z_index: Option<usize>) {
@@ -340,15 +289,6 @@ impl SceneBuilder {
     pub fn pop_stacking_context(&mut self) {
         self.active_stacking_context_stack.pop();
         assert!(!self.active_stacking_context_stack.is_empty());
-    }
-
-    pub fn paint_layer<F>(&mut self, clip_bounds: Option<RectF>, f: F)
-    where
-        F: FnOnce(&mut Self),
-    {
-        self.push_layer(clip_bounds);
-        f(self);
-        self.pop_layer();
     }
 
     pub fn push_layer(&mut self, clip_bounds: Option<RectF>) {
@@ -603,99 +543,6 @@ impl Layer {
 
     pub fn paths(&self) -> &[Path] {
         self.paths.as_slice()
-    }
-}
-
-impl Border {
-    pub fn new(width: f32, color: Color) -> Self {
-        Self {
-            width,
-            color,
-            overlay: false,
-            top: false,
-            left: false,
-            bottom: false,
-            right: false,
-        }
-    }
-
-    pub fn all(width: f32, color: Color) -> Self {
-        Self {
-            width,
-            color,
-            overlay: false,
-            top: true,
-            left: true,
-            bottom: true,
-            right: true,
-        }
-    }
-
-    pub fn top(width: f32, color: Color) -> Self {
-        let mut border = Self::new(width, color);
-        border.top = true;
-        border
-    }
-
-    pub fn left(width: f32, color: Color) -> Self {
-        let mut border = Self::new(width, color);
-        border.left = true;
-        border
-    }
-
-    pub fn bottom(width: f32, color: Color) -> Self {
-        let mut border = Self::new(width, color);
-        border.bottom = true;
-        border
-    }
-
-    pub fn right(width: f32, color: Color) -> Self {
-        let mut border = Self::new(width, color);
-        border.right = true;
-        border
-    }
-
-    pub fn with_sides(mut self, top: bool, left: bool, bottom: bool, right: bool) -> Self {
-        self.top = top;
-        self.left = left;
-        self.bottom = bottom;
-        self.right = right;
-        self
-    }
-
-    pub fn top_width(&self) -> f32 {
-        if self.top {
-            self.width
-        } else {
-            0.0
-        }
-    }
-
-    pub fn left_width(&self) -> f32 {
-        if self.left {
-            self.width
-        } else {
-            0.0
-        }
-    }
-}
-
-impl ToJson for Border {
-    fn to_json(&self) -> serde_json::Value {
-        let mut value = json!({});
-        if self.top {
-            value["top"] = json!(self.width);
-        }
-        if self.right {
-            value["right"] = json!(self.width);
-        }
-        if self.bottom {
-            value["bottom"] = json!(self.width);
-        }
-        if self.left {
-            value["left"] = json!(self.width);
-        }
-        value
     }
 }
 

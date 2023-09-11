@@ -221,6 +221,14 @@ unsafe fn build_classes() {
     };
 }
 
+pub fn convert_mouse_position(position: NSPoint, window_height: f32) -> Vector2F {
+    vec2f(
+        position.x as f32,
+        // MacOS screen coordinates are relative to bottom left
+        window_height - position.y as f32,
+    )
+}
+
 unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const Class {
     let mut decl = ClassDecl::new(name, superclass).unwrap();
     decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
@@ -659,6 +667,16 @@ impl platform::Window for MacWindow {
                 native_screen: self.0.as_ref().borrow().native_window.screen(),
             })
         }
+    }
+
+    fn mouse_position(&self) -> Vector2F {
+        let position = unsafe {
+            self.0
+                .borrow()
+                .native_window
+                .mouseLocationOutsideOfEventStream()
+        };
+        convert_mouse_position(position, self.content_size().y())
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {

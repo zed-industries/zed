@@ -12,8 +12,13 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         ident,
         data,
         generics,
+        attrs,
         ..
     } = parse_macro_input!(input);
+
+    let impl_debug_on_refinement = attrs
+        .iter()
+        .any(|attr| attr.path.is_ident("refineable") && attr.tokens.to_string().contains("debug"));
 
     let refinement_ident = format_ident!("{}Refinement", ident);
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
@@ -120,6 +125,41 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         })
         .collect();
 
+    let debug_impl = if impl_debug_on_refinement {
+        let refinement_field_debugs: Vec<TokenStream2> = fields
+            .iter()
+            .map(|field| {
+                let name = &field.ident;
+                quote! {
+                    if self.#name.is_some() {
+                        debug_struct.field(stringify!(#name), &self.#name);
+                    } else {
+                        all_some = false;
+                    }
+                }
+            })
+            .collect();
+
+        quote! {
+            impl #impl_generics std::fmt::Debug for #refinement_ident #ty_generics
+                #where_clause
+            {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    let mut debug_struct = f.debug_struct(stringify!(#refinement_ident));
+                    let mut all_some = true;
+                    #( #refinement_field_debugs )*
+                    if all_some {
+                        debug_struct.finish()
+                    } else {
+                        debug_struct.finish_non_exhaustive()
+                    }
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     let gen = quote! {
         #[derive(Default, Clone)]
         pub struct #refinement_ident #impl_generics {
@@ -145,8 +185,22 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
                 #( #refinement_field_assignments )*
             }
         }
-    };
 
+        impl #impl_generics #refinement_ident #ty_generics
+            #where_clause
+        {
+            pub fn is_some(&self) -> bool {
+                #(
+                    if self.#field_names.is_some() {
+                        return true;
+                    }
+                )*
+                false
+            }
+        }
+
+        #debug_impl
+    };
     gen.into()
 }
 

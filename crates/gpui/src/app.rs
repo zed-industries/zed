@@ -10,7 +10,7 @@ mod window_input_handler;
 use crate::{
     elements::{AnyElement, AnyRootElement, RootElement},
     executor::{self, Task},
-    fonts::TextStyle,
+    image_cache::ImageCache,
     json,
     keymap_matcher::{self, Binding, KeymapContext, KeymapMatcher, Keystroke, MatchResult},
     platform::{
@@ -28,6 +28,7 @@ use collections::{hash_map::Entry, BTreeMap, HashMap, HashSet, VecDeque};
 use derive_more::Deref;
 pub use menu::*;
 use parking_lot::Mutex;
+use pathfinder_geometry::rect::RectF;
 use platform::Event;
 use postage::oneshot;
 #[cfg(any(test, feature = "test-support"))]
@@ -51,8 +52,12 @@ use std::{
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use test_app_context::{ContextHandle, TestAppContext};
-use util::ResultExt;
+use util::{
+    http::{self, HttpClient},
+    ResultExt,
+};
 use uuid::Uuid;
+pub use window::MeasureParams;
 use window_input_handler::WindowInputHandler;
 
 pub trait Entity: 'static {
@@ -154,12 +159,14 @@ impl App {
         let platform = platform::current::platform();
         let foreground = Rc::new(executor::Foreground::platform(platform.dispatcher())?);
         let foreground_platform = platform::current::foreground_platform(foreground.clone());
+        let http_client = http::client();
         let app = Self(Rc::new(RefCell::new(AppContext::new(
             foreground,
             Arc::new(executor::Background::new()),
             platform.clone(),
             foreground_platform.clone(),
             Arc::new(FontCache::new(platform.fonts())),
+            http_client,
             Default::default(),
             asset_source,
         ))));
@@ -456,6 +463,7 @@ pub struct AppContext {
     pub asset_cache: Arc<AssetCache>,
     font_system: Arc<dyn FontSystem>,
     pub font_cache: Arc<FontCache>,
+    pub image_cache: Arc<ImageCache>,
     action_deserializers: HashMap<&'static str, (TypeId, DeserializeActionCallback)>,
     capture_actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
     // Entity Types -> { Action Types -> Action Handlers }
@@ -499,6 +507,7 @@ impl AppContext {
         platform: Arc<dyn platform::Platform>,
         foreground_platform: Rc<dyn platform::ForegroundPlatform>,
         font_cache: Arc<FontCache>,
+        http_client: Arc<dyn HttpClient>,
         ref_counts: RefCounts,
         asset_source: impl AssetSource,
     ) -> Self {
@@ -517,6 +526,7 @@ impl AppContext {
             platform,
             foreground_platform,
             font_cache,
+            image_cache: Arc::new(ImageCache::new(http_client)),
             asset_cache: Arc::new(AssetCache::new(asset_source)),
             action_deserializers: Default::default(),
             capture_actions: Default::default(),
@@ -1898,7 +1908,6 @@ impl AppContext {
 
     fn handle_repaint_window_effect(&mut self, window: AnyWindowHandle) {
         self.update_window(window, |cx| {
-            cx.layout(false).log_err();
             if let Some(scene) = cx.paint().log_err() {
                 cx.window.platform_window.present_scene(scene);
             }
@@ -3345,16 +3354,65 @@ impl<'a, 'b, V: 'static> ViewContext<'a, 'b, V> {
         self.element_state::<Tag, T>(element_id, T::default())
     }
 
-    pub fn rem_pixels(&self) -> f32 {
-        16.
-    }
-
     pub fn default_element_state_dynamic<T: 'static + Default>(
         &mut self,
         tag: TypeTag,
         element_id: usize,
     ) -> ElementStateHandle<T> {
         self.element_state_dynamic::<T>(tag, element_id, T::default())
+    }
+
+    /// Return keystrokes that would dispatch the given action on the given view.
+    pub(crate) fn keystrokes_for_action(
+        &mut self,
+        view_id: usize,
+        action: &dyn Action,
+    ) -> Option<SmallVec<[Keystroke; 2]>> {
+        self.notify_if_view_ancestors_change(view_id);
+
+        let window = self.window_handle;
+        let mut contexts = Vec::new();
+        let mut handler_depth = None;
+        for (i, view_id) in self.ancestors(view_id).enumerate() {
+            if let Some(view_metadata) = self.views_metadata.get(&(window, view_id)) {
+                if let Some(actions) = self.actions.get(&view_metadata.type_id) {
+                    if actions.contains_key(&action.id()) {
+                        handler_depth = Some(i);
+                    }
+                }
+                contexts.push(view_metadata.keymap_context.clone());
+            }
+        }
+
+        if self.global_actions.contains_key(&action.id()) {
+            handler_depth = Some(contexts.len())
+        }
+
+        let handler_depth = handler_depth.unwrap_or(0);
+        (0..=handler_depth).find_map(|depth| {
+            let contexts = &contexts[depth..];
+            self.keystroke_matcher
+                .keystrokes_for_action(action, contexts)
+        })
+    }
+
+    fn notify_if_view_ancestors_change(&mut self, view_id: usize) {
+        let self_view_id = self.view_id;
+        self.window
+            .views_to_notify_if_ancestors_change
+            .entry(view_id)
+            .or_default()
+            .push(self_view_id);
+    }
+
+    pub fn paint_layer<F, R>(&mut self, clip_bounds: Option<RectF>, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        self.scene().push_layer(clip_bounds);
+        let result = f(self);
+        self.scene().pop_layer();
+        result
     }
 }
 
@@ -3444,265 +3502,6 @@ impl<V> BorrowWindowContext for ViewContext<'_, '_, V> {
         F: FnOnce(&mut WindowContext) -> Option<T>,
     {
         BorrowWindowContext::update_window_optional(&mut *self.window_context, window, f)
-    }
-}
-
-/// Methods shared by both LayoutContext and PaintContext
-///
-/// It's that PaintContext should be implemented in terms of layout context and
-/// deref to it, in which case we wouldn't need this.
-pub trait RenderContext<'a, 'b, V> {
-    fn text_style(&self) -> TextStyle;
-    fn push_text_style(&mut self, style: TextStyle);
-    fn pop_text_style(&mut self);
-    fn as_view_context(&mut self) -> &mut ViewContext<'a, 'b, V>;
-}
-
-pub struct LayoutContext<'a, 'b, 'c, V> {
-    // Nathan: Making this is public while I work on playground.
-    pub view_context: &'c mut ViewContext<'a, 'b, V>,
-    new_parents: &'c mut HashMap<usize, usize>,
-    views_to_notify_if_ancestors_change: &'c mut HashMap<usize, SmallVec<[usize; 2]>>,
-    text_style_stack: Vec<TextStyle>,
-    pub refreshing: bool,
-}
-
-impl<'a, 'b, 'c, V> LayoutContext<'a, 'b, 'c, V> {
-    pub fn new(
-        view_context: &'c mut ViewContext<'a, 'b, V>,
-        new_parents: &'c mut HashMap<usize, usize>,
-        views_to_notify_if_ancestors_change: &'c mut HashMap<usize, SmallVec<[usize; 2]>>,
-        refreshing: bool,
-    ) -> Self {
-        Self {
-            view_context,
-            new_parents,
-            views_to_notify_if_ancestors_change,
-            text_style_stack: Vec::new(),
-            refreshing,
-        }
-    }
-
-    pub fn view_context(&mut self) -> &mut ViewContext<'a, 'b, V> {
-        self.view_context
-    }
-
-    /// Return keystrokes that would dispatch the given action on the given view.
-    pub(crate) fn keystrokes_for_action(
-        &mut self,
-        view_id: usize,
-        action: &dyn Action,
-    ) -> Option<SmallVec<[Keystroke; 2]>> {
-        self.notify_if_view_ancestors_change(view_id);
-
-        let window = self.window_handle;
-        let mut contexts = Vec::new();
-        let mut handler_depth = None;
-        for (i, view_id) in self.ancestors(view_id).enumerate() {
-            if let Some(view_metadata) = self.views_metadata.get(&(window, view_id)) {
-                if let Some(actions) = self.actions.get(&view_metadata.type_id) {
-                    if actions.contains_key(&action.id()) {
-                        handler_depth = Some(i);
-                    }
-                }
-                contexts.push(view_metadata.keymap_context.clone());
-            }
-        }
-
-        if self.global_actions.contains_key(&action.id()) {
-            handler_depth = Some(contexts.len())
-        }
-
-        let handler_depth = handler_depth.unwrap_or(0);
-        (0..=handler_depth).find_map(|depth| {
-            let contexts = &contexts[depth..];
-            self.keystroke_matcher
-                .keystrokes_for_action(action, contexts)
-        })
-    }
-
-    fn notify_if_view_ancestors_change(&mut self, view_id: usize) {
-        let self_view_id = self.view_id;
-        self.views_to_notify_if_ancestors_change
-            .entry(view_id)
-            .or_default()
-            .push(self_view_id);
-    }
-
-    pub fn with_text_style<F, T>(&mut self, style: TextStyle, f: F) -> T
-    where
-        F: FnOnce(&mut Self) -> T,
-    {
-        self.push_text_style(style);
-        let result = f(self);
-        self.pop_text_style();
-        result
-    }
-}
-
-impl<'a, 'b, 'c, V> RenderContext<'a, 'b, V> for LayoutContext<'a, 'b, 'c, V> {
-    fn text_style(&self) -> TextStyle {
-        self.text_style_stack
-            .last()
-            .cloned()
-            .unwrap_or(TextStyle::default(&self.font_cache))
-    }
-
-    fn push_text_style(&mut self, style: TextStyle) {
-        self.text_style_stack.push(style);
-    }
-
-    fn pop_text_style(&mut self) {
-        self.text_style_stack.pop();
-    }
-
-    fn as_view_context(&mut self) -> &mut ViewContext<'a, 'b, V> {
-        &mut self.view_context
-    }
-}
-
-impl<'a, 'b, 'c, V> Deref for LayoutContext<'a, 'b, 'c, V> {
-    type Target = ViewContext<'a, 'b, V>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.view_context
-    }
-}
-
-impl<V> DerefMut for LayoutContext<'_, '_, '_, V> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.view_context
-    }
-}
-
-impl<V> BorrowAppContext for LayoutContext<'_, '_, '_, V> {
-    fn read_with<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
-        BorrowAppContext::read_with(&*self.view_context, f)
-    }
-
-    fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
-        BorrowAppContext::update(&mut *self.view_context, f)
-    }
-}
-
-impl<V> BorrowWindowContext for LayoutContext<'_, '_, '_, V> {
-    type Result<T> = T;
-
-    fn read_window<T, F: FnOnce(&WindowContext) -> T>(&self, window: AnyWindowHandle, f: F) -> T {
-        BorrowWindowContext::read_window(&*self.view_context, window, f)
-    }
-
-    fn read_window_optional<T, F>(&self, window: AnyWindowHandle, f: F) -> Option<T>
-    where
-        F: FnOnce(&WindowContext) -> Option<T>,
-    {
-        BorrowWindowContext::read_window_optional(&*self.view_context, window, f)
-    }
-
-    fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
-        &mut self,
-        window: AnyWindowHandle,
-        f: F,
-    ) -> T {
-        BorrowWindowContext::update_window(&mut *self.view_context, window, f)
-    }
-
-    fn update_window_optional<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Option<T>
-    where
-        F: FnOnce(&mut WindowContext) -> Option<T>,
-    {
-        BorrowWindowContext::update_window_optional(&mut *self.view_context, window, f)
-    }
-}
-
-pub struct PaintContext<'a, 'b, 'c, V> {
-    pub view_context: &'c mut ViewContext<'a, 'b, V>,
-    text_style_stack: Vec<TextStyle>,
-}
-
-impl<'a, 'b, 'c, V> PaintContext<'a, 'b, 'c, V> {
-    pub fn new(view_context: &'c mut ViewContext<'a, 'b, V>) -> Self {
-        Self {
-            view_context,
-            text_style_stack: Vec::new(),
-        }
-    }
-}
-
-impl<'a, 'b, 'c, V> RenderContext<'a, 'b, V> for PaintContext<'a, 'b, 'c, V> {
-    fn text_style(&self) -> TextStyle {
-        self.text_style_stack
-            .last()
-            .cloned()
-            .unwrap_or(TextStyle::default(&self.font_cache))
-    }
-
-    fn push_text_style(&mut self, style: TextStyle) {
-        self.text_style_stack.push(style);
-    }
-
-    fn pop_text_style(&mut self) {
-        self.text_style_stack.pop();
-    }
-
-    fn as_view_context(&mut self) -> &mut ViewContext<'a, 'b, V> {
-        &mut self.view_context
-    }
-}
-
-impl<'a, 'b, 'c, V> Deref for PaintContext<'a, 'b, 'c, V> {
-    type Target = ViewContext<'a, 'b, V>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.view_context
-    }
-}
-
-impl<V> DerefMut for PaintContext<'_, '_, '_, V> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.view_context
-    }
-}
-
-impl<V> BorrowAppContext for PaintContext<'_, '_, '_, V> {
-    fn read_with<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
-        BorrowAppContext::read_with(&*self.view_context, f)
-    }
-
-    fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
-        BorrowAppContext::update(&mut *self.view_context, f)
-    }
-}
-
-impl<V> BorrowWindowContext for PaintContext<'_, '_, '_, V> {
-    type Result<T> = T;
-
-    fn read_window<T, F>(&self, window: AnyWindowHandle, f: F) -> Self::Result<T>
-    where
-        F: FnOnce(&WindowContext) -> T,
-    {
-        BorrowWindowContext::read_window(self.view_context, window, f)
-    }
-
-    fn read_window_optional<T, F>(&self, window: AnyWindowHandle, f: F) -> Option<T>
-    where
-        F: FnOnce(&WindowContext) -> Option<T>,
-    {
-        BorrowWindowContext::read_window_optional(self.view_context, window, f)
-    }
-
-    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Self::Result<T>
-    where
-        F: FnOnce(&mut WindowContext) -> T,
-    {
-        BorrowWindowContext::update_window(self.view_context, window, f)
-    }
-
-    fn update_window_optional<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Option<T>
-    where
-        F: FnOnce(&mut WindowContext) -> Option<T>,
-    {
-        BorrowWindowContext::update_window_optional(self.view_context, window, f)
     }
 }
 
@@ -6555,32 +6354,21 @@ mod tests {
         view_1.update(cx, |_, cx| {
             view_2.update(cx, |_, cx| {
                 // Sanity check
-                let mut new_parents = Default::default();
-                let mut notify_views_if_parents_change = Default::default();
-                let mut layout_cx = LayoutContext::new(
-                    cx,
-                    &mut new_parents,
-                    &mut notify_views_if_parents_change,
-                    false,
-                );
                 assert_eq!(
-                    layout_cx
-                        .keystrokes_for_action(view_1_id, &Action1)
+                    cx.keystrokes_for_action(view_1_id, &Action1)
                         .unwrap()
                         .as_slice(),
                     &[Keystroke::parse("a").unwrap()]
                 );
                 assert_eq!(
-                    layout_cx
-                        .keystrokes_for_action(view_2.id(), &Action2)
+                    cx.keystrokes_for_action(view_2.id(), &Action2)
                         .unwrap()
                         .as_slice(),
                     &[Keystroke::parse("b").unwrap()]
                 );
-                assert_eq!(layout_cx.keystrokes_for_action(view_1.id(), &Action3), None);
+                assert_eq!(cx.keystrokes_for_action(view_1.id(), &Action3), None);
                 assert_eq!(
-                    layout_cx
-                        .keystrokes_for_action(view_2.id(), &Action3)
+                    cx.keystrokes_for_action(view_2.id(), &Action3)
                         .unwrap()
                         .as_slice(),
                     &[Keystroke::parse("c").unwrap()]
@@ -6589,21 +6377,17 @@ mod tests {
                 // The 'a' keystroke propagates up the view tree from view_2
                 // to view_1. The action, Action1, is handled by view_1.
                 assert_eq!(
-                    layout_cx
-                        .keystrokes_for_action(view_2.id(), &Action1)
+                    cx.keystrokes_for_action(view_2.id(), &Action1)
                         .unwrap()
                         .as_slice(),
                     &[Keystroke::parse("a").unwrap()]
                 );
 
                 // Actions that are handled below the current view don't have bindings
-                assert_eq!(layout_cx.keystrokes_for_action(view_1_id, &Action2), None);
+                assert_eq!(cx.keystrokes_for_action(view_1_id, &Action2), None);
 
                 // Actions that are handled in other branches of the tree should not have a binding
-                assert_eq!(
-                    layout_cx.keystrokes_for_action(view_2.id(), &GlobalAction),
-                    None
-                );
+                assert_eq!(cx.keystrokes_for_action(view_2.id(), &GlobalAction), None);
             });
         });
 

@@ -332,6 +332,10 @@ impl super::Window for Window {
         Rc::new(Screen)
     }
 
+    fn mouse_position(&self) -> Vector2F {
+        Vector2F::zero()
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }

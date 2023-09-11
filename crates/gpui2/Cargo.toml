@@ -1,0 +1,32 @@
+[package]
+name = "gpui2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "gpui2"
+path = "src/gpui2.rs"
+
+[features]
+test-support = ["gpui/test-support"]
+
+[dependencies]
+anyhow.workspace = true
+derive_more.workspace = true
+gpui = { path = "../gpui" }
+log.workspace = true
+futures.workspace = true
+gpui2_macros = { path = "../gpui2_macros" }
+parking_lot.workspace = true
+refineable.workspace = true
+rust-embed.workspace = true
+serde.workspace = true
+settings = { path = "../settings" }
+simplelog = "0.9"
+smallvec.workspace = true
+theme = { path = "../theme" }
+util = { path = "../util" }
+
+[dev-dependencies]
+gpui = { path = "../gpui", features = ["test-support"] }

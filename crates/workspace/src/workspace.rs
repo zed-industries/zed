@@ -3628,13 +3628,13 @@ fn notify_of_new_dock(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppCo
                             "Looking for the dock? Try ctrl-`!\nshift-escape now zooms your pane.",
                             text,
                         )
-                        .with_custom_runs(vec![26..32, 34..46], |_, bounds, scene, cx| {
+                        .with_custom_runs(vec![26..32, 34..46], |_, bounds, cx| {
                             let code_span_background_color = settings::get::<ThemeSettings>(cx)
                                 .theme
                                 .editor
                                 .document_highlight_read_background;
 
-                            scene.push_quad(gpui::Quad {
+                            cx.scene().push_quad(gpui::Quad {
                                 bounds,
                                 background: Some(code_span_background_color),
                                 border: Default::default(),

@@ -7,8 +7,7 @@ use serde_json::json;
 use crate::{
     geometry::rect::RectF,
     platform::{CursorStyle, MouseButton},
-    AnyElement, AppContext, Axis, Element, LayoutContext, MouseRegion, PaintContext, SceneBuilder,
-    SizeConstraint, TypeTag, View, ViewContext,
+    AnyElement, AppContext, Axis, Element, MouseRegion, SizeConstraint, TypeTag, View, ViewContext,
 };
 
 #[derive(Copy, Clone, Debug)]
@@ -105,77 +104,77 @@ impl<V: 'static> Element<V> for Resizable<V> {
         &mut self,
         constraint: crate::SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         (self.child.layout(constraint, view, cx), constraint)
     }
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: pathfinder_geometry::rect::RectF,
         visible_bounds: pathfinder_geometry::rect::RectF,
         constraint: &mut SizeConstraint,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
-        scene.push_stacking_context(None, None);
+        cx.scene().push_stacking_context(None, None);
 
         let handle_region = self.handle_side.of_rect(bounds, self.handle_size);
 
         enum ResizeHandle {}
-        scene.push_mouse_region(
-            MouseRegion::new::<ResizeHandle>(
-                cx.view_id(),
-                self.handle_side as usize,
-                handle_region,
-            )
-            .on_down(MouseButton::Left, |_, _: &mut V, _| {}) // This prevents the mouse down event from being propagated elsewhere
-            .on_click(MouseButton::Left, {
-                let on_resize = self.on_resize.clone();
-                move |click, v, cx| {
-                    if click.click_count == 2 {
-                        on_resize.borrow_mut()(v, None, cx);
+        let view_id = cx.view_id();
+        cx.scene().push_mouse_region(
+            MouseRegion::new::<ResizeHandle>(view_id, self.handle_side as usize, handle_region)
+                .on_down(MouseButton::Left, |_, _: &mut V, _| {}) // This prevents the mouse down event from being propagated elsewhere
+                .on_click(MouseButton::Left, {
+                    let on_resize = self.on_resize.clone();
+                    move |click, v, cx| {
+                        if click.click_count == 2 {
+                            on_resize.borrow_mut()(v, None, cx);
+                        }
                     }
-                }
-            })
-            .on_drag(MouseButton::Left, {
-                let bounds = bounds.clone();
-                let side = self.handle_side;
-                let prev_size = side.relevant_component(bounds.size());
-                let min_size = side.relevant_component(constraint.min);
-                let max_size = side.relevant_component(constraint.max);
-                let on_resize = self.on_resize.clone();
-                let tag = self.tag;
-                move |event, view: &mut V, cx| {
-                    if event.end {
-                        return;
+                })
+                .on_drag(MouseButton::Left, {
+                    let bounds = bounds.clone();
+                    let side = self.handle_side;
+                    let prev_size = side.relevant_component(bounds.size());
+                    let min_size = side.relevant_component(constraint.min);
+                    let max_size = side.relevant_component(constraint.max);
+                    let on_resize = self.on_resize.clone();
+                    let tag = self.tag;
+                    move |event, view: &mut V, cx| {
+                        if event.end {
+                            return;
+                        }
+
+                        let Some((bounds, _)) = get_bounds(tag, cx) else {
+                            return;
+                        };
+
+                        let new_size_raw = match side {
+                            // Handle on top side of element => Element is on bottom
+                            HandleSide::Top => {
+                                bounds.height() + bounds.origin_y() - event.position.y()
+                            }
+                            // Handle on right side of element => Element is on left
+                            HandleSide::Right => event.position.x() - bounds.lower_left().x(),
+                            // Handle on left side of element => Element is on the right
+                            HandleSide::Left => {
+                                bounds.width() + bounds.origin_x() - event.position.x()
+                            }
+                            // Handle on bottom side of element => Element is on the top
+                            HandleSide::Bottom => event.position.y() - bounds.lower_left().y(),
+                        };
+
+                        let new_size = min_size.max(new_size_raw).min(max_size).round();
+                        if new_size != prev_size {
+                            on_resize.borrow_mut()(view, Some(new_size), cx);
+                        }
                     }
-
-                    let Some((bounds, _)) = get_bounds(tag, cx) else {
-                        return;
-                    };
-
-                    let new_size_raw = match side {
-                        // Handle on top side of element => Element is on bottom
-                        HandleSide::Top => bounds.height() + bounds.origin_y() - event.position.y(),
-                        // Handle on right side of element => Element is on left
-                        HandleSide::Right => event.position.x() - bounds.lower_left().x(),
-                        // Handle on left side of element => Element is on the right
-                        HandleSide::Left => bounds.width() + bounds.origin_x() - event.position.x(),
-                        // Handle on bottom side of element => Element is on the top
-                        HandleSide::Bottom => event.position.y() - bounds.lower_left().y(),
-                    };
-
-                    let new_size = min_size.max(new_size_raw).min(max_size).round();
-                    if new_size != prev_size {
-                        on_resize.borrow_mut()(view, Some(new_size), cx);
-                    }
-                }
-            }),
+                }),
         );
 
-        scene.push_cursor_region(crate::CursorRegion {
+        cx.scene().push_cursor_region(crate::CursorRegion {
             bounds: handle_region,
             style: match self.handle_side.axis() {
                 Axis::Horizontal => CursorStyle::ResizeLeftRight,
@@ -183,10 +182,9 @@ impl<V: 'static> Element<V> for Resizable<V> {
             },
         });
 
-        scene.pop_stacking_context();
+        cx.scene().pop_stacking_context();
 
-        self.child
-            .paint(scene, bounds.origin(), visible_bounds, view, cx);
+        self.child.paint(bounds.origin(), visible_bounds, view, cx);
     }
 
     fn rect_for_text_range(
@@ -242,26 +240,24 @@ impl<V: View, P: 'static> Element<V> for BoundsProvider<V, P> {
         &mut self,
         constraint: crate::SizeConstraint,
         view: &mut V,
-        cx: &mut crate::LayoutContext<V>,
+        cx: &mut crate::ViewContext<V>,
     ) -> (pathfinder_geometry::vector::Vector2F, Self::LayoutState) {
         (self.child.layout(constraint, view, cx), ())
     }
 
     fn paint(
         &mut self,
-        scene: &mut crate::SceneBuilder,
         bounds: pathfinder_geometry::rect::RectF,
         visible_bounds: pathfinder_geometry::rect::RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut crate::PaintContext<V>,
+        cx: &mut crate::ViewContext<V>,
     ) -> Self::PaintState {
         cx.update_default_global::<ProviderMap, _, _>(|map, _| {
             map.0.insert(TypeTag::new::<P>(), (bounds, visible_bounds));
         });
 
-        self.child
-            .paint(scene, bounds.origin(), visible_bounds, view, cx)
+        self.child.paint(bounds.origin(), visible_bounds, view, cx)
     }
 
     fn rect_for_text_range(

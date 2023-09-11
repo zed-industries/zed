@@ -146,6 +146,7 @@ pub trait Window {
     fn titlebar_height(&self) -> f32;
     fn appearance(&self) -> Appearance;
     fn screen(&self) -> Rc<dyn Screen>;
+    fn mouse_position(&self) -> Vector2F;
 
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn set_input_handler(&mut self, input_handler: Box<dyn InputHandler>);

@@ -6,15 +6,16 @@ pub mod ui;
 use components::{action_button::ButtonStyle, disclosure::DisclosureStyle, ToggleIconButtonStyle};
 use gpui::{
     color::Color,
-    elements::{ContainerStyle, ImageStyle, LabelStyle, Shadow, SvgStyle, TooltipStyle},
+    elements::{Border, ContainerStyle, ImageStyle, LabelStyle, Shadow, SvgStyle, TooltipStyle},
     fonts::{HighlightStyle, TextStyle},
-    platform, AppContext, AssetSource, Border, MouseState,
+    platform, AppContext, AssetSource, MouseState,
 };
+use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
 use settings::SettingsStore;
-use std::{collections::HashMap, ops::Deref, sync::Arc};
+use std::{any::Any, collections::HashMap, ops::Deref, sync::Arc};
 use ui::{CheckboxStyle, CopilotCTAButton, IconStyle, ModalStyle};
 
 pub use theme_registry::*;
@@ -67,6 +68,14 @@ pub struct Theme {
     pub welcome: WelcomeStyle,
     pub titlebar: Titlebar,
     pub component_test: ComponentTest,
+    // Nathan: New elements are styled in Rust, directly from the base theme.
+    // We store it on the legacy theme so we can mix both kinds of elements during the transition.
+    #[schemars(skip)]
+    pub base_theme: serde_json::Value,
+    // A place to cache deserialized base theme.
+    #[serde(skip_deserializing)]
+    #[schemars(skip)]
+    pub deserialized_base_theme: Mutex<Option<Box<dyn Any + Send + Sync>>>,
 }
 
 #[derive(Deserialize, Default, Clone, JsonSchema)]

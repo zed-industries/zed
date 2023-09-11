@@ -2,7 +2,7 @@ pub use anyhow::{anyhow, Result};
 use futures::future::BoxFuture;
 use isahc::config::{Configurable, RedirectPolicy};
 pub use isahc::{
-    http::{Method, Uri},
+    http::{Method, StatusCode, Uri},
     Error,
 };
 pub use isahc::{AsyncBody, Request, Response};

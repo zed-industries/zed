@@ -9,7 +9,6 @@ use crate::{
     platform::FontSystem,
     scene,
     window::WindowContext,
-    SceneBuilder,
 };
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
@@ -284,7 +283,6 @@ impl Line {
 
     pub fn paint(
         &self,
-        scene: &mut SceneBuilder,
         origin: Vector2F,
         visible_bounds: RectF,
         line_height: f32,
@@ -347,7 +345,7 @@ impl Line {
                 }
 
                 if let Some((underline_origin, underline_style)) = finished_underline {
-                    scene.push_underline(scene::Underline {
+                    cx.scene().push_underline(scene::Underline {
                         origin: underline_origin,
                         width: glyph_origin.x() - underline_origin.x(),
                         thickness: underline_style.thickness.into(),
@@ -357,14 +355,14 @@ impl Line {
                 }
 
                 if glyph.is_emoji {
-                    scene.push_image_glyph(scene::ImageGlyph {
+                    cx.scene().push_image_glyph(scene::ImageGlyph {
                         font_id: run.font_id,
                         font_size: self.layout.font_size,
                         id: glyph.id,
                         origin: glyph_origin,
                     });
                 } else {
-                    scene.push_glyph(scene::Glyph {
+                    cx.scene().push_glyph(scene::Glyph {
                         font_id: run.font_id,
                         font_size: self.layout.font_size,
                         id: glyph.id,
@@ -377,7 +375,7 @@ impl Line {
 
         if let Some((underline_start, underline_style)) = underline.take() {
             let line_end_x = origin.x() + self.layout.width;
-            scene.push_underline(scene::Underline {
+            cx.scene().push_underline(scene::Underline {
                 origin: underline_start,
                 width: line_end_x - underline_start.x(),
                 color: underline_style.color.unwrap(),
@@ -389,7 +387,6 @@ impl Line {
 
     pub fn paint_wrapped(
         &self,
-        scene: &mut SceneBuilder,
         origin: Vector2F,
         visible_bounds: RectF,
         line_height: f32,
@@ -417,7 +414,7 @@ impl Line {
                 {
                     boundaries.next();
                     if let Some((underline_origin, underline_style)) = underline {
-                        scene.push_underline(scene::Underline {
+                        cx.scene().push_underline(scene::Underline {
                             origin: underline_origin,
                             width: glyph_origin.x() - underline_origin.x(),
                             thickness: underline_style.thickness.into(),
@@ -461,7 +458,7 @@ impl Line {
                 }
 
                 if let Some((underline_origin, underline_style)) = finished_underline {
-                    scene.push_underline(scene::Underline {
+                    cx.scene().push_underline(scene::Underline {
                         origin: underline_origin,
                         width: glyph_origin.x() - underline_origin.x(),
                         thickness: underline_style.thickness.into(),
@@ -477,14 +474,14 @@ impl Line {
                 );
                 if glyph_bounds.intersects(visible_bounds) {
                     if glyph.is_emoji {
-                        scene.push_image_glyph(scene::ImageGlyph {
+                        cx.scene().push_image_glyph(scene::ImageGlyph {
                             font_id: run.font_id,
                             font_size: self.layout.font_size,
                             id: glyph.id,
                             origin: glyph_bounds.origin() + baseline_offset,
                         });
                     } else {
-                        scene.push_glyph(scene::Glyph {
+                        cx.scene().push_glyph(scene::Glyph {
                             font_id: run.font_id,
                             font_size: self.layout.font_size,
                             id: glyph.id,
@@ -498,7 +495,7 @@ impl Line {
 
         if let Some((underline_origin, underline_style)) = underline.take() {
             let line_end_x = glyph_origin.x() + self.layout.width - prev_position;
-            scene.push_underline(scene::Underline {
+            cx.scene().push_underline(scene::Underline {
                 origin: underline_origin,
                 width: line_end_x - underline_origin.x(),
                 thickness: underline_style.thickness.into(),

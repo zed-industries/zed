@@ -3163,12 +3163,43 @@ dependencies = [
  "sqlez",
  "sum_tree",
  "taffy",
+ "thiserror",
  "time 0.3.27",
  "tiny-skia",
  "usvg",
  "util",
  "uuid 1.4.1",
  "waker-fn",
+]
+
+[[package]]
+name = "gpui2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "derive_more",
+ "futures 0.3.28",
+ "gpui",
+ "gpui2_macros",
+ "log",
+ "parking_lot 0.11.2",
+ "refineable",
+ "rust-embed",
+ "serde",
+ "settings",
+ "simplelog",
+ "smallvec",
+ "theme",
+ "util",
+]
+
+[[package]]
+name = "gpui2_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -5230,33 +5261,6 @@ name = "pkg-config"
 version = "0.3.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26072860ba924cbfa98ea39c8c19b4dd6a4a25423dbdf219c1eca91aa0cf6964"
-
-[[package]]
-name = "playground"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "derive_more",
- "gpui",
- "log",
- "parking_lot 0.11.2",
- "playground_macros",
- "refineable",
- "serde",
- "simplelog",
- "smallvec",
- "taffy",
- "util",
-]
-
-[[package]]
-name = "playground_macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
 
 [[package]]
 name = "plist"
@@ -7368,6 +7372,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "storybook"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui2",
+ "log",
+ "rust-embed",
+ "serde",
+ "settings",
+ "simplelog",
+ "theme",
+ "util",
+]
+
+[[package]]
 name = "stringprep"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7566,7 +7585,7 @@ dependencies = [
 [[package]]
 name = "taffy"
 version = "0.3.11"
-source = "git+https://github.com/DioxusLabs/taffy?rev=dab541d6104d58e2e10ce90c4a1dad0b703160cd#dab541d6104d58e2e10ce90c4a1dad0b703160cd"
+source = "git+https://github.com/DioxusLabs/taffy?rev=4fb530bdd71609bb1d3f76c6a8bde1ba82805d5e#4fb530bdd71609bb1d3f76c6a8bde1ba82805d5e"
 dependencies = [
  "arrayvec 0.7.4",
  "grid",
