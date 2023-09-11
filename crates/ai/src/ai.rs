@@ -1,5 +1,6 @@
 pub mod assistant;
 mod assistant_settings;
+mod codegen;
 mod streaming_diff;
 
 use anyhow::{anyhow, Result};

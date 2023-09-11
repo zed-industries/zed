@@ -1734,6 +1734,10 @@ impl Editor {
         }
     }
 
+    pub fn read_only(&self) -> bool {
+        self.read_only
+    }
+
     pub fn set_read_only(&mut self, read_only: bool) {
         self.read_only = read_only;
     }
@@ -5103,9 +5107,6 @@ impl Editor {
             self.unmark_text(cx);
             self.refresh_copilot_suggestions(true, cx);
             cx.emit(Event::Edited);
-            cx.emit(Event::TransactionUndone {
-                transaction_id: tx_id,
-            });
         }
     }
 
@@ -8547,9 +8548,6 @@ pub enum Event {
     ScrollPositionChanged {
         local: bool,
         autoscroll: bool,
-    },
-    TransactionUndone {
-        transaction_id: TransactionId,
     },
     Closed,
 }
