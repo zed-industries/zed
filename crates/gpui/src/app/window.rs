@@ -1,5 +1,6 @@
 use crate::{
     elements::AnyRootElement,
+    fonts::{TextStyle, TextStyleRefinement},
     geometry::{rect::RectF, Size},
     json::ToJson,
     keymap_matcher::{Binding, KeymapContext, Keystroke, MatchResult},
@@ -15,9 +16,8 @@ use crate::{
     text_layout::TextLayoutCache,
     util::post_inc,
     Action, AnyView, AnyViewHandle, AnyWindowHandle, AppContext, BorrowAppContext,
-    BorrowWindowContext, Effect, Element, Entity, Handle, LayoutContext, MouseRegion,
-    MouseRegionId, PaintContext, SceneBuilder, Subscription, View, ViewContext, ViewHandle,
-    WindowInvalidation,
+    BorrowWindowContext, Effect, Element, Entity, Handle, MouseRegion, MouseRegionId, SceneBuilder,
+    Subscription, View, ViewContext, ViewHandle, WindowInvalidation,
 };
 use anyhow::{anyhow, bail, Result};
 use collections::{HashMap, HashSet};
@@ -30,7 +30,7 @@ use sqlez::{
     statement::Statement,
 };
 use std::{
-    any::TypeId,
+    any::{type_name, Any, TypeId},
     mem,
     ops::{Deref, DerefMut, Range, Sub},
 };
@@ -50,20 +50,28 @@ pub struct Window {
     pub(crate) parents: HashMap<usize, usize>,
     pub(crate) is_active: bool,
     pub(crate) is_fullscreen: bool,
+    inspector_enabled: bool,
     pub(crate) invalidation: Option<WindowInvalidation>,
     pub(crate) platform_window: Box<dyn platform::Window>,
     pub(crate) rendered_views: HashMap<usize, Box<dyn AnyRootElement>>,
+    scene: SceneBuilder,
+    pub(crate) text_style_stack: Vec<TextStyle>,
+    pub(crate) theme_stack: Vec<Box<dyn Any>>,
+    pub(crate) new_parents: HashMap<usize, usize>,
+    pub(crate) views_to_notify_if_ancestors_change: HashMap<usize, SmallVec<[usize; 2]>>,
     titlebar_height: f32,
     appearance: Appearance,
     cursor_regions: Vec<CursorRegion>,
     mouse_regions: Vec<(MouseRegion, usize)>,
     event_handlers: Vec<EventHandler>,
     last_mouse_moved_event: Option<Event>,
+    last_mouse_position: Vector2F,
+    pressed_buttons: HashSet<MouseButton>,
     pub(crate) hovered_region_ids: Vec<MouseRegionId>,
     pub(crate) clicked_region_ids: Vec<MouseRegionId>,
     pub(crate) clicked_region: Option<(MouseRegionId, MouseButton)>,
-    mouse_position: Vector2F,
     text_layout_cache: TextLayoutCache,
+    refreshing: bool,
 }
 
 impl Window {
@@ -87,19 +95,27 @@ impl Window {
             is_active: false,
             invalidation: None,
             is_fullscreen: false,
+            inspector_enabled: false,
             platform_window,
             rendered_views: Default::default(),
+            scene: SceneBuilder::new(),
+            text_style_stack: Vec::new(),
+            theme_stack: Vec::new(),
+            new_parents: HashMap::default(),
+            views_to_notify_if_ancestors_change: HashMap::default(),
             cursor_regions: Default::default(),
             mouse_regions: Default::default(),
             event_handlers: Default::default(),
             text_layout_cache: TextLayoutCache::new(cx.font_system.clone()),
             last_mouse_moved_event: None,
+            last_mouse_position: Vector2F::zero(),
+            pressed_buttons: Default::default(),
             hovered_region_ids: Default::default(),
             clicked_region_ids: Default::default(),
             clicked_region: None,
-            mouse_position: vec2f(0., 0.),
             titlebar_height,
             appearance,
+            refreshing: false,
         };
 
         let mut window_context = WindowContext::mutable(cx, &mut window, handle);
@@ -226,6 +242,26 @@ impl<'a> WindowContext<'a> {
             .push_back(Effect::RepaintWindow { window });
     }
 
+    pub fn scene(&mut self) -> &mut SceneBuilder {
+        &mut self.window.scene
+    }
+
+    pub fn enable_inspector(&mut self) {
+        self.window.inspector_enabled = true;
+    }
+
+    pub fn is_inspector_enabled(&self) -> bool {
+        self.window.inspector_enabled
+    }
+
+    pub fn is_mouse_down(&self, button: MouseButton) -> bool {
+        self.window.pressed_buttons.contains(&button)
+    }
+
+    pub fn rem_size(&self) -> f32 {
+        16.
+    }
+
     pub fn layout_engine(&mut self) -> Option<&mut LayoutEngine> {
         self.window.layout_engines.last_mut()
     }
@@ -259,7 +295,11 @@ impl<'a> WindowContext<'a> {
     }
 
     pub fn mouse_position(&self) -> Vector2F {
-        self.window.mouse_position
+        self.window.platform_window.mouse_position()
+    }
+
+    pub fn refreshing(&self) -> bool {
+        self.window.refreshing
     }
 
     pub fn text_layout_cache(&self) -> &TextLayoutCache {
@@ -507,7 +547,9 @@ impl<'a> WindowContext<'a> {
     }
 
     pub(crate) fn dispatch_event(&mut self, event: Event, event_reused: bool) -> bool {
-        self.dispatch_to_new_event_handlers(&event);
+        if !event_reused {
+            self.dispatch_event_2(&event);
+        }
 
         let mut mouse_events = SmallVec::<[_; 2]>::new();
         let mut notified_views: HashSet<usize> = Default::default();
@@ -576,7 +618,7 @@ impl<'a> WindowContext<'a> {
                 // Synthesize one last drag event to end the drag
                 mouse_events.push(MouseEvent::Drag(MouseDrag {
                     region: Default::default(),
-                    prev_mouse_position: self.window.mouse_position,
+                    prev_mouse_position: self.window.last_mouse_position,
                     platform_event: MouseMovedEvent {
                         position: e.position,
                         pressed_button: Some(e.button),
@@ -630,14 +672,14 @@ impl<'a> WindowContext<'a> {
                     if pressed_button.is_some() {
                         mouse_events.push(MouseEvent::Drag(MouseDrag {
                             region: Default::default(),
-                            prev_mouse_position: self.window.mouse_position,
+                            prev_mouse_position: self.window.last_mouse_position,
                             platform_event: e.clone(),
                             end: false,
                         }));
                     } else if let Some((_, clicked_button)) = self.window.clicked_region {
                         mouse_events.push(MouseEvent::Drag(MouseDrag {
                             region: Default::default(),
-                            prev_mouse_position: self.window.mouse_position,
+                            prev_mouse_position: self.window.last_mouse_position,
                             platform_event: e.clone(),
                             end: true,
                         }));
@@ -697,7 +739,7 @@ impl<'a> WindowContext<'a> {
         }
 
         if let Some(position) = event.position() {
-            self.window.mouse_position = position;
+            self.window.last_mouse_position = position;
         }
 
         // 2. Dispatch mouse events on regions
@@ -711,7 +753,7 @@ impl<'a> WindowContext<'a> {
             match &mouse_event {
                 MouseEvent::Hover(_) => {
                     let mut highest_z_index = None;
-                    let mouse_position = self.window.mouse_position.clone();
+                    let mouse_position = self.mouse_position();
                     let window = &mut *self.window;
                     let prev_hovered_regions = mem::take(&mut window.hovered_region_ids);
                     for (region, z_index) in window.mouse_regions.iter().rev() {
@@ -756,7 +798,7 @@ impl<'a> WindowContext<'a> {
 
                 MouseEvent::Down(_) | MouseEvent::Up(_) => {
                     for (region, _) in self.window.mouse_regions.iter().rev() {
-                        if region.bounds.contains_point(self.window.mouse_position) {
+                        if region.bounds.contains_point(self.mouse_position()) {
                             valid_regions.push(region.clone());
                             if region.notify_on_click {
                                 notified_views.insert(region.id().view_id());
@@ -783,10 +825,7 @@ impl<'a> WindowContext<'a> {
                         // Find regions which still overlap with the mouse since the last MouseDown happened
                         for (mouse_region, _) in self.window.mouse_regions.iter().rev() {
                             if clicked_region_ids.contains(&mouse_region.id()) {
-                                if mouse_region
-                                    .bounds
-                                    .contains_point(self.window.mouse_position)
-                                {
+                                if mouse_region.bounds.contains_point(self.mouse_position()) {
                                     valid_regions.push(mouse_region.clone());
                                 } else {
                                     // Let the view know that it hasn't been clicked anymore
@@ -813,10 +852,7 @@ impl<'a> WindowContext<'a> {
                 | MouseEvent::ClickOut(_) => {
                     for (mouse_region, _) in self.window.mouse_regions.iter().rev() {
                         // NOT contains
-                        if !mouse_region
-                            .bounds
-                            .contains_point(self.window.mouse_position)
-                        {
+                        if !mouse_region.bounds.contains_point(self.mouse_position()) {
                             valid_regions.push(mouse_region.clone());
                         }
                     }
@@ -825,10 +861,7 @@ impl<'a> WindowContext<'a> {
                 _ => {
                     for (mouse_region, _) in self.window.mouse_regions.iter().rev() {
                         // Contains
-                        if mouse_region
-                            .bounds
-                            .contains_point(self.window.mouse_position)
-                        {
+                        if mouse_region.bounds.contains_point(self.mouse_position()) {
                             valid_regions.push(mouse_region.clone());
                         }
                     }
@@ -892,12 +925,24 @@ impl<'a> WindowContext<'a> {
         any_event_handled
     }
 
-    fn dispatch_to_new_event_handlers(&mut self, event: &Event) {
+    fn dispatch_event_2(&mut self, event: &Event) {
+        match event {
+            Event::MouseDown(event) => {
+                self.window.pressed_buttons.insert(event.button);
+            }
+            Event::MouseUp(event) => {
+                self.window.pressed_buttons.remove(&event.button);
+            }
+            _ => {}
+        }
+
         if let Some(mouse_event) = event.mouse_event() {
             let event_handlers = self.window.take_event_handlers();
             for event_handler in event_handlers.iter().rev() {
                 if event_handler.event_type == mouse_event.type_id() {
-                    (event_handler.handler)(mouse_event, self);
+                    if !(event_handler.handler)(mouse_event, self) {
+                        break;
+                    }
                 }
             }
             self.window.event_handlers = event_handlers;
@@ -1000,21 +1045,17 @@ impl<'a> WindowContext<'a> {
 
         let mut rendered_root = self.window.rendered_views.remove(&root_view_id).unwrap();
 
-        let mut new_parents = HashMap::default();
-        let mut views_to_notify_if_ancestors_change = HashMap::default();
-        rendered_root.layout(
-            SizeConstraint::new(window_size, window_size),
-            &mut new_parents,
-            &mut views_to_notify_if_ancestors_change,
-            refreshing,
-            self,
-        )?;
+        self.window.refreshing = refreshing;
+        rendered_root.layout(SizeConstraint::strict(window_size), self)?;
+        self.window.refreshing = false;
 
+        let views_to_notify_if_ancestors_change =
+            mem::take(&mut self.window.views_to_notify_if_ancestors_change);
         for (view_id, view_ids_to_notify) in views_to_notify_if_ancestors_change {
             let mut current_view_id = view_id;
             loop {
                 let old_parent_id = self.window.parents.get(&current_view_id);
-                let new_parent_id = new_parents.get(&current_view_id);
+                let new_parent_id = self.window.new_parents.get(&current_view_id);
                 if old_parent_id.is_none() && new_parent_id.is_none() {
                     break;
                 } else if old_parent_id == new_parent_id {
@@ -1029,6 +1070,7 @@ impl<'a> WindowContext<'a> {
             }
         }
 
+        let new_parents = mem::take(&mut self.window.new_parents);
         let old_parents = mem::replace(&mut self.window.parents, new_parents);
         self.window
             .rendered_views
@@ -1043,9 +1085,7 @@ impl<'a> WindowContext<'a> {
         let root_view_id = self.window.root_view().id();
         let mut rendered_root = self.window.rendered_views.remove(&root_view_id).unwrap();
 
-        let mut scene_builder = SceneBuilder::new(scale_factor);
         rendered_root.paint(
-            &mut scene_builder,
             Vector2F::zero(),
             RectF::from_points(Vector2F::zero(), window_size),
             self,
@@ -1055,7 +1095,7 @@ impl<'a> WindowContext<'a> {
             .insert(root_view_id, rendered_root);
 
         self.window.text_layout_cache.finish_frame();
-        let mut scene = scene_builder.build();
+        let mut scene = self.window.scene.build(scale_factor);
         self.window.cursor_regions = scene.cursor_regions();
         self.window.mouse_regions = scene.mouse_regions();
         self.window.event_handlers = scene.take_event_handlers();
@@ -1110,7 +1150,7 @@ impl<'a> WindowContext<'a> {
         self.window.is_fullscreen
     }
 
-    pub(crate) fn dispatch_action(&mut self, view_id: Option<usize>, action: &dyn Action) -> bool {
+    pub fn dispatch_action(&mut self, view_id: Option<usize>, action: &dyn Action) -> bool {
         if let Some(view_id) = view_id {
             self.halt_action_dispatch = false;
             self.visit_dispatch_path(view_id, |view_id, capture_phase, cx| {
@@ -1203,6 +1243,10 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.bounds()
     }
 
+    pub fn titlebar_height(&self) -> f32 {
+        self.window.titlebar_height
+    }
+
     pub fn window_appearance(&self) -> Appearance {
         self.window.appearance
     }
@@ -1274,6 +1318,43 @@ impl<'a> WindowContext<'a> {
         };
         handle
     }
+
+    pub fn text_style(&self) -> TextStyle {
+        self.window
+            .text_style_stack
+            .last()
+            .cloned()
+            .unwrap_or(TextStyle::default(&self.font_cache))
+    }
+
+    pub fn push_text_style(&mut self, refinement: &TextStyleRefinement) -> Result<()> {
+        let mut style = self.text_style();
+        style.refine(refinement, self.font_cache())?;
+        self.window.text_style_stack.push(style);
+        Ok(())
+    }
+
+    pub fn pop_text_style(&mut self) {
+        self.window.text_style_stack.pop();
+    }
+
+    pub fn theme<T: 'static>(&self) -> &T {
+        self.window
+            .theme_stack
+            .iter()
+            .rev()
+            .find_map(|theme| theme.downcast_ref())
+            .ok_or_else(|| anyhow!("no theme provided of type {}", type_name::<T>()))
+            .unwrap()
+    }
+
+    pub fn push_theme<T: 'static>(&mut self, theme: T) {
+        self.window.theme_stack.push(Box::new(theme));
+    }
+
+    pub fn pop_theme(&mut self) {
+        self.window.theme_stack.pop();
+    }
 }
 
 #[derive(Default)]
@@ -1289,9 +1370,12 @@ impl LayoutEngine {
     where
         C: IntoIterator<Item = LayoutId>,
     {
-        Ok(self
-            .0
-            .new_with_children(style, &children.into_iter().collect::<Vec<_>>())?)
+        let children = children.into_iter().collect::<Vec<_>>();
+        if children.is_empty() {
+            Ok(self.0.new_leaf(style)?)
+        } else {
+            Ok(self.0.new_with_children(style, &children)?)
+        }
     }
 
     pub fn add_measured_node<F>(&mut self, style: LayoutStyle, measure: F) -> Result<LayoutId>
@@ -1314,8 +1398,8 @@ impl LayoutEngine {
         Ok(())
     }
 
-    pub fn computed_layout(&mut self, node: LayoutId) -> Result<EngineLayout> {
-        Ok(self.0.layout(node)?.into())
+    pub fn computed_layout(&mut self, node: LayoutId) -> Result<Layout> {
+        Ok(Layout::from(self.0.layout(node)?))
     }
 }
 
@@ -1339,7 +1423,7 @@ where
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct EngineLayout {
+pub struct Layout {
     pub bounds: RectF,
     pub order: u32,
 }
@@ -1349,7 +1433,7 @@ pub struct MeasureParams {
     pub available_space: Size<AvailableSpace>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum AvailableSpace {
     /// The amount of space available is the specified number of pixels
     Pixels(f32),
@@ -1375,7 +1459,7 @@ impl From<taffy::prelude::AvailableSpace> for AvailableSpace {
     }
 }
 
-impl From<&taffy::tree::Layout> for EngineLayout {
+impl From<&taffy::tree::Layout> for Layout {
     fn from(value: &taffy::tree::Layout) -> Self {
         Self {
             bounds: RectF::new(
@@ -1592,18 +1676,13 @@ impl<V: 'static> Element<V> for ChildView {
         &mut self,
         constraint: SizeConstraint,
         _: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         if let Some(mut rendered_view) = cx.window.rendered_views.remove(&self.view_id) {
-            cx.new_parents.insert(self.view_id, cx.view_id());
+            let parent_id = cx.view_id();
+            cx.window.new_parents.insert(self.view_id, parent_id);
             let size = rendered_view
-                .layout(
-                    constraint,
-                    cx.new_parents,
-                    cx.views_to_notify_if_ancestors_change,
-                    cx.refreshing,
-                    cx.view_context,
-                )
+                .layout(constraint, cx)
                 .log_err()
                 .unwrap_or(Vector2F::zero());
             cx.window.rendered_views.insert(self.view_id, rendered_view);
@@ -1620,16 +1699,15 @@ impl<V: 'static> Element<V> for ChildView {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         _: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) {
         if let Some(mut rendered_view) = cx.window.rendered_views.remove(&self.view_id) {
             rendered_view
-                .paint(scene, bounds.origin(), visible_bounds, cx)
+                .paint(bounds.origin(), visible_bounds, cx)
                 .log_err();
             cx.window.rendered_views.insert(self.view_id, rendered_view);
         } else {

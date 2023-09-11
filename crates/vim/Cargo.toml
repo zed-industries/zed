@@ -38,6 +38,7 @@ language_selector = { path = "../language_selector"}
 [dev-dependencies]
 indoc.workspace = true
 parking_lot.workspace = true
+futures.workspace = true
 
 editor = { path = "../editor", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
@@ -47,3 +48,4 @@ util = { path = "../util", features = ["test-support"] }
 settings = { path = "../settings" }
 workspace = { path = "../workspace", features = ["test-support"] }
 theme = { path = "../theme", features = ["test-support"] }
+lsp = { path = "../lsp", features = ["test-support"] }

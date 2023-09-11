@@ -1,4 +1,5 @@
 mod app;
+mod image_cache;
 pub use app::*;
 mod assets;
 #[cfg(any(test, feature = "test-support"))]
@@ -8,6 +9,7 @@ pub mod elements;
 pub mod font_cache;
 mod image_data;
 pub use crate::image_data::ImageData;
+pub use taffy;
 pub mod views;
 pub use font_cache::FontCache;
 mod clipboard;
@@ -27,9 +29,9 @@ pub mod json;
 pub mod keymap_matcher;
 pub mod platform;
 pub use gpui_macros::{test, Element};
+pub use usvg;
 pub use window::{
-    Axis, EngineLayout, LayoutEngine, LayoutId, RectFExt, SizeConstraint, Vector2FExt,
-    WindowContext,
+    Axis, Layout, LayoutEngine, LayoutId, RectFExt, SizeConstraint, Vector2FExt, WindowContext,
 };
 
 pub use anyhow;

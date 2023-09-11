@@ -8,7 +8,30 @@ Welcome to Zed, a lightning-fast, collaborative code editor that makes your drea
 
 ### Dependencies
 
-* Install [Postgres.app](https://postgresapp.com) and start it.
+* Install Xcode from https://apps.apple.com/us/app/xcode/id497799835?mt=12, and accept the license:
+  ```
+  sudo xcodebuild -license
+  ```
+
+* Install rustup (rust, cargo, etc.)
+  ```
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+  ```
+  
+* Install homebrew and node
+  ```
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  brew install node
+  ```
+  
+* Install postgres and configure the database
+  ```
+  brew install postgresql@15
+  brew services start postgresql@15
+  psql -c "CREATE ROLE postgres SUPERUSER LOGIN" postgres
+  psql -U postgres -c "CREATE DATABASE zed"
+  ```
+  
 * Install the `LiveKit` server and the `foreman` process supervisor:
 
     ```
@@ -40,6 +63,17 @@ Welcome to Zed, a lightning-fast, collaborative code editor that makes your drea
     ```
     GITHUB_TOKEN=<$token> script/bootstrap
     ```
+
+* Now try running zed with collaboration disabled:
+  ```
+  cargo run
+  ```
+
+### Common errors
+
+* `xcrun: error: unable to find utility "metal", not a developer tool or in PATH`
+  * You need to install Xcode and then run: `xcode-select --switch /Applications/Xcode.app/Contents/Developer`
+  * (see https://github.com/gfx-rs/gfx/issues/2309)
 
 ### Testing against locally-running servers
 

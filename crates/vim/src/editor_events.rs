@@ -34,6 +34,7 @@ fn focused(EditorFocused(editor): &EditorFocused, cx: &mut AppContext) {
 fn blurred(EditorBlurred(editor): &EditorBlurred, cx: &mut AppContext) {
     editor.window().update(cx, |cx| {
         Vim::update(cx, |vim, cx| {
+            vim.workspace_state.recording = false;
             if let Some(previous_editor) = vim.active_editor.clone() {
                 if previous_editor == editor.clone() {
                     vim.active_editor = None;

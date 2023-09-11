@@ -1,6 +1,5 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use async_trait::async_trait;
-use futures::StreamExt;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
@@ -164,31 +163,16 @@ async fn get_cached_server_binary(
     container_dir: PathBuf,
     node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
-    (|| async move {
-        let mut last_version_dir = None;
-        let mut entries = fs::read_dir(&container_dir).await?;
-        while let Some(entry) = entries.next().await {
-            let entry = entry?;
-            if entry.file_type().await?.is_dir() {
-                last_version_dir = Some(entry.path());
-            }
-        }
-        let last_version_dir = last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
-        let server_path = last_version_dir.join(SERVER_PATH);
-        if server_path.exists() {
-            Ok(LanguageServerBinary {
-                path: node.binary_path().await?,
-                arguments: server_binary_arguments(&server_path),
-            })
-        } else {
-            Err(anyhow!(
-                "missing executable in directory {:?}",
-                last_version_dir
-            ))
-        }
-    })()
-    .await
-    .log_err()
+    let server_path = container_dir.join(SERVER_PATH);
+    if server_path.exists() {
+        Some(LanguageServerBinary {
+            path: node.binary_path().await.log_err()?,
+            arguments: server_binary_arguments(&server_path),
+        })
+    } else {
+        log::error!("missing executable in directory {:?}", server_path);
+        None
+    }
 }
 
 #[cfg(test)]

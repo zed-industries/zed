@@ -7,13 +7,16 @@ use isahc::http::StatusCode;
 use isahc::prelude::Configurable;
 use isahc::{AsyncBody, Response};
 use lazy_static::lazy_static;
+use parking_lot::Mutex;
 use parse_duration::parse;
+use postage::watch;
 use rusqlite::types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef};
 use rusqlite::ToSql;
 use serde::{Deserialize, Serialize};
 use std::env;
+use std::ops::Add;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tiktoken_rs::{cl100k_base, CoreBPE};
 use util::http::{HttpClient, Request};
 
@@ -82,6 +85,8 @@ impl ToSql for Embedding {
 pub struct OpenAIEmbeddings {
     pub client: Arc<dyn HttpClient>,
     pub executor: Arc<Background>,
+    rate_limit_count_rx: watch::Receiver<Option<Instant>>,
+    rate_limit_count_tx: Arc<Mutex<watch::Sender<Option<Instant>>>>,
 }
 
 #[derive(Serialize)]
@@ -114,12 +119,16 @@ pub trait EmbeddingProvider: Sync + Send {
     async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>>;
     fn max_tokens_per_batch(&self) -> usize;
     fn truncate(&self, span: &str) -> (String, usize);
+    fn rate_limit_expiration(&self) -> Option<Instant>;
 }
 
 pub struct DummyEmbeddings {}
 
 #[async_trait]
 impl EmbeddingProvider for DummyEmbeddings {
+    fn rate_limit_expiration(&self) -> Option<Instant> {
+        None
+    }
     async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>> {
         // 1024 is the OpenAI Embeddings size for ada models.
         // the model we will likely be starting with.
@@ -149,6 +158,50 @@ impl EmbeddingProvider for DummyEmbeddings {
 const OPENAI_INPUT_LIMIT: usize = 8190;
 
 impl OpenAIEmbeddings {
+    pub fn new(client: Arc<dyn HttpClient>, executor: Arc<Background>) -> Self {
+        let (rate_limit_count_tx, rate_limit_count_rx) = watch::channel_with(None);
+        let rate_limit_count_tx = Arc::new(Mutex::new(rate_limit_count_tx));
+
+        OpenAIEmbeddings {
+            client,
+            executor,
+            rate_limit_count_rx,
+            rate_limit_count_tx,
+        }
+    }
+
+    fn resolve_rate_limit(&self) {
+        let reset_time = *self.rate_limit_count_tx.lock().borrow();
+
+        if let Some(reset_time) = reset_time {
+            if Instant::now() >= reset_time {
+                *self.rate_limit_count_tx.lock().borrow_mut() = None
+            }
+        }
+
+        log::trace!(
+            "resolving reset time: {:?}",
+            *self.rate_limit_count_tx.lock().borrow()
+        );
+    }
+
+    fn update_reset_time(&self, reset_time: Instant) {
+        let original_time = *self.rate_limit_count_tx.lock().borrow();
+
+        let updated_time = if let Some(original_time) = original_time {
+            if reset_time < original_time {
+                Some(reset_time)
+            } else {
+                Some(original_time)
+            }
+        } else {
+            Some(reset_time)
+        };
+
+        log::trace!("updating rate limit time: {:?}", updated_time);
+
+        *self.rate_limit_count_tx.lock().borrow_mut() = updated_time;
+    }
     async fn send_request(
         &self,
         api_key: &str,
@@ -179,6 +232,9 @@ impl EmbeddingProvider for OpenAIEmbeddings {
         50000
     }
 
+    fn rate_limit_expiration(&self) -> Option<Instant> {
+        *self.rate_limit_count_rx.borrow()
+    }
     fn truncate(&self, span: &str) -> (String, usize) {
         let mut tokens = OPENAI_BPE_TOKENIZER.encode_with_special_tokens(span);
         let output = if tokens.len() > OPENAI_INPUT_LIMIT {
@@ -203,6 +259,7 @@ impl EmbeddingProvider for OpenAIEmbeddings {
             .ok_or_else(|| anyhow!("no api key"))?;
 
         let mut request_number = 0;
+        let mut rate_limiting = false;
         let mut request_timeout: u64 = 15;
         let mut response: Response<AsyncBody>;
         while request_number < MAX_RETRIES {
@@ -229,6 +286,12 @@ impl EmbeddingProvider for OpenAIEmbeddings {
                         response.usage.total_tokens
                     );
 
+                    // If we complete a request successfully that was previously rate_limited
+                    // resolve the rate limit
+                    if rate_limiting {
+                        self.resolve_rate_limit()
+                    }
+
                     return Ok(response
                         .data
                         .into_iter()
@@ -236,6 +299,7 @@ impl EmbeddingProvider for OpenAIEmbeddings {
                         .collect());
                 }
                 StatusCode::TOO_MANY_REQUESTS => {
+                    rate_limiting = true;
                     let mut body = String::new();
                     response.body_mut().read_to_string(&mut body).await?;
 
@@ -253,6 +317,10 @@ impl EmbeddingProvider for OpenAIEmbeddings {
                             delay
                         }
                     };
+
+                    // If we've previously rate limited, increment the duration but not the count
+                    let reset_time = Instant::now().add(delay_duration);
+                    self.update_reset_time(reset_time);
 
                     log::trace!(
                         "openai rate limiting: waiting {:?} until lifted",

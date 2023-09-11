@@ -8,8 +8,8 @@ use gpui::{
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    AnyElement, AnyViewHandle, Entity, LayoutContext, PaintContext, SceneBuilder, SizeConstraint,
-    Subscription, View, ViewContext, ViewHandle, WindowContext,
+    AnyElement, AnyViewHandle, Entity, SizeConstraint, Subscription, View, ViewContext, ViewHandle,
+    WindowContext,
 };
 
 pub trait StatusItemView: View {
@@ -208,7 +208,7 @@ impl Element<StatusBar> for StatusBarElement {
         &mut self,
         mut constraint: SizeConstraint,
         view: &mut StatusBar,
-        cx: &mut LayoutContext<StatusBar>,
+        cx: &mut ViewContext<StatusBar>,
     ) -> (Vector2F, Self::LayoutState) {
         let max_width = constraint.max.x();
         constraint.min = vec2f(0., constraint.min.y());
@@ -226,23 +226,20 @@ impl Element<StatusBar> for StatusBarElement {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut StatusBar,
-        cx: &mut PaintContext<StatusBar>,
+        cx: &mut ViewContext<StatusBar>,
     ) -> Self::PaintState {
         let origin_y = bounds.upper_right().y();
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
         let left_origin = vec2f(bounds.lower_left().x(), origin_y);
-        self.left
-            .paint(scene, left_origin, visible_bounds, view, cx);
+        self.left.paint(left_origin, visible_bounds, view, cx);
 
         let right_origin = vec2f(bounds.upper_right().x() - self.right.size().x(), origin_y);
-        self.right
-            .paint(scene, right_origin, visible_bounds, view, cx);
+        self.right.paint(right_origin, visible_bounds, view, cx);
     }
 
     fn rect_for_text_range(

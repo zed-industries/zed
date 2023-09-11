@@ -1,3 +1,4 @@
+pub mod arc_cow;
 pub mod channel;
 pub mod fs;
 pub mod github;
@@ -246,9 +247,16 @@ where
     }
 }
 
-struct Defer<F: FnOnce()>(Option<F>);
+pub struct Deferred<F: FnOnce()>(Option<F>);
 
-impl<F: FnOnce()> Drop for Defer<F> {
+impl<F: FnOnce()> Deferred<F> {
+    /// Drop without running the deferred function.
+    pub fn cancel(mut self) {
+        self.0.take();
+    }
+}
+
+impl<F: FnOnce()> Drop for Deferred<F> {
     fn drop(&mut self) {
         if let Some(f) = self.0.take() {
             f()
@@ -256,8 +264,9 @@ impl<F: FnOnce()> Drop for Defer<F> {
     }
 }
 
-pub fn defer<F: FnOnce()>(f: F) -> impl Drop {
-    Defer(Some(f))
+/// Run the given function when the returned value is dropped (unless it's cancelled).
+pub fn defer<F: FnOnce()>(f: F) -> Deferred<F> {
+    Deferred(Some(f))
 }
 
 pub struct RandomCharIter<T: Rng> {

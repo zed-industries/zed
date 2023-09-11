@@ -9,8 +9,8 @@ use crate::{
     },
     json::ToJson,
     platform::CursorStyle,
-    scene::{self, Border, CornerRadii, CursorRegion, Quad},
-    AnyElement, Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, ViewContext,
+    scene::{self, CornerRadii, CursorRegion, Quad},
+    AnyElement, Element, SizeConstraint, ViewContext,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -206,6 +206,163 @@ impl<V> Container<V> {
     }
 }
 
+#[derive(Copy, Clone, Debug, Default, JsonSchema)]
+pub struct Border {
+    pub color: Color,
+    pub width: f32,
+    pub overlay: bool,
+    pub top: bool,
+    pub bottom: bool,
+    pub left: bool,
+    pub right: bool,
+}
+
+impl Into<scene::Border> for Border {
+    fn into(self) -> scene::Border {
+        scene::Border {
+            color: self.color,
+            left: if self.left { self.width } else { 0.0 },
+            right: if self.right { self.width } else { 0.0 },
+            top: if self.top { self.width } else { 0.0 },
+            bottom: if self.bottom { self.width } else { 0.0 },
+        }
+    }
+}
+
+impl Border {
+    pub fn new(width: f32, color: Color) -> Self {
+        Self {
+            width,
+            color,
+            overlay: false,
+            top: false,
+            left: false,
+            bottom: false,
+            right: false,
+        }
+    }
+
+    pub fn all(width: f32, color: Color) -> Self {
+        Self {
+            width,
+            color,
+            overlay: false,
+            top: true,
+            left: true,
+            bottom: true,
+            right: true,
+        }
+    }
+
+    pub fn top(width: f32, color: Color) -> Self {
+        let mut border = Self::new(width, color);
+        border.top = true;
+        border
+    }
+
+    pub fn left(width: f32, color: Color) -> Self {
+        let mut border = Self::new(width, color);
+        border.left = true;
+        border
+    }
+
+    pub fn bottom(width: f32, color: Color) -> Self {
+        let mut border = Self::new(width, color);
+        border.bottom = true;
+        border
+    }
+
+    pub fn right(width: f32, color: Color) -> Self {
+        let mut border = Self::new(width, color);
+        border.right = true;
+        border
+    }
+
+    pub fn with_sides(mut self, top: bool, left: bool, bottom: bool, right: bool) -> Self {
+        self.top = top;
+        self.left = left;
+        self.bottom = bottom;
+        self.right = right;
+        self
+    }
+
+    pub fn top_width(&self) -> f32 {
+        if self.top {
+            self.width
+        } else {
+            0.0
+        }
+    }
+
+    pub fn left_width(&self) -> f32 {
+        if self.left {
+            self.width
+        } else {
+            0.0
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Border {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct BorderData {
+            pub width: f32,
+            pub color: Color,
+            #[serde(default)]
+            pub overlay: bool,
+            #[serde(default)]
+            pub top: bool,
+            #[serde(default)]
+            pub right: bool,
+            #[serde(default)]
+            pub bottom: bool,
+            #[serde(default)]
+            pub left: bool,
+        }
+
+        let data = BorderData::deserialize(deserializer)?;
+        let mut border = Border {
+            width: data.width,
+            color: data.color,
+            overlay: data.overlay,
+            top: data.top,
+            bottom: data.bottom,
+            left: data.left,
+            right: data.right,
+        };
+        if !border.top && !border.bottom && !border.left && !border.right {
+            border.top = true;
+            border.bottom = true;
+            border.left = true;
+            border.right = true;
+        }
+        Ok(border)
+    }
+}
+
+impl ToJson for Border {
+    fn to_json(&self) -> serde_json::Value {
+        let mut value = json!({});
+        if self.top {
+            value["top"] = json!(self.width);
+        }
+        if self.right {
+            value["right"] = json!(self.width);
+        }
+        if self.bottom {
+            value["bottom"] = json!(self.width);
+        }
+        if self.left {
+            value["left"] = json!(self.width);
+        }
+        value
+    }
+}
+
 impl<V: 'static> Element<V> for Container<V> {
     type LayoutState = ();
     type PaintState = ();
@@ -214,7 +371,7 @@ impl<V: 'static> Element<V> for Container<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let mut size_buffer = self.margin_size() + self.padding_size();
         if !self.style.border.overlay {
@@ -230,12 +387,11 @@ impl<V: 'static> Element<V> for Container<V> {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         let quad_bounds = RectF::from_points(
             bounds.origin() + vec2f(self.style.margin.left, self.style.margin.top),
@@ -243,7 +399,7 @@ impl<V: 'static> Element<V> for Container<V> {
         );
 
         if let Some(shadow) = self.style.shadow.as_ref() {
-            scene.push_shadow(scene::Shadow {
+            cx.scene().push_shadow(scene::Shadow {
                 bounds: quad_bounds + shadow.offset,
                 corner_radii: self.style.corner_radii,
                 sigma: shadow.blur,
@@ -253,7 +409,7 @@ impl<V: 'static> Element<V> for Container<V> {
 
         if let Some(hit_bounds) = quad_bounds.intersection(visible_bounds) {
             if let Some(style) = self.style.cursor {
-                scene.push_cursor_region(CursorRegion {
+                cx.scene().push_cursor_region(CursorRegion {
                     bounds: hit_bounds,
                     style,
                 });
@@ -264,29 +420,28 @@ impl<V: 'static> Element<V> for Container<V> {
             quad_bounds.origin() + vec2f(self.style.padding.left, self.style.padding.top);
 
         if self.style.border.overlay {
-            scene.push_quad(Quad {
+            cx.scene().push_quad(Quad {
                 bounds: quad_bounds,
                 background: self.style.background_color,
                 border: Default::default(),
                 corner_radii: self.style.corner_radii.into(),
             });
 
-            self.child
-                .paint(scene, child_origin, visible_bounds, view, cx);
+            self.child.paint(child_origin, visible_bounds, view, cx);
 
-            scene.push_layer(None);
-            scene.push_quad(Quad {
+            cx.scene().push_layer(None);
+            cx.scene().push_quad(Quad {
                 bounds: quad_bounds,
                 background: self.style.overlay_color,
-                border: self.style.border,
+                border: self.style.border.into(),
                 corner_radii: self.style.corner_radii.into(),
             });
-            scene.pop_layer();
+            cx.scene().pop_layer();
         } else {
-            scene.push_quad(Quad {
+            cx.scene().push_quad(Quad {
                 bounds: quad_bounds,
                 background: self.style.background_color,
-                border: self.style.border,
+                border: self.style.border.into(),
                 corner_radii: self.style.corner_radii.into(),
             });
 
@@ -295,18 +450,17 @@ impl<V: 'static> Element<V> for Container<V> {
                     self.style.border.left_width(),
                     self.style.border.top_width(),
                 );
-            self.child
-                .paint(scene, child_origin, visible_bounds, view, cx);
+            self.child.paint(child_origin, visible_bounds, view, cx);
 
             if self.style.overlay_color.is_some() {
-                scene.push_layer(None);
-                scene.push_quad(Quad {
+                cx.scene().push_layer(None);
+                cx.scene().push_quad(Quad {
                     bounds: quad_bounds,
                     background: self.style.overlay_color,
                     border: Default::default(),
                     corner_radii: self.style.corner_radii.into(),
                 });
-                scene.pop_layer();
+                cx.scene().pop_layer();
             }
         }
     }

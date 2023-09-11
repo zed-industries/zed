@@ -11,8 +11,9 @@ pub fn init(cx: &mut AppContext) {
 }
 
 fn normal_before(_: &mut Workspace, _: &NormalBefore, cx: &mut ViewContext<Workspace>) {
-    Vim::update(cx, |state, cx| {
-        state.update_active_editor(cx, |editor, cx| {
+    Vim::update(cx, |vim, cx| {
+        vim.stop_recording();
+        vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_cursors_with(|map, mut cursor, _| {
                     *cursor.column_mut() = cursor.column().saturating_sub(1);
@@ -20,7 +21,7 @@ fn normal_before(_: &mut Workspace, _: &NormalBefore, cx: &mut ViewContext<Works
                 });
             });
         });
-        state.switch_mode(Mode::Normal, false, cx);
+        vim.switch_mode(Mode::Normal, false, cx);
     })
 }
 

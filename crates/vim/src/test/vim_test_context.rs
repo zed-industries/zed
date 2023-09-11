@@ -3,7 +3,9 @@ use std::ops::{Deref, DerefMut};
 use editor::test::{
     editor_lsp_test_context::EditorLspTestContext, editor_test_context::EditorTestContext,
 };
+use futures::Future;
 use gpui::ContextHandle;
+use lsp::request;
 use search::{BufferSearchBar, ProjectSearchBar};
 
 use crate::{state::Operator, *};
@@ -123,6 +125,19 @@ impl<'a> VimTestContext<'a> {
         self.cx.assert_editor_state(state_after);
         assert_eq!(self.mode(), mode_after, "{}", self.assertion_context());
         assert_eq!(self.active_operator(), None, "{}", self.assertion_context());
+    }
+
+    pub fn handle_request<T, F, Fut>(
+        &self,
+        handler: F,
+    ) -> futures::channel::mpsc::UnboundedReceiver<()>
+    where
+        T: 'static + request::Request,
+        T::Params: 'static + Send,
+        F: 'static + Send + FnMut(lsp::Url, T::Params, gpui::AsyncAppContext) -> Fut,
+        Fut: 'static + Send + Future<Output = Result<T::Result>>,
+    {
+        self.cx.handle_request::<T, F, Fut>(handler)
     }
 }
 

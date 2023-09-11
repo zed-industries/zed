@@ -9,7 +9,7 @@ use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::Vector2F},
     platform::{CursorStyle, MouseButton},
-    AnyViewHandle, Axis, Border, ModelHandle, ViewContext, ViewHandle,
+    AnyViewHandle, Axis, ModelHandle, ViewContext, ViewHandle,
 };
 use project::Project;
 use serde::Deserialize;
@@ -594,8 +594,8 @@ mod element {
         json::{self, ToJson},
         platform::{CursorStyle, MouseButton},
         scene::MouseDrag,
-        AnyElement, Axis, CursorRegion, Element, EventContext, LayoutContext, MouseRegion,
-        PaintContext, RectFExt, SceneBuilder, SizeConstraint, Vector2FExt, ViewContext,
+        AnyElement, Axis, CursorRegion, Element, EventContext, MouseRegion, RectFExt,
+        SizeConstraint, Vector2FExt, ViewContext,
     };
 
     use crate::{
@@ -641,7 +641,7 @@ mod element {
             remaining_flex: &mut f32,
             cross_axis_max: &mut f32,
             view: &mut Workspace,
-            cx: &mut LayoutContext<Workspace>,
+            cx: &mut ViewContext<Workspace>,
         ) {
             let flexes = self.flexes.borrow();
             let cross_axis = self.axis.invert();
@@ -789,7 +789,7 @@ mod element {
             &mut self,
             constraint: SizeConstraint,
             view: &mut Workspace,
-            cx: &mut LayoutContext<Workspace>,
+            cx: &mut ViewContext<Workspace>,
         ) -> (Vector2F, Self::LayoutState) {
             debug_assert!(self.children.len() == self.flexes.borrow().len());
 
@@ -851,19 +851,18 @@ mod element {
 
         fn paint(
             &mut self,
-            scene: &mut SceneBuilder,
             bounds: RectF,
             visible_bounds: RectF,
             remaining_space: &mut Self::LayoutState,
             view: &mut Workspace,
-            cx: &mut PaintContext<Workspace>,
+            cx: &mut ViewContext<Workspace>,
         ) -> Self::PaintState {
             let can_resize = settings::get::<WorkspaceSettings>(cx).active_pane_magnification == 1.;
             let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
             let overflowing = *remaining_space < 0.;
             if overflowing {
-                scene.push_layer(Some(visible_bounds));
+                cx.scene().push_layer(Some(visible_bounds));
             }
 
             let mut child_origin = bounds.origin();
@@ -874,7 +873,7 @@ mod element {
             let mut children_iter = self.children.iter_mut().enumerate().peekable();
             while let Some((ix, child)) = children_iter.next() {
                 let child_start = child_origin.clone();
-                child.paint(scene, child_origin, visible_bounds, view, cx);
+                child.paint(child_origin, visible_bounds, view, cx);
 
                 bounding_boxes.push(Some(RectF::new(child_origin, child.size())));
 
@@ -884,7 +883,7 @@ mod element {
                 }
 
                 if can_resize && children_iter.peek().is_some() {
-                    scene.push_stacking_context(None, None);
+                    cx.scene().push_stacking_context(None, None);
 
                     let handle_origin = match self.axis {
                         Axis::Horizontal => child_origin - vec2f(HANDLE_HITBOX_SIZE / 2., 0.0),
@@ -907,7 +906,7 @@ mod element {
                         Axis::Vertical => CursorStyle::ResizeUpDown,
                     };
 
-                    scene.push_cursor_region(CursorRegion {
+                    cx.scene().push_cursor_region(CursorRegion {
                         bounds: handle_bounds,
                         style,
                     });
@@ -940,14 +939,14 @@ mod element {
                                 }
                             }
                         });
-                    scene.push_mouse_region(mouse_region);
+                    cx.scene().push_mouse_region(mouse_region);
 
-                    scene.pop_stacking_context();
+                    cx.scene().pop_stacking_context();
                 }
             }
 
             if overflowing {
-                scene.pop_layer();
+                cx.scene().pop_layer();
             }
         }
 

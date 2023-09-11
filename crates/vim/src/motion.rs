@@ -1,9 +1,9 @@
-use std::{cmp, sync::Arc};
+use std::cmp;
 
 use editor::{
     char_kind,
     display_map::{DisplaySnapshot, FoldPoint, ToDisplayPoint},
-    movement::{self, FindRange},
+    movement::{self, find_boundary, find_preceding_boundary, FindRange},
     Bias, CharKind, DisplayPoint, ToOffset,
 };
 use gpui::{actions, impl_actions, AppContext, WindowContext};
@@ -37,8 +37,8 @@ pub enum Motion {
     StartOfDocument,
     EndOfDocument,
     Matching,
-    FindForward { before: bool, text: Arc<str> },
-    FindBackward { after: bool, text: Arc<str> },
+    FindForward { before: bool, char: char },
+    FindBackward { after: bool, char: char },
     NextLineStart,
 }
 
@@ -65,9 +65,9 @@ struct PreviousWordStart {
 
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-struct Up {
+pub(crate) struct Up {
     #[serde(default)]
-    display_lines: bool,
+    pub(crate) display_lines: bool,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -93,9 +93,9 @@ struct EndOfLine {
 
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-struct StartOfLine {
+pub struct StartOfLine {
     #[serde(default)]
-    display_lines: bool,
+    pub(crate) display_lines: bool,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -233,25 +233,25 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
 
 fn repeat_motion(backwards: bool, cx: &mut WindowContext) {
     let find = match Vim::read(cx).workspace_state.last_find.clone() {
-        Some(Motion::FindForward { before, text }) => {
+        Some(Motion::FindForward { before, char }) => {
             if backwards {
                 Motion::FindBackward {
                     after: before,
-                    text,
+                    char,
                 }
             } else {
-                Motion::FindForward { before, text }
+                Motion::FindForward { before, char }
             }
         }
 
-        Some(Motion::FindBackward { after, text }) => {
+        Some(Motion::FindBackward { after, char }) => {
             if backwards {
                 Motion::FindForward {
                     before: after,
-                    text,
+                    char,
                 }
             } else {
-                Motion::FindBackward { after, text }
+                Motion::FindBackward { after, char }
             }
         }
         _ => return,
@@ -403,12 +403,12 @@ impl Motion {
                 SelectionGoal::None,
             ),
             Matching => (matching(map, point), SelectionGoal::None),
-            FindForward { before, text } => (
-                find_forward(map, point, *before, text.clone(), times),
+            FindForward { before, char } => (
+                find_forward(map, point, *before, *char, times),
                 SelectionGoal::None,
             ),
-            FindBackward { after, text } => (
-                find_backward(map, point, *after, text.clone(), times),
+            FindBackward { after, char } => (
+                find_backward(map, point, *after, *char, times),
                 SelectionGoal::None,
             ),
             NextLineStart => (next_line_start(map, point, times), SelectionGoal::None),
@@ -793,44 +793,55 @@ fn find_forward(
     map: &DisplaySnapshot,
     from: DisplayPoint,
     before: bool,
-    target: Arc<str>,
+    target: char,
     times: usize,
 ) -> DisplayPoint {
-    map.find_while(from, target.as_ref(), |ch, _| ch != '\n')
-        .skip_while(|found_at| found_at == &from)
-        .nth(times - 1)
-        .map(|mut found| {
-            if before {
-                *found.column_mut() -= 1;
-                found = map.clip_point(found, Bias::Right);
-                found
-            } else {
-                found
-            }
-        })
-        .unwrap_or(from)
+    let mut to = from;
+    let mut found = false;
+
+    for _ in 0..times {
+        found = false;
+        to = find_boundary(map, to, FindRange::SingleLine, |_, right| {
+            found = right == target;
+            found
+        });
+    }
+
+    if found {
+        if before && to.column() > 0 {
+            *to.column_mut() -= 1;
+            map.clip_point(to, Bias::Left)
+        } else {
+            to
+        }
+    } else {
+        from
+    }
 }
 
 fn find_backward(
     map: &DisplaySnapshot,
     from: DisplayPoint,
     after: bool,
-    target: Arc<str>,
+    target: char,
     times: usize,
 ) -> DisplayPoint {
-    map.reverse_find_while(from, target.as_ref(), |ch, _| ch != '\n')
-        .skip_while(|found_at| found_at == &from)
-        .nth(times - 1)
-        .map(|mut found| {
-            if after {
-                *found.column_mut() += 1;
-                found = map.clip_point(found, Bias::Left);
-                found
-            } else {
-                found
-            }
-        })
-        .unwrap_or(from)
+    let mut to = from;
+
+    for _ in 0..times {
+        to = find_preceding_boundary(map, to, FindRange::SingleLine, |_, right| right == target);
+    }
+
+    if map.buffer_snapshot.chars_at(to.to_point(map)).next() == Some(target) {
+        if after {
+            *to.column_mut() += 1;
+            map.clip_point(to, Bias::Right)
+        } else {
+            to
+        }
+    } else {
+        from
+    }
 }
 
 fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
