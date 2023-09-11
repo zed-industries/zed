@@ -32,6 +32,8 @@
       "right": "vim::Right",
       "$": "vim::EndOfLine",
       "^": "vim::FirstNonWhitespace",
+      "_": "vim::StartOfLineDownward",
+      "g _": "vim::EndOfLineDownward",
       "shift-g": "vim::EndOfDocument",
       "w": "vim::NextWordStart",
       "{": "vim::StartOfParagraph",
