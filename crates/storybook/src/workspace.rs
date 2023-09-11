@@ -38,7 +38,7 @@ impl WorkspaceElement {
                     .flex()
                     .flex_row()
                     .overflow_hidden()
-                    // .child(collab_panel(self.left_scroll_state.clone()))
+                    .child(collab_panel(self.left_scroll_state.clone()))
                     .child(
                         div()
                             .h_full()
@@ -50,8 +50,9 @@ impl WorkspaceElement {
                                     .flex_col()
                                     .flex_1()
                                     .child(tab_bar(self.tab_bar_scroll_state.clone())),
-                            ),
-                    ), // .child(collab_panel(self.right_scroll_state.clone())),
+                            )
+                            .child(collab_panel(self.right_scroll_state.clone())),
+                    ),
             )
             .child(statusbar())
     }

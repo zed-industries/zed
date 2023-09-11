@@ -23,10 +23,11 @@ pub fn icon_button<V: 'static>(path: &'static str, variant: ButtonVariant) -> im
 impl IconButton {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
+
         let mut div = div();
 
         if self.variant == ButtonVariant::Filled {
-            div = div.fill(theme.highest.base.default.background);
+            div = div.fill(theme.highest.negative.default.background);
         }
 
         div.w_7()

@@ -28,10 +28,6 @@ impl<V: 'static> TabBar<V> {
         div()
             .w_full()
             .flex()
-            .items_center()
-            .overflow_hidden()
-            .justify_between()
-            .fill(theme.highest.base.default.background)
             // Left Side
             .child(
                 div()
@@ -49,29 +45,22 @@ impl<V: 'static> TabBar<V> {
                             .child(icon_button("icons/arrow_right.svg", ButtonVariant::Ghost)),
                     ),
             )
-            // Tabs
             .child(
-                div()
-                    .flex_1()
-                    .py_1()
-                    .overflow_hidden()
-                    .items_center()
-                    .fill(theme.highest.accent.default.background)
-                    .child(
-                        div()
-                            .flex()
-                            .gap_px()
-                            .overflow_x_scroll(self.scroll_state.clone())
-                            .child(tab("Cargo.toml", false))
-                            .child(tab("Channels Panel", true))
-                            .child(tab("channels_panel.rs", false))
-                            .child(tab("workspace.rs", false))
-                            .child(tab("icon_button.rs", false))
-                            .child(tab("storybook.rs", false))
-                            .child(tab("theme.rs", false))
-                            .child(tab("theme_registry.rs", false))
-                            .child(tab("styleable_helpers.rs", false)),
-                    ),
+                div().w_0().flex_1().h_full().child(
+                    div()
+                        .flex()
+                        .gap_px()
+                        .overflow_x_scroll(self.scroll_state.clone())
+                        .child(tab("Cargo.toml", false))
+                        .child(tab("Channels Panel", true))
+                        .child(tab("channels_panel.rs", false))
+                        .child(tab("workspace.rs", false))
+                        .child(tab("icon_button.rs", false))
+                        .child(tab("storybook.rs", false))
+                        .child(tab("theme.rs", false))
+                        .child(tab("theme_registry.rs", false))
+                        .child(tab("styleable_helpers.rs", false)),
+                ),
             )
             // Right Side
             .child(

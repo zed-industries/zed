@@ -1,5 +1,4 @@
 use crate::theme::theme;
-use gpui2::elements::svg;
 use gpui2::style::{StyleHelpers, Styleable};
 use gpui2::{elements::div, IntoElement};
 use gpui2::{Element, ParentElement, ViewContext};
