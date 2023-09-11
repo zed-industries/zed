@@ -12,6 +12,7 @@ use simplelog::SimpleLogger;
 mod collab_panel;
 mod components;
 mod element_ext;
+mod modules;
 mod theme;
 mod workspace;
 
@@ -34,13 +35,13 @@ fn main() {
 
         cx.add_window(
             gpui2::WindowOptions {
-                bounds: WindowBounds::Fixed(RectF::new(vec2f(0., 0.), vec2f(1400., 900.))),
+                bounds: WindowBounds::Fixed(RectF::new(vec2f(0., 0.), vec2f(1600., 900.))),
                 center: true,
                 ..Default::default()
             },
             |cx| {
                 view(|cx| {
-                    cx.enable_inspector();
+                    // cx.enable_inspector();
                     storybook(&mut ViewContext::new(cx))
                 })
             },
