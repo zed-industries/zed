@@ -117,7 +117,7 @@ impl<V: 'static> CollabPanelElement<V> {
 
     fn list_section_header(
         &self,
-        label: impl Into<ArcCow<'static, str>>,
+        label: impl IntoElement<V>,
         expanded: bool,
         theme: &Theme,
     ) -> impl Element<V> {
@@ -146,7 +146,7 @@ impl<V: 'static> CollabPanelElement<V> {
     fn list_item(
         &self,
         avatar_uri: impl Into<ArcCow<'static, str>>,
-        label: impl Into<ArcCow<'static, str>>,
+        label: impl IntoElement<V>,
         theme: &Theme,
     ) -> impl Element<V> {
         div()

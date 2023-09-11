@@ -167,6 +167,15 @@ pub struct Size<T: Clone + Default + Debug> {
     pub height: T,
 }
 
+impl Size<Length> {
+    pub fn full() -> Self {
+        Self {
+            width: relative(1.),
+            height: relative(1.),
+        }
+    }
+}
+
 impl<S, T: Clone + Default + Debug> From<taffy::geometry::Size<S>> for Size<T>
 where
     S: Into<T>,

@@ -6,6 +6,7 @@ pub mod interactive;
 pub mod style;
 pub mod view;
 pub mod view_context;
+pub mod view_handle;
 
 pub use color::*;
 pub use element::{AnyElement, Element, IntoElement, Layout, ParentElement};

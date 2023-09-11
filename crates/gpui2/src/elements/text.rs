@@ -12,11 +12,21 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 use util::arc_cow::ArcCow;
 
-impl<V: 'static, S: Into<ArcCow<'static, str>>> IntoElement<V> for S {
+impl<V: 'static> IntoElement<V> for ArcCow<'static, str> {
     type Element = Text;
 
     fn into_element(self) -> Self::Element {
-        Text { text: self.into() }
+        Text { text: self }
+    }
+}
+
+impl<V: 'static> IntoElement<V> for &'static str {
+    type Element = Text;
+
+    fn into_element(self) -> Self::Element {
+        Text {
+            text: ArcCow::from(self),
+        }
     }
 }
 
