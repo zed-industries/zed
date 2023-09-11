@@ -112,7 +112,7 @@ pub enum SemanticIndexStatus {
     Indexed,
     Indexing {
         remaining_files: usize,
-        rate_limit_expiry: Option<SystemTime>,
+        rate_limit_expiry: Option<Instant>,
     },
 }
 

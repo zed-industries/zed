@@ -34,7 +34,7 @@ use std::{
     ops::{Not, Range},
     path::PathBuf,
     sync::Arc,
-    time::{Duration, SystemTime},
+    time::{Duration, Instant},
 };
 use util::ResultExt as _;
 use workspace::{
@@ -329,9 +329,9 @@ impl View for ProjectSearchView {
                             Some(format!("Indexing..."))
                         } else {
                             if let Some(rate_limit_expiry) = rate_limit_expiry {
-                                if let Ok(remaining_seconds) =
-                                    rate_limit_expiry.duration_since(SystemTime::now())
-                                {
+                                let remaining_seconds =
+                                    rate_limit_expiry.duration_since(Instant::now());
+                                if remaining_seconds > Duration::from_secs(0) {
                                     Some(format!(
                                         "Remaining files to index (rate limit resets in {}s): {}",
                                         remaining_seconds.as_secs(),

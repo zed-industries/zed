@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::ops::Add;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant};
 use tiktoken_rs::{cl100k_base, CoreBPE};
 use util::http::{HttpClient, Request};
 
@@ -85,8 +85,8 @@ impl ToSql for Embedding {
 pub struct OpenAIEmbeddings {
     pub client: Arc<dyn HttpClient>,
     pub executor: Arc<Background>,
-    rate_limit_count_rx: watch::Receiver<Option<SystemTime>>,
-    rate_limit_count_tx: Arc<Mutex<watch::Sender<Option<SystemTime>>>>,
+    rate_limit_count_rx: watch::Receiver<Option<Instant>>,
+    rate_limit_count_tx: Arc<Mutex<watch::Sender<Option<Instant>>>>,
 }
 
 #[derive(Serialize)]
@@ -119,14 +119,14 @@ pub trait EmbeddingProvider: Sync + Send {
     async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>>;
     fn max_tokens_per_batch(&self) -> usize;
     fn truncate(&self, span: &str) -> (String, usize);
-    fn rate_limit_expiration(&self) -> Option<SystemTime>;
+    fn rate_limit_expiration(&self) -> Option<Instant>;
 }
 
 pub struct DummyEmbeddings {}
 
 #[async_trait]
 impl EmbeddingProvider for DummyEmbeddings {
-    fn rate_limit_expiration(&self) -> Option<SystemTime> {
+    fn rate_limit_expiration(&self) -> Option<Instant> {
         None
     }
     async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>> {
@@ -174,7 +174,7 @@ impl OpenAIEmbeddings {
         let reset_time = *self.rate_limit_count_tx.lock().borrow();
 
         if let Some(reset_time) = reset_time {
-            if SystemTime::now() >= reset_time {
+            if Instant::now() >= reset_time {
                 *self.rate_limit_count_tx.lock().borrow_mut() = None
             }
         }
@@ -185,7 +185,7 @@ impl OpenAIEmbeddings {
         );
     }
 
-    fn update_reset_time(&self, reset_time: SystemTime) {
+    fn update_reset_time(&self, reset_time: Instant) {
         let original_time = *self.rate_limit_count_tx.lock().borrow();
 
         let updated_time = if let Some(original_time) = original_time {
@@ -232,7 +232,7 @@ impl EmbeddingProvider for OpenAIEmbeddings {
         50000
     }
 
-    fn rate_limit_expiration(&self) -> Option<SystemTime> {
+    fn rate_limit_expiration(&self) -> Option<Instant> {
         *self.rate_limit_count_rx.borrow()
     }
     fn truncate(&self, span: &str) -> (String, usize) {
@@ -319,7 +319,7 @@ impl EmbeddingProvider for OpenAIEmbeddings {
                     };
 
                     // If we've previously rate limited, increment the duration but not the count
-                    let reset_time = SystemTime::now().add(delay_duration);
+                    let reset_time = Instant::now().add(delay_duration);
                     self.update_reset_time(reset_time);
 
                     log::trace!(

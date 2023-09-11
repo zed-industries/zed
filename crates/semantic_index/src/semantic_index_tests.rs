@@ -21,7 +21,7 @@ use std::{
         atomic::{self, AtomicUsize},
         Arc,
     },
-    time::SystemTime,
+    time::{Instant, SystemTime},
 };
 use unindent::Unindent;
 use util::RandomCharIter;
@@ -1275,7 +1275,7 @@ impl EmbeddingProvider for FakeEmbeddingProvider {
         200
     }
 
-    fn rate_limit_expiration(&self) -> Option<SystemTime> {
+    fn rate_limit_expiration(&self) -> Option<Instant> {
         None
     }
 
