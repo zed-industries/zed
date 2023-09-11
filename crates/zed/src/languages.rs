@@ -170,6 +170,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<dyn NodeRuntime>
     language("elm", tree_sitter_elm::language(), vec![]);
     language("glsl", tree_sitter_glsl::language(), vec![]);
     language("nix", tree_sitter_nix::language(), vec![]);
+    language("nu", tree_sitter_nu::language(), vec![]);
 }
 
 #[cfg(any(test, feature = "test-support"))]

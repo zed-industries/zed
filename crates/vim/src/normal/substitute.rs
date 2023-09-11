@@ -10,6 +10,7 @@ actions!(vim, [Substitute, SubstituteLine]);
 pub(crate) fn init(cx: &mut AppContext) {
     cx.add_action(|_: &mut Workspace, _: &Substitute, cx| {
         Vim::update(cx, |vim, cx| {
+            vim.start_recording(cx);
             let count = vim.pop_number_operator(cx);
             substitute(vim, count, vim.state().mode == Mode::VisualLine, cx);
         })
@@ -17,6 +18,7 @@ pub(crate) fn init(cx: &mut AppContext) {
 
     cx.add_action(|_: &mut Workspace, _: &SubstituteLine, cx| {
         Vim::update(cx, |vim, cx| {
+            vim.start_recording(cx);
             if matches!(vim.state().mode, Mode::VisualBlock | Mode::Visual) {
                 vim.switch_mode(Mode::VisualLine, false, cx)
             }

@@ -262,6 +262,7 @@ impl LspAdapter for RustLspAdapter {
         })
     }
 }
+
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
     (|| async move {
         let mut last = None;
