@@ -13,16 +13,15 @@ Welcome to Zed, a lightning-fast, collaborative code editor that makes your drea
   sudo xcodebuild -license
   ```
 
-* Install homebrew, rust and node
+* Install rustup (rust, cargo, etc.)
   ```
-  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-  brew install rust
-  brew install node
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
   ```
   
-* Ensure rust executables are in your $PATH
+* Install homebrew and node
   ```
-  echo $HOME/.cargo/bin | sudo tee /etc/paths.d/10-rust
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  brew install node
   ```
   
 * Install postgres and configure the database
