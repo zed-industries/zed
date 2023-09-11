@@ -40,7 +40,7 @@ impl<V: 'static> TabBar<V> {
                             .flex()
                             .items_center()
                             .gap_px()
-                            .child(icon_button("icons/arrow_left.svg", ButtonVariant::Ghost))
+                            .child(icon_button("icons/arrow_left.svg", ButtonVariant::Filled))
                             .child(icon_button("icons/arrow_right.svg", ButtonVariant::Ghost)),
                     ),
             )

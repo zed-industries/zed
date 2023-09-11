@@ -25,9 +25,8 @@ impl IconButton {
         let theme = theme(cx);
 
         let mut div = div();
-
         if self.variant == ButtonVariant::Filled {
-            div = div.fill(theme.highest.negative.default.background);
+            div = div.fill(theme.highest.on.default.background);
         }
 
         div.w_7()

@@ -6,11 +6,11 @@ use gpui2::{Element, ParentElement, ViewContext};
 #[derive(Element)]
 pub(crate) struct Tab {
     title: &'static str,
-    active: bool,
+    enabled: bool,
 }
 
-pub fn tab<V: 'static>(title: &'static str, active: bool) -> impl Element<V> {
-    Tab { title, active }
+pub fn tab<V: 'static>(title: &'static str, enabled: bool) -> impl Element<V> {
+    Tab { title, enabled }
 }
 
 impl Tab {
@@ -24,19 +24,19 @@ impl Tab {
             .items_center()
             .justify_center()
             .rounded_lg()
-            .fill(if self.active {
+            .fill(if self.enabled {
                 theme.highest.on.default.background
             } else {
                 theme.highest.base.default.background
             })
             .hover()
-            .fill(if self.active {
+            .fill(if self.enabled {
                 theme.highest.on.hovered.background
             } else {
                 theme.highest.base.hovered.background
             })
             .active()
-            .fill(if self.active {
+            .fill(if self.enabled {
                 theme.highest.on.pressed.background
             } else {
                 theme.highest.base.pressed.background
@@ -44,7 +44,7 @@ impl Tab {
             .child(
                 div()
                     .text_sm()
-                    .text_color(if self.active {
+                    .text_color(if self.enabled {
                         theme.highest.base.default.foreground
                     } else {
                         theme.highest.variant.default.foreground
