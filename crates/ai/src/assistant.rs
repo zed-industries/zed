@@ -1,6 +1,6 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, OpenAIModel},
-    codegen::{self, Codegen, OpenAICompletionProvider},
+    codegen::{self, Codegen, CodegenKind, OpenAICompletionProvider},
     stream_completion, MessageId, MessageMetadata, MessageStatus, OpenAIRequest, RequestMessage,
     Role, SavedConversation, SavedConversationMetadata, SavedMessage, OPENAI_API_URL,
 };
@@ -270,24 +270,28 @@ impl AssistantPanel {
 
         let inline_assist_id = post_inc(&mut self.next_inline_assist_id);
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
-        let selection = editor.read(cx).selections.newest_anchor().clone();
-        let range = selection.start.bias_left(&snapshot)..selection.end.bias_right(&snapshot);
         let provider = Arc::new(OpenAICompletionProvider::new(
             api_key,
             cx.background().clone(),
         ));
-        let codegen =
-            cx.add_model(|cx| Codegen::new(editor.read(cx).buffer().clone(), range, provider, cx));
-        let assist_kind = if editor.read(cx).selections.newest::<usize>(cx).is_empty() {
-            InlineAssistKind::Generate
+        let selection = editor.read(cx).selections.newest_anchor().clone();
+        let codegen_kind = if editor.read(cx).selections.newest::<usize>(cx).is_empty() {
+            CodegenKind::Generate {
+                position: selection.start,
+            }
         } else {
-            InlineAssistKind::Transform
+            CodegenKind::Transform {
+                range: selection.start..selection.end,
+            }
         };
+        let codegen = cx.add_model(|cx| {
+            Codegen::new(editor.read(cx).buffer().clone(), codegen_kind, provider, cx)
+        });
+
         let measurements = Rc::new(Cell::new(BlockMeasurements::default()));
         let inline_assistant = cx.add_view(|cx| {
             let assistant = InlineAssistant::new(
                 inline_assist_id,
-                assist_kind,
                 measurements.clone(),
                 self.include_conversation_in_next_inline_assist,
                 self.inline_prompt_history.clone(),
@@ -330,7 +334,6 @@ impl AssistantPanel {
         self.pending_inline_assists.insert(
             inline_assist_id,
             PendingInlineAssist {
-                kind: assist_kind,
                 editor: editor.downgrade(),
                 inline_assistant: Some((block_id, inline_assistant.clone())),
                 codegen: codegen.clone(),
@@ -345,6 +348,14 @@ impl AssistantPanel {
                                         cx.focus(&editor);
                                     }
                                 }
+                            }
+                        }
+                    }),
+                    cx.observe(&codegen, {
+                        let editor = editor.downgrade();
+                        move |this, _, cx| {
+                            if let Some(editor) = editor.upgrade(cx) {
+                                this.update_highlights_for_editor(&editor, cx);
                             }
                         }
                     }),
@@ -542,8 +553,8 @@ impl AssistantPanel {
         if let Some(language_name) = language_name {
             writeln!(prompt, "You're an expert {language_name} engineer.").unwrap();
         }
-        match pending_assist.kind {
-            InlineAssistKind::Transform => {
+        match pending_assist.codegen.read(cx).kind() {
+            CodegenKind::Transform { .. } => {
                 writeln!(
                     prompt,
                     "You're currently working inside an editor on this file:"
@@ -583,7 +594,7 @@ impl AssistantPanel {
                 )
                 .unwrap();
             }
-            InlineAssistKind::Generate => {
+            CodegenKind::Generate { .. } => {
                 writeln!(
                     prompt,
                     "You're currently working inside an editor on this file:"
@@ -2649,12 +2660,6 @@ enum InlineAssistantEvent {
     },
 }
 
-#[derive(Copy, Clone)]
-enum InlineAssistKind {
-    Transform,
-    Generate,
-}
-
 struct InlineAssistant {
     id: usize,
     prompt_editor: ViewHandle<Editor>,
@@ -2769,7 +2774,6 @@ impl View for InlineAssistant {
 impl InlineAssistant {
     fn new(
         id: usize,
-        kind: InlineAssistKind,
         measurements: Rc<Cell<BlockMeasurements>>,
         include_conversation: bool,
         prompt_history: VecDeque<String>,
@@ -2781,9 +2785,9 @@ impl InlineAssistant {
                 Some(Arc::new(|theme| theme.assistant.inline.editor.clone())),
                 cx,
             );
-            let placeholder = match kind {
-                InlineAssistKind::Transform => "Enter transformation prompt…",
-                InlineAssistKind::Generate => "Enter generation prompt…",
+            let placeholder = match codegen.read(cx).kind() {
+                CodegenKind::Transform { .. } => "Enter transformation prompt…",
+                CodegenKind::Generate { .. } => "Enter generation prompt…",
             };
             editor.set_placeholder_text(placeholder, cx);
             editor
@@ -2929,7 +2933,6 @@ struct BlockMeasurements {
 }
 
 struct PendingInlineAssist {
-    kind: InlineAssistKind,
     editor: WeakViewHandle<Editor>,
     inline_assistant: Option<(BlockId, ViewHandle<InlineAssistant>)>,
     codegen: ModelHandle<Codegen>,
