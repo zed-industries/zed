@@ -341,6 +341,21 @@ mod tests {
 
         palette
             .update(cx, |palette, cx| {
+                // Fill up palette's command list by running an empty query;
+                // we only need it to subsequently assert that the palette is initially
+                // sorted by command's name.
+                palette.delegate_mut().update_matches("".to_string(), cx)
+            })
+            .await;
+
+        palette.update(cx, |palette, _| {
+            let is_sorted =
+                |actions: &[Command]| actions.windows(2).all(|pair| pair[0].name <= pair[1].name);
+            assert!(is_sorted(&palette.delegate().actions));
+        });
+
+        palette
+            .update(cx, |palette, cx| {
                 palette
                     .delegate_mut()
                     .update_matches("bcksp".to_string(), cx)
