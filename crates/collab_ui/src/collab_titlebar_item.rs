@@ -13,8 +13,8 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
     json::{self, ToJson},
     platform::{CursorStyle, MouseButton},
-    AppContext, Entity, ImageData, LayoutContext, ModelHandle, PaintContext, Subscription, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, Entity, ImageData, ModelHandle, PaintContext, Subscription, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use picker::PickerEvent;
 use project::{Project, RepositoryEntry};
@@ -1165,7 +1165,7 @@ impl Element<CollabTitlebarItem> for AvatarRibbon {
         &mut self,
         constraint: gpui::SizeConstraint,
         _: &mut CollabTitlebarItem,
-        _: &mut LayoutContext<CollabTitlebarItem>,
+        _: &mut ViewContext<CollabTitlebarItem>,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
         (constraint.max, ())
     }

@@ -32,8 +32,8 @@ use gpui::{
     json::{self, ToJson},
     platform::{CursorStyle, Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent},
     text_layout::{self, Line, RunStyle, TextLayoutCache},
-    AnyElement, Axis, CursorRegion, Element, EventContext, FontCache, LayoutContext, MouseRegion,
-    PaintContext, Quad, SizeConstraint, ViewContext, WindowContext,
+    AnyElement, Axis, CursorRegion, Element, EventContext, FontCache, MouseRegion, PaintContext,
+    Quad, SizeConstraint, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use json::json;
@@ -1670,7 +1670,7 @@ impl EditorElement {
         style: &EditorStyle,
         line_layouts: &[LineWithInvisibles],
         editor: &mut Editor,
-        cx: &mut LayoutContext<Editor>,
+        cx: &mut ViewContext<Editor>,
     ) -> (f32, Vec<BlockLayout>) {
         let mut block_id = 0;
         let scroll_x = snapshot.scroll_anchor.offset.x();
@@ -2092,7 +2092,7 @@ impl Element<Editor> for EditorElement {
         &mut self,
         constraint: SizeConstraint,
         editor: &mut Editor,
-        cx: &mut LayoutContext<Editor>,
+        cx: &mut ViewContext<Editor>,
     ) -> (Vector2F, Self::LayoutState) {
         let mut size = constraint.max;
         if size.x().is_infinite() {
@@ -3177,11 +3177,10 @@ mod tests {
                     Point::new(5, 6)..Point::new(6, 0),
                 ]);
             });
-            let mut layout_cx = LayoutContext::new(cx);
             element.layout(
                 SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
                 editor,
-                &mut layout_cx,
+                cx,
             )
         });
         assert_eq!(state.selections.len(), 1);
@@ -3262,11 +3261,10 @@ mod tests {
                     DisplayPoint::new(10, 0)..DisplayPoint::new(13, 0),
                 ]);
             });
-            let mut layout_cx = LayoutContext::new(cx);
             element.layout(
                 SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
                 editor,
-                &mut layout_cx,
+                cx,
             )
         });
 
@@ -3322,11 +3320,10 @@ mod tests {
 
         let mut element = EditorElement::new(editor.read_with(cx, |editor, cx| editor.style(cx)));
         let (size, mut state) = editor.update(cx, |editor, cx| {
-            let mut layout_cx = LayoutContext::new(cx);
             element.layout(
                 SizeConstraint::new(vec2f(500., 500.), vec2f(500., 500.)),
                 editor,
-                &mut layout_cx,
+                cx,
             )
         });
 
@@ -3517,11 +3514,10 @@ mod tests {
             editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
             editor.set_wrap_width(Some(editor_width), cx);
 
-            let mut layout_cx = LayoutContext::new(cx);
             element.layout(
                 SizeConstraint::new(vec2f(editor_width, 500.), vec2f(editor_width, 500.)),
                 editor,
-                &mut layout_cx,
+                cx,
             )
         });
 

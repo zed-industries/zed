@@ -13,7 +13,7 @@ impl<V: 'static> gpui::Element<V> for AdapterElement<V> {
         &mut self,
         constraint: gpui::SizeConstraint,
         view: &mut V,
-        cx: &mut gpui::LayoutContext<V>,
+        cx: &mut gpui::ViewContext<V>,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
         cx.push_layout_engine(LayoutEngine::new());
 

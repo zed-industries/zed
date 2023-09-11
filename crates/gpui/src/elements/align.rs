@@ -1,6 +1,6 @@
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    json, AnyElement, Element, LayoutContext, PaintContext, SizeConstraint, ViewContext,
+    json, AnyElement, Element, PaintContext, SizeConstraint, ViewContext,
 };
 use json::ToJson;
 
@@ -48,7 +48,7 @@ impl<V: 'static> Element<V> for Align<V> {
         &mut self,
         mut constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let mut size = constraint.max;
         constraint.min = Vector2F::zero();

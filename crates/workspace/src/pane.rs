@@ -25,8 +25,8 @@ use gpui::{
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton, NavigationDirection, PromptLevel},
     Action, AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, EventContext,
-    LayoutContext, ModelHandle, MouseRegion, PaintContext, Quad, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle, WindowContext,
+    ModelHandle, MouseRegion, PaintContext, Quad, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle, WindowContext,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
@@ -1999,7 +1999,7 @@ impl<V: 'static> Element<V> for PaneBackdrop<V> {
         &mut self,
         constraint: gpui::SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let size = self.child.layout(constraint, view, cx);
         (size, ())

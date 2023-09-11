@@ -34,8 +34,8 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    json, Action, Entity, LayoutContext, PaintContext, SizeConstraint, TypeTag, View, ViewContext,
-    WeakViewHandle, WindowContext,
+    json, Action, Entity, PaintContext, SizeConstraint, TypeTag, View, ViewContext, WeakViewHandle,
+    WindowContext,
 };
 use anyhow::{anyhow, Result};
 use core::panic;
@@ -59,7 +59,7 @@ pub trait Element<V: 'static>: 'static {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState);
 
     fn paint(
@@ -259,7 +259,7 @@ trait AnyElementState<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Vector2F;
 
     fn paint(
@@ -310,7 +310,7 @@ impl<V, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Vector2F {
         let result;
         *self = match mem::take(self) {
@@ -510,7 +510,7 @@ impl<V> AnyElement<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Vector2F {
         self.state.layout(constraint, view, cx)
     }
@@ -570,7 +570,7 @@ impl<V: 'static> Element<V> for AnyElement<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let size = self.layout(constraint, view, cx);
         (size, ())
@@ -659,10 +659,7 @@ impl<V: View> AnyRootElement for RootElement<V> {
             .view
             .upgrade(cx)
             .ok_or_else(|| anyhow!("layout called on a root element for a dropped view"))?;
-        view.update(cx, |view, cx| {
-            let mut cx = LayoutContext::new(cx);
-            Ok(self.element.layout(constraint, view, &mut cx))
-        })
+        view.update(cx, |view, cx| Ok(self.element.layout(constraint, view, cx)))
     }
 
     fn paint(

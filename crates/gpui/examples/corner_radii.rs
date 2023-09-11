@@ -42,7 +42,7 @@ impl<V: View> gpui::Element<V> for CornersElement {
         &mut self,
         constraint: gpui::SizeConstraint,
         _: &mut V,
-        _: &mut gpui::LayoutContext<V>,
+        _: &mut gpui::ViewContext<V>,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
         (constraint.max, ())
     }

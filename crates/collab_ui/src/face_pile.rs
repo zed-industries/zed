@@ -7,7 +7,7 @@ use gpui::{
     },
     json::ToJson,
     serde_json::{self, json},
-    AnyElement, Axis, Element, LayoutContext, PaintContext, View, ViewContext,
+    AnyElement, Axis, Element, PaintContext, View, ViewContext,
 };
 
 pub(crate) struct FacePile<V: View> {
@@ -32,7 +32,7 @@ impl<V: View> Element<V> for FacePile<V> {
         &mut self,
         constraint: gpui::SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         debug_assert!(constraint.max_along(Axis::Horizontal) == f32::INFINITY);
 

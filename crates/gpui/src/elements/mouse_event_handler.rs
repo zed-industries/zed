@@ -10,8 +10,8 @@ use crate::{
         CursorRegion, HandlerSet, MouseClick, MouseClickOut, MouseDown, MouseDownOut, MouseDrag,
         MouseHover, MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut,
     },
-    AnyElement, Element, EventContext, LayoutContext, MouseRegion, MouseState, PaintContext,
-    SizeConstraint, TypeTag, ViewContext,
+    AnyElement, Element, EventContext, MouseRegion, MouseState, PaintContext, SizeConstraint,
+    TypeTag, ViewContext,
 };
 use serde_json::json;
 use std::ops::Range;
@@ -270,7 +270,7 @@ impl<V: 'static> Element<V> for MouseEventHandler<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         (self.child.layout(constraint, view, cx), ())
     }

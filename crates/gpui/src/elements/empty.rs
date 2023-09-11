@@ -6,7 +6,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    LayoutContext, PaintContext, ViewContext,
+    PaintContext, ViewContext,
 };
 use crate::{Element, SizeConstraint};
 
@@ -34,7 +34,7 @@ impl<V: 'static> Element<V> for Empty {
         &mut self,
         constraint: SizeConstraint,
         _: &mut V,
-        _: &mut LayoutContext<V>,
+        _: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let x = if constraint.max.x().is_finite() && !self.collapsed {
             constraint.max.x()

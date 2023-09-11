@@ -10,9 +10,8 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     serde_json::json,
     text_layout::{Line, RunStyle},
-    AnyElement, Element, EventContext, FontCache, LayoutContext, ModelContext, MouseRegion,
-    PaintContext, Quad, SizeConstraint, TextLayoutCache, ViewContext, WeakModelHandle,
-    WindowContext,
+    AnyElement, Element, EventContext, FontCache, ModelContext, MouseRegion, PaintContext, Quad,
+    SizeConstraint, TextLayoutCache, ViewContext, WeakModelHandle, WindowContext,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -527,7 +526,7 @@ impl Element<TerminalView> for TerminalElement {
         &mut self,
         constraint: gpui::SizeConstraint,
         view: &mut TerminalView,
-        cx: &mut LayoutContext<TerminalView>,
+        cx: &mut ViewContext<TerminalView>,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
         let settings = settings::get::<ThemeSettings>(cx);
         let terminal_settings = settings::get::<TerminalSettings>(cx);

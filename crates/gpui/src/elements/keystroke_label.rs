@@ -39,7 +39,7 @@ impl<V: 'static> Element<V> for KeystrokeLabel {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, AnyElement<V>) {
         let mut element = if let Some(keystrokes) =
             cx.keystrokes_for_action(self.view_id, self.action.as_ref())
