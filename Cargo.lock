@@ -114,6 +114,7 @@ dependencies = [
  "log",
  "menu",
  "ordered-float",
+ "parking_lot 0.11.2",
  "project",
  "rand 0.8.5",
  "regex",

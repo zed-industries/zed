@@ -27,7 +27,7 @@ use util::paths::CONVERSATIONS_DIR;
 const OPENAI_API_URL: &'static str = "https://api.openai.com/v1";
 
 // Data types for chat completion requests
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Serialize)]
 pub struct OpenAIRequest {
     model: String,
     messages: Vec<RequestMessage>,
