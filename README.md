@@ -12,16 +12,12 @@ Welcome to Zed, a lightning-fast, collaborative code editor that makes your drea
   ```
   sudo xcodebuild -license
   ```
-
-* Install rustup (rust, cargo, etc.)
-  ```
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-  ```
   
-* Install homebrew and node
+* Install homebrew, node and rustup-init (rutup, rust, cargo, etc.)
   ```
   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-  brew install node
+  brew install node rustup-init
+  rustup-init # follow the installation steps
   ```
   
 * Install postgres and configure the database
