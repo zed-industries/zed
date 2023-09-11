@@ -50,9 +50,9 @@ impl WorkspaceElement {
                                     .flex_col()
                                     .flex_1()
                                     .child(tab_bar(self.tab_bar_scroll_state.clone())),
-                            )
-                            .child(collab_panel(self.right_scroll_state.clone())),
-                    ),
+                            ),
+                    )
+                    .child(collab_panel(self.right_scroll_state.clone())),
             )
             .child(statusbar())
     }
