@@ -42,6 +42,8 @@ globset.workspace = true
 sha1 = "0.10.5"
 parse_duration = "2.1.1"
 ort = { version = "1.15.2", features = ["coreml"]}
+tokenizers = { version = ">=0.13.4", default-features = false, features = [ "onig" ] }
+ndarray = "0.15"
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }

@@ -18,6 +18,7 @@ lazy_static::lazy_static! {
     pub static ref LOG: PathBuf = LOGS_DIR.join("Zed.log");
     pub static ref OLD_LOG: PathBuf = LOGS_DIR.join("Zed.log.old");
     pub static ref LOCAL_SETTINGS_RELATIVE_PATH: &'static Path = Path::new(".zed/settings.json");
+    pub static ref MODELS_DIR: PathBuf = HOME.join("Library/Application Support/Zed/models");
 }
 
 pub mod legacy {
