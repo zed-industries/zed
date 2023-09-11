@@ -112,7 +112,7 @@ pub enum SemanticIndexStatus {
     Indexed,
     Indexing {
         remaining_files: usize,
-        rate_limit_expiration_time: Option<SystemTime>,
+        rate_limit_expiry: Option<SystemTime>,
     },
 }
 
@@ -232,20 +232,9 @@ impl ProjectState {
             _observe_pending_file_count: cx.spawn_weak({
                 let mut pending_file_count_rx = pending_file_count_rx.clone();
                 |this, mut cx| async move {
-                    loop {
-                        let mut timer = cx.background().timer(Duration::from_millis(350)).fuse();
-                        let mut pending_file_count = pending_file_count_rx.next().fuse();
-                        futures::select_biased! {
-                            _ = pending_file_count => {
-                                if let Some(this) = this.upgrade(&cx) {
-                                    this.update(&mut cx, |_, cx| cx.notify());
-                                }
-                            },
-                            _ = timer => {
-                                if let Some(this) = this.upgrade(&cx) {
-                                    this.update(&mut cx, |_, cx| cx.notify());
-                                }
-                            }
+                    while let Some(_) = pending_file_count_rx.next().await {
+                        if let Some(this) = this.upgrade(&cx) {
+                            this.update(&mut cx, |_, cx| cx.notify());
                         }
                     }
                 }
@@ -304,7 +293,7 @@ impl SemanticIndex {
             } else {
                 SemanticIndexStatus::Indexing {
                     remaining_files: project_state.pending_file_count_rx.borrow().clone(),
-                    rate_limit_expiration_time: self.embedding_provider.rate_limit_expiration(),
+                    rate_limit_expiry: self.embedding_provider.rate_limit_expiration(),
                 }
             }
         } else {
