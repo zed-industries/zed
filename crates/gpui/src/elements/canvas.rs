@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use super::Element;
 use crate::{
     json::{self, json},
-    PaintContext, ViewContext,
+    ViewContext,
 };
 use json::ToJson;
 use pathfinder_geometry::{
@@ -15,7 +15,7 @@ pub struct Canvas<V, F>(F, PhantomData<V>);
 
 impl<V, F> Canvas<V, F>
 where
-    F: FnMut(RectF, RectF, &mut V, &mut PaintContext<V>),
+    F: FnMut(RectF, RectF, &mut V, &mut ViewContext<V>),
 {
     pub fn new(f: F) -> Self {
         Self(f, PhantomData)
@@ -24,7 +24,7 @@ where
 
 impl<V: 'static, F> Element<V> for Canvas<V, F>
 where
-    F: 'static + FnMut(RectF, RectF, &mut V, &mut PaintContext<V>),
+    F: 'static + FnMut(RectF, RectF, &mut V, &mut ViewContext<V>),
 {
     type LayoutState = ();
     type PaintState = ();
@@ -54,7 +54,7 @@ where
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         self.0(bounds, visible_bounds, view, cx)
     }

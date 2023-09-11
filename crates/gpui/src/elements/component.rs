@@ -2,7 +2,7 @@ use std::{any::Any, marker::PhantomData};
 
 use pathfinder_geometry::{rect::RectF, vector::Vector2F};
 
-use crate::{AnyElement, Element, PaintContext, SizeConstraint, ViewContext};
+use crate::{AnyElement, Element, SizeConstraint, ViewContext};
 
 use super::Empty;
 
@@ -302,7 +302,7 @@ impl<V: 'static, C: StatefulComponent<V> + 'static> Element<V> for ComponentAdap
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         self.element
             .as_mut()

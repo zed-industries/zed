@@ -1,6 +1,5 @@
 use crate::{
     element::{Element, IntoElement, Layout},
-    paint_context::PaintContext,
     ViewContext,
 };
 use anyhow::Result;
@@ -71,7 +70,7 @@ impl<V: 'static> Element<V> for Text {
         parent_origin: Vector2F,
         layout: &Layout,
         paint_state: &mut Self::PaintState,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) {
         let bounds = layout.bounds + parent_origin;
 

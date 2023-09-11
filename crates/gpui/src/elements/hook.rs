@@ -3,7 +3,7 @@ use std::ops::Range;
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::json,
-    AnyElement, Element, PaintContext, SizeConstraint, ViewContext,
+    AnyElement, Element, SizeConstraint, ViewContext,
 };
 
 pub struct Hook<V> {
@@ -51,7 +51,7 @@ impl<V: 'static> Element<V> for Hook<V> {
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) {
         self.child.paint(bounds.origin(), visible_bounds, view, cx);
     }

@@ -8,8 +8,8 @@ use gpui::{
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    AnyElement, AnyViewHandle, Entity, PaintContext, SizeConstraint, Subscription, View,
-    ViewContext, ViewHandle, WindowContext,
+    AnyElement, AnyViewHandle, Entity, SizeConstraint, Subscription, View, ViewContext, ViewHandle,
+    WindowContext,
 };
 
 pub trait StatusItemView: View {
@@ -230,7 +230,7 @@ impl Element<StatusBar> for StatusBarElement {
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut StatusBar,
-        cx: &mut PaintContext<StatusBar>,
+        cx: &mut ViewContext<StatusBar>,
     ) -> Self::PaintState {
         let origin_y = bounds.upper_right().y();
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();

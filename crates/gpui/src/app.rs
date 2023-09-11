@@ -3404,6 +3404,16 @@ impl<'a, 'b, V: 'static> ViewContext<'a, 'b, V> {
             .or_default()
             .push(self_view_id);
     }
+
+    pub fn paint_layer<F, R>(&mut self, clip_bounds: Option<RectF>, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        self.scene().push_layer(clip_bounds);
+        let result = f(self);
+        self.scene().pop_layer();
+        result
+    }
 }
 
 impl<V: View> ViewContext<'_, '_, V> {
@@ -3492,82 +3502,6 @@ impl<V> BorrowWindowContext for ViewContext<'_, '_, V> {
         F: FnOnce(&mut WindowContext) -> Option<T>,
     {
         BorrowWindowContext::update_window_optional(&mut *self.window_context, window, f)
-    }
-}
-
-pub struct PaintContext<'a, 'b, 'c, V> {
-    pub view_context: &'c mut ViewContext<'a, 'b, V>,
-}
-
-impl<'a, 'b, 'c, V> PaintContext<'a, 'b, 'c, V> {
-    pub fn new(view_context: &'c mut ViewContext<'a, 'b, V>) -> Self {
-        Self { view_context }
-    }
-
-    pub fn paint_layer<F, R>(&mut self, clip_bounds: Option<RectF>, f: F) -> R
-    where
-        F: FnOnce(&mut Self) -> R,
-    {
-        self.scene().push_layer(clip_bounds);
-        let result = f(self);
-        self.scene().pop_layer();
-        result
-    }
-}
-
-impl<'a, 'b, 'c, V> Deref for PaintContext<'a, 'b, 'c, V> {
-    type Target = ViewContext<'a, 'b, V>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.view_context
-    }
-}
-
-impl<V> DerefMut for PaintContext<'_, '_, '_, V> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.view_context
-    }
-}
-
-impl<V> BorrowAppContext for PaintContext<'_, '_, '_, V> {
-    fn read_with<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
-        BorrowAppContext::read_with(&*self.view_context, f)
-    }
-
-    fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
-        BorrowAppContext::update(&mut *self.view_context, f)
-    }
-}
-
-impl<V> BorrowWindowContext for PaintContext<'_, '_, '_, V> {
-    type Result<T> = T;
-
-    fn read_window<T, F>(&self, window: AnyWindowHandle, f: F) -> Self::Result<T>
-    where
-        F: FnOnce(&WindowContext) -> T,
-    {
-        BorrowWindowContext::read_window(self.view_context, window, f)
-    }
-
-    fn read_window_optional<T, F>(&self, window: AnyWindowHandle, f: F) -> Option<T>
-    where
-        F: FnOnce(&WindowContext) -> Option<T>,
-    {
-        BorrowWindowContext::read_window_optional(self.view_context, window, f)
-    }
-
-    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Self::Result<T>
-    where
-        F: FnOnce(&mut WindowContext) -> T,
-    {
-        BorrowWindowContext::update_window(self.view_context, window, f)
-    }
-
-    fn update_window_optional<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Option<T>
-    where
-        F: FnOnce(&mut WindowContext) -> Option<T>,
-    {
-        BorrowWindowContext::update_window_optional(self.view_context, window, f)
     }
 }
 

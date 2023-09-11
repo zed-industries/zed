@@ -7,7 +7,7 @@ use gpui::{
     },
     json::ToJson,
     serde_json::{self, json},
-    AnyElement, Axis, Element, PaintContext, View, ViewContext,
+    AnyElement, Axis, Element, View, ViewContext,
 };
 
 pub(crate) struct FacePile<V: View> {
@@ -57,7 +57,7 @@ impl<V: View> Element<V> for FacePile<V> {
         visible_bounds: RectF,
         _layout: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 

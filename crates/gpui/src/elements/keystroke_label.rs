@@ -65,7 +65,7 @@ impl<V: 'static> Element<V> for KeystrokeLabel {
         visible_bounds: RectF,
         element: &mut AnyElement<V>,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) {
         element.paint(bounds.origin(), visible_bounds, view, cx);
     }

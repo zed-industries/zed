@@ -13,8 +13,8 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f, PathBuilder},
     json::{self, ToJson},
     platform::{CursorStyle, MouseButton},
-    AppContext, Entity, ImageData, ModelHandle, PaintContext, Subscription, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    AppContext, Entity, ImageData, ModelHandle, Subscription, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use picker::PickerEvent;
 use project::{Project, RepositoryEntry};
@@ -1176,7 +1176,7 @@ impl Element<CollabTitlebarItem> for AvatarRibbon {
         _: RectF,
         _: &mut Self::LayoutState,
         _: &mut CollabTitlebarItem,
-        cx: &mut PaintContext<CollabTitlebarItem>,
+        cx: &mut ViewContext<CollabTitlebarItem>,
     ) -> Self::PaintState {
         let mut path = PathBuilder::new();
         path.reset(bounds.lower_left());

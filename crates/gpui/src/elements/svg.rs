@@ -1,6 +1,5 @@
 use super::constrain_size_preserving_aspect_ratio;
 use crate::json::ToJson;
-use crate::PaintContext;
 use crate::{
     color::Color,
     geometry::{
@@ -73,7 +72,7 @@ impl<V: 'static> Element<V> for Svg {
         _visible_bounds: RectF,
         svg: &mut Self::LayoutState,
         _: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) {
         if let Some(svg) = svg.clone() {
             cx.scene().push_icon(scene::Icon {

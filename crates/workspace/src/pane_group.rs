@@ -594,7 +594,7 @@ mod element {
         json::{self, ToJson},
         platform::{CursorStyle, MouseButton},
         scene::MouseDrag,
-        AnyElement, Axis, CursorRegion, Element, EventContext, MouseRegion, PaintContext, RectFExt,
+        AnyElement, Axis, CursorRegion, Element, EventContext, MouseRegion, RectFExt,
         SizeConstraint, Vector2FExt, ViewContext,
     };
 
@@ -855,7 +855,7 @@ mod element {
             visible_bounds: RectF,
             remaining_space: &mut Self::LayoutState,
             view: &mut Workspace,
-            cx: &mut PaintContext<Workspace>,
+            cx: &mut ViewContext<Workspace>,
         ) -> Self::PaintState {
             let can_resize = settings::get::<WorkspaceSettings>(cx).active_pane_magnification == 1.;
             let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();

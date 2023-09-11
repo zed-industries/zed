@@ -1,4 +1,4 @@
-use crate::{paint_context::PaintContext, ViewContext};
+use crate::ViewContext;
 use gpui::{geometry::rect::RectF, LayoutEngine, LayoutId};
 use util::ResultExt;
 
@@ -40,13 +40,13 @@ impl<V: 'static> gpui::Element<V> for AdapterElement<V> {
         _visible_bounds: RectF,
         layout_data: &mut Option<(LayoutEngine, LayoutId)>,
         view: &mut V,
-        legacy_cx: &mut gpui::PaintContext<V>,
+        cx: &mut gpui::ViewContext<V>,
     ) -> Self::PaintState {
         let (layout_engine, layout_id) = layout_data.take().unwrap();
-        legacy_cx.push_layout_engine(layout_engine);
-        let mut cx = PaintContext::new(legacy_cx);
-        self.0.paint(view, bounds.origin(), &mut cx);
-        *layout_data = legacy_cx.pop_layout_engine().zip(Some(layout_id));
+        cx.push_layout_engine(layout_engine);
+        self.0
+            .paint(view, bounds.origin(), &mut ViewContext::new(cx));
+        *layout_data = cx.pop_layout_engine().zip(Some(layout_id));
         debug_assert!(layout_data.is_some());
     }
 

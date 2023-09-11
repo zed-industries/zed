@@ -32,8 +32,8 @@ use gpui::{
     json::{self, ToJson},
     platform::{CursorStyle, Modifiers, MouseButton, MouseButtonEvent, MouseMovedEvent},
     text_layout::{self, Line, RunStyle, TextLayoutCache},
-    AnyElement, Axis, CursorRegion, Element, EventContext, FontCache, MouseRegion, PaintContext,
-    Quad, SizeConstraint, ViewContext, WindowContext,
+    AnyElement, Axis, CursorRegion, Element, EventContext, FontCache, MouseRegion, Quad,
+    SizeConstraint, ViewContext, WindowContext,
 };
 use itertools::Itertools;
 use json::json;
@@ -635,7 +635,7 @@ impl EditorElement {
         visible_bounds: RectF,
         layout: &mut LayoutState,
         editor: &mut Editor,
-        cx: &mut PaintContext<Editor>,
+        cx: &mut ViewContext<Editor>,
     ) {
         let line_height = layout.position_map.line_height;
 
@@ -778,7 +778,7 @@ impl EditorElement {
         visible_bounds: RectF,
         layout: &mut LayoutState,
         editor: &mut Editor,
-        cx: &mut PaintContext<Editor>,
+        cx: &mut ViewContext<Editor>,
     ) {
         let style = &self.style;
         let scroll_position = layout.position_map.snapshot.scroll_position();
@@ -1351,7 +1351,7 @@ impl EditorElement {
         visible_bounds: RectF,
         layout: &mut LayoutState,
         editor: &mut Editor,
-        cx: &mut PaintContext<Editor>,
+        cx: &mut ViewContext<Editor>,
     ) {
         let scroll_position = layout.position_map.snapshot.scroll_position();
         let scroll_left = scroll_position.x() * layout.position_map.em_width;
@@ -2570,7 +2570,7 @@ impl Element<Editor> for EditorElement {
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
         editor: &mut Editor,
-        cx: &mut PaintContext<Editor>,
+        cx: &mut ViewContext<Editor>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
         cx.scene().push_layer(Some(visible_bounds));
@@ -3340,13 +3340,7 @@ mod tests {
         // Don't panic.
         let bounds = RectF::new(Default::default(), size);
         editor.update(cx, |editor, cx| {
-            element.paint(
-                bounds,
-                bounds,
-                &mut state,
-                editor,
-                &mut PaintContext::new(cx),
-            );
+            element.paint(bounds, bounds, &mut state, editor, cx);
         });
     }
 

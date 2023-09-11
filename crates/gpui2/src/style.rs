@@ -2,7 +2,7 @@ use crate::{
     color::Hsla,
     elements::hoverable::{hoverable, Hoverable},
     elements::pressable::{pressable, Pressable},
-    paint_context::PaintContext,
+    ViewContext,
 };
 pub use fonts::Style as FontStyle;
 pub use fonts::Weight as FontWeight;
@@ -164,7 +164,7 @@ impl Style {
     }
 
     /// Paints the background of an element styled with this style.
-    pub fn paint_background<V: 'static>(&self, bounds: RectF, cx: &mut PaintContext<V>) {
+    pub fn paint_background<V: 'static>(&self, bounds: RectF, cx: &mut ViewContext<V>) {
         let rem_size = cx.rem_size();
         if let Some(color) = self.fill.as_ref().and_then(Fill::color) {
             cx.scene().push_quad(gpui::Quad {
@@ -177,7 +177,7 @@ impl Style {
     }
 
     /// Paints the foreground of an element styled with this style.
-    pub fn paint_foreground<V: 'static>(&self, bounds: RectF, cx: &mut PaintContext<V>) {
+    pub fn paint_foreground<V: 'static>(&self, bounds: RectF, cx: &mut ViewContext<V>) {
         let rem_size = cx.rem_size();
 
         if let Some(color) = self.border_color {

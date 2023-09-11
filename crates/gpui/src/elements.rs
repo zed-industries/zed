@@ -34,7 +34,7 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    json, Action, Entity, PaintContext, SizeConstraint, TypeTag, View, ViewContext, WeakViewHandle,
+    json, Action, Entity, SizeConstraint, TypeTag, View, ViewContext, WeakViewHandle,
     WindowContext,
 };
 use anyhow::{anyhow, Result};
@@ -68,7 +68,7 @@ pub trait Element<V: 'static>: 'static {
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState;
 
     fn rect_for_text_range(
@@ -267,7 +267,7 @@ trait AnyElementState<V> {
         origin: Vector2F,
         visible_bounds: RectF,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     );
 
     fn rect_for_text_range(
@@ -347,7 +347,7 @@ impl<V, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
         origin: Vector2F,
         visible_bounds: RectF,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) {
         *self = match mem::take(self) {
             ElementState::PostLayout {
@@ -357,13 +357,7 @@ impl<V, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
                 mut layout,
             } => {
                 let bounds = RectF::new(origin, size);
-                let paint = element.paint(
-                    bounds,
-                    visible_bounds,
-                    &mut layout,
-                    view,
-                    &mut PaintContext::new(cx),
-                );
+                let paint = element.paint(bounds, visible_bounds, &mut layout, view, cx);
                 ElementState::PostPaint {
                     element,
                     constraint,
@@ -381,13 +375,7 @@ impl<V, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
                 ..
             } => {
                 let bounds = RectF::new(origin, bounds.size());
-                let paint = element.paint(
-                    bounds,
-                    visible_bounds,
-                    &mut layout,
-                    view,
-                    &mut PaintContext::new(cx),
-                );
+                let paint = element.paint(bounds, visible_bounds, &mut layout, view, cx);
                 ElementState::PostPaint {
                     element,
                     constraint,
@@ -520,7 +508,7 @@ impl<V> AnyElement<V> {
         origin: Vector2F,
         visible_bounds: RectF,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) {
         self.state.paint(origin, visible_bounds, view, cx);
     }
@@ -582,7 +570,7 @@ impl<V: 'static> Element<V> for AnyElement<V> {
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         self.paint(bounds.origin(), visible_bounds, view, cx);
     }
@@ -674,8 +662,7 @@ impl<V: View> AnyRootElement for RootElement<V> {
             .ok_or_else(|| anyhow!("paint called on a root element for a dropped view"))?;
 
         view.update(cx, |view, cx| {
-            let mut cx = PaintContext::new(cx);
-            self.element.paint(origin, visible_bounds, view, &mut cx);
+            self.element.paint(origin, visible_bounds, view, cx);
             Ok(())
         })
     }
