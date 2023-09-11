@@ -34,6 +34,7 @@ use std::{
     ops::{Not, Range},
     path::PathBuf,
     sync::Arc,
+    time::{Duration, Instant},
 };
 use util::ResultExt as _;
 use workspace::{
@@ -130,6 +131,7 @@ pub struct ProjectSearchView {
 
 struct SemanticState {
     index_status: SemanticIndexStatus,
+    maintain_rate_limit: Option<Task<()>>,
     _subscription: Subscription,
 }
 
@@ -319,11 +321,28 @@ impl View for ProjectSearchView {
                 let status = semantic.index_status;
                 match status {
                     SemanticIndexStatus::Indexed => Some("Indexing complete".to_string()),
-                    SemanticIndexStatus::Indexing { remaining_files } => {
+                    SemanticIndexStatus::Indexing {
+                        remaining_files,
+                        rate_limit_expiry,
+                    } => {
                         if remaining_files == 0 {
                             Some(format!("Indexing..."))
                         } else {
-                            Some(format!("Remaining files to index: {}", remaining_files))
+                            if let Some(rate_limit_expiry) = rate_limit_expiry {
+                                let remaining_seconds =
+                                    rate_limit_expiry.duration_since(Instant::now());
+                                if remaining_seconds > Duration::from_secs(0) {
+                                    Some(format!(
+                                        "Remaining files to index (rate limit resets in {}s): {}",
+                                        remaining_seconds.as_secs(),
+                                        remaining_files
+                                    ))
+                                } else {
+                                    Some(format!("Remaining files to index: {}", remaining_files))
+                                }
+                            } else {
+                                Some(format!("Remaining files to index: {}", remaining_files))
+                            }
                         }
                     }
                     SemanticIndexStatus::NotIndexed => None,
@@ -651,9 +670,10 @@ impl ProjectSearchView {
 
             self.semantic_state = Some(SemanticState {
                 index_status: semantic_index.read(cx).status(&project),
+                maintain_rate_limit: None,
                 _subscription: cx.observe(&semantic_index, Self::semantic_index_changed),
             });
-            cx.notify();
+            self.semantic_index_changed(semantic_index, cx);
         }
     }
 
@@ -664,8 +684,25 @@ impl ProjectSearchView {
     ) {
         let project = self.model.read(cx).project.clone();
         if let Some(semantic_state) = self.semantic_state.as_mut() {
-            semantic_state.index_status = semantic_index.read(cx).status(&project);
             cx.notify();
+            semantic_state.index_status = semantic_index.read(cx).status(&project);
+            if let SemanticIndexStatus::Indexing {
+                rate_limit_expiry: Some(_),
+                ..
+            } = &semantic_state.index_status
+            {
+                if semantic_state.maintain_rate_limit.is_none() {
+                    semantic_state.maintain_rate_limit =
+                        Some(cx.spawn(|this, mut cx| async move {
+                            loop {
+                                cx.background().timer(Duration::from_secs(1)).await;
+                                this.update(&mut cx, |_, cx| cx.notify()).log_err();
+                            }
+                        }));
+                    return;
+                }
+            }
+            semantic_state.maintain_rate_limit = None;
         }
     }
 
