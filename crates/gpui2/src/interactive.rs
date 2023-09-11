@@ -6,7 +6,7 @@ use gpui::{
 use smallvec::SmallVec;
 use std::{cell::Cell, rc::Rc};
 
-use crate::element::PaintContext;
+use crate::ViewContext;
 
 pub trait Interactive<V: 'static> {
     fn interaction_handlers(&mut self) -> &mut InteractionHandlers<V>;
@@ -121,7 +121,7 @@ pub struct InteractionHandlers<V: 'static> {
 }
 
 impl<V: 'static> InteractionHandlers<V> {
-    pub fn paint(&self, order: u32, bounds: RectF, cx: &mut PaintContext<V>) {
+    pub fn paint(&self, order: u32, bounds: RectF, cx: &mut ViewContext<V>) {
         for handler in self.mouse_down.iter().cloned() {
             cx.on_event(order, move |view, event: &MouseButtonEvent, cx| {
                 if event.is_down && bounds.contains_point(event.position) {

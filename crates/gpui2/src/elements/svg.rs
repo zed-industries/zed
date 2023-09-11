@@ -49,7 +49,7 @@ impl<V: 'static> Element<V> for Svg {
         parent_origin: Vector2F,
         layout: &Layout,
         _: &mut Self::PaintState,
-        cx: &mut crate::paint_context::PaintContext<V>,
+        cx: &mut crate::ViewContext<V>,
     ) where
         Self: Sized,
     {

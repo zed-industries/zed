@@ -10,7 +10,7 @@ use crate::{
     json::ToJson,
     platform::CursorStyle,
     scene::{self, CornerRadii, CursorRegion, Quad},
-    AnyElement, Element, LayoutContext, PaintContext, SizeConstraint, ViewContext,
+    AnyElement, Element, SizeConstraint, ViewContext,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -371,7 +371,7 @@ impl<V: 'static> Element<V> for Container<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let mut size_buffer = self.margin_size() + self.padding_size();
         if !self.style.border.overlay {
@@ -391,7 +391,7 @@ impl<V: 'static> Element<V> for Container<V> {
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         let quad_bounds = RectF::from_points(
             bounds.origin() + vec2f(self.style.margin.left, self.style.margin.top),

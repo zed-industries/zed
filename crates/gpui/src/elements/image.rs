@@ -5,7 +5,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    scene, Element, ImageData, LayoutContext, PaintContext, SizeConstraint, ViewContext,
+    scene, Element, ImageData, SizeConstraint, ViewContext,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -64,7 +64,7 @@ impl<V: 'static> Element<V> for Image {
         &mut self,
         constraint: SizeConstraint,
         _: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let data = match &self.source {
             ImageSource::Path(path) => match cx.asset_cache.png(path) {
@@ -95,7 +95,7 @@ impl<V: 'static> Element<V> for Image {
         _: RectF,
         layout: &mut Self::LayoutState,
         _: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         if let Some(data) = layout {
             cx.scene().push_image(scene::Image {

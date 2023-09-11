@@ -594,8 +594,8 @@ mod element {
         json::{self, ToJson},
         platform::{CursorStyle, MouseButton},
         scene::MouseDrag,
-        AnyElement, Axis, CursorRegion, Element, EventContext, LayoutContext, MouseRegion,
-        PaintContext, RectFExt, SizeConstraint, Vector2FExt, ViewContext,
+        AnyElement, Axis, CursorRegion, Element, EventContext, MouseRegion, RectFExt,
+        SizeConstraint, Vector2FExt, ViewContext,
     };
 
     use crate::{
@@ -641,7 +641,7 @@ mod element {
             remaining_flex: &mut f32,
             cross_axis_max: &mut f32,
             view: &mut Workspace,
-            cx: &mut LayoutContext<Workspace>,
+            cx: &mut ViewContext<Workspace>,
         ) {
             let flexes = self.flexes.borrow();
             let cross_axis = self.axis.invert();
@@ -789,7 +789,7 @@ mod element {
             &mut self,
             constraint: SizeConstraint,
             view: &mut Workspace,
-            cx: &mut LayoutContext<Workspace>,
+            cx: &mut ViewContext<Workspace>,
         ) -> (Vector2F, Self::LayoutState) {
             debug_assert!(self.children.len() == self.flexes.borrow().len());
 
@@ -855,7 +855,7 @@ mod element {
             visible_bounds: RectF,
             remaining_space: &mut Self::LayoutState,
             view: &mut Workspace,
-            cx: &mut PaintContext<Workspace>,
+            cx: &mut ViewContext<Workspace>,
         ) -> Self::PaintState {
             let can_resize = settings::get::<WorkspaceSettings>(cx).active_pane_magnification == 1.;
             let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();

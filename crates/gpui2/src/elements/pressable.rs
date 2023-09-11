@@ -1,7 +1,6 @@
 use crate::{
     element::{AnyElement, Element, IntoElement, Layout, ParentElement},
     interactive::{InteractionHandlers, Interactive},
-    paint_context::PaintContext,
     style::{Style, StyleHelpers, Styleable},
     ViewContext,
 };
@@ -59,7 +58,7 @@ impl<V: 'static, E: Element<V> + Styleable> Element<V> for Pressable<E> {
         parent_origin: Vector2F,
         layout: &Layout,
         paint_state: &mut Self::PaintState,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) where
         Self: Sized,
     {

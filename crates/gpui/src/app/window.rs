@@ -16,9 +16,8 @@ use crate::{
     text_layout::TextLayoutCache,
     util::post_inc,
     Action, AnyView, AnyViewHandle, AnyWindowHandle, AppContext, BorrowAppContext,
-    BorrowWindowContext, Effect, Element, Entity, Handle, LayoutContext, MouseRegion,
-    MouseRegionId, PaintContext, SceneBuilder, Subscription, View, ViewContext, ViewHandle,
-    WindowInvalidation,
+    BorrowWindowContext, Effect, Element, Entity, Handle, MouseRegion, MouseRegionId, SceneBuilder,
+    Subscription, View, ViewContext, ViewHandle, WindowInvalidation,
 };
 use anyhow::{anyhow, bail, Result};
 use collections::{HashMap, HashSet};
@@ -1677,13 +1676,13 @@ impl<V: 'static> Element<V> for ChildView {
         &mut self,
         constraint: SizeConstraint,
         _: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         if let Some(mut rendered_view) = cx.window.rendered_views.remove(&self.view_id) {
             let parent_id = cx.view_id();
             cx.window.new_parents.insert(self.view_id, parent_id);
             let size = rendered_view
-                .layout(constraint, cx.view_context)
+                .layout(constraint, cx)
                 .log_err()
                 .unwrap_or(Vector2F::zero());
             cx.window.rendered_views.insert(self.view_id, rendered_view);
@@ -1704,7 +1703,7 @@ impl<V: 'static> Element<V> for ChildView {
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         _: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) {
         if let Some(mut rendered_view) = cx.window.rendered_views.remove(&self.view_id) {
             rendered_view

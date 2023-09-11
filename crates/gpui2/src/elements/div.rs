@@ -3,7 +3,6 @@ use std::{cell::Cell, rc::Rc};
 use crate::{
     element::{AnyElement, Element, IntoElement, Layout, ParentElement},
     hsla,
-    paint_context::PaintContext,
     style::{CornerRadii, Overflow, Style, StyleHelpers, Styleable},
     InteractionHandlers, Interactive, ViewContext,
 };
@@ -69,7 +68,7 @@ impl<V: 'static> Element<V> for Div<V> {
         parent_origin: Vector2F,
         layout: &Layout,
         child_layouts: &mut Vec<LayoutId>,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) where
         Self: Sized,
     {
@@ -167,7 +166,7 @@ impl<V: 'static> Div<V> {
         bounds: RectF,
         overflow: Point<Overflow>,
         child_layout_ids: &[LayoutId],
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) {
         if overflow.y == Overflow::Scroll || overflow.x == Overflow::Scroll {
             let mut scroll_max = Vector2F::zero();
@@ -214,7 +213,7 @@ impl<V: 'static> Div<V> {
         }
     }
 
-    fn paint_inspector(&self, parent_origin: Vector2F, layout: &Layout, cx: &mut PaintContext<V>) {
+    fn paint_inspector(&self, parent_origin: Vector2F, layout: &Layout, cx: &mut ViewContext<V>) {
         let style = self.styles.merged();
         let bounds = layout.bounds + parent_origin;
 

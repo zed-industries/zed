@@ -1,7 +1,6 @@
 use gpui2::{
-    color::Hsla,
-    element::{Element, PaintContext},
-    serde_json, AppContext, IntoElement, Vector2F, ViewContext, WindowContext,
+    color::Hsla, element::Element, serde_json, AppContext, IntoElement, Vector2F, ViewContext,
+    WindowContext,
 };
 use serde::{de::Visitor, Deserialize, Deserializer};
 use std::{collections::HashMap, fmt, marker::PhantomData};
@@ -162,7 +161,7 @@ impl<V: 'static, E: Element<V>> Element<V> for Themed<V, E> {
         parent_origin: Vector2F,
         layout: &gpui2::Layout,
         state: &mut Self::PaintState,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) where
         Self: Sized,
     {

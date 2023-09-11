@@ -3,7 +3,6 @@ pub mod color;
 pub mod element;
 pub mod elements;
 pub mod interactive;
-pub mod paint_context;
 pub mod style;
 pub mod view;
 pub mod view_context;

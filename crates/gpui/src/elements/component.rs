@@ -2,7 +2,7 @@ use std::{any::Any, marker::PhantomData};
 
 use pathfinder_geometry::{rect::RectF, vector::Vector2F};
 
-use crate::{AnyElement, Element, LayoutContext, PaintContext, SizeConstraint, ViewContext};
+use crate::{AnyElement, Element, SizeConstraint, ViewContext};
 
 use super::Empty;
 
@@ -282,14 +282,14 @@ impl<V: 'static, C: StatefulComponent<V> + 'static> Element<V> for ComponentAdap
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         if self.element.is_none() {
             let element = self
                 .component
                 .take()
                 .expect("Component can only be rendered once")
-                .render(view, cx.view_context());
+                .render(view, cx);
             self.element = Some(element);
         }
         let constraint = self.element.as_mut().unwrap().layout(constraint, view, cx);
@@ -302,7 +302,7 @@ impl<V: 'static, C: StatefulComponent<V> + 'static> Element<V> for ComponentAdap
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         self.element
             .as_mut()

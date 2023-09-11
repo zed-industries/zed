@@ -1,13 +1,12 @@
 use super::constrain_size_preserving_aspect_ratio;
 use crate::json::ToJson;
-use crate::PaintContext;
 use crate::{
     color::Color,
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    scene, Element, LayoutContext, SizeConstraint, ViewContext,
+    scene, Element, SizeConstraint, ViewContext,
 };
 use schemars::JsonSchema;
 use serde_derive::Deserialize;
@@ -49,7 +48,7 @@ impl<V: 'static> Element<V> for Svg {
         &mut self,
         constraint: SizeConstraint,
         _: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         match cx.asset_cache.svg(&self.path) {
             Ok(tree) => {
@@ -73,7 +72,7 @@ impl<V: 'static> Element<V> for Svg {
         _visible_bounds: RectF,
         svg: &mut Self::LayoutState,
         _: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) {
         if let Some(svg) = svg.clone() {
             cx.scene().push_icon(scene::Icon {

@@ -10,8 +10,8 @@ use crate::{
         CursorRegion, HandlerSet, MouseClick, MouseClickOut, MouseDown, MouseDownOut, MouseDrag,
         MouseHover, MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut,
     },
-    AnyElement, Element, EventContext, LayoutContext, MouseRegion, MouseState, PaintContext,
-    SizeConstraint, TypeTag, ViewContext,
+    AnyElement, Element, EventContext, MouseRegion, MouseState, SizeConstraint, TypeTag,
+    ViewContext,
 };
 use serde_json::json;
 use std::ops::Range;
@@ -270,7 +270,7 @@ impl<V: 'static> Element<V> for MouseEventHandler<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         (self.child.layout(constraint, view, cx), ())
     }
@@ -281,13 +281,13 @@ impl<V: 'static> Element<V> for MouseEventHandler<V> {
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         if self.above {
             self.child.paint(bounds.origin(), visible_bounds, view, cx);
-            cx.scene().push_layer(None);
-            self.paint_regions(bounds, visible_bounds, cx);
-            cx.scene().pop_layer();
+            cx.paint_layer(None, |cx| {
+                self.paint_regions(bounds, visible_bounds, cx);
+            });
         } else {
             self.paint_regions(bounds, visible_bounds, cx);
             self.child.paint(bounds.origin(), visible_bounds, view, cx);

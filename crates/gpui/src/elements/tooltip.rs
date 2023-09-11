@@ -6,8 +6,7 @@ use crate::{
     fonts::TextStyle,
     geometry::{rect::RectF, vector::Vector2F},
     json::json,
-    Action, Axis, ElementStateHandle, LayoutContext, PaintContext, SizeConstraint, Task, TypeTag,
-    ViewContext,
+    Action, Axis, ElementStateHandle, SizeConstraint, Task, TypeTag, ViewContext,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -189,7 +188,7 @@ impl<V: 'static> Element<V> for Tooltip<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let size = self.child.layout(constraint, view, cx);
         if let Some(tooltip) = self.tooltip.as_mut() {
@@ -208,7 +207,7 @@ impl<V: 'static> Element<V> for Tooltip<V> {
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) {
         self.child.paint(bounds.origin(), visible_bounds, view, cx);
         if let Some(tooltip) = self.tooltip.as_mut() {

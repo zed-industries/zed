@@ -261,6 +261,8 @@ impl SceneBuilder {
         self.stacking_contexts.push(StackingContext::new(None, 0));
         self.active_stacking_context_stack.clear();
         self.active_stacking_context_stack.push(0);
+        #[cfg(debug_assertions)]
+        self.mouse_region_ids.clear();
     }
 
     pub fn build(&mut self, scale_factor: f32) -> Scene {

@@ -3404,6 +3404,16 @@ impl<'a, 'b, V: 'static> ViewContext<'a, 'b, V> {
             .or_default()
             .push(self_view_id);
     }
+
+    pub fn paint_layer<F, R>(&mut self, clip_bounds: Option<RectF>, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        self.scene().push_layer(clip_bounds);
+        let result = f(self);
+        self.scene().pop_layer();
+        result
+    }
 }
 
 impl<V: View> ViewContext<'_, '_, V> {
@@ -3492,151 +3502,6 @@ impl<V> BorrowWindowContext for ViewContext<'_, '_, V> {
         F: FnOnce(&mut WindowContext) -> Option<T>,
     {
         BorrowWindowContext::update_window_optional(&mut *self.window_context, window, f)
-    }
-}
-
-pub struct LayoutContext<'a, 'b, 'c, V> {
-    // Nathan: Making this is public while I work on gpui2.
-    pub view_context: &'c mut ViewContext<'a, 'b, V>,
-}
-
-impl<'a, 'b, 'c, V> LayoutContext<'a, 'b, 'c, V> {
-    pub fn new(view_context: &'c mut ViewContext<'a, 'b, V>) -> Self {
-        Self { view_context }
-    }
-
-    pub fn view_context(&mut self) -> &mut ViewContext<'a, 'b, V> {
-        self.view_context
-    }
-}
-
-impl<'a, 'b, 'c, V> Deref for LayoutContext<'a, 'b, 'c, V> {
-    type Target = ViewContext<'a, 'b, V>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.view_context
-    }
-}
-
-impl<V> DerefMut for LayoutContext<'_, '_, '_, V> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.view_context
-    }
-}
-
-impl<V> BorrowAppContext for LayoutContext<'_, '_, '_, V> {
-    fn read_with<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
-        BorrowAppContext::read_with(&*self.view_context, f)
-    }
-
-    fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
-        BorrowAppContext::update(&mut *self.view_context, f)
-    }
-}
-
-impl<V> BorrowWindowContext for LayoutContext<'_, '_, '_, V> {
-    type Result<T> = T;
-
-    fn read_window<T, F: FnOnce(&WindowContext) -> T>(&self, window: AnyWindowHandle, f: F) -> T {
-        BorrowWindowContext::read_window(&*self.view_context, window, f)
-    }
-
-    fn read_window_optional<T, F>(&self, window: AnyWindowHandle, f: F) -> Option<T>
-    where
-        F: FnOnce(&WindowContext) -> Option<T>,
-    {
-        BorrowWindowContext::read_window_optional(&*self.view_context, window, f)
-    }
-
-    fn update_window<T, F: FnOnce(&mut WindowContext) -> T>(
-        &mut self,
-        window: AnyWindowHandle,
-        f: F,
-    ) -> T {
-        BorrowWindowContext::update_window(&mut *self.view_context, window, f)
-    }
-
-    fn update_window_optional<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Option<T>
-    where
-        F: FnOnce(&mut WindowContext) -> Option<T>,
-    {
-        BorrowWindowContext::update_window_optional(&mut *self.view_context, window, f)
-    }
-}
-
-pub struct PaintContext<'a, 'b, 'c, V> {
-    pub view_context: &'c mut ViewContext<'a, 'b, V>,
-}
-
-impl<'a, 'b, 'c, V> PaintContext<'a, 'b, 'c, V> {
-    pub fn new(view_context: &'c mut ViewContext<'a, 'b, V>) -> Self {
-        Self { view_context }
-    }
-
-    pub fn paint_layer<F, R>(&mut self, clip_bounds: Option<RectF>, f: F) -> R
-    where
-        F: FnOnce(&mut Self) -> R,
-    {
-        self.scene().push_layer(clip_bounds);
-        let result = f(self);
-        self.scene().pop_layer();
-        result
-    }
-}
-
-impl<'a, 'b, 'c, V> Deref for PaintContext<'a, 'b, 'c, V> {
-    type Target = ViewContext<'a, 'b, V>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.view_context
-    }
-}
-
-impl<V> DerefMut for PaintContext<'_, '_, '_, V> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.view_context
-    }
-}
-
-impl<V> BorrowAppContext for PaintContext<'_, '_, '_, V> {
-    fn read_with<T, F: FnOnce(&AppContext) -> T>(&self, f: F) -> T {
-        BorrowAppContext::read_with(&*self.view_context, f)
-    }
-
-    fn update<T, F: FnOnce(&mut AppContext) -> T>(&mut self, f: F) -> T {
-        BorrowAppContext::update(&mut *self.view_context, f)
-    }
-}
-
-impl<V> BorrowWindowContext for PaintContext<'_, '_, '_, V> {
-    type Result<T> = T;
-
-    fn read_window<T, F>(&self, window: AnyWindowHandle, f: F) -> Self::Result<T>
-    where
-        F: FnOnce(&WindowContext) -> T,
-    {
-        BorrowWindowContext::read_window(self.view_context, window, f)
-    }
-
-    fn read_window_optional<T, F>(&self, window: AnyWindowHandle, f: F) -> Option<T>
-    where
-        F: FnOnce(&WindowContext) -> Option<T>,
-    {
-        BorrowWindowContext::read_window_optional(self.view_context, window, f)
-    }
-
-    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Self::Result<T>
-    where
-        F: FnOnce(&mut WindowContext) -> T,
-    {
-        BorrowWindowContext::update_window(self.view_context, window, f)
-    }
-
-    fn update_window_optional<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Option<T>
-    where
-        F: FnOnce(&mut WindowContext) -> Option<T>,
-    {
-        BorrowWindowContext::update_window_optional(self.view_context, window, f)
     }
 }
 
@@ -6489,25 +6354,21 @@ mod tests {
         view_1.update(cx, |_, cx| {
             view_2.update(cx, |_, cx| {
                 // Sanity check
-                let mut layout_cx = LayoutContext::new(cx);
                 assert_eq!(
-                    layout_cx
-                        .keystrokes_for_action(view_1_id, &Action1)
+                    cx.keystrokes_for_action(view_1_id, &Action1)
                         .unwrap()
                         .as_slice(),
                     &[Keystroke::parse("a").unwrap()]
                 );
                 assert_eq!(
-                    layout_cx
-                        .keystrokes_for_action(view_2.id(), &Action2)
+                    cx.keystrokes_for_action(view_2.id(), &Action2)
                         .unwrap()
                         .as_slice(),
                     &[Keystroke::parse("b").unwrap()]
                 );
-                assert_eq!(layout_cx.keystrokes_for_action(view_1.id(), &Action3), None);
+                assert_eq!(cx.keystrokes_for_action(view_1.id(), &Action3), None);
                 assert_eq!(
-                    layout_cx
-                        .keystrokes_for_action(view_2.id(), &Action3)
+                    cx.keystrokes_for_action(view_2.id(), &Action3)
                         .unwrap()
                         .as_slice(),
                     &[Keystroke::parse("c").unwrap()]
@@ -6516,21 +6377,17 @@ mod tests {
                 // The 'a' keystroke propagates up the view tree from view_2
                 // to view_1. The action, Action1, is handled by view_1.
                 assert_eq!(
-                    layout_cx
-                        .keystrokes_for_action(view_2.id(), &Action1)
+                    cx.keystrokes_for_action(view_2.id(), &Action1)
                         .unwrap()
                         .as_slice(),
                     &[Keystroke::parse("a").unwrap()]
                 );
 
                 // Actions that are handled below the current view don't have bindings
-                assert_eq!(layout_cx.keystrokes_for_action(view_1_id, &Action2), None);
+                assert_eq!(cx.keystrokes_for_action(view_1_id, &Action2), None);
 
                 // Actions that are handled in other branches of the tree should not have a binding
-                assert_eq!(
-                    layout_cx.keystrokes_for_action(view_2.id(), &GlobalAction),
-                    None
-                );
+                assert_eq!(cx.keystrokes_for_action(view_2.id(), &GlobalAction), None);
             });
         });
 

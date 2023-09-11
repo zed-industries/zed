@@ -7,8 +7,7 @@ use serde_json::json;
 use crate::{
     geometry::rect::RectF,
     platform::{CursorStyle, MouseButton},
-    AnyElement, AppContext, Axis, Element, LayoutContext, MouseRegion, PaintContext,
-    SizeConstraint, TypeTag, View, ViewContext,
+    AnyElement, AppContext, Axis, Element, MouseRegion, SizeConstraint, TypeTag, View, ViewContext,
 };
 
 #[derive(Copy, Clone, Debug)]
@@ -105,7 +104,7 @@ impl<V: 'static> Element<V> for Resizable<V> {
         &mut self,
         constraint: crate::SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         (self.child.layout(constraint, view, cx), constraint)
     }
@@ -116,7 +115,7 @@ impl<V: 'static> Element<V> for Resizable<V> {
         visible_bounds: pathfinder_geometry::rect::RectF,
         constraint: &mut SizeConstraint,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         cx.scene().push_stacking_context(None, None);
 
@@ -241,7 +240,7 @@ impl<V: View, P: 'static> Element<V> for BoundsProvider<V, P> {
         &mut self,
         constraint: crate::SizeConstraint,
         view: &mut V,
-        cx: &mut crate::LayoutContext<V>,
+        cx: &mut crate::ViewContext<V>,
     ) -> (pathfinder_geometry::vector::Vector2F, Self::LayoutState) {
         (self.child.layout(constraint, view, cx), ())
     }
@@ -252,7 +251,7 @@ impl<V: View, P: 'static> Element<V> for BoundsProvider<V, P> {
         visible_bounds: pathfinder_geometry::rect::RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut crate::PaintContext<V>,
+        cx: &mut crate::ViewContext<V>,
     ) -> Self::PaintState {
         cx.update_default_global::<ProviderMap, _, _>(|map, _| {
             map.0.insert(TypeTag::new::<P>(), (bounds, visible_bounds));

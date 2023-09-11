@@ -2,8 +2,7 @@ use std::{any::Any, cell::Cell, f32::INFINITY, ops::Range, rc::Rc};
 
 use crate::{
     json::{self, ToJson, Value},
-    AnyElement, Axis, Element, ElementStateHandle, LayoutContext, PaintContext, SizeConstraint,
-    Vector2FExt, ViewContext,
+    AnyElement, Axis, Element, ElementStateHandle, SizeConstraint, Vector2FExt, ViewContext,
 };
 use pathfinder_geometry::{
     rect::RectF,
@@ -85,7 +84,7 @@ impl<V: 'static> Flex<V> {
         remaining_flex: &mut f32,
         cross_axis_max: &mut f32,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) {
         let cross_axis = self.axis.invert();
         for child in self.children.iter_mut() {
@@ -136,7 +135,7 @@ impl<V: 'static> Element<V> for Flex<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let mut total_flex = None;
         let mut fixed_space = self.children.len().saturating_sub(1) as f32 * self.spacing;
@@ -225,7 +224,7 @@ impl<V: 'static> Element<V> for Flex<V> {
         }
 
         if let Some(scroll_state) = self.scroll_state.as_ref() {
-            scroll_state.0.update(cx.view_context(), |scroll_state, _| {
+            scroll_state.0.update(cx, |scroll_state, _| {
                 if let Some(scroll_to) = scroll_state.scroll_to.take() {
                     let visible_start = scroll_state.scroll_position.get();
                     let visible_end = visible_start + size.along(self.axis);
@@ -264,7 +263,7 @@ impl<V: 'static> Element<V> for Flex<V> {
         visible_bounds: RectF,
         remaining_space: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
@@ -442,7 +441,7 @@ impl<V: 'static> Element<V> for FlexItem<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let size = self.child.layout(constraint, view, cx);
         (size, ())
@@ -454,7 +453,7 @@ impl<V: 'static> Element<V> for FlexItem<V> {
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         self.child.paint(bounds.origin(), visible_bounds, view, cx)
     }

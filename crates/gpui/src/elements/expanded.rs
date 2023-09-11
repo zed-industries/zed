@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
-    json, AnyElement, Element, LayoutContext, PaintContext, SizeConstraint, ViewContext,
+    json, AnyElement, Element, SizeConstraint, ViewContext,
 };
 use serde_json::json;
 
@@ -42,7 +42,7 @@ impl<V: 'static> Element<V> for Expanded<V> {
         &mut self,
         mut constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         if self.full_width {
             constraint.min.set_x(constraint.max.x());
@@ -60,7 +60,7 @@ impl<V: 'static> Element<V> for Expanded<V> {
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         self.child.paint(bounds.origin(), visible_bounds, view, cx);
     }

@@ -53,7 +53,7 @@ impl<V: 'static> Element<V> for Img {
         parent_origin: Vector2F,
         layout: &gpui::Layout,
         _: &mut Self::PaintState,
-        cx: &mut crate::paint_context::PaintContext<V>,
+        cx: &mut crate::ViewContext<V>,
     ) where
         Self: Sized,
     {

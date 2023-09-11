@@ -42,7 +42,7 @@ impl<V: View> gpui::Element<V> for CornersElement {
         &mut self,
         constraint: gpui::SizeConstraint,
         _: &mut V,
-        _: &mut gpui::LayoutContext<V>,
+        _: &mut gpui::ViewContext<V>,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
         (constraint.max, ())
     }
@@ -53,7 +53,7 @@ impl<V: View> gpui::Element<V> for CornersElement {
         _: pathfinder_geometry::rect::RectF,
         _: &mut Self::LayoutState,
         _: &mut V,
-        cx: &mut gpui::PaintContext<V>,
+        cx: &mut gpui::ViewContext<V>,
     ) -> Self::PaintState {
         cx.scene().push_quad(Quad {
             bounds,
