@@ -9,8 +9,9 @@ name = "storybook"
 path = "src/storybook.rs"
 
 [dependencies]
-gpui2 = { path = "../gpui2" }
 anyhow.workspace = true
+derive_more.workspace = true
+gpui2 = { path = "../gpui2" }
 log.workspace = true
 refineable = { path = "../refineable" }
 rust-embed.workspace = true

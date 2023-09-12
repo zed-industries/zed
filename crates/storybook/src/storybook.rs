@@ -12,6 +12,7 @@ use simplelog::SimpleLogger;
 mod collab_panel;
 mod components;
 mod element_ext;
+mod sketch;
 mod theme;
 mod workspace;
 

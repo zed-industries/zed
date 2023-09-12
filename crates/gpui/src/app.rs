@@ -3589,7 +3589,7 @@ impl<V> BorrowWindowContext for EventContext<'_, '_, '_, V> {
     }
 }
 
-pub(crate) enum Reference<'a, T> {
+pub enum Reference<'a, T> {
     Immutable(&'a T),
     Mutable(&'a mut T),
 }
