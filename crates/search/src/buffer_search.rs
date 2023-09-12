@@ -868,9 +868,10 @@ impl BufferSearchBar {
             cx.propagate_action();
         }
     }
-    fn toggle_replace(&mut self, _: &ToggleReplace, _: &mut ViewContext<Self>) {
+    fn toggle_replace(&mut self, _: &ToggleReplace, cx: &mut ViewContext<Self>) {
         if let Some(_) = &self.active_searchable_item {
             self.replace_is_active = !self.replace_is_active;
+            cx.notify();
         }
     }
     fn replace_next(&mut self, _: &ReplaceNext, cx: &mut ViewContext<Self>) {
