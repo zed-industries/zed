@@ -532,6 +532,16 @@ impl ChannelStore {
     fn handle_connect(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         self.disconnect_channel_buffers_task.take();
 
+        for chat in self.opened_chats.values() {
+            if let OpenedModelHandle::Open(chat) = chat {
+                if let Some(chat) = chat.upgrade(cx) {
+                    chat.update(cx, |chat, cx| {
+                        chat.rejoin(cx);
+                    });
+                }
+            }
+        }
+
         let mut buffer_versions = Vec::new();
         for buffer in self.opened_buffers.values() {
             if let OpenedModelHandle::Open(buffer) = buffer {
