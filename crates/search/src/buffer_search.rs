@@ -101,6 +101,21 @@ impl View for BufferSearchBar {
         "BufferSearchBar"
     }
 
+    fn update_keymap_context(
+        &self,
+        keymap: &mut gpui::keymap_matcher::KeymapContext,
+        cx: &AppContext,
+    ) {
+        Self::reset_to_default_keymap_context(keymap);
+        let in_replace = self
+            .replacement_editor
+            .read_with(cx, |_, cx| cx.is_self_focused())
+            .unwrap_or(false);
+        if in_replace {
+            keymap.add_identifier("in_replace");
+        }
+    }
+
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         if cx.is_self_focused() {
             cx.focus(&self.query_editor);
