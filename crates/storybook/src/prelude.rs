@@ -7,7 +7,7 @@ pub enum ButtonVariant {
 #[derive(PartialEq)]
 pub enum Shape {
     Circle,
-    Squircle,
+    RoundedRectangle,
 }
 
 #[derive(PartialEq)]

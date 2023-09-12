@@ -147,7 +147,7 @@ impl<V: 'static> TitleBar<V> {
                     )
                     .child(div().px_2().flex().items_center().child(avatar(
                         "https://avatars.githubusercontent.com/u/1714999?v=4",
-                        Shape::Squircle,
+                        Shape::RoundedRectangle,
                     ))),
             )
     }
