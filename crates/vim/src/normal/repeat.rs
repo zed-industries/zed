@@ -43,9 +43,6 @@ pub(crate) fn init(cx: &mut AppContext) {
     cx.add_action(|_: &mut Workspace, _: &EndRepeat, cx| {
         Vim::update(cx, |vim, cx| {
             vim.workspace_state.replaying = false;
-            vim.update_active_editor(cx, |editor, _| {
-                editor.show_local_selections = true;
-            });
             vim.switch_mode(Mode::Normal, false, cx)
         });
     });
@@ -56,6 +53,10 @@ pub(crate) fn init(cx: &mut AppContext) {
 pub(crate) fn repeat(cx: &mut WindowContext, from_insert_mode: bool) {
     let Some((mut actions, editor, selection)) = Vim::update(cx, |vim, cx| {
         let actions = vim.workspace_state.recorded_actions.clone();
+        if actions.is_empty() {
+            return None;
+        }
+
         let Some(editor) = vim.active_editor.clone() else {
             return None;
         };
@@ -80,14 +81,6 @@ pub(crate) fn repeat(cx: &mut WindowContext, from_insert_mode: bool) {
                     vim.workspace_state.recorded_count = Some(count);
                 }
             }
-        }
-
-        if let Some(editor) = editor.upgrade(cx) {
-            editor.update(cx, |editor, _| {
-                editor.show_local_selections = false;
-            })
-        } else {
-            return None;
         }
 
         Some((actions, editor, selection))
@@ -176,6 +169,9 @@ pub(crate) fn repeat(cx: &mut WindowContext, from_insert_mode: bool) {
     let window = cx.window();
     cx.app_context()
         .spawn(move |mut cx| async move {
+            editor.update(&mut cx, |editor, _| {
+                editor.show_local_selections = false;
+            })?;
             for action in actions {
                 match action {
                     ReplayableAction::Action(action) => {
@@ -195,6 +191,9 @@ pub(crate) fn repeat(cx: &mut WindowContext, from_insert_mode: bool) {
                     }),
                 }?
             }
+            editor.update(&mut cx, |editor, _| {
+                editor.show_local_selections = true;
+            })?;
             window
                 .dispatch_action(editor.id(), &EndRepeat, &mut cx)
                 .ok_or_else(|| anyhow::anyhow!("window was closed"))
@@ -512,5 +511,18 @@ mod test {
             ˇe lazy dog"
         })
         .await;
+    }
+
+    #[gpui::test]
+    async fn test_record_interrupted(
+        deterministic: Arc<Deterministic>,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("ˇhello\n", Mode::Normal);
+        cx.simulate_keystrokes(["4", "i", "j", "cmd-shift-p", "escape", "escape"]);
+        deterministic.run_until_parked();
+        cx.assert_state("ˇjhello\n", Mode::Normal);
     }
 }
