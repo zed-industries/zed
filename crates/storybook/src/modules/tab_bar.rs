@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 
-use crate::components::{icon_button, tab, ButtonVariant};
+use crate::components::{icon_button, tab};
+use crate::prelude::{ButtonVariant, UIState};
 use crate::theme::theme;
 use gpui2::elements::div::ScrollState;
 use gpui2::style::StyleHelpers;
@@ -40,15 +41,23 @@ impl<V: 'static> TabBar<V> {
                             .flex()
                             .items_center()
                             .gap_px()
-                            .child(icon_button("icons/arrow_left.svg", ButtonVariant::Filled))
-                            .child(icon_button("icons/arrow_right.svg", ButtonVariant::Ghost)),
+                            .child(icon_button(
+                                "icons/arrow_left.svg",
+                                ButtonVariant::Ghost,
+                                UIState::Default,
+                            ))
+                            .child(icon_button(
+                                "icons/arrow_right.svg",
+                                ButtonVariant::Ghost,
+                                UIState::Disabled,
+                            )),
                     ),
             )
             .child(
                 div().w_0().flex_1().h_full().child(
                     div()
                         .flex()
-                        .gap_px()
+                        .gap_8()
                         .overflow_x_scroll(self.scroll_state.clone())
                         .child(tab("Cargo.toml", false))
                         .child(tab("Channels Panel", true))
@@ -74,8 +83,16 @@ impl<V: 'static> TabBar<V> {
                             .flex()
                             .items_center()
                             .gap_px()
-                            .child(icon_button("icons/plus.svg", ButtonVariant::Ghost))
-                            .child(icon_button("icons/split.svg", ButtonVariant::Ghost)),
+                            .child(icon_button(
+                                "icons/plus.svg",
+                                ButtonVariant::Ghost,
+                                UIState::Default,
+                            ))
+                            .child(icon_button(
+                                "icons/split.svg",
+                                ButtonVariant::Ghost,
+                                UIState::Default,
+                            )),
                     ),
             )
     }

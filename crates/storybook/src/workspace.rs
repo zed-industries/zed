@@ -1,4 +1,8 @@
-use crate::{collab_panel::collab_panel, modules::tab_bar, theme::theme};
+use crate::{
+    collab_panel::collab_panel,
+    modules::{chat_panel, tab_bar, title_bar},
+    theme::theme,
+};
 use gpui2::{
     elements::{div, div::ScrollState, img, svg},
     style::{StyleHelpers, Styleable},
@@ -30,7 +34,7 @@ impl WorkspaceElement {
             .items_start()
             .text_color(theme.lowest.base.default.foreground)
             .fill(theme.middle.base.default.background)
-            .child(titlebar())
+            .child(title_bar())
             .child(
                 div()
                     .flex_1()
@@ -52,7 +56,7 @@ impl WorkspaceElement {
                                     .child(tab_bar(self.tab_bar_scroll_state.clone())),
                             ),
                     )
-                    .child(collab_panel(self.right_scroll_state.clone())),
+                    .child(chat_panel(self.right_scroll_state.clone())),
             )
             .child(statusbar())
     }
