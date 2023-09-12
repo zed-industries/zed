@@ -16,7 +16,6 @@ use gpui::{
 use project::search::SearchQuery;
 use serde::Deserialize;
 use std::{any::Any, sync::Arc};
-use theme::components::ComponentExt;
 
 use util::ResultExt;
 use workspace::{
@@ -276,9 +275,8 @@ impl View for BufferSearchBar {
                 ReplaceAll,
                 "Replace all",
                 "icons/replace_all.svg",
-                false,
                 theme.tooltip.clone(),
-                theme.search.option_button_component.clone(),
+                theme.search.replace_all_button.clone(),
             )
         });
         let replace_next = should_show_replace_input.then(|| {
@@ -286,9 +284,8 @@ impl View for BufferSearchBar {
                 ReplaceNext,
                 "Replace next",
                 "icons/replace_next.svg",
-                false,
                 theme.tooltip.clone(),
-                theme.search.option_button_component.clone(),
+                theme.search.replace_next_button.clone(),
             )
         });
         let switches_column = supported_options.replacement.then(|| {
@@ -553,16 +550,14 @@ impl BufferSearchBar {
     ) -> AnyElement<Self> {
         let tooltip = "Select All Matches";
         let tooltip_style = theme::current(cx).tooltip.clone();
-        let has_matches = self.active_match_index.is_some();
 
         let theme = theme::current(cx);
-        let style = theme.search.option_button_component.clone();
+        let style = theme.search.select_all_button.clone();
 
         gpui::elements::Component::element(SafeStylable::with_style(
             theme::components::action_button::Button::action(SelectAllMatches)
                 .with_tooltip(tooltip, tooltip_style)
-                .with_contents(theme::components::svg::Svg::new(icon))
-                .toggleable(has_matches),
+                .with_contents(theme::components::svg::Svg::new(icon)),
             style,
         ))
         .into_any()

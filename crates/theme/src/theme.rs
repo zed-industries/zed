@@ -3,7 +3,9 @@ mod theme_registry;
 mod theme_settings;
 pub mod ui;
 
-use components::{action_button::ButtonStyle, disclosure::DisclosureStyle, ToggleIconButtonStyle};
+use components::{
+    action_button::ButtonStyle, disclosure::DisclosureStyle, IconButtonStyle, ToggleIconButtonStyle,
+};
 use gpui::{
     color::Color,
     elements::{Border, ContainerStyle, ImageStyle, LabelStyle, Shadow, SvgStyle, TooltipStyle},
@@ -439,9 +441,7 @@ pub struct Search {
     pub include_exclude_editor: FindEditor,
     pub invalid_include_exclude_editor: ContainerStyle,
     pub include_exclude_inputs: ContainedText,
-    pub option_button: Toggleable<Interactive<IconButton>>,
     pub option_button_component: ToggleIconButtonStyle,
-    pub action_button: Toggleable<Interactive<ContainedText>>,
     pub match_background: Color,
     pub match_index: ContainedText,
     pub major_results_status: TextStyle,
@@ -454,6 +454,11 @@ pub struct Search {
     pub option_button_height: f32,
     pub modes_container: ContainerStyle,
     pub replace_icon: IconStyle,
+    // Used for filters and replace
+    pub option_button: Toggleable<Interactive<IconButton>>,
+    pub replace_next_button: IconButtonStyle,
+    pub replace_all_button: IconButtonStyle,
+    pub select_all_button: IconButtonStyle,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]

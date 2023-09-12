@@ -8,7 +8,9 @@ use gpui::{
 pub use mode::SearchMode;
 use project::search::SearchQuery;
 pub use project_search::{ProjectSearchBar, ProjectSearchView};
-use theme::components::{action_button::Button, svg::Svg, ComponentExt, ToggleIconButtonStyle};
+use theme::components::{
+    action_button::Button, svg::Svg, ComponentExt, IconButtonStyle, ToggleIconButtonStyle,
+};
 
 pub mod buffer_search;
 mod history;
@@ -107,28 +109,25 @@ fn toggle_replace_button<V: View>(
     tooltip_style: TooltipStyle,
     button_style: ToggleIconButtonStyle,
 ) -> AnyElement<V> {
-    replace_action(
-        ToggleReplace,
-        "Toggle replace",
-        "icons/replace.svg",
-        active,
-        tooltip_style,
-        button_style,
-    )
+    Button::dynamic_action(Box::new(ToggleReplace))
+        .with_tooltip("Toggle replace", tooltip_style)
+        .with_contents(theme::components::svg::Svg::new("icons/replace.svg"))
+        .toggleable(active)
+        .with_style(button_style)
+        .element()
+        .into_any()
 }
 
 fn replace_action<V: View>(
     action: impl Action,
     name: &'static str,
     icon_path: &'static str,
-    active: bool,
     tooltip_style: TooltipStyle,
-    button_style: ToggleIconButtonStyle,
+    button_style: IconButtonStyle,
 ) -> AnyElement<V> {
     Button::dynamic_action(Box::new(action))
         .with_tooltip(name, tooltip_style)
         .with_contents(theme::components::svg::Svg::new(icon_path))
-        .toggleable(active)
         .with_style(button_style)
         .element()
         .into_any()

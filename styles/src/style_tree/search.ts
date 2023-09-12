@@ -185,26 +185,6 @@ export default function search(): any {
                 },
             },
         }),
-        // Search tool buttons
-        // HACK: This is not how disabled elements should be created
-        // Disabled elements should use a disabled state of an interactive element, not a toggleable element with the inactive state being disabled
-        action_button: toggleable({
-            state: {
-                inactive: text_button({
-                    variant: "ghost",
-                    layer: theme.highest,
-                    disabled: true,
-                    margin: { right: SEARCH_ROW_SPACING },
-                    text_properties: { size: "sm" },
-                }),
-                active: text_button({
-                    variant: "ghost",
-                    layer: theme.highest,
-                    margin: { right: SEARCH_ROW_SPACING },
-                    text_properties: { size: "sm" },
-                }),
-            },
-        }),
         editor,
         invalid_editor: {
             ...editor,
@@ -412,6 +392,123 @@ export default function search(): any {
                 padding: { left: 1, right: 1 },
             },
         },
+        replace_next_button: interactive({
+            base: {
+                icon_size: 14,
+                color: foreground(theme.highest, "variant"),
+
+                button_width: 32,
+                background: background(theme.highest, "on"),
+                corner_radius: 2,
+                margin: { right: 2 },
+                border: {
+                    width: 1,
+                    color: background(theme.highest, "on"),
+                },
+                padding: {
+                    left: 4,
+                    right: 4,
+                    top: 4,
+                    bottom: 4,
+                },
+            },
+            state: {
+                hovered: {
+                    ...text(theme.highest, "mono", "variant", "hovered"),
+                    background: background(theme.highest, "on", "hovered"),
+                    border: {
+                        width: 1,
+                        color: background(theme.highest, "on", "hovered"),
+                    },
+                },
+                clicked: {
+                    ...text(theme.highest, "mono", "variant", "pressed"),
+                    background: background(theme.highest, "on", "pressed"),
+                    border: {
+                        width: 1,
+                        color: background(theme.highest, "on", "pressed"),
+                    },
+                },
+            },
+        }),
+        replace_all_button: interactive({
+            base: {
+                icon_size: 14,
+                color: foreground(theme.highest, "variant"),
+
+                button_width: 32,
+                background: background(theme.highest, "on"),
+                corner_radius: 2,
+                margin: { right: 2 },
+                border: {
+                    width: 1,
+                    color: background(theme.highest, "on"),
+                },
+                padding: {
+                    left: 4,
+                    right: 4,
+                    top: 4,
+                    bottom: 4,
+                },
+            },
+            state: {
+                hovered: {
+                    ...text(theme.highest, "mono", "variant", "hovered"),
+                    background: background(theme.highest, "on", "hovered"),
+                    border: {
+                        width: 1,
+                        color: background(theme.highest, "on", "hovered"),
+                    },
+                },
+                clicked: {
+                    ...text(theme.highest, "mono", "variant", "pressed"),
+                    background: background(theme.highest, "on", "pressed"),
+                    border: {
+                        width: 1,
+                        color: background(theme.highest, "on", "pressed"),
+                    },
+                },
+            },
+        }),
+        select_all_button: interactive({
+            base: {
+                icon_size: 14,
+                color: foreground(theme.highest, "variant"),
+
+                button_width: 32,
+                background: background(theme.highest, "on"),
+                corner_radius: 2,
+                margin: { right: 2 },
+                border: {
+                    width: 1,
+                    color: background(theme.highest, "on"),
+                },
+                padding: {
+                    left: 4,
+                    right: 4,
+                    top: 4,
+                    bottom: 4,
+                },
+            },
+            state: {
+                hovered: {
+                    ...text(theme.highest, "mono", "variant", "hovered"),
+                    background: background(theme.highest, "on", "hovered"),
+                    border: {
+                        width: 1,
+                        color: background(theme.highest, "on", "hovered"),
+                    },
+                },
+                clicked: {
+                    ...text(theme.highest, "mono", "variant", "pressed"),
+                    background: background(theme.highest, "on", "pressed"),
+                    border: {
+                        width: 1,
+                        color: background(theme.highest, "on", "pressed"),
+                    },
+                },
+            },
+        }),
         ...search_results(),
     }
 }
