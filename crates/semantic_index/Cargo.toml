@@ -50,6 +50,7 @@ project = { path = "../project", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"]}
+git2 = { version = "0.15"}
 
 pretty_assertions.workspace = true
 rand.workspace = true
@@ -67,3 +68,6 @@ tree-sitter-elixir.workspace = true
 tree-sitter-lua.workspace = true
 tree-sitter-ruby.workspace = true
 tree-sitter-php.workspace = true
+
+[[example]]
+name = "eval"

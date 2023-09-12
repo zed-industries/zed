@@ -1,0 +1,10 @@
+{
+  "repo": "https://github.com/tree-sitter/tree-sitter.git",
+  "commit": "46af27796a76c72d8466627d499f2bca4af958ee",
+  "assertions": [
+    {
+      "query": "",
+      "matches": []
+    }
+  ]
+}
