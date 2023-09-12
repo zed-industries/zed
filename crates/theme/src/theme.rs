@@ -453,6 +453,7 @@ pub struct Search {
     pub search_row_spacing: f32,
     pub option_button_height: f32,
     pub modes_container: ContainerStyle,
+    pub replace_icon: IconStyle,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]

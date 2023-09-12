@@ -398,6 +398,20 @@ export default function search(): any {
         search_row_spacing: 8,
         option_button_height: 22,
         modes_container: {},
+        replace_icon: {
+            icon: {
+                color: foreground(theme.highest, "disabled"),
+                asset: "icons/replace.svg",
+                dimensions: {
+                    width: 14,
+                    height: 14,
+                },
+            },
+            container: {
+                margin: { right: 4 },
+                padding: { left: 1, right: 1 },
+            },
+        },
         ...search_results(),
     }
 }

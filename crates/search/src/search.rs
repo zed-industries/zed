@@ -27,6 +27,7 @@ actions!(
         CycleMode,
         ToggleWholeWord,
         ToggleCaseSensitive,
+        ToggleReplace,
         SelectNextMatch,
         SelectPrevMatch,
         SelectAllMatches,
@@ -99,4 +100,36 @@ impl SearchOptions {
             .element()
             .into_any()
     }
+}
+
+fn toggle_replace_button<V: View>(
+    active: bool,
+    tooltip_style: TooltipStyle,
+    button_style: ToggleIconButtonStyle,
+) -> AnyElement<V> {
+    replace_action(
+        ToggleReplace,
+        "Toggle replace",
+        "icons/replace.svg",
+        active,
+        tooltip_style,
+        button_style,
+    )
+}
+
+fn replace_action<V: View>(
+    action: impl Action,
+    name: &'static str,
+    icon_path: &'static str,
+    active: bool,
+    tooltip_style: TooltipStyle,
+    button_style: ToggleIconButtonStyle,
+) -> AnyElement<V> {
+    Button::dynamic_action(Box::new(action))
+        .with_tooltip(name, tooltip_style)
+        .with_contents(theme::components::svg::Svg::new(icon_path))
+        .toggleable(active)
+        .with_style(button_style)
+        .element()
+        .into_any()
 }
