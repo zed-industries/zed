@@ -20,6 +20,7 @@ use gpui::{
 use project::search::SearchQuery;
 use serde::Deserialize;
 use std::{any::Any, sync::Arc};
+use theme::components::ComponentExt;
 
 use util::ResultExt;
 use workspace::{
@@ -272,38 +273,38 @@ impl View for BufferSearchBar {
                 .with_min_width(theme.search.editor.min_width)
                 .with_max_width(theme.search.editor.max_width)
                 .with_height(theme.search.search_bar_row_height)
-                .aligned()
-                .right()
                 .flex(1., false)
         });
-        let replacement_actions = should_show_replace_input.then(|| {
-            Flex::row()
-                .with_child(super::replace_action(
-                    ReplaceNext,
-                    "Replace next",
-                    "icons/replace_next.svg",
-                    false,
-                    theme.tooltip.clone(),
-                    theme.search.option_button_component.clone(),
-                ))
-                .with_child(super::replace_action(
-                    ReplaceAll,
-                    "Replace all",
-                    "icons/replace_all.svg",
-                    false,
-                    theme.tooltip.clone(),
-                    theme.search.option_button_component.clone(),
-                ))
-        });
-
-        let switches_column = supported_options.replacement.then(|| {
-            super::toggle_replace_button(
-                self.replace_is_active,
+        let replace_all = should_show_replace_input.then(|| {
+            super::replace_action(
+                ReplaceAll,
+                "Replace all",
+                "icons/replace_all.svg",
+                false,
                 theme.tooltip.clone(),
                 theme.search.option_button_component.clone(),
             )
-            .constrained()
-            .with_height(theme.search.search_bar_row_height)
+        });
+        let replace_next = should_show_replace_input.then(|| {
+            super::replace_action(
+                ReplaceNext,
+                "Replace next",
+                "icons/replace_next.svg",
+                false,
+                theme.tooltip.clone(),
+                theme.search.option_button_component.clone(),
+            )
+        });
+        let switches_column = supported_options.replacement.then(|| {
+            Flex::row()
+                .align_children_center()
+                .with_child(super::toggle_replace_button(
+                    self.replace_is_active,
+                    theme.tooltip.clone(),
+                    theme.search.option_button_component.clone(),
+                ))
+                .constrained()
+                .with_height(theme.search.search_bar_row_height)
         });
         let mode_column = Flex::row()
             .with_child(search_button_for_mode(
@@ -322,7 +323,10 @@ impl View for BufferSearchBar {
             .with_height(theme.search.search_bar_row_height);
 
         let nav_column = Flex::row()
-            .with_child(self.render_action_button("all", cx))
+            .align_children_center()
+            .with_children(replace_next)
+            .with_children(replace_all)
+            .with_child(self.render_action_button("icons/select-all.svg", cx))
             .with_child(Flex::row().with_children(match_count))
             .with_child(nav_button_for_direction("<", Direction::Prev, cx))
             .with_child(nav_button_for_direction(">", Direction::Next, cx))
@@ -333,9 +337,8 @@ impl View for BufferSearchBar {
         Flex::row()
             .with_child(query_column)
             .with_children(switches_column)
-            .with_child(mode_column)
             .with_children(replacement)
-            .with_children(replacement_actions)
+            .with_child(mode_column)
             .with_child(nav_column)
             .contained()
             .with_style(theme.search.container)
@@ -554,37 +557,18 @@ impl BufferSearchBar {
     ) -> AnyElement<Self> {
         let tooltip = "Select All Matches";
         let tooltip_style = theme::current(cx).tooltip.clone();
-        let action_type_id = 0_usize;
         let has_matches = self.active_match_index.is_some();
-        let cursor_style = if has_matches {
-            CursorStyle::PointingHand
-        } else {
-            CursorStyle::default()
-        };
-        enum ActionButton {}
-        MouseEventHandler::new::<ActionButton, _>(action_type_id, cx, |state, cx| {
-            let theme = theme::current(cx);
-            let style = theme
-                .search
-                .action_button
-                .in_state(has_matches)
-                .style_for(state);
-            Label::new(icon, style.text.clone())
-                .aligned()
-                .contained()
-                .with_style(style.container)
-        })
-        .on_click(MouseButton::Left, move |_, this, cx| {
-            this.select_all_matches(&SelectAllMatches, cx)
-        })
-        .with_cursor_style(cursor_style)
-        .with_tooltip::<ActionButton>(
-            action_type_id,
-            tooltip.to_string(),
-            Some(Box::new(SelectAllMatches)),
-            tooltip_style,
-            cx,
-        )
+
+        let theme = theme::current(cx);
+        let style = theme.search.option_button_component.clone();
+
+        gpui::elements::Component::element(SafeStylable::with_style(
+            theme::components::action_button::Button::action(SelectAllMatches)
+                .with_tooltip(tooltip, tooltip_style)
+                .with_contents(theme::components::svg::Svg::new(icon))
+                .toggleable(has_matches),
+            style,
+        ))
         .into_any()
     }
 
