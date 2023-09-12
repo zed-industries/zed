@@ -278,37 +278,41 @@ mod test {
 
     #[gpui::test]
     async fn test_delete_end_of_document(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx)
-            .await
-            .binding(["d", "shift-g"]);
-        cx.assert(indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.assert_neovim_compatible(
+            indoc! {"
             The quick
             brownˇ fox
             jumps over
-            the lazy"})
-            .await;
-        cx.assert(indoc! {"
+            the lazy"},
+            ["d", "shift-g"],
+        )
+        .await;
+        cx.assert_neovim_compatible(
+            indoc! {"
             The quick
             brownˇ fox
             jumps over
-            the lazy"})
-            .await;
-        cx.assert_exempted(
+            the lazy"},
+            ["d", "shift-g"],
+        )
+        .await;
+        cx.assert_neovim_compatible(
             indoc! {"
             The quick
             brown fox
             jumps over
             the lˇazy"},
-            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+            ["d", "shift-g"],
         )
         .await;
-        cx.assert_exempted(
+        cx.assert_neovim_compatible(
             indoc! {"
             The quick
             brown fox
             jumps over
             ˇ"},
-            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+            ["d", "shift-g"],
         )
         .await;
     }
@@ -318,34 +322,40 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx)
             .await
             .binding(["d", "g", "g"]);
-        cx.assert(indoc! {"
+        cx.assert_neovim_compatible(
+            indoc! {"
             The quick
             brownˇ fox
             jumps over
-            the lazy"})
-            .await;
-        cx.assert(indoc! {"
+            the lazy"},
+            ["d", "g", "g"],
+        )
+        .await;
+        cx.assert_neovim_compatible(
+            indoc! {"
             The quick
             brown fox
             jumps over
-            the lˇazy"})
-            .await;
-        cx.assert_exempted(
+            the lˇazy"},
+            ["d", "g", "g"],
+        )
+        .await;
+        cx.assert_neovim_compatible(
             indoc! {"
             The qˇuick
             brown fox
             jumps over
             the lazy"},
-            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+            ["d", "g", "g"],
         )
         .await;
-        cx.assert_exempted(
+        cx.assert_neovim_compatible(
             indoc! {"
             ˇ
             brown fox
             jumps over
             the lazy"},
-            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+            ["d", "g", "g"],
         )
         .await;
     }
@@ -386,5 +396,41 @@ mod test {
         cx.simulate_keystrokes(["d", "y"]);
         assert_eq!(cx.active_operator(), None);
         assert_eq!(cx.mode(), Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_delete_with_counts(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {"
+                The ˇquick brown
+                fox jumps over
+                the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes(["d", "2", "d"]).await;
+        cx.assert_shared_state(indoc! {"
+        the ˇlazy dog"})
+            .await;
+
+        cx.set_shared_state(indoc! {"
+                The ˇquick brown
+                fox jumps over
+                the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes(["2", "d", "d"]).await;
+        cx.assert_shared_state(indoc! {"
+        the ˇlazy dog"})
+            .await;
+
+        cx.set_shared_state(indoc! {"
+                The ˇquick brown
+                fox jumps over
+                the moon,
+                a star, and
+                the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes(["2", "d", "2", "d"]).await;
+        cx.assert_shared_state(indoc! {"
+        the ˇlazy dog"})
+            .await;
     }
 }
