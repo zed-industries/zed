@@ -7378,6 +7378,7 @@ dependencies = [
  "anyhow",
  "gpui2",
  "log",
+ "refineable",
  "rust-embed",
  "serde",
  "settings",

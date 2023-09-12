@@ -17,6 +17,12 @@ pub trait Refineable: Clone {
     {
         Self::default().refined(refinement)
     }
+    fn from_cascade(cascade: &RefinementCascade<Self>) -> Self
+    where
+        Self: Default + Sized,
+    {
+        Self::default().refined(&cascade.merged())
+    }
 }
 
 pub struct RefinementCascade<S: Refineable>(Vec<Option<S::Refinement>>);

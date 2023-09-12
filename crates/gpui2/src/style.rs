@@ -22,6 +22,8 @@ use gpui2_macros::styleable_helpers;
 use refineable::{Refineable, RefinementCascade};
 use std::sync::Arc;
 
+pub type StyleCascade = RefinementCascade<Style>;
+
 #[derive(Clone, Refineable, Debug)]
 #[refineable(debug)]
 pub struct Style {

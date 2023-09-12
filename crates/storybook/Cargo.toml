@@ -12,6 +12,7 @@ path = "src/storybook.rs"
 gpui2 = { path = "../gpui2" }
 anyhow.workspace = true
 log.workspace = true
+refineable = { path = "../refineable" }
 rust-embed.workspace = true
 serde.workspace = true
 settings = { path = "../settings" }
