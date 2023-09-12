@@ -904,9 +904,8 @@ async fn connection_lost(
                     room_updated(&room, &session.peer);
                 }
             }
+
             update_user_contacts(session.user_id, &session).await?;
-
-
         }
         _ = teardown.changed().fuse() => {}
     }

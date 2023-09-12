@@ -25,6 +25,25 @@ impl Database {
         .await
     }
 
+    pub async fn channel_chat_connection_lost(
+        &self,
+        connection_id: ConnectionId,
+        tx: &DatabaseTransaction,
+    ) -> Result<()> {
+        channel_chat_participant::Entity::delete_many()
+            .filter(
+                Condition::all()
+                    .add(
+                        channel_chat_participant::Column::ConnectionServerId
+                            .eq(connection_id.owner_id),
+                    )
+                    .add(channel_chat_participant::Column::ConnectionId.eq(connection_id.id)),
+            )
+            .exec(tx)
+            .await?;
+        Ok(())
+    }
+
     pub async fn leave_channel_chat(
         &self,
         channel_id: ChannelId,
