@@ -574,3 +574,22 @@ async fn test_folds(cx: &mut gpui::TestAppContext) {
     "})
         .await;
 }
+
+#[gpui::test]
+async fn test_clear_counts(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state(indoc! {"
+        The quick brown
+        fox juˇmps over
+        the lazy dog"})
+        .await;
+
+    cx.simulate_shared_keystrokes(["4", "escape", "3", "d", "l"])
+        .await;
+    cx.set_shared_state(indoc! {"
+        The quick brown
+        fox juˇ over
+        the lazy dog"})
+        .await;
+}

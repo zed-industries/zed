@@ -308,6 +308,9 @@ impl Vim {
             state.mode = mode;
             state.operator_stack.clear();
         });
+        if mode != Mode::Insert {
+            self.take_count();
+        }
 
         cx.emit_global(VimEvent::ModeChanged { mode });
 
@@ -412,6 +415,7 @@ impl Vim {
         popped_operator
     }
     fn clear_operator(&mut self, cx: &mut WindowContext) {
+        self.take_count();
         self.update_state(|state| state.operator_stack.clear());
         self.sync_vim_settings(cx);
     }
