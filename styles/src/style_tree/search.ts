@@ -126,7 +126,7 @@ export default function search(): any {
                     button_width: 32,
                     background: background(theme.highest, "on"),
                     corner_radius: 2,
-                    margin: { right: 2 },
+                    margin: { right: SEARCH_ROW_SPACING },
                     border: {
                         width: 1,
                         color: background(theme.highest, "on"),
@@ -198,6 +198,7 @@ export default function search(): any {
         match_index: {
             ...text(theme.highest, "mono", { size: "sm" }),
             padding: {
+                left: SEARCH_ROW_SPACING,
                 right: SEARCH_ROW_SPACING,
             },
         },
@@ -392,85 +393,7 @@ export default function search(): any {
                 padding: { left: 1, right: 1 },
             },
         },
-        replace_next_button: interactive({
-            base: {
-                icon_size: 14,
-                color: foreground(theme.highest, "variant"),
-
-                button_width: 32,
-                background: background(theme.highest, "on"),
-                corner_radius: 2,
-                margin: { right: 2 },
-                border: {
-                    width: 1,
-                    color: background(theme.highest, "on"),
-                },
-                padding: {
-                    left: 4,
-                    right: 4,
-                    top: 4,
-                    bottom: 4,
-                },
-            },
-            state: {
-                hovered: {
-                    ...text(theme.highest, "mono", "variant", "hovered"),
-                    background: background(theme.highest, "on", "hovered"),
-                    border: {
-                        width: 1,
-                        color: background(theme.highest, "on", "hovered"),
-                    },
-                },
-                clicked: {
-                    ...text(theme.highest, "mono", "variant", "pressed"),
-                    background: background(theme.highest, "on", "pressed"),
-                    border: {
-                        width: 1,
-                        color: background(theme.highest, "on", "pressed"),
-                    },
-                },
-            },
-        }),
-        replace_all_button: interactive({
-            base: {
-                icon_size: 14,
-                color: foreground(theme.highest, "variant"),
-
-                button_width: 32,
-                background: background(theme.highest, "on"),
-                corner_radius: 2,
-                margin: { right: 2 },
-                border: {
-                    width: 1,
-                    color: background(theme.highest, "on"),
-                },
-                padding: {
-                    left: 4,
-                    right: 4,
-                    top: 4,
-                    bottom: 4,
-                },
-            },
-            state: {
-                hovered: {
-                    ...text(theme.highest, "mono", "variant", "hovered"),
-                    background: background(theme.highest, "on", "hovered"),
-                    border: {
-                        width: 1,
-                        color: background(theme.highest, "on", "hovered"),
-                    },
-                },
-                clicked: {
-                    ...text(theme.highest, "mono", "variant", "pressed"),
-                    background: background(theme.highest, "on", "pressed"),
-                    border: {
-                        width: 1,
-                        color: background(theme.highest, "on", "pressed"),
-                    },
-                },
-            },
-        }),
-        select_all_button: interactive({
+        action_button: interactive({
             base: {
                 icon_size: 14,
                 color: foreground(theme.highest, "variant"),

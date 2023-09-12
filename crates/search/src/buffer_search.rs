@@ -276,7 +276,7 @@ impl View for BufferSearchBar {
                 "Replace all",
                 "icons/replace_all.svg",
                 theme.tooltip.clone(),
-                theme.search.replace_all_button.clone(),
+                theme.search.action_button.clone(),
             )
         });
         let replace_next = should_show_replace_input.then(|| {
@@ -285,7 +285,7 @@ impl View for BufferSearchBar {
                 "Replace next",
                 "icons/replace_next.svg",
                 theme.tooltip.clone(),
-                theme.search.replace_next_button.clone(),
+                theme.search.action_button.clone(),
             )
         });
         let switches_column = supported_options.replacement.then(|| {
@@ -552,7 +552,7 @@ impl BufferSearchBar {
         let tooltip_style = theme::current(cx).tooltip.clone();
 
         let theme = theme::current(cx);
-        let style = theme.search.select_all_button.clone();
+        let style = theme.search.action_button.clone();
 
         gpui::elements::Component::element(SafeStylable::with_style(
             theme::components::action_button::Button::action(SelectAllMatches)

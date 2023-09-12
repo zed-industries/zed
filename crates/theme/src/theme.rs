@@ -456,9 +456,7 @@ pub struct Search {
     pub replace_icon: IconStyle,
     // Used for filters and replace
     pub option_button: Toggleable<Interactive<IconButton>>,
-    pub replace_next_button: IconButtonStyle,
-    pub replace_all_button: IconButtonStyle,
-    pub select_all_button: IconButtonStyle,
+    pub action_button: IconButtonStyle,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]
