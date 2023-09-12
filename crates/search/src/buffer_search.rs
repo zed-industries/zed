@@ -10,12 +10,8 @@ use collections::HashMap;
 use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{
-    actions,
-    elements::*,
-    impl_actions,
-    platform::{CursorStyle, MouseButton},
-    Action, AnyViewHandle, AppContext, Entity, Subscription, Task, View, ViewContext, ViewHandle,
-    WindowContext,
+    actions, elements::*, impl_actions, Action, AnyViewHandle, AppContext, Entity, Subscription,
+    Task, View, ViewContext, ViewHandle, WindowContext,
 };
 use project::search::SearchQuery;
 use serde::Deserialize;
