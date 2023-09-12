@@ -278,37 +278,41 @@ mod test {
 
     #[gpui::test]
     async fn test_delete_end_of_document(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx)
-            .await
-            .binding(["d", "shift-g"]);
-        cx.assert(indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.assert_neovim_compatible(
+            indoc! {"
             The quick
             brownˇ fox
             jumps over
-            the lazy"})
-            .await;
-        cx.assert(indoc! {"
+            the lazy"},
+            ["d", "shift-g"],
+        )
+        .await;
+        cx.assert_neovim_compatible(
+            indoc! {"
             The quick
             brownˇ fox
             jumps over
-            the lazy"})
-            .await;
-        cx.assert_exempted(
+            the lazy"},
+            ["d", "shift-g"],
+        )
+        .await;
+        cx.assert_neovim_compatible(
             indoc! {"
             The quick
             brown fox
             jumps over
             the lˇazy"},
-            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+            ["d", "shift-g"],
         )
         .await;
-        cx.assert_exempted(
+        cx.assert_neovim_compatible(
             indoc! {"
             The quick
             brown fox
             jumps over
             ˇ"},
-            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+            ["d", "shift-g"],
         )
         .await;
     }
@@ -318,34 +322,32 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx)
             .await
             .binding(["d", "g", "g"]);
-        cx.assert(indoc! {"
+        cx.assert_neovim_compatible(indoc! {"
             The quick
             brownˇ fox
             jumps over
-            the lazy"})
+            the lazy"}, ["d", "g", "g"])
             .await;
-        cx.assert(indoc! {"
+        cx.assert_neovim_compatible(indoc! {"
             The quick
             brown fox
             jumps over
-            the lˇazy"})
+            the lˇazy"}, ["d", "g", "g"])
             .await;
-        cx.assert_exempted(
+        cx.assert_neovim_compatible(
             indoc! {"
             The qˇuick
             brown fox
             jumps over
-            the lazy"},
-            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+            the lazy"},["d", "g", "g"]
         )
         .await;
-        cx.assert_exempted(
+        cx.assert_neovim_compatible(
             indoc! {"
             ˇ
             brown fox
             jumps over
-            the lazy"},
-            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+            the lazy"},["d", "g", "g"]
         )
         .await;
     }
