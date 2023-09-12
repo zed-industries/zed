@@ -73,7 +73,7 @@ pub fn init(cx: &mut AppContext) {
         },
     );
     cx.add_action(|_: &mut Workspace, n: &Number, cx: _| {
-        Vim::update(cx, |vim, _| vim.push_count_digit(n.0));
+        Vim::update(cx, |vim, cx| vim.push_count_digit(n.0, cx));
     });
 
     cx.add_action(|_: &mut Workspace, _: &Tab, cx| {
@@ -228,13 +228,7 @@ impl Vim {
         let editor = self.active_editor.clone()?.upgrade(cx)?;
         Some(editor.update(cx, update))
     }
-    // ~, shift-j, x, shift-x, p
-    // shift-c, shift-d, shift-i, i, a, o, shift-o, s
-    // c, d
-    // r
 
-    // TODO: shift-j?
-    //
     pub fn start_recording(&mut self, cx: &mut WindowContext) {
         if !self.workspace_state.replaying {
             self.workspace_state.recording = true;
@@ -309,7 +303,7 @@ impl Vim {
             state.operator_stack.clear();
         });
         if mode != Mode::Insert {
-            self.take_count();
+            self.take_count(cx);
         }
 
         cx.emit_global(VimEvent::ModeChanged { mode });
@@ -363,7 +357,7 @@ impl Vim {
         });
     }
 
-    fn push_count_digit(&mut self, number: usize) {
+    fn push_count_digit(&mut self, number: usize, cx: &mut WindowContext) {
         if self.active_operator().is_some() {
             self.update_state(|state| {
                 state.post_count = Some(state.post_count.unwrap_or(0) * 10 + number)
@@ -373,9 +367,11 @@ impl Vim {
                 state.pre_count = Some(state.pre_count.unwrap_or(0) * 10 + number)
             })
         }
+        // update the keymap so that 0 works
+        self.sync_vim_settings(cx)
     }
 
-    fn take_count(&mut self) -> Option<usize> {
+    fn take_count(&mut self, cx: &mut WindowContext) -> Option<usize> {
         if self.workspace_state.replaying {
             return self.workspace_state.recorded_count;
         }
@@ -390,6 +386,7 @@ impl Vim {
         if self.workspace_state.recording {
             self.workspace_state.recorded_count = count;
         }
+        self.sync_vim_settings(cx);
         count
     }
 
@@ -415,7 +412,7 @@ impl Vim {
         popped_operator
     }
     fn clear_operator(&mut self, cx: &mut WindowContext) {
-        self.take_count();
+        self.take_count(cx);
         self.update_state(|state| state.operator_stack.clear());
         self.sync_vim_settings(cx);
     }

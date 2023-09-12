@@ -229,7 +229,7 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
         Vim::update(cx, |vim, cx| vim.pop_operator(cx));
     }
 
-    let count = Vim::update(cx, |vim, _| vim.take_count());
+    let count = Vim::update(cx, |vim, cx| vim.take_count(cx));
     let operator = Vim::read(cx).active_operator();
     match Vim::read(cx).state().mode {
         Mode::Normal => normal_motion(motion, operator, count, cx),

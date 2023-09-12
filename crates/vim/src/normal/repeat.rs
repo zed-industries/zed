@@ -60,7 +60,7 @@ pub(crate) fn repeat(cx: &mut WindowContext, from_insert_mode: bool) {
         let Some(editor) = vim.active_editor.clone() else {
             return None;
         };
-        let count = vim.take_count();
+        let count = vim.take_count(cx);
 
         let selection = vim.workspace_state.recorded_selection.clone();
         match selection {
@@ -253,7 +253,7 @@ mod test {
         deterministic.run_until_parked();
         cx.simulate_shared_keystrokes(["."]).await;
         deterministic.run_until_parked();
-        cx.set_shared_state("THE QUICK ˇbrown fox").await;
+        cx.assert_shared_state("THE QUICK ˇbrown fox").await;
     }
 
     #[gpui::test]

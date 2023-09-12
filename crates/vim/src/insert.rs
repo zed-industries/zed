@@ -12,7 +12,7 @@ pub fn init(cx: &mut AppContext) {
 
 fn normal_before(_: &mut Workspace, action: &NormalBefore, cx: &mut ViewContext<Workspace>) {
     let should_repeat = Vim::update(cx, |vim, cx| {
-        let count = vim.take_count().unwrap_or(1);
+        let count = vim.take_count(cx).unwrap_or(1);
         vim.stop_recording_immediately(action.boxed_clone());
         if count <= 1 || vim.workspace_state.replaying {
             vim.update_active_editor(cx, |editor, cx| {

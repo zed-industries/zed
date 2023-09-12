@@ -4,4 +4,4 @@
 {"Key":"3"}
 {"Key":"d"}
 {"Key":"l"}
-{"Put":{"state":"The quick brown\nfox juˇ over\nthe lazy dog"}}
+{"Get":{"state":"The quick brown\nfox juˇ over\nthe lazy dog","mode":"Normal"}}
