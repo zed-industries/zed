@@ -2,7 +2,7 @@ mod case;
 mod change;
 mod delete;
 mod paste;
-mod repeat;
+pub(crate) mod repeat;
 mod scroll;
 mod search;
 pub mod substitute;

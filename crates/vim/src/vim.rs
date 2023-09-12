@@ -15,8 +15,8 @@ use anyhow::Result;
 use collections::{CommandPaletteFilter, HashMap};
 use editor::{movement, Editor, EditorMode, Event};
 use gpui::{
-    actions, impl_actions, keymap_matcher::KeymapContext, keymap_matcher::MatchResult, AppContext,
-    Subscription, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
+    actions, impl_actions, keymap_matcher::KeymapContext, keymap_matcher::MatchResult, Action,
+    AppContext, Subscription, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use language::{CursorShape, Point, Selection, SelectionGoal};
 pub use mode_indicator::ModeIndicator;
@@ -281,6 +281,16 @@ impl Vim {
     pub fn stop_recording(&mut self) {
         if self.workspace_state.recording {
             self.workspace_state.stop_recording_after_next_action = true;
+        }
+    }
+
+    pub fn stop_recording_immediately(&mut self, action: Box<dyn Action>) {
+        if self.workspace_state.recording {
+            self.workspace_state
+                .recorded_actions
+                .push(ReplayableAction::Action(action.boxed_clone()));
+            self.workspace_state.recording = false;
+            self.workspace_state.stop_recording_after_next_action = false;
         }
     }
 

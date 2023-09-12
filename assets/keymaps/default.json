@@ -533,7 +533,7 @@
       // TODO: Move this to a dock open action
       "cmd-shift-c": "collab_panel::ToggleFocus",
       "cmd-alt-i": "zed::DebugElements",
-      "ctrl-:": "editor::ToggleInlayHints",
+      "ctrl-:": "editor::ToggleInlayHints"
     }
   },
   {
