@@ -13,15 +13,13 @@ use util::test::{generate_marked_text, marked_text_offsets};
 use super::{neovim_connection::NeovimConnection, NeovimBackedBindingTestContext, VimTestContext};
 use crate::state::Mode;
 
-pub const SUPPORTED_FEATURES: &[ExemptionFeatures] = &[ExemptionFeatures::DeletionOnEmptyLine];
+pub const SUPPORTED_FEATURES: &[ExemptionFeatures] = &[];
 
 /// Enum representing features we have tests for but which don't work, yet. Used
 /// to add exemptions and automatically
 #[derive(PartialEq, Eq)]
 pub enum ExemptionFeatures {
     // MOTIONS
-    // Deletions on empty lines miss some newlines
-    DeletionOnEmptyLine,
     // When an operator completes at the end of the file, an extra newline is left
     OperatorLastNewlineRemains,
     // Deleting a word on an empty line doesn't remove the newline

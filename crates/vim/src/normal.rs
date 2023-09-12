@@ -356,7 +356,7 @@ mod test {
 
     use crate::{
         state::Mode::{self},
-        test::{ExemptionFeatures, NeovimBackedTestContext},
+        test::NeovimBackedTestContext,
     };
 
     #[gpui::test]
@@ -762,20 +762,22 @@ mod test {
 
     #[gpui::test]
     async fn test_dd(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["d", "d"]);
-        cx.assert("ˇ").await;
-        cx.assert("The ˇquick").await;
-        cx.assert_all(indoc! {"
-                The qˇuick
-                brown ˇfox
-                jumps ˇover"})
-            .await;
-        cx.assert_exempted(
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.assert_neovim_compatible("ˇ", ["d", "d"]).await;
+        cx.assert_neovim_compatible("The ˇquick", ["d", "d"]).await;
+        for marked_text in cx.each_marked_position(indoc! {"
+            The qˇuick
+            brown ˇfox
+            jumps ˇover"})
+        {
+            cx.assert_neovim_compatible(&marked_text, ["d", "d"]).await;
+        }
+        cx.assert_neovim_compatible(
             indoc! {"
                 The quick
                 ˇ
                 brown fox"},
-            ExemptionFeatures::DeletionOnEmptyLine,
+            ["d", "d"],
         )
         .await;
     }

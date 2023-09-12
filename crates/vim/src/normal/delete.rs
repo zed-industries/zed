@@ -322,24 +322,31 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx)
             .await
             .binding(["d", "g", "g"]);
-        cx.assert_neovim_compatible(indoc! {"
+        cx.assert_neovim_compatible(
+            indoc! {"
             The quick
             brownˇ fox
             jumps over
-            the lazy"}, ["d", "g", "g"])
-            .await;
-        cx.assert_neovim_compatible(indoc! {"
+            the lazy"},
+            ["d", "g", "g"],
+        )
+        .await;
+        cx.assert_neovim_compatible(
+            indoc! {"
             The quick
             brown fox
             jumps over
-            the lˇazy"}, ["d", "g", "g"])
-            .await;
+            the lˇazy"},
+            ["d", "g", "g"],
+        )
+        .await;
         cx.assert_neovim_compatible(
             indoc! {"
             The qˇuick
             brown fox
             jumps over
-            the lazy"},["d", "g", "g"]
+            the lazy"},
+            ["d", "g", "g"],
         )
         .await;
         cx.assert_neovim_compatible(
@@ -347,7 +354,8 @@ mod test {
             ˇ
             brown fox
             jumps over
-            the lazy"},["d", "g", "g"]
+            the lazy"},
+            ["d", "g", "g"],
         )
         .await;
     }
