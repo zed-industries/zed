@@ -30,9 +30,6 @@ export default function search(): any {
         selection: theme.players[0],
         text: text(theme.highest, "mono", "default"),
         border: border(theme.highest),
-        margin: {
-            right: SEARCH_ROW_SPACING,
-        },
         padding: {
             top: 4,
             bottom: 4,
@@ -125,8 +122,8 @@ export default function search(): any {
 
                     button_width: 32,
                     background: background(theme.highest, "on"),
-                    corner_radius: 2,
-                    margin: { right: SEARCH_ROW_SPACING },
+                    corner_radius: 6,
+                    margin: { right: 2 },
                     border: {
                         width: 1,
                         color: background(theme.highest, "on"),
@@ -400,7 +397,7 @@ export default function search(): any {
 
                 button_width: 32,
                 background: background(theme.highest, "on"),
-                corner_radius: 2,
+                corner_radius: 6,
                 margin: { right: 2 },
                 border: {
                     width: 1,

@@ -298,6 +298,8 @@ impl View for BufferSearchBar {
                 ))
                 .constrained()
                 .with_height(theme.search.search_bar_row_height)
+                .contained()
+                .with_style(theme.search.option_button_group)
         });
         let mode_column = Flex::row()
             .with_child(search_button_for_mode(
