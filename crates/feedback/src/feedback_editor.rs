@@ -13,7 +13,7 @@ use gpui::{
 use isahc::Request;
 use language::Buffer;
 use postage::prelude::Stream;
-use project::Project;
+use project::{search::SearchQuery, Project};
 use regex::Regex;
 use serde::Serialize;
 use smallvec::SmallVec;
@@ -418,10 +418,13 @@ impl SearchableItem for FeedbackEditor {
         self.editor
             .update(cx, |e, cx| e.select_matches(matches, cx))
     }
-
+    fn replace(&mut self, matches: &Self::Match, query: &SearchQuery, cx: &mut ViewContext<Self>) {
+        self.editor
+            .update(cx, |e, cx| e.replace(matches, query, cx));
+    }
     fn find_matches(
         &mut self,
-        query: project::search::SearchQuery,
+        query: Arc<project::search::SearchQuery>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Self::Match>> {
         self.editor

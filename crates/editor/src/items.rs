@@ -16,7 +16,7 @@ use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
     SelectionGoal,
 };
-use project::{FormatTrigger, Item as _, Project, ProjectPath};
+use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view};
 use smallvec::SmallVec;
 use std::{
@@ -26,6 +26,7 @@ use std::{
     iter,
     ops::Range,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 use text::Selection;
 use util::{
@@ -978,7 +979,26 @@ impl SearchableItem for Editor {
         }
         self.change_selections(None, cx, |s| s.select_ranges(ranges));
     }
+    fn replace(
+        &mut self,
+        identifier: &Self::Match,
+        query: &SearchQuery,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let text = self.buffer.read(cx);
+        let text = text.snapshot(cx);
+        let text = text.text_for_range(identifier.clone()).collect::<Vec<_>>();
+        let text: Cow<_> = if text.len() == 1 {
+            text.first().cloned().unwrap().into()
+        } else {
+            let joined_chunks = text.join("");
+            joined_chunks.into()
+        };
 
+        if let Some(replacement) = query.replacement(&text) {
+            self.edit([(identifier.clone(), Arc::from(&*replacement))], cx);
+        }
+    }
     fn match_index_for_direction(
         &mut self,
         matches: &Vec<Range<Anchor>>,
@@ -1030,7 +1050,7 @@ impl SearchableItem for Editor {
 
     fn find_matches(
         &mut self,
-        query: project::search::SearchQuery,
+        query: Arc<project::search::SearchQuery>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Range<Anchor>>> {
         let buffer = self.buffer().read(cx).snapshot(cx);

@@ -30,9 +30,6 @@ export default function search(): any {
         selection: theme.players[0],
         text: text(theme.highest, "mono", "default"),
         border: border(theme.highest),
-        margin: {
-            right: SEARCH_ROW_SPACING,
-        },
         padding: {
             top: 4,
             bottom: 4,
@@ -125,7 +122,7 @@ export default function search(): any {
 
                     button_width: 32,
                     background: background(theme.highest, "on"),
-                    corner_radius: 2,
+                    corner_radius: 6,
                     margin: { right: 2 },
                     border: {
                         width: 1,
@@ -185,26 +182,6 @@ export default function search(): any {
                 },
             },
         }),
-        // Search tool buttons
-        // HACK: This is not how disabled elements should be created
-        // Disabled elements should use a disabled state of an interactive element, not a toggleable element with the inactive state being disabled
-        action_button: toggleable({
-            state: {
-                inactive: text_button({
-                    variant: "ghost",
-                    layer: theme.highest,
-                    disabled: true,
-                    margin: { right: SEARCH_ROW_SPACING },
-                    text_properties: { size: "sm" },
-                }),
-                active: text_button({
-                    variant: "ghost",
-                    layer: theme.highest,
-                    margin: { right: SEARCH_ROW_SPACING },
-                    text_properties: { size: "sm" },
-                }),
-            },
-        }),
         editor,
         invalid_editor: {
             ...editor,
@@ -218,6 +195,7 @@ export default function search(): any {
         match_index: {
             ...text(theme.highest, "mono", { size: "sm" }),
             padding: {
+                left: SEARCH_ROW_SPACING,
                 right: SEARCH_ROW_SPACING,
             },
         },
@@ -398,6 +376,59 @@ export default function search(): any {
         search_row_spacing: 8,
         option_button_height: 22,
         modes_container: {},
+        replace_icon: {
+            icon: {
+                color: foreground(theme.highest, "disabled"),
+                asset: "icons/replace.svg",
+                dimensions: {
+                    width: 14,
+                    height: 14,
+                },
+            },
+            container: {
+                margin: { right: 4 },
+                padding: { left: 1, right: 1 },
+            },
+        },
+        action_button: interactive({
+            base: {
+                icon_size: 14,
+                color: foreground(theme.highest, "variant"),
+
+                button_width: 32,
+                background: background(theme.highest, "on"),
+                corner_radius: 6,
+                margin: { right: 2 },
+                border: {
+                    width: 1,
+                    color: background(theme.highest, "on"),
+                },
+                padding: {
+                    left: 4,
+                    right: 4,
+                    top: 4,
+                    bottom: 4,
+                },
+            },
+            state: {
+                hovered: {
+                    ...text(theme.highest, "mono", "variant", "hovered"),
+                    background: background(theme.highest, "on", "hovered"),
+                    border: {
+                        width: 1,
+                        color: background(theme.highest, "on", "hovered"),
+                    },
+                },
+                clicked: {
+                    ...text(theme.highest, "mono", "variant", "pressed"),
+                    background: background(theme.highest, "on", "pressed"),
+                    border: {
+                        width: 1,
+                        color: background(theme.highest, "on", "pressed"),
+                    },
+                },
+            },
+        }),
         ...search_results(),
     }
 }
