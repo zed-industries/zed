@@ -20,7 +20,7 @@ use futures::{
         mpsc::{self, UnboundedReceiver},
         oneshot,
     },
-    future::{try_join_all, Shared},
+    future::{self, try_join_all, Shared},
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
 };
@@ -31,7 +31,9 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{
-    language_settings::{language_settings, FormatOnSave, Formatter, InlayHintKind},
+    language_settings::{
+        language_settings, FormatOnSave, Formatter, InlayHintKind, LanguageSettings,
+    },
     point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
@@ -79,8 +81,11 @@ use std::{
 use terminals::Terminals;
 use text::Anchor;
 use util::{
-    debug_panic, defer, http::HttpClient, merge_json_value_into,
-    paths::LOCAL_SETTINGS_RELATIVE_PATH, post_inc, ResultExt, TryFutureExt as _,
+    debug_panic, defer,
+    http::HttpClient,
+    merge_json_value_into,
+    paths::{DEFAULT_PRETTIER_DIR, LOCAL_SETTINGS_RELATIVE_PATH},
+    post_inc, ResultExt, TryFutureExt as _,
 };
 
 pub use fs::*;
@@ -832,17 +837,28 @@ impl Project {
 
     fn on_settings_changed(&mut self, cx: &mut ModelContext<Self>) {
         let mut language_servers_to_start = Vec::new();
+        let mut language_formatters_to_check = Vec::new();
         for buffer in self.opened_buffers.values() {
             if let Some(buffer) = buffer.upgrade(cx) {
                 let buffer = buffer.read(cx);
-                if let Some((file, language)) = buffer.file().zip(buffer.language()) {
-                    let settings = language_settings(Some(language), Some(file), cx);
+                let buffer_file = buffer.file();
+                let buffer_language = buffer.language();
+                let settings = language_settings(buffer_language, buffer_file, cx);
+                if let Some(language) = buffer_language {
                     if settings.enable_language_server {
-                        if let Some(file) = File::from_dyn(Some(file)) {
+                        if let Some(file) = File::from_dyn(buffer_file) {
                             language_servers_to_start
-                                .push((file.worktree.clone(), language.clone()));
+                                .push((file.worktree.clone(), Arc::clone(language)));
                         }
                     }
+                    let worktree = buffer_file
+                        .map(|f| f.worktree_id())
+                        .map(WorktreeId::from_usize);
+                    language_formatters_to_check.push((
+                        worktree,
+                        Arc::clone(language),
+                        settings.clone(),
+                    ));
                 }
             }
         }
@@ -893,6 +909,11 @@ impl Project {
         for (worktree_id, adapter_name) in language_servers_to_stop {
             self.stop_language_server(worktree_id, adapter_name, cx)
                 .detach();
+        }
+
+        // TODO kb restart all formatters if settings change
+        for (worktree, language, settings) in language_formatters_to_check {
+            self.maybe_start_default_formatters(worktree, &language, &settings, cx);
         }
 
         // Start all the newly-enabled language servers.
@@ -2643,7 +2664,15 @@ impl Project {
             }
         });
 
-        if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
+        let buffer_file = buffer.read(cx).file().cloned();
+        let worktree = buffer_file
+            .as_ref()
+            .map(|f| f.worktree_id())
+            .map(WorktreeId::from_usize);
+        let settings = language_settings(Some(&new_language), buffer_file.as_ref(), cx).clone();
+        self.maybe_start_default_formatters(worktree, &new_language, &settings, cx);
+
+        if let Some(file) = File::from_dyn(buffer_file.as_ref()) {
             let worktree = file.worktree.clone();
             if let Some(tree) = worktree.read(cx).as_local() {
                 self.start_language_servers(&worktree, tree.abs_path().clone(), new_language, cx);
@@ -2651,8 +2680,6 @@ impl Project {
         }
     }
 
-    // TODO kb 2 usages of this method (buffer language select + settings change) should take care of
-    // `LspAdapter::enabled_formatters` collecting and initializing. Remove `Option<WorktreeId>` for prettier instances?
     fn start_language_servers(
         &mut self,
         worktree: &ModelHandle<Worktree>,
@@ -8278,6 +8305,81 @@ impl Project {
             new_prettier_task
         });
         Some(task)
+    }
+
+    fn maybe_start_default_formatters(
+        &mut self,
+        worktree: Option<WorktreeId>,
+        new_language: &Language,
+        language_settings: &LanguageSettings,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match &language_settings.formatter {
+            Formatter::Prettier { .. } | Formatter::Auto => {}
+            Formatter::LanguageServer | Formatter::External { .. } => return,
+        };
+        let Some(node) = self.node.as_ref().cloned() else {
+            return;
+        };
+
+        let mut prettier_plugins = None;
+        for formatter in new_language
+            .lsp_adapters()
+            .into_iter()
+            .flat_map(|adapter| adapter.enabled_formatters())
+        {
+            match formatter {
+                BundledFormatter::Prettier { plugin_names } => prettier_plugins
+                    .get_or_insert_with(|| HashSet::default())
+                    .extend(plugin_names),
+            }
+        }
+        let Some(prettier_plugins) = prettier_plugins else {
+            return;
+        };
+
+        let default_prettier_dir = DEFAULT_PRETTIER_DIR.as_path();
+        if let Some(_already_running) = self
+            .prettier_instances
+            .get(&(worktree, default_prettier_dir.to_path_buf()))
+        {
+            // TODO kb need to compare plugins, install missing and restart prettier
+            return;
+        }
+
+        let fs = Arc::clone(&self.fs);
+        cx.background()
+            .spawn(async move {
+                let prettier_dir_metadata = fs.metadata(default_prettier_dir).await.with_context(|| format!("fetching FS metadata for prettier default dir {default_prettier_dir:?}"))?;
+                if prettier_dir_metadata.is_none() {
+                    fs.create_dir(default_prettier_dir).await.with_context(|| format!("creating prettier default dir {default_prettier_dir:?}"))?;
+                }
+
+                let packages_to_versions = future::try_join_all(
+                    prettier_plugins
+                        .iter()
+                        .map(|s| s.as_str())
+                        .chain(Some("prettier"))
+                        .map(|package_name| async {
+                            let returned_package_name = package_name.to_string();
+                            let latest_version = node.npm_package_latest_version(package_name)
+                                .await
+                                .with_context(|| {
+                                    format!("fetching latest npm version for package {returned_package_name}")
+                                })?;
+                            anyhow::Ok((returned_package_name, latest_version))
+                        }),
+                )
+                .await
+                .context("fetching latest npm versions")?;
+
+                let borrowed_packages = packages_to_versions.iter().map(|(package, version)| {
+                    (package.as_str(), version.as_str())
+                }).collect::<Vec<_>>();
+                node.npm_install_packages(default_prettier_dir, &borrowed_packages).await.context("fetching formatter packages")?;
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
     }
 }
 

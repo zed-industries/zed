@@ -204,10 +204,3 @@ async fn find_closest_prettier_dir(
     }
     Ok(None)
 }
-
-async fn prepare_default_prettier(
-    fs: Arc<dyn Fs>,
-    node: Arc<dyn NodeRuntime>,
-) -> anyhow::Result<PathBuf> {
-    todo!("TODO kb need to call per language that supports it, and have to use extra packages sometimes")
-}
