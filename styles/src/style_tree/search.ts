@@ -36,6 +36,7 @@ export default function search(): any {
             left: 10,
             right: 4,
         },
+        margin: { right: SEARCH_ROW_SPACING }
     }
 
     const include_exclude_editor = {
@@ -201,7 +202,6 @@ export default function search(): any {
         },
         option_button_group: {
             padding: {
-                left: SEARCH_ROW_SPACING,
                 right: SEARCH_ROW_SPACING,
             },
         },
@@ -375,7 +375,11 @@ export default function search(): any {
         search_bar_row_height: 34,
         search_row_spacing: 8,
         option_button_height: 22,
-        modes_container: {},
+        modes_container: {
+            padding: {
+                right: SEARCH_ROW_SPACING,
+            }
+        },
         replace_icon: {
             icon: {
                 color: foreground(theme.highest, "disabled"),
