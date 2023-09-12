@@ -31,6 +31,7 @@ regex.workspace = true
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
+util = { path = "../util", features = ["test-support"] }
 ctor.workspace = true
 env_logger.workspace = true
 rand.workspace = true

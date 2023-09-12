@@ -2272,7 +2272,18 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
         },
         Some(tree_sitter_typescript::language_typescript()),
     );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
+    let mut fake_language_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![":".to_string()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        }))
+        .await;
 
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(
@@ -2358,7 +2369,18 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
         },
         Some(tree_sitter_typescript::language_typescript()),
     );
-    let mut fake_language_servers = language.set_fake_lsp_adapter(Default::default()).await;
+    let mut fake_language_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![":".to_string()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        }))
+        .await;
 
     let fs = FakeFs::new(cx.background());
     fs.insert_tree(

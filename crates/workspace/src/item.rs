@@ -171,6 +171,7 @@ pub trait Item: View {
             None
         }
     }
+
     fn as_searchable(&self, _: &ViewHandle<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         None
     }
@@ -473,8 +474,14 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                     for item_event in T::to_item_events(event).into_iter() {
                         match item_event {
                             ItemEvent::CloseItem => {
-                                pane.update(cx, |pane, cx| pane.close_item_by_id(item.id(), cx))
-                                    .detach_and_log_err(cx);
+                                pane.update(cx, |pane, cx| {
+                                    pane.close_item_by_id(
+                                        item.id(),
+                                        crate::SaveBehavior::PromptOnWrite,
+                                        cx,
+                                    )
+                                })
+                                .detach_and_log_err(cx);
                                 return;
                             }
 

@@ -37,8 +37,14 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                         Some("seed") => starting_seed = parse_int(&meta.lit)?,
                         Some("on_failure") => {
                             if let Lit::Str(name) = meta.lit {
-                                let ident = Ident::new(&name.value(), name.span());
-                                on_failure_fn_name = quote!(Some(#ident));
+                                let mut path = syn::Path {
+                                    leading_colon: None,
+                                    segments: Default::default(),
+                                };
+                                for part in name.value().split("::") {
+                                    path.segments.push(Ident::new(part, name.span()).into());
+                                }
+                                on_failure_fn_name = quote!(Some(#path));
                             } else {
                                 return Err(TokenStream::from(
                                     syn::Error::new(
@@ -323,7 +329,7 @@ pub fn element_derive(input: TokenStream) -> TokenStream {
                 &mut self,
                 constraint: gpui::SizeConstraint,
                 view: &mut V,
-                cx: &mut gpui::LayoutContext<V>,
+                cx: &mut gpui::ViewContext<V>,
             ) -> (gpui::geometry::vector::Vector2F, gpui::elements::AnyElement<V>) {
                 let mut element = self.render(view, cx).into_any();
                 let size = element.layout(constraint, view, cx);
@@ -332,14 +338,13 @@ pub fn element_derive(input: TokenStream) -> TokenStream {
 
             fn paint(
                 &mut self,
-                scene: &mut gpui::SceneBuilder,
                 bounds: gpui::geometry::rect::RectF,
                 visible_bounds: gpui::geometry::rect::RectF,
                 element: &mut gpui::elements::AnyElement<V>,
                 view: &mut V,
-                cx: &mut gpui::PaintContext<V>,
+                cx: &mut gpui::ViewContext<V>,
             ) {
-                element.paint(scene, bounds.origin(), visible_bounds, view, cx);
+                element.paint(bounds.origin(), visible_bounds, view, cx);
             }
 
             fn rect_for_text_range(

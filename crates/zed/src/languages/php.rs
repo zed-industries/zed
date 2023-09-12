@@ -23,14 +23,14 @@ fn intelephense_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 pub struct IntelephenseVersion(String);
 
 pub struct IntelephenseLspAdapter {
-    node: Arc<NodeRuntime>,
+    node: Arc<dyn NodeRuntime>,
 }
 
 impl IntelephenseLspAdapter {
     const SERVER_PATH: &'static str = "node_modules/intelephense/lib/intelephense.js";
 
     #[allow(unused)]
-    pub fn new(node: Arc<NodeRuntime>) -> Self {
+    pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
         Self { node }
     }
 }
@@ -39,6 +39,10 @@ impl IntelephenseLspAdapter {
 impl LspAdapter for IntelephenseLspAdapter {
     async fn name(&self) -> LanguageServerName {
         LanguageServerName("intelephense".into())
+    }
+
+    fn short_name(&self) -> &'static str {
+        "php"
     }
 
     async fn fetch_latest_server_version(
@@ -61,7 +65,7 @@ impl LspAdapter for IntelephenseLspAdapter {
 
         if fs::metadata(&server_path).await.is_err() {
             self.node
-                .npm_install_packages(&container_dir, [("intelephense", version.0.as_str())])
+                .npm_install_packages(&container_dir, &[("intelephense", version.0.as_str())])
                 .await?;
         }
         Ok(LanguageServerBinary {
@@ -75,14 +79,14 @@ impl LspAdapter for IntelephenseLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &self.node).await
+        get_cached_server_binary(container_dir, &*self.node).await
     }
 
     async fn installation_test_binary(
         &self,
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &self.node).await
+        get_cached_server_binary(container_dir, &*self.node).await
     }
 
     async fn label_for_completion(
@@ -103,7 +107,7 @@ impl LspAdapter for IntelephenseLspAdapter {
 
 async fn get_cached_server_binary(
     container_dir: PathBuf,
-    node: &NodeRuntime,
+    node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
     (|| async move {
         let mut last_version_dir = None;

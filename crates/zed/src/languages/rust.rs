@@ -22,6 +22,10 @@ impl LspAdapter for RustLspAdapter {
         LanguageServerName("rust-analyzer".into())
     }
 
+    fn short_name(&self) -> &'static str {
+        "rust"
+    }
+
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
@@ -258,6 +262,7 @@ impl LspAdapter for RustLspAdapter {
         })
     }
 }
+
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
     (|| async move {
         let mut last = None;

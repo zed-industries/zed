@@ -10,9 +10,8 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     serde_json::json,
     text_layout::{Line, RunStyle},
-    AnyElement, Element, EventContext, FontCache, LayoutContext, ModelContext, MouseRegion,
-    PaintContext, Quad, SceneBuilder, SizeConstraint, TextLayoutCache, ViewContext,
-    WeakModelHandle,
+    AnyElement, Element, EventContext, FontCache, ModelContext, MouseRegion, Quad, SizeConstraint,
+    TextLayoutCache, ViewContext, WeakModelHandle, WindowContext,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -86,12 +85,11 @@ impl LayoutCell {
 
     fn paint(
         &self,
-        scene: &mut SceneBuilder,
         origin: Vector2F,
         layout: &LayoutState,
         visible_bounds: RectF,
         _view: &mut TerminalView,
-        cx: &mut ViewContext<TerminalView>,
+        cx: &mut WindowContext,
     ) {
         let pos = {
             let point = self.point;
@@ -102,7 +100,7 @@ impl LayoutCell {
         };
 
         self.text
-            .paint(scene, pos, visible_bounds, layout.size.line_height, cx);
+            .paint(pos, visible_bounds, layout.size.line_height, cx);
     }
 }
 
@@ -132,11 +130,10 @@ impl LayoutRect {
 
     fn paint(
         &self,
-        scene: &mut SceneBuilder,
         origin: Vector2F,
         layout: &LayoutState,
         _view: &mut TerminalView,
-        _cx: &mut ViewContext<TerminalView>,
+        cx: &mut ViewContext<TerminalView>,
     ) {
         let position = {
             let point = self.point;
@@ -150,7 +147,7 @@ impl LayoutRect {
             layout.size.line_height,
         );
 
-        scene.push_quad(Quad {
+        cx.scene().push_quad(Quad {
             bounds: RectF::new(position, size),
             background: Some(self.color),
             border: Default::default(),
@@ -387,7 +384,6 @@ impl TerminalElement {
 
     fn attach_mouse_handlers(
         &self,
-        scene: &mut SceneBuilder,
         origin: Vector2F,
         visible_bounds: RectF,
         mode: TermMode,
@@ -518,7 +514,7 @@ impl TerminalElement {
                 )
         }
 
-        scene.push_mouse_region(region);
+        cx.scene().push_mouse_region(region);
     }
 }
 
@@ -530,7 +526,7 @@ impl Element<TerminalView> for TerminalElement {
         &mut self,
         constraint: gpui::SizeConstraint,
         view: &mut TerminalView,
-        cx: &mut LayoutContext<TerminalView>,
+        cx: &mut ViewContext<TerminalView>,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
         let settings = settings::get::<ThemeSettings>(cx);
         let terminal_settings = settings::get::<TerminalSettings>(cx);
@@ -733,25 +729,24 @@ impl Element<TerminalView> for TerminalElement {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
         view: &mut TerminalView,
-        cx: &mut PaintContext<TerminalView>,
+        cx: &mut ViewContext<TerminalView>,
     ) -> Self::PaintState {
         let visible_bounds = bounds.intersection(visible_bounds).unwrap_or_default();
 
         //Setup element stuff
         let clip_bounds = Some(visible_bounds);
 
-        scene.paint_layer(clip_bounds, |scene| {
+        cx.paint_layer(clip_bounds, |cx| {
             let origin = bounds.origin() + vec2f(layout.gutter, 0.);
 
             // Elements are ephemeral, only at paint time do we know what could be clicked by a mouse
-            self.attach_mouse_handlers(scene, origin, visible_bounds, layout.mode, cx);
+            self.attach_mouse_handlers(origin, visible_bounds, layout.mode, cx);
 
-            scene.push_cursor_region(gpui::CursorRegion {
+            cx.scene().push_cursor_region(gpui::CursorRegion {
                 bounds,
                 style: if layout.hyperlink_tooltip.is_some() {
                     CursorStyle::PointingHand
@@ -760,9 +755,9 @@ impl Element<TerminalView> for TerminalElement {
                 },
             });
 
-            scene.paint_layer(clip_bounds, |scene| {
+            cx.paint_layer(clip_bounds, |cx| {
                 //Start with a background color
-                scene.push_quad(Quad {
+                cx.scene().push_quad(Quad {
                     bounds: RectF::new(bounds.origin(), bounds.size()),
                     background: Some(layout.background_color),
                     border: Default::default(),
@@ -770,12 +765,12 @@ impl Element<TerminalView> for TerminalElement {
                 });
 
                 for rect in &layout.rects {
-                    rect.paint(scene, origin, layout, view, cx)
+                    rect.paint(origin, layout, view, cx);
                 }
             });
 
             //Draw Highlighted Backgrounds
-            scene.paint_layer(clip_bounds, |scene| {
+            cx.paint_layer(clip_bounds, |cx| {
                 for (relative_highlighted_range, color) in layout.relative_highlighted_ranges.iter()
                 {
                     if let Some((start_y, highlighted_range_lines)) =
@@ -789,29 +784,29 @@ impl Element<TerminalView> for TerminalElement {
                             //Copied from editor. TODO: move to theme or something
                             corner_radius: 0.15 * layout.size.line_height,
                         };
-                        hr.paint(bounds, scene);
+                        hr.paint(bounds, cx);
                     }
                 }
             });
 
             //Draw the text cells
-            scene.paint_layer(clip_bounds, |scene| {
+            cx.paint_layer(clip_bounds, |cx| {
                 for cell in &layout.cells {
-                    cell.paint(scene, origin, layout, visible_bounds, view, cx);
+                    cell.paint(origin, layout, visible_bounds, view, cx);
                 }
             });
 
             //Draw cursor
             if self.cursor_visible {
                 if let Some(cursor) = &layout.cursor {
-                    scene.paint_layer(clip_bounds, |scene| {
-                        cursor.paint(scene, origin, cx);
+                    cx.paint_layer(clip_bounds, |cx| {
+                        cursor.paint(origin, cx);
                     })
                 }
             }
 
             if let Some(element) = &mut layout.hyperlink_tooltip {
-                element.paint(scene, origin, visible_bounds, view, cx)
+                element.paint(origin, visible_bounds, view, cx)
             }
         });
     }

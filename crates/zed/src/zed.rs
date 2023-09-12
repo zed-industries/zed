@@ -723,7 +723,6 @@ mod tests {
         AppContext, AssetSource, Element, Entity, TestAppContext, View, ViewHandle,
     };
     use language::LanguageRegistry;
-    use node_runtime::NodeRuntime;
     use project::{Project, ProjectPath};
     use serde_json::json;
     use settings::{handle_settings_file_changes, watch_config_file, SettingsStore};
@@ -732,10 +731,9 @@ mod tests {
         path::{Path, PathBuf},
     };
     use theme::{ThemeRegistry, ThemeSettings};
-    use util::http::FakeHttpClient;
     use workspace::{
         item::{Item, ItemHandle},
-        open_new, open_paths, pane, NewFile, SplitDirection, WorkspaceHandle,
+        open_new, open_paths, pane, NewFile, SaveBehavior, SplitDirection, WorkspaceHandle,
     };
 
     #[gpui::test]
@@ -1497,7 +1495,12 @@ mod tests {
 
             pane2_item.downcast::<Editor>().unwrap().downgrade()
         });
-        cx.dispatch_action(window.into(), workspace::CloseActiveItem);
+        cx.dispatch_action(
+            window.into(),
+            workspace::CloseActiveItem {
+                save_behavior: None,
+            },
+        );
 
         cx.foreground().run_until_parked();
         workspace.read_with(cx, |workspace, _| {
@@ -1505,7 +1508,12 @@ mod tests {
             assert_eq!(workspace.active_pane(), &pane_1);
         });
 
-        cx.dispatch_action(window.into(), workspace::CloseActiveItem);
+        cx.dispatch_action(
+            window.into(),
+            workspace::CloseActiveItem {
+                save_behavior: None,
+            },
+        );
         cx.foreground().run_until_parked();
         window.simulate_prompt_answer(1, cx);
         cx.foreground().run_until_parked();
@@ -1663,7 +1671,7 @@ mod tests {
         pane.update(cx, |pane, cx| {
             let editor3_id = editor3.id();
             drop(editor3);
-            pane.close_item_by_id(editor3_id, cx)
+            pane.close_item_by_id(editor3_id, SaveBehavior::PromptOnWrite, cx)
         })
         .await
         .unwrap();
@@ -1698,7 +1706,7 @@ mod tests {
         pane.update(cx, |pane, cx| {
             let editor2_id = editor2.id();
             drop(editor2);
-            pane.close_item_by_id(editor2_id, cx)
+            pane.close_item_by_id(editor2_id, SaveBehavior::PromptOnWrite, cx)
         })
         .await
         .unwrap();
@@ -1854,24 +1862,32 @@ mod tests {
         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
         // Close all the pane items in some arbitrary order.
-        pane.update(cx, |pane, cx| pane.close_item_by_id(file1_item_id, cx))
-            .await
-            .unwrap();
+        pane.update(cx, |pane, cx| {
+            pane.close_item_by_id(file1_item_id, SaveBehavior::PromptOnWrite, cx)
+        })
+        .await
+        .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
-        pane.update(cx, |pane, cx| pane.close_item_by_id(file4_item_id, cx))
-            .await
-            .unwrap();
+        pane.update(cx, |pane, cx| {
+            pane.close_item_by_id(file4_item_id, SaveBehavior::PromptOnWrite, cx)
+        })
+        .await
+        .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
-        pane.update(cx, |pane, cx| pane.close_item_by_id(file2_item_id, cx))
-            .await
-            .unwrap();
+        pane.update(cx, |pane, cx| {
+            pane.close_item_by_id(file2_item_id, SaveBehavior::PromptOnWrite, cx)
+        })
+        .await
+        .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
-        pane.update(cx, |pane, cx| pane.close_item_by_id(file3_item_id, cx))
-            .await
-            .unwrap();
+        pane.update(cx, |pane, cx| {
+            pane.close_item_by_id(file3_item_id, SaveBehavior::PromptOnWrite, cx)
+        })
+        .await
+        .unwrap();
         assert_eq!(active_path(&workspace, cx), None);
 
         // Reopen all the closed items, ensuring they are reopened in the same order
@@ -2364,8 +2380,7 @@ mod tests {
         let mut languages = LanguageRegistry::test();
         languages.set_executor(cx.background().clone());
         let languages = Arc::new(languages);
-        let http = FakeHttpClient::with_404_response();
-        let node_runtime = NodeRuntime::instance(http);
+        let node_runtime = node_runtime::FakeNodeRuntime::new();
         languages::init(languages.clone(), node_runtime);
         for name in languages.language_names() {
             languages.language_for_name(&name);

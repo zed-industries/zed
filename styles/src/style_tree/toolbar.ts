@@ -1,14 +1,15 @@
 import { useTheme } from "../common"
 import { toggleable_icon_button } from "../component/icon_button"
-import { interactive } from "../element"
+import { interactive, toggleable } from "../element"
 import { background, border, foreground, text } from "./components"
+import { text_button } from "../component"
 
 export const toolbar = () => {
     const theme = useTheme()
 
     return {
-        height: 32,
-        padding: { left: 4, right: 4, top: 4, bottom: 4 },
+        height: 42,
+        padding: { left: 8, right: 8 },
         background: background(theme.highest),
         border: border(theme.highest, { bottom: true }),
         item_spacing: 4,
@@ -23,9 +24,9 @@ export const toolbar = () => {
                 ...text(theme.highest, "sans", "variant"),
                 corner_radius: 6,
                 padding: {
-                    left: 6,
-                    right: 6,
-                },
+                    left: 4,
+                    right: 4,
+                }
             },
             state: {
                 hovered: {
@@ -33,6 +34,25 @@ export const toolbar = () => {
                     background: background(theme.highest, "on", "hovered"),
                 },
             },
+        }),
+        toggleable_text_tool: toggleable({
+            state: {
+                inactive: text_button({
+                    disabled: true,
+                    variant: "ghost",
+                    layer: theme.highest,
+                    margin: { left: 4 },
+                    text_properties: { size: "sm" },
+                    border: border(theme.middle),
+                }),
+                active: text_button({
+                    variant: "ghost",
+                    layer: theme.highest,
+                    margin: { left: 4 },
+                    text_properties: { size: "sm" },
+                    border: border(theme.middle),
+                }),
+            }
         }),
     }
 }

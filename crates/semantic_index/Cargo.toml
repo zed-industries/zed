@@ -9,6 +9,7 @@ path = "src/semantic_index.rs"
 doctest = false
 
 [dependencies]
+collections = { path = "../collections" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 project = { path = "../project" }
@@ -39,8 +40,10 @@ rand.workspace = true
 schemars.workspace = true
 globset.workspace = true
 sha1 = "0.10.5"
+parse_duration = "2.1.1"
 
 [dev-dependencies]
+collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }

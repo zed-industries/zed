@@ -577,7 +577,6 @@ impl Renderer {
         };
         for (ix, quad) in quads.iter().enumerate() {
             let bounds = quad.bounds * scale_factor;
-            let border_width = quad.border.width * scale_factor;
             let shader_quad = shaders::GPUIQuad {
                 origin: bounds.origin().round().to_float2(),
                 size: bounds.size().round().to_float2(),
@@ -585,10 +584,10 @@ impl Renderer {
                     .background
                     .unwrap_or_else(Color::transparent_black)
                     .to_uchar4(),
-                border_top: border_width * (quad.border.top as usize as f32),
-                border_right: border_width * (quad.border.right as usize as f32),
-                border_bottom: border_width * (quad.border.bottom as usize as f32),
-                border_left: border_width * (quad.border.left as usize as f32),
+                border_top: quad.border.top * scale_factor,
+                border_right: quad.border.right * scale_factor,
+                border_bottom: quad.border.bottom * scale_factor,
+                border_left: quad.border.left * scale_factor,
                 border_color: quad.border.color.to_uchar4(),
                 corner_radius_top_left: quad.corner_radii.top_left * scale_factor,
                 corner_radius_top_right: quad.corner_radii.top_right * scale_factor,
@@ -746,7 +745,6 @@ impl Renderer {
             let origin = image.bounds.origin() * scale_factor;
             let target_size = image.bounds.size() * scale_factor;
             let corner_radii = image.corner_radii * scale_factor;
-            let border_width = image.border.width * scale_factor;
             let (alloc_id, atlas_bounds) = self.image_cache.render(&image.data);
             images_by_atlas
                 .entry(alloc_id.atlas_id)
@@ -756,10 +754,10 @@ impl Renderer {
                     target_size: target_size.to_float2(),
                     source_size: atlas_bounds.size().to_float2(),
                     atlas_origin: atlas_bounds.origin().to_float2(),
-                    border_top: border_width * (image.border.top as usize as f32),
-                    border_right: border_width * (image.border.right as usize as f32),
-                    border_bottom: border_width * (image.border.bottom as usize as f32),
-                    border_left: border_width * (image.border.left as usize as f32),
+                    border_top: image.border.top * scale_factor,
+                    border_right: image.border.right * scale_factor,
+                    border_bottom: image.border.bottom * scale_factor,
+                    border_left: image.border.left * scale_factor,
                     border_color: image.border.color.to_uchar4(),
                     corner_radius_top_left: corner_radii.top_left,
                     corner_radius_top_right: corner_radii.top_right,

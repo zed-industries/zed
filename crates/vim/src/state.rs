@@ -1,4 +1,6 @@
-use gpui::keymap_matcher::KeymapContext;
+use std::{ops::Range, sync::Arc};
+
+use gpui::{keymap_matcher::KeymapContext, Action};
 use language::CursorShape;
 use serde::{Deserialize, Serialize};
 use workspace::searchable::Direction;
@@ -48,10 +50,61 @@ pub struct EditorState {
     pub operator_stack: Vec<Operator>,
 }
 
+#[derive(Default, Clone, Debug)]
+pub enum RecordedSelection {
+    #[default]
+    None,
+    Visual {
+        rows: u32,
+        cols: u32,
+    },
+    SingleLine {
+        cols: u32,
+    },
+    VisualBlock {
+        rows: u32,
+        cols: u32,
+    },
+    VisualLine {
+        rows: u32,
+    },
+}
+
 #[derive(Default, Clone)]
 pub struct WorkspaceState {
     pub search: SearchState,
     pub last_find: Option<Motion>,
+
+    pub recording: bool,
+    pub stop_recording_after_next_action: bool,
+    pub replaying: bool,
+    pub recorded_count: Option<usize>,
+    pub recorded_actions: Vec<ReplayableAction>,
+    pub recorded_selection: RecordedSelection,
+}
+
+#[derive(Debug)]
+pub enum ReplayableAction {
+    Action(Box<dyn Action>),
+    Insertion {
+        text: Arc<str>,
+        utf16_range_to_replace: Option<Range<isize>>,
+    },
+}
+
+impl Clone for ReplayableAction {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Action(action) => Self::Action(action.boxed_clone()),
+            Self::Insertion {
+                text,
+                utf16_range_to_replace,
+            } => Self::Insertion {
+                text: text.clone(),
+                utf16_range_to_replace: utf16_range_to_replace.clone(),
+            },
+        }
+    }
 }
 
 #[derive(Clone)]

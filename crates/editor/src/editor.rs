@@ -44,7 +44,7 @@ use gpui::{
     elements::*,
     executor,
     fonts::{self, HighlightStyle, TextStyle},
-    geometry::vector::Vector2F,
+    geometry::vector::{vec2f, Vector2F},
     impl_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton},
@@ -312,6 +312,10 @@ actions!(
         CopyPath,
         CopyRelativePath,
         CopyHighlightJson,
+        ContextMenuFirst,
+        ContextMenuPrev,
+        ContextMenuNext,
+        ContextMenuLast,
     ]
 );
 
@@ -468,6 +472,10 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::next_copilot_suggestion);
     cx.add_action(Editor::previous_copilot_suggestion);
     cx.add_action(Editor::copilot_suggest);
+    cx.add_action(Editor::context_menu_first);
+    cx.add_action(Editor::context_menu_prev);
+    cx.add_action(Editor::context_menu_next);
+    cx.add_action(Editor::context_menu_last);
 
     hover_popover::init(cx);
     scroll::actions::init(cx);
@@ -564,7 +572,7 @@ pub struct Editor {
     project: Option<ModelHandle<Project>>,
     focused: bool,
     blink_manager: ModelHandle<BlinkManager>,
-    show_local_selections: bool,
+    pub show_local_selections: bool,
     mode: EditorMode,
     replica_id_mapping: Option<HashMap<ReplicaId, ReplicaId>>,
     show_gutter: bool,
@@ -820,6 +828,7 @@ struct CompletionsMenu {
     id: CompletionId,
     initial_position: Anchor,
     buffer: ModelHandle<Buffer>,
+    project: Option<ModelHandle<Project>>,
     completions: Arc<[Completion]>,
     match_candidates: Vec<StringMatchCandidate>,
     matches: Arc<[StringMatch]>,
@@ -863,6 +872,48 @@ impl CompletionsMenu {
     fn render(&self, style: EditorStyle, cx: &mut ViewContext<Editor>) -> AnyElement<Editor> {
         enum CompletionTag {}
 
+        let language_servers = self.project.as_ref().map(|project| {
+            project
+                .read(cx)
+                .language_servers_for_buffer(self.buffer.read(cx), cx)
+                .filter(|(_, server)| server.capabilities().completion_provider.is_some())
+                .map(|(adapter, server)| (server.server_id(), adapter.short_name))
+                .collect::<Vec<_>>()
+        });
+        let needs_server_name = language_servers
+            .as_ref()
+            .map_or(false, |servers| servers.len() > 1);
+
+        let get_server_name =
+            move |lookup_server_id: lsp::LanguageServerId| -> Option<&'static str> {
+                language_servers
+                    .iter()
+                    .flatten()
+                    .find_map(|(server_id, server_name)| {
+                        if *server_id == lookup_server_id {
+                            Some(*server_name)
+                        } else {
+                            None
+                        }
+                    })
+            };
+
+        let widest_completion_ix = self
+            .matches
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, mat)| {
+                let completion = &self.completions[mat.candidate_id];
+                let mut len = completion.label.text.chars().count();
+
+                if let Some(server_name) = get_server_name(completion.server_id) {
+                    len += server_name.chars().count();
+                }
+
+                len
+            })
+            .map(|(ix, _)| ix);
+
         let completions = self.completions.clone();
         let matches = self.matches.clone();
         let selected_item = self.selected_item;
@@ -889,19 +940,83 @@ impl CompletionsMenu {
                                     style.autocomplete.item
                                 };
 
-                                Text::new(completion.label.text.clone(), style.text.clone())
-                                    .with_soft_wrap(false)
-                                    .with_highlights(combine_syntax_and_fuzzy_match_highlights(
-                                        &completion.label.text,
-                                        style.text.color.into(),
-                                        styled_runs_for_code_label(
-                                            &completion.label,
-                                            &style.syntax,
-                                        ),
-                                        &mat.positions,
-                                    ))
-                                    .contained()
-                                    .with_style(item_style)
+                                let completion_label =
+                                    Text::new(completion.label.text.clone(), style.text.clone())
+                                        .with_soft_wrap(false)
+                                        .with_highlights(
+                                            combine_syntax_and_fuzzy_match_highlights(
+                                                &completion.label.text,
+                                                style.text.color.into(),
+                                                styled_runs_for_code_label(
+                                                    &completion.label,
+                                                    &style.syntax,
+                                                ),
+                                                &mat.positions,
+                                            ),
+                                        );
+
+                                if let Some(server_name) = get_server_name(completion.server_id) {
+                                    Flex::row()
+                                        .with_child(completion_label)
+                                        .with_children((|| {
+                                            if !needs_server_name {
+                                                return None;
+                                            }
+
+                                            let text_style = TextStyle {
+                                                color: style.autocomplete.server_name_color,
+                                                font_size: style.text.font_size
+                                                    * style.autocomplete.server_name_size_percent,
+                                                ..style.text.clone()
+                                            };
+
+                                            let label = Text::new(server_name, text_style)
+                                                .aligned()
+                                                .constrained()
+                                                .dynamically(move |constraint, _, _| {
+                                                    gpui::SizeConstraint {
+                                                        min: constraint.min,
+                                                        max: vec2f(
+                                                            constraint.max.x(),
+                                                            constraint.min.y(),
+                                                        ),
+                                                    }
+                                                });
+
+                                            if Some(item_ix) == widest_completion_ix {
+                                                Some(
+                                                    label
+                                                        .contained()
+                                                        .with_style(
+                                                            style
+                                                                .autocomplete
+                                                                .server_name_container,
+                                                        )
+                                                        .into_any(),
+                                                )
+                                            } else {
+                                                Some(label.flex_float().into_any())
+                                            }
+                                        })())
+                                        .into_any()
+                                } else {
+                                    completion_label.into_any()
+                                }
+                                .contained()
+                                .with_style(item_style)
+                                .constrained()
+                                .dynamically(
+                                    move |constraint, _, _| {
+                                        if Some(item_ix) == widest_completion_ix {
+                                            constraint
+                                        } else {
+                                            gpui::SizeConstraint {
+                                                min: constraint.min,
+                                                max: constraint.min,
+                                            }
+                                        }
+                                    },
+                                )
                             },
                         )
                         .with_cursor_style(CursorStyle::PointingHand)
@@ -918,19 +1033,7 @@ impl CompletionsMenu {
                 }
             },
         )
-        .with_width_from_item(
-            self.matches
-                .iter()
-                .enumerate()
-                .max_by_key(|(_, mat)| {
-                    self.completions[mat.candidate_id]
-                        .label
-                        .text
-                        .chars()
-                        .count()
-                })
-                .map(|(ix, _)| ix),
-        )
+        .with_width_from_item(widest_completion_ix)
         .contained()
         .with_style(container_style)
         .into_any()
@@ -1559,7 +1662,7 @@ impl Editor {
             .excerpt_containing(self.selections.newest_anchor().head(), cx)
     }
 
-    fn style(&self, cx: &AppContext) -> EditorStyle {
+    pub fn style(&self, cx: &AppContext) -> EditorStyle {
         build_style(
             settings::get::<ThemeSettings>(cx),
             self.get_field_editor_theme.as_deref(),
@@ -2164,10 +2267,6 @@ impl Editor {
         let text: Arc<str> = text.into();
 
         if self.read_only {
-            return;
-        }
-        if !self.input_enabled {
-            cx.emit(Event::InputIgnored { text });
             return;
         }
 
@@ -2983,6 +3082,7 @@ impl Editor {
         });
 
         let id = post_inc(&mut self.next_completion_id);
+        let project = self.project.clone();
         let task = cx.spawn(|this, mut cx| {
             async move {
                 let menu = if let Some(completions) = completions.await.log_err() {
@@ -3001,6 +3101,7 @@ impl Editor {
                             })
                             .collect(),
                         buffer,
+                        project,
                         completions: completions.into(),
                         matches: Vec::new().into(),
                         selected_item: 0,
@@ -3102,17 +3203,30 @@ impl Editor {
             .count();
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
+        let mut range_to_replace: Option<Range<isize>> = None;
         let mut ranges = Vec::new();
         for selection in &selections {
             if snapshot.contains_str_at(selection.start.saturating_sub(lookbehind), &old_text) {
                 let start = selection.start.saturating_sub(lookbehind);
                 let end = selection.end + lookahead;
+                if selection.id == newest_selection.id {
+                    range_to_replace = Some(
+                        ((start + common_prefix_len) as isize - selection.start as isize)
+                            ..(end as isize - selection.start as isize),
+                    );
+                }
                 ranges.push(start + common_prefix_len..end);
             } else {
                 common_prefix_len = 0;
                 ranges.clear();
                 ranges.extend(selections.iter().map(|s| {
                     if s.id == newest_selection.id {
+                        range_to_replace = Some(
+                            old_range.start.to_offset_utf16(&snapshot).0 as isize
+                                - selection.start as isize
+                                ..old_range.end.to_offset_utf16(&snapshot).0 as isize
+                                    - selection.start as isize,
+                        );
                         old_range.clone()
                     } else {
                         s.start..s.end
@@ -3122,6 +3236,11 @@ impl Editor {
             }
         }
         let text = &text[common_prefix_len..];
+
+        cx.emit(Event::InputHandled {
+            utf16_range_to_replace: range_to_replace,
+            text: text.into(),
+        });
 
         self.transact(cx, |this, cx| {
             if let Some(mut snippet) = snippet {
@@ -3580,6 +3699,10 @@ impl Editor {
 
                 self.report_copilot_event(Some(completion.uuid.clone()), true, cx)
             }
+            cx.emit(Event::InputHandled {
+                utf16_range_to_replace: None,
+                text: suggestion.text.to_string().into(),
+            });
             self.insert_with_autoindent_mode(&suggestion.text.to_string(), None, cx);
             cx.notify();
             true
@@ -5069,12 +5192,6 @@ impl Editor {
             return;
         }
 
-        if let Some(context_menu) = self.context_menu.as_mut() {
-            if context_menu.select_prev(cx) {
-                return;
-            }
-        }
-
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate_action();
             return;
@@ -5094,15 +5211,6 @@ impl Editor {
 
     pub fn move_page_up(&mut self, action: &MovePageUp, cx: &mut ViewContext<Self>) {
         if self.take_rename(true, cx).is_some() {
-            return;
-        }
-
-        if self
-            .context_menu
-            .as_mut()
-            .map(|menu| menu.select_first(cx))
-            .unwrap_or(false)
-        {
             return;
         }
 
@@ -5144,12 +5252,6 @@ impl Editor {
 
     pub fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
         self.take_rename(true, cx);
-
-        if let Some(context_menu) = self.context_menu.as_mut() {
-            if context_menu.select_next(cx) {
-                return;
-            }
-        }
 
         if self.mode == EditorMode::SingleLine {
             cx.propagate_action();
@@ -5216,6 +5318,30 @@ impl Editor {
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_heads_with(|map, head, goal| movement::down(map, head, goal, false))
         });
+    }
+
+    pub fn context_menu_first(&mut self, _: &ContextMenuFirst, cx: &mut ViewContext<Self>) {
+        if let Some(context_menu) = self.context_menu.as_mut() {
+            context_menu.select_first(cx);
+        }
+    }
+
+    pub fn context_menu_prev(&mut self, _: &ContextMenuPrev, cx: &mut ViewContext<Self>) {
+        if let Some(context_menu) = self.context_menu.as_mut() {
+            context_menu.select_prev(cx);
+        }
+    }
+
+    pub fn context_menu_next(&mut self, _: &ContextMenuNext, cx: &mut ViewContext<Self>) {
+        if let Some(context_menu) = self.context_menu.as_mut() {
+            context_menu.select_next(cx);
+        }
+    }
+
+    pub fn context_menu_last(&mut self, _: &ContextMenuLast, cx: &mut ViewContext<Self>) {
+        if let Some(context_menu) = self.context_menu.as_mut() {
+            context_menu.select_last(cx);
+        }
     }
 
     pub fn move_to_previous_word_start(
@@ -8328,6 +8454,41 @@ impl Editor {
     pub fn inlay_hint_cache(&self) -> &InlayHintCache {
         &self.inlay_hint_cache
     }
+
+    pub fn replay_insert_event(
+        &mut self,
+        text: &str,
+        relative_utf16_range: Option<Range<isize>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if !self.input_enabled {
+            cx.emit(Event::InputIgnored { text: text.into() });
+            return;
+        }
+        if let Some(relative_utf16_range) = relative_utf16_range {
+            let selections = self.selections.all::<OffsetUtf16>(cx);
+            self.change_selections(None, cx, |s| {
+                let new_ranges = selections.into_iter().map(|range| {
+                    let start = OffsetUtf16(
+                        range
+                            .head()
+                            .0
+                            .saturating_add_signed(relative_utf16_range.start),
+                    );
+                    let end = OffsetUtf16(
+                        range
+                            .head()
+                            .0
+                            .saturating_add_signed(relative_utf16_range.end),
+                    );
+                    start..end
+                });
+                s.select_ranges(new_ranges);
+            });
+        }
+
+        self.handle_input(text, cx);
+    }
 }
 
 fn document_to_inlay_range(
@@ -8414,6 +8575,10 @@ impl Deref for EditorSnapshot {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     InputIgnored {
+        text: Arc<str>,
+    },
+    InputHandled {
+        utf16_range_to_replace: Option<Range<isize>>,
         text: Arc<str>,
     },
     ExcerptsAdded {
@@ -8569,17 +8734,20 @@ impl View for Editor {
         if self.pending_rename.is_some() {
             keymap.add_identifier("renaming");
         }
-        match self.context_menu.as_ref() {
-            Some(ContextMenu::Completions(_)) => {
-                keymap.add_identifier("menu");
-                keymap.add_identifier("showing_completions")
+        if self.context_menu_visible() {
+            match self.context_menu.as_ref() {
+                Some(ContextMenu::Completions(_)) => {
+                    keymap.add_identifier("menu");
+                    keymap.add_identifier("showing_completions")
+                }
+                Some(ContextMenu::CodeActions(_)) => {
+                    keymap.add_identifier("menu");
+                    keymap.add_identifier("showing_code_actions")
+                }
+                None => {}
             }
-            Some(ContextMenu::CodeActions(_)) => {
-                keymap.add_identifier("menu");
-                keymap.add_identifier("showing_code_actions")
-            }
-            None => {}
         }
+
         for layer in self.keymap_context_layers.values() {
             keymap.extend(layer);
         }
@@ -8633,28 +8801,50 @@ impl View for Editor {
         text: &str,
         cx: &mut ViewContext<Self>,
     ) {
-        self.transact(cx, |this, cx| {
-            if this.input_enabled {
-                let new_selected_ranges = if let Some(range_utf16) = range_utf16 {
-                    let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
-                    Some(this.selection_replacement_ranges(range_utf16, cx))
-                } else {
-                    this.marked_text_ranges(cx)
-                };
+        if !self.input_enabled {
+            cx.emit(Event::InputIgnored { text: text.into() });
+            return;
+        }
 
-                if let Some(new_selected_ranges) = new_selected_ranges {
-                    this.change_selections(None, cx, |selections| {
-                        selections.select_ranges(new_selected_ranges)
-                    });
-                }
+        self.transact(cx, |this, cx| {
+            let new_selected_ranges = if let Some(range_utf16) = range_utf16 {
+                let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
+                Some(this.selection_replacement_ranges(range_utf16, cx))
+            } else {
+                this.marked_text_ranges(cx)
+            };
+
+            let range_to_replace = new_selected_ranges.as_ref().and_then(|ranges_to_replace| {
+                let newest_selection_id = this.selections.newest_anchor().id;
+                this.selections
+                    .all::<OffsetUtf16>(cx)
+                    .iter()
+                    .zip(ranges_to_replace.iter())
+                    .find_map(|(selection, range)| {
+                        if selection.id == newest_selection_id {
+                            Some(
+                                (range.start.0 as isize - selection.head().0 as isize)
+                                    ..(range.end.0 as isize - selection.head().0 as isize),
+                            )
+                        } else {
+                            None
+                        }
+                    })
+            });
+
+            cx.emit(Event::InputHandled {
+                utf16_range_to_replace: range_to_replace,
+                text: text.into(),
+            });
+
+            if let Some(new_selected_ranges) = new_selected_ranges {
+                this.change_selections(None, cx, |selections| {
+                    selections.select_ranges(new_selected_ranges)
+                });
             }
 
             this.handle_input(text, cx);
         });
-
-        if !self.input_enabled {
-            return;
-        }
 
         if let Some(transaction) = self.ime_transaction {
             self.buffer.update(cx, |buffer, cx| {
@@ -8673,6 +8863,7 @@ impl View for Editor {
         cx: &mut ViewContext<Self>,
     ) {
         if !self.input_enabled {
+            cx.emit(Event::InputIgnored { text: text.into() });
             return;
         }
 
@@ -8696,6 +8887,29 @@ impl View for Editor {
             } else {
                 None
             };
+
+            let range_to_replace = ranges_to_replace.as_ref().and_then(|ranges_to_replace| {
+                let newest_selection_id = this.selections.newest_anchor().id;
+                this.selections
+                    .all::<OffsetUtf16>(cx)
+                    .iter()
+                    .zip(ranges_to_replace.iter())
+                    .find_map(|(selection, range)| {
+                        if selection.id == newest_selection_id {
+                            Some(
+                                (range.start.0 as isize - selection.head().0 as isize)
+                                    ..(range.end.0 as isize - selection.head().0 as isize),
+                            )
+                        } else {
+                            None
+                        }
+                    })
+            });
+
+            cx.emit(Event::InputHandled {
+                utf16_range_to_replace: range_to_replace,
+                text: text.into(),
+            });
 
             if let Some(ranges) = ranges_to_replace {
                 this.change_selections(None, cx, |s| s.select_ranges(ranges));
@@ -9186,6 +9400,7 @@ pub fn split_words<'a>(text: &'a str) -> impl std::iter::Iterator<Item = &'a str
         None
     })
     .flat_map(|word| word.split_inclusive('_'))
+    .flat_map(|word| word.split_inclusive('-'))
 }
 
 trait RangeToAnchorExt {

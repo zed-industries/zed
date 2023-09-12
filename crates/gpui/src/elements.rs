@@ -34,14 +34,12 @@ use crate::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
-    json, Action, Entity, LayoutContext, PaintContext, SceneBuilder, SizeConstraint, TypeTag, View,
-    ViewContext, WeakViewHandle, WindowContext,
+    json, Action, Entity, SizeConstraint, TypeTag, View, ViewContext, WeakViewHandle,
+    WindowContext,
 };
 use anyhow::{anyhow, Result};
-use collections::HashMap;
 use core::panic;
 use json::ToJson;
-use smallvec::SmallVec;
 use std::{
     any::{type_name, Any},
     borrow::Cow,
@@ -61,17 +59,16 @@ pub trait Element<V: 'static>: 'static {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState);
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState;
 
     fn rect_for_text_range(
@@ -262,16 +259,15 @@ trait AnyElementState<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Vector2F;
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         origin: Vector2F,
         visible_bounds: RectF,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     );
 
     fn rect_for_text_range(
@@ -314,7 +310,7 @@ impl<V, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Vector2F {
         let result;
         *self = match mem::take(self) {
@@ -348,11 +344,10 @@ impl<V, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         origin: Vector2F,
         visible_bounds: RectF,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) {
         *self = match mem::take(self) {
             ElementState::PostLayout {
@@ -362,14 +357,7 @@ impl<V, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
                 mut layout,
             } => {
                 let bounds = RectF::new(origin, size);
-                let paint = element.paint(
-                    scene,
-                    bounds,
-                    visible_bounds,
-                    &mut layout,
-                    view,
-                    &mut PaintContext::new(cx),
-                );
+                let paint = element.paint(bounds, visible_bounds, &mut layout, view, cx);
                 ElementState::PostPaint {
                     element,
                     constraint,
@@ -387,14 +375,7 @@ impl<V, E: Element<V>> AnyElementState<V> for ElementState<V, E> {
                 ..
             } => {
                 let bounds = RectF::new(origin, bounds.size());
-                let paint = element.paint(
-                    scene,
-                    bounds,
-                    visible_bounds,
-                    &mut layout,
-                    view,
-                    &mut PaintContext::new(cx),
-                );
+                let paint = element.paint(bounds, visible_bounds, &mut layout, view, cx);
                 ElementState::PostPaint {
                     element,
                     constraint,
@@ -517,20 +498,19 @@ impl<V> AnyElement<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Vector2F {
         self.state.layout(constraint, view, cx)
     }
 
     pub fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         origin: Vector2F,
         visible_bounds: RectF,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) {
-        self.state.paint(scene, origin, visible_bounds, view, cx);
+        self.state.paint(origin, visible_bounds, view, cx);
     }
 
     pub fn rect_for_text_range(
@@ -578,7 +558,7 @@ impl<V: 'static> Element<V> for AnyElement<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let size = self.layout(constraint, view, cx);
         (size, ())
@@ -586,14 +566,13 @@ impl<V: 'static> Element<V> for AnyElement<V> {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
-        self.paint(scene, bounds.origin(), visible_bounds, view, cx);
+        self.paint(bounds.origin(), visible_bounds, view, cx);
     }
 
     fn rect_for_text_range(
@@ -646,17 +625,9 @@ impl<V> RootElement<V> {
 }
 
 pub trait AnyRootElement {
-    fn layout(
-        &mut self,
-        constraint: SizeConstraint,
-        new_parents: &mut HashMap<usize, usize>,
-        views_to_notify_if_ancestors_change: &mut HashMap<usize, SmallVec<[usize; 2]>>,
-        refreshing: bool,
-        cx: &mut WindowContext,
-    ) -> Result<Vector2F>;
+    fn layout(&mut self, constraint: SizeConstraint, cx: &mut WindowContext) -> Result<Vector2F>;
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         origin: Vector2F,
         visible_bounds: RectF,
         cx: &mut WindowContext,
@@ -671,32 +642,16 @@ pub trait AnyRootElement {
 }
 
 impl<V: View> AnyRootElement for RootElement<V> {
-    fn layout(
-        &mut self,
-        constraint: SizeConstraint,
-        new_parents: &mut HashMap<usize, usize>,
-        views_to_notify_if_ancestors_change: &mut HashMap<usize, SmallVec<[usize; 2]>>,
-        refreshing: bool,
-        cx: &mut WindowContext,
-    ) -> Result<Vector2F> {
+    fn layout(&mut self, constraint: SizeConstraint, cx: &mut WindowContext) -> Result<Vector2F> {
         let view = self
             .view
             .upgrade(cx)
             .ok_or_else(|| anyhow!("layout called on a root element for a dropped view"))?;
-        view.update(cx, |view, cx| {
-            let mut cx = LayoutContext::new(
-                cx,
-                new_parents,
-                views_to_notify_if_ancestors_change,
-                refreshing,
-            );
-            Ok(self.element.layout(constraint, view, &mut cx))
-        })
+        view.update(cx, |view, cx| Ok(self.element.layout(constraint, view, cx)))
     }
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         origin: Vector2F,
         visible_bounds: RectF,
         cx: &mut WindowContext,
@@ -707,9 +662,7 @@ impl<V: View> AnyRootElement for RootElement<V> {
             .ok_or_else(|| anyhow!("paint called on a root element for a dropped view"))?;
 
         view.update(cx, |view, cx| {
-            let mut cx = PaintContext::new(cx);
-            self.element
-                .paint(scene, origin, visible_bounds, view, &mut cx);
+            self.element.paint(origin, visible_bounds, view, cx);
             Ok(())
         })
     }

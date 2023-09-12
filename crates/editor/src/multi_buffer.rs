@@ -1417,13 +1417,13 @@ impl MultiBuffer {
             return false;
         }
 
-        let language = self.language_at(position.clone(), cx);
-
-        if char_kind(language.as_ref(), char) == CharKind::Word {
+        let snapshot = self.snapshot(cx);
+        let position = position.to_offset(&snapshot);
+        let scope = snapshot.language_scope_at(position);
+        if char_kind(&scope, char) == CharKind::Word {
             return true;
         }
 
-        let snapshot = self.snapshot(cx);
         let anchor = snapshot.anchor_before(position);
         anchor
             .buffer_id
@@ -1925,8 +1925,8 @@ impl MultiBufferSnapshot {
         let mut next_chars = self.chars_at(start).peekable();
         let mut prev_chars = self.reversed_chars_at(start).peekable();
 
-        let language = self.language_at(start);
-        let kind = |c| char_kind(language, c);
+        let scope = self.language_scope_at(start);
+        let kind = |c| char_kind(&scope, c);
         let word_kind = cmp::max(
             prev_chars.peek().copied().map(kind),
             next_chars.peek().copied().map(kind),

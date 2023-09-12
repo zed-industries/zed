@@ -287,6 +287,55 @@ async fn test_word_characters(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_join_lines(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state(indoc! {"
+      ˇone
+      two
+      three
+      four
+      five
+      six
+      "})
+        .await;
+    cx.simulate_shared_keystrokes(["shift-j"]).await;
+    cx.assert_shared_state(indoc! {"
+          oneˇ two
+          three
+          four
+          five
+          six
+          "})
+        .await;
+    cx.simulate_shared_keystrokes(["3", "shift-j"]).await;
+    cx.assert_shared_state(indoc! {"
+          one two threeˇ four
+          five
+          six
+          "})
+        .await;
+
+    cx.set_shared_state(indoc! {"
+      ˇone
+      two
+      three
+      four
+      five
+      six
+      "})
+        .await;
+    cx.simulate_shared_keystrokes(["j", "v", "3", "j", "shift-j"])
+        .await;
+    cx.assert_shared_state(indoc! {"
+      one
+      two three fourˇ five
+      six
+      "})
+        .await;
+}
+
+#[gpui::test]
 async fn test_wrapped_lines(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -429,6 +478,31 @@ async fn test_wrapped_lines(cx: &mut gpui::TestAppContext) {
         ˇo
         twelve char twelve char
         twelve char
+    "})
+        .await;
+
+    // line wraps as:
+    // fourteen ch
+    // ar
+    // fourteen ch
+    // ar
+    cx.set_shared_state(indoc! { "
+        fourteen chaˇr
+        fourteen char
+    "})
+        .await;
+
+    cx.simulate_shared_keystrokes(["d", "i", "w"]).await;
+    cx.assert_shared_state(indoc! {"
+        fourteenˇ•
+        fourteen char
+    "})
+        .await;
+    cx.simulate_shared_keystrokes(["j", "shift-f", "e", "f", "r"])
+        .await;
+    cx.assert_shared_state(indoc! {"
+        fourteen•
+        fourteen chaˇr
     "})
         .await;
 }

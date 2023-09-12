@@ -15,7 +15,7 @@ use gpui::{
     ViewContext, ViewHandle,
 };
 use project::Project;
-use std::any::Any;
+use std::any::{Any, TypeId};
 use workspace::{
     item::{FollowableItem, Item, ItemHandle},
     register_followable_item,
@@ -189,6 +189,21 @@ impl View for ChannelView {
 }
 
 impl Item for ChannelView {
+    fn act_as_type<'a>(
+        &'a self,
+        type_id: TypeId,
+        self_handle: &'a ViewHandle<Self>,
+        _: &'a AppContext,
+    ) -> Option<&'a AnyViewHandle> {
+        if type_id == TypeId::of::<Self>() {
+            Some(self_handle)
+        } else if type_id == TypeId::of::<Editor>() {
+            Some(&self.editor)
+        } else {
+            None
+        }
+    }
+
     fn tab_content<V: 'static>(
         &self,
         _: Option<usize>,

@@ -48,7 +48,7 @@ export default function search(): any {
     }
 
     return {
-        padding: { top: 0, bottom: 0 },
+        padding: { top: 4, bottom: 4 },
 
         option_button: toggleable({
             base: interactive({
@@ -394,7 +394,7 @@ export default function search(): any {
                 }),
             },
         }),
-        search_bar_row_height: 32,
+        search_bar_row_height: 34,
         search_row_spacing: 8,
         option_button_height: 22,
         modes_container: {},

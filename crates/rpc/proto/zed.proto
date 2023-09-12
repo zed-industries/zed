@@ -1,6 +1,8 @@
 syntax = "proto3";
 package zed.messages;
 
+// Looking for a number? Search "// Current max"
+
 message PeerId {
     uint32 owner_id = 1;
     uint32 id = 2;
@@ -151,6 +153,9 @@ message Envelope {
         LeaveChannelBuffer leave_channel_buffer = 134;
         AddChannelBufferCollaborator add_channel_buffer_collaborator = 135;
         RemoveChannelBufferCollaborator remove_channel_buffer_collaborator = 136;
+        UpdateChannelBufferCollaborator update_channel_buffer_collaborator = 139;
+        RejoinChannelBuffers rejoin_channel_buffers = 140;
+        RejoinChannelBuffersResponse rejoin_channel_buffers_response = 141; // Current max
     }
 }
 
@@ -430,6 +435,12 @@ message RemoveChannelBufferCollaborator {
     PeerId peer_id = 2;
 }
 
+message UpdateChannelBufferCollaborator {
+    uint64 channel_id = 1;
+    PeerId old_peer_id = 2;
+    PeerId new_peer_id = 3;
+}
+
 message GetDefinition {
      uint64 project_id = 1;
      uint64 buffer_id = 2;
@@ -616,6 +627,12 @@ message BufferVersion {
     repeated VectorClockEntry version = 2;
 }
 
+message ChannelBufferVersion {
+    uint64 channel_id = 1;
+    repeated VectorClockEntry version = 2;
+    uint64 epoch = 3;
+}
+
 enum FormatTrigger {
     Save = 0;
     Manual = 1;
@@ -657,7 +674,8 @@ message Completion {
     Anchor old_start = 1;
     Anchor old_end = 2;
     string new_text = 3;
-    bytes lsp_completion = 4;
+    uint64 server_id = 4;
+    bytes lsp_completion = 5;
 }
 
 message GetCodeActions {
@@ -860,12 +878,12 @@ message ProjectTransaction {
 }
 
 message Transaction {
-    LocalTimestamp id = 1;
-    repeated LocalTimestamp edit_ids = 2;
+    LamportTimestamp id = 1;
+    repeated LamportTimestamp edit_ids = 2;
     repeated VectorClockEntry start = 3;
 }
 
-message LocalTimestamp {
+message LamportTimestamp {
     uint32 replica_id = 1;
     uint32 value = 2;
 }
@@ -1007,12 +1025,28 @@ message JoinChannelBuffer {
     uint64 channel_id = 1;
 }
 
+message RejoinChannelBuffers {
+    repeated ChannelBufferVersion buffers = 1;
+}
+
+message RejoinChannelBuffersResponse {
+    repeated RejoinedChannelBuffer buffers = 1;
+}
+
 message JoinChannelBufferResponse {
     uint64 buffer_id = 1;
     uint32 replica_id = 2;
     string base_text = 3;
     repeated Operation operations = 4;
     repeated Collaborator collaborators = 5;
+    uint64 epoch = 6;
+}
+
+message RejoinedChannelBuffer {
+    uint64 channel_id = 1;
+    repeated VectorClockEntry version = 2;
+    repeated Operation operations = 3;
+    repeated Collaborator collaborators = 4;
 }
 
 message LeaveChannelBuffer {
@@ -1279,7 +1313,7 @@ message Excerpt {
 
 message Anchor {
     uint32 replica_id = 1;
-    uint32 local_timestamp = 2;
+    uint32 timestamp = 2;
     uint64 offset = 3;
     Bias bias = 4;
     optional uint64 buffer_id = 5;
@@ -1323,19 +1357,17 @@ message Operation {
 
     message Edit {
         uint32 replica_id = 1;
-        uint32 local_timestamp = 2;
-        uint32 lamport_timestamp = 3;
-        repeated VectorClockEntry version = 4;
-        repeated Range ranges = 5;
-        repeated string new_text = 6;
+        uint32 lamport_timestamp = 2;
+        repeated VectorClockEntry version = 3;
+        repeated Range ranges = 4;
+        repeated string new_text = 5;
     }
 
     message Undo {
         uint32 replica_id = 1;
-        uint32 local_timestamp = 2;
-        uint32 lamport_timestamp = 3;
-        repeated VectorClockEntry version = 4;
-        repeated UndoCount counts = 5;
+        uint32 lamport_timestamp = 2;
+        repeated VectorClockEntry version = 3;
+        repeated UndoCount counts = 4;
     }
 
     message UpdateSelections {
@@ -1361,7 +1393,7 @@ message UndoMapEntry {
 
 message UndoCount {
     uint32 replica_id = 1;
-    uint32 local_timestamp = 2;
+    uint32 lamport_timestamp = 2;
     uint32 count = 3;
 }
 

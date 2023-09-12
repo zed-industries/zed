@@ -35,7 +35,7 @@ use language::{
     point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
-        serialize_anchor, serialize_version,
+        serialize_anchor, serialize_version, split_operations,
     },
     range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeAction,
     CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Event as BufferEvent,
@@ -154,6 +154,11 @@ pub struct Project {
 struct DelayedDebounced {
     task: Option<Task<()>>,
     cancel_channel: Option<oneshot::Sender<()>>,
+}
+
+enum LanguageServerToQuery {
+    Primary,
+    Other(LanguageServerId),
 }
 
 impl DelayedDebounced {
@@ -634,7 +639,7 @@ impl Project {
                     cx.observe_global::<SettingsStore, _>(Self::on_settings_changed)
                 ],
                 _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
-                _maintain_workspace_config: Self::maintain_workspace_config(languages.clone(), cx),
+                _maintain_workspace_config: Self::maintain_workspace_config(cx),
                 active_entry: None,
                 languages,
                 client,
@@ -704,7 +709,7 @@ impl Project {
                 collaborators: Default::default(),
                 join_project_response_message_id: response.message_id,
                 _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
-                _maintain_workspace_config: Self::maintain_workspace_config(languages.clone(), cx),
+                _maintain_workspace_config: Self::maintain_workspace_config(cx),
                 languages,
                 user_store: user_store.clone(),
                 fs,
@@ -2472,35 +2477,42 @@ impl Project {
         })
     }
 
-    fn maintain_workspace_config(
-        languages: Arc<LanguageRegistry>,
-        cx: &mut ModelContext<Project>,
-    ) -> Task<()> {
+    fn maintain_workspace_config(cx: &mut ModelContext<Project>) -> Task<()> {
         let (mut settings_changed_tx, mut settings_changed_rx) = watch::channel();
         let _ = postage::stream::Stream::try_recv(&mut settings_changed_rx);
 
         let settings_observation = cx.observe_global::<SettingsStore, _>(move |_, _| {
             *settings_changed_tx.borrow_mut() = ();
         });
+
         cx.spawn_weak(|this, mut cx| async move {
             while let Some(_) = settings_changed_rx.next().await {
-                let workspace_config = cx.update(|cx| languages.workspace_configuration(cx)).await;
-                if let Some(this) = this.upgrade(&cx) {
-                    this.read_with(&cx, |this, _| {
-                        for server_state in this.language_servers.values() {
-                            if let LanguageServerState::Running { server, .. } = server_state {
-                                server
-                                    .notify::<lsp::notification::DidChangeConfiguration>(
-                                        lsp::DidChangeConfigurationParams {
-                                            settings: workspace_config.clone(),
-                                        },
-                                    )
-                                    .ok();
-                            }
-                        }
-                    })
-                } else {
+                let Some(this) = this.upgrade(&cx) else {
                     break;
+                };
+
+                let servers: Vec<_> = this.read_with(&cx, |this, _| {
+                    this.language_servers
+                        .values()
+                        .filter_map(|state| match state {
+                            LanguageServerState::Starting(_) => None,
+                            LanguageServerState::Running {
+                                adapter, server, ..
+                            } => Some((adapter.clone(), server.clone())),
+                        })
+                        .collect()
+                });
+
+                for (adapter, server) in servers {
+                    let workspace_config =
+                        cx.update(|cx| adapter.workspace_configuration(cx)).await;
+                    server
+                        .notify::<lsp::notification::DidChangeConfiguration>(
+                            lsp::DidChangeConfigurationParams {
+                                settings: workspace_config.clone(),
+                            },
+                        )
+                        .ok();
                 }
             }
 
@@ -2615,7 +2627,6 @@ impl Project {
         let state = LanguageServerState::Starting({
             let adapter = adapter.clone();
             let server_name = adapter.name.0.clone();
-            let languages = self.languages.clone();
             let language = language.clone();
             let key = key.clone();
 
@@ -2625,7 +2636,6 @@ impl Project {
                     initialization_options,
                     pending_server,
                     adapter.clone(),
-                    languages,
                     language.clone(),
                     server_id,
                     key,
@@ -2729,7 +2739,6 @@ impl Project {
         initialization_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
         adapter: Arc<CachedLspAdapter>,
-        languages: Arc<LanguageRegistry>,
         language: Arc<Language>,
         server_id: LanguageServerId,
         key: (WorktreeId, LanguageServerName),
@@ -2740,7 +2749,6 @@ impl Project {
             initialization_options,
             pending_server,
             adapter.clone(),
-            languages,
             server_id,
             cx,
         );
@@ -2773,16 +2781,13 @@ impl Project {
         initialization_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
         adapter: Arc<CachedLspAdapter>,
-        languages: Arc<LanguageRegistry>,
         server_id: LanguageServerId,
         cx: &mut AsyncAppContext,
     ) -> Result<Option<Arc<LanguageServer>>> {
-        let workspace_config = cx.update(|cx| languages.workspace_configuration(cx)).await;
+        let workspace_config = cx.update(|cx| adapter.workspace_configuration(cx)).await;
         let language_server = match pending_server.task.await? {
-            Some(server) => server.initialize(initialization_options).await?,
-            None => {
-                return Ok(None);
-            }
+            Some(server) => server,
+            None => return Ok(None),
         };
 
         language_server
@@ -2821,12 +2826,12 @@ impl Project {
 
         language_server
             .on_request::<lsp::request::WorkspaceConfiguration, _, _>({
-                let languages = languages.clone();
+                let adapter = adapter.clone();
                 move |params, mut cx| {
-                    let languages = languages.clone();
+                    let adapter = adapter.clone();
                     async move {
                         let workspace_config =
-                            cx.update(|cx| languages.workspace_configuration(cx)).await;
+                            cx.update(|cx| adapter.workspace_configuration(cx)).await;
                         Ok(params
                             .items
                             .into_iter()
@@ -2931,6 +2936,8 @@ impl Project {
                 }
             })
             .detach();
+
+        let language_server = language_server.initialize(initialization_options).await?;
 
         language_server
             .notify::<lsp::notification::DidChangeConfiguration>(
@@ -3892,7 +3899,7 @@ impl Project {
                     let file = File::from_dyn(buffer.file())?;
                     let buffer_abs_path = file.as_local().map(|f| f.abs_path(cx));
                     let server = self
-                        .primary_language_servers_for_buffer(buffer, cx)
+                        .primary_language_server_for_buffer(buffer, cx)
                         .map(|s| s.1.clone());
                     Some((buffer_handle, buffer_abs_path, server))
                 })
@@ -4197,7 +4204,12 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.request_lsp(buffer.clone(), GetDefinition { position }, cx)
+        self.request_lsp(
+            buffer.clone(),
+            LanguageServerToQuery::Primary,
+            GetDefinition { position },
+            cx,
+        )
     }
 
     pub fn type_definition<T: ToPointUtf16>(
@@ -4207,7 +4219,12 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.request_lsp(buffer.clone(), GetTypeDefinition { position }, cx)
+        self.request_lsp(
+            buffer.clone(),
+            LanguageServerToQuery::Primary,
+            GetTypeDefinition { position },
+            cx,
+        )
     }
 
     pub fn references<T: ToPointUtf16>(
@@ -4217,7 +4234,12 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Location>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.request_lsp(buffer.clone(), GetReferences { position }, cx)
+        self.request_lsp(
+            buffer.clone(),
+            LanguageServerToQuery::Primary,
+            GetReferences { position },
+            cx,
+        )
     }
 
     pub fn document_highlights<T: ToPointUtf16>(
@@ -4227,7 +4249,12 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<DocumentHighlight>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.request_lsp(buffer.clone(), GetDocumentHighlights { position }, cx)
+        self.request_lsp(
+            buffer.clone(),
+            LanguageServerToQuery::Primary,
+            GetDocumentHighlights { position },
+            cx,
+        )
     }
 
     pub fn symbols(&self, query: &str, cx: &mut ModelContext<Self>) -> Task<Result<Vec<Symbol>>> {
@@ -4455,17 +4482,66 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Hover>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.request_lsp(buffer.clone(), GetHover { position }, cx)
+        self.request_lsp(
+            buffer.clone(),
+            LanguageServerToQuery::Primary,
+            GetHover { position },
+            cx,
+        )
     }
 
-    pub fn completions<T: ToPointUtf16>(
+    pub fn completions<T: ToOffset + ToPointUtf16>(
         &self,
         buffer: &ModelHandle<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Completion>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.request_lsp(buffer.clone(), GetCompletions { position }, cx)
+        if self.is_local() {
+            let snapshot = buffer.read(cx).snapshot();
+            let offset = position.to_offset(&snapshot);
+            let scope = snapshot.language_scope_at(offset);
+
+            let server_ids: Vec<_> = self
+                .language_servers_for_buffer(buffer.read(cx), cx)
+                .filter(|(_, server)| server.capabilities().completion_provider.is_some())
+                .filter(|(adapter, _)| {
+                    scope
+                        .as_ref()
+                        .map(|scope| scope.language_allowed(&adapter.name))
+                        .unwrap_or(true)
+                })
+                .map(|(_, server)| server.server_id())
+                .collect();
+
+            let buffer = buffer.clone();
+            cx.spawn(|this, mut cx| async move {
+                let mut tasks = Vec::with_capacity(server_ids.len());
+                this.update(&mut cx, |this, cx| {
+                    for server_id in server_ids {
+                        tasks.push(this.request_lsp(
+                            buffer.clone(),
+                            LanguageServerToQuery::Other(server_id),
+                            GetCompletions { position },
+                            cx,
+                        ));
+                    }
+                });
+
+                let mut completions = Vec::new();
+                for task in tasks {
+                    if let Ok(new_completions) = task.await {
+                        completions.extend_from_slice(&new_completions);
+                    }
+                }
+
+                Ok(completions)
+            })
+        } else if let Some(project_id) = self.remote_id() {
+            self.send_lsp_proto_request(buffer.clone(), project_id, GetCompletions { position }, cx)
+        } else {
+            Task::ready(Ok(Default::default()))
+        }
     }
 
     pub fn apply_additional_edits_for_completion(
@@ -4479,7 +4555,8 @@ impl Project {
         let buffer_id = buffer.remote_id();
 
         if self.is_local() {
-            let lang_server = match self.primary_language_servers_for_buffer(buffer, cx) {
+            let server_id = completion.server_id;
+            let lang_server = match self.language_server_for_buffer(buffer, server_id, cx) {
                 Some((_, server)) => server.clone(),
                 _ => return Task::ready(Ok(Default::default())),
             };
@@ -4586,7 +4663,12 @@ impl Project {
     ) -> Task<Result<Vec<CodeAction>>> {
         let buffer = buffer_handle.read(cx);
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
-        self.request_lsp(buffer_handle.clone(), GetCodeActions { range }, cx)
+        self.request_lsp(
+            buffer_handle.clone(),
+            LanguageServerToQuery::Primary,
+            GetCodeActions { range },
+            cx,
+        )
     }
 
     pub fn apply_code_action(
@@ -4942,7 +5024,12 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Range<Anchor>>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.request_lsp(buffer, PrepareRename { position }, cx)
+        self.request_lsp(
+            buffer,
+            LanguageServerToQuery::Primary,
+            PrepareRename { position },
+            cx,
+        )
     }
 
     pub fn perform_rename<T: ToPointUtf16>(
@@ -4956,6 +5043,7 @@ impl Project {
         let position = position.to_point_utf16(buffer.read(cx));
         self.request_lsp(
             buffer,
+            LanguageServerToQuery::Primary,
             PerformRename {
                 position,
                 new_name,
@@ -4983,6 +5071,7 @@ impl Project {
         });
         self.request_lsp(
             buffer.clone(),
+            LanguageServerToQuery::Primary,
             OnTypeFormatting {
                 position,
                 trigger,
@@ -5008,7 +5097,12 @@ impl Project {
         let lsp_request = InlayHints { range };
 
         if self.is_local() {
-            let lsp_request_task = self.request_lsp(buffer_handle.clone(), lsp_request, cx);
+            let lsp_request_task = self.request_lsp(
+                buffer_handle.clone(),
+                LanguageServerToQuery::Primary,
+                lsp_request,
+                cx,
+            );
             cx.spawn(|_, mut cx| async move {
                 buffer_handle
                     .update(&mut cx, |buffer, _| {
@@ -5441,10 +5535,10 @@ impl Project {
             .await;
     }
 
-    // TODO: Wire this up to allow selecting a server?
     fn request_lsp<R: LspCommand>(
         &self,
         buffer_handle: ModelHandle<Buffer>,
+        server: LanguageServerToQuery,
         request: R,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<R::Response>>
@@ -5453,11 +5547,19 @@ impl Project {
     {
         let buffer = buffer_handle.read(cx);
         if self.is_local() {
+            let language_server = match server {
+                LanguageServerToQuery::Primary => {
+                    match self.primary_language_server_for_buffer(buffer, cx) {
+                        Some((_, server)) => Some(Arc::clone(server)),
+                        None => return Task::ready(Ok(Default::default())),
+                    }
+                }
+                LanguageServerToQuery::Other(id) => self
+                    .language_server_for_buffer(buffer, id, cx)
+                    .map(|(_, server)| Arc::clone(server)),
+            };
             let file = File::from_dyn(buffer.file()).and_then(File::as_local);
-            if let Some((file, language_server)) = file.zip(
-                self.primary_language_servers_for_buffer(buffer, cx)
-                    .map(|(_, server)| server.clone()),
-            ) {
+            if let (Some(file), Some(language_server)) = (file, language_server) {
                 let lsp_params = request.to_lsp(&file.abs_path(cx), buffer, &language_server, cx);
                 return cx.spawn(|this, cx| async move {
                     if !request.check_capabilities(language_server.capabilities()) {
@@ -5490,29 +5592,38 @@ impl Project {
                 });
             }
         } else if let Some(project_id) = self.remote_id() {
-            let rpc = self.client.clone();
-            let message = request.to_proto(project_id, buffer);
-            return cx.spawn_weak(|this, cx| async move {
-                // Ensure the project is still alive by the time the task
-                // is scheduled.
-                this.upgrade(&cx)
-                    .ok_or_else(|| anyhow!("project dropped"))?;
-
-                let response = rpc.request(message).await?;
-
-                let this = this
-                    .upgrade(&cx)
-                    .ok_or_else(|| anyhow!("project dropped"))?;
-                if this.read_with(&cx, |this, _| this.is_read_only()) {
-                    Err(anyhow!("disconnected before completing request"))
-                } else {
-                    request
-                        .response_from_proto(response, this, buffer_handle, cx)
-                        .await
-                }
-            });
+            return self.send_lsp_proto_request(buffer_handle, project_id, request, cx);
         }
+
         Task::ready(Ok(Default::default()))
+    }
+
+    fn send_lsp_proto_request<R: LspCommand>(
+        &self,
+        buffer: ModelHandle<Buffer>,
+        project_id: u64,
+        request: R,
+        cx: &mut ModelContext<'_, Project>,
+    ) -> Task<anyhow::Result<<R as LspCommand>::Response>> {
+        let rpc = self.client.clone();
+        let message = request.to_proto(project_id, buffer.read(cx));
+        cx.spawn_weak(|this, cx| async move {
+            // Ensure the project is still alive by the time the task
+            // is scheduled.
+            this.upgrade(&cx)
+                .ok_or_else(|| anyhow!("project dropped"))?;
+            let response = rpc.request(message).await?;
+            let this = this
+                .upgrade(&cx)
+                .ok_or_else(|| anyhow!("project dropped"))?;
+            if this.read_with(&cx, |this, _| this.is_read_only()) {
+                Err(anyhow!("disconnected before completing request"))
+            } else {
+                request
+                    .response_from_proto(response, this, buffer, cx)
+                    .await
+            }
+        })
     }
 
     fn sort_candidates_and_open_buffers(
@@ -7150,7 +7261,7 @@ impl Project {
         let buffer_version = buffer_handle.read_with(&cx, |buffer, _| buffer.version());
         let response = this
             .update(&mut cx, |this, cx| {
-                this.request_lsp(buffer_handle, request, cx)
+                this.request_lsp(buffer_handle, LanguageServerToQuery::Primary, request, cx)
             })
             .await?;
         this.update(&mut cx, |this, cx| {
@@ -7867,7 +7978,7 @@ impl Project {
             })
     }
 
-    fn primary_language_servers_for_buffer(
+    fn primary_language_server_for_buffer(
         &self,
         buffer: &Buffer,
         cx: &AppContext,
@@ -8087,31 +8198,6 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
     fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http_client.clone()
     }
-}
-
-fn split_operations(
-    mut operations: Vec<proto::Operation>,
-) -> impl Iterator<Item = Vec<proto::Operation>> {
-    #[cfg(any(test, feature = "test-support"))]
-    const CHUNK_SIZE: usize = 5;
-
-    #[cfg(not(any(test, feature = "test-support")))]
-    const CHUNK_SIZE: usize = 100;
-
-    let mut done = false;
-    std::iter::from_fn(move || {
-        if done {
-            return None;
-        }
-
-        let operations = operations
-            .drain(..cmp::min(CHUNK_SIZE, operations.len()))
-            .collect::<Vec<_>>();
-        if operations.is_empty() {
-            done = true;
-        }
-        Some(operations)
-    })
 }
 
 fn serialize_symbol(symbol: &Symbol) -> proto::Symbol {

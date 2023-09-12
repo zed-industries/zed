@@ -273,7 +273,13 @@ impl ActiveCall {
             .borrow_mut()
             .take()
             .ok_or_else(|| anyhow!("no incoming call"))?;
-        Self::report_call_event_for_room("decline incoming", call.room_id, None, &self.client, cx);
+        Self::report_call_event_for_room(
+            "decline incoming",
+            Some(call.room_id),
+            None,
+            &self.client,
+            cx,
+        );
         self.client.send(proto::DeclineCall {
             room_id: call.room_id,
         })?;
@@ -404,21 +410,19 @@ impl ActiveCall {
     }
 
     fn report_call_event(&self, operation: &'static str, cx: &AppContext) {
-        if let Some(room) = self.room() {
-            let room = room.read(cx);
-            Self::report_call_event_for_room(
-                operation,
-                room.id(),
-                room.channel_id(),
-                &self.client,
-                cx,
-            )
-        }
+        let (room_id, channel_id) = match self.room() {
+            Some(room) => {
+                let room = room.read(cx);
+                (Some(room.id()), room.channel_id())
+            }
+            None => (None, None),
+        };
+        Self::report_call_event_for_room(operation, room_id, channel_id, &self.client, cx)
     }
 
     pub fn report_call_event_for_room(
         operation: &'static str,
-        room_id: u64,
+        room_id: Option<u64>,
         channel_id: Option<u64>,
         client: &Arc<Client>,
         cx: &AppContext,

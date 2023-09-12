@@ -691,15 +691,15 @@ impl InfoPopover {
                         .with_highlights(rendered_content.highlights.clone())
                         .with_custom_runs(
                             rendered_content.region_ranges.clone(),
-                            move |ix, bounds, scene, _| {
+                            move |ix, bounds, cx| {
                                 region_id += 1;
                                 let region = regions[ix].clone();
                                 if let Some(url) = region.link_url {
-                                    scene.push_cursor_region(CursorRegion {
+                                    cx.scene().push_cursor_region(CursorRegion {
                                         bounds,
                                         style: CursorStyle::PointingHand,
                                     });
-                                    scene.push_mouse_region(
+                                    cx.scene().push_mouse_region(
                                         MouseRegion::new::<Self>(view_id, region_id, bounds)
                                             .on_click::<Editor, _>(
                                                 MouseButton::Left,
@@ -708,7 +708,7 @@ impl InfoPopover {
                                     );
                                 }
                                 if region.code {
-                                    scene.push_quad(gpui::Quad {
+                                    cx.scene().push_quad(gpui::Quad {
                                         bounds,
                                         background: Some(code_span_background_color),
                                         border: Default::default(),

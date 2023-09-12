@@ -1453,9 +1453,10 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "async-tungstenite",
  "audio",
  "axum",
@@ -3162,12 +3163,43 @@ dependencies = [
  "sqlez",
  "sum_tree",
  "taffy",
+ "thiserror",
  "time 0.3.27",
  "tiny-skia",
  "usvg",
  "util",
  "uuid 1.4.1",
  "waker-fn",
+]
+
+[[package]]
+name = "gpui2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "derive_more",
+ "futures 0.3.28",
+ "gpui",
+ "gpui2_macros",
+ "log",
+ "parking_lot 0.11.2",
+ "refineable",
+ "rust-embed",
+ "serde",
+ "settings",
+ "simplelog",
+ "smallvec",
+ "theme",
+ "util",
+]
+
+[[package]]
+name = "gpui2_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -3539,7 +3571,7 @@ dependencies = [
  "gif",
  "jpeg-decoder",
  "num-iter",
- "num-rational",
+ "num-rational 0.3.2",
  "num-traits",
  "png",
  "scoped_threadpool",
@@ -4177,8 +4209,7 @@ dependencies = [
 [[package]]
 name = "lsp-types"
 version = "0.94.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c66bfd44a06ae10647fe3f8214762e9369fd4248df1350924b4ef9e770a85ea1"
+source = "git+https://github.com/zed-industries/lsp-types?branch=updated-completion-list-item-defaults#90a040a1d195687bd19e1df47463320a44e93d7a"
 dependencies = [
  "bitflags 1.3.2",
  "serde",
@@ -4583,6 +4614,7 @@ dependencies = [
  "anyhow",
  "async-compression",
  "async-tar",
+ "async-trait",
  "futures 0.3.28",
  "gpui",
  "log",
@@ -4633,6 +4665,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "num"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8536030f9fea7127f841b45bb6243b27255787fb4eb83958aa1ef9d2fdc0c36"
+dependencies = [
+ "num-bigint 0.2.6",
+ "num-complex",
+ "num-integer",
+ "num-iter",
+ "num-rational 0.2.4",
+ "num-traits",
+]
+
+[[package]]
+name = "num-bigint"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "090c7f9998ee0ff65aa5b723e4009f7b217707f1fb5ea551329cc4d6231fb304"
+dependencies = [
+ "autocfg",
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
 name = "num-bigint"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4658,6 +4715,16 @@ dependencies = [
  "rand 0.8.5",
  "smallvec",
  "zeroize",
+]
+
+[[package]]
+name = "num-complex"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6b19411a9719e753aff12e5187b74d60d3dc449ec3f4dc21e3989c3f554bc95"
+dependencies = [
+ "autocfg",
+ "num-traits",
 ]
 
 [[package]]
@@ -4688,6 +4755,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d03e6c028c5dc5cac6e2dec0efda81fc887605bb3d884578bb6d6bf7514e252"
 dependencies = [
  "autocfg",
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
+name = "num-rational"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c000134b5dbf44adc5cb772486d335293351644b801551abe8f75c84cfa4aef"
+dependencies = [
+ "autocfg",
+ "num-bigint 0.2.6",
  "num-integer",
  "num-traits",
 ]
@@ -5009,6 +5088,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "parse_duration"
+version = "2.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7037e5e93e0172a5a96874380bf73bc6ecef022e26fa25f2be26864d6b3ba95d"
+dependencies = [
+ "lazy_static",
+ "num",
+ "regex",
+]
+
+[[package]]
 name = "password-hash"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5171,33 +5261,6 @@ name = "pkg-config"
 version = "0.3.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26072860ba924cbfa98ea39c8c19b4dd6a4a25423dbdf219c1eca91aa0cf6964"
-
-[[package]]
-name = "playground"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "derive_more",
- "gpui",
- "log",
- "parking_lot 0.11.2",
- "playground_macros",
- "refineable",
- "serde",
- "simplelog",
- "smallvec",
- "taffy",
- "util",
-]
-
-[[package]]
-name = "playground_macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
 
 [[package]]
 name = "plist"
@@ -6663,6 +6726,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bincode",
+ "collections",
  "ctor",
  "editor",
  "env_logger 0.9.3",
@@ -6675,6 +6739,7 @@ dependencies = [
  "log",
  "matrixmultiply",
  "parking_lot 0.11.2",
+ "parse_duration",
  "picker",
  "postage",
  "pretty_assertions",
@@ -7006,7 +7071,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8eb4ea60fb301dc81dfc113df680571045d375ab7345d171c5dc7d7e13107a80"
 dependencies = [
  "chrono",
- "num-bigint",
+ "num-bigint 0.4.4",
  "num-traits",
  "thiserror",
 ]
@@ -7238,7 +7303,7 @@ dependencies = [
  "log",
  "md-5",
  "memchr",
- "num-bigint",
+ "num-bigint 0.4.4",
  "once_cell",
  "paste",
  "percent-encoding",
@@ -7305,6 +7370,21 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "storybook"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui2",
+ "log",
+ "rust-embed",
+ "serde",
+ "settings",
+ "simplelog",
+ "theme",
+ "util",
+]
 
 [[package]]
 name = "stringprep"
@@ -7505,7 +7585,7 @@ dependencies = [
 [[package]]
 name = "taffy"
 version = "0.3.11"
-source = "git+https://github.com/DioxusLabs/taffy?rev=dab541d6104d58e2e10ce90c4a1dad0b703160cd#dab541d6104d58e2e10ce90c4a1dad0b703160cd"
+source = "git+https://github.com/DioxusLabs/taffy?rev=4fb530bdd71609bb1d3f76c6a8bde1ba82805d5e#4fb530bdd71609bb1d3f76c6a8bde1ba82805d5e"
 dependencies = [
  "arrayvec 0.7.4",
  "grid",
@@ -8346,6 +8426,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-nu"
+version = "0.0.1"
+source = "git+https://github.com/nushell/tree-sitter-nu?rev=786689b0562b9799ce53e824cb45a1a2a04dc673#786689b0562b9799ce53e824cb45a1a2a04dc673"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-php"
 version = "0.19.1"
 source = "git+https://github.com/tree-sitter/tree-sitter-php?rev=d43130fd1525301e9826f420c5393a4d169819fc#d43130fd1525301e9826f420c5393a4d169819fc"
@@ -8768,12 +8857,14 @@ dependencies = [
  "collections",
  "command_palette",
  "editor",
+ "futures 0.3.28",
  "gpui",
  "indoc",
  "itertools",
  "language",
  "language_selector",
  "log",
+ "lsp",
  "nvim-rs",
  "parking_lot 0.11.2",
  "project",
@@ -9702,7 +9793,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.103.0"
+version = "0.104.0"
 dependencies = [
  "activity_indicator",
  "ai",
@@ -9805,6 +9896,7 @@ dependencies = [
  "tree-sitter-lua",
  "tree-sitter-markdown",
  "tree-sitter-nix",
+ "tree-sitter-nu",
  "tree-sitter-php",
  "tree-sitter-python",
  "tree-sitter-racket",

@@ -378,10 +378,6 @@ impl Editor {
             return;
         }
 
-        if amount.move_context_menu_selection(self, cx) {
-            return;
-        }
-
         let cur_position = self.scroll_position(cx);
         let new_pos = cur_position + vec2f(0., amount.lines(self));
         self.set_scroll_position(new_pos, cx);

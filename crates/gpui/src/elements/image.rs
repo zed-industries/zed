@@ -1,12 +1,11 @@
-use super::constrain_size_preserving_aspect_ratio;
+use super::{constrain_size_preserving_aspect_ratio, Border};
 use crate::{
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
     },
     json::{json, ToJson},
-    scene, Border, Element, ImageData, LayoutContext, PaintContext, SceneBuilder, SizeConstraint,
-    ViewContext,
+    scene, Element, ImageData, SizeConstraint, ViewContext,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -65,7 +64,7 @@ impl<V: 'static> Element<V> for Image {
         &mut self,
         constraint: SizeConstraint,
         _: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let data = match &self.source {
             ImageSource::Path(path) => match cx.asset_cache.png(path) {
@@ -92,17 +91,16 @@ impl<V: 'static> Element<V> for Image {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         _: RectF,
         layout: &mut Self::LayoutState,
         _: &mut V,
-        _: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         if let Some(data) = layout {
-            scene.push_image(scene::Image {
+            cx.scene().push_image(scene::Image {
                 bounds,
-                border: self.style.border,
+                border: self.style.border.into(),
                 corner_radii: self.style.corner_radius.into(),
                 grayscale: self.style.grayscale,
                 data: data.clone(),
