@@ -35,22 +35,6 @@ impl AppContext {
         }
     }
 
-    fn update_entity<T: 'static, R>(
-        &mut self,
-        handle: &Handle<T>,
-        update: impl FnOnce(&mut T, &mut ModelContext<T>) -> R,
-    ) -> R {
-        let mut entity = self
-            .entities
-            .remove(&handle.id)
-            .unwrap()
-            .downcast::<T>()
-            .unwrap();
-        let result = update(&mut *entity, &mut ModelContext::mutable(self, handle.id));
-        self.entities.insert(handle.id, Box::new(entity));
-        result
-    }
-
     fn update_window<R>(
         &mut self,
         window_id: WindowId,
@@ -213,50 +197,61 @@ pub struct Handle<T> {
     entity_type: PhantomData<T>,
 }
 
-trait Context<'a, 'parent, 'app, 'win> {
-    type EntityContext<T: 'static>;
+trait Context {
+    type EntityContext<'cx, 'app, 'win, T: 'static>;
 
-    fn update_entity<T: 'static, R>(
-        &mut self,
+    fn update_entity<'a, 'app, 'win, T: 'static, R>(
+        &'a mut self,
         handle: &Handle<T>,
-        update: impl FnOnce(&mut T, Self::EntityContext<T>) -> R,
+        update: impl for<'cx> FnOnce(&mut T, &mut Self::EntityContext<'cx, 'app, 'win, T>) -> R,
     ) -> R;
 }
 
-impl<'a, 'parent: 'a, 'app, 'win> Context<'a, 'parent, 'app, 'win> for AppContext {
-    type EntityContext<T: 'static> = &'a mut ModelContext<'parent, T>;
+impl Context for AppContext {
+    type EntityContext<'cx, 'app, 'win, T: 'static> = ModelContext<'cx, T>;
 
-    fn update_entity<T: 'static, R>(
-        &mut self,
+    fn update_entity<'a, 'app, 'win, T: 'static, R>(
+        &'a mut self,
         handle: &Handle<T>,
-        update: impl FnOnce(&mut T, Self::EntityContext<T>) -> R,
+        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, 'app, 'win, T>) -> R,
     ) -> R {
-        todo!()
+        let mut entity = self
+            .entities
+            .remove(&handle.id)
+            .unwrap()
+            .downcast::<T>()
+            .unwrap();
+        let result = update(&mut *entity, &mut ModelContext::mutable(self, handle.id));
+        self.entities.insert(handle.id, Box::new(entity));
+        result
     }
 }
 
-impl<'a, 'parent, 'app, 'win> Context<'a, 'parent, 'app, 'win> for WindowContext<'app, 'win>
-where
-    'parent: 'a,
-    'app: 'parent,
-    'win: 'parent,
-{
-    type EntityContext<T: 'static> = &'a mut ViewContext<'parent, 'app, 'win, T>;
+// impl<'app, 'win> Context for WindowContext<'app, 'win> {
+//     type EntityContext<'cx, 'app, 'win, T: 'static> = ModelContext<'cx, T>;
 
-    fn update_entity<T: 'static, R>(
-        &mut self,
-        handle: &Handle<T>,
-        update: impl FnOnce(&mut T, Self::EntityContext<T>) -> R,
-    ) -> R {
-        todo!()
-    }
-}
+//     fn update_entity<'a, 'app, 'win, T: 'static, R>(
+//         &'a mut self,
+//         handle: &Handle<T>,
+//         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, 'app, 'win, T>) -> R,
+//     ) -> R {
+//         let mut entity = self
+//             .entities
+//             .remove(&handle.id)
+//             .unwrap()
+//             .downcast::<T>()
+//             .unwrap();
+//         let result = update(&mut *entity, &mut ModelContext::mutable(self, handle.id));
+//         self.entities.insert(handle.id, Box::new(entity));
+//         result
+//     }
+// }
 
 impl<T: 'static> Handle<T> {
-    fn update<'a, 'parent, 'app, 'win, C: Context<'a, 'parent, 'app, 'win>, R>(
+    fn update<'app, 'win, C: Context, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, C::EntityContext<T>) -> R,
+        update: impl FnOnce(&mut T, &mut C::EntityContext<'_, 'app, 'win, T>) -> R,
     ) -> R {
         cx.update_entity(self, update)
     }
