@@ -129,6 +129,12 @@ pub struct SelectPrevious {
     pub replace_newest: bool,
 }
 
+#[derive(Clone, Deserialize, PartialEq, Default)]
+pub struct SelectNextAll {
+    #[serde(default)]
+    pub replace_newest: bool,
+}
+
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct SelectToBeginningOfLine {
     #[serde(default)]
@@ -325,6 +331,7 @@ impl_actions!(
     [
         SelectNext,
         SelectPrevious,
+        SelectNextAll,
         SelectToBeginningOfLine,
         SelectToEndOfLine,
         ToggleCodeActions,
@@ -427,6 +434,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::select_to_beginning);
     cx.add_action(Editor::select_to_end);
     cx.add_action(Editor::select_all);
+    cx.add_action(Editor::select_all_matches);
     cx.add_action(Editor::select_line);
     cx.add_action(Editor::split_selection_into_lines);
     cx.add_action(Editor::add_selection_above);
@@ -5936,9 +5944,27 @@ impl Editor {
         }
     }
 
-    pub fn select_next(&mut self, action: &SelectNext, cx: &mut ViewContext<Self>) -> Result<()> {
-        self.push_to_selection_history();
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+    pub fn select_next_match_internal(
+        &mut self,
+        display_map: &DisplaySnapshot,
+        replace_newest: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        fn select_next_match_ranges(
+            this: &mut Editor,
+            range: Range<usize>,
+            replace_newest: bool,
+            cx: &mut ViewContext<Editor>,
+        ) {
+            this.unfold_ranges([range.clone()], false, true, cx);
+            this.change_selections(Some(Autoscroll::newest()), cx, |s| {
+                if replace_newest {
+                    s.delete(s.newest_anchor().id);
+                }
+                s.insert_range(range.clone());
+            });
+        }
+
         let buffer = &display_map.buffer_snapshot;
         let mut selections = self.selections.all::<usize>(cx);
         if let Some(mut select_next_state) = self.select_next_state.take() {
@@ -5976,13 +6002,7 @@ impl Editor {
                 }
 
                 if let Some(next_selected_range) = next_selected_range {
-                    self.unfold_ranges([next_selected_range.clone()], false, true, cx);
-                    self.change_selections(Some(Autoscroll::newest()), cx, |s| {
-                        if action.replace_newest {
-                            s.delete(s.newest_anchor().id);
-                        }
-                        s.insert_range(next_selected_range);
-                    });
+                    select_next_match_ranges(self, next_selected_range, replace_newest, cx);
                 } else {
                     select_next_state.done = true;
                 }
@@ -6009,10 +6029,7 @@ impl Editor {
                     wordwise: true,
                     done: false,
                 };
-                self.unfold_ranges([selection.start..selection.end], false, true, cx);
-                self.change_selections(Some(Autoscroll::newest()), cx, |s| {
-                    s.select(selections);
-                });
+                select_next_match_ranges(self, selection.start..selection.end, replace_newest, cx);
                 self.select_next_state = Some(select_state);
             } else {
                 let query = buffer
@@ -6029,11 +6046,31 @@ impl Editor {
         Ok(())
     }
 
-    pub fn select_previous(
-        &mut self,
-        action: &SelectPrevious,
-        cx: &mut ViewContext<Self>,
-    ) -> Result<()> {
+    pub fn select_all_matches(&mut self, action: &SelectNextAll, cx: &mut ViewContext<Self>) {
+        self.push_to_selection_history();
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+
+        loop {
+            self.select_next_match_internal(&display_map, action.replace_newest, cx);
+
+            if self
+                .select_next_state
+                .as_ref()
+                .map(|selection_state| selection_state.done)
+                .unwrap_or(true)
+            {
+                break;
+            }
+        }
+    }
+
+    pub fn select_next(&mut self, action: &SelectNext, cx: &mut ViewContext<Self>) {
+        self.push_to_selection_history();
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        self.select_next_match_internal(&display_map, action.replace_newest, cx);
+    }
+
+    pub fn select_previous(&mut self, action: &SelectPrevious, cx: &mut ViewContext<Self>) {
         self.push_to_selection_history();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
