@@ -114,7 +114,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 }
 
 impl<'a, 'w> WindowContext<'a, 'w> {
-    fn add_entity<T: 'static>(
+    fn entity<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut ViewContext<'_, '_, T>) -> T,
     ) -> Handle<T> {
@@ -541,6 +541,15 @@ impl<S: 'static> Element for AnyView<S> {
     }
 }
 
+impl<S> Clone for AnyView<S> {
+    fn clone(&self) -> Self {
+        Self {
+            view: self.view.clone(),
+            parent_state_type: PhantomData,
+        }
+    }
+}
+
 pub struct Div<S>(PhantomData<S>);
 
 impl<S: 'static> Element for Div<S> {
@@ -580,22 +589,28 @@ pub struct Workspace {
     left_panel: AnyView<Self>,
 }
 
-fn workspace(
-    state: &mut Workspace,
-    cx: &mut ViewContext<Workspace>,
-) -> impl Element<State = Workspace> {
-    div()
-    // .child(state.left_panel.render(cx))
+fn workspace(cx: &mut WindowContext) -> View<Workspace> {
+    let workspace = cx.entity(|cx| Workspace {
+        left_panel: collab_panel(cx).into_any(),
+    });
+    view(workspace, |workspace, cx| {
+        div().child(workspace.left_panel.clone())
+    })
 }
 
 pub struct CollabPanel {
     filter_editor: Handle<Editor>,
 }
 
+fn collab_panel(cx: &mut WindowContext) -> View<CollabPanel> {
+    let panel = cx.entity(|cx| CollabPanel::new(cx));
+    view(panel, |panel, cx| div())
+}
+
 impl CollabPanel {
     fn new(cx: &mut ViewContext<Self>) -> Self {
         Self {
-            filter_editor: cx.add_entity(|cx| Editor::new(cx)),
+            filter_editor: cx.entity(|cx| Editor::new(cx)),
         }
     }
 }
@@ -626,16 +641,6 @@ mod tests {
     #[test]
     fn test() {
         let mut cx = AppContext::new();
-
-        let workspace = cx.open_window(|cx| {
-            let workspace = cx.add_entity(|cx| Workspace {
-                left_panel: view(cx.add_entity(|cx| CollabPanel::new(cx)), |panel, cx| div())
-                    .into_any(),
-            });
-
-            view(workspace, |workspace, cx| div())
-        });
-
-        // cx.open_window(workspace::Workspace, state)
+        cx.open_window(|cx| workspace(cx));
     }
 }
