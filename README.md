@@ -12,14 +12,14 @@ Welcome to Zed, a lightning-fast, collaborative code editor that makes your drea
   ```
   sudo xcodebuild -license
   ```
-  
+
 * Install homebrew, node and rustup-init (rutup, rust, cargo, etc.)
   ```
   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   brew install node rustup-init
   rustup-init # follow the installation steps
   ```
-  
+
 * Install postgres and configure the database
   ```
   brew install postgresql@15
@@ -27,11 +27,12 @@ Welcome to Zed, a lightning-fast, collaborative code editor that makes your drea
   psql -c "CREATE ROLE postgres SUPERUSER LOGIN" postgres
   psql -U postgres -c "CREATE DATABASE zed"
   ```
-  
-* Install the `LiveKit` server and the `foreman` process supervisor:
+
+* Install the `LiveKit` server, the `PostgREST` API server, and the `foreman` process supervisor:
 
     ```
     brew install livekit
+    brew install postgrest
     brew install foreman
     ```
 
