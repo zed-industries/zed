@@ -48,7 +48,7 @@
       "query": "Handle conflict when numerous actions occur on the same symbol",
       "matches": [
         "cli/src/generate/build_tables/build_parse_table.rs:363",
-        "cli/src/generate/build_tables/build_parse_table.rs:442",
+        "cli/src/generate/build_tables/build_parse_table.rs:442"
       ]
     },
     {

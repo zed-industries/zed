@@ -12,7 +12,7 @@
     {
       "query": "What version of the openai package is active?",
       "matches": [
-        "pyproject.toml:14"
+        "pyprojet.toml:14"
       ]
     },
     {
