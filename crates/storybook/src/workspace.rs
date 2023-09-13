@@ -1,6 +1,6 @@
 use crate::{
     collab_panel::collab_panel,
-    modules::{chat_panel, tab_bar, title_bar},
+    modules::{chat_panel, status_bar, tab_bar, title_bar},
     theme::theme,
 };
 use gpui2::{
@@ -59,6 +59,7 @@ impl WorkspaceElement {
                     .child(chat_panel(self.right_scroll_state.clone())),
             )
             .child(statusbar())
+            .child(status_bar())
     }
 }
 

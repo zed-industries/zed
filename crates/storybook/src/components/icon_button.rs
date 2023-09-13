@@ -12,7 +12,7 @@ pub struct IconButton {
     state: InteractionState,
 }
 
-pub fn icon_button<V: 'static>(path: &'static str) -> IconButton {
+pub fn icon_button(path: &'static str) -> IconButton {
     IconButton {
         path,
         variant: ButtonVariant::default(),

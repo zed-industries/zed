@@ -2,10 +2,15 @@
 
 use crate::theme::Theme;
 use ::theme as legacy_theme;
+use components::icon_button;
 use element_ext::ElementExt;
-use gpui2::{serde_json, vec2f, view, Element, RectF, ViewContext, WindowBounds};
+use gpui2::{
+    elements::div, serde_json, style::StyleHelpers, vec2f, view, Element, ParentElement, RectF,
+    ViewContext, WindowBounds,
+};
 use legacy_theme::ThemeSettings;
 use log::LevelFilter;
+use modules::title_bar;
 use settings::{default_settings, SettingsStore};
 use simplelog::SimpleLogger;
 

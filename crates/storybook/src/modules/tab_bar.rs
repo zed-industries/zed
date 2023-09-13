@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use crate::components::{icon_button, tab, IconButton};
+use crate::components::{icon_button, tab};
 use crate::prelude::InteractionState;
 use crate::theme::theme;
 use gpui2::elements::div::ScrollState;
@@ -43,11 +43,11 @@ impl<V: 'static> TabBar<V> {
                             .items_center()
                             .gap_px()
                             .child(
-                                icon_button::<IconButton>("icons/arrow_left.svg")
+                                icon_button("icons/arrow_left.svg")
                                     .state(InteractionState::Enabled.if_enabled(can_navigate_back)),
                             )
                             .child(
-                                icon_button::<IconButton>("icons/arrow_right.svg").state(
+                                icon_button("icons/arrow_right.svg").state(
                                     InteractionState::Enabled.if_enabled(can_navigate_forward),
                                 ),
                             ),
@@ -83,8 +83,8 @@ impl<V: 'static> TabBar<V> {
                             .flex()
                             .items_center()
                             .gap_px()
-                            .child(icon_button::<IconButton>("icons/plus.svg"))
-                            .child(icon_button::<IconButton>("icons/split.svg")),
+                            .child(icon_button("icons/plus.svg"))
+                            .child(icon_button("icons/split.svg")),
                     ),
             )
     }

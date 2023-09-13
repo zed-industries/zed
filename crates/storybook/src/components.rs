@@ -12,7 +12,6 @@ mod tool_divider;
 pub use avatar::avatar;
 pub use avatar::Avatar;
 pub use icon_button::icon_button;
-pub use icon_button::IconButton;
 pub use tab::tab;
 pub use tab::Tab;
 pub use tool_divider::tool_divider;
