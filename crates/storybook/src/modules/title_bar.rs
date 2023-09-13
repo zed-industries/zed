@@ -1,11 +1,12 @@
 use std::marker::PhantomData;
 
 use crate::components::{avatar, icon_button, tool_divider};
-use crate::prelude::{ButtonVariant, Shape, UIState};
+use crate::prelude::Shape;
 use crate::theme::theme;
 use gpui2::style::{StyleHelpers, Styleable};
 use gpui2::{elements::div, IntoElement};
 use gpui2::{Element, ParentElement, ViewContext};
+use theme::IconButton;
 
 #[derive(Element)]
 pub struct TitleBar<V: 'static> {
@@ -111,16 +112,8 @@ impl<V: 'static> TitleBar<V> {
                             .flex()
                             .items_center()
                             .gap_1()
-                            .child(icon_button(
-                                "icons/stop_sharing.svg",
-                                ButtonVariant::Ghost,
-                                UIState::Default,
-                            ))
-                            .child(icon_button(
-                                "icons/exit.svg",
-                                ButtonVariant::Ghost,
-                                UIState::Default,
-                            )),
+                            .child(icon_button::<IconButton>("icons/stop_sharing.svg"))
+                            .child(icon_button::<IconButton>("icons/exit.svg")),
                     )
                     .child(tool_divider())
                     .child(
@@ -129,21 +122,9 @@ impl<V: 'static> TitleBar<V> {
                             .flex()
                             .items_center()
                             .gap_1()
-                            .child(icon_button(
-                                "icons/radix/mic.svg",
-                                ButtonVariant::Ghost,
-                                UIState::Default,
-                            ))
-                            .child(icon_button(
-                                "icons/radix/speaker-loud.svg",
-                                ButtonVariant::Ghost,
-                                UIState::Default,
-                            ))
-                            .child(icon_button(
-                                "icons/radix/desktop.svg",
-                                ButtonVariant::Ghost,
-                                UIState::Default,
-                            )),
+                            .child(icon_button::<IconButton>("icons/radix/mic.svg"))
+                            .child(icon_button::<IconButton>("icons/radix/speaker-loud.svg"))
+                            .child(icon_button::<IconButton>("icons/radix/desktop.svg")),
                     )
                     .child(div().px_2().flex().items_center().child(avatar(
                         "https://avatars.githubusercontent.com/u/1714999?v=4",

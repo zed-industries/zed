@@ -1,26 +1,42 @@
-#[derive(PartialEq)]
+#[derive(Default, PartialEq)]
 pub enum ButtonVariant {
+    #[default]
     Ghost,
     Filled,
 }
 
-#[derive(PartialEq)]
+#[derive(Default, PartialEq)]
 pub enum Shape {
+    #[default]
     Circle,
     RoundedRectangle,
 }
 
-#[derive(PartialEq)]
-pub enum UIState {
-    Default,
+#[derive(Default, PartialEq, Clone, Copy)]
+pub enum InteractionState {
+    #[default]
+    Enabled,
     Hovered,
     Active,
     Focused,
+    Dragged,
     Disabled,
 }
 
-#[derive(PartialEq)]
-pub enum UIToggleState {
-    Default,
-    Enabled,
+impl InteractionState {
+    pub fn if_enabled(&self, enabled: bool) -> Self {
+        if enabled {
+            *self
+        } else {
+            InteractionState::Disabled
+        }
+    }
+}
+
+#[derive(Default, PartialEq)]
+pub enum SelectedState {
+    #[default]
+    Unselected,
+    PartiallySelected,
+    Selected,
 }
