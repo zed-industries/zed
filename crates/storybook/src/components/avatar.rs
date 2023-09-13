@@ -8,19 +8,24 @@ use gpui2::{Element, ViewContext};
 pub type UnknownString = ArcCow<'static, str>;
 
 #[derive(Element)]
-pub(crate) struct Avatar {
+pub struct Avatar {
     src: ArcCow<'static, str>,
     shape: Shape,
 }
 
-pub fn avatar<V: 'static>(src: impl Into<ArcCow<'static, str>>, shape: Shape) -> impl Element<V> {
+pub fn avatar<V: 'static>(src: impl Into<ArcCow<'static, str>>) -> Avatar {
     Avatar {
         src: src.into(),
-        shape,
+        shape: Shape::Circle,
     }
 }
 
 impl Avatar {
+    pub fn shape(mut self, shape: Shape) -> Self {
+        self.shape = shape;
+        self
+    }
+
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
 

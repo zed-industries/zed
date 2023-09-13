@@ -9,10 +9,14 @@ mod icon_button;
 mod tab;
 mod tool_divider;
 
-pub(crate) use avatar::avatar;
-pub(crate) use icon_button::icon_button;
-pub(crate) use tab::tab;
-pub(crate) use tool_divider::tool_divider;
+pub use avatar::avatar;
+pub use avatar::Avatar;
+pub use icon_button::icon_button;
+pub use icon_button::IconButton;
+pub use tab::tab;
+pub use tab::Tab;
+pub use tool_divider::tool_divider;
+pub use tool_divider::ToolDivider;
 
 struct ButtonHandlers<V, D> {
     click: Option<Rc<dyn Fn(&mut V, &D, &mut EventContext<V>)>>,

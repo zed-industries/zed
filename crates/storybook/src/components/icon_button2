@@ -1,0 +1,123 @@
+// use crate::prelude::{ButtonVariant, UIState};
+// use crate::theme::theme;
+// use gpui2::elements::svg;
+// use gpui2::style::{StyleHelpers, Styleable};
+// use gpui2::{elements::div, IntoElement};
+// use gpui2::{Element, ParentElement, ViewContext};
+
+// #[derive(Element)]
+// pub(crate) struct IconButton {
+//     path: &'static str,
+//     variant: ButtonVariant,
+//     state: UIState,
+// }
+
+// pub fn icon_button<V: 'static>(path: &'static str) -> IconButton {
+//     IconButton {
+//         path,
+//         variant: ButtonVariant::Filled,
+//         state: UIState::Default,
+//     }
+// }
+
+// impl IconButton {
+//     fn variant(mut self, variant: ButtonVariant) -> Self {
+//         self.variant = variant;
+
+//         // Example of more interesting setter behavior
+//         // FilledButtons must be disabled
+//         if self.variant == ButtonVariant::Filled {
+//             self.state = UIState::Disabled;
+//         }
+
+//         self
+//     }
+
+//     fn state(mut self, state: UIState) -> Self {
+//         // Example of more interesting setter behavior:
+//         // GhostButtons Cannot be disabled
+//         // Debug asserts are compiled out when we make a new release.
+//         // Useful for making sure developers develop correctly without breaking
+//         // everything
+//         debug_assert!(self.variant != ButtonVariant::Ghost && state != UIState::Disabled);
+
+//         self.state = state;
+//         self
+//     }
+
+//     // const state = {
+//     // foo: "foo",
+//     // bar: "bar"
+//     // } as const
+//     //
+//     // type State = typeof state[keyof typeof something]
+//     //
+//     // type Button {
+//     //      style: State
+//     // }
+//     //
+//     // <Button style="foo" /> State['foo']
+
+//     fn render_warning<V: 'static>(&mut self) -> impl IntoElement<V> {
+//         div()
+//     }
+
+//     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
+//         let theme = theme(cx);
+
+//         let icon_color;
+
+//         enum Severity {
+//             Low,
+//             Medium,
+//             High,
+//         }
+
+//         // Enum declaration and match statement example
+//         enum Style {
+//             Error,
+//             Warning(Severity),
+//             Foo,
+//             Bar,
+//             Baz,
+//         }
+
+//         let style = Style::Warning(Severity::High);
+
+//         match style {
+//             Error => return self.render_warning(),
+//             Warning(severity) => match severity {
+//                 Low => {}
+//                 Medium => {}
+//                 High => {}
+//             },
+//             Foo => {}
+//             Bar => {}
+//             Baz => {}
+//         }
+
+//         if self.state == UIState::Disabled {
+//             icon_color = theme.highest.base.disabled.foreground;
+//         } else {
+//             icon_color = theme.highest.base.default.foreground;
+//         }
+
+//         let mut div = div();
+
+//         if self.variant == ButtonVariant::Filled {
+//             div = div.fill(theme.highest.on.default.background);
+//         }
+
+//         div.w_7()
+//             .h_6()
+//             .flex()
+//             .items_center()
+//             .justify_center()
+//             .rounded_md()
+//             .hover()
+//             .fill(theme.highest.base.hovered.background)
+//             .active()
+//             .fill(theme.highest.base.pressed.background)
+//             .child(svg().path(self.path).w_4().h_4().fill(icon_color))
+//     }
+// }

@@ -1,12 +1,11 @@
 use std::marker::PhantomData;
 
-use crate::components::{avatar, icon_button, tool_divider};
+use crate::components::{avatar, icon_button, tool_divider, Avatar, IconButton};
 use crate::prelude::Shape;
 use crate::theme::theme;
 use gpui2::style::{StyleHelpers, Styleable};
 use gpui2::{elements::div, IntoElement};
 use gpui2::{Element, ParentElement, ViewContext};
-use theme::IconButton;
 
 #[derive(Element)]
 pub struct TitleBar<V: 'static> {
@@ -126,10 +125,12 @@ impl<V: 'static> TitleBar<V> {
                             .child(icon_button::<IconButton>("icons/radix/speaker-loud.svg"))
                             .child(icon_button::<IconButton>("icons/radix/desktop.svg")),
                     )
-                    .child(div().px_2().flex().items_center().child(avatar(
-                        "https://avatars.githubusercontent.com/u/1714999?v=4",
-                        Shape::RoundedRectangle,
-                    ))),
+                    .child(
+                        div().px_2().flex().items_center().child(
+                            avatar::<Avatar>("https://avatars.githubusercontent.com/u/1714999?v=4")
+                                .shape(Shape::RoundedRectangle),
+                        ),
+                    ),
             )
     }
 }

@@ -4,7 +4,7 @@ use gpui2::{elements::div, IntoElement};
 use gpui2::{Element, ViewContext};
 
 #[derive(Element)]
-pub(crate) struct ToolDivider {}
+pub struct ToolDivider {}
 
 pub fn tool_divider<V: 'static>() -> impl Element<V> {
     ToolDivider {}
