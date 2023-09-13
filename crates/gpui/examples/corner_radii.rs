@@ -42,29 +42,28 @@ impl<V: View> gpui::Element<V> for CornersElement {
         &mut self,
         constraint: gpui::SizeConstraint,
         _: &mut V,
-        _: &mut gpui::LayoutContext<V>,
+        _: &mut gpui::ViewContext<V>,
     ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
         (constraint.max, ())
     }
 
     fn paint(
         &mut self,
-        scene: &mut gpui::SceneBuilder,
         bounds: pathfinder_geometry::rect::RectF,
         _: pathfinder_geometry::rect::RectF,
         _: &mut Self::LayoutState,
         _: &mut V,
-        _: &mut gpui::PaintContext<V>,
+        cx: &mut gpui::ViewContext<V>,
     ) -> Self::PaintState {
-        scene.push_quad(Quad {
+        cx.scene().push_quad(Quad {
             bounds,
             background: Some(Color::white()),
             ..Default::default()
         });
 
-        scene.push_layer(None);
+        cx.scene().push_layer(None);
 
-        scene.push_quad(Quad {
+        cx.scene().push_quad(Quad {
             bounds: RectF::new(vec2f(100., 100.), vec2f(100., 100.)),
             background: Some(Color::red()),
             border: Default::default(),
@@ -74,7 +73,7 @@ impl<V: View> gpui::Element<V> for CornersElement {
             },
         });
 
-        scene.push_quad(Quad {
+        cx.scene().push_quad(Quad {
             bounds: RectF::new(vec2f(200., 100.), vec2f(100., 100.)),
             background: Some(Color::green()),
             border: Default::default(),
@@ -84,7 +83,7 @@ impl<V: View> gpui::Element<V> for CornersElement {
             },
         });
 
-        scene.push_quad(Quad {
+        cx.scene().push_quad(Quad {
             bounds: RectF::new(vec2f(100., 200.), vec2f(100., 100.)),
             background: Some(Color::blue()),
             border: Default::default(),
@@ -94,7 +93,7 @@ impl<V: View> gpui::Element<V> for CornersElement {
             },
         });
 
-        scene.push_quad(Quad {
+        cx.scene().push_quad(Quad {
             bounds: RectF::new(vec2f(200., 200.), vec2f(100., 100.)),
             background: Some(Color::yellow()),
             border: Default::default(),
@@ -104,7 +103,7 @@ impl<V: View> gpui::Element<V> for CornersElement {
             },
         });
 
-        scene.push_shadow(Shadow {
+        cx.scene().push_shadow(Shadow {
             bounds: RectF::new(vec2f(400., 100.), vec2f(100., 100.)),
             corner_radii: gpui::scene::CornerRadii {
                 bottom_right: 20.,
@@ -114,8 +113,8 @@ impl<V: View> gpui::Element<V> for CornersElement {
             color: Color::black(),
         });
 
-        scene.push_layer(None);
-        scene.push_quad(Quad {
+        cx.scene().push_layer(None);
+        cx.scene().push_quad(Quad {
             bounds: RectF::new(vec2f(400., 100.), vec2f(100., 100.)),
             background: Some(Color::red()),
             border: Default::default(),
@@ -125,8 +124,8 @@ impl<V: View> gpui::Element<V> for CornersElement {
             },
         });
 
-        scene.pop_layer();
-        scene.pop_layer();
+        cx.scene().pop_layer();
+        cx.scene().pop_layer();
     }
 
     fn rect_for_text_range(

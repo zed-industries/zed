@@ -91,10 +91,7 @@ pub fn init(
         let semantic_index = SemanticIndex::new(
             fs,
             db_file_path,
-            Arc::new(OpenAIEmbeddings {
-                client: http_client,
-                executor: cx.background(),
-            }),
+            Arc::new(OpenAIEmbeddings::new(http_client, cx.background())),
             language_registry,
             cx.clone(),
         )
@@ -113,7 +110,10 @@ pub fn init(
 pub enum SemanticIndexStatus {
     NotIndexed,
     Indexed,
-    Indexing { remaining_files: usize },
+    Indexing {
+        remaining_files: usize,
+        rate_limit_expiry: Option<Instant>,
+    },
 }
 
 pub struct SemanticIndex {
@@ -293,6 +293,7 @@ impl SemanticIndex {
             } else {
                 SemanticIndexStatus::Indexing {
                     remaining_files: project_state.pending_file_count_rx.borrow().clone(),
+                    rate_limit_expiry: self.embedding_provider.rate_limit_expiration(),
                 }
             }
         } else {

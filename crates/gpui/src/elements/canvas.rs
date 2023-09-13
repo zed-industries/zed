@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use super::Element;
 use crate::{
     json::{self, json},
-    PaintContext, SceneBuilder, ViewContext,
+    ViewContext,
 };
 use json::ToJson;
 use pathfinder_geometry::{
@@ -15,7 +15,7 @@ pub struct Canvas<V, F>(F, PhantomData<V>);
 
 impl<V, F> Canvas<V, F>
 where
-    F: FnMut(&mut SceneBuilder, RectF, RectF, &mut V, &mut ViewContext<V>),
+    F: FnMut(RectF, RectF, &mut V, &mut ViewContext<V>),
 {
     pub fn new(f: F) -> Self {
         Self(f, PhantomData)
@@ -24,7 +24,7 @@ where
 
 impl<V: 'static, F> Element<V> for Canvas<V, F>
 where
-    F: 'static + FnMut(&mut SceneBuilder, RectF, RectF, &mut V, &mut ViewContext<V>),
+    F: 'static + FnMut(RectF, RectF, &mut V, &mut ViewContext<V>),
 {
     type LayoutState = ();
     type PaintState = ();
@@ -33,7 +33,7 @@ where
         &mut self,
         constraint: crate::SizeConstraint,
         _: &mut V,
-        _: &mut crate::LayoutContext<V>,
+        _: &mut crate::ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let x = if constraint.max.x().is_finite() {
             constraint.max.x()
@@ -50,14 +50,13 @@ where
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
-        self.0(scene, bounds, visible_bounds, view, cx)
+        self.0(bounds, visible_bounds, view, cx)
     }
 
     fn rect_for_text_range(

@@ -1,6 +1,6 @@
-use crate::{state::Mode, Vim};
+use crate::{normal::repeat, state::Mode, Vim};
 use editor::{scroll::autoscroll::Autoscroll, Bias};
-use gpui::{actions, AppContext, ViewContext};
+use gpui::{actions, Action, AppContext, ViewContext};
 use language::SelectionGoal;
 use workspace::Workspace;
 
@@ -10,23 +10,41 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(normal_before);
 }
 
-fn normal_before(_: &mut Workspace, _: &NormalBefore, cx: &mut ViewContext<Workspace>) {
-    Vim::update(cx, |state, cx| {
-        state.update_active_editor(cx, |editor, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.move_cursors_with(|map, mut cursor, _| {
-                    *cursor.column_mut() = cursor.column().saturating_sub(1);
-                    (map.clip_point(cursor, Bias::Left), SelectionGoal::None)
+fn normal_before(_: &mut Workspace, action: &NormalBefore, cx: &mut ViewContext<Workspace>) {
+    let should_repeat = Vim::update(cx, |vim, cx| {
+        let count = vim.take_count(cx).unwrap_or(1);
+        vim.stop_recording_immediately(action.boxed_clone());
+        if count <= 1 || vim.workspace_state.replaying {
+            vim.update_active_editor(cx, |editor, cx| {
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    s.move_cursors_with(|map, mut cursor, _| {
+                        *cursor.column_mut() = cursor.column().saturating_sub(1);
+                        (map.clip_point(cursor, Bias::Left), SelectionGoal::None)
+                    });
                 });
             });
-        });
-        state.switch_mode(Mode::Normal, false, cx);
-    })
+            vim.switch_mode(Mode::Normal, false, cx);
+            false
+        } else {
+            true
+        }
+    });
+
+    if should_repeat {
+        repeat::repeat(cx, true)
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::{state::Mode, test::VimTestContext};
+    use std::sync::Arc;
+
+    use gpui::executor::Deterministic;
+
+    use crate::{
+        state::Mode,
+        test::{NeovimBackedTestContext, VimTestContext},
+    };
 
     #[gpui::test]
     async fn test_enter_and_exit_insert_mode(cx: &mut gpui::TestAppContext) {
@@ -38,5 +56,79 @@ mod test {
         cx.simulate_keystroke("escape");
         assert_eq!(cx.mode(), Mode::Normal);
         cx.assert_editor_state("Tesˇt");
+    }
+
+    #[gpui::test]
+    async fn test_insert_with_counts(
+        deterministic: Arc<Deterministic>,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇhello\n").await;
+        cx.simulate_shared_keystrokes(["5", "i", "-", "escape"])
+            .await;
+        deterministic.run_until_parked();
+        cx.assert_shared_state("----ˇ-hello\n").await;
+
+        cx.set_shared_state("ˇhello\n").await;
+        cx.simulate_shared_keystrokes(["5", "a", "-", "escape"])
+            .await;
+        deterministic.run_until_parked();
+        cx.assert_shared_state("h----ˇ-ello\n").await;
+
+        cx.simulate_shared_keystrokes(["4", "shift-i", "-", "escape"])
+            .await;
+        deterministic.run_until_parked();
+        cx.assert_shared_state("---ˇ-h-----ello\n").await;
+
+        cx.simulate_shared_keystrokes(["3", "shift-a", "-", "escape"])
+            .await;
+        deterministic.run_until_parked();
+        cx.assert_shared_state("----h-----ello--ˇ-\n").await;
+
+        cx.set_shared_state("ˇhello\n").await;
+        cx.simulate_shared_keystrokes(["3", "o", "o", "i", "escape"])
+            .await;
+        deterministic.run_until_parked();
+        cx.assert_shared_state("hello\noi\noi\noˇi\n").await;
+
+        cx.set_shared_state("ˇhello\n").await;
+        cx.simulate_shared_keystrokes(["3", "shift-o", "o", "i", "escape"])
+            .await;
+        deterministic.run_until_parked();
+        cx.assert_shared_state("oi\noi\noˇi\nhello\n").await;
+    }
+
+    #[gpui::test]
+    async fn test_insert_with_repeat(
+        deterministic: Arc<Deterministic>,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇhello\n").await;
+        cx.simulate_shared_keystrokes(["3", "i", "-", "escape"])
+            .await;
+        deterministic.run_until_parked();
+        cx.assert_shared_state("--ˇ-hello\n").await;
+        cx.simulate_shared_keystrokes(["."]).await;
+        deterministic.run_until_parked();
+        cx.assert_shared_state("----ˇ--hello\n").await;
+        cx.simulate_shared_keystrokes(["2", "."]).await;
+        deterministic.run_until_parked();
+        cx.assert_shared_state("-----ˇ---hello\n").await;
+
+        cx.set_shared_state("ˇhello\n").await;
+        cx.simulate_shared_keystrokes(["2", "o", "k", "k", "escape"])
+            .await;
+        deterministic.run_until_parked();
+        cx.assert_shared_state("hello\nkk\nkˇk\n").await;
+        cx.simulate_shared_keystrokes(["."]).await;
+        deterministic.run_until_parked();
+        cx.assert_shared_state("hello\nkk\nkk\nkk\nkˇk\n").await;
+        cx.simulate_shared_keystrokes(["1", "."]).await;
+        deterministic.run_until_parked();
+        cx.assert_shared_state("hello\nkk\nkk\nkk\nkk\nkˇk\n").await;
     }
 }

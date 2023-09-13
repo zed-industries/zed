@@ -202,6 +202,10 @@ impl platform::Window for StatusItem {
         }
     }
 
+    fn mouse_position(&self) -> Vector2F {
+        unimplemented!()
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }

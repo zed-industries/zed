@@ -13,7 +13,7 @@ use gpui::{
 };
 use language::{Buffer, LanguageServerId, LanguageServerName};
 use lsp::IoKind;
-use project::{Project, Worktree};
+use project::{search::SearchQuery, Project, Worktree};
 use std::{borrow::Cow, sync::Arc};
 use theme::{ui, Theme};
 use workspace::{
@@ -524,12 +524,24 @@ impl SearchableItem for LspLogView {
 
     fn find_matches(
         &mut self,
-        query: project::search::SearchQuery,
+        query: Arc<project::search::SearchQuery>,
         cx: &mut ViewContext<Self>,
     ) -> gpui::Task<Vec<Self::Match>> {
         self.editor.update(cx, |e, cx| e.find_matches(query, cx))
     }
 
+    fn replace(&mut self, _: &Self::Match, _: &SearchQuery, _: &mut ViewContext<Self>) {
+        // Since LSP Log is read-only, it doesn't make sense to support replace operation.
+    }
+    fn supported_options() -> workspace::searchable::SearchOptions {
+        workspace::searchable::SearchOptions {
+            case: true,
+            word: true,
+            regex: true,
+            // LSP log is read-only.
+            replacement: false,
+        }
+    }
     fn active_match_index(
         &mut self,
         matches: Vec<Self::Match>,

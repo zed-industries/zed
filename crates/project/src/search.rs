@@ -7,6 +7,7 @@ use language::{char_kind, BufferSnapshot};
 use regex::{Regex, RegexBuilder};
 use smol::future::yield_now;
 use std::{
+    borrow::Cow,
     io::{BufRead, BufReader, Read},
     ops::Range,
     path::{Path, PathBuf},
@@ -35,6 +36,7 @@ impl SearchInputs {
 pub enum SearchQuery {
     Text {
         search: Arc<AhoCorasick<usize>>,
+        replacement: Option<String>,
         whole_word: bool,
         case_sensitive: bool,
         inner: SearchInputs,
@@ -42,7 +44,7 @@ pub enum SearchQuery {
 
     Regex {
         regex: Regex,
-
+        replacement: Option<String>,
         multiline: bool,
         whole_word: bool,
         case_sensitive: bool,
@@ -95,6 +97,7 @@ impl SearchQuery {
         };
         Self::Text {
             search: Arc::new(search),
+            replacement: None,
             whole_word,
             case_sensitive,
             inner,
@@ -130,6 +133,7 @@ impl SearchQuery {
         };
         Ok(Self::Regex {
             regex,
+            replacement: None,
             multiline,
             whole_word,
             case_sensitive,
@@ -156,7 +160,21 @@ impl SearchQuery {
             ))
         }
     }
-
+    pub fn with_replacement(mut self, new_replacement: Option<String>) -> Self {
+        match self {
+            Self::Text {
+                ref mut replacement,
+                ..
+            }
+            | Self::Regex {
+                ref mut replacement,
+                ..
+            } => {
+                *replacement = new_replacement;
+                self
+            }
+        }
+    }
     pub fn to_proto(&self, project_id: u64) -> proto::SearchProject {
         proto::SearchProject {
             project_id,
@@ -214,7 +232,20 @@ impl SearchQuery {
             }
         }
     }
-
+    pub fn replacement<'a>(&self, text: &'a str) -> Option<Cow<'a, str>> {
+        match self {
+            SearchQuery::Text { replacement, .. } => replacement.clone().map(Cow::from),
+            SearchQuery::Regex {
+                regex, replacement, ..
+            } => {
+                if let Some(replacement) = replacement {
+                    Some(regex.replace(text, replacement))
+                } else {
+                    None
+                }
+            }
+        }
+    }
     pub async fn search(
         &self,
         buffer: &BufferSnapshot,

@@ -62,12 +62,12 @@ impl gpui::View for TextView {
             },
         )
         .with_highlights(vec![(17..26, underline), (34..40, underline)])
-        .with_custom_runs(vec![(17..26), (34..40)], move |ix, bounds, scene, _| {
-            scene.push_cursor_region(CursorRegion {
+        .with_custom_runs(vec![(17..26), (34..40)], move |ix, bounds, cx| {
+            cx.scene().push_cursor_region(CursorRegion {
                 bounds,
                 style: CursorStyle::PointingHand,
             });
-            scene.push_mouse_region(
+            cx.scene().push_mouse_region(
                 MouseRegion::new::<Self>(view_id, ix, bounds).on_click::<Self, _>(
                     MouseButton::Left,
                     move |_, _, _| {

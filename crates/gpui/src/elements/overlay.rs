@@ -3,8 +3,7 @@ use std::ops::Range;
 use crate::{
     geometry::{rect::RectF, vector::Vector2F},
     json::ToJson,
-    AnyElement, Axis, Element, LayoutContext, MouseRegion, PaintContext, SceneBuilder,
-    SizeConstraint, ViewContext,
+    AnyElement, Axis, Element, MouseRegion, SizeConstraint, ViewContext,
 };
 use serde_json::json;
 
@@ -125,7 +124,7 @@ impl<V: 'static> Element<V> for Overlay<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let constraint = if self.anchor_position.is_some() {
             SizeConstraint::new(Vector2F::zero(), cx.window_size())
@@ -138,12 +137,11 @@ impl<V: 'static> Element<V> for Overlay<V> {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         _: RectF,
         size: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) {
         let (anchor_position, mut bounds) = match self.position_mode {
             OverlayPositionMode::Window => {
@@ -213,25 +211,23 @@ impl<V: 'static> Element<V> for Overlay<V> {
             OverlayFitMode::None => {}
         }
 
-        scene.paint_stacking_context(None, self.z_index, |scene| {
-            if self.hoverable {
-                enum OverlayHoverCapture {}
-                // Block hovers in lower stacking contexts
-                scene.push_mouse_region(MouseRegion::new::<OverlayHoverCapture>(
-                    cx.view_id(),
-                    cx.view_id(),
-                    bounds,
+        cx.scene().push_stacking_context(None, self.z_index);
+        if self.hoverable {
+            enum OverlayHoverCapture {}
+            // Block hovers in lower stacking contexts
+            let view_id = cx.view_id();
+            cx.scene()
+                .push_mouse_region(MouseRegion::new::<OverlayHoverCapture>(
+                    view_id, view_id, bounds,
                 ));
-            }
-
-            self.child.paint(
-                scene,
-                bounds.origin(),
-                RectF::new(Vector2F::zero(), cx.window_size()),
-                view,
-                cx,
-            );
-        });
+        }
+        self.child.paint(
+            bounds.origin(),
+            RectF::new(Vector2F::zero(), cx.window_size()),
+            view,
+            cx,
+        );
+        cx.scene().pop_stacking_context();
     }
 
     fn rect_for_text_range(

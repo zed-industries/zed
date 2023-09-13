@@ -2,19 +2,16 @@ use crate::{
     history::SearchHistory,
     mode::{next_mode, SearchMode, Side},
     search_bar::{render_nav_button, render_search_mode_button},
-    CycleMode, NextHistoryQuery, PreviousHistoryQuery, SearchOptions, SelectAllMatches,
-    SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
+    CycleMode, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
+    SelectAllMatches, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleReplace,
+    ToggleWholeWord,
 };
 use collections::HashMap;
 use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{
-    actions,
-    elements::*,
-    impl_actions,
-    platform::{CursorStyle, MouseButton},
-    Action, AnyViewHandle, AppContext, Entity, Subscription, Task, View, ViewContext, ViewHandle,
-    WindowContext,
+    actions, elements::*, impl_actions, Action, AnyViewHandle, AppContext, Entity, Subscription,
+    Task, View, ViewContext, ViewHandle, WindowContext,
 };
 use project::search::SearchQuery;
 use serde::Deserialize;
@@ -54,6 +51,11 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(BufferSearchBar::previous_history_query);
     cx.add_action(BufferSearchBar::cycle_mode);
     cx.add_action(BufferSearchBar::cycle_mode_on_pane);
+    cx.add_action(BufferSearchBar::replace_all);
+    cx.add_action(BufferSearchBar::replace_next);
+    cx.add_action(BufferSearchBar::replace_all_on_pane);
+    cx.add_action(BufferSearchBar::replace_next_on_pane);
+    cx.add_action(BufferSearchBar::toggle_replace);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
     add_toggle_option_action::<ToggleWholeWord>(SearchOptions::WHOLE_WORD, cx);
 }
@@ -73,9 +75,11 @@ fn add_toggle_option_action<A: Action>(option: SearchOptions, cx: &mut AppContex
 
 pub struct BufferSearchBar {
     query_editor: ViewHandle<Editor>,
+    replacement_editor: ViewHandle<Editor>,
     active_searchable_item: Option<Box<dyn SearchableItemHandle>>,
     active_match_index: Option<usize>,
     active_searchable_item_subscription: Option<Subscription>,
+    active_search: Option<Arc<SearchQuery>>,
     searchable_items_with_matches:
         HashMap<Box<dyn WeakSearchableItemHandle>, Vec<Box<dyn Any + Send>>>,
     pending_search: Option<Task<()>>,
@@ -85,6 +89,7 @@ pub struct BufferSearchBar {
     dismissed: bool,
     search_history: SearchHistory,
     current_mode: SearchMode,
+    replace_is_active: bool,
 }
 
 impl Entity for BufferSearchBar {
@@ -94,6 +99,21 @@ impl Entity for BufferSearchBar {
 impl View for BufferSearchBar {
     fn ui_name() -> &'static str {
         "BufferSearchBar"
+    }
+
+    fn update_keymap_context(
+        &self,
+        keymap: &mut gpui::keymap_matcher::KeymapContext,
+        cx: &AppContext,
+    ) {
+        Self::reset_to_default_keymap_context(keymap);
+        let in_replace = self
+            .replacement_editor
+            .read_with(cx, |_, cx| cx.is_self_focused())
+            .unwrap_or(false);
+        if in_replace {
+            keymap.add_identifier("in_replace");
+        }
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
@@ -156,6 +176,9 @@ impl View for BufferSearchBar {
         self.query_editor.update(cx, |editor, cx| {
             editor.set_placeholder_text(new_placeholder_text, cx);
         });
+        self.replacement_editor.update(cx, |editor, cx| {
+            editor.set_placeholder_text("Replace with...", cx);
+        });
         let search_button_for_mode = |mode, side, cx: &mut ViewContext<BufferSearchBar>| {
             let is_active = self.current_mode == mode;
 
@@ -212,7 +235,6 @@ impl View for BufferSearchBar {
                 cx,
             )
         };
-
         let query_column = Flex::row()
             .with_child(
                 Svg::for_style(theme.search.editor_icon.clone().icon)
@@ -243,7 +265,57 @@ impl View for BufferSearchBar {
             .with_max_width(theme.search.editor.max_width)
             .with_height(theme.search.search_bar_row_height)
             .flex(1., false);
+        let should_show_replace_input = self.replace_is_active && supported_options.replacement;
 
+        let replacement = should_show_replace_input.then(|| {
+            Flex::row()
+                .with_child(
+                    Svg::for_style(theme.search.replace_icon.clone().icon)
+                        .contained()
+                        .with_style(theme.search.replace_icon.clone().container),
+                )
+                .with_child(ChildView::new(&self.replacement_editor, cx).flex(1., true))
+                .align_children_center()
+                .flex(1., true)
+                .contained()
+                .with_style(query_container_style)
+                .constrained()
+                .with_min_width(theme.search.editor.min_width)
+                .with_max_width(theme.search.editor.max_width)
+                .with_height(theme.search.search_bar_row_height)
+                .flex(1., false)
+        });
+        let replace_all = should_show_replace_input.then(|| {
+            super::replace_action(
+                ReplaceAll,
+                "Replace all",
+                "icons/replace_all.svg",
+                theme.tooltip.clone(),
+                theme.search.action_button.clone(),
+            )
+        });
+        let replace_next = should_show_replace_input.then(|| {
+            super::replace_action(
+                ReplaceNext,
+                "Replace next",
+                "icons/replace_next.svg",
+                theme.tooltip.clone(),
+                theme.search.action_button.clone(),
+            )
+        });
+        let switches_column = supported_options.replacement.then(|| {
+            Flex::row()
+                .align_children_center()
+                .with_child(super::toggle_replace_button(
+                    self.replace_is_active,
+                    theme.tooltip.clone(),
+                    theme.search.option_button_component.clone(),
+                ))
+                .constrained()
+                .with_height(theme.search.search_bar_row_height)
+                .contained()
+                .with_style(theme.search.option_button_group)
+        });
         let mode_column = Flex::row()
             .with_child(search_button_for_mode(
                 SearchMode::Text,
@@ -261,7 +333,10 @@ impl View for BufferSearchBar {
             .with_height(theme.search.search_bar_row_height);
 
         let nav_column = Flex::row()
-            .with_child(self.render_action_button("all", cx))
+            .align_children_center()
+            .with_children(replace_next)
+            .with_children(replace_all)
+            .with_child(self.render_action_button("icons/select-all.svg", cx))
             .with_child(Flex::row().with_children(match_count))
             .with_child(nav_button_for_direction("<", Direction::Prev, cx))
             .with_child(nav_button_for_direction(">", Direction::Next, cx))
@@ -271,6 +346,8 @@ impl View for BufferSearchBar {
 
         Flex::row()
             .with_child(query_column)
+            .with_children(switches_column)
+            .with_children(replacement)
             .with_child(mode_column)
             .with_child(nav_column)
             .contained()
@@ -345,9 +422,18 @@ impl BufferSearchBar {
         });
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
-
+        let replacement_editor = cx.add_view(|cx| {
+            Editor::auto_height(
+                2,
+                Some(Arc::new(|theme| theme.search.editor.input.clone())),
+                cx,
+            )
+        });
+        // cx.subscribe(&replacement_editor, Self::on_query_editor_event)
+        //     .detach();
         Self {
             query_editor,
+            replacement_editor,
             active_searchable_item: None,
             active_searchable_item_subscription: None,
             active_match_index: None,
@@ -359,6 +445,8 @@ impl BufferSearchBar {
             dismissed: true,
             search_history: SearchHistory::default(),
             current_mode: SearchMode::default(),
+            active_search: None,
+            replace_is_active: false,
         }
     }
 
@@ -441,7 +529,9 @@ impl BufferSearchBar {
     pub fn query(&self, cx: &WindowContext) -> String {
         self.query_editor.read(cx).text(cx)
     }
-
+    pub fn replacement(&self, cx: &WindowContext) -> String {
+        self.replacement_editor.read(cx).text(cx)
+    }
     pub fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> Option<String> {
         self.active_searchable_item
             .as_ref()
@@ -477,37 +567,16 @@ impl BufferSearchBar {
     ) -> AnyElement<Self> {
         let tooltip = "Select All Matches";
         let tooltip_style = theme::current(cx).tooltip.clone();
-        let action_type_id = 0_usize;
-        let has_matches = self.active_match_index.is_some();
-        let cursor_style = if has_matches {
-            CursorStyle::PointingHand
-        } else {
-            CursorStyle::default()
-        };
-        enum ActionButton {}
-        MouseEventHandler::new::<ActionButton, _>(action_type_id, cx, |state, cx| {
-            let theme = theme::current(cx);
-            let style = theme
-                .search
-                .action_button
-                .in_state(has_matches)
-                .style_for(state);
-            Label::new(icon, style.text.clone())
-                .aligned()
-                .contained()
-                .with_style(style.container)
-        })
-        .on_click(MouseButton::Left, move |_, this, cx| {
-            this.select_all_matches(&SelectAllMatches, cx)
-        })
-        .with_cursor_style(cursor_style)
-        .with_tooltip::<ActionButton>(
-            action_type_id,
-            tooltip.to_string(),
-            Some(Box::new(SelectAllMatches)),
-            tooltip_style,
-            cx,
-        )
+
+        let theme = theme::current(cx);
+        let style = theme.search.action_button.clone();
+
+        gpui::elements::Component::element(SafeStylable::with_style(
+            theme::components::action_button::Button::action(SelectAllMatches)
+                .with_tooltip(tooltip, tooltip_style)
+                .with_contents(theme::components::svg::Svg::new(icon)),
+            style,
+        ))
         .into_any()
     }
 
@@ -688,6 +757,7 @@ impl BufferSearchBar {
         let (done_tx, done_rx) = oneshot::channel();
         let query = self.query(cx);
         self.pending_search.take();
+
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
             if query.is_empty() {
                 self.active_match_index.take();
@@ -695,7 +765,7 @@ impl BufferSearchBar {
                 let _ = done_tx.send(());
                 cx.notify();
             } else {
-                let query = if self.current_mode == SearchMode::Regex {
+                let query: Arc<_> = if self.current_mode == SearchMode::Regex {
                     match SearchQuery::regex(
                         query,
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
@@ -703,7 +773,8 @@ impl BufferSearchBar {
                         Vec::new(),
                         Vec::new(),
                     ) {
-                        Ok(query) => query,
+                        Ok(query) => query
+                            .with_replacement(Some(self.replacement(cx)).filter(|s| !s.is_empty())),
                         Err(_) => {
                             self.query_contains_error = true;
                             cx.notify();
@@ -718,8 +789,10 @@ impl BufferSearchBar {
                         Vec::new(),
                         Vec::new(),
                     )
-                };
-
+                    .with_replacement(Some(self.replacement(cx)).filter(|s| !s.is_empty()))
+                }
+                .into();
+                self.active_search = Some(query.clone());
                 let query_text = query.as_str().to_string();
                 let matches = active_searchable_item.find_matches(query, cx);
 
@@ -808,6 +881,64 @@ impl BufferSearchBar {
         }
         if should_propagate {
             cx.propagate_action();
+        }
+    }
+    fn toggle_replace(&mut self, _: &ToggleReplace, cx: &mut ViewContext<Self>) {
+        if let Some(_) = &self.active_searchable_item {
+            self.replace_is_active = !self.replace_is_active;
+            cx.notify();
+        }
+    }
+    fn replace_next(&mut self, _: &ReplaceNext, cx: &mut ViewContext<Self>) {
+        if !self.dismissed && self.active_search.is_some() {
+            if let Some(searchable_item) = self.active_searchable_item.as_ref() {
+                if let Some(query) = self.active_search.as_ref() {
+                    if let Some(matches) = self
+                        .searchable_items_with_matches
+                        .get(&searchable_item.downgrade())
+                    {
+                        if let Some(active_index) = self.active_match_index {
+                            let query = query.as_ref().clone().with_replacement(
+                                Some(self.replacement(cx)).filter(|rep| !rep.is_empty()),
+                            );
+                            searchable_item.replace(&matches[active_index], &query, cx);
+                        }
+
+                        self.focus_editor(&FocusEditor, cx);
+                    }
+                }
+            }
+        }
+    }
+    fn replace_all(&mut self, _: &ReplaceAll, cx: &mut ViewContext<Self>) {
+        if !self.dismissed && self.active_search.is_some() {
+            if let Some(searchable_item) = self.active_searchable_item.as_ref() {
+                if let Some(query) = self.active_search.as_ref() {
+                    if let Some(matches) = self
+                        .searchable_items_with_matches
+                        .get(&searchable_item.downgrade())
+                    {
+                        let query = query.as_ref().clone().with_replacement(
+                            Some(self.replacement(cx)).filter(|rep| !rep.is_empty()),
+                        );
+                        for m in matches {
+                            searchable_item.replace(m, &query, cx);
+                        }
+
+                        self.focus_editor(&FocusEditor, cx);
+                    }
+                }
+            }
+        }
+    }
+    fn replace_next_on_pane(pane: &mut Pane, action: &ReplaceNext, cx: &mut ViewContext<Pane>) {
+        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
+            search_bar.update(cx, |bar, cx| bar.replace_next(action, cx));
+        }
+    }
+    fn replace_all_on_pane(pane: &mut Pane, action: &ReplaceAll, cx: &mut ViewContext<Pane>) {
+        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
+            search_bar.update(cx, |bar, cx| bar.replace_all(action, cx));
         }
     }
 }
@@ -1538,5 +1669,110 @@ mod tests {
             assert_eq!(search_bar.query(cx), "");
             assert_eq!(search_bar.search_options, SearchOptions::NONE);
         });
+    }
+    #[gpui::test]
+    async fn test_replace_simple(cx: &mut TestAppContext) {
+        let (editor, search_bar) = init_test(cx);
+
+        search_bar
+            .update(cx, |search_bar, cx| {
+                search_bar.search("expression", None, cx)
+            })
+            .await
+            .unwrap();
+
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.replacement_editor.update(cx, |editor, cx| {
+                // We use $1 here as initially we should be in Text mode, where `$1` should be treated literally.
+                editor.set_text("expr$1", cx);
+            });
+            search_bar.replace_all(&ReplaceAll, cx)
+        });
+        assert_eq!(
+            editor.read_with(cx, |this, cx| { this.text(cx) }),
+            r#"
+        A regular expr$1 (shortened as regex or regexp;[1] also referred to as
+        rational expr$1[2][3]) is a sequence of characters that specifies a search
+        pattern in text. Usually such patterns are used by string-searching algorithms
+        for "find" or "find and replace" operations on strings, or for input validation.
+        "#
+            .unindent()
+        );
+
+        // Search for word boundaries and replace just a single one.
+        search_bar
+            .update(cx, |search_bar, cx| {
+                search_bar.search("or", Some(SearchOptions::WHOLE_WORD), cx)
+            })
+            .await
+            .unwrap();
+
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.replacement_editor.update(cx, |editor, cx| {
+                editor.set_text("banana", cx);
+            });
+            search_bar.replace_next(&ReplaceNext, cx)
+        });
+        // Notice how the first or in the text (shORtened) is not replaced. Neither are the remaining hits of `or` in the text.
+        assert_eq!(
+            editor.read_with(cx, |this, cx| { this.text(cx) }),
+            r#"
+        A regular expr$1 (shortened as regex banana regexp;[1] also referred to as
+        rational expr$1[2][3]) is a sequence of characters that specifies a search
+        pattern in text. Usually such patterns are used by string-searching algorithms
+        for "find" or "find and replace" operations on strings, or for input validation.
+        "#
+            .unindent()
+        );
+        // Let's turn on regex mode.
+        search_bar
+            .update(cx, |search_bar, cx| {
+                search_bar.activate_search_mode(SearchMode::Regex, cx);
+                search_bar.search("\\[([^\\]]+)\\]", None, cx)
+            })
+            .await
+            .unwrap();
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.replacement_editor.update(cx, |editor, cx| {
+                editor.set_text("${1}number", cx);
+            });
+            search_bar.replace_all(&ReplaceAll, cx)
+        });
+        assert_eq!(
+            editor.read_with(cx, |this, cx| { this.text(cx) }),
+            r#"
+        A regular expr$1 (shortened as regex banana regexp;1number also referred to as
+        rational expr$12number3number) is a sequence of characters that specifies a search
+        pattern in text. Usually such patterns are used by string-searching algorithms
+        for "find" or "find and replace" operations on strings, or for input validation.
+        "#
+            .unindent()
+        );
+        // Now with a whole-word twist.
+        search_bar
+            .update(cx, |search_bar, cx| {
+                search_bar.activate_search_mode(SearchMode::Regex, cx);
+                search_bar.search("a\\w+s", Some(SearchOptions::WHOLE_WORD), cx)
+            })
+            .await
+            .unwrap();
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.replacement_editor.update(cx, |editor, cx| {
+                editor.set_text("things", cx);
+            });
+            search_bar.replace_all(&ReplaceAll, cx)
+        });
+        // The only word affected by this edit should be `algorithms`, even though there's a bunch
+        // of words in this text that would match this regex if not for WHOLE_WORD.
+        assert_eq!(
+            editor.read_with(cx, |this, cx| { this.text(cx) }),
+            r#"
+        A regular expr$1 (shortened as regex banana regexp;1number also referred to as
+        rational expr$12number3number) is a sequence of characters that specifies a search
+        pattern in text. Usually such patterns are used by string-searching things
+        for "find" or "find and replace" operations on strings, or for input validation.
+        "#
+            .unindent()
+        );
     }
 }

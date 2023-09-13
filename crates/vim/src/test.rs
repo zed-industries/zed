@@ -287,6 +287,55 @@ async fn test_word_characters(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_join_lines(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state(indoc! {"
+      ˇone
+      two
+      three
+      four
+      five
+      six
+      "})
+        .await;
+    cx.simulate_shared_keystrokes(["shift-j"]).await;
+    cx.assert_shared_state(indoc! {"
+          oneˇ two
+          three
+          four
+          five
+          six
+          "})
+        .await;
+    cx.simulate_shared_keystrokes(["3", "shift-j"]).await;
+    cx.assert_shared_state(indoc! {"
+          one two threeˇ four
+          five
+          six
+          "})
+        .await;
+
+    cx.set_shared_state(indoc! {"
+      ˇone
+      two
+      three
+      four
+      five
+      six
+      "})
+        .await;
+    cx.simulate_shared_keystrokes(["j", "v", "3", "j", "shift-j"])
+        .await;
+    cx.assert_shared_state(indoc! {"
+      one
+      two three fourˇ five
+      six
+      "})
+        .await;
+}
+
+#[gpui::test]
 async fn test_wrapped_lines(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -449,6 +498,13 @@ async fn test_wrapped_lines(cx: &mut gpui::TestAppContext) {
         fourteen char
     "})
         .await;
+    cx.simulate_shared_keystrokes(["j", "shift-f", "e", "f", "r"])
+        .await;
+    cx.assert_shared_state(indoc! {"
+        fourteen•
+        fourteen chaˇr
+    "})
+        .await;
 }
 
 #[gpui::test]
@@ -516,5 +572,49 @@ async fn test_folds(cx: &mut gpui::TestAppContext) {
           bazp()
         }
     "})
+        .await;
+}
+
+#[gpui::test]
+async fn test_clear_counts(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state(indoc! {"
+        The quick brown
+        fox juˇmps over
+        the lazy dog"})
+        .await;
+
+    cx.simulate_shared_keystrokes(["4", "escape", "3", "d", "l"])
+        .await;
+    cx.assert_shared_state(indoc! {"
+        The quick brown
+        fox juˇ over
+        the lazy dog"})
+        .await;
+}
+
+#[gpui::test]
+async fn test_zero(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state(indoc! {"
+        The quˇick brown
+        fox jumps over
+        the lazy dog"})
+        .await;
+
+    cx.simulate_shared_keystrokes(["0"]).await;
+    cx.assert_shared_state(indoc! {"
+        ˇThe quick brown
+        fox jumps over
+        the lazy dog"})
+        .await;
+
+    cx.simulate_shared_keystrokes(["1", "0", "l"]).await;
+    cx.assert_shared_state(indoc! {"
+        The quick ˇbrown
+        fox jumps over
+        the lazy dog"})
         .await;
 }

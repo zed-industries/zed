@@ -4,8 +4,7 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     json::json,
-    AnyElement, Element, LayoutContext, MouseRegion, PaintContext, SceneBuilder, SizeConstraint,
-    ViewContext,
+    AnyElement, Element, MouseRegion, SizeConstraint, ViewContext,
 };
 use std::{cell::RefCell, collections::VecDeque, fmt::Debug, ops::Range, rc::Rc};
 use sum_tree::{Bias, SumTree};
@@ -100,7 +99,7 @@ impl<V: 'static> Element<V> for List<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         let state = &mut *self.state.0.borrow_mut();
         let size = constraint.max;
@@ -108,7 +107,7 @@ impl<V: 'static> Element<V> for List<V> {
         item_constraint.min.set_y(0.);
         item_constraint.max.set_y(f32::INFINITY);
 
-        if cx.refreshing || state.last_layout_width != Some(size.x()) {
+        if cx.refreshing() || state.last_layout_width != Some(size.x()) {
             state.rendered_range = 0..0;
             state.items = SumTree::from_iter(
                 (0..state.items.summary().count).map(|_| ListItem::Unrendered),
@@ -250,17 +249,17 @@ impl<V: 'static> Element<V> for List<V> {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         scroll_top: &mut ListOffset,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) {
         let visible_bounds = visible_bounds.intersection(bounds).unwrap_or_default();
-        scene.push_layer(Some(visible_bounds));
-        scene.push_mouse_region(
-            MouseRegion::new::<Self>(cx.view_id(), 0, bounds).on_scroll({
+        cx.scene().push_layer(Some(visible_bounds));
+        let view_id = cx.view_id();
+        cx.scene()
+            .push_mouse_region(MouseRegion::new::<Self>(view_id, 0, bounds).on_scroll({
                 let state = self.state.clone();
                 let height = bounds.height();
                 let scroll_top = scroll_top.clone();
@@ -274,17 +273,14 @@ impl<V: 'static> Element<V> for List<V> {
                         cx,
                     )
                 }
-            }),
-        );
+            }));
 
         let state = &mut *self.state.0.borrow_mut();
         for (element, origin) in state.visible_elements(bounds, scroll_top) {
-            element
-                .borrow_mut()
-                .paint(scene, origin, visible_bounds, view, cx);
+            element.borrow_mut().paint(origin, visible_bounds, view, cx);
         }
 
-        scene.pop_layer();
+        cx.scene().pop_layer();
     }
 
     fn rect_for_text_range(
@@ -453,7 +449,7 @@ impl<V: 'static> StateInner<V> {
         existing_element: Option<&ListItem<V>>,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Option<Rc<RefCell<AnyElement<V>>>> {
         if let Some(ListItem::Rendered(element)) = existing_element {
             Some(element.clone())
@@ -647,7 +643,7 @@ impl<'a> sum_tree::SeekTarget<'a, ListItemSummary, ListItemSummary> for Height {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{elements::Empty, geometry::vector::vec2f, Entity, PaintContext};
+    use crate::{elements::Empty, geometry::vector::vec2f, Entity};
     use rand::prelude::*;
     use std::env;
 
@@ -666,15 +662,7 @@ mod tests {
             });
 
             let mut list = List::new(state.clone());
-            let mut new_parents = Default::default();
-            let mut notify_views_if_parents_change = Default::default();
-            let mut layout_cx = LayoutContext::new(
-                cx,
-                &mut new_parents,
-                &mut notify_views_if_parents_change,
-                false,
-            );
-            let (size, _) = list.layout(constraint, &mut view, &mut layout_cx);
+            let (size, _) = list.layout(constraint, &mut view, cx);
             assert_eq!(size, vec2f(100., 40.));
             assert_eq!(
                 state.0.borrow().items.summary().clone(),
@@ -698,13 +686,7 @@ mod tests {
                 cx,
             );
 
-            let mut layout_cx = LayoutContext::new(
-                cx,
-                &mut new_parents,
-                &mut notify_views_if_parents_change,
-                false,
-            );
-            let (_, logical_scroll_top) = list.layout(constraint, &mut view, &mut layout_cx);
+            let (_, logical_scroll_top) = list.layout(constraint, &mut view, cx);
             assert_eq!(
                 logical_scroll_top,
                 ListOffset {
@@ -728,13 +710,7 @@ mod tests {
                 }
             );
 
-            let mut layout_cx = LayoutContext::new(
-                cx,
-                &mut new_parents,
-                &mut notify_views_if_parents_change,
-                false,
-            );
-            let (size, logical_scroll_top) = list.layout(constraint, &mut view, &mut layout_cx);
+            let (size, logical_scroll_top) = list.layout(constraint, &mut view, cx);
             assert_eq!(size, vec2f(100., 40.));
             assert_eq!(
                 state.0.borrow().items.summary().clone(),
@@ -852,18 +828,10 @@ mod tests {
 
                 let mut list = List::new(state.clone());
                 let window_size = vec2f(width, height);
-                let mut new_parents = Default::default();
-                let mut notify_views_if_parents_change = Default::default();
-                let mut layout_cx = LayoutContext::new(
-                    cx,
-                    &mut new_parents,
-                    &mut notify_views_if_parents_change,
-                    false,
-                );
                 let (size, logical_scroll_top) = list.layout(
                     SizeConstraint::new(vec2f(0., 0.), window_size),
                     &mut view,
-                    &mut layout_cx,
+                    cx,
                 );
                 assert_eq!(size, window_size);
                 last_logical_scroll_top = Some(logical_scroll_top);
@@ -976,20 +944,12 @@ mod tests {
             &mut self,
             _: SizeConstraint,
             _: &mut V,
-            _: &mut LayoutContext<V>,
+            _: &mut ViewContext<V>,
         ) -> (Vector2F, ()) {
             (self.size, ())
         }
 
-        fn paint(
-            &mut self,
-            _: &mut SceneBuilder,
-            _: RectF,
-            _: RectF,
-            _: &mut (),
-            _: &mut V,
-            _: &mut PaintContext<V>,
-        ) {
+        fn paint(&mut self, _: RectF, _: RectF, _: &mut (), _: &mut V, _: &mut ViewContext<V>) {
             unimplemented!()
         }
 

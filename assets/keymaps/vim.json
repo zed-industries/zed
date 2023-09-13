@@ -32,6 +32,8 @@
       "right": "vim::Right",
       "$": "vim::EndOfLine",
       "^": "vim::FirstNonWhitespace",
+      "_": "vim::StartOfLineDownward",
+      "g _": "vim::EndOfLineDownward",
       "shift-g": "vim::EndOfDocument",
       "w": "vim::NextWordStart",
       "{": "vim::StartOfParagraph",
@@ -198,6 +200,18 @@
       "z c": "editor::Fold",
       "z o": "editor::UnfoldLines",
       "z f": "editor::FoldSelectedRanges",
+      "shift-z shift-q": [
+        "pane::CloseActiveItem",
+        {
+          "saveBehavior": "dontSave"
+        }
+      ],
+      "shift-z shift-z": [
+        "pane::CloseActiveItem",
+        {
+          "saveBehavior": "promptOnConflict"
+        }
+      ],
       // Count support
       "1": [
         "vim::Number",
@@ -314,8 +328,9 @@
     }
   },
   {
-    "context": "Editor && vim_mode == normal && (vim_operator == none || vim_operator == n) && !VimWaiting",
+    "context": "Editor && vim_mode == normal && vim_operator == none && !VimWaiting",
     "bindings": {
+      ".": "vim::Repeat",
       "c": [
         "vim::PushOperator",
         "Change"
@@ -326,15 +341,12 @@
         "Delete"
       ],
       "shift-d": "vim::DeleteToEndOfLine",
-      "shift-j": "editor::JoinLines",
+      "shift-j": "vim::JoinLines",
       "y": [
         "vim::PushOperator",
         "Yank"
       ],
-      "i": [
-        "vim::SwitchMode",
-        "Insert"
-      ],
+      "i": "vim::InsertBefore",
       "shift-i": "vim::InsertFirstNonWhitespace",
       "a": "vim::InsertAfter",
       "shift-a": "vim::InsertEndOfLine",
@@ -379,7 +391,7 @@
     }
   },
   {
-    "context": "Editor && vim_operator == n",
+    "context": "Editor && VimCount",
     "bindings": {
       "0": [
         "vim::Number",
@@ -448,13 +460,12 @@
       ],
       "s": "vim::Substitute",
       "shift-s": "vim::SubstituteLine",
+      "shift-r": "vim::SubstituteLine",
       "c": "vim::Substitute",
       "~": "vim::ChangeCase",
-      "shift-i": [
-        "vim::SwitchMode",
-        "Insert"
-      ],
+      "shift-i": "vim::InsertBefore",
       "shift-a": "vim::InsertAfter",
+      "shift-j": "vim::JoinLines",
       "r": [
         "vim::PushOperator",
         "Replace"
@@ -488,7 +499,7 @@
             "around": true
           }
         }
-      ],
+      ]
     }
   },
   {

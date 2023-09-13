@@ -2,6 +2,7 @@ mod case;
 mod change;
 mod delete;
 mod paste;
+pub(crate) mod repeat;
 mod scroll;
 mod search;
 pub mod substitute;
@@ -34,6 +35,7 @@ actions!(
     vim,
     [
         InsertAfter,
+        InsertBefore,
         InsertFirstNonWhitespace,
         InsertEndOfLine,
         InsertLineAbove,
@@ -44,33 +46,43 @@ actions!(
         DeleteToEndOfLine,
         Yank,
         ChangeCase,
+        JoinLines,
     ]
 );
 
 pub fn init(cx: &mut AppContext) {
+    paste::init(cx);
+    repeat::init(cx);
+    scroll::init(cx);
+    search::init(cx);
+    substitute::init(cx);
+
     cx.add_action(insert_after);
+    cx.add_action(insert_before);
     cx.add_action(insert_first_non_whitespace);
     cx.add_action(insert_end_of_line);
     cx.add_action(insert_line_above);
     cx.add_action(insert_line_below);
     cx.add_action(change_case);
-    substitute::init(cx);
-    search::init(cx);
+
     cx.add_action(|_: &mut Workspace, _: &DeleteLeft, cx| {
         Vim::update(cx, |vim, cx| {
-            let times = vim.pop_number_operator(cx);
+            vim.record_current_action(cx);
+            let times = vim.take_count(cx);
             delete_motion(vim, Motion::Left, times, cx);
         })
     });
     cx.add_action(|_: &mut Workspace, _: &DeleteRight, cx| {
         Vim::update(cx, |vim, cx| {
-            let times = vim.pop_number_operator(cx);
+            vim.record_current_action(cx);
+            let times = vim.take_count(cx);
             delete_motion(vim, Motion::Right, times, cx);
         })
     });
     cx.add_action(|_: &mut Workspace, _: &ChangeToEndOfLine, cx| {
         Vim::update(cx, |vim, cx| {
-            let times = vim.pop_number_operator(cx);
+            vim.start_recording(cx);
+            let times = vim.take_count(cx);
             change_motion(
                 vim,
                 Motion::EndOfLine {
@@ -83,7 +95,8 @@ pub fn init(cx: &mut AppContext) {
     });
     cx.add_action(|_: &mut Workspace, _: &DeleteToEndOfLine, cx| {
         Vim::update(cx, |vim, cx| {
-            let times = vim.pop_number_operator(cx);
+            vim.record_current_action(cx);
+            let times = vim.take_count(cx);
             delete_motion(
                 vim,
                 Motion::EndOfLine {
@@ -94,8 +107,26 @@ pub fn init(cx: &mut AppContext) {
             );
         })
     });
-    scroll::init(cx);
-    paste::init(cx);
+    cx.add_action(|_: &mut Workspace, _: &JoinLines, cx| {
+        Vim::update(cx, |vim, cx| {
+            vim.record_current_action(cx);
+            let mut times = vim.take_count(cx).unwrap_or(1);
+            if vim.state().mode.is_visual() {
+                times = 1;
+            } else if times > 1 {
+                // 2J joins two lines together (same as J or 1J)
+                times -= 1;
+            }
+
+            vim.update_active_editor(cx, |editor, cx| {
+                editor.transact(cx, |editor, cx| {
+                    for _ in 0..times {
+                        editor.join_lines(&Default::default(), cx)
+                    }
+                })
+            })
+        })
+    })
 }
 
 pub fn normal_motion(
@@ -151,6 +182,7 @@ fn move_cursor(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut Win
 
 fn insert_after(_: &mut Workspace, _: &InsertAfter, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
+        vim.start_recording(cx);
         vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
@@ -162,12 +194,20 @@ fn insert_after(_: &mut Workspace, _: &InsertAfter, cx: &mut ViewContext<Workspa
     });
 }
 
+fn insert_before(_: &mut Workspace, _: &InsertBefore, cx: &mut ViewContext<Workspace>) {
+    Vim::update(cx, |vim, cx| {
+        vim.start_recording(cx);
+        vim.switch_mode(Mode::Insert, false, cx);
+    });
+}
+
 fn insert_first_non_whitespace(
     _: &mut Workspace,
     _: &InsertFirstNonWhitespace,
     cx: &mut ViewContext<Workspace>,
 ) {
     Vim::update(cx, |vim, cx| {
+        vim.start_recording(cx);
         vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
@@ -184,6 +224,7 @@ fn insert_first_non_whitespace(
 
 fn insert_end_of_line(_: &mut Workspace, _: &InsertEndOfLine, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
+        vim.start_recording(cx);
         vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
@@ -197,6 +238,7 @@ fn insert_end_of_line(_: &mut Workspace, _: &InsertEndOfLine, cx: &mut ViewConte
 
 fn insert_line_above(_: &mut Workspace, _: &InsertLineAbove, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
+        vim.start_recording(cx);
         vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
@@ -229,6 +271,7 @@ fn insert_line_above(_: &mut Workspace, _: &InsertLineAbove, cx: &mut ViewContex
 
 fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
+        vim.start_recording(cx);
         vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
@@ -260,6 +303,7 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
 
 pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
+        vim.stop_recording();
         vim.update_active_editor(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
@@ -312,7 +356,7 @@ mod test {
 
     use crate::{
         state::Mode::{self},
-        test::{ExemptionFeatures, NeovimBackedTestContext},
+        test::NeovimBackedTestContext,
     };
 
     #[gpui::test]
@@ -718,20 +762,22 @@ mod test {
 
     #[gpui::test]
     async fn test_dd(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["d", "d"]);
-        cx.assert("ˇ").await;
-        cx.assert("The ˇquick").await;
-        cx.assert_all(indoc! {"
-                The qˇuick
-                brown ˇfox
-                jumps ˇover"})
-            .await;
-        cx.assert_exempted(
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.assert_neovim_compatible("ˇ", ["d", "d"]).await;
+        cx.assert_neovim_compatible("The ˇquick", ["d", "d"]).await;
+        for marked_text in cx.each_marked_position(indoc! {"
+            The qˇuick
+            brown ˇfox
+            jumps ˇover"})
+        {
+            cx.assert_neovim_compatible(&marked_text, ["d", "d"]).await;
+        }
+        cx.assert_neovim_compatible(
             indoc! {"
                 The quick
                 ˇ
                 brown fox"},
-            ExemptionFeatures::DeletionOnEmptyLine,
+            ["d", "d"],
         )
         .await;
     }
@@ -780,6 +826,7 @@ mod test {
     #[gpui::test]
     async fn test_f_and_t(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
+
         for count in 1..=3 {
             let test_case = indoc! {"
                 ˇaaaˇbˇ ˇbˇ   ˇbˇbˇ aˇaaˇbaaa

@@ -10,8 +10,8 @@ use crate::{
         CursorRegion, HandlerSet, MouseClick, MouseClickOut, MouseDown, MouseDownOut, MouseDrag,
         MouseHover, MouseMove, MouseMoveOut, MouseScrollWheel, MouseUp, MouseUpOut,
     },
-    AnyElement, Element, EventContext, LayoutContext, MouseRegion, MouseState, PaintContext,
-    SceneBuilder, SizeConstraint, TypeTag, ViewContext,
+    AnyElement, Element, EventContext, MouseRegion, MouseState, SizeConstraint, TypeTag,
+    ViewContext,
 };
 use serde_json::json;
 use std::ops::Range;
@@ -236,26 +236,21 @@ impl<V: 'static> MouseEventHandler<V> {
         .round_out()
     }
 
-    fn paint_regions(
-        &self,
-        scene: &mut SceneBuilder,
-        bounds: RectF,
-        visible_bounds: RectF,
-        cx: &mut ViewContext<V>,
-    ) {
+    fn paint_regions(&self, bounds: RectF, visible_bounds: RectF, cx: &mut ViewContext<V>) {
         let visible_bounds = visible_bounds.intersection(bounds).unwrap_or_default();
         let hit_bounds = self.hit_bounds(visible_bounds);
 
         if let Some(style) = self.cursor_style {
-            scene.push_cursor_region(CursorRegion {
+            cx.scene().push_cursor_region(CursorRegion {
                 bounds: hit_bounds,
                 style,
             });
         }
-        scene.push_mouse_region(
+        let view_id = cx.view_id();
+        cx.scene().push_mouse_region(
             MouseRegion::from_handlers(
                 self.tag,
-                cx.view_id(),
+                view_id,
                 self.region_id,
                 hit_bounds,
                 self.handlers.clone(),
@@ -275,31 +270,27 @@ impl<V: 'static> Element<V> for MouseEventHandler<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         (self.child.layout(constraint, view, cx), ())
     }
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         if self.above {
-            self.child
-                .paint(scene, bounds.origin(), visible_bounds, view, cx);
-
-            scene.paint_layer(None, |scene| {
-                self.paint_regions(scene, bounds, visible_bounds, cx);
+            self.child.paint(bounds.origin(), visible_bounds, view, cx);
+            cx.paint_layer(None, |cx| {
+                self.paint_regions(bounds, visible_bounds, cx);
             });
         } else {
-            self.paint_regions(scene, bounds, visible_bounds, cx);
-            self.child
-                .paint(scene, bounds.origin(), visible_bounds, view, cx);
+            self.paint_regions(bounds, visible_bounds, cx);
+            self.child.paint(bounds.origin(), visible_bounds, view, cx);
         }
     }
 

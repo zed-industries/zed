@@ -73,14 +73,14 @@ impl View for SharedScreen {
 
         let frame = self.frame.clone();
         MouseEventHandler::new::<Focus, _>(0, cx, |_, cx| {
-            Canvas::new(move |scene, bounds, _, _, _| {
+            Canvas::new(move |bounds, _, _, cx| {
                 if let Some(frame) = frame.clone() {
                     let size = constrain_size_preserving_aspect_ratio(
                         bounds.size(),
                         vec2f(frame.width() as f32, frame.height() as f32),
                     );
                     let origin = bounds.origin() + (bounds.size() / 2.) - size / 2.;
-                    scene.push_surface(gpui::platform::mac::Surface {
+                    cx.scene().push_surface(gpui::platform::mac::Surface {
                         bounds: RectF::new(origin, size),
                         image_buffer: frame.image(),
                     });

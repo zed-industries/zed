@@ -572,7 +572,7 @@ pub struct Editor {
     project: Option<ModelHandle<Project>>,
     focused: bool,
     blink_manager: ModelHandle<BlinkManager>,
-    show_local_selections: bool,
+    pub show_local_selections: bool,
     mode: EditorMode,
     replica_id_mapping: Option<HashMap<ReplicaId, ReplicaId>>,
     show_gutter: bool,
@@ -2273,10 +2273,6 @@ impl Editor {
         if self.read_only {
             return;
         }
-        if !self.input_enabled {
-            cx.emit(Event::InputIgnored { text });
-            return;
-        }
 
         let selections = self.selections.all_adjusted(cx);
         let mut brace_inserted = false;
@@ -3211,17 +3207,30 @@ impl Editor {
             .count();
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
+        let mut range_to_replace: Option<Range<isize>> = None;
         let mut ranges = Vec::new();
         for selection in &selections {
             if snapshot.contains_str_at(selection.start.saturating_sub(lookbehind), &old_text) {
                 let start = selection.start.saturating_sub(lookbehind);
                 let end = selection.end + lookahead;
+                if selection.id == newest_selection.id {
+                    range_to_replace = Some(
+                        ((start + common_prefix_len) as isize - selection.start as isize)
+                            ..(end as isize - selection.start as isize),
+                    );
+                }
                 ranges.push(start + common_prefix_len..end);
             } else {
                 common_prefix_len = 0;
                 ranges.clear();
                 ranges.extend(selections.iter().map(|s| {
                     if s.id == newest_selection.id {
+                        range_to_replace = Some(
+                            old_range.start.to_offset_utf16(&snapshot).0 as isize
+                                - selection.start as isize
+                                ..old_range.end.to_offset_utf16(&snapshot).0 as isize
+                                    - selection.start as isize,
+                        );
                         old_range.clone()
                     } else {
                         s.start..s.end
@@ -3231,6 +3240,11 @@ impl Editor {
             }
         }
         let text = &text[common_prefix_len..];
+
+        cx.emit(Event::InputHandled {
+            utf16_range_to_replace: range_to_replace,
+            text: text.into(),
+        });
 
         self.transact(cx, |this, cx| {
             if let Some(mut snippet) = snippet {
@@ -3689,6 +3703,10 @@ impl Editor {
 
                 self.report_copilot_event(Some(completion.uuid.clone()), true, cx)
             }
+            cx.emit(Event::InputHandled {
+                utf16_range_to_replace: None,
+                text: suggestion.text.to_string().into(),
+            });
             self.insert_with_autoindent_mode(&suggestion.text.to_string(), None, cx);
             cx.notify();
             true
@@ -8437,6 +8455,41 @@ impl Editor {
     pub fn inlay_hint_cache(&self) -> &InlayHintCache {
         &self.inlay_hint_cache
     }
+
+    pub fn replay_insert_event(
+        &mut self,
+        text: &str,
+        relative_utf16_range: Option<Range<isize>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if !self.input_enabled {
+            cx.emit(Event::InputIgnored { text: text.into() });
+            return;
+        }
+        if let Some(relative_utf16_range) = relative_utf16_range {
+            let selections = self.selections.all::<OffsetUtf16>(cx);
+            self.change_selections(None, cx, |s| {
+                let new_ranges = selections.into_iter().map(|range| {
+                    let start = OffsetUtf16(
+                        range
+                            .head()
+                            .0
+                            .saturating_add_signed(relative_utf16_range.start),
+                    );
+                    let end = OffsetUtf16(
+                        range
+                            .head()
+                            .0
+                            .saturating_add_signed(relative_utf16_range.end),
+                    );
+                    start..end
+                });
+                s.select_ranges(new_ranges);
+            });
+        }
+
+        self.handle_input(text, cx);
+    }
 }
 
 fn document_to_inlay_range(
@@ -8523,6 +8576,10 @@ impl Deref for EditorSnapshot {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     InputIgnored {
+        text: Arc<str>,
+    },
+    InputHandled {
+        utf16_range_to_replace: Option<Range<isize>>,
         text: Arc<str>,
     },
     ExcerptsAdded {
@@ -8742,28 +8799,50 @@ impl View for Editor {
         text: &str,
         cx: &mut ViewContext<Self>,
     ) {
-        self.transact(cx, |this, cx| {
-            if this.input_enabled {
-                let new_selected_ranges = if let Some(range_utf16) = range_utf16 {
-                    let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
-                    Some(this.selection_replacement_ranges(range_utf16, cx))
-                } else {
-                    this.marked_text_ranges(cx)
-                };
+        if !self.input_enabled {
+            cx.emit(Event::InputIgnored { text: text.into() });
+            return;
+        }
 
-                if let Some(new_selected_ranges) = new_selected_ranges {
-                    this.change_selections(None, cx, |selections| {
-                        selections.select_ranges(new_selected_ranges)
-                    });
-                }
+        self.transact(cx, |this, cx| {
+            let new_selected_ranges = if let Some(range_utf16) = range_utf16 {
+                let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
+                Some(this.selection_replacement_ranges(range_utf16, cx))
+            } else {
+                this.marked_text_ranges(cx)
+            };
+
+            let range_to_replace = new_selected_ranges.as_ref().and_then(|ranges_to_replace| {
+                let newest_selection_id = this.selections.newest_anchor().id;
+                this.selections
+                    .all::<OffsetUtf16>(cx)
+                    .iter()
+                    .zip(ranges_to_replace.iter())
+                    .find_map(|(selection, range)| {
+                        if selection.id == newest_selection_id {
+                            Some(
+                                (range.start.0 as isize - selection.head().0 as isize)
+                                    ..(range.end.0 as isize - selection.head().0 as isize),
+                            )
+                        } else {
+                            None
+                        }
+                    })
+            });
+
+            cx.emit(Event::InputHandled {
+                utf16_range_to_replace: range_to_replace,
+                text: text.into(),
+            });
+
+            if let Some(new_selected_ranges) = new_selected_ranges {
+                this.change_selections(None, cx, |selections| {
+                    selections.select_ranges(new_selected_ranges)
+                });
             }
 
             this.handle_input(text, cx);
         });
-
-        if !self.input_enabled {
-            return;
-        }
 
         if let Some(transaction) = self.ime_transaction {
             self.buffer.update(cx, |buffer, cx| {
@@ -8782,6 +8861,7 @@ impl View for Editor {
         cx: &mut ViewContext<Self>,
     ) {
         if !self.input_enabled {
+            cx.emit(Event::InputIgnored { text: text.into() });
             return;
         }
 
@@ -8805,6 +8885,29 @@ impl View for Editor {
             } else {
                 None
             };
+
+            let range_to_replace = ranges_to_replace.as_ref().and_then(|ranges_to_replace| {
+                let newest_selection_id = this.selections.newest_anchor().id;
+                this.selections
+                    .all::<OffsetUtf16>(cx)
+                    .iter()
+                    .zip(ranges_to_replace.iter())
+                    .find_map(|(selection, range)| {
+                        if selection.id == newest_selection_id {
+                            Some(
+                                (range.start.0 as isize - selection.head().0 as isize)
+                                    ..(range.end.0 as isize - selection.head().0 as isize),
+                            )
+                        } else {
+                            None
+                        }
+                    })
+            });
+
+            cx.emit(Event::InputHandled {
+                utf16_range_to_replace: range_to_replace,
+                text: text.into(),
+            });
 
             if let Some(ranges) = ranges_to_replace {
                 this.change_selections(None, cx, |s| s.select_ranges(ranges));

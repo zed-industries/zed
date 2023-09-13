@@ -16,3 +16,8 @@
 {"Key":"shift-v"}
 {"Key":"~"}
 {"Get":{"state":"ˇABc\n","mode":"Normal"}}
+{"Put":{"state":"ˇaa\nbb\ncc"}}
+{"Key":"ctrl-v"}
+{"Key":"j"}
+{"Key":"~"}
+{"Get":{"state":"ˇAa\nBb\ncc","mode":"Normal"}}

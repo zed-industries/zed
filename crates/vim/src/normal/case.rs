@@ -7,7 +7,8 @@ use crate::{normal::ChangeCase, state::Mode, Vim};
 
 pub fn change_case(_: &mut Workspace, _: &ChangeCase, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
-        let count = vim.pop_number_operator(cx).unwrap_or(1) as u32;
+        vim.record_current_action(cx);
+        let count = vim.take_count(cx).unwrap_or(1) as u32;
         vim.update_active_editor(cx, |editor, cx| {
             let mut ranges = Vec::new();
             let mut cursor_positions = Vec::new();
@@ -21,9 +22,15 @@ pub fn change_case(_: &mut Workspace, _: &ChangeCase, cx: &mut ViewContext<Works
                         ranges.push(start..end);
                         cursor_positions.push(start..start);
                     }
-                    Mode::Visual | Mode::VisualBlock => {
+                    Mode::Visual => {
                         ranges.push(selection.start..selection.end);
                         cursor_positions.push(selection.start..selection.start);
+                    }
+                    Mode::VisualBlock => {
+                        ranges.push(selection.start..selection.end);
+                        if cursor_positions.len() == 0 {
+                            cursor_positions.push(selection.start..selection.start);
+                        }
                     }
                     Mode::Insert | Mode::Normal => {
                         let start = selection.start;
@@ -95,6 +102,11 @@ mod test {
         cx.set_shared_state("abˇC\n").await;
         cx.simulate_shared_keystrokes(["shift-v", "~"]).await;
         cx.assert_shared_state("ˇABc\n").await;
+
+        // works in visual block mode
+        cx.set_shared_state("ˇaa\nbb\ncc").await;
+        cx.simulate_shared_keystrokes(["ctrl-v", "j", "~"]).await;
+        cx.assert_shared_state("ˇAa\nBb\ncc").await;
 
         // works with multiple cursors (zed only)
         cx.set_state("aˇßcdˇe\n", Mode::Normal);

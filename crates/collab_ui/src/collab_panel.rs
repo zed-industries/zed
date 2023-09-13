@@ -2434,14 +2434,14 @@ fn render_tree_branch(
     let cap_height = row_style.cap_height(font_cache);
     let baseline_offset = row_style.baseline_offset(font_cache) + (size.y() - line_height) / 2.;
 
-    Canvas::new(move |scene, bounds, _, _, _| {
-        scene.paint_layer(None, |scene| {
+    Canvas::new(move |bounds, _, _, cx| {
+        cx.paint_layer(None, |cx| {
             let start_x = bounds.min_x() + (bounds.width() / 2.) - (branch_style.width / 2.);
             let end_x = bounds.max_x();
             let start_y = bounds.min_y();
             let end_y = bounds.min_y() + baseline_offset - (cap_height / 2.);
 
-            scene.push_quad(gpui::Quad {
+            cx.scene().push_quad(gpui::Quad {
                 bounds: RectF::from_points(
                     vec2f(start_x, start_y),
                     vec2f(
@@ -2453,7 +2453,7 @@ fn render_tree_branch(
                 border: gpui::Border::default(),
                 corner_radii: (0.).into(),
             });
-            scene.push_quad(gpui::Quad {
+            cx.scene().push_quad(gpui::Quad {
                 bounds: RectF::from_points(
                     vec2f(start_x, end_y),
                     vec2f(end_x, end_y + branch_style.width),

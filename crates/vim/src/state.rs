@@ -1,4 +1,6 @@
-use gpui::keymap_matcher::KeymapContext;
+use std::{ops::Range, sync::Arc};
+
+use gpui::{keymap_matcher::KeymapContext, Action};
 use language::CursorShape;
 use serde::{Deserialize, Serialize};
 use workspace::searchable::Direction;
@@ -31,7 +33,6 @@ impl Default for Mode {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
 pub enum Operator {
-    Number(usize),
     Change,
     Delete,
     Yank,
@@ -45,13 +46,70 @@ pub enum Operator {
 pub struct EditorState {
     pub mode: Mode,
     pub last_mode: Mode,
+
+    /// pre_count is the number before an operator is specified (3 in 3d2d)
+    pub pre_count: Option<usize>,
+    /// post_count is the number after an operator is specified (2 in 3d2d)
+    pub post_count: Option<usize>,
+
     pub operator_stack: Vec<Operator>,
+}
+
+#[derive(Default, Clone, Debug)]
+pub enum RecordedSelection {
+    #[default]
+    None,
+    Visual {
+        rows: u32,
+        cols: u32,
+    },
+    SingleLine {
+        cols: u32,
+    },
+    VisualBlock {
+        rows: u32,
+        cols: u32,
+    },
+    VisualLine {
+        rows: u32,
+    },
 }
 
 #[derive(Default, Clone)]
 pub struct WorkspaceState {
     pub search: SearchState,
     pub last_find: Option<Motion>,
+
+    pub recording: bool,
+    pub stop_recording_after_next_action: bool,
+    pub replaying: bool,
+    pub recorded_count: Option<usize>,
+    pub recorded_actions: Vec<ReplayableAction>,
+    pub recorded_selection: RecordedSelection,
+}
+
+#[derive(Debug)]
+pub enum ReplayableAction {
+    Action(Box<dyn Action>),
+    Insertion {
+        text: Arc<str>,
+        utf16_range_to_replace: Option<Range<isize>>,
+    },
+}
+
+impl Clone for ReplayableAction {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Action(action) => Self::Action(action.boxed_clone()),
+            Self::Insertion {
+                text,
+                utf16_range_to_replace,
+            } => Self::Insertion {
+                text: text.clone(),
+                utf16_range_to_replace: utf16_range_to_replace.clone(),
+            },
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -105,6 +163,10 @@ impl EditorState {
         }
     }
 
+    pub fn active_operator(&self) -> Option<Operator> {
+        self.operator_stack.last().copied()
+    }
+
     pub fn keymap_context_layer(&self) -> KeymapContext {
         let mut context = KeymapContext::default();
         context.add_identifier("VimEnabled");
@@ -121,7 +183,14 @@ impl EditorState {
             context.add_identifier("VimControl");
         }
 
-        let active_operator = self.operator_stack.last();
+        if self.active_operator().is_none() && self.pre_count.is_some()
+            || self.active_operator().is_some() && self.post_count.is_some()
+        {
+            dbg!("VimCount");
+            context.add_identifier("VimCount");
+        }
+
+        let active_operator = self.active_operator();
 
         if let Some(active_operator) = active_operator {
             for context_flag in active_operator.context_flags().into_iter() {
@@ -141,7 +210,6 @@ impl EditorState {
 impl Operator {
     pub fn id(&self) -> &'static str {
         match self {
-            Operator::Number(_) => "n",
             Operator::Object { around: false } => "i",
             Operator::Object { around: true } => "a",
             Operator::Change => "c",

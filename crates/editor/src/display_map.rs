@@ -555,67 +555,6 @@ impl DisplaySnapshot {
             })
     }
 
-    /// Returns an iterator of the start positions of the occurrences of `target` in the `self` after `from`
-    /// Stops if `condition` returns false for any of the character position pairs observed.
-    pub fn find_while<'a>(
-        &'a self,
-        from: DisplayPoint,
-        target: &str,
-        condition: impl FnMut(char, DisplayPoint) -> bool + 'a,
-    ) -> impl Iterator<Item = DisplayPoint> + 'a {
-        Self::find_internal(self.chars_at(from), target.chars().collect(), condition)
-    }
-
-    /// Returns an iterator of the end positions of the occurrences of `target` in the `self` before `from`
-    /// Stops if `condition` returns false for any of the character position pairs observed.
-    pub fn reverse_find_while<'a>(
-        &'a self,
-        from: DisplayPoint,
-        target: &str,
-        condition: impl FnMut(char, DisplayPoint) -> bool + 'a,
-    ) -> impl Iterator<Item = DisplayPoint> + 'a {
-        Self::find_internal(
-            self.reverse_chars_at(from),
-            target.chars().rev().collect(),
-            condition,
-        )
-    }
-
-    fn find_internal<'a>(
-        iterator: impl Iterator<Item = (char, DisplayPoint)> + 'a,
-        target: Vec<char>,
-        mut condition: impl FnMut(char, DisplayPoint) -> bool + 'a,
-    ) -> impl Iterator<Item = DisplayPoint> + 'a {
-        // List of partial matches with the index of the last seen character in target and the starting point of the match
-        let mut partial_matches: Vec<(usize, DisplayPoint)> = Vec::new();
-        iterator
-            .take_while(move |(ch, point)| condition(*ch, *point))
-            .filter_map(move |(ch, point)| {
-                if Some(&ch) == target.get(0) {
-                    partial_matches.push((0, point));
-                }
-
-                let mut found = None;
-                // Keep partial matches that have the correct next character
-                partial_matches.retain_mut(|(match_position, match_start)| {
-                    if target.get(*match_position) == Some(&ch) {
-                        *match_position += 1;
-                        if *match_position == target.len() {
-                            found = Some(match_start.clone());
-                            // This match is completed. No need to keep tracking it
-                            false
-                        } else {
-                            true
-                        }
-                    } else {
-                        false
-                    }
-                });
-
-                found
-            })
-    }
-
     pub fn column_to_chars(&self, display_row: u32, target: u32) -> u32 {
         let mut count = 0;
         let mut column = 0;
@@ -933,7 +872,7 @@ pub mod tests {
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
     use theme::SyntaxTheme;
-    use util::test::{marked_text_offsets, marked_text_ranges, sample_text};
+    use util::test::{marked_text_ranges, sample_text};
     use Bias::*;
 
     #[gpui::test(iterations = 100)]
@@ -1742,32 +1681,6 @@ pub mod tests {
             map.update(cx, |map, cx| map.snapshot(cx)).max_point(),
             DisplayPoint::new(1, 11)
         )
-    }
-
-    #[test]
-    fn test_find_internal() {
-        assert("This is a ˇtest of find internal", "test");
-        assert("Some text ˇaˇaˇaa with repeated characters", "aa");
-
-        fn assert(marked_text: &str, target: &str) {
-            let (text, expected_offsets) = marked_text_offsets(marked_text);
-
-            let chars = text
-                .chars()
-                .enumerate()
-                .map(|(index, ch)| (ch, DisplayPoint::new(0, index as u32)));
-            let target = target.chars();
-
-            assert_eq!(
-                expected_offsets
-                    .into_iter()
-                    .map(|offset| offset as u32)
-                    .collect::<Vec<_>>(),
-                DisplaySnapshot::find_internal(chars, target.collect(), |_, _| true)
-                    .map(|point| point.column())
-                    .collect::<Vec<_>>()
-            )
-        }
     }
 
     fn syntax_chunks<'a>(

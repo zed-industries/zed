@@ -7,8 +7,7 @@ use crate::{
     },
     json::{ToJson, Value},
     text_layout::{Line, RunStyle, ShapedBoundary},
-    AppContext, Element, FontCache, LayoutContext, PaintContext, SceneBuilder, SizeConstraint,
-    TextLayoutCache, ViewContext,
+    Element, FontCache, SizeConstraint, TextLayoutCache, ViewContext, WindowContext,
 };
 use log::warn;
 use serde_json::json;
@@ -21,7 +20,7 @@ pub struct Text {
     highlights: Option<Box<[(Range<usize>, HighlightStyle)]>>,
     custom_runs: Option<(
         Box<[Range<usize>]>,
-        Box<dyn FnMut(usize, RectF, &mut SceneBuilder, &mut AppContext)>,
+        Box<dyn FnMut(usize, RectF, &mut WindowContext)>,
     )>,
 }
 
@@ -58,7 +57,7 @@ impl Text {
     pub fn with_custom_runs(
         mut self,
         runs: impl Into<Box<[Range<usize>]>>,
-        callback: impl 'static + FnMut(usize, RectF, &mut SceneBuilder, &mut AppContext),
+        callback: impl 'static + FnMut(usize, RectF, &mut WindowContext),
     ) -> Self {
         self.custom_runs = Some((runs.into(), Box::new(callback)));
         self
@@ -78,7 +77,7 @@ impl<V: 'static> Element<V> for Text {
         &mut self,
         constraint: SizeConstraint,
         _: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         // Convert the string and highlight ranges into an iterator of highlighted chunks.
 
@@ -166,16 +165,15 @@ impl<V: 'static> Element<V> for Text {
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         layout: &mut Self::LayoutState,
         _: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
         let mut origin = bounds.origin();
         let empty = Vec::new();
-        let mut callback = |_, _, _: &mut SceneBuilder, _: &mut AppContext| {};
+        let mut callback = |_, _, _: &mut WindowContext| {};
 
         let mouse_runs;
         let custom_run_callback;
@@ -202,7 +200,6 @@ impl<V: 'static> Element<V> for Text {
             if boundaries.intersects(visible_bounds) {
                 if self.soft_wrap {
                     line.paint_wrapped(
-                        scene,
                         origin,
                         visible_bounds,
                         layout.line_height,
@@ -210,7 +207,7 @@ impl<V: 'static> Element<V> for Text {
                         cx,
                     );
                 } else {
-                    line.paint(scene, origin, visible_bounds, layout.line_height, cx);
+                    line.paint(origin, visible_bounds, layout.line_height, cx);
                 }
             }
 
@@ -248,7 +245,7 @@ impl<V: 'static> Element<V> for Text {
                                     *run_origin,
                                     glyph_origin + vec2f(0., layout.line_height),
                                 );
-                                custom_run_callback(*run_ix, bounds, scene, cx);
+                                custom_run_callback(*run_ix, bounds, cx);
                                 *run_origin =
                                     vec2f(origin.x(), glyph_origin.y() + layout.line_height);
                             }
@@ -264,7 +261,7 @@ impl<V: 'static> Element<V> for Text {
                                     run_origin,
                                     glyph_origin + vec2f(0., layout.line_height),
                                 );
-                                custom_run_callback(run_ix, bounds, scene, cx);
+                                custom_run_callback(run_ix, bounds, cx);
                                 custom_runs.next();
                             }
 
@@ -294,7 +291,7 @@ impl<V: 'static> Element<V> for Text {
                             run_origin,
                             line_end + vec2f(0., layout.line_height),
                         );
-                        custom_run_callback(run_ix, bounds, scene, cx);
+                        custom_run_callback(run_ix, bounds, cx);
                         if end_offset == run_end_offset {
                             custom_runs.next();
                         }
@@ -411,18 +408,10 @@ mod tests {
             let mut view = TestView;
             fonts::with_font_cache(cx.font_cache().clone(), || {
                 let mut text = Text::new("Hello\r\n", Default::default()).with_soft_wrap(true);
-                let mut new_parents = Default::default();
-                let mut notify_views_if_parents_change = Default::default();
-                let mut layout_cx = LayoutContext::new(
-                    cx,
-                    &mut new_parents,
-                    &mut notify_views_if_parents_change,
-                    false,
-                );
                 let (_, state) = text.layout(
                     SizeConstraint::new(Default::default(), vec2f(f32::INFINITY, f32::INFINITY)),
                     &mut view,
-                    &mut layout_cx,
+                    cx,
                 );
                 assert_eq!(state.shaped_lines.len(), 2);
                 assert_eq!(state.wrap_boundaries.len(), 2);

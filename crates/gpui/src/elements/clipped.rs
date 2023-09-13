@@ -3,10 +3,7 @@ use std::ops::Range;
 use pathfinder_geometry::{rect::RectF, vector::Vector2F};
 use serde_json::json;
 
-use crate::{
-    json, AnyElement, Element, LayoutContext, PaintContext, SceneBuilder, SizeConstraint,
-    ViewContext,
-};
+use crate::{json, AnyElement, Element, SizeConstraint, ViewContext};
 
 pub struct Clipped<V> {
     child: AnyElement<V>,
@@ -26,24 +23,23 @@ impl<V: 'static> Element<V> for Clipped<V> {
         &mut self,
         constraint: SizeConstraint,
         view: &mut V,
-        cx: &mut LayoutContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> (Vector2F, Self::LayoutState) {
         (self.child.layout(constraint, view, cx), ())
     }
 
     fn paint(
         &mut self,
-        scene: &mut SceneBuilder,
         bounds: RectF,
         visible_bounds: RectF,
         _: &mut Self::LayoutState,
         view: &mut V,
-        cx: &mut PaintContext<V>,
+        cx: &mut ViewContext<V>,
     ) -> Self::PaintState {
-        scene.paint_layer(Some(bounds), |scene| {
-            self.child
-                .paint(scene, bounds.origin(), visible_bounds, view, cx)
-        })
+        cx.scene().push_layer(Some(bounds));
+        let state = self.child.paint(bounds.origin(), visible_bounds, view, cx);
+        cx.scene().pop_layer();
+        state
     }
 
     fn rect_for_text_range(
