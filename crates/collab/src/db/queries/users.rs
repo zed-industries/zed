@@ -123,27 +123,6 @@ impl Database {
         .await
     }
 
-    pub async fn get_users_with_no_invites(
-        &self,
-        invited_by_another_user: bool,
-    ) -> Result<Vec<User>> {
-        self.transaction(|tx| async move {
-            Ok(user::Entity::find()
-                .filter(
-                    user::Column::InviteCount
-                        .eq(0)
-                        .and(if invited_by_another_user {
-                            user::Column::InviterId.is_not_null()
-                        } else {
-                            user::Column::InviterId.is_null()
-                        }),
-                )
-                .all(&*tx)
-                .await?)
-        })
-        .await
-    }
-
     pub async fn get_user_metrics_id(&self, id: UserId) -> Result<String> {
         #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
         enum QueryAs {
@@ -159,21 +138,6 @@ impl Database {
                 .await?
                 .ok_or_else(|| anyhow!("could not find user"))?;
             Ok(metrics_id.to_string())
-        })
-        .await
-    }
-
-    pub async fn set_user_is_admin(&self, id: UserId, is_admin: bool) -> Result<()> {
-        self.transaction(|tx| async move {
-            user::Entity::update_many()
-                .filter(user::Column::Id.eq(id))
-                .set(user::ActiveModel {
-                    admin: ActiveValue::set(is_admin),
-                    ..Default::default()
-                })
-                .exec(&*tx)
-                .await?;
-            Ok(())
         })
         .await
     }
