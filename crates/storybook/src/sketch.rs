@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
-use gpui2::{Layout, LayoutId, Reference, Vector2F};
+use gpui2::{taffy::Taffy, ArcCow, Layout, LayoutId, Reference, Vector2F};
 use std::{any::Any, cell::RefCell, collections::HashMap, marker::PhantomData, rc::Rc};
 
 pub struct AppContext {
@@ -12,13 +12,20 @@ pub struct AppContext {
 
 impl AppContext {
     pub fn new() -> Self {
-        unimplemented!()
+        AppContext {
+            entity_count: 0,
+            entities: HashMap::new(),
+            window_count: 0,
+            windows: HashMap::new(),
+        }
     }
 
     pub fn open_window<S>(
         &mut self,
         build_root_view: impl FnOnce(&mut WindowContext) -> View<S>,
     ) -> WindowHandle<S> {
+        let window = Window::new(&mut self.window_count);
+
         unimplemented!()
     }
 
@@ -83,6 +90,17 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
 pub struct Window {
     id: WindowId,
+    layout_engine: Taffy,
+}
+
+impl Window {
+    pub fn new(window_count: &mut usize) -> Window {
+        let id = WindowId::new(window_count);
+        Window {
+            id,
+            layout_engine: Taffy::new(),
+        }
+    }
 }
 
 #[derive(Deref, DerefMut)]
@@ -355,10 +373,18 @@ struct RenderedElement<E: Element> {
     phase: ElementRenderPhase<E::FrameState>,
 }
 
+#[derive(Default)]
 enum ElementRenderPhase<S> {
+    #[default]
     Rendered,
-    LayoutNodeAdded { layout_id: LayoutId, frame_state: S },
-    Painted { layout: Layout, frame_state: S },
+    LayoutRequested {
+        layout_id: LayoutId,
+        frame_state: S,
+    },
+    Painted {
+        layout: Layout,
+        frame_state: S,
+    },
 }
 
 impl<E: Element> RenderedElement<E> {
@@ -373,7 +399,7 @@ impl<E: Element> RenderedElement<E> {
 impl<E: Element> ElementObject<E::State> for RenderedElement<E> {
     fn layout(&mut self, state: &mut E::State, cx: &mut ViewContext<E::State>) -> Result<LayoutId> {
         let (layout_id, frame_state) = self.element.layout(state, cx)?;
-        self.phase = ElementRenderPhase::LayoutNodeAdded {
+        self.phase = ElementRenderPhase::LayoutRequested {
             layout_id,
             frame_state,
         };
@@ -386,7 +412,20 @@ impl<E: Element> ElementObject<E::State> for RenderedElement<E> {
         state: &mut E::State,
         cx: &mut ViewContext<E::State>,
     ) -> Result<()> {
-        todo!()
+        self.phase = match std::mem::take(&mut self.phase) {
+            ElementRenderPhase::Rendered => panic!("must call layout before paint"),
+            ElementRenderPhase::LayoutRequested {
+                layout_id,
+                frame_state,
+            } => {
+                todo!()
+            }
+            ElementRenderPhase::Painted {
+                layout,
+                frame_state,
+            } => todo!(),
+        };
+        Ok(())
     }
 }
 
@@ -585,7 +624,15 @@ pub fn div<S>() -> Div<S> {
     todo!()
 }
 
-pub struct Workspace {
+pub struct SharedString(ArcCow<'static, str>);
+
+impl<T: Into<ArcCow<'static, str>>> From<T> for SharedString {
+    fn from(value: T) -> Self {
+        Self(value.into())
+    }
+}
+
+struct Workspace {
     left_panel: AnyView<Self>,
 }
 
@@ -598,13 +645,17 @@ fn workspace(cx: &mut WindowContext) -> View<Workspace> {
     })
 }
 
-pub struct CollabPanel {
+struct CollabPanel {
     filter_editor: Handle<Editor>,
 }
 
 fn collab_panel(cx: &mut WindowContext) -> View<CollabPanel> {
     let panel = cx.entity(|cx| CollabPanel::new(cx));
-    view(panel, |panel, cx| div())
+    view(panel, |panel, cx| {
+        div()
+            .child(div())
+            .child(field(panel.filter_editor.clone()).placeholder_text("Search channels, contacts"))
+    })
 }
 
 impl CollabPanel {
@@ -615,14 +666,54 @@ impl CollabPanel {
     }
 }
 
-struct EditorElement {
-    input: bool,
+fn field<S>(editor: Handle<Editor>) -> EditorElement<S> {
+    EditorElement {
+        editor,
+        field: true,
+        placeholder_text: None,
+        parent_state: PhantomData,
+    }
 }
 
-impl EditorElement {
-    pub fn input(mut self) -> Self {
-        self.input = true;
+struct EditorElement<S> {
+    editor: Handle<Editor>,
+    field: bool,
+    placeholder_text: Option<SharedString>,
+    parent_state: PhantomData<S>,
+}
+
+impl<S> EditorElement<S> {
+    pub fn field(mut self) -> Self {
+        self.field = true;
         self
+    }
+
+    pub fn placeholder_text(mut self, text: impl Into<SharedString>) -> Self {
+        self.placeholder_text = Some(text.into());
+        self
+    }
+}
+
+impl<S: 'static> Element for EditorElement<S> {
+    type State = S;
+    type FrameState = ();
+
+    fn layout(
+        &mut self,
+        _: &mut Self::State,
+        cx: &mut ViewContext<Self::State>,
+    ) -> Result<(LayoutId, Self::FrameState)> {
+        self.editor.update(cx, |editor, cx| todo!())
+    }
+
+    fn paint(
+        &mut self,
+        layout: Layout,
+        state: &mut Self::State,
+        frame_state: &mut Self::FrameState,
+        cx: &mut ViewContext<Self::State>,
+    ) -> Result<()> {
+        self.editor.update(cx, |editor, cx| todo!())
     }
 }
 
