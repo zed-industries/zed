@@ -22,6 +22,26 @@ spec:
       protocol: TCP
       port: 443
       targetPort: 8080
+
+---
+kind: Service
+apiVersion: v1
+metadata:
+  namespace: ${ZED_KUBE_NAMESPACE}
+  name: pgadmin
+  annotations:
+    service.beta.kubernetes.io/do-loadbalancer-tls-ports: "443"
+    service.beta.kubernetes.io/do-loadbalancer-certificate-id: ${ZED_DO_CERTIFICATE_ID}
+spec:
+  type: LoadBalancer
+  selector:
+    app: pgadmin
+  ports:
+    - name: web
+      protocol: TCP
+      port: 443
+      targetPort: 8080
+
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -118,3 +138,98 @@ spec:
               # FIXME - Switch to the more restrictive `PERFMON` capability.
               # This capability isn't yet available in a stable version of Debian.
               add: ["SYS_ADMIN"]
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: ${ZED_KUBE_NAMESPACE}
+  name: pgadmin
+
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pgadmin
+  template:
+    metadata:
+      labels:
+        app: pgadmin
+    spec:
+      securityContext:
+        runAsUser: 0
+      containers:
+        - name: pgadmin
+          image: "dpage/pgadmin4"
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /misc/ping
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 5
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /misc/ping
+              port: 8080
+            initialDelaySeconds: 1
+            periodSeconds: 1
+          command: ['/bin/sh', '-c']
+          args:
+          - |
+            set -e
+
+            python3 - <<EOF
+            import os
+            import json
+            from urllib.parse import urlparse;
+
+            url = urlparse(os.environ["ZED_DATABASE_URL"])
+            db = url.path[1:]
+
+            with open("/pgadmin4/servers.json", "w") as f:
+              f.write(json.dumps({
+                "Servers": {
+                  "1": {
+                      "Name": "Zed Database",
+                      "Group": "Server Group 1",
+                      "Port": url.port,
+                      "Username": url.username,
+                      "Host": url.hostname,
+                      "SSLMode": "require",
+                      "PassFile": "/pgadmin4/passfile",
+                      "MaintenanceDB": db,
+                  }
+                }
+              }))
+
+            with open("/pgadmin4/passfile", "w") as f:
+              f.write(f"{url.hostname}:{url.port}:*:{url.username}:{url.password}\n")
+            os.chmod("/pgadmin4/passfile", 0o600)
+            EOF
+
+            exec /entrypoint.sh
+
+          env:
+            - name: PGADMIN_LISTEN_PORT
+              value: "8080"
+            - name: ZED_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: database
+                  key: url
+            - name: PGADMIN_CONFIG_WTF_CSRF_CHECK_DEFAULT
+              value: "False"
+            - name: PGADMIN_DEFAULT_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: pgadmin
+                  key: email
+            - name: PGADMIN_DEFAULT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pgadmin
+                  key: password
