@@ -1,9 +1,9 @@
-use ndarray::{Array1, Array2, Axis, CowArray};
+use ndarray::CowArray;
 use ort::{Environment, ExecutionProvider, GraphOptimizationLevel, Session, SessionBuilder, Value};
 use tokenizers::Tokenizer;
 use util::paths::MODELS_DIR;
 
-struct CrossEncoder {
+pub struct CrossEncoder {
     session: Session,
     tokenizer: Tokenizer,
 }
@@ -25,15 +25,22 @@ impl CrossEncoder {
 
         let session = SessionBuilder::new(&environment)?
             .with_optimization_level(GraphOptimizationLevel::Level1)?
-            .with_intra_threads(1)?
             .with_model_from_file(model_path)?;
 
-        let tokenizer = Tokenizer::from_file(tokenizer_path).unwrap();
+        let mut tokenizer = Tokenizer::from_file(tokenizer_path).unwrap();
+        tokenizer
+            .with_truncation(Some(tokenizers::TruncationParams {
+                direction: Default::default(),
+                max_length: 512,
+                strategy: Default::default(),
+                stride: 0,
+            }))
+            .unwrap();
 
         Ok(Self { session, tokenizer })
     }
 
-    pub fn score(&self, query: &str, candidates: Vec<&str>) -> anyhow::Result<Vec<f32>> {
+    pub fn score(&self, query: &str, candidates: &[String]) -> anyhow::Result<Vec<f32>> {
         let spans = candidates
             .into_iter()
             .map(|candidate| format!("{}. {}", query, candidate))
@@ -91,9 +98,18 @@ mod tests {
     #[test]
     fn test_cross_encoder() {
         let cross_encoder = CrossEncoder::load().unwrap();
-
-        let sample_candidates = vec!["I love you.", "I hate you."];
-        let results = cross_encoder.score("I like you", sample_candidates.clone());
-        assert_eq!(results.unwrap().len(), sample_candidates.len());
+        let results = cross_encoder
+            .score(
+                "I like you",
+                &[
+                    "I hate you.".into(),
+                    "I love you.".into(),
+                    "my name is kyle".into(),
+                ],
+            )
+            .unwrap();
+        assert_eq!(results.len(), 3);
+        assert!(results[1] > results[0]);
+        assert!(results[0] > results[2]);
     }
 }
