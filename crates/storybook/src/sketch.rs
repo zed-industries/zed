@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
 use gpui2::{Layout, LayoutId, Reference, Vector2F};
-use std::{any::Any, collections::HashMap, marker::PhantomData, rc::Rc};
+use std::{any::Any, cell::RefCell, collections::HashMap, marker::PhantomData, rc::Rc};
 
 pub struct AppContext {
     entity_count: usize,
@@ -15,10 +15,9 @@ impl AppContext {
         unimplemented!()
     }
 
-    pub fn open_window<S, E>(
-        &self,
-        state: S,
-        render: impl Fn(&mut S, &mut ViewContext<S>) -> View<E>,
+    pub fn open_window<S>(
+        &mut self,
+        build_root_view: impl FnOnce(&mut WindowContext) -> View<S>,
     ) -> WindowHandle<S> {
         unimplemented!()
     }
@@ -440,6 +439,15 @@ pub fn view<S: 'static, E: Element<State = S>>(
     }
 }
 
+impl<S: 'static> View<S> {
+    pub fn into_any<ParentState>(self) -> AnyView<ParentState> {
+        AnyView {
+            view: Rc::new(RefCell::new(self)),
+            parent_state_type: PhantomData,
+        }
+    }
+}
+
 impl<S: 'static> Element for View<S> {
     type State = ();
     type FrameState = AnyElement<S>;
@@ -469,7 +477,69 @@ impl<S: 'static> Element for View<S> {
     }
 }
 
-pub struct AnyView(Rc<dyn ElementObject<()>>);
+trait ViewObject {
+    fn layout(&mut self, cx: &mut WindowContext) -> Result<(LayoutId, Box<dyn Any>)>;
+    fn paint(
+        &mut self,
+        layout: Layout,
+        element: &mut dyn Any,
+        cx: &mut WindowContext,
+    ) -> Result<()>;
+}
+
+impl<S: 'static> ViewObject for View<S> {
+    fn layout(&mut self, cx: &mut WindowContext) -> Result<(LayoutId, Box<dyn Any>)> {
+        self.state.update(cx, |state, cx| {
+            let mut element = (self.render)(state, cx);
+            let layout_id = element.layout(state, cx)?;
+            let element = Box::new(element) as Box<dyn Any>;
+            Ok((layout_id, element))
+        })
+    }
+
+    fn paint(
+        &mut self,
+        layout: Layout,
+        element: &mut dyn Any,
+        cx: &mut WindowContext,
+    ) -> Result<()> {
+        self.state.update(cx, |state, cx| {
+            element.downcast_mut::<AnyElement<S>>().unwrap().paint(
+                layout.bounds.origin(),
+                state,
+                cx,
+            )
+        })
+    }
+}
+
+pub struct AnyView<S> {
+    view: Rc<RefCell<dyn ViewObject>>,
+    parent_state_type: PhantomData<S>,
+}
+
+impl<S: 'static> Element for AnyView<S> {
+    type State = S;
+    type FrameState = Box<dyn Any>;
+
+    fn layout(
+        &mut self,
+        _: &mut Self::State,
+        cx: &mut ViewContext<Self::State>,
+    ) -> Result<(LayoutId, Self::FrameState)> {
+        self.view.borrow_mut().layout(cx)
+    }
+
+    fn paint(
+        &mut self,
+        layout: Layout,
+        _: &mut Self::State,
+        element: &mut Self::FrameState,
+        cx: &mut ViewContext<Self::State>,
+    ) -> Result<()> {
+        self.view.borrow_mut().paint(layout, element, cx)
+    }
+}
 
 pub struct Div<S>(PhantomData<S>);
 
@@ -507,7 +577,7 @@ pub fn div<S>() -> Div<S> {
 }
 
 pub struct Workspace {
-    // left_panel: AnyView<Self>,
+    left_panel: AnyView<Self>,
 }
 
 fn workspace(
@@ -555,16 +625,16 @@ mod tests {
 
     #[test]
     fn test() {
-        // let mut cx = AppContext::new();
-        // let collab_panel = cx.open_window(|cx| {
-        //     let panel = cx.add_entity(|cx| CollabPanel::new(cx));
-        //     view(panel, |panel, cx| div().into_any())
-        // });
+        let mut cx = AppContext::new();
 
-        // let
-        // let mut workspace = Workspace {
-        //     left_panel: view(),
-        // }
+        let workspace = cx.open_window(|cx| {
+            let workspace = cx.add_entity(|cx| Workspace {
+                left_panel: view(cx.add_entity(|cx| CollabPanel::new(cx)), |panel, cx| div())
+                    .into_any(),
+            });
+
+            view(workspace, |workspace, cx| div())
+        });
 
         // cx.open_window(workspace::Workspace, state)
     }
