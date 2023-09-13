@@ -182,6 +182,8 @@ spec:
           - |
             set -e
 
+            mkdir -p /var/lib/pgadmin/storage/max_zed.dev
+
             python3 - <<EOF
             import os
             import json
@@ -200,15 +202,15 @@ spec:
                       "Username": url.username,
                       "Host": url.hostname,
                       "SSLMode": "require",
-                      "PassFile": "/pgadmin4/passfile",
+                      "PassFile": "/passfile",
                       "MaintenanceDB": db,
                   }
                 }
               }))
 
-            with open("/pgadmin4/passfile", "w") as f:
-              f.write(f"{url.hostname}:{url.port}:*:{url.username}:{url.password}\n")
-            os.chmod("/pgadmin4/passfile", 0o600)
+            with open("/var/lib/pgadmin/storage/max_zed.dev/passfile", "w") as f:
+              f.write(f"*:*:*:*:{url.password}")
+            os.chmod("/var/lib/pgadmin/storage/max_zed.dev/passfile", 0o600)
             EOF
 
             exec /entrypoint.sh
