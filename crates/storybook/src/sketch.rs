@@ -115,7 +115,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 impl<'app, 'win> WindowContext<'app, 'win> {
     fn add_entity<T: 'static>(
         &mut self,
-        build_entity: impl FnOnce(&mut ViewContext<'app, 'win, '_, T>) -> T,
+        build_entity: impl FnOnce(&mut ViewContext<'_, 'app, 'win, T>) -> T,
     ) -> Handle<T> {
         let id = EntityId::new(&mut self.app_context().entity_count);
         let mut cx = ViewContext::mutable(self, id);
@@ -155,16 +155,16 @@ impl<'app, 'win> WindowContext<'app, 'win> {
 }
 
 #[derive(Deref, DerefMut)]
-pub struct ViewContext<'a, 'b, 'c, T> {
+pub struct ViewContext<'parent, 'app, 'win, T> {
     #[deref]
     #[deref_mut]
-    window_cx: Reference<'c, WindowContext<'a, 'b>>,
+    window_cx: Reference<'parent, WindowContext<'app, 'win>>,
     entity_type: PhantomData<T>,
     entity_id: EntityId,
 }
 
-impl<'a, 'b, 'c, V> ViewContext<'a, 'b, 'c, V> {
-    fn mutable(window_cx: &'c mut WindowContext<'a, 'b>, entity_id: EntityId) -> Self {
+impl<'cx, 'app: 'cx, 'win: 'cx, V> ViewContext<'cx, 'app, 'win, V> {
+    fn mutable(window_cx: &'cx mut WindowContext<'app, 'win>, entity_id: EntityId) -> Self {
         Self {
             window_cx: Reference::Mutable(window_cx),
             entity_id,
@@ -172,7 +172,7 @@ impl<'a, 'b, 'c, V> ViewContext<'a, 'b, 'c, V> {
         }
     }
 
-    fn immutable(window_cx: &'c WindowContext<'a, 'b>, entity_id: EntityId) -> Self {
+    fn immutable(window_cx: &'cx WindowContext<'app, 'win>, entity_id: EntityId) -> Self {
         Self {
             window_cx: Reference::Immutable(window_cx),
             entity_id,
@@ -213,18 +213,47 @@ pub struct Handle<T> {
     entity_type: PhantomData<T>,
 }
 
-trait Context {
-    type EntityContext<T>;
+trait Context<'a, 'parent, 'app, 'win> {
+    type EntityContext<T: 'static>;
 
-    fn update_entity<T, R>(
+    fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, Self::EntityContext<T>) -> R,
     ) -> R;
 }
 
-impl<T> Handle<T> {
-    fn update<C: Context, R>(
+impl<'a, 'parent: 'a, 'app, 'win> Context<'a, 'parent, 'app, 'win> for AppContext {
+    type EntityContext<T: 'static> = &'a mut ModelContext<'parent, T>;
+
+    fn update_entity<T: 'static, R>(
+        &mut self,
+        handle: &Handle<T>,
+        update: impl FnOnce(&mut T, Self::EntityContext<T>) -> R,
+    ) -> R {
+        todo!()
+    }
+}
+
+impl<'a, 'parent, 'app, 'win> Context<'a, 'parent, 'app, 'win> for WindowContext<'app, 'win>
+where
+    'parent: 'a,
+    'app: 'parent,
+    'win: 'parent,
+{
+    type EntityContext<T: 'static> = &'a mut ViewContext<'parent, 'app, 'win, T>;
+
+    fn update_entity<T: 'static, R>(
+        &mut self,
+        handle: &Handle<T>,
+        update: impl FnOnce(&mut T, Self::EntityContext<T>) -> R,
+    ) -> R {
+        todo!()
+    }
+}
+
+impl<T: 'static> Handle<T> {
+    fn update<'a, 'parent, 'app, 'win, C: Context<'a, 'parent, 'app, 'win>, R>(
         &self,
         cx: &mut C,
         update: impl FnOnce(&mut T, C::EntityContext<T>) -> R,
@@ -358,7 +387,8 @@ pub fn view<ParentState, ChildState: 'static>(
     render: impl 'static + Fn(&mut ChildState, &mut ViewContext<ChildState>) -> AnyElement<ParentState>,
 ) -> View<ParentState> {
     View {
-        render: todo!(), // Rc::new(move |cx| state.update(cx, |state, cx| render(state, cx))),
+        // render: Rc::new(move |cx| state.update(cx, |state, cx| render(state, cx))),
+        render: todo!(),
     }
 }
 
