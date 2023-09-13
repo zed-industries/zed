@@ -196,6 +196,23 @@ impl<'a, 'w, T: 'static> ViewContext<'a, 'w, T> {
     }
 }
 
+impl<'a, 'w, T: 'static> Context for ViewContext<'a, 'w, T> {
+    type EntityContext<'b, 'c, U: 'static> = ViewContext<'b, 'c, U>;
+
+    fn update_entity<U: 'static, R>(
+        &mut self,
+        handle: &Handle<U>,
+        update: impl FnOnce(&mut U, &mut Self::EntityContext<'_, '_, U>) -> R,
+    ) -> R {
+        ViewContext::mutable(
+            &mut *self.window_cx.app,
+            &mut *self.window_cx.window,
+            handle.id,
+        )
+        .update(update)
+    }
+}
+
 #[derive(Clone, Copy, Eq, PartialEq, Hash)]
 pub struct WindowId(usize);
 
@@ -292,11 +309,20 @@ impl<T: 'static> Handle<T> {
     }
 }
 
+impl<T> Clone for Handle<T> {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            entity_type: PhantomData,
+        }
+    }
+}
+
 pub trait Element: 'static {
     type State;
     type FrameState;
 
-    fn add_layout_node(
+    fn layout(
         &mut self,
         state: &mut Self::State,
         cx: &mut ViewContext<Self::State>,
@@ -316,7 +342,7 @@ pub trait ParentElement<S> {
 }
 
 trait ElementObject<S> {
-    fn add_layout_node(&mut self, state: &mut S, cx: &mut ViewContext<S>) -> Result<LayoutId>;
+    fn layout(&mut self, state: &mut S, cx: &mut ViewContext<S>) -> Result<LayoutId>;
     fn paint(
         &mut self,
         parent_origin: Vector2F,
@@ -346,12 +372,8 @@ impl<E: Element> RenderedElement<E> {
 }
 
 impl<E: Element> ElementObject<E::State> for RenderedElement<E> {
-    fn add_layout_node(
-        &mut self,
-        state: &mut E::State,
-        cx: &mut ViewContext<E::State>,
-    ) -> Result<LayoutId> {
-        let (layout_id, frame_state) = self.element.add_layout_node(state, cx)?;
+    fn layout(&mut self, state: &mut E::State, cx: &mut ViewContext<E::State>) -> Result<LayoutId> {
+        let (layout_id, frame_state) = self.element.layout(state, cx)?;
         self.phase = ElementRenderPhase::LayoutNodeAdded {
             layout_id,
             frame_state,
@@ -373,7 +395,7 @@ pub struct AnyElement<S>(Box<dyn ElementObject<S>>);
 
 impl<S> AnyElement<S> {
     pub fn layout(&mut self, state: &mut S, cx: &mut ViewContext<S>) -> Result<LayoutId> {
-        self.0.add_layout_node(state, cx)
+        self.0.layout(state, cx)
     }
 
     pub fn paint(
@@ -402,37 +424,52 @@ impl<S> IntoAnyElement<S> for AnyElement<S> {
     }
 }
 
-pub struct View<E> {
-    render: Rc<dyn Fn(&mut WindowContext) -> E>,
-}
-
-impl<E> View<E> {
-    fn render(&self, cx: &mut WindowContext) -> E {
-        (self.render)(cx)
-    }
+#[derive(Clone)]
+pub struct View<S> {
+    state: Handle<S>,
+    render: Rc<dyn Fn(&mut S, &mut ViewContext<S>) -> AnyElement<S>>,
 }
 
 pub fn view<S: 'static, E: Element<State = S>>(
     state: Handle<S>,
     render: impl 'static + Fn(&mut S, &mut ViewContext<S>) -> E,
-) -> View<E> {
+) -> View<S> {
     View {
-        render: Rc::new(move |cx| state.update(cx, |state, cx| render(state, cx))),
+        state,
+        render: Rc::new(move |state, cx| render(state, cx).into_any()),
     }
 }
 
-trait ViewObject<S> {
-    fn render(cx: &mut WindowContext) -> AnyElement<S>;
-}
+impl<S: 'static> Element for View<S> {
+    type State = ();
+    type FrameState = AnyElement<S>;
 
-impl<S: 'static, E: Element<State = S>> ViewObject<S> for View<E> {
-    fn render<V>(&mut self, cx: &mut WindowContext) -> AnyElement<V> {
-        let element = (self.render)(cx);
-        AnyElement(Box::new(RenderedElement::new(element)))
+    fn layout(
+        &mut self,
+        _: &mut Self::State,
+        cx: &mut ViewContext<Self::State>,
+    ) -> Result<(LayoutId, Self::FrameState)> {
+        self.state.update(cx, |state, cx| {
+            let mut element = (self.render)(state, cx);
+            let layout_id = element.layout(state, cx)?;
+            Ok((layout_id, element))
+        })
+    }
+
+    fn paint(
+        &mut self,
+        layout: Layout,
+        _: &mut Self::State,
+        element: &mut Self::FrameState,
+        cx: &mut ViewContext<Self::State>,
+    ) -> Result<()> {
+        self.state.update(cx, |state, cx| {
+            element.paint(layout.bounds.origin(), state, cx)
+        })
     }
 }
 
-pub struct AnyView(Box<dyn ViewObject<S>);
+pub struct AnyView(Rc<dyn ElementObject<()>>);
 
 pub struct Div<S>(PhantomData<S>);
 
@@ -440,7 +477,7 @@ impl<S: 'static> Element for Div<S> {
     type State = S;
     type FrameState = ();
 
-    fn add_layout_node(
+    fn layout(
         &mut self,
         state: &mut Self::State,
         cx: &mut ViewContext<Self::State>,
@@ -470,14 +507,15 @@ pub fn div<S>() -> Div<S> {
 }
 
 pub struct Workspace {
-    left_panel: AnyView,
+    // left_panel: AnyView<Self>,
 }
 
 fn workspace(
     state: &mut Workspace,
     cx: &mut ViewContext<Workspace>,
 ) -> impl Element<State = Workspace> {
-    div().child(state.left_panel.render(cx))
+    div()
+    // .child(state.left_panel.render(cx))
 }
 
 pub struct CollabPanel {
@@ -517,11 +555,11 @@ mod tests {
 
     #[test]
     fn test() {
-        let mut cx = AppContext::new();
-        let collab_panel = cx.open_window(|cx| {
-            let panel = cx.add_entity(|cx| CollabPanel::new(cx));
-            view(panel, |panel, cx| div().into_any())
-        });
+        // let mut cx = AppContext::new();
+        // let collab_panel = cx.open_window(|cx| {
+        //     let panel = cx.add_entity(|cx| CollabPanel::new(cx));
+        //     view(panel, |panel, cx| div().into_any())
+        // });
 
         // let
         // let mut workspace = Workspace {
