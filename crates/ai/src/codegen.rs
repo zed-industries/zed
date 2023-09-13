@@ -225,10 +225,13 @@ impl Codegen {
                                     }
                                 }
 
-                                if lines.peek().is_some() {
+                                if line_indent.is_some() {
                                     hunks_tx.send(diff.push_new(&new_text)).await?;
-                                    hunks_tx.send(diff.push_new("\n")).await?;
                                     new_text.clear();
+                                }
+
+                                if lines.peek().is_some() {
+                                    hunks_tx.send(diff.push_new("\n")).await?;
                                     line_indent = None;
                                     first_line = false;
                                 }
