@@ -950,12 +950,16 @@ impl BufferSearchBar {
     fn replace_next_on_pane(pane: &mut Pane, action: &ReplaceNext, cx: &mut ViewContext<Pane>) {
         if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
             search_bar.update(cx, |bar, cx| bar.replace_next(action, cx));
+            return;
         }
+        cx.propagate_action();
     }
     fn replace_all_on_pane(pane: &mut Pane, action: &ReplaceAll, cx: &mut ViewContext<Pane>) {
         if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
             search_bar.update(cx, |bar, cx| bar.replace_all(action, cx));
+            return;
         }
+        cx.propagate_action();
     }
 }
 
