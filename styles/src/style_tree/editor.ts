@@ -209,7 +209,7 @@ export default function editor(): any {
             inline_docs_container: { padding: { left: 40 } },
             inline_docs_color: text(theme.middle, "sans", "disabled", {}).color,
             inline_docs_size_percent: 0.75,
-            alongside_docs_width: 400,
+            alongside_docs_width: 700,
             alongside_docs_container: { padding: autocomplete_item.padding }
         },
         diagnostic_header: {

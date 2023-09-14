@@ -9,6 +9,7 @@ mod highlight_matching_bracket;
 mod hover_popover;
 pub mod items;
 mod link_go_to_definition;
+mod markdown;
 mod mouse_context_menu;
 pub mod movement;
 pub mod multi_buffer;
@@ -845,11 +846,12 @@ impl ContextMenu {
     fn render(
         &self,
         cursor_position: DisplayPoint,
+        editor: &Editor,
         style: EditorStyle,
         cx: &mut ViewContext<Editor>,
     ) -> (DisplayPoint, AnyElement<Editor>) {
         match self {
-            ContextMenu::Completions(menu) => (cursor_position, menu.render(style, cx)),
+            ContextMenu::Completions(menu) => (cursor_position, menu.render(editor, style, cx)),
             ContextMenu::CodeActions(menu) => menu.render(cursor_position, style, cx),
         }
     }
@@ -899,7 +901,12 @@ impl CompletionsMenu {
         !self.matches.is_empty()
     }
 
-    fn render(&self, style: EditorStyle, cx: &mut ViewContext<Editor>) -> AnyElement<Editor> {
+    fn render(
+        &self,
+        editor: &Editor,
+        style: EditorStyle,
+        cx: &mut ViewContext<Editor>,
+    ) -> AnyElement<Editor> {
         enum CompletionTag {}
 
         let widest_completion_ix = self
@@ -923,18 +930,12 @@ impl CompletionsMenu {
         let matches = self.matches.clone();
         let selected_item = self.selected_item;
 
-        let alongside_docs_text_style = TextStyle {
-            soft_wrap: true,
-            ..style.text.clone()
-        };
         let alongside_docs_width = style.autocomplete.alongside_docs_width;
         let alongside_docs_container_style = style.autocomplete.alongside_docs_container;
         let outer_container_style = style.autocomplete.container;
 
-        let list = UniformList::new(
-            self.list.clone(),
-            matches.len(),
-            cx,
+        let list = UniformList::new(self.list.clone(), matches.len(), cx, {
+            let style = style.clone();
             move |_, range, items, cx| {
                 let start_ix = range.start;
                 for (ix, mat) in matches[range].iter().enumerate() {
@@ -1043,8 +1044,8 @@ impl CompletionsMenu {
                         .into_any(),
                     );
                 }
-            },
-        )
+            }
+        })
         .with_width_from_item(widest_completion_ix);
 
         Flex::row()
@@ -1055,12 +1056,26 @@ impl CompletionsMenu {
                 let documentation = &completion.lsp_completion.documentation;
 
                 if let Some(lsp::Documentation::MarkupContent(content)) = documentation {
+                    let registry = editor
+                        .project
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .languages()
+                        .clone();
+                    let language = self.buffer.read(cx).language().map(Arc::clone);
                     Some(
-                        Text::new(content.value.clone(), alongside_docs_text_style)
-                            .constrained()
-                            .with_width(alongside_docs_width)
-                            .contained()
-                            .with_style(alongside_docs_container_style),
+                        crate::markdown::render_markdown(
+                            &content.value,
+                            &registry,
+                            &language,
+                            &style,
+                            cx,
+                        )
+                        .constrained()
+                        .with_width(alongside_docs_width)
+                        .contained()
+                        .with_style(alongside_docs_container_style),
                     )
                 } else {
                     None
@@ -3985,7 +4000,7 @@ impl Editor {
     ) -> Option<(DisplayPoint, AnyElement<Editor>)> {
         self.context_menu
             .as_ref()
-            .map(|menu| menu.render(cursor_position, style, cx))
+            .map(|menu| menu.render(cursor_position, self, style, cx))
     }
 
     fn show_context_menu(&mut self, menu: ContextMenu, cx: &mut ViewContext<Self>) {
