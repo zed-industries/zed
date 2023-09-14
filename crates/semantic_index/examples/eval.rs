@@ -1,22 +1,21 @@
 use anyhow::{anyhow, Result};
 use client::{self, UserStore};
 use git2::{Object, Oid, Repository};
-use gpui::{AppContext, AssetSource, ModelHandle, Task};
+use gpui::{AssetSource, Task};
 use language::LanguageRegistry;
 use node_runtime::RealNodeRuntime;
-use project::{Fs, Project, RealFs};
+use project::{Project, RealFs};
 use rust_embed::RustEmbed;
 use semantic_index::embedding::OpenAIEmbeddings;
 use semantic_index::semantic_index_settings::SemanticIndexSettings;
 use semantic_index::{SearchResult, SemanticIndex};
 use serde::Deserialize;
 use settings::{default_settings, handle_settings_file_changes, watch_config_file, SettingsStore};
-use std::path::{self, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 use std::{cmp, env, fs};
 use util::channel::{RELEASE_CHANNEL, RELEASE_CHANNEL_NAME};
-use util::http::{self, HttpClient};
+use util::http::{self};
 use util::paths::{self, EMBEDDINGS_DIR};
 use zed::languages;
 
