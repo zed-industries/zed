@@ -2,12 +2,15 @@ use super::{px, AppContext, Bounds, Context, EntityId, Handle, Pixels, Style, Ta
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui2::Reference;
-use std::marker::PhantomData;
+use std::{any::Any, marker::PhantomData};
+
+pub struct AnyWindow {}
 
 pub struct Window {
     id: WindowId,
     rem_size: Pixels,
     layout_engine: Box<dyn LayoutEngine>,
+    pub(crate) root_view: Option<Box<dyn Any>>,
 }
 
 impl Window {
@@ -16,6 +19,7 @@ impl Window {
             id,
             layout_engine: Box::new(TaffyLayoutEngine::new()),
             rem_size: px(16.),
+            root_view: None,
         }
     }
 }
@@ -196,6 +200,15 @@ slotmap::new_key_type! { pub struct WindowId; }
 pub struct WindowHandle<S> {
     id: WindowId,
     state_type: PhantomData<S>,
+}
+
+impl<S> WindowHandle<S> {
+    pub fn new(id: WindowId) -> Self {
+        WindowHandle {
+            id,
+            state_type: PhantomData,
+        }
+    }
 }
 
 #[derive(Clone)]

@@ -23,15 +23,18 @@ impl AppContext {
         }
     }
 
-    pub fn open_window<S>(
+    pub fn open_window<S: 'static>(
         &mut self,
         build_root_view: impl FnOnce(&mut WindowContext) -> View<S>,
     ) -> WindowHandle<S> {
-        // let window = self.windows.insert_with_key(|id| {
+        let id = self.windows.insert(None);
 
-        // });
+        let mut window = Window::new(id);
+        let root_view = build_root_view(&mut WindowContext::mutable(self, &mut window));
+        window.root_view.replace(Box::new(root_view));
 
-        unimplemented!()
+        self.windows.get_mut(id).unwrap().replace(window);
+        WindowHandle::new(id)
     }
 
     pub(crate) fn update_window<R>(
