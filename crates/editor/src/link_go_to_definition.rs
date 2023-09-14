@@ -224,7 +224,6 @@ pub fn update_inlay_link_and_hover_points(
                             extra_shift_left += 1;
                             extra_shift_right += 1;
                         }
-                        // TODO kb is it right for label part cases? for `\n` in hints and fold cases?
                         if cached_hint.padding_right {
                             extra_shift_right += 1;
                         }

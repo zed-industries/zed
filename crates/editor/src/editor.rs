@@ -7823,6 +7823,7 @@ impl Editor {
         color_fetcher: fn(&Theme) -> Color,
         cx: &mut ViewContext<Self>,
     ) {
+        // TODO: no actual highlights happen for inlays currently, find a way to do that
         self.inlay_background_highlights
             .insert(Some(TypeId::of::<T>()), (color_fetcher, ranges));
         cx.notify();

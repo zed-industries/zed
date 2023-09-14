@@ -54,7 +54,6 @@ use std::{
     ops::Range,
     sync::Arc,
 };
-use sum_tree::TreeMap;
 use text::Point;
 use workspace::item::Item;
 
@@ -1548,7 +1547,6 @@ impl EditorElement {
         &mut self,
         rows: Range<u32>,
         line_number_layouts: &[Option<Line>],
-        editor: &mut Editor,
         snapshot: &EditorSnapshot,
         cx: &ViewContext<Editor>,
     ) -> Vec<LineWithInvisibles> {
@@ -1593,28 +1591,10 @@ impl EditorElement {
                 .collect()
         } else {
             let style = &self.style;
-            let theme = theme::current(cx);
-            let inlay_background_highlights =
-                TreeMap::from_ordered_entries(editor.inlay_background_highlights.iter().map(
-                    |(type_id, (color_fetcher, ranges))| {
-                        let color = Some(color_fetcher(&theme));
-                        (
-                            *type_id,
-                            Arc::new((
-                                HighlightStyle {
-                                    color,
-                                    ..HighlightStyle::default()
-                                },
-                                ranges.as_slice(),
-                            )),
-                        )
-                    },
-                ));
             let chunks = snapshot
                 .chunks(
                     rows.clone(),
                     true,
-                    Some(inlay_background_highlights),
                     Some(style.theme.hint),
                     Some(style.theme.suggestion),
                 )
@@ -2375,13 +2355,8 @@ impl Element<Editor> for EditorElement {
         let scrollbar_row_range = scroll_position.y()..(scroll_position.y() + height_in_lines);
 
         let mut max_visible_line_width = 0.0;
-        let line_layouts = self.layout_lines(
-            start_row..end_row,
-            &line_number_layouts,
-            editor,
-            &snapshot,
-            cx,
-        );
+        let line_layouts =
+            self.layout_lines(start_row..end_row, &line_number_layouts, &snapshot, cx);
         for line_with_invisibles in &line_layouts {
             if line_with_invisibles.line.width() > max_visible_line_width {
                 max_visible_line_width = line_with_invisibles.line.width();

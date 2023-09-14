@@ -485,6 +485,7 @@ impl InlayHintCache {
         self.hints.clear();
     }
 
+    // TODO kb have a map
     pub fn hint_by_id(&self, excerpt_id: ExcerptId, hint_id: InlayId) -> Option<InlayHint> {
         self.hints
             .get(&excerpt_id)?

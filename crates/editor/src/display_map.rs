@@ -308,9 +308,6 @@ impl DisplayMap {
 pub struct Highlights<'a> {
     pub text_highlights: Option<&'a TextHighlights>,
     pub inlay_highlights: Option<&'a InlayHighlights>,
-    // TODO kb remove, backgrounds are not handled in the *Map codegi
-    pub inlay_background_highlights:
-        Option<TreeMap<Option<TypeId>, Arc<(HighlightStyle, &'a [InlayHighlight])>>>,
     pub inlay_highlight_style: Option<HighlightStyle>,
     pub suggestion_highlight_style: Option<HighlightStyle>,
 }
@@ -482,9 +479,6 @@ impl DisplaySnapshot {
         &'a self,
         display_rows: Range<u32>,
         language_aware: bool,
-        inlay_background_highlights: Option<
-            TreeMap<Option<TypeId>, Arc<(HighlightStyle, &'a [InlayHighlight])>>,
-        >,
         inlay_highlight_style: Option<HighlightStyle>,
         suggestion_highlight_style: Option<HighlightStyle>,
     ) -> DisplayChunks<'_> {
@@ -494,7 +488,6 @@ impl DisplaySnapshot {
             Highlights {
                 text_highlights: Some(&self.text_highlights),
                 inlay_highlights: Some(&self.inlay_highlights),
-                inlay_background_highlights,
                 inlay_highlight_style,
                 suggestion_highlight_style,
             },
@@ -1714,7 +1707,7 @@ pub mod tests {
     ) -> Vec<(String, Option<Color>, Option<Color>)> {
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         let mut chunks: Vec<(String, Option<Color>, Option<Color>)> = Vec::new();
-        for chunk in snapshot.chunks(rows, true, None, None, None) {
+        for chunk in snapshot.chunks(rows, true, None, None) {
             let syntax_color = chunk
                 .syntax_highlight_id
                 .and_then(|id| id.style(theme)?.color);
