@@ -1,6 +1,6 @@
 use crate::{
     display_map::{InlayOffset, ToDisplayPoint},
-    link_go_to_definition::{InlayRange, RangeInEditor},
+    link_go_to_definition::{InlayHighlight, RangeInEditor},
     Anchor, AnchorRangeExt, DisplayPoint, Editor, EditorSettings, EditorSnapshot, EditorStyle,
     ExcerptId, RangeToAnchorExt,
 };
@@ -50,7 +50,7 @@ pub fn hover_at(editor: &mut Editor, point: Option<DisplayPoint>, cx: &mut ViewC
 
 pub struct InlayHover {
     pub excerpt: ExcerptId,
-    pub range: InlayRange,
+    pub range: InlayHighlight,
     pub tooltip: HoverBlock,
 }
 

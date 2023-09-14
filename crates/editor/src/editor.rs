@@ -66,7 +66,7 @@ use language::{
     TransactionId,
 };
 use link_go_to_definition::{
-    hide_link_definition, show_link_definition, GoToDefinitionLink, InlayRange,
+    hide_link_definition, show_link_definition, GoToDefinitionLink, InlayHighlight,
     LinkGoToDefinitionState,
 };
 use log::error;
@@ -550,7 +550,7 @@ type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
 type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
 type BackgroundHighlight = (fn(&Theme) -> Color, Vec<Range<Anchor>>);
-type InlayBackgroundHighlight = (fn(&Theme) -> Color, Vec<InlayRange>);
+type InlayBackgroundHighlight = (fn(&Theme) -> Color, Vec<InlayHighlight>);
 
 pub struct Editor {
     handle: WeakViewHandle<Self>,
@@ -7819,7 +7819,7 @@ impl Editor {
 
     pub fn highlight_inlay_background<T: 'static>(
         &mut self,
-        ranges: Vec<InlayRange>,
+        ranges: Vec<InlayHighlight>,
         color_fetcher: fn(&Theme) -> Color,
         cx: &mut ViewContext<Self>,
     ) {
@@ -8019,7 +8019,7 @@ impl Editor {
 
     pub fn highlight_inlays<T: 'static>(
         &mut self,
-        ranges: Vec<InlayRange>,
+        ranges: Vec<InlayHighlight>,
         style: HighlightStyle,
         cx: &mut ViewContext<Self>,
     ) {

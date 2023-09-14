@@ -5,7 +5,7 @@ mod tab_map;
 mod wrap_map;
 
 use crate::{
-    link_go_to_definition::InlayRange, Anchor, AnchorRangeExt, InlayId, MultiBuffer,
+    link_go_to_definition::InlayHighlight, Anchor, AnchorRangeExt, InlayId, MultiBuffer,
     MultiBufferSnapshot, ToOffset, ToPoint,
 };
 pub use block_map::{BlockMap, BlockPoint};
@@ -44,7 +44,7 @@ pub trait ToDisplayPoint {
 }
 
 type TextHighlights = TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
-type InlayHighlights = TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<InlayRange>)>>;
+type InlayHighlights = TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<InlayHighlight>)>>;
 
 pub struct DisplayMap {
     buffer: ModelHandle<MultiBuffer>,
@@ -226,7 +226,7 @@ impl DisplayMap {
     pub fn highlight_inlays(
         &mut self,
         type_id: TypeId,
-        ranges: Vec<InlayRange>,
+        ranges: Vec<InlayHighlight>,
         style: HighlightStyle,
     ) {
         self.inlay_highlights
@@ -308,8 +308,9 @@ impl DisplayMap {
 pub struct Highlights<'a> {
     pub text_highlights: Option<&'a TextHighlights>,
     pub inlay_highlights: Option<&'a InlayHighlights>,
+    // TODO kb remove, backgrounds are not handled in the *Map codegi
     pub inlay_background_highlights:
-        Option<TreeMap<Option<TypeId>, Arc<(HighlightStyle, &'a [InlayRange])>>>,
+        Option<TreeMap<Option<TypeId>, Arc<(HighlightStyle, &'a [InlayHighlight])>>>,
     pub inlay_highlight_style: Option<HighlightStyle>,
     pub suggestion_highlight_style: Option<HighlightStyle>,
 }
@@ -482,7 +483,7 @@ impl DisplaySnapshot {
         display_rows: Range<u32>,
         language_aware: bool,
         inlay_background_highlights: Option<
-            TreeMap<Option<TypeId>, Arc<(HighlightStyle, &'a [InlayRange])>>,
+            TreeMap<Option<TypeId>, Arc<(HighlightStyle, &'a [InlayHighlight])>>,
         >,
         inlay_highlight_style: Option<HighlightStyle>,
         suggestion_highlight_style: Option<HighlightStyle>,

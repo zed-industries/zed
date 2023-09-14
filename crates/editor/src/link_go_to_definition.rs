@@ -26,7 +26,7 @@ pub struct LinkGoToDefinitionState {
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum RangeInEditor {
     Text(Range<Anchor>),
-    Inlay(InlayRange),
+    Inlay(InlayHighlight),
 }
 
 impl RangeInEditor {
@@ -57,7 +57,7 @@ impl RangeInEditor {
 #[derive(Debug)]
 pub enum GoToDefinitionTrigger {
     Text(DisplayPoint),
-    InlayHint(InlayRange, lsp::Location, LanguageServerId),
+    InlayHint(InlayHighlight, lsp::Location, LanguageServerId),
 }
 
 #[derive(Debug, Clone)]
@@ -67,9 +67,10 @@ pub enum GoToDefinitionLink {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InlayRange {
+pub struct InlayHighlight {
     pub inlay: InlayId,
     pub inlay_position: Anchor,
+    // TODO kb turn into Range<usize>
     pub highlight_start: usize,
     pub highlight_end: usize,
 }
@@ -77,7 +78,7 @@ pub struct InlayRange {
 #[derive(Debug, Clone)]
 pub enum TriggerPoint {
     Text(Anchor),
-    InlayHint(InlayRange, lsp::Location, LanguageServerId),
+    InlayHint(InlayHighlight, lsp::Location, LanguageServerId),
 }
 
 impl TriggerPoint {
@@ -248,7 +249,7 @@ pub fn update_inlay_link_and_hover_points(
                                                     }
                                                 }
                                             },
-                                            range: InlayRange {
+                                            range: InlayHighlight {
                                                 inlay: hovered_hint.id,
                                                 inlay_position: hovered_hint.position,
                                                 highlight_start: extra_shift_left,
@@ -271,7 +272,7 @@ pub fn update_inlay_link_and_hover_points(
                                         hovered_offset,
                                     )
                                 {
-                                    let range = InlayRange {
+                                    let range = InlayHighlight {
                                         inlay: hovered_hint.id,
                                         inlay_position: hovered_hint.position,
                                         highlight_start: (part_range.start - hint_start).0
