@@ -1711,7 +1711,6 @@ mod tests {
                     .filter_map(|i| {
                         let (_, inlay) = &inlays[i];
                         let inlay_text_len = inlay.text.len();
-                        // TODO kb gen_range
                         match inlay_text_len {
                             0 => None,
                             1 => Some(InlayHighlight {

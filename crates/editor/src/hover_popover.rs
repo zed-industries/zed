@@ -796,6 +796,7 @@ mod tests {
         inlay_hint_cache::tests::{cached_hint_labels, visible_hint_labels},
         link_go_to_definition::update_inlay_link_and_hover_points,
         test::editor_lsp_test_context::EditorLspTestContext,
+        InlayId,
     };
     use collections::BTreeSet;
     use gpui::fonts::Weight;
@@ -1462,29 +1463,19 @@ mod tests {
             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
         cx.foreground().run_until_parked();
         cx.update_editor(|editor, cx| {
-            let snapshot = editor.snapshot(cx);
             let hover_state = &editor.hover_state;
             assert!(hover_state.diagnostic_popover.is_none() && hover_state.info_popover.is_some());
             let popover = hover_state.info_popover.as_ref().unwrap();
             let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
-            let entire_inlay_start = snapshot.display_point_to_inlay_offset(
-                inlay_range.start.to_display_point(&snapshot),
-                Bias::Left,
+            assert_eq!(
+                popover.symbol_range,
+                RangeInEditor::Inlay(InlayHighlight {
+                    inlay: InlayId::Hint(0),
+                    inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
+                    range: ": ".len()..": ".len() + new_type_label.len(),
+                }),
+                "Popover range should match the new type label part"
             );
-
-            let expected_new_type_label_start = InlayOffset(entire_inlay_start.0 + ": ".len());
-            // TODO kb
-            // assert_eq!(
-            //     popover.symbol_range,
-            //     RangeInEditor::Inlay(InlayRange {
-            //         inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
-            //         highlight_start: expected_new_type_label_start,
-            //         highlight_end: InlayOffset(
-            //             expected_new_type_label_start.0 + new_type_label.len()
-            //         ),
-            //     }),
-            //     "Popover range should match the new type label part"
-            // );
             assert_eq!(
                 popover
                     .rendered_content
@@ -1529,27 +1520,20 @@ mod tests {
             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
         cx.foreground().run_until_parked();
         cx.update_editor(|editor, cx| {
-            let snapshot = editor.snapshot(cx);
             let hover_state = &editor.hover_state;
             assert!(hover_state.diagnostic_popover.is_none() && hover_state.info_popover.is_some());
             let popover = hover_state.info_popover.as_ref().unwrap();
             let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
-            let entire_inlay_start = snapshot.display_point_to_inlay_offset(
-                inlay_range.start.to_display_point(&snapshot),
-                Bias::Left,
+            assert_eq!(
+                popover.symbol_range,
+                RangeInEditor::Inlay(InlayHighlight {
+                    inlay: InlayId::Hint(0),
+                    inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
+                    range: ": ".len() + new_type_label.len() + "<".len()
+                        ..": ".len() + new_type_label.len() + "<".len() + struct_label.len(),
+                }),
+                "Popover range should match the struct label part"
             );
-            let expected_struct_label_start =
-                InlayOffset(entire_inlay_start.0 + ": ".len() + new_type_label.len() + "<".len());
-            // TODO kb
-            // assert_eq!(
-            //     popover.symbol_range,
-            //     RangeInEditor::Inlay(InlayRange {
-            //         inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
-            //         highlight_start: expected_struct_label_start,
-            //         highlight_end: InlayOffset(expected_struct_label_start.0 + struct_label.len()),
-            //     }),
-            //     "Popover range should match the struct label part"
-            // );
             assert_eq!(
                 popover
                     .rendered_content

@@ -761,6 +761,14 @@ impl DisplaySnapshot {
         let type_id = TypeId::of::<Tag>();
         self.text_highlights.get(&Some(type_id)).cloned()
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn inlay_highlight_ranges<Tag: ?Sized + 'static>(
+        &self,
+    ) -> Option<Arc<(HighlightStyle, Vec<InlayHighlight>)>> {
+        let type_id = TypeId::of::<Tag>();
+        self.inlay_highlights.get(&Some(type_id)).cloned()
+    }
 }
 
 #[derive(Copy, Clone, Default, Eq, Ord, PartialOrd, PartialEq)]
