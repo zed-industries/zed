@@ -7,6 +7,7 @@ use rusqlite::{
 };
 use sha1::{Digest, Sha1};
 use std::{
+    borrow::Cow,
     cmp::{self, Reverse},
     collections::HashSet,
     ops::Range,
@@ -94,12 +95,15 @@ impl CodeContextRetriever {
 
     fn parse_entire_file(
         &self,
-        relative_path: &Path,
+        relative_path: Option<&Path>,
         language_name: Arc<str>,
         content: &str,
     ) -> Result<Vec<Span>> {
         let document_span = ENTIRE_FILE_TEMPLATE
-            .replace("<path>", relative_path.to_string_lossy().as_ref())
+            .replace(
+                "<path>",
+                &relative_path.map_or(Cow::Borrowed("untitled"), |path| path.to_string_lossy()),
+            )
             .replace("<language>", language_name.as_ref())
             .replace("<item>", &content);
         let digest = SpanDigest::from(document_span.as_str());
@@ -114,9 +118,16 @@ impl CodeContextRetriever {
         }])
     }
 
-    fn parse_markdown_file(&self, relative_path: &Path, content: &str) -> Result<Vec<Span>> {
+    fn parse_markdown_file(
+        &self,
+        relative_path: Option<&Path>,
+        content: &str,
+    ) -> Result<Vec<Span>> {
         let document_span = MARKDOWN_CONTEXT_TEMPLATE
-            .replace("<path>", relative_path.to_string_lossy().as_ref())
+            .replace(
+                "<path>",
+                &relative_path.map_or(Cow::Borrowed("untitled"), |path| path.to_string_lossy()),
+            )
             .replace("<item>", &content);
         let digest = SpanDigest::from(document_span.as_str());
         let (document_span, token_count) = self.embedding_provider.truncate(&document_span);
@@ -188,7 +199,7 @@ impl CodeContextRetriever {
 
     pub fn parse_file_with_template(
         &mut self,
-        relative_path: &Path,
+        relative_path: Option<&Path>,
         content: &str,
         language: Arc<Language>,
     ) -> Result<Vec<Span>> {
@@ -203,7 +214,10 @@ impl CodeContextRetriever {
         let mut spans = self.parse_file(content, language)?;
         for span in &mut spans {
             let document_content = CODE_CONTEXT_TEMPLATE
-                .replace("<path>", relative_path.to_string_lossy().as_ref())
+                .replace(
+                    "<path>",
+                    &relative_path.map_or(Cow::Borrowed("untitled"), |path| path.to_string_lossy()),
+                )
                 .replace("<language>", language_name.as_ref())
                 .replace("item", &span.content);
 

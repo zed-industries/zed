@@ -402,7 +402,7 @@ impl SemanticIndex {
 
         if let Some(content) = fs.load(&pending_file.absolute_path).await.log_err() {
             if let Some(mut spans) = retriever
-                .parse_file_with_template(&pending_file.relative_path, &content, language)
+                .parse_file_with_template(Some(&pending_file.relative_path), &content, language)
                 .log_err()
             {
                 log::trace!(
@@ -422,7 +422,7 @@ impl SemanticIndex {
                     path: pending_file.relative_path,
                     mtime: pending_file.modified_time,
                     job_handle: pending_file.job_handle,
-                    spans: spans,
+                    spans,
                 });
             }
         }
