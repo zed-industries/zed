@@ -2289,14 +2289,16 @@ impl Editor {
                 // bracket of any of this language's bracket pairs.
                 let mut bracket_pair = None;
                 let mut is_bracket_pair_start = false;
-                for (pair, enabled) in scope.brackets() {
-                    if enabled && pair.close && pair.start.ends_with(text.as_ref()) {
-                        bracket_pair = Some(pair.clone());
-                        is_bracket_pair_start = true;
-                        break;
-                    } else if pair.end.as_str() == text.as_ref() {
-                        bracket_pair = Some(pair.clone());
-                        break;
+                if !text.is_empty() {
+                    for (pair, enabled) in scope.brackets() {
+                        if enabled && pair.close && pair.start.ends_with(text.as_ref()) {
+                            bracket_pair = Some(pair.clone());
+                            is_bracket_pair_start = true;
+                            break;
+                        } else if pair.end.as_str() == text.as_ref() {
+                            bracket_pair = Some(pair.clone());
+                            break;
+                        }
                     }
                 }
 
