@@ -207,7 +207,7 @@ impl CodeContextRetriever {
 
         if PARSEABLE_ENTIRE_FILE_TYPES.contains(&language_name.as_ref()) {
             return self.parse_entire_file(relative_path, language_name, &content);
-        } else if language_name.as_ref() == "Markdown" {
+        } else if ["Markdown", "Plain Text"].contains(&language_name.as_ref()) {
             return self.parse_markdown_file(relative_path, &content);
         }
 

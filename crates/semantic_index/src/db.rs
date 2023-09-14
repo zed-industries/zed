@@ -190,6 +190,10 @@ impl VectorDatabase {
                 )",
                 [],
             )?;
+            db.execute(
+                "CREATE INDEX spans_digest ON spans (digest)",
+                [],
+            )?;
 
             log::trace!("vector database initialized with updated schema.");
             Ok(())
