@@ -1,7 +1,8 @@
 use anyhow::{anyhow, Result};
 use client::{self, UserStore};
+use collections::HashMap;
 use git2::{Object, Oid, Repository};
-use gpui::{AssetSource, Task};
+use gpui::{AssetSource, AsyncAppContext, ModelHandle, Task};
 use language::LanguageRegistry;
 use node_runtime::RealNodeRuntime;
 use project::{Project, RealFs};
@@ -13,6 +14,7 @@ use serde::Deserialize;
 use settings::{default_settings, handle_settings_file_changes, watch_config_file, SettingsStore};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use std::{cmp, env, fs};
 use util::channel::{RELEASE_CHANNEL, RELEASE_CHANNEL_NAME};
 use util::http::{self};
@@ -71,6 +73,15 @@ struct RepoEval {
     repo: String,
     commit: String,
     assertions: Vec<EvaluationQuery>,
+}
+
+struct EvaluationResults {
+    token_count: usize,
+    span_count: usize,
+    time_to_index: Duration,
+    time_to_search: Vec<Duration>,
+    ndcg: HashMap<usize, f32>,
+    map: HashMap<usize, f32>,
 }
 
 const TMP_REPO_PATH: &str = "eval_repos";
@@ -180,6 +191,42 @@ fn init_logger() {
     env_logger::init();
 }
 
+async fn evaluate_repo(
+    index: ModelHandle<SemanticIndex>,
+    project: ModelHandle<Project>,
+    query_matches: Vec<EvaluationQuery>,
+    cx: &mut AsyncAppContext,
+) -> Result<()> {
+    // Index Project
+    let index_t0 = Instant::now();
+    index
+        .update(cx, |index, cx| index.index_project(project.clone(), cx))
+        .await?;
+    let index_time = index_t0.elapsed();
+    println!("Time to Index: {:?}", index_time.as_secs());
+
+    for query in query_matches {
+        // Query each match in order
+        let search_t0 = Instant::now();
+        let search_results = index
+            .update(cx, |index, mut cx| {
+                index.search_project(project.clone(), query.query, 10, vec![], vec![], cx)
+            })
+            .await?;
+        let search_time = search_t0.elapsed();
+        println!("Time to Search: {:?}", search_time.as_secs());
+
+        // Evaluate ndcg@k, for k = 1, 3, 5, 10
+        // Evaluate map@k, for k = 1, 3, 5, 10
+        // Evaluate span count
+        // Evaluate token count
+        // Evaluate time to index
+        // Evaluate time to search
+    }
+
+    anyhow::Ok(())
+}
+
 fn main() {
     // Launch new repo as a new Zed workspace/project
     let app = gpui::App::new(Assets).unwrap();
@@ -260,17 +307,17 @@ fn main() {
                             // Register Worktree
                             let _ = project
                                 .update(&mut cx, |project, cx| {
-                                    println!(
-                                        "Creating worktree in project: {:?}",
-                                        clone_path.clone()
-                                    );
                                     project.find_or_create_local_worktree(clone_path, true, cx)
                                 })
                                 .await;
 
-                            let _ = semantic_index
-                                .update(&mut cx, |index, cx| index.index_project(project, cx))
-                                .await;
+                            evaluate_repo(
+                                semantic_index.clone(),
+                                project,
+                                repo.assertions,
+                                &mut cx,
+                            )
+                            .await?;
                         }
                         Err(err) => {
                             log::trace!("Error cloning: {:?}", err);
