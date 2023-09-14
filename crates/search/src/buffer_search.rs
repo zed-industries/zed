@@ -992,7 +992,7 @@ mod tests {
             .unwrap();
         editor.update(cx, |editor, cx| {
             assert_eq!(
-                editor.all_background_highlights(cx),
+                editor.all_text_background_highlights(cx),
                 &[
                     (
                         DisplayPoint::new(2, 17)..DisplayPoint::new(2, 19),
@@ -1013,7 +1013,7 @@ mod tests {
         editor.next_notification(cx).await;
         editor.update(cx, |editor, cx| {
             assert_eq!(
-                editor.all_background_highlights(cx),
+                editor.all_text_background_highlights(cx),
                 &[(
                     DisplayPoint::new(2, 43)..DisplayPoint::new(2, 45),
                     Color::red(),
@@ -1029,7 +1029,7 @@ mod tests {
             .unwrap();
         editor.update(cx, |editor, cx| {
             assert_eq!(
-                editor.all_background_highlights(cx),
+                editor.all_text_background_highlights(cx),
                 &[
                     (
                         DisplayPoint::new(0, 24)..DisplayPoint::new(0, 26),
@@ -1070,7 +1070,7 @@ mod tests {
         editor.next_notification(cx).await;
         editor.update(cx, |editor, cx| {
             assert_eq!(
-                editor.all_background_highlights(cx),
+                editor.all_text_background_highlights(cx),
                 &[
                     (
                         DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43),
@@ -1281,7 +1281,7 @@ mod tests {
             .unwrap();
         editor.update(cx, |editor, cx| {
             assert_eq!(
-                editor.all_background_highlights(cx),
+                editor.all_text_background_highlights(cx),
                 &[(
                     DisplayPoint::new(2, 43)..DisplayPoint::new(2, 45),
                     Color::red(),
@@ -1308,7 +1308,7 @@ mod tests {
         editor.next_notification(cx).await;
         editor.update(cx, |editor, cx| {
             assert_eq!(
-                editor.all_background_highlights(cx),
+                editor.all_text_background_highlights(cx),
                 &[(
                     DisplayPoint::new(0, 35)..DisplayPoint::new(0, 40),
                     Color::red(),

@@ -1649,9 +1649,7 @@ mod tests {
                         false,
                         Highlights {
                             text_highlights: Some(&text_highlights),
-                            inlay_highlights: None,
-                            inlay_highlight_style: None,
-                            suggestion_highlight_style: None,
+                            ..Highlights::default()
                         },
                     )
                     .map(|chunk| chunk.text)

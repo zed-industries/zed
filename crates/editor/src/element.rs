@@ -1547,6 +1547,7 @@ impl EditorElement {
         &mut self,
         rows: Range<u32>,
         line_number_layouts: &[Option<Line>],
+        editor: &mut Editor,
         snapshot: &EditorSnapshot,
         cx: &ViewContext<Editor>,
     ) -> Vec<LineWithInvisibles> {
@@ -1595,6 +1596,7 @@ impl EditorElement {
                 .chunks(
                     rows.clone(),
                     true,
+                    Some(&editor.inlay_background_highlights),
                     Some(style.theme.hint),
                     Some(style.theme.suggestion),
                 )
@@ -2355,8 +2357,13 @@ impl Element<Editor> for EditorElement {
         let scrollbar_row_range = scroll_position.y()..(scroll_position.y() + height_in_lines);
 
         let mut max_visible_line_width = 0.0;
-        let line_layouts =
-            self.layout_lines(start_row..end_row, &line_number_layouts, &snapshot, cx);
+        let line_layouts = self.layout_lines(
+            start_row..end_row,
+            &line_number_layouts,
+            editor,
+            &snapshot,
+            cx,
+        );
         for line_with_invisibles in &line_layouts {
             if line_with_invisibles.line.width() > max_visible_line_width {
                 max_visible_line_width = line_with_invisibles.line.width();

@@ -549,6 +549,7 @@ type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
 type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
 type BackgroundHighlight = (fn(&Theme) -> Color, Vec<Range<Anchor>>);
+type InlayBackgroundHighlight = (fn(&Theme) -> Color, Vec<InlayRange>);
 
 pub struct Editor {
     handle: WeakViewHandle<Self>,
@@ -580,6 +581,7 @@ pub struct Editor {
     placeholder_text: Option<Arc<str>>,
     highlighted_rows: Option<Range<u32>>,
     background_highlights: BTreeMap<TypeId, BackgroundHighlight>,
+    inlay_background_highlights: BTreeMap<TypeId, InlayBackgroundHighlight>,
     nav_history: Option<ItemNavHistory>,
     context_menu: Option<ContextMenu>,
     mouse_context_menu: ViewHandle<context_menu::ContextMenu>,
@@ -1523,6 +1525,7 @@ impl Editor {
             placeholder_text: None,
             highlighted_rows: None,
             background_highlights: Default::default(),
+            inlay_background_highlights: Default::default(),
             nav_history: None,
             context_menu: None,
             mouse_context_menu: cx
@@ -7070,9 +7073,6 @@ impl Editor {
             } else {
                 this.update(&mut cx, |this, cx| {
                     let buffer = this.buffer.read(cx).snapshot(cx);
-                    let display_snapshot = this
-                        .display_map
-                        .update(cx, |display_map, cx| display_map.snapshot(cx));
                     let mut buffer_highlights = this
                         .document_highlights_for_position(selection.head(), &buffer)
                         .filter(|highlight| {
@@ -7822,14 +7822,8 @@ impl Editor {
         color_fetcher: fn(&Theme) -> Color,
         cx: &mut ViewContext<Self>,
     ) {
-        // TODO kb
-        // self.background_highlights.insert(
-        //     TypeId::of::<T>(),
-        //     (
-        //         color_fetcher,
-        //         ranges.into_iter().map(DocumentRange::Inlay).collect(),
-        //     ),
-        // );
+        self.inlay_background_highlights
+            .insert(TypeId::of::<T>(), (color_fetcher, ranges));
         cx.notify();
     }
 
@@ -7837,15 +7831,16 @@ impl Editor {
         &mut self,
         cx: &mut ViewContext<Self>,
     ) -> Option<BackgroundHighlight> {
-        let highlights = self.background_highlights.remove(&TypeId::of::<T>());
-        if highlights.is_some() {
+        let text_highlights = self.background_highlights.remove(&TypeId::of::<T>());
+        let inlay_highlights = self.inlay_background_highlights.remove(&TypeId::of::<T>());
+        if text_highlights.is_some() || inlay_highlights.is_some() {
             cx.notify();
         }
-        highlights
+        text_highlights
     }
 
     #[cfg(feature = "test-support")]
-    pub fn all_background_highlights(
+    pub fn all_text_background_highlights(
         &mut self,
         cx: &mut ViewContext<Self>,
     ) -> Vec<(Range<DisplayPoint>, Color)> {

@@ -69,7 +69,6 @@ pub enum GoToDefinitionLink {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InlayRange {
     pub inlay: InlayId,
-    // TODO kb look up inlays by id instead?
     pub inlay_position: Anchor,
     pub highlight_start: usize,
     pub highlight_end: usize,

@@ -5,11 +5,11 @@ mod tab_map;
 mod wrap_map;
 
 use crate::{
-    link_go_to_definition::InlayRange, Anchor, AnchorRangeExt, InlayId, MultiBuffer,
-    MultiBufferSnapshot, ToOffset, ToPoint,
+    link_go_to_definition::InlayRange, Anchor, AnchorRangeExt, InlayBackgroundHighlight, InlayId,
+    MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 pub use block_map::{BlockMap, BlockPoint};
-use collections::{HashMap, HashSet};
+use collections::{BTreeMap, HashMap, HashSet};
 use fold_map::FoldMap;
 use gpui::{
     color::Color,
@@ -320,6 +320,7 @@ pub struct DisplaySnapshot {
 pub struct Highlights<'a> {
     pub text_highlights: Option<&'a TextHighlights>,
     pub inlay_highlights: Option<&'a InlayHighlights>,
+    pub inlay_background_highlights: Option<&'a BTreeMap<TypeId, InlayBackgroundHighlight>>,
     pub inlay_highlight_style: Option<HighlightStyle>,
     pub suggestion_highlight_style: Option<HighlightStyle>,
 }
@@ -475,10 +476,11 @@ impl DisplaySnapshot {
         })
     }
 
-    pub fn chunks(
-        &self,
+    pub fn chunks<'a>(
+        &'a self,
         display_rows: Range<u32>,
         language_aware: bool,
+        inlay_background_highlights: Option<&'a BTreeMap<TypeId, InlayBackgroundHighlight>>,
         inlay_highlight_style: Option<HighlightStyle>,
         suggestion_highlight_style: Option<HighlightStyle>,
     ) -> DisplayChunks<'_> {
@@ -488,6 +490,7 @@ impl DisplaySnapshot {
             Highlights {
                 text_highlights: Some(&self.text_highlights),
                 inlay_highlights: Some(&self.inlay_highlights),
+                inlay_background_highlights,
                 inlay_highlight_style,
                 suggestion_highlight_style,
             },
@@ -1699,7 +1702,7 @@ pub mod tests {
     ) -> Vec<(String, Option<Color>, Option<Color>)> {
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         let mut chunks: Vec<(String, Option<Color>, Option<Color>)> = Vec::new();
-        for chunk in snapshot.chunks(rows, true, None, None) {
+        for chunk in snapshot.chunks(rows, true, None, None, None) {
             let syntax_color = chunk
                 .syntax_highlight_id
                 .and_then(|id| id.style(theme)?.color);
