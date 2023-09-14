@@ -75,7 +75,6 @@ impl KeymapMatcher {
         keystroke: Keystroke,
         mut dispatch_path: Vec<(usize, KeymapContext)>,
     ) -> MatchResult {
-        let mut any_pending = false;
         // Collect matched bindings into an ordered list using the position in the matching binding first,
         // and then the order the binding matched in the view tree second.
         // The key is the reverse position of the binding in the bindings list so that later bindings
@@ -84,7 +83,8 @@ impl KeymapMatcher {
         let no_action_id = (NoAction {}).id();
 
         let first_keystroke = self.pending_keystrokes.is_empty();
-        self.pending_keystrokes.push(keystroke.clone());
+        let mut pending_key = None;
+        let mut previous_keystrokes = self.pending_keystrokes.clone();
 
         self.contexts.clear();
         self.contexts
@@ -106,24 +106,32 @@ impl KeymapMatcher {
             }
 
             for binding in self.keymap.bindings().iter().rev() {
-                match binding.match_keys_and_context(&self.pending_keystrokes, &self.contexts[i..])
-                {
-                    BindingMatchResult::Complete(action) => {
-                        if action.id() != no_action_id {
-                            matched_bindings.push((*view_id, action));
+                for possibility in keystroke.match_possibilities() {
+                    previous_keystrokes.push(possibility.clone());
+                    match binding.match_keys_and_context(&previous_keystrokes, &self.contexts[i..])
+                    {
+                        BindingMatchResult::Complete(action) => {
+                            if action.id() != no_action_id {
+                                matched_bindings.push((*view_id, action));
+                            }
                         }
+                        BindingMatchResult::Partial => {
+                            if pending_key == None || pending_key == Some(possibility.clone()) {
+                                self.pending_views
+                                    .insert(*view_id, self.contexts[i].clone());
+                                pending_key = Some(possibility)
+                            }
+                        }
+                        _ => {}
                     }
-                    BindingMatchResult::Partial => {
-                        self.pending_views
-                            .insert(*view_id, self.contexts[i].clone());
-                        any_pending = true;
-                    }
-                    _ => {}
+                    previous_keystrokes.pop();
                 }
             }
         }
 
-        if !any_pending {
+        if pending_key.is_some() {
+            self.pending_keystrokes.push(pending_key.unwrap());
+        } else {
             self.clear_pending();
         }
 
@@ -131,7 +139,7 @@ impl KeymapMatcher {
             // Collect the sorted matched bindings into the final vec for ease of use
             // Matched bindings are in order by precedence
             MatchResult::Matches(matched_bindings)
-        } else if any_pending {
+        } else if !self.pending_keystrokes.is_empty() {
             MatchResult::Pending
         } else {
             MatchResult::None
@@ -340,6 +348,7 @@ mod tests {
                 shift: false,
                 cmd: false,
                 function: false,
+                ime_key: None,
             }
         );
 
@@ -352,6 +361,7 @@ mod tests {
                 shift: true,
                 cmd: false,
                 function: false,
+                ime_key: None,
             }
         );
 
@@ -364,6 +374,7 @@ mod tests {
                 shift: true,
                 cmd: true,
                 function: false,
+                ime_key: None,
             }
         );
 
@@ -466,7 +477,7 @@ mod tests {
         #[derive(Clone, Deserialize, PartialEq, Eq, Debug)]
         pub struct A(pub String);
         impl_actions!(test, [A]);
-        actions!(test, [B, Ab]);
+        actions!(test, [B, Ab, Dollar, Quote, Ess, Backtick]);
 
         #[derive(Clone, Debug, Eq, PartialEq)]
         struct ActionArg {
@@ -477,6 +488,10 @@ mod tests {
             Binding::new("a", A("x".to_string()), Some("a")),
             Binding::new("b", B, Some("a")),
             Binding::new("a b", Ab, Some("a || b")),
+            Binding::new("$", Dollar, Some("a")),
+            Binding::new("\"", Quote, Some("a")),
+            Binding::new("alt-s", Ess, Some("a")),
+            Binding::new("ctrl-`", Backtick, Some("a")),
         ]);
 
         let mut context_a = KeymapContext::default();
@@ -541,6 +556,30 @@ mod tests {
         assert_eq!(
             matcher.push_keystroke(Keystroke::parse("b")?, vec![(1, context_b.clone())]),
             MatchResult::Matches(vec![(1, Box::new(Ab))])
+        );
+
+        // handle Czech $ (option + 4 key)
+        assert_eq!(
+            matcher.push_keystroke(Keystroke::parse("alt-ç->$")?, vec![(1, context_a.clone())]),
+            MatchResult::Matches(vec![(1, Box::new(Dollar))])
+        );
+
+        // handle Brazillian quote (quote key then space key)
+        assert_eq!(
+            matcher.push_keystroke(Keystroke::parse("space->\"")?, vec![(1, context_a.clone())]),
+            MatchResult::Matches(vec![(1, Box::new(Quote))])
+        );
+
+        // handle ctrl+` on a brazillian keyboard
+        assert_eq!(
+            matcher.push_keystroke(Keystroke::parse("ctrl-->`")?, vec![(1, context_a.clone())]),
+            MatchResult::Matches(vec![(1, Box::new(Backtick))])
+        );
+
+        // handle alt-s on a US keyboard
+        assert_eq!(
+            matcher.push_keystroke(Keystroke::parse("alt-s->ß")?, vec![(1, context_a.clone())]),
+            MatchResult::Matches(vec![(1, Box::new(Ess))])
         );
 
         Ok(())

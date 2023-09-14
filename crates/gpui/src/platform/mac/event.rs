@@ -327,6 +327,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         cmd,
         function,
         key,
+        ime_key: None,
     }
 }
 

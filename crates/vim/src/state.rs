@@ -186,7 +186,6 @@ impl EditorState {
         if self.active_operator().is_none() && self.pre_count.is_some()
             || self.active_operator().is_some() && self.post_count.is_some()
         {
-            dbg!("VimCount");
             context.add_identifier("VimCount");
         }
 
