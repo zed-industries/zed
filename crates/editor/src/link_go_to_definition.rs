@@ -444,7 +444,7 @@ pub fn show_link_definition(
 
             this.update(&mut cx, |this, cx| {
                 // Clear any existing highlights
-                this.clear_text_highlights::<LinkGoToDefinitionState>(cx);
+                this.clear_highlights::<LinkGoToDefinitionState>(cx);
                 this.link_go_to_definition_state.kind = Some(definition_kind);
                 this.link_go_to_definition_state.symbol_range = result
                     .as_ref()
@@ -545,7 +545,7 @@ pub fn hide_link_definition(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
 
     editor.link_go_to_definition_state.task = None;
 
-    editor.clear_text_highlights::<LinkGoToDefinitionState>(cx);
+    editor.clear_highlights::<LinkGoToDefinitionState>(cx);
 }
 
 pub fn go_to_fetched_definition(
@@ -1198,7 +1198,7 @@ mod tests {
         cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
             let actual_ranges = snapshot
-                .highlight_ranges::<LinkGoToDefinitionState>()
+                .text_highlight_ranges::<LinkGoToDefinitionState>()
                 .map(|ranges| ranges.as_ref().clone().1)
                 .unwrap_or_default();
 
@@ -1233,7 +1233,7 @@ mod tests {
         cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
             let actual_ranges = snapshot
-                .highlight_ranges::<LinkGoToDefinitionState>()
+                .text_highlight_ranges::<LinkGoToDefinitionState>()
                 .map(|ranges| ranges.as_ref().clone().1)
                 .unwrap_or_default();
 

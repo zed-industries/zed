@@ -15,7 +15,7 @@ use std::{
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{Patch, Rope};
 
-use super::TextHighlights;
+use super::Highlights;
 
 pub struct InlayMap {
     snapshot: InlaySnapshot,
@@ -213,7 +213,7 @@ pub struct InlayChunks<'a> {
     inlay_chunk: Option<&'a str>,
     output_offset: InlayOffset,
     max_output_offset: InlayOffset,
-    hint_highlight_style: Option<HighlightStyle>,
+    inlay_highlight_style: Option<HighlightStyle>,
     suggestion_highlight_style: Option<HighlightStyle>,
     highlight_endpoints: Peekable<vec::IntoIter<HighlightEndpoint>>,
     active_highlights: BTreeMap<Option<TypeId>, HighlightStyle>,
@@ -314,7 +314,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                 self.output_offset.0 += chunk.len();
                 let mut highlight_style = match inlay.id {
                     InlayId::Suggestion(_) => self.suggestion_highlight_style,
-                    InlayId::Hint(_) => self.hint_highlight_style,
+                    InlayId::Hint(_) => self.inlay_highlight_style,
                 };
                 if !self.active_highlights.is_empty() {
                     for active_highlight in self.active_highlights.values() {
@@ -991,15 +991,13 @@ impl InlaySnapshot {
         &'a self,
         range: Range<InlayOffset>,
         language_aware: bool,
-        text_highlights: Option<&'a TextHighlights>,
-        hint_highlight_style: Option<HighlightStyle>,
-        suggestion_highlight_style: Option<HighlightStyle>,
+        highlights: Highlights<'a>,
     ) -> InlayChunks<'a> {
         let mut cursor = self.transforms.cursor::<(InlayOffset, usize)>();
         cursor.seek(&range.start, Bias::Right, &());
 
         let mut highlight_endpoints = Vec::new();
-        if let Some(text_highlights) = text_highlights {
+        if let Some(text_highlights) = highlights.text_highlights {
             if !text_highlights.is_empty() {
                 while cursor.start().0 < range.end {
                     let transform_start = self.buffer.anchor_after(
@@ -1065,8 +1063,8 @@ impl InlaySnapshot {
             buffer_chunk: None,
             output_offset: range.start,
             max_output_offset: range.end,
-            hint_highlight_style,
-            suggestion_highlight_style,
+            inlay_highlight_style: highlights.inlay_highlight_style,
+            suggestion_highlight_style: highlights.suggestion_highlight_style,
             highlight_endpoints: highlight_endpoints.into_iter().peekable(),
             active_highlights: Default::default(),
             snapshot: self,
@@ -1075,7 +1073,7 @@ impl InlaySnapshot {
 
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks(Default::default()..self.len(), false, None, None, None)
+        self.chunks(Default::default()..self.len(), false, Highlights::default())
             .map(|chunk| chunk.text)
             .collect()
     }
@@ -1123,7 +1121,7 @@ fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{InlayId, MultiBuffer};
+    use crate::{display_map::TextHighlights, InlayId, MultiBuffer};
     use gpui::AppContext;
     use project::{InlayHint, InlayHintLabel, ResolveState};
     use rand::prelude::*;
@@ -1619,7 +1617,7 @@ mod tests {
                 );
             }
 
-            let mut highlights = TextHighlights::default();
+            let mut text_highlights = TextHighlights::default();
             let highlight_count = rng.gen_range(0_usize..10);
             let mut highlight_ranges = (0..highlight_count)
                 .map(|_| buffer_snapshot.random_byte_range(0, &mut rng))
@@ -1634,7 +1632,7 @@ mod tests {
                         ..buffer_snapshot.anchor_after(range.end)
                 })
                 .collect::<Vec<_>>();
-            highlights.insert(
+            text_highlights.insert(
                 Some(TypeId::of::<()>()),
                 Arc::new((HighlightStyle::default(), highlight_ranges)),
             );
@@ -1649,9 +1647,12 @@ mod tests {
                     .chunks(
                         InlayOffset(start)..InlayOffset(end),
                         false,
-                        Some(&highlights),
-                        None,
-                        None,
+                        Highlights {
+                            text_highlights: Some(&text_highlights),
+                            inlay_highlights: None,
+                            inlay_highlight_style: None,
+                            suggestion_highlight_style: None,
+                        },
                     )
                     .map(|chunk| chunk.text)
                     .collect::<String>();

@@ -236,7 +236,7 @@ impl<'a> EditorTestContext<'a> {
         let expected_ranges = self.ranges(marked_text);
         let snapshot = self.update_editor(|editor, cx| editor.snapshot(cx));
         let actual_ranges: Vec<Range<usize>> = snapshot
-            .highlight_ranges::<Tag>()
+            .text_highlight_ranges::<Tag>()
             .map(|ranges| ranges.as_ref().clone().1)
             .unwrap_or_default()
             .into_iter()

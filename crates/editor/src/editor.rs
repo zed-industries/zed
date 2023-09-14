@@ -7234,7 +7234,7 @@ impl Editor {
             Some(Autoscroll::fit()),
             cx,
         );
-        self.clear_text_highlights::<Rename>(cx);
+        self.clear_highlights::<Rename>(cx);
         self.show_local_selections = true;
 
         if moving_cursor {
@@ -8038,11 +8038,11 @@ impl Editor {
         self.display_map.read(cx).text_highlights(TypeId::of::<T>())
     }
 
-    pub fn clear_text_highlights<T: 'static>(&mut self, cx: &mut ViewContext<Self>) {
-        let text_highlights = self
+    pub fn clear_highlights<T: 'static>(&mut self, cx: &mut ViewContext<Self>) {
+        let cleared = self
             .display_map
-            .update(cx, |map, _| map.clear_text_highlights(TypeId::of::<T>()));
-        if text_highlights.is_some() {
+            .update(cx, |map, _| map.clear_highlights(TypeId::of::<T>()));
+        if cleared {
             cx.notify();
         }
     }
@@ -8683,7 +8683,7 @@ impl View for Editor {
 
             self.link_go_to_definition_state.task = None;
 
-            self.clear_text_highlights::<LinkGoToDefinitionState>(cx);
+            self.clear_highlights::<LinkGoToDefinitionState>(cx);
         }
 
         false
@@ -8756,7 +8756,7 @@ impl View for Editor {
     }
 
     fn unmark_text(&mut self, cx: &mut ViewContext<Self>) {
-        self.clear_text_highlights::<InputComposition>(cx);
+        self.clear_highlights::<InputComposition>(cx);
         self.ime_transaction.take();
     }
 
