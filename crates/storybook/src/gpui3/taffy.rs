@@ -1,26 +1,33 @@
 use super::{
-    AbsoluteLength, Bounds, DefiniteLength, Edges, Layout, LayoutEngine, LayoutId, Length, Pixels,
-    Point, Result, Size, Style,
+    AbsoluteLength, Bounds, DefiniteLength, Edges, Layout, Length, Pixels, Point, Result, Size,
+    Style,
 };
 use gpui2::taffy::{self, Taffy};
 use std::fmt::Debug;
 
-pub use gpui2::taffy::tree::NodeId;
-
+pub use gpui2::taffy::tree::NodeId as LayoutId;
 pub struct TaffyLayoutEngine(Taffy);
 
 impl TaffyLayoutEngine {
     pub fn new() -> Self {
         TaffyLayoutEngine(Taffy::new())
     }
-}
 
-impl LayoutEngine for TaffyLayoutEngine {
-    fn request_layout(&mut self, style: Style, children: &[LayoutId]) -> Result<LayoutId> {
-        todo!()
+    pub fn request_layout(
+        &mut self,
+        style: Style,
+        rem_size: Pixels,
+        children: &[LayoutId],
+    ) -> Result<LayoutId> {
+        let style = style.to_taffy(rem_size);
+        if children.is_empty() {
+            Ok(self.0.new_leaf(style)?)
+        } else {
+            Ok(self.0.new_with_children(style, children)?)
+        }
     }
 
-    fn layout(&mut self, id: LayoutId) -> Result<Layout> {
+    pub fn layout(&mut self, id: LayoutId) -> Result<Layout> {
         todo!()
     }
 }

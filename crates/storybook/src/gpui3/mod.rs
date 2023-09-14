@@ -15,6 +15,7 @@ pub use element::*;
 pub use elements::*;
 pub use geometry::*;
 pub use style::*;
+pub use taffy::LayoutId;
 use taffy::TaffyLayoutEngine;
 pub use window::*;
 

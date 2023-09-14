@@ -1,4 +1,7 @@
-use super::{px, AppContext, Bounds, Context, EntityId, Handle, Pixels, Style, TaffyLayoutEngine};
+use super::{
+    px, taffy::LayoutId, AppContext, Bounds, Context, EntityId, Handle, Pixels, Style,
+    TaffyLayoutEngine,
+};
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui2::Reference;
@@ -9,7 +12,7 @@ pub struct AnyWindow {}
 pub struct Window {
     id: WindowId,
     rem_size: Pixels,
-    layout_engine: Box<dyn LayoutEngine>,
+    layout_engine: TaffyLayoutEngine,
     pub(crate) root_view: Option<Box<dyn Any>>,
 }
 
@@ -17,7 +20,7 @@ impl Window {
     pub fn new(id: WindowId) -> Window {
         Window {
             id,
-            layout_engine: Box::new(TaffyLayoutEngine::new()),
+            layout_engine: TaffyLayoutEngine::new(),
             rem_size: px(16.),
             root_view: None,
         }
@@ -52,11 +55,13 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         style: Style,
         children: impl IntoIterator<Item = LayoutId>,
     ) -> Result<LayoutId> {
-        self.app.child_layout_buffer.clear();
-        self.app.child_layout_buffer.extend(children.into_iter());
+        self.app.layout_id_buffer.clear();
+        self.app.layout_id_buffer.extend(children.into_iter());
+        let rem_size = self.rem_size();
+
         self.window
             .layout_engine
-            .request_layout(style, &self.app.child_layout_buffer)
+            .request_layout(style, rem_size, &self.app.layout_id_buffer)
     }
 
     pub fn layout(&mut self, layout_id: LayoutId) -> Result<Layout> {
@@ -215,15 +220,4 @@ impl<S> WindowHandle<S> {
 pub struct Layout {
     pub order: u32,
     pub bounds: Bounds<Pixels>,
-}
-
-#[derive(Copy, Clone)]
-pub struct LayoutId(slotmap::DefaultKey);
-
-pub trait LayoutEngine {
-    /// Register a new node on which to perform layout.
-    fn request_layout(&mut self, style: Style, children: &[LayoutId]) -> Result<LayoutId>;
-
-    /// Get the layout for the given id.
-    fn layout(&mut self, id: LayoutId) -> Result<Layout>;
 }

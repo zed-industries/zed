@@ -11,7 +11,7 @@ pub struct AppContext {
     pub(crate) entities: SlotMap<EntityId, Option<Box<dyn Any>>>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     // We recycle this memory across layout requests.
-    pub(crate) child_layout_buffer: Vec<LayoutId>,
+    pub(crate) layout_id_buffer: Vec<LayoutId>,
 }
 
 impl AppContext {
@@ -19,7 +19,7 @@ impl AppContext {
         AppContext {
             entities: SlotMap::with_key(),
             windows: SlotMap::with_key(),
-            child_layout_buffer: Default::default(),
+            layout_id_buffer: Default::default(),
         }
     }
 
