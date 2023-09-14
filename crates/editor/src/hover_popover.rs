@@ -107,7 +107,7 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
 
                 let hover_popover = InfoPopover {
                     project: project.clone(),
-                    symbol_range: RangeInEditor::Inlay(inlay_hover.range),
+                    symbol_range: RangeInEditor::Inlay(inlay_hover.range.clone()),
                     blocks: vec![inlay_hover.tooltip],
                     language: None,
                     rendered_content: None,

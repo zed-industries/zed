@@ -316,10 +316,10 @@ impl<'a> Iterator for InlayChunks<'a> {
                 };
                 let next_inlay_highlight_endpoint;
                 let offset_in_inlay = self.output_offset - self.transforms.start().0;
-                if let Some((style, inlay_range)) = inlay_highlight_style_and_range {
-                    let range = inlay_range.highlight_start..inlay_range.highlight_end;
+                if let Some((style, highlight)) = inlay_highlight_style_and_range {
+                    let range = &highlight.range;
                     if offset_in_inlay.0 < range.start {
-                        next_inlay_highlight_endpoint = range.start;
+                        next_inlay_highlight_endpoint = range.start - offset_in_inlay.0;
                     } else if offset_in_inlay.0 >= range.end {
                         next_inlay_highlight_endpoint = usize::MAX;
                     } else {
@@ -1711,25 +1711,28 @@ mod tests {
                     .filter_map(|i| {
                         let (_, inlay) = &inlays[i];
                         let inlay_text_len = inlay.text.len();
+                        // TODO kb gen_range
                         match inlay_text_len {
                             0 => None,
                             1 => Some(InlayHighlight {
                                 inlay: inlay.id,
                                 inlay_position: inlay.position,
-                                highlight_start: 0,
-                                highlight_end: 1,
+                                range: 0..1,
                             }),
                             n => {
                                 let inlay_text = inlay.text.to_string();
                                 let mut highlight_end = rng.gen_range(1..n);
+                                let mut highlight_start = rng.gen_range(0..highlight_end);
                                 while !inlay_text.is_char_boundary(highlight_end) {
                                     highlight_end += 1;
+                                }
+                                while !inlay_text.is_char_boundary(highlight_start) {
+                                    highlight_start -= 1;
                                 }
                                 Some(InlayHighlight {
                                     inlay: inlay.id,
                                     inlay_position: inlay.position,
-                                    highlight_start: 0,
-                                    highlight_end,
+                                    range: highlight_start..highlight_end,
                                 })
                             }
                         }

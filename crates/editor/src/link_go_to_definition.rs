@@ -43,10 +43,10 @@ impl RangeInEditor {
                 let point_after_start = range.start.cmp(point, &snapshot.buffer_snapshot).is_le();
                 point_after_start && range.end.cmp(point, &snapshot.buffer_snapshot).is_ge()
             }
-            (Self::Inlay(range), TriggerPoint::InlayHint(point, _, _)) => {
-                range.inlay == point.inlay
-                    && range.highlight_start.cmp(&point.highlight_end).is_le()
-                    && range.highlight_end.cmp(&point.highlight_end).is_ge()
+            (Self::Inlay(highlight), TriggerPoint::InlayHint(point, _, _)) => {
+                highlight.inlay == point.inlay
+                    && highlight.range.contains(&point.range.start)
+                    && highlight.range.contains(&point.range.end)
             }
             (Self::Inlay(_), TriggerPoint::Text(_))
             | (Self::Text(_), TriggerPoint::InlayHint(_, _, _)) => false,
@@ -66,13 +66,11 @@ pub enum GoToDefinitionLink {
     InlayHint(lsp::Location, LanguageServerId),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlayHighlight {
     pub inlay: InlayId,
     pub inlay_position: Anchor,
-    // TODO kb turn into Range<usize>
-    pub highlight_start: usize,
-    pub highlight_end: usize,
+    pub range: Range<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -252,9 +250,8 @@ pub fn update_inlay_link_and_hover_points(
                                             range: InlayHighlight {
                                                 inlay: hovered_hint.id,
                                                 inlay_position: hovered_hint.position,
-                                                highlight_start: extra_shift_left,
-                                                highlight_end: hovered_hint.text.len()
-                                                    + extra_shift_right,
+                                                range: extra_shift_left
+                                                    ..hovered_hint.text.len() + extra_shift_right,
                                             },
                                         },
                                         cx,
@@ -272,13 +269,14 @@ pub fn update_inlay_link_and_hover_points(
                                         hovered_offset,
                                     )
                                 {
-                                    let range = InlayHighlight {
+                                    let highlight_start =
+                                        (part_range.start - hint_start).0 + extra_shift_left;
+                                    let highlight_end =
+                                        (part_range.end - hint_start).0 + extra_shift_right;
+                                    let highlight = InlayHighlight {
                                         inlay: hovered_hint.id,
                                         inlay_position: hovered_hint.position,
-                                        highlight_start: (part_range.start - hint_start).0
-                                            + extra_shift_left,
-                                        highlight_end: (part_range.end - hint_start).0
-                                            + extra_shift_right,
+                                        range: highlight_start..highlight_end,
                                     };
                                     if let Some(tooltip) = hovered_hint_part.tooltip {
                                         hover_popover::hover_at_inlay(
@@ -299,7 +297,7 @@ pub fn update_inlay_link_and_hover_points(
                                                         kind: content.kind,
                                                     },
                                                 },
-                                                range,
+                                                range: highlight.clone(),
                                             },
                                             cx,
                                         );
@@ -312,7 +310,7 @@ pub fn update_inlay_link_and_hover_points(
                                         update_go_to_definition_link(
                                             editor,
                                             Some(GoToDefinitionTrigger::InlayHint(
-                                                range,
+                                                highlight,
                                                 location,
                                                 language_server_id,
                                             )),
@@ -433,8 +431,8 @@ pub fn show_link_definition(
                         )
                     })
                 }
-                TriggerPoint::InlayHint(trigger_source, lsp_location, server_id) => Some((
-                    Some(RangeInEditor::Inlay(*trigger_source)),
+                TriggerPoint::InlayHint(highlight, lsp_location, server_id) => Some((
+                    Some(RangeInEditor::Inlay(highlight.clone())),
                     vec![GoToDefinitionLink::InlayHint(
                         lsp_location.clone(),
                         *server_id,
@@ -501,8 +499,8 @@ pub fn show_link_definition(
                                             ..snapshot.anchor_after(offset_range.end),
                                     )
                                 }
-                                TriggerPoint::InlayHint(inlay_coordinates, _, _) => {
-                                    RangeInEditor::Inlay(*inlay_coordinates)
+                                TriggerPoint::InlayHint(highlight, _, _) => {
+                                    RangeInEditor::Inlay(highlight.clone())
                                 }
                             });
 
@@ -513,9 +511,9 @@ pub fn show_link_definition(
                                     style,
                                     cx,
                                 ),
-                            RangeInEditor::Inlay(inlay_coordinates) => this
+                            RangeInEditor::Inlay(highlight) => this
                                 .highlight_inlays::<LinkGoToDefinitionState>(
-                                    vec![inlay_coordinates],
+                                    vec![highlight],
                                     style,
                                     cx,
                                 ),
