@@ -20,13 +20,13 @@ use super::Highlights;
 
 pub struct InlayMap {
     snapshot: InlaySnapshot,
+    inlays: Vec<Inlay>,
 }
 
 #[derive(Clone)]
 pub struct InlaySnapshot {
     pub buffer: MultiBufferSnapshot,
     transforms: SumTree<Transform>,
-    inlays: Vec<Inlay>,
     pub version: usize,
 }
 
@@ -428,13 +428,13 @@ impl InlayMap {
         let snapshot = InlaySnapshot {
             buffer: buffer.clone(),
             transforms: SumTree::from_iter(Some(Transform::Isomorphic(buffer.text_summary())), &()),
-            inlays: Vec::new(),
             version,
         };
 
         (
             Self {
                 snapshot: snapshot.clone(),
+                inlays: Vec::new(),
             },
             snapshot,
         )
@@ -503,7 +503,7 @@ impl InlayMap {
                 );
                 let new_start = InlayOffset(new_transforms.summary().output.len);
 
-                let start_ix = match snapshot.inlays.binary_search_by(|probe| {
+                let start_ix = match self.inlays.binary_search_by(|probe| {
                     probe
                         .position
                         .to_offset(&buffer_snapshot)
@@ -513,7 +513,7 @@ impl InlayMap {
                     Ok(ix) | Err(ix) => ix,
                 };
 
-                for inlay in &snapshot.inlays[start_ix..] {
+                for inlay in &self.inlays[start_ix..] {
                     let buffer_offset = inlay.position.to_offset(&buffer_snapshot);
                     if buffer_offset > buffer_edit.new.end {
                         break;
@@ -583,7 +583,7 @@ impl InlayMap {
         let snapshot = &mut self.snapshot;
         let mut edits = BTreeSet::new();
 
-        snapshot.inlays.retain(|inlay| {
+        self.inlays.retain(|inlay| {
             let retain = !to_remove.contains(&inlay.id);
             if !retain {
                 let offset = inlay.position.to_offset(&snapshot.buffer);
@@ -599,13 +599,13 @@ impl InlayMap {
             }
 
             let offset = inlay_to_insert.position.to_offset(&snapshot.buffer);
-            match snapshot.inlays.binary_search_by(|probe| {
+            match self.inlays.binary_search_by(|probe| {
                 probe
                     .position
                     .cmp(&inlay_to_insert.position, &snapshot.buffer)
             }) {
                 Ok(ix) | Err(ix) => {
-                    snapshot.inlays.insert(ix, inlay_to_insert);
+                    self.inlays.insert(ix, inlay_to_insert);
                 }
             }
 
@@ -625,7 +625,7 @@ impl InlayMap {
     }
 
     pub fn current_inlays(&self) -> impl Iterator<Item = &Inlay> {
-        self.snapshot.inlays.iter()
+        self.inlays.iter()
     }
 
     #[cfg(test)]
@@ -641,7 +641,7 @@ impl InlayMap {
         let mut to_insert = Vec::new();
         let snapshot = &mut self.snapshot;
         for i in 0..rng.gen_range(1..=5) {
-            if snapshot.inlays.is_empty() || rng.gen() {
+            if self.inlays.is_empty() || rng.gen() {
                 let position = snapshot.buffer.random_byte_range(0, rng).start;
                 let bias = if rng.gen() { Bias::Left } else { Bias::Right };
                 let len = if rng.gen_bool(0.01) {
@@ -674,8 +674,7 @@ impl InlayMap {
                 });
             } else {
                 to_remove.push(
-                    snapshot
-                        .inlays
+                    self.inlays
                         .iter()
                         .choose(rng)
                         .map(|inlay| inlay.id)
@@ -1547,12 +1546,7 @@ mod tests {
 
         // The inlays can be manually removed.
         let (inlay_snapshot, _) = inlay_map.splice(
-            inlay_map
-                .snapshot
-                .inlays
-                .iter()
-                .map(|inlay| inlay.id)
-                .collect(),
+            inlay_map.inlays.iter().map(|inlay| inlay.id).collect(),
             Vec::new(),
         );
         assert_eq!(inlay_snapshot.text(), "abxJKLyDzefghi");
@@ -1644,7 +1638,6 @@ mod tests {
             log::info!("inlay text: {:?}", inlay_snapshot.text());
 
             let inlays = inlay_map
-                .snapshot
                 .inlays
                 .iter()
                 .filter(|inlay| inlay.position.is_valid(&buffer_snapshot))
