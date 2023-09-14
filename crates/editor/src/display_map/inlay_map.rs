@@ -1669,30 +1669,31 @@ mod tests {
             }
 
             let mut text_highlights = TextHighlights::default();
+            let text_highlight_count = rng.gen_range(0_usize..10);
+            let mut text_highlight_ranges = (0..text_highlight_count)
+                .map(|_| buffer_snapshot.random_byte_range(0, &mut rng))
+                .collect::<Vec<_>>();
+            text_highlight_ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
+            log::info!("highlighting text ranges {text_highlight_ranges:?}");
+            text_highlights.insert(
+                Some(TypeId::of::<()>()),
+                Arc::new((
+                    HighlightStyle::default(),
+                    text_highlight_ranges
+                        .into_iter()
+                        .map(|range| {
+                            buffer_snapshot.anchor_before(range.start)
+                                ..buffer_snapshot.anchor_after(range.end)
+                        })
+                        .collect(),
+                )),
+            );
+
             let mut inlay_highlights = InlayHighlights::default();
-            let highlight_count = rng.gen_range(0_usize..10);
-            if false && rng.gen_bool(0.5) {
-                let mut highlight_ranges = (0..highlight_count)
-                    .map(|_| buffer_snapshot.random_byte_range(0, &mut rng))
-                    .collect::<Vec<_>>();
-                highlight_ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
-                log::info!("highlighting text ranges {highlight_ranges:?}");
-                text_highlights.insert(
-                    Some(TypeId::of::<()>()),
-                    Arc::new((
-                        HighlightStyle::default(),
-                        highlight_ranges
-                            .into_iter()
-                            .map(|range| {
-                                buffer_snapshot.anchor_before(range.start)
-                                    ..buffer_snapshot.anchor_after(range.end)
-                            })
-                            .collect(),
-                    )),
-                );
-            } else {
+            if !inlays.is_empty() {
+                let inlay_highlight_count = rng.gen_range(0..inlays.len());
                 let mut inlay_indices = BTreeSet::default();
-                while inlay_indices.len() < highlight_count.min(inlays.len()) {
+                while inlay_indices.len() < inlay_highlight_count {
                     inlay_indices.insert(rng.gen_range(0..inlays.len()));
                 }
                 let new_highlights = inlay_indices
@@ -1729,7 +1730,7 @@ mod tests {
                     .collect();
                 log::info!("highlighting inlay ranges {new_highlights:?}");
                 inlay_highlights.insert(TypeId::of::<()>(), new_highlights);
-            };
+            }
 
             for _ in 0..5 {
                 let mut end = rng.gen_range(0..=inlay_snapshot.len().0);
@@ -1738,7 +1739,7 @@ mod tests {
                 start = expected_text.clip_offset(start, Bias::Right);
 
                 let range = InlayOffset(start)..InlayOffset(end);
-                log::info!("calling inlay_snapshot.chunks({:?})", range);
+                log::info!("calling inlay_snapshot.chunks({range:?})");
                 let actual_text = inlay_snapshot
                     .chunks(
                         range,
