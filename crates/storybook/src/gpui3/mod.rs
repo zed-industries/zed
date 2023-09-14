@@ -9,7 +9,6 @@ mod window;
 use anyhow::Result;
 pub use gpui2::ArcCow;
 use gpui2::Reference;
-use std::marker::PhantomData;
 
 pub use app::*;
 pub use element::*;
@@ -18,6 +17,8 @@ pub use geometry::*;
 pub use style::*;
 use taffy::TaffyLayoutEngine;
 pub use window::*;
+
+use self::editor::Editor;
 
 pub trait Context {
     type EntityContext<'a, 'w, T: 'static>;
@@ -56,7 +57,7 @@ fn workspace(cx: &mut WindowContext) -> View<Workspace> {
 }
 
 struct CollabPanel {
-    filter_editor: Handle<Editor>,
+    filter_editor: Handle<editor::Editor>,
 }
 
 fn collab_panel(cx: &mut WindowContext) -> View<CollabPanel> {
@@ -73,65 +74,6 @@ impl CollabPanel {
         Self {
             filter_editor: cx.entity(|cx| Editor::new(cx)),
         }
-    }
-}
-
-fn field<S>(editor: Handle<Editor>) -> EditorElement<S> {
-    EditorElement {
-        editor,
-        field: true,
-        placeholder_text: None,
-        parent_state: PhantomData,
-    }
-}
-
-struct EditorElement<S> {
-    editor: Handle<Editor>,
-    field: bool,
-    placeholder_text: Option<SharedString>,
-    parent_state: PhantomData<S>,
-}
-
-impl<S> EditorElement<S> {
-    pub fn field(mut self) -> Self {
-        self.field = true;
-        self
-    }
-
-    pub fn placeholder_text(mut self, text: impl Into<SharedString>) -> Self {
-        self.placeholder_text = Some(text.into());
-        self
-    }
-}
-
-impl<S: 'static> Element for EditorElement<S> {
-    type State = S;
-    type FrameState = ();
-
-    fn layout(
-        &mut self,
-        _: &mut Self::State,
-        cx: &mut ViewContext<Self::State>,
-    ) -> Result<(LayoutId, Self::FrameState)> {
-        self.editor.update(cx, |editor, cx| todo!())
-    }
-
-    fn paint(
-        &mut self,
-        layout: Layout,
-        state: &mut Self::State,
-        frame_state: &mut Self::FrameState,
-        cx: &mut ViewContext<Self::State>,
-    ) -> Result<()> {
-        self.editor.update(cx, |editor, cx| todo!())
-    }
-}
-
-struct Editor {}
-
-impl Editor {
-    pub fn new(_: &mut ViewContext<Self>) -> Self {
-        Editor {}
     }
 }
 

@@ -1,5 +1,4 @@
-use super::{Handle, Layout, LayoutId, Pixels, Point, ViewContext, WindowContext};
-use anyhow::Result;
+use super::{Handle, Layout, LayoutId, Pixels, Point, Result, ViewContext, WindowContext};
 use std::{any::Any, cell::RefCell, marker::PhantomData, rc::Rc};
 
 pub trait Element: 'static {

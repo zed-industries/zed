@@ -1,8 +1,7 @@
 use super::{
     AbsoluteLength, Bounds, DefiniteLength, Edges, Layout, LayoutEngine, LayoutId, Length, Pixels,
-    Point, Size, Style,
+    Point, Result, Size, Style,
 };
-use anyhow::Result;
 use gpui2::taffy::{self, Taffy};
 use std::fmt::Debug;
 
