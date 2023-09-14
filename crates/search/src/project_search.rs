@@ -701,8 +701,9 @@ impl ProjectSearchView {
                         }));
                     return;
                 }
+            } else {
+                semantic_state.maintain_rate_limit = None;
             }
-            semantic_state.maintain_rate_limit = None;
         }
     }
 
