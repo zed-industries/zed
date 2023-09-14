@@ -693,7 +693,7 @@ impl SemanticIndex {
         phrase: String,
         limit: usize,
         includes: Vec<PathMatcher>,
-        excludes: Vec<PathMatcher>,
+        mut excludes: Vec<PathMatcher>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<SearchResult>>> {
         let index = self.index_project(project.clone(), cx);
@@ -741,6 +741,43 @@ impl SemanticIndex {
                     .collect::<Vec<i64>>();
                 anyhow::Ok(worktree_db_ids)
             })?;
+
+            let (dirty_buffers, dirty_paths) = project.read_with(&cx, |project, cx| {
+                let mut dirty_paths = Vec::new();
+                let dirty_buffers = project
+                    .opened_buffers(cx)
+                    .into_iter()
+                    .filter_map(|buffer_handle| {
+                        let buffer = buffer_handle.read(cx);
+                        if buffer.is_dirty() {
+                            let snapshot = buffer.snapshot();
+                            if let Some(file_pathbuf) = snapshot.resolve_file_path(cx, false) {
+                                let file_path = file_pathbuf.as_path();
+
+                                if excludes.iter().any(|glob| glob.is_match(file_path)) {
+                                    return None;
+                                }
+
+                                file_pathbuf
+                                    .to_str()
+                                    .and_then(|path| PathMatcher::new(path).log_err())
+                                    .and_then(|path_matcher| {
+                                        dirty_paths.push(path_matcher);
+                                        Some(())
+                                    });
+                            }
+                            // TOOD: @as-cii I removed the downgrade for now to fix the compiler - @kcaverly
+                            Some((buffer_handle, buffer.snapshot()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<HashMap<_, _>>();
+
+                (dirty_buffers, dirty_paths)
+            });
+
+            excludes.extend(dirty_paths);
             let file_ids = database
                 .retrieve_included_file_ids(&worktree_db_ids, &includes, &excludes)
                 .await?;
@@ -770,21 +807,6 @@ impl SemanticIndex {
                     });
                 }
             }
-            let dirty_buffers = project.read_with(&cx, |project, cx| {
-                project
-                    .opened_buffers(cx)
-                    .into_iter()
-                    .filter_map(|buffer_handle| {
-                        let buffer = buffer_handle.read(cx);
-                        if buffer.is_dirty() {
-                            // TOOD: @as-cii I removed the downgrade for now to fix the compiler - @kcaverly
-                            Some((buffer_handle, buffer.snapshot()))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<HashMap<_, _>>()
-            });
 
             let buffer_results = if let Some(db) =
                 VectorDatabase::new(fs, db_path.clone(), cx.background())
@@ -966,7 +988,7 @@ impl SemanticIndex {
                 t0.elapsed().as_millis()
             );
 
-            let database_results = buffers
+            let mut database_results = buffers
                 .into_iter()
                 .zip(ranges)
                 .zip(scores)
@@ -987,53 +1009,22 @@ impl SemanticIndex {
 
             // Stitch Together Database Results & Buffer Results
             if let Ok(buffer_results) = buffer_results {
-                let mut buffer_map = HashMap::default();
                 for buffer_result in buffer_results {
-                    buffer_map
-                        .entry(buffer_result.clone().buffer)
-                        .or_insert(Vec::new())
-                        .push(buffer_result);
+                    let ix = match database_results.binary_search_by(|search_result| {
+                        buffer_result
+                            .similarity
+                            .partial_cmp(&search_result.similarity)
+                            .unwrap_or(Ordering::Equal)
+                    }) {
+                        Ok(ix) => ix,
+                        Err(ix) => ix,
+                    };
+                    database_results.insert(ix, buffer_result);
+                    database_results.truncate(limit);
                 }
-
-                for db_result in database_results {
-                    if !buffer_map.contains_key(&db_result.buffer) {
-                        buffer_map
-                            .entry(db_result.clone().buffer)
-                            .or_insert(Vec::new())
-                            .push(db_result);
-                    }
-                }
-
-                let mut full_results = Vec::<SearchResult>::new();
-
-                for (_, results) in buffer_map {
-                    for res in results.into_iter() {
-                        let ix = match full_results.binary_search_by(|search_result| {
-                            res.similarity
-                                .partial_cmp(&search_result.similarity)
-                                .unwrap_or(Ordering::Equal)
-                        }) {
-                            Ok(ix) => ix,
-                            Err(ix) => ix,
-                        };
-                        full_results.insert(ix, res);
-                        full_results.truncate(limit);
-                    }
-                }
-
-                return Ok(full_results);
-            } else {
-                return Ok(database_results);
             }
 
-            // let ix = match results.binary_search_by(|(_, s)| {
-            //     similarity.partial_cmp(&s).unwrap_or(Ordering::Equal)
-            // }) {
-            //     Ok(ix) => ix,
-            //     Err(ix) => ix,
-            // };
-            // results.insert(ix, (id, similarity));
-            // results.truncate(limit);
+            Ok(database_results)
         })
     }
 
