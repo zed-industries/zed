@@ -56,6 +56,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(BufferSearchBar::replace_all_on_pane);
     cx.add_action(BufferSearchBar::replace_next_on_pane);
     cx.add_action(BufferSearchBar::toggle_replace);
+    cx.add_action(BufferSearchBar::toggle_replace_on_a_pane);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
     add_toggle_option_action::<ToggleWholeWord>(SearchOptions::WHOLE_WORD, cx);
 }
@@ -887,6 +888,21 @@ impl BufferSearchBar {
         if let Some(_) = &self.active_searchable_item {
             self.replace_is_active = !self.replace_is_active;
             cx.notify();
+        }
+    }
+    fn toggle_replace_on_a_pane(pane: &mut Pane, _: &ToggleReplace, cx: &mut ViewContext<Pane>) {
+        let mut should_propagate = true;
+        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
+            search_bar.update(cx, |bar, cx| {
+                if let Some(_) = &bar.active_searchable_item {
+                    should_propagate = false;
+                    bar.replace_is_active = !bar.replace_is_active;
+                    cx.notify();
+                }
+            });
+        }
+        if should_propagate {
+            cx.propagate_action();
         }
     }
     fn replace_next(&mut self, _: &ReplaceNext, cx: &mut ViewContext<Self>) {
