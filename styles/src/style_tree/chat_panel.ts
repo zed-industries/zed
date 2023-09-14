@@ -1,53 +1,21 @@
 import {
     background,
     border,
-    border_color,
-    foreground,
     text,
 } from "./components"
-import { interactive, toggleable } from "../element"
 import { useTheme } from "../theme"
-import collab_modals from "./collab_modals"
-import { icon_button, toggleable_icon_button } from "../component/icon_button"
-import { indicator } from "../component/indicator"
 
-export default function contacts_panel(): any {
+export default function chat_panel(): any {
     const theme = useTheme()
-
-    const CHANNEL_SPACING = 4 as const
-    const NAME_MARGIN = 6 as const
-    const SPACING = 12 as const
-    const INDENT_SIZE = 8 as const
-    const ITEM_HEIGHT = 28 as const
-
     const layer = theme.middle
 
-    const input_editor = {
-        background: background(layer, "on"),
-        corner_radius: 6,
-        text: text(layer, "sans", "base"),
-        placeholder_text: text(layer, "sans", "base", "disabled", {
-            size: "xs",
-        }),
-        selection: theme.players[0],
-        border: border(layer, "on"),
-        padding: {
-            bottom: 4,
-            left: 8,
-            right: 8,
-            top: 4,
-        },
-        margin: {
-            left: SPACING,
-            right: SPACING,
-        },
-    }
+    const SPACING = 12 as const
 
     const channel_name = {
         padding: {
-            top: 4,
+            // top: 4,
             bottom: 4,
-            left: 4,
+            // left: 4,
             right: 4,
         },
         hash: {
@@ -58,8 +26,14 @@ export default function contacts_panel(): any {
 
     return {
         background: background(layer),
+        padding: {
+            top: SPACING,
+            bottom: SPACING,
+            left: SPACING,
+            right: SPACING,
+        },
         channel_select: {
-            header: channel_name,
+            header: { ...channel_name },
             item: channel_name,
             active_item: channel_name,
             hovered_item: channel_name,
@@ -71,24 +45,38 @@ export default function contacts_panel(): any {
                 }
             }
         },
-        input_editor,
+        input_editor: {
+            background: background(layer, "on"),
+            corner_radius: 6,
+            text: text(layer, "sans", "base"),
+            placeholder_text: text(layer, "sans", "base", "disabled", {
+                size: "xs",
+            }),
+            selection: theme.players[0],
+            border: border(layer, "on"),
+            padding: {
+                bottom: 4,
+                left: 8,
+                right: 8,
+                top: 4,
+            },
+        },
         message: {
             body: text(layer, "sans", "base"),
             sender: {
-                padding: {
-                    left: 4,
-                    right: 4,
+                margin: {
+                    right: 8,
                 },
-                ...text(layer, "sans", "base", "disabled"),
+                ...text(layer, "sans", "base", { weight: "bold" }),
             },
-            timestamp: text(layer, "sans", "base"),
+            timestamp: text(layer, "sans", "base", "disabled"),
+            margin: { bottom: SPACING }
         },
         pending_message: {
             body: text(layer, "sans", "base"),
             sender: {
-                padding: {
-                    left: 4,
-                    right: 4,
+                margin: {
+                    right: 8,
                 },
                 ...text(layer, "sans", "base", "disabled"),
             },
@@ -96,16 +84,6 @@ export default function contacts_panel(): any {
         },
         sign_in_prompt: {
             default: text(layer, "sans", "base"),
-        },
-        timestamp: {
-            body: text(layer, "sans", "base"),
-            sender: {
-                padding: {
-                    left: 4,
-                    right: 4,
-                },
-                ...text(layer, "sans", "base", "disabled"),
-            }
         }
     }
 }
