@@ -5,11 +5,11 @@ mod tab_map;
 mod wrap_map;
 
 use crate::{
-    link_go_to_definition::InlayRange, Anchor, AnchorRangeExt, InlayBackgroundHighlight, InlayId,
-    MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
+    link_go_to_definition::InlayRange, Anchor, AnchorRangeExt, InlayId, MultiBuffer,
+    MultiBufferSnapshot, ToOffset, ToPoint,
 };
 pub use block_map::{BlockMap, BlockPoint};
-use collections::{BTreeMap, HashMap, HashSet};
+use collections::{HashMap, HashSet};
 use fold_map::FoldMap;
 use gpui::{
     color::Color,
@@ -304,6 +304,16 @@ impl DisplayMap {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct Highlights<'a> {
+    pub text_highlights: Option<&'a TextHighlights>,
+    pub inlay_highlights: Option<&'a InlayHighlights>,
+    pub inlay_background_highlights:
+        Option<TreeMap<Option<TypeId>, Arc<(HighlightStyle, &'a [InlayRange])>>>,
+    pub inlay_highlight_style: Option<HighlightStyle>,
+    pub suggestion_highlight_style: Option<HighlightStyle>,
+}
+
 pub struct DisplaySnapshot {
     pub buffer_snapshot: MultiBufferSnapshot,
     pub fold_snapshot: fold_map::FoldSnapshot,
@@ -314,15 +324,6 @@ pub struct DisplaySnapshot {
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
     clip_at_line_ends: bool,
-}
-
-#[derive(Debug, Default)]
-pub struct Highlights<'a> {
-    pub text_highlights: Option<&'a TextHighlights>,
-    pub inlay_highlights: Option<&'a InlayHighlights>,
-    pub inlay_background_highlights: Option<&'a BTreeMap<TypeId, InlayBackgroundHighlight>>,
-    pub inlay_highlight_style: Option<HighlightStyle>,
-    pub suggestion_highlight_style: Option<HighlightStyle>,
 }
 
 impl DisplaySnapshot {
@@ -480,7 +481,9 @@ impl DisplaySnapshot {
         &'a self,
         display_rows: Range<u32>,
         language_aware: bool,
-        inlay_background_highlights: Option<&'a BTreeMap<TypeId, InlayBackgroundHighlight>>,
+        inlay_background_highlights: Option<
+            TreeMap<Option<TypeId>, Arc<(HighlightStyle, &'a [InlayRange])>>,
+        >,
         inlay_highlight_style: Option<HighlightStyle>,
         suggestion_highlight_style: Option<HighlightStyle>,
     ) -> DisplayChunks<'_> {

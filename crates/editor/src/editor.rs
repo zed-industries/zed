@@ -99,6 +99,7 @@ use std::{
     time::{Duration, Instant},
 };
 pub use sum_tree::Bias;
+use sum_tree::TreeMap;
 use text::Rope;
 use theme::{DiagnosticStyle, Theme, ThemeSettings};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
@@ -581,7 +582,7 @@ pub struct Editor {
     placeholder_text: Option<Arc<str>>,
     highlighted_rows: Option<Range<u32>>,
     background_highlights: BTreeMap<TypeId, BackgroundHighlight>,
-    inlay_background_highlights: BTreeMap<TypeId, InlayBackgroundHighlight>,
+    inlay_background_highlights: TreeMap<Option<TypeId>, InlayBackgroundHighlight>,
     nav_history: Option<ItemNavHistory>,
     context_menu: Option<ContextMenu>,
     mouse_context_menu: ViewHandle<context_menu::ContextMenu>,
@@ -7823,7 +7824,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.inlay_background_highlights
-            .insert(TypeId::of::<T>(), (color_fetcher, ranges));
+            .insert(Some(TypeId::of::<T>()), (color_fetcher, ranges));
         cx.notify();
     }
 
@@ -7832,7 +7833,9 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> Option<BackgroundHighlight> {
         let text_highlights = self.background_highlights.remove(&TypeId::of::<T>());
-        let inlay_highlights = self.inlay_background_highlights.remove(&TypeId::of::<T>());
+        let inlay_highlights = self
+            .inlay_background_highlights
+            .remove(&Some(TypeId::of::<T>()));
         if text_highlights.is_some() || inlay_highlights.is_some() {
             cx.notify();
         }

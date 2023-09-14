@@ -54,6 +54,7 @@ use std::{
     ops::Range,
     sync::Arc,
 };
+use sum_tree::TreeMap;
 use text::Point;
 use workspace::item::Item;
 
@@ -1592,11 +1593,28 @@ impl EditorElement {
                 .collect()
         } else {
             let style = &self.style;
+            let theme = theme::current(cx);
+            let inlay_background_highlights =
+                TreeMap::from_ordered_entries(editor.inlay_background_highlights.iter().map(
+                    |(type_id, (color_fetcher, ranges))| {
+                        let color = Some(color_fetcher(&theme));
+                        (
+                            *type_id,
+                            Arc::new((
+                                HighlightStyle {
+                                    color,
+                                    ..HighlightStyle::default()
+                                },
+                                ranges.as_slice(),
+                            )),
+                        )
+                    },
+                ));
             let chunks = snapshot
                 .chunks(
                     rows.clone(),
                     true,
-                    Some(&editor.inlay_background_highlights),
+                    Some(inlay_background_highlights),
                     Some(style.theme.hint),
                     Some(style.theme.suggestion),
                 )
