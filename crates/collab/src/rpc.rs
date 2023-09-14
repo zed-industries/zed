@@ -553,9 +553,8 @@ impl Server {
                 this.app_state.db.set_user_connected_once(user_id, true).await?;
             }
 
-            let (contacts, invite_code, channels_for_user, channel_invites) = future::try_join4(
+            let (contacts, channels_for_user, channel_invites) = future::try_join3(
                 this.app_state.db.get_contacts(user_id),
-                this.app_state.db.get_invite_code_for_user(user_id),
                 this.app_state.db.get_channels_for_user(user_id),
                 this.app_state.db.get_channel_invites_for_user(user_id)
             ).await?;
@@ -568,13 +567,6 @@ impl Server {
                     channels_for_user,
                     channel_invites
                 ))?;
-
-                if let Some((code, count)) = invite_code {
-                    this.peer.send(connection_id, proto::UpdateInviteInfo {
-                        url: format!("{}{}", this.app_state.config.invite_link_prefix, code),
-                        count: count as u32,
-                    })?;
-                }
             }
 
             if let Some(incoming_call) = this.app_state.db.incoming_call_for_user(user_id).await? {
