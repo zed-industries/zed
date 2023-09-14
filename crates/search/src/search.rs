@@ -110,7 +110,7 @@ fn toggle_replace_button<V: View>(
     button_style: ToggleIconButtonStyle,
 ) -> AnyElement<V> {
     Button::dynamic_action(Box::new(ToggleReplace))
-        .with_tooltip("Toggle replace", tooltip_style)
+        .with_tooltip("Toggle Replace", tooltip_style)
         .with_contents(theme::components::svg::Svg::new("icons/replace.svg"))
         .toggleable(active)
         .with_style(button_style)
