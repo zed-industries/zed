@@ -11,8 +11,7 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn new(window_count: &mut usize) -> Window {
-        let id = WindowId::new(window_count);
+    pub fn new(id: WindowId) -> Window {
         Window {
             id,
             layout_engine: Box::new(TaffyLayoutEngine::new()),
@@ -88,19 +87,17 @@ impl Context for WindowContext<'_, '_> {
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
     ) -> Handle<T> {
-        {
-            let id = EntityId::new(&mut self.app.entity_count);
-            let entity = build_entity(&mut ViewContext::mutable(
-                &mut *self.app,
-                &mut self.window,
-                id,
-            ));
-            let handle = Handle {
-                id,
-                entity_type: PhantomData,
-            };
-            self.app.entities.insert(handle.id, Box::new(entity));
-            handle
+        let id = self.entities.insert(None);
+        let entity = Box::new(build_entity(&mut ViewContext::mutable(
+            &mut *self.app,
+            &mut self.window,
+            id,
+        )));
+        self.entities.get_mut(id).unwrap().replace(entity);
+
+        Handle {
+            id,
+            entity_type: PhantomData,
         }
     }
 
@@ -112,15 +109,24 @@ impl Context for WindowContext<'_, '_> {
         let mut entity = self
             .app
             .entities
-            .remove(&handle.id)
+            .get_mut(handle.id)
+            .unwrap()
+            .take()
             .unwrap()
             .downcast::<T>()
             .unwrap();
+
         let result = update(
             &mut *entity,
             &mut ViewContext::mutable(&mut *self.app, &mut *self.window, handle.id),
         );
-        self.entities.insert(handle.id, Box::new(entity));
+
+        self.app
+            .entities
+            .get_mut(handle.id)
+            .unwrap()
+            .replace(entity);
+
         result
     }
 }
@@ -135,15 +141,18 @@ pub struct ViewContext<'a, 'w, T> {
 }
 
 impl<'a, 'w, T: 'static> ViewContext<'a, 'w, T> {
-    fn update<R>(&mut self, update: impl FnOnce(&mut T, &mut Self) -> R) -> R {
-        let mut entity = self.window_cx.app.entities.remove(&self.entity_id).unwrap();
-        let result = update(entity.downcast_mut::<T>().unwrap(), self);
-        self.window_cx
-            .app
-            .entities
-            .insert(self.entity_id, Box::new(entity));
-        result
-    }
+    // fn update<R>(&mut self, update: impl FnOnce(&mut T, &mut Self) -> R) -> R {
+
+    //     self.window_cx.update_entity(handle, update)
+
+    //     let mut entity = self.window_cx.app.entities.remove(&self.entity_id).unwrap();
+    //     let result = update(entity.downcast_mut::<T>().unwrap(), self);
+    //     self.window_cx
+    //         .app
+    //         .entities
+    //         .insert(self.entity_id, Box::new(entity));
+    //     result
+    // }
 
     fn mutable(app: &'a mut AppContext, window: &'w mut Window, entity_id: EntityId) -> Self {
         Self {
@@ -181,16 +190,8 @@ impl<'a, 'w, T: 'static> Context for ViewContext<'a, 'w, T> {
     }
 }
 
-#[derive(Clone, Copy, Eq, PartialEq, Hash)]
-pub struct WindowId(usize);
-
-impl WindowId {
-    fn new(window_count: &mut usize) -> Self {
-        let id = *window_count;
-        *window_count += 1;
-        Self(id)
-    }
-}
+// #[derive(Clone, Copy, Eq, PartialEq, Hash)]
+slotmap::new_key_type! { pub struct WindowId; }
 
 pub struct WindowHandle<S> {
     id: WindowId,

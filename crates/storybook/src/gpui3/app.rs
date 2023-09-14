@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
-use std::{any::Any, collections::HashMap, marker::PhantomData};
+use slotmap::SlotMap;
+use std::{any::Any, marker::PhantomData};
 
 use super::{
     window::{Window, WindowHandle, WindowId},
@@ -7,10 +8,8 @@ use super::{
 };
 
 pub struct AppContext {
-    pub(crate) entity_count: usize,
-    pub(crate) entities: HashMap<EntityId, Box<dyn Any>>,
-    pub(crate) window_count: usize,
-    pub(crate) windows: HashMap<WindowId, Window>,
+    pub(crate) entities: SlotMap<EntityId, Option<Box<dyn Any>>>,
+    pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     // We recycle this memory across layout requests.
     pub(crate) child_layout_buffer: Vec<LayoutId>,
 }
@@ -18,10 +17,8 @@ pub struct AppContext {
 impl AppContext {
     pub fn new() -> Self {
         AppContext {
-            entity_count: 0,
-            entities: HashMap::new(),
-            window_count: 0,
-            windows: HashMap::new(),
+            entities: SlotMap::with_key(),
+            windows: SlotMap::with_key(),
             child_layout_buffer: Default::default(),
         }
     }
@@ -30,7 +27,9 @@ impl AppContext {
         &mut self,
         build_root_view: impl FnOnce(&mut WindowContext) -> View<S>,
     ) -> WindowHandle<S> {
-        let window = Window::new(&mut self.window_count);
+        // let window = self.windows.insert_with_key(|id| {
+
+        // });
 
         unimplemented!()
     }
@@ -42,10 +41,18 @@ impl AppContext {
     ) -> Result<R> {
         let mut window = self
             .windows
-            .remove(&window_id)
-            .ok_or_else(|| anyhow!("window not found"))?;
+            .get_mut(window_id)
+            .ok_or_else(|| anyhow!("window not found"))?
+            .take()
+            .unwrap();
+
         let result = update(&mut WindowContext::mutable(self, &mut window));
-        self.windows.insert(window_id, window);
+
+        self.windows
+            .get_mut(window_id)
+            .ok_or_else(|| anyhow!("window not found"))?
+            .replace(window);
+
         Ok(result)
     }
 }
@@ -57,10 +64,11 @@ impl Context for AppContext {
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
     ) -> Handle<T> {
-        let entity_id = EntityId::new(&mut self.entity_count);
-        let entity = build_entity(&mut ModelContext::mutable(self, entity_id));
-        self.entities.insert(entity_id, Box::new(entity));
-        Handle::new(entity_id)
+        let id = self.entities.insert(None);
+        let entity = Box::new(build_entity(&mut ModelContext::mutable(self, id)));
+        self.entities.get_mut(id).unwrap().replace(entity);
+
+        Handle::new(id)
     }
 
     fn update_entity<T: 'static, R>(
@@ -70,12 +78,15 @@ impl Context for AppContext {
     ) -> R {
         let mut entity = self
             .entities
-            .remove(&handle.id)
+            .get_mut(handle.id)
+            .unwrap()
+            .take()
             .unwrap()
             .downcast::<T>()
             .unwrap();
+
         let result = update(&mut *entity, &mut ModelContext::mutable(self, handle.id));
-        self.entities.insert(handle.id, Box::new(entity));
+        self.entities.get_mut(handle.id).unwrap().replace(entity);
         result
     }
 }
@@ -104,9 +115,19 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     }
 
     fn update<R>(&mut self, update: impl FnOnce(&mut T, &mut Self) -> R) -> R {
-        let mut entity = self.app.entities.remove(&self.entity_id).unwrap();
+        let mut entity = self
+            .app
+            .entities
+            .get_mut(self.entity_id)
+            .unwrap()
+            .take()
+            .unwrap();
         let result = update(entity.downcast_mut::<T>().unwrap(), self);
-        self.app.entities.insert(self.entity_id, Box::new(entity));
+        self.app
+            .entities
+            .get_mut(self.entity_id)
+            .unwrap()
+            .replace(entity);
         result
     }
 }
@@ -135,16 +156,7 @@ pub struct Handle<T> {
     pub(crate) entity_type: PhantomData<T>,
 }
 
-#[derive(Clone, Copy, Eq, PartialEq, Hash)]
-pub struct EntityId(usize);
-
-impl EntityId {
-    pub fn new(entity_count: &mut usize) -> EntityId {
-        let id = *entity_count;
-        *entity_count += 1;
-        Self(id)
-    }
-}
+slotmap::new_key_type! { pub struct EntityId; }
 
 impl<T: 'static> Handle<T> {
     fn new(id: EntityId) -> Self {
