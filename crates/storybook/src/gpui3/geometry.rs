@@ -3,8 +3,8 @@ use derive_more::{Add, AddAssign, Div, Mul, Sub};
 use refineable::Refineable;
 use std::ops::Mul;
 
-#[derive(Default, Add, AddAssign, Sub, Mul, Div, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct Point<T> {
+#[derive(Refineable, Default, Add, AddAssign, Sub, Mul, Div, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Point<T: Clone> {
     pub x: T,
     pub y: T,
 }
@@ -51,13 +51,13 @@ impl Size<Length> {
     }
 }
 
-#[derive(Clone, Default, Debug)]
+#[derive(Refineable, Clone, Default, Debug)]
 pub struct Bounds<F: Clone> {
     pub origin: Point<F>,
     pub size: Size<F>,
 }
 
-#[derive(Clone, Default, Refineable, Debug)]
+#[derive(Refineable, Clone, Default, Debug)]
 pub struct Edges<T: Clone> {
     pub top: T,
     pub right: T,

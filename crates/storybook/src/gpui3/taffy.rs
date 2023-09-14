@@ -4,6 +4,7 @@ use super::{
 };
 use gpui2::taffy::{self, Taffy};
 use std::fmt::Debug;
+pub use taffy::*;
 
 pub use gpui2::taffy::tree::NodeId as LayoutId;
 pub struct TaffyLayoutEngine(Taffy);

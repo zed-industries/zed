@@ -1,4 +1,5 @@
 mod app;
+mod color;
 mod element;
 mod elements;
 mod geometry;
@@ -11,6 +12,7 @@ pub use gpui2::ArcCow;
 use gpui2::Reference;
 
 pub use app::*;
+pub use color::*;
 pub use element::*;
 pub use elements::*;
 pub use geometry::*;
