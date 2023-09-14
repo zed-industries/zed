@@ -17,7 +17,7 @@
     {
       "query": "generate tags based on config",
       "matches": [
-        "tags/src/lib.rs:261",
+        "tags/src/lib.rs:261"
       ]
     },
     {
@@ -54,13 +54,13 @@
     {
       "query": "Match based on associativity of actions",
       "matches": [
-        "cri/src/generate/build_tables/build_parse_table.rs:542",
+        "cri/src/generate/build_tables/build_parse_table.rs:542"
       ]
     },
     {
       "query": "Format token set display",
       "matches": [
-        "cli/src/generate/build_tables/item.rs:246",
+        "cli/src/generate/build_tables/item.rs:246"
       ]
     },
     {

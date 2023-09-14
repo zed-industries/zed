@@ -6744,6 +6744,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bincode",
+ "client",
  "collections",
  "ctor",
  "editor",
@@ -6757,6 +6758,7 @@ dependencies = [
  "lazy_static",
  "log",
  "matrixmultiply",
+ "node_runtime",
  "parking_lot 0.11.2",
  "parse_duration",
  "picker",
@@ -6766,6 +6768,7 @@ dependencies = [
  "rand 0.8.5",
  "rpc",
  "rusqlite",
+ "rust-embed",
  "schemars",
  "serde",
  "serde_json",
@@ -6788,6 +6791,7 @@ dependencies = [
  "unindent",
  "util",
  "workspace",
+ "zed",
 ]
 
 [[package]]
