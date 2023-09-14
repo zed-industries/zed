@@ -28,7 +28,7 @@ impl TaffyLayoutEngine {
     }
 
     pub fn layout(&mut self, id: LayoutId) -> Result<Layout> {
-        todo!()
+        Ok(self.0.layout(id).map(Into::into)?)
     }
 }
 
