@@ -217,6 +217,7 @@ messages!(
     (RejoinRoomResponse, Foreground),
     (RemoveContact, Foreground),
     (RemoveChannelMember, Foreground),
+    (RemoveChannelMessage, Foreground),
     (ReloadBuffers, Foreground),
     (ReloadBuffersResponse, Foreground),
     (RemoveProjectCollaborator, Foreground),
@@ -327,6 +328,7 @@ request_messages!(
     (GetChannelMembers, GetChannelMembersResponse),
     (JoinChannel, JoinRoomResponse),
     (RemoveChannel, Ack),
+    (RemoveChannelMessage, Ack),
     (RenameProjectEntry, ProjectEntryResponse),
     (RenameChannel, ChannelResponse),
     (SaveBuffer, BufferSaved),
@@ -402,6 +404,7 @@ entity_messages!(
     ChannelMessageSent,
     UpdateChannelBuffer,
     RemoveChannelBufferCollaborator,
+    RemoveChannelMessage,
     AddChannelBufferCollaborator,
     UpdateChannelBufferCollaborator
 );

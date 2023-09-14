@@ -164,7 +164,8 @@ message Envelope {
         SendChannelMessageResponse send_channel_message_response = 146;
         ChannelMessageSent channel_message_sent = 147;
         GetChannelMessages get_channel_messages = 148;
-        GetChannelMessagesResponse get_channel_messages_response = 149; // Current max
+        GetChannelMessagesResponse get_channel_messages_response = 149;
+        RemoveChannelMessage remove_channel_message = 150; // Current max
     }
 }
 
@@ -1047,6 +1048,11 @@ message SendChannelMessage {
     uint64 channel_id = 1;
     string body = 2;
     Nonce nonce = 3;
+}
+
+message RemoveChannelMessage {
+    uint64 channel_id = 1;
+    uint64 message_id = 2;
 }
 
 message SendChannelMessageResponse {

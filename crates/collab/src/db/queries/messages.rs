@@ -171,4 +171,44 @@ impl Database {
         })
         .await
     }
+
+    pub async fn remove_channel_message(
+        &self,
+        channel_id: ChannelId,
+        message_id: MessageId,
+        user_id: UserId,
+    ) -> Result<Vec<ConnectionId>> {
+        self.transaction(|tx| async move {
+            let mut rows = channel_chat_participant::Entity::find()
+                .filter(channel_chat_participant::Column::ChannelId.eq(channel_id))
+                .stream(&*tx)
+                .await?;
+
+            let mut is_participant = false;
+            let mut participant_connection_ids = Vec::new();
+            while let Some(row) = rows.next().await {
+                let row = row?;
+                if row.user_id == user_id {
+                    is_participant = true;
+                }
+                participant_connection_ids.push(row.connection());
+            }
+            drop(rows);
+
+            if !is_participant {
+                Err(anyhow!("not a chat participant"))?;
+            }
+
+            let result = channel_message::Entity::delete_by_id(message_id)
+                .filter(channel_message::Column::SenderId.eq(user_id))
+                .exec(&*tx)
+                .await?;
+            if result.rows_affected == 0 {
+                Err(anyhow!("no such message"))?;
+            }
+
+            Ok(participant_connection_ids)
+        })
+        .await
+    }
 }

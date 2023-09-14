@@ -265,6 +265,7 @@ impl Server {
             .add_request_handler(join_channel_chat)
             .add_message_handler(leave_channel_chat)
             .add_request_handler(send_channel_message)
+            .add_request_handler(remove_channel_message)
             .add_request_handler(get_channel_messages)
             .add_request_handler(follow)
             .add_message_handler(unfollow)
@@ -2693,6 +2694,25 @@ async fn send_channel_message(
     response.send(proto::SendChannelMessageResponse {
         message: Some(message),
     })?;
+    Ok(())
+}
+
+async fn remove_channel_message(
+    request: proto::RemoveChannelMessage,
+    response: Response<proto::RemoveChannelMessage>,
+    session: Session,
+) -> Result<()> {
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let message_id = MessageId::from_proto(request.message_id);
+    let connection_ids = session
+        .db()
+        .await
+        .remove_channel_message(channel_id, message_id, session.user_id)
+        .await?;
+    broadcast(Some(session.connection_id), connection_ids, |connection| {
+        session.peer.send(connection, request.clone())
+    });
+    response.send(proto::Ack {})?;
     Ok(())
 }
 

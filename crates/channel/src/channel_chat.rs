@@ -59,6 +59,7 @@ pub enum ChannelChatEvent {
 
 pub fn init(client: &Arc<Client>) {
     client.add_model_message_handler(ChannelChat::handle_message_sent);
+    client.add_model_message_handler(ChannelChat::handle_message_removed);
 }
 
 impl Entity for ChannelChat {
@@ -164,6 +165,21 @@ impl ChannelChat {
                 Ok(())
             })
         }))
+    }
+
+    pub fn remove_message(&mut self, id: u64, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        let response = self.rpc.request(proto::RemoveChannelMessage {
+            channel_id: self.channel.id,
+            message_id: id,
+        });
+        cx.spawn(|this, mut cx| async move {
+            response.await?;
+
+            this.update(&mut cx, |this, cx| {
+                this.message_removed(id, cx);
+                Ok(())
+            })
+        })
     }
 
     pub fn load_more_messages(&mut self, cx: &mut ModelContext<Self>) -> bool {
@@ -306,6 +322,18 @@ impl ChannelChat {
         Ok(())
     }
 
+    async fn handle_message_removed(
+        this: ModelHandle<Self>,
+        message: TypedEnvelope<proto::RemoveChannelMessage>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            this.message_removed(message.payload.message_id, cx)
+        });
+        Ok(())
+    }
+
     fn insert_messages(&mut self, messages: SumTree<ChannelMessage>, cx: &mut ModelContext<Self>) {
         if let Some((first_message, last_message)) = messages.first().zip(messages.last()) {
             let nonces = messages
@@ -361,6 +389,24 @@ impl ChannelChat {
                 new_count,
             });
             cx.notify();
+        }
+    }
+
+    fn message_removed(&mut self, id: u64, cx: &mut ModelContext<Self>) {
+        let mut cursor = self.messages.cursor::<ChannelMessageId>();
+        let mut messages = cursor.slice(&ChannelMessageId::Saved(id), Bias::Left, &());
+        if let Some(item) = cursor.item() {
+            if item.id == ChannelMessageId::Saved(id) {
+                let ix = messages.summary().count;
+                cursor.next(&());
+                messages.append(cursor.suffix(&()), &());
+                drop(cursor);
+                self.messages = messages;
+                cx.emit(ChannelChatEvent::MessagesUpdated {
+                    old_range: ix..ix + 1,
+                    new_count: 0,
+                });
+            }
         }
     }
 }

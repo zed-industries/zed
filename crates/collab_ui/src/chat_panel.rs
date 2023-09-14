@@ -1,6 +1,6 @@
 use crate::ChatPanelSettings;
 use anyhow::Result;
-use channel::{ChannelChat, ChannelChatEvent, ChannelMessage, ChannelStore};
+use channel::{ChannelChat, ChannelChatEvent, ChannelMessageId, ChannelStore};
 use client::Client;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
@@ -19,7 +19,7 @@ use project::Fs;
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
 use std::sync::Arc;
-use theme::Theme;
+use theme::{IconButton, Theme};
 use time::{OffsetDateTime, UtcOffset};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -105,8 +105,7 @@ impl ChatPanel {
 
         let mut message_list =
             ListState::<Self>::new(0, Orientation::Bottom, 1000., move |this, ix, cx| {
-                let message = this.active_chat.as_ref().unwrap().0.read(cx).message(ix);
-                this.render_message(message, cx)
+                this.render_message(ix, cx)
             });
         message_list.set_scroll_handler(|visible_range, this, cx| {
             if visible_range.start < MESSAGE_LOADING_THRESHOLD {
@@ -285,38 +284,70 @@ impl ChatPanel {
         messages.flex(1., true).into_any()
     }
 
-    fn render_message(&self, message: &ChannelMessage, cx: &AppContext) -> AnyElement<Self> {
+    fn render_message(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+        let message = self.active_chat.as_ref().unwrap().0.read(cx).message(ix);
+
         let now = OffsetDateTime::now_utc();
         let theme = theme::current(cx);
-        let theme = if message.is_pending() {
+        let style = if message.is_pending() {
             &theme.chat_panel.pending_message
         } else {
             &theme.chat_panel.message
         };
 
+        let belongs_to_user = Some(message.sender.id) == self.client.user_id();
+        let message_id_to_remove =
+            if let (ChannelMessageId::Saved(id), true) = (message.id, belongs_to_user) {
+                Some(id)
+            } else {
+                None
+            };
+
+        enum DeleteMessage {}
+
+        let body = message.body.clone();
         Flex::column()
             .with_child(
                 Flex::row()
                     .with_child(
                         Label::new(
                             message.sender.github_login.clone(),
-                            theme.sender.text.clone(),
+                            style.sender.text.clone(),
                         )
                         .contained()
-                        .with_style(theme.sender.container),
+                        .with_style(style.sender.container),
                     )
                     .with_child(
                         Label::new(
                             format_timestamp(message.timestamp, now, self.local_timezone),
-                            theme.timestamp.text.clone(),
+                            style.timestamp.text.clone(),
                         )
                         .contained()
-                        .with_style(theme.timestamp.container),
-                    ),
+                        .with_style(style.timestamp.container),
+                    )
+                    .with_children(message_id_to_remove.map(|id| {
+                        MouseEventHandler::new::<DeleteMessage, _>(
+                            id as usize,
+                            cx,
+                            |mouse_state, _| {
+                                let button_style =
+                                    theme.collab_panel.contact_button.style_for(mouse_state);
+                                render_icon_button(button_style, "icons/x.svg")
+                                    .aligned()
+                                    .into_any()
+                            },
+                        )
+                        .with_padding(Padding::uniform(2.))
+                        .with_cursor_style(CursorStyle::PointingHand)
+                        .on_click(MouseButton::Left, move |_, this, cx| {
+                            this.remove_message(id, cx);
+                        })
+                        .flex_float()
+                    })),
             )
-            .with_child(Text::new(message.body.clone(), theme.body.clone()))
+            .with_child(Text::new(body, style.body.clone()))
             .contained()
-            .with_style(theme.container)
+            .with_style(style.container)
             .into_any()
     }
 
@@ -410,6 +441,12 @@ impl ChatPanel {
             {
                 task.detach();
             }
+        }
+    }
+
+    fn remove_message(&mut self, id: u64, cx: &mut ViewContext<Self>) {
+        if let Some((chat, _)) = self.active_chat.as_ref() {
+            chat.update(cx, |chat, cx| chat.remove_message(id, cx).detach())
         }
     }
 
@@ -550,4 +587,17 @@ fn format_timestamp(
     } else {
         format!("{:02}/{}/{}", date.month() as u32, date.day(), date.year())
     }
+}
+
+fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Element<ChatPanel> {
+    Svg::new(svg_path)
+        .with_color(style.color)
+        .constrained()
+        .with_width(style.icon_width)
+        .aligned()
+        .constrained()
+        .with_width(style.button_width)
+        .with_height(style.button_width)
+        .contained()
+        .with_style(style.container)
 }
