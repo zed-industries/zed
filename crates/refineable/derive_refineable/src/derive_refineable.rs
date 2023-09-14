@@ -35,7 +35,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
     let field_visibilities: Vec<_> = fields.iter().map(|f| &f.vis).collect();
     let wrapped_types: Vec<_> = fields.iter().map(|f| get_wrapper_type(f, &f.ty)).collect();
 
-    // Create trait bound that each wrapped type must implement Clone & Default
+    // Create trait bound that each wrapped type must implement Clone // & Default
     let type_param_bounds: Vec<_> = wrapped_types
         .iter()
         .map(|ty| {
@@ -51,13 +51,14 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
                         lifetimes: None,
                         path: parse_quote!(Clone),
                     }));
-                    punctuated.push_punct(syn::token::Add::default());
-                    punctuated.push_value(TypeParamBound::Trait(TraitBound {
-                        paren_token: None,
-                        modifier: syn::TraitBoundModifier::None,
-                        lifetimes: None,
-                        path: parse_quote!(Default),
-                    }));
+
+                    // punctuated.push_punct(syn::token::Add::default());
+                    // punctuated.push_value(TypeParamBound::Trait(TraitBound {
+                    //     paren_token: None,
+                    //     modifier: syn::TraitBoundModifier::None,
+                    //     lifetimes: None,
+                    //     path: parse_quote!(Default),
+                    // }));
                     punctuated
                 },
             })
@@ -161,7 +162,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
     };
 
     let gen = quote! {
-        #[derive(Default, Clone)]
+        #[derive(Clone)]
         pub struct #refinement_ident #impl_generics {
             #( #field_visibilities #field_names: #wrapped_types ),*
         }
@@ -183,6 +184,16 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
 
             fn refine(&mut self, refinement: &Self::Refinement) {
                 #( #refinement_field_assignments )*
+            }
+        }
+
+        impl #impl_generics ::core::default::Default for #refinement_ident #ty_generics
+            #where_clause
+        {
+            fn default() -> Self {
+                #refinement_ident {
+                    #( #field_names: Default::default() ),*
+                }
             }
         }
 

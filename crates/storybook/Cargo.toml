@@ -18,6 +18,7 @@ rust-embed.workspace = true
 serde.workspace = true
 settings = { path = "../settings" }
 simplelog = "0.9"
+slotmap = "1.0.6"
 theme = { path = "../theme" }
 util = { path = "../util" }
 
