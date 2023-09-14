@@ -17,7 +17,7 @@ use std::{
 use tree_sitter::{Parser, QueryCursor};
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-pub struct SpanDigest([u8; 20]);
+pub struct SpanDigest(pub [u8; 20]);
 
 impl FromSql for SpanDigest {
     fn column_result(value: ValueRef) -> FromSqlResult<Self> {

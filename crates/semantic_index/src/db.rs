@@ -278,6 +278,39 @@ impl VectorDatabase {
         })
     }
 
+    pub fn embeddings_for_digests(
+        &self,
+        digests: Vec<SpanDigest>,
+    ) -> impl Future<Output = Result<HashMap<SpanDigest, Embedding>>> {
+        self.transact(move |db| {
+            let mut query = db.prepare(
+                "
+                SELECT digest, embedding
+                FROM spans
+                WHERE digest IN rarray(?)
+                ",
+            )?;
+            let mut embeddings_by_digest = HashMap::default();
+            let digests = Rc::new(
+                digests
+                    .into_iter()
+                    .map(|p| Value::Blob(p.0.to_vec()))
+                    .collect::<Vec<_>>(),
+            );
+            let rows = query.query_map(params![digests], |row| {
+                Ok((row.get::<_, SpanDigest>(0)?, row.get::<_, Embedding>(1)?))
+            })?;
+
+            for row in rows {
+                if let Ok(row) = row {
+                    embeddings_by_digest.insert(row.0, row.1);
+                }
+            }
+
+            Ok(embeddings_by_digest)
+        })
+    }
+
     pub fn embeddings_for_files(
         &self,
         worktree_id_file_paths: HashMap<i64, Vec<Arc<Path>>>,
