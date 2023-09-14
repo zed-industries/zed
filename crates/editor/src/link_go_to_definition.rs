@@ -188,7 +188,6 @@ pub fn update_inlay_link_and_hover_points(
             Bias::Right,
         );
         if let Some(hovered_hint) = editor
-            // TODO kb look up by position with binary search
             .visible_inlay_hints(cx)
             .into_iter()
             .skip_while(|hint| {

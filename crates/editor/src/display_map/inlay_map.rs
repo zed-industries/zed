@@ -295,7 +295,6 @@ impl<'a> Iterator for InlayChunks<'a> {
             }
             Transform::Inlay(inlay) => {
                 let mut inlay_style_and_highlight = None;
-                // type InlayHighlights = BTreeMap<TypeId, HashMap<InlayId, (HighlightStyle, InlayHighlight)>>;
                 if let Some(inlay_highlights) = self.highlights.inlay_highlights {
                     for (_, inlay_id_to_data) in inlay_highlights.iter() {
                         let style_and_highlight = inlay_id_to_data.get(&inlay.id);
