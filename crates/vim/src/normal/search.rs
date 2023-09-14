@@ -52,7 +52,7 @@ fn search(workspace: &mut Workspace, action: &Search, cx: &mut ViewContext<Works
         Direction::Next
     };
     Vim::update(cx, |vim, cx| {
-        let count = vim.pop_number_operator(cx).unwrap_or(1);
+        let count = vim.take_count(cx).unwrap_or(1);
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                 search_bar.update(cx, |search_bar, cx| {
@@ -119,7 +119,7 @@ pub fn move_to_internal(
 ) {
     Vim::update(cx, |vim, cx| {
         let pane = workspace.active_pane().clone();
-        let count = vim.pop_number_operator(cx).unwrap_or(1);
+        let count = vim.take_count(cx).unwrap_or(1);
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                 let search = search_bar.update(cx, |search_bar, cx| {

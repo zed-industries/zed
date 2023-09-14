@@ -33,7 +33,6 @@ impl Default for Mode {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
 pub enum Operator {
-    Number(usize),
     Change,
     Delete,
     Yank,
@@ -47,6 +46,12 @@ pub enum Operator {
 pub struct EditorState {
     pub mode: Mode,
     pub last_mode: Mode,
+
+    /// pre_count is the number before an operator is specified (3 in 3d2d)
+    pub pre_count: Option<usize>,
+    /// post_count is the number after an operator is specified (2 in 3d2d)
+    pub post_count: Option<usize>,
+
     pub operator_stack: Vec<Operator>,
 }
 
@@ -158,6 +163,10 @@ impl EditorState {
         }
     }
 
+    pub fn active_operator(&self) -> Option<Operator> {
+        self.operator_stack.last().copied()
+    }
+
     pub fn keymap_context_layer(&self) -> KeymapContext {
         let mut context = KeymapContext::default();
         context.add_identifier("VimEnabled");
@@ -174,7 +183,14 @@ impl EditorState {
             context.add_identifier("VimControl");
         }
 
-        let active_operator = self.operator_stack.last();
+        if self.active_operator().is_none() && self.pre_count.is_some()
+            || self.active_operator().is_some() && self.post_count.is_some()
+        {
+            dbg!("VimCount");
+            context.add_identifier("VimCount");
+        }
+
+        let active_operator = self.active_operator();
 
         if let Some(active_operator) = active_operator {
             for context_flag in active_operator.context_flags().into_iter() {
@@ -194,7 +210,6 @@ impl EditorState {
 impl Operator {
     pub fn id(&self) -> &'static str {
         match self {
-            Operator::Number(_) => "n",
             Operator::Object { around: false } => "i",
             Operator::Object { around: true } => "a",
             Operator::Change => "c",

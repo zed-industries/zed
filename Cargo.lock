@@ -114,6 +114,7 @@ dependencies = [
  "log",
  "menu",
  "ordered-float",
+ "parking_lot 0.11.2",
  "project",
  "rand 0.8.5",
  "regex",
@@ -1453,7 +1454,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9794,7 +9795,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.104.0"
+version = "0.105.0"
 dependencies = [
  "activity_indicator",
  "ai",

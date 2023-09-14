@@ -1734,6 +1734,10 @@ impl Editor {
         }
     }
 
+    pub fn read_only(&self) -> bool {
+        self.read_only
+    }
+
     pub fn set_read_only(&mut self, read_only: bool) {
         self.read_only = read_only;
     }
@@ -2285,14 +2289,18 @@ impl Editor {
                 // bracket of any of this language's bracket pairs.
                 let mut bracket_pair = None;
                 let mut is_bracket_pair_start = false;
-                for (pair, enabled) in scope.brackets() {
-                    if enabled && pair.close && pair.start.ends_with(text.as_ref()) {
-                        bracket_pair = Some(pair.clone());
-                        is_bracket_pair_start = true;
-                        break;
-                    } else if pair.end.as_str() == text.as_ref() {
-                        bracket_pair = Some(pair.clone());
-                        break;
+                if !text.is_empty() {
+                    // `text` can be empty when an user is using IME (e.g. Chinese Wubi Simplified)
+                    //  and they are removing the character that triggered IME popup.
+                    for (pair, enabled) in scope.brackets() {
+                        if enabled && pair.close && pair.start.ends_with(text.as_ref()) {
+                            bracket_pair = Some(pair.clone());
+                            is_bracket_pair_start = true;
+                            break;
+                        } else if pair.end.as_str() == text.as_ref() {
+                            bracket_pair = Some(pair.clone());
+                            break;
+                        }
                     }
                 }
 
@@ -5121,9 +5129,6 @@ impl Editor {
             self.unmark_text(cx);
             self.refresh_copilot_suggestions(true, cx);
             cx.emit(Event::Edited);
-            cx.emit(Event::TransactionUndone {
-                transaction_id: tx_id,
-            });
         }
     }
 
@@ -8604,9 +8609,6 @@ pub enum Event {
     ScrollPositionChanged {
         local: bool,
         autoscroll: bool,
-    },
-    TransactionUndone {
-        transaction_id: TransactionId,
     },
     Closed,
 }

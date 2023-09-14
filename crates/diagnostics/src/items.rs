@@ -32,7 +32,8 @@ impl DiagnosticIndicator {
                 this.in_progress_checks.insert(*language_server_id);
                 cx.notify();
             }
-            project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
+            project::Event::DiskBasedDiagnosticsFinished { language_server_id }
+            | project::Event::LanguageServerRemoved(language_server_id) => {
                 this.summary = project.read(cx).diagnostic_summary(cx);
                 this.in_progress_checks.remove(language_server_id);
                 cx.notify();
