@@ -1244,7 +1244,10 @@ fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{display_map::TextHighlights, InlayId, MultiBuffer};
+    use crate::{
+        display_map::{InlayHighlights, TextHighlights},
+        InlayId, MultiBuffer,
+    };
     use gpui::AppContext;
     use project::{InlayHint, InlayHintLabel, ResolveState};
     use rand::prelude::*;
@@ -1725,8 +1728,8 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             let mut expected_text = Rope::from(buffer_snapshot.text());
-            for (offset, inlay) in inlays.into_iter().rev() {
-                expected_text.replace(offset..offset, &inlay.text.to_string());
+            for (offset, inlay) in inlays.iter().rev() {
+                expected_text.replace(*offset..*offset, &inlay.text.to_string());
             }
             assert_eq!(inlay_snapshot.text(), expected_text.to_string());
 
@@ -1747,24 +1750,70 @@ mod tests {
             }
 
             let mut text_highlights = TextHighlights::default();
+            let mut inlay_highlights = InlayHighlights::default();
             let highlight_count = rng.gen_range(0_usize..10);
-            let mut highlight_ranges = (0..highlight_count)
-                .map(|_| buffer_snapshot.random_byte_range(0, &mut rng))
-                .collect::<Vec<_>>();
-            highlight_ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
-            log::info!("highlighting ranges {highlight_ranges:?}");
-            // TODO kb add inlay ranges into the tests
-            let highlight_ranges = highlight_ranges
-                .into_iter()
-                .map(|range| {
-                    buffer_snapshot.anchor_before(range.start)
-                        ..buffer_snapshot.anchor_after(range.end)
-                })
-                .collect::<Vec<_>>();
-            text_highlights.insert(
-                Some(TypeId::of::<()>()),
-                Arc::new((HighlightStyle::default(), highlight_ranges)),
-            );
+            if rng.gen_bool(0.5) {
+                let mut highlight_ranges = (0..highlight_count)
+                    .map(|_| buffer_snapshot.random_byte_range(0, &mut rng))
+                    .collect::<Vec<_>>();
+                highlight_ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
+                log::info!("highlighting text ranges {highlight_ranges:?}");
+                text_highlights.insert(
+                    Some(TypeId::of::<()>()),
+                    Arc::new((
+                        HighlightStyle::default(),
+                        highlight_ranges
+                            .into_iter()
+                            .map(|range| {
+                                buffer_snapshot.anchor_before(range.start)
+                                    ..buffer_snapshot.anchor_after(range.end)
+                            })
+                            .collect(),
+                    )),
+                );
+            } else {
+                let mut inlay_indices = BTreeSet::default();
+                while inlay_indices.len() < highlight_count.min(inlays.len()) {
+                    inlay_indices.insert(rng.gen_range(0..inlays.len()));
+                }
+                let highlight_ranges = inlay_indices
+                    .into_iter()
+                    .filter_map(|i| {
+                        let (_, inlay) = &inlays[i];
+                        let inlay_text_len = inlay.text.len();
+                        match inlay_text_len {
+                            0 => None,
+                            1 => Some(InlayRange {
+                                inlay: inlay.id,
+                                inlay_position: inlay.position,
+                                highlight_start: 0,
+                                highlight_end: 1,
+                            }),
+                            n => {
+                                let inlay_text = inlay.text.to_string();
+                                let mut highlight_end_offset_increment = rng.gen_range(1..n);
+                                while !inlay_text.is_char_boundary(highlight_end_offset_increment) {
+                                    highlight_end_offset_increment += 1;
+                                }
+                                Some(InlayRange {
+                                    inlay: inlay.id,
+                                    inlay_position: inlay.position,
+                                    highlight_start: 0,
+                                    // TODO kb
+                                    // highlight_end_offset_increment: highlight_end_offset_increment,
+                                    highlight_end: inlay.text.len(),
+                                })
+                            }
+                        }
+                    })
+                    .collect();
+
+                log::info!("highlighting inlay ranges {highlight_ranges:?}");
+                inlay_highlights.insert(
+                    Some(TypeId::of::<()>()),
+                    Arc::new((HighlightStyle::default(), highlight_ranges)),
+                );
+            };
 
             for _ in 0..5 {
                 let mut end = rng.gen_range(0..=inlay_snapshot.len().0);
@@ -1778,6 +1827,7 @@ mod tests {
                         false,
                         Highlights {
                             text_highlights: Some(&text_highlights),
+                            inlay_highlights: Some(&inlay_highlights),
                             ..Highlights::default()
                         },
                     )
