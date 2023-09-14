@@ -2290,6 +2290,8 @@ impl Editor {
                 let mut bracket_pair = None;
                 let mut is_bracket_pair_start = false;
                 if !text.is_empty() {
+                    // `text` can be empty when an user is using IME (e.g. Chinese Wubi Simplified)
+                    //  and they are removing the character that triggered IME popup.
                     for (pair, enabled) in scope.brackets() {
                         if enabled && pair.close && pair.start.ends_with(text.as_ref()) {
                             bracket_pair = Some(pair.clone());
