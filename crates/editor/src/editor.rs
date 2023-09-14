@@ -66,7 +66,7 @@ use language::{
     TransactionId,
 };
 use link_go_to_definition::{
-    hide_link_definition, show_link_definition, DocumentRange, GoToDefinitionLink, InlayRange,
+    hide_link_definition, show_link_definition, GoToDefinitionLink, InlayRange,
     LinkGoToDefinitionState,
 };
 use log::error;
@@ -548,7 +548,7 @@ type CompletionId = usize;
 type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
 type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
-type BackgroundHighlight = (fn(&Theme) -> Color, Vec<DocumentRange>);
+type BackgroundHighlight = (fn(&Theme) -> Color, Vec<Range<Anchor>>);
 
 pub struct Editor {
     handle: WeakViewHandle<Self>,
@@ -7074,12 +7074,7 @@ impl Editor {
                         .display_map
                         .update(cx, |display_map, cx| display_map.snapshot(cx));
                     let mut buffer_highlights = this
-                        .document_highlights_for_position(
-                            selection.head(),
-                            &buffer,
-                            &display_snapshot,
-                        )
-                        .filter_map(|highlight| highlight.as_text_range())
+                        .document_highlights_for_position(selection.head(), &buffer)
                         .filter(|highlight| {
                             highlight.start.excerpt_id() == selection.head().excerpt_id()
                                 && highlight.end.excerpt_id() == selection.head().excerpt_id()
@@ -7134,15 +7129,11 @@ impl Editor {
                     let ranges = this
                         .clear_background_highlights::<DocumentHighlightWrite>(cx)
                         .into_iter()
-                        .flat_map(|(_, ranges)| {
-                            ranges.into_iter().filter_map(|range| range.as_text_range())
-                        })
+                        .flat_map(|(_, ranges)| ranges.into_iter())
                         .chain(
                             this.clear_background_highlights::<DocumentHighlightRead>(cx)
                                 .into_iter()
-                                .flat_map(|(_, ranges)| {
-                                    ranges.into_iter().filter_map(|range| range.as_text_range())
-                                }),
+                                .flat_map(|(_, ranges)| ranges.into_iter()),
                         )
                         .collect();
 
@@ -7820,13 +7811,8 @@ impl Editor {
         color_fetcher: fn(&Theme) -> Color,
         cx: &mut ViewContext<Self>,
     ) {
-        self.background_highlights.insert(
-            TypeId::of::<T>(),
-            (
-                color_fetcher,
-                ranges.into_iter().map(DocumentRange::Text).collect(),
-            ),
-        );
+        self.background_highlights
+            .insert(TypeId::of::<T>(), (color_fetcher, ranges));
         cx.notify();
     }
 
@@ -7836,13 +7822,14 @@ impl Editor {
         color_fetcher: fn(&Theme) -> Color,
         cx: &mut ViewContext<Self>,
     ) {
-        self.background_highlights.insert(
-            TypeId::of::<T>(),
-            (
-                color_fetcher,
-                ranges.into_iter().map(DocumentRange::Inlay).collect(),
-            ),
-        );
+        // TODO kb
+        // self.background_highlights.insert(
+        //     TypeId::of::<T>(),
+        //     (
+        //         color_fetcher,
+        //         ranges.into_iter().map(DocumentRange::Inlay).collect(),
+        //     ),
+        // );
         cx.notify();
     }
 
@@ -7874,8 +7861,7 @@ impl Editor {
         &'a self,
         position: Anchor,
         buffer: &'a MultiBufferSnapshot,
-        display_snapshot: &'a DisplaySnapshot,
-    ) -> impl 'a + Iterator<Item = &DocumentRange> {
+    ) -> impl 'a + Iterator<Item = &Range<Anchor>> {
         let read_highlights = self
             .background_highlights
             .get(&TypeId::of::<DocumentHighlightRead>())
@@ -7884,16 +7870,14 @@ impl Editor {
             .background_highlights
             .get(&TypeId::of::<DocumentHighlightWrite>())
             .map(|h| &h.1);
-        let left_position = display_snapshot.anchor_to_inlay_offset(position.bias_left(buffer));
-        let right_position = display_snapshot.anchor_to_inlay_offset(position.bias_right(buffer));
+        let left_position = position.bias_left(buffer);
+        let right_position = position.bias_right(buffer);
         read_highlights
             .into_iter()
             .chain(write_highlights)
             .flat_map(move |ranges| {
                 let start_ix = match ranges.binary_search_by(|probe| {
-                    let cmp = document_to_inlay_range(probe, display_snapshot)
-                        .end
-                        .cmp(&left_position);
+                    let cmp = probe.end.cmp(&left_position, buffer);
                     if cmp.is_ge() {
                         Ordering::Greater
                     } else {
@@ -7904,12 +7888,9 @@ impl Editor {
                 };
 
                 let right_position = right_position.clone();
-                ranges[start_ix..].iter().take_while(move |range| {
-                    document_to_inlay_range(range, display_snapshot)
-                        .start
-                        .cmp(&right_position)
-                        .is_le()
-                })
+                ranges[start_ix..]
+                    .iter()
+                    .take_while(move |range| range.start.cmp(&right_position, buffer).is_le())
             })
     }
 
@@ -7919,15 +7900,13 @@ impl Editor {
         display_snapshot: &DisplaySnapshot,
         theme: &Theme,
     ) -> Vec<(Range<DisplayPoint>, Color)> {
-        let search_range = display_snapshot.anchor_to_inlay_offset(search_range.start)
-            ..display_snapshot.anchor_to_inlay_offset(search_range.end);
         let mut results = Vec::new();
         for (color_fetcher, ranges) in self.background_highlights.values() {
             let color = color_fetcher(theme);
             let start_ix = match ranges.binary_search_by(|probe| {
-                let cmp = document_to_inlay_range(probe, display_snapshot)
+                let cmp = probe
                     .end
-                    .cmp(&search_range.start);
+                    .cmp(&search_range.start, &display_snapshot.buffer_snapshot);
                 if cmp.is_gt() {
                     Ordering::Greater
                 } else {
@@ -7937,13 +7916,16 @@ impl Editor {
                 Ok(i) | Err(i) => i,
             };
             for range in &ranges[start_ix..] {
-                let range = document_to_inlay_range(range, display_snapshot);
-                if range.start.cmp(&search_range.end).is_ge() {
+                if range
+                    .start
+                    .cmp(&search_range.end, &display_snapshot.buffer_snapshot)
+                    .is_ge()
+                {
                     break;
                 }
 
-                let start = display_snapshot.inlay_offset_to_display_point(range.start, Bias::Left);
-                let end = display_snapshot.inlay_offset_to_display_point(range.end, Bias::Right);
+                let start = range.start.to_display_point(&display_snapshot);
+                let end = range.end.to_display_point(&display_snapshot);
                 results.push((start..end, color))
             }
         }
@@ -7956,17 +7938,15 @@ impl Editor {
         display_snapshot: &DisplaySnapshot,
         count: usize,
     ) -> Vec<RangeInclusive<DisplayPoint>> {
-        let search_range = display_snapshot.anchor_to_inlay_offset(search_range.start)
-            ..display_snapshot.anchor_to_inlay_offset(search_range.end);
         let mut results = Vec::new();
         let Some((_, ranges)) = self.background_highlights.get(&TypeId::of::<T>()) else {
             return vec![];
         };
 
         let start_ix = match ranges.binary_search_by(|probe| {
-            let cmp = document_to_inlay_range(probe, display_snapshot)
+            let cmp = probe
                 .end
-                .cmp(&search_range.start);
+                .cmp(&search_range.start, &display_snapshot.buffer_snapshot);
             if cmp.is_gt() {
                 Ordering::Greater
             } else {
@@ -7989,22 +7969,20 @@ impl Editor {
             return Vec::new();
         }
         for range in &ranges[start_ix..] {
-            let range = document_to_inlay_range(range, display_snapshot);
-            if range.start.cmp(&search_range.end).is_ge() {
+            if range
+                .start
+                .cmp(&search_range.end, &display_snapshot.buffer_snapshot)
+                .is_ge()
+            {
                 break;
             }
-            let end = display_snapshot
-                .inlay_offset_to_display_point(range.end, Bias::Right)
-                .to_point(display_snapshot);
+            let end = range.end.to_point(&display_snapshot.buffer_snapshot);
             if let Some(current_row) = &end_row {
                 if end.row == current_row.row {
                     continue;
                 }
             }
-            let start = display_snapshot
-                .inlay_offset_to_display_point(range.start, Bias::Left)
-                .to_point(display_snapshot);
-
+            let start = range.start.to_point(&display_snapshot.buffer_snapshot);
             if start_row.is_none() {
                 assert_eq!(end_row, None);
                 start_row = Some(start);
@@ -8056,7 +8034,7 @@ impl Editor {
     pub fn text_highlights<'a, T: 'static>(
         &'a self,
         cx: &'a AppContext,
-    ) -> Option<(HighlightStyle, &'a [DocumentRange])> {
+    ) -> Option<(HighlightStyle, &'a [Range<Anchor>])> {
         self.display_map.read(cx).text_highlights(TypeId::of::<T>())
     }
 
@@ -8281,7 +8259,6 @@ impl Editor {
         Some(
             ranges
                 .iter()
-                .filter_map(|range| range.as_text_range())
                 .map(move |range| {
                     range.start.to_offset_utf16(&snapshot)..range.end.to_offset_utf16(&snapshot)
                 })
@@ -8493,19 +8470,6 @@ impl Editor {
         }
 
         self.handle_input(text, cx);
-    }
-}
-
-fn document_to_inlay_range(
-    range: &DocumentRange,
-    snapshot: &DisplaySnapshot,
-) -> Range<InlayOffset> {
-    match range {
-        DocumentRange::Text(text_range) => {
-            snapshot.anchor_to_inlay_offset(text_range.start)
-                ..snapshot.anchor_to_inlay_offset(text_range.end)
-        }
-        DocumentRange::Inlay(inlay_range) => inlay_range.highlight_start..inlay_range.highlight_end,
     }
 }
 
@@ -8788,7 +8752,6 @@ impl View for Editor {
     fn marked_text_range(&self, cx: &AppContext) -> Option<Range<usize>> {
         let snapshot = self.buffer.read(cx).read(cx);
         let range = self.text_highlights::<InputComposition>(cx)?.1.get(0)?;
-        let range = range.as_text_range()?;
         Some(range.start.to_offset_utf16(&snapshot).0..range.end.to_offset_utf16(&snapshot).0)
     }
 

@@ -1,5 +1,4 @@
 use crate::{
-    link_go_to_definition::DocumentRange,
     multi_buffer::{MultiBufferChunks, MultiBufferRows},
     Anchor, InlayId, MultiBufferSnapshot, ToOffset,
 };
@@ -1006,9 +1005,6 @@ impl InlaySnapshot {
                     let transform_start = self.buffer.anchor_after(
                         self.to_buffer_offset(cmp::max(range.start, cursor.start().0)),
                     );
-                    let transform_start =
-                        self.to_inlay_offset(transform_start.to_offset(&self.buffer));
-
                     let transform_end = {
                         let overshoot = InlayOffset(range.end.0 - cursor.start().0 .0);
                         self.buffer.anchor_before(self.to_buffer_offset(cmp::min(
@@ -1016,17 +1012,13 @@ impl InlaySnapshot {
                             cursor.start().0 + overshoot,
                         )))
                     };
-                    let transform_end = self.to_inlay_offset(transform_end.to_offset(&self.buffer));
 
                     for (tag, text_highlights) in text_highlights.iter() {
                         let style = text_highlights.0;
                         let ranges = &text_highlights.1;
 
                         let start_ix = match ranges.binary_search_by(|probe| {
-                            let cmp = self
-                                .document_to_inlay_range(probe)
-                                .end
-                                .cmp(&transform_start);
+                            let cmp = probe.end.cmp(&transform_start, &self.buffer);
                             if cmp.is_gt() {
                                 cmp::Ordering::Greater
                             } else {
@@ -1036,19 +1028,18 @@ impl InlaySnapshot {
                             Ok(i) | Err(i) => i,
                         };
                         for range in &ranges[start_ix..] {
-                            let range = self.document_to_inlay_range(range);
-                            if range.start.cmp(&transform_end).is_ge() {
+                            if range.start.cmp(&transform_end, &self.buffer).is_ge() {
                                 break;
                             }
 
                             highlight_endpoints.push(HighlightEndpoint {
-                                offset: range.start,
+                                offset: self.to_inlay_offset(range.start.to_offset(&self.buffer)),
                                 is_start: true,
                                 tag: *tag,
                                 style,
                             });
                             highlight_endpoints.push(HighlightEndpoint {
-                                offset: range.end,
+                                offset: self.to_inlay_offset(range.end.to_offset(&self.buffer)),
                                 is_start: false,
                                 tag: *tag,
                                 style,
@@ -1079,18 +1070,6 @@ impl InlaySnapshot {
             highlight_endpoints: highlight_endpoints.into_iter().peekable(),
             active_highlights: Default::default(),
             snapshot: self,
-        }
-    }
-
-    fn document_to_inlay_range(&self, range: &DocumentRange) -> Range<InlayOffset> {
-        match range {
-            DocumentRange::Text(text_range) => {
-                self.to_inlay_offset(text_range.start.to_offset(&self.buffer))
-                    ..self.to_inlay_offset(text_range.end.to_offset(&self.buffer))
-            }
-            DocumentRange::Inlay(inlay_range) => {
-                inlay_range.highlight_start..inlay_range.highlight_end
-            }
         }
     }
 
@@ -1144,7 +1123,7 @@ fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{link_go_to_definition::InlayRange, InlayId, MultiBuffer};
+    use crate::{InlayId, MultiBuffer};
     use gpui::AppContext;
     use project::{InlayHint, InlayHintLabel, ResolveState};
     use rand::prelude::*;
@@ -1646,27 +1625,15 @@ mod tests {
                 .map(|_| buffer_snapshot.random_byte_range(0, &mut rng))
                 .collect::<Vec<_>>();
             highlight_ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
-            log::info!("highlighting ranges {:?}", highlight_ranges);
-            let highlight_ranges = if rng.gen_bool(0.5) {
-                highlight_ranges
-                    .into_iter()
-                    .map(|range| InlayRange {
-                        inlay_position: buffer_snapshot.anchor_before(range.start),
-                        highlight_start: inlay_snapshot.to_inlay_offset(range.start),
-                        highlight_end: inlay_snapshot.to_inlay_offset(range.end),
-                    })
-                    .map(DocumentRange::Inlay)
-                    .collect::<Vec<_>>()
-            } else {
-                highlight_ranges
-                    .into_iter()
-                    .map(|range| {
-                        buffer_snapshot.anchor_before(range.start)
-                            ..buffer_snapshot.anchor_after(range.end)
-                    })
-                    .map(DocumentRange::Text)
-                    .collect::<Vec<_>>()
-            };
+            log::info!("highlighting ranges {highlight_ranges:?}");
+            // TODO kb add inlay ranges into the tests
+            let highlight_ranges = highlight_ranges
+                .into_iter()
+                .map(|range| {
+                    buffer_snapshot.anchor_before(range.start)
+                        ..buffer_snapshot.anchor_after(range.end)
+                })
+                .collect::<Vec<_>>();
             highlights.insert(
                 Some(TypeId::of::<()>()),
                 Arc::new((HighlightStyle::default(), highlight_ranges)),
