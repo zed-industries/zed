@@ -315,15 +315,15 @@ impl<'a> Iterator for InlayChunks<'a> {
                     InlayId::Hint(_) => self.inlay_highlight_style,
                 };
                 let next_inlay_highlight_endpoint;
+                let offset_in_inlay = self.output_offset - self.transforms.start().0;
                 if let Some((style, inlay_range)) = inlay_highlight_style_and_range {
-                    let offset_in_inlay = (self.output_offset - self.transforms.start().0).0;
                     let range = inlay_range.highlight_start..inlay_range.highlight_end;
-                    if offset_in_inlay < range.start {
+                    if offset_in_inlay.0 < range.start {
                         next_inlay_highlight_endpoint = range.start;
-                    } else if offset_in_inlay >= range.end {
+                    } else if offset_in_inlay.0 >= range.end {
                         next_inlay_highlight_endpoint = usize::MAX;
                     } else {
-                        next_inlay_highlight_endpoint = range.end;
+                        next_inlay_highlight_endpoint = range.end - offset_in_inlay.0;
                         highlight_style
                             .get_or_insert_with(|| Default::default())
                             .highlight(style.clone());
@@ -332,9 +332,8 @@ impl<'a> Iterator for InlayChunks<'a> {
                     next_inlay_highlight_endpoint = usize::MAX;
                 }
 
-                //
                 let inlay_chunks = self.inlay_chunks.get_or_insert_with(|| {
-                    let start = self.output_offset - self.transforms.start().0;
+                    let start = offset_in_inlay;
                     let end = cmp::min(self.max_output_offset, self.transforms.end(&()).0)
                         - self.transforms.start().0;
                     inlay.text.chunks_in_range(start.0..end.0)
@@ -1035,7 +1034,6 @@ impl InlaySnapshot {
         cursor.seek(&range.start, Bias::Right, &());
 
         let mut highlight_endpoints = Vec::new();
-        // TODO kb repeat this for all other highlights?
         if let Some(text_highlights) = highlights.text_highlights {
             if !text_highlights.is_empty() {
                 self.apply_text_highlights(
@@ -1048,38 +1046,6 @@ impl InlaySnapshot {
             }
         }
         highlight_endpoints.sort();
-
-        // if let Some(inlay_highlights) = highlights.inlay_highlights {
-        //     let adjusted_highlights = TreeMap::from_ordered_entries(inlay_highlights.iter().map(
-        //         |(type_id, styled_ranges)| {
-        //             (
-        //                 *type_id,
-        //                 Arc::new((styled_ranges.0, styled_ranges.1.as_slice())),
-        //             )
-        //         },
-        //     ));
-        //     if !inlay_highlights.is_empty() {
-        //         self.apply_inlay_highlights(
-        //             &mut cursor,
-        //             &range,
-        //             &adjusted_highlights,
-        //             &mut highlight_endpoints,
-        //         );
-        //         cursor.seek(&range.start, Bias::Right, &());
-        //     }
-        // }
-        // if let Some(inlay_background_highlights) = highlights.inlay_background_highlights.as_ref() {
-        //     if !inlay_background_highlights.is_empty() {
-        //         self.apply_inlay_highlights(
-        //             &mut cursor,
-        //             &range,
-        //             inlay_background_highlights,
-        //             &mut highlight_endpoints,
-        //         );
-        //         cursor.seek(&range.start, Bias::Right, &());
-        //     }
-        // }
-
         let buffer_range = self.to_buffer_offset(range.start)..self.to_buffer_offset(range.end);
         let buffer_chunks = self.buffer.chunks(buffer_range, language_aware);
 
@@ -1763,9 +1729,7 @@ mod tests {
                                     inlay: inlay.id,
                                     inlay_position: inlay.position,
                                     highlight_start: 0,
-                                    // TODO kb
-                                    // highlight_end
-                                    highlight_end: inlay_text.len(),
+                                    highlight_end,
                                 })
                             }
                         }
