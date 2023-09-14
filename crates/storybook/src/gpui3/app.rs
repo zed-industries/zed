@@ -3,7 +3,7 @@ use std::{any::Any, collections::HashMap, marker::PhantomData};
 
 use super::{
     window::{Window, WindowHandle, WindowId},
-    Context, EntityId, LayoutId, Reference, View, WindowContext,
+    Context, LayoutId, Reference, View, WindowContext,
 };
 
 pub struct AppContext {
@@ -133,6 +133,17 @@ impl<'a, T: 'static> Context for ModelContext<'a, T> {
 pub struct Handle<T> {
     pub(crate) id: EntityId,
     pub(crate) entity_type: PhantomData<T>,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq, Hash)]
+pub struct EntityId(usize);
+
+impl EntityId {
+    pub fn new(entity_count: &mut usize) -> EntityId {
+        let id = *entity_count;
+        *entity_count += 1;
+        Self(id)
+    }
 }
 
 impl<T: 'static> Handle<T> {

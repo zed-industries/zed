@@ -1,5 +1,6 @@
 mod app;
 mod element;
+mod elements;
 mod geometry;
 mod style;
 mod taffy;
@@ -12,21 +13,11 @@ use std::marker::PhantomData;
 
 pub use app::*;
 pub use element::*;
+pub use elements::*;
 pub use geometry::*;
 pub use style::*;
 use taffy::TaffyLayoutEngine;
 pub use window::*;
-
-#[derive(Clone, Copy, Eq, PartialEq, Hash)]
-pub struct EntityId(usize);
-
-impl EntityId {
-    fn new(entity_count: &mut usize) -> EntityId {
-        let id = *entity_count;
-        *entity_count += 1;
-        Self(id)
-    }
-}
 
 pub trait Context {
     type EntityContext<'a, 'w, T: 'static>;
@@ -41,41 +32,6 @@ pub trait Context {
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
     ) -> R;
-}
-
-pub struct Div<S>(PhantomData<S>);
-
-impl<S: 'static> Element for Div<S> {
-    type State = S;
-    type FrameState = ();
-
-    fn layout(
-        &mut self,
-        state: &mut Self::State,
-        cx: &mut ViewContext<Self::State>,
-    ) -> Result<(LayoutId, Self::FrameState)> {
-        todo!()
-    }
-
-    fn paint(
-        &mut self,
-        layout: Layout,
-        state: &mut Self::State,
-        frame_state: &mut Self::FrameState,
-        cx: &mut ViewContext<Self::State>,
-    ) -> Result<()> {
-        todo!()
-    }
-}
-
-impl<S> ParentElement<S> for Div<S> {
-    fn child(self, child: impl IntoAnyElement<S>) -> Self {
-        todo!()
-    }
-}
-
-pub fn div<S>() -> Div<S> {
-    todo!()
 }
 
 pub struct SharedString(ArcCow<'static, str>);
