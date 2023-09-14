@@ -1194,18 +1194,19 @@ mod tests {
         cx.foreground().run_until_parked();
         cx.update_editor(|editor, cx| {
             let snapshot = editor.snapshot(cx);
-            let actual_ranges = snapshot
-                .inlay_highlight_ranges::<LinkGoToDefinitionState>()
-                .map(|ranges| ranges.as_ref().clone().1)
-                .unwrap_or_default();
+            let actual_highlights = snapshot
+                .inlay_highlights::<LinkGoToDefinitionState>()
+                .into_iter()
+                .flat_map(|highlights| highlights.values().map(|(_, highlight)| highlight))
+                .collect::<Vec<_>>();
 
             let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
-            let expected_ranges = vec![InlayHighlight {
+            let expected_highlight = InlayHighlight {
                 inlay: InlayId::Hint(0),
                 inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
                 range: 0..hint_label.len(),
-            }];
-            assert_set_eq!(actual_ranges, expected_ranges);
+            };
+            assert_set_eq!(actual_highlights, vec![&expected_highlight]);
         });
 
         // Unpress cmd causes highlight to go away

@@ -1,5 +1,4 @@
 use crate::{
-    link_go_to_definition::InlayHighlight,
     multi_buffer::{MultiBufferChunks, MultiBufferRows},
     Anchor, InlayId, MultiBufferSnapshot, ToOffset,
 };
@@ -295,16 +294,13 @@ impl<'a> Iterator for InlayChunks<'a> {
                 prefix
             }
             Transform::Inlay(inlay) => {
-                let mut inlay_highlight_style_and_range = None;
+                let mut inlay_style_and_highlight = None;
+                // type InlayHighlights = BTreeMap<TypeId, HashMap<InlayId, (HighlightStyle, InlayHighlight)>>;
                 if let Some(inlay_highlights) = self.highlights.inlay_highlights {
-                    for (_, style_and_ranges) in inlay_highlights.iter() {
-                        let highlight_style: &HighlightStyle = &style_and_ranges.0;
-                        let inlay_ranges: &Vec<InlayHighlight> = &style_and_ranges.1;
-                        // TODO kb: turn into a map.
-                        if let Some(range) =
-                            inlay_ranges.iter().find(|range| range.inlay == inlay.id)
-                        {
-                            inlay_highlight_style_and_range = Some((highlight_style, range));
+                    for (_, inlay_id_to_data) in inlay_highlights.iter() {
+                        let style_and_highlight = inlay_id_to_data.get(&inlay.id);
+                        if style_and_highlight.is_some() {
+                            inlay_style_and_highlight = style_and_highlight;
                             break;
                         }
                     }
@@ -316,7 +312,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                 };
                 let next_inlay_highlight_endpoint;
                 let offset_in_inlay = self.output_offset - self.transforms.start().0;
-                if let Some((style, highlight)) = inlay_highlight_style_and_range {
+                if let Some((style, highlight)) = inlay_style_and_highlight {
                     let range = &highlight.range;
                     if offset_in_inlay.0 < range.start {
                         next_inlay_highlight_endpoint = range.start - offset_in_inlay.0;
@@ -1176,6 +1172,7 @@ mod tests {
     use super::*;
     use crate::{
         display_map::{InlayHighlights, TextHighlights},
+        link_go_to_definition::InlayHighlight,
         InlayId, MultiBuffer,
     };
     use gpui::AppContext;
@@ -1706,7 +1703,7 @@ mod tests {
                 while inlay_indices.len() < highlight_count.min(inlays.len()) {
                     inlay_indices.insert(rng.gen_range(0..inlays.len()));
                 }
-                let highlight_ranges = inlay_indices
+                let new_highlights = inlay_indices
                     .into_iter()
                     .filter_map(|i| {
                         let (_, inlay) = &inlays[i];
@@ -1736,13 +1733,10 @@ mod tests {
                             }
                         }
                     })
+                    .map(|highlight| (highlight.inlay, (HighlightStyle::default(), highlight)))
                     .collect();
-
-                log::info!("highlighting inlay ranges {highlight_ranges:?}");
-                inlay_highlights.insert(
-                    Some(TypeId::of::<()>()),
-                    Arc::new((HighlightStyle::default(), highlight_ranges)),
-                );
+                log::info!("highlighting inlay ranges {new_highlights:?}");
+                inlay_highlights.insert(TypeId::of::<()>(), new_highlights);
             };
 
             for _ in 0..5 {

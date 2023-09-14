@@ -9,7 +9,7 @@ use crate::{
     MultiBufferSnapshot, ToOffset, ToPoint,
 };
 pub use block_map::{BlockMap, BlockPoint};
-use collections::{HashMap, HashSet};
+use collections::{BTreeMap, HashMap, HashSet};
 use fold_map::FoldMap;
 use gpui::{
     color::Color,
@@ -44,7 +44,7 @@ pub trait ToDisplayPoint {
 }
 
 type TextHighlights = TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
-type InlayHighlights = TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<InlayHighlight>)>>;
+type InlayHighlights = BTreeMap<TypeId, HashMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 pub struct DisplayMap {
     buffer: ModelHandle<MultiBuffer>,
@@ -226,11 +226,15 @@ impl DisplayMap {
     pub fn highlight_inlays(
         &mut self,
         type_id: TypeId,
-        ranges: Vec<InlayHighlight>,
+        highlights: Vec<InlayHighlight>,
         style: HighlightStyle,
     ) {
-        self.inlay_highlights
-            .insert(Some(type_id), Arc::new((style, ranges)));
+        for highlight in highlights {
+            self.inlay_highlights
+                .entry(type_id)
+                .or_default()
+                .insert(highlight.inlay, (style, highlight));
+        }
     }
 
     pub fn text_highlights(&self, type_id: TypeId) -> Option<(HighlightStyle, &[Range<Anchor>])> {
@@ -239,7 +243,7 @@ impl DisplayMap {
     }
     pub fn clear_highlights(&mut self, type_id: TypeId) -> bool {
         let mut cleared = self.text_highlights.remove(&Some(type_id)).is_some();
-        cleared |= self.inlay_highlights.remove(&Some(type_id)).is_none();
+        cleared |= self.inlay_highlights.remove(&type_id).is_none();
         cleared
     }
 
@@ -756,11 +760,11 @@ impl DisplaySnapshot {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn inlay_highlight_ranges<Tag: ?Sized + 'static>(
+    pub fn inlay_highlights<Tag: ?Sized + 'static>(
         &self,
-    ) -> Option<Arc<(HighlightStyle, Vec<InlayHighlight>)>> {
+    ) -> Option<&HashMap<InlayId, (HighlightStyle, InlayHighlight)>> {
         let type_id = TypeId::of::<Tag>();
-        self.inlay_highlights.get(&Some(type_id)).cloned()
+        self.inlay_highlights.get(&type_id)
     }
 }
 
