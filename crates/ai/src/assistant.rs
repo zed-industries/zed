@@ -702,7 +702,7 @@ impl AssistantPanel {
             }
 
             if foreground_ranges.is_empty() {
-                editor.clear_text_highlights::<PendingInlineAssist>(cx);
+                editor.clear_highlights::<PendingInlineAssist>(cx);
             } else {
                 editor.highlight_text::<PendingInlineAssist>(
                     foreground_ranges,
