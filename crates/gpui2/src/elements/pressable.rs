@@ -5,7 +5,7 @@ use crate::{
     ViewContext,
 };
 use anyhow::Result;
-use gpui::{color::Color, geometry::vector::Vector2F, platform::MouseButtonEvent, LayoutId};
+use gpui::{geometry::vector::Vector2F, platform::MouseButtonEvent, LayoutId};
 use refineable::{CascadeSlot, Refineable, RefinementCascade};
 use smallvec::SmallVec;
 use std::{cell::Cell, rc::Rc};

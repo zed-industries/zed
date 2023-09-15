@@ -57,7 +57,7 @@ impl<V: 'static> TabBar<V> {
                 div().w_0().flex_1().h_full().child(
                     div()
                         .flex()
-                        .gap_8()
+                        .gap_1()
                         .overflow_x_scroll(self.scroll_state.clone())
                         .child(tab("Cargo.toml", false))
                         .child(tab("Channels Panel", true))
