@@ -912,7 +912,6 @@ impl Project {
         self.user_store.clone()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn opened_buffers(&self, cx: &AppContext) -> Vec<ModelHandle<Buffer>> {
         self.opened_buffers
             .values()

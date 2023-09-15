@@ -7,6 +7,7 @@ use isahc::http::StatusCode;
 use isahc::prelude::Configurable;
 use isahc::{AsyncBody, Response};
 use lazy_static::lazy_static;
+use ordered_float::OrderedFloat;
 use parking_lot::Mutex;
 use parse_duration::parse;
 use postage::watch;
@@ -35,7 +36,7 @@ impl From<Vec<f32>> for Embedding {
 }
 
 impl Embedding {
-    pub fn similarity(&self, other: &Self) -> f32 {
+    pub fn similarity(&self, other: &Self) -> OrderedFloat<f32> {
         let len = self.0.len();
         assert_eq!(len, other.0.len());
 
@@ -58,7 +59,7 @@ impl Embedding {
                 1,
             );
         }
-        result
+        OrderedFloat(result)
     }
 }
 
@@ -379,13 +380,13 @@ mod tests {
             );
         }
 
-        fn round_to_decimals(n: f32, decimal_places: i32) -> f32 {
+        fn round_to_decimals(n: OrderedFloat<f32>, decimal_places: i32) -> f32 {
             let factor = (10.0 as f32).powi(decimal_places);
             (n * factor).round() / factor
         }
 
-        fn reference_dot(a: &[f32], b: &[f32]) -> f32 {
-            a.iter().zip(b.iter()).map(|(a, b)| a * b).sum()
+        fn reference_dot(a: &[f32], b: &[f32]) -> OrderedFloat<f32> {
+            OrderedFloat(a.iter().zip(b.iter()).map(|(a, b)| a * b).sum())
         }
     }
 }
