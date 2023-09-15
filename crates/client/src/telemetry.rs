@@ -57,6 +57,13 @@ struct ClickhouseEventWrapper {
 }
 
 #[derive(Serialize, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum AssistantKind {
+    Panel,
+    Inline,
+}
+
+#[derive(Serialize, Debug)]
 #[serde(tag = "type")]
 pub enum ClickhouseEvent {
     Editor {
@@ -75,6 +82,11 @@ pub enum ClickhouseEvent {
         operation: &'static str,
         room_id: Option<u64>,
         channel_id: Option<u64>,
+    },
+    Assistant {
+        conversation_id: Option<String>,
+        kind: AssistantKind,
+        model: &'static str,
     },
 }
 

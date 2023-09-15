@@ -61,6 +61,7 @@ struct SavedMessage {
 
 #[derive(Serialize, Deserialize)]
 struct SavedConversation {
+    id: Option<String>,
     zed: String,
     version: String,
     text: String,
