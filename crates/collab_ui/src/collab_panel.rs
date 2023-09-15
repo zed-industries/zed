@@ -2129,15 +2129,13 @@ impl CollabPanel {
                     ));
                 }
 
-                items.extend([
-                    ContextMenuItem::action(
-                        "Move this channel",
-                        StartMoveChannel {
-                            channel_id: location.channel,
-                            parent_id,
-                        },
-                    ),
-                ]);
+                items.extend([ContextMenuItem::action(
+                    "Move this channel",
+                    StartMoveChannel {
+                        channel_id: location.channel,
+                        parent_id,
+                    },
+                )]);
 
                 items.extend([
                     ContextMenuItem::Separator,

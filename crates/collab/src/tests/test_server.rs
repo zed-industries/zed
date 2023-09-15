@@ -592,16 +592,10 @@ impl TestClient {
     ) {
         let (other_client, other_cx) = user;
 
-        self
-            .app_state
+        self.app_state
             .channel_store
             .update(cx_self, |channel_store, cx| {
-                channel_store.invite_member(
-                    channel,
-                    other_client.user_id().unwrap(),
-                    true,
-                    cx,
-                )
+                channel_store.invite_member(channel, other_client.user_id().unwrap(), true, cx)
             })
             .await
             .unwrap();
@@ -616,7 +610,6 @@ impl TestClient {
             })
             .await
             .unwrap();
-
     }
 }
 

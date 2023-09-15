@@ -794,11 +794,11 @@ async fn test_joining_channels(db: &Arc<Database>) {
                 github_login: "user2".into(),
                 github_user_id: 6,
                 invite_count: 0,
-
             },
         )
         .await
-        .unwrap()        .user_id;
+        .unwrap()
+        .user_id;
 
     let channel_1 = db
         .create_root_channel("channel_1", "1", user_1)

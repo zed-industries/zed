@@ -414,8 +414,9 @@ impl Database {
                 .filter_map(|membership| membership.admin.then_some(membership.channel_id))
                 .collect();
 
-            let channels = self.get_channels_internal(parents_by_child_id, true, &tx).await?;
-
+            let channels = self
+                .get_channels_internal(parents_by_child_id, true, &tx)
+                .await?;
 
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
             enum QueryUserIdsAndChannelIds {
@@ -877,7 +878,9 @@ impl Database {
             channel.insert(to);
         }
 
-        let channels = self.get_channels_internal(from_descendants, false, &*tx).await?;
+        let channels = self
+            .get_channels_internal(from_descendants, false, &*tx)
+            .await?;
 
         Ok(channels)
     }

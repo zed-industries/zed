@@ -342,7 +342,12 @@ async fn test_channel_buffer_disconnect(
     let client_b = server.create_client(cx_b, "user_b").await;
 
     let channel_id = server
-        .make_channel("the-channel", None, (&client_a, cx_a), &mut [(&client_b, cx_b)])
+        .make_channel(
+            "the-channel",
+            None,
+            (&client_a, cx_a),
+            &mut [(&client_b, cx_b)],
+        )
         .await;
 
     let channel_buffer_a = client_a
@@ -412,7 +417,12 @@ async fn test_rejoin_channel_buffer(
     let client_b = server.create_client(cx_b, "user_b").await;
 
     let channel_id = server
-        .make_channel("the-channel", None, (&client_a, cx_a), &mut [(&client_b, cx_b)])
+        .make_channel(
+            "the-channel",
+            None,
+            (&client_a, cx_a),
+            &mut [(&client_b, cx_b)],
+        )
         .await;
 
     let channel_buffer_a = client_a

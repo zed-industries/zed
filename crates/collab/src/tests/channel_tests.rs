@@ -1021,13 +1021,7 @@ async fn test_channel_moving(
 
     // Current shape for C:
     // - ep
-    assert_channels_list_shape(
-        client_c.channel_store(),
-        cx_c,
-        &[
-            (channel_ep_id, 0),
-        ],
-    );
+    assert_channels_list_shape(client_c.channel_store(), cx_c, &[(channel_ep_id, 0)]);
 
     client_b
         .channel_store()
