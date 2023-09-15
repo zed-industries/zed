@@ -1,6 +1,7 @@
 use crate::{
     display_map::{InlayOffset, ToDisplayPoint},
     link_go_to_definition::{DocumentRange, InlayRange},
+    markdown::{self, RenderedRegion},
     Anchor, AnchorRangeExt, DisplayPoint, Editor, EditorSettings, EditorSnapshot, EditorStyle,
     ExcerptId, RangeToAnchorExt,
 };
@@ -8,7 +9,7 @@ use futures::FutureExt;
 use gpui::{
     actions,
     elements::{Flex, MouseEventHandler, Padding, ParentElement, Text},
-    fonts::{HighlightStyle, Underline, Weight},
+    fonts::HighlightStyle,
     platform::{CursorStyle, MouseButton},
     AnyElement, AppContext, CursorRegion, Element, ModelHandle, MouseRegion, Task, ViewContext,
 };
@@ -364,7 +365,7 @@ fn render_blocks(
     theme_id: usize,
     blocks: &[HoverBlock],
     language_registry: &Arc<LanguageRegistry>,
-    language: Option<&Arc<Language>>,
+    language: &Option<Arc<Language>>,
     style: &EditorStyle,
 ) -> RenderedInfo {
     let mut text = String::new();
@@ -375,160 +376,20 @@ fn render_blocks(
     for block in blocks {
         match &block.kind {
             HoverBlockKind::PlainText => {
-                new_paragraph(&mut text, &mut Vec::new());
+                markdown::new_paragraph(&mut text, &mut Vec::new());
                 text.push_str(&block.text);
             }
 
-            HoverBlockKind::Markdown => {
-                use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
-
-                let mut bold_depth = 0;
-                let mut italic_depth = 0;
-                let mut link_url = None;
-                let mut current_language = None;
-                let mut list_stack = Vec::new();
-
-                for event in Parser::new_ext(&block.text, Options::all()) {
-                    let prev_len = text.len();
-                    match event {
-                        Event::Text(t) => {
-                            if let Some(language) = &current_language {
-                                render_code(
-                                    &mut text,
-                                    &mut highlights,
-                                    t.as_ref(),
-                                    language,
-                                    style,
-                                );
-                            } else {
-                                text.push_str(t.as_ref());
-
-                                let mut style = HighlightStyle::default();
-                                if bold_depth > 0 {
-                                    style.weight = Some(Weight::BOLD);
-                                }
-                                if italic_depth > 0 {
-                                    style.italic = Some(true);
-                                }
-                                if let Some(link_url) = link_url.clone() {
-                                    region_ranges.push(prev_len..text.len());
-                                    regions.push(RenderedRegion {
-                                        link_url: Some(link_url),
-                                        code: false,
-                                    });
-                                    style.underline = Some(Underline {
-                                        thickness: 1.0.into(),
-                                        ..Default::default()
-                                    });
-                                }
-
-                                if style != HighlightStyle::default() {
-                                    let mut new_highlight = true;
-                                    if let Some((last_range, last_style)) = highlights.last_mut() {
-                                        if last_range.end == prev_len && last_style == &style {
-                                            last_range.end = text.len();
-                                            new_highlight = false;
-                                        }
-                                    }
-                                    if new_highlight {
-                                        highlights.push((prev_len..text.len(), style));
-                                    }
-                                }
-                            }
-                        }
-
-                        Event::Code(t) => {
-                            text.push_str(t.as_ref());
-                            region_ranges.push(prev_len..text.len());
-                            if link_url.is_some() {
-                                highlights.push((
-                                    prev_len..text.len(),
-                                    HighlightStyle {
-                                        underline: Some(Underline {
-                                            thickness: 1.0.into(),
-                                            ..Default::default()
-                                        }),
-                                        ..Default::default()
-                                    },
-                                ));
-                            }
-                            regions.push(RenderedRegion {
-                                code: true,
-                                link_url: link_url.clone(),
-                            });
-                        }
-
-                        Event::Start(tag) => match tag {
-                            Tag::Paragraph => new_paragraph(&mut text, &mut list_stack),
-
-                            Tag::Heading(_, _, _) => {
-                                new_paragraph(&mut text, &mut list_stack);
-                                bold_depth += 1;
-                            }
-
-                            Tag::CodeBlock(kind) => {
-                                new_paragraph(&mut text, &mut list_stack);
-                                current_language = if let CodeBlockKind::Fenced(language) = kind {
-                                    language_registry
-                                        .language_for_name(language.as_ref())
-                                        .now_or_never()
-                                        .and_then(Result::ok)
-                                } else {
-                                    language.cloned()
-                                }
-                            }
-
-                            Tag::Emphasis => italic_depth += 1,
-
-                            Tag::Strong => bold_depth += 1,
-
-                            Tag::Link(_, url, _) => link_url = Some(url.to_string()),
-
-                            Tag::List(number) => {
-                                list_stack.push((number, false));
-                            }
-
-                            Tag::Item => {
-                                let len = list_stack.len();
-                                if let Some((list_number, has_content)) = list_stack.last_mut() {
-                                    *has_content = false;
-                                    if !text.is_empty() && !text.ends_with('\n') {
-                                        text.push('\n');
-                                    }
-                                    for _ in 0..len - 1 {
-                                        text.push_str("  ");
-                                    }
-                                    if let Some(number) = list_number {
-                                        text.push_str(&format!("{}. ", number));
-                                        *number += 1;
-                                        *has_content = false;
-                                    } else {
-                                        text.push_str("- ");
-                                    }
-                                }
-                            }
-
-                            _ => {}
-                        },
-
-                        Event::End(tag) => match tag {
-                            Tag::Heading(_, _, _) => bold_depth -= 1,
-                            Tag::CodeBlock(_) => current_language = None,
-                            Tag::Emphasis => italic_depth -= 1,
-                            Tag::Strong => bold_depth -= 1,
-                            Tag::Link(_, _, _) => link_url = None,
-                            Tag::List(_) => drop(list_stack.pop()),
-                            _ => {}
-                        },
-
-                        Event::HardBreak => text.push('\n'),
-
-                        Event::SoftBreak => text.push(' '),
-
-                        _ => {}
-                    }
-                }
-            }
+            HoverBlockKind::Markdown => markdown::render_markdown_block(
+                &block.text,
+                language_registry,
+                language,
+                style,
+                &mut text,
+                &mut highlights,
+                &mut region_ranges,
+                &mut regions,
+            ),
 
             HoverBlockKind::Code { language } => {
                 if let Some(language) = language_registry
@@ -536,7 +397,13 @@ fn render_blocks(
                     .now_or_never()
                     .and_then(Result::ok)
                 {
-                    render_code(&mut text, &mut highlights, &block.text, &language, style);
+                    markdown::render_code(
+                        &mut text,
+                        &mut highlights,
+                        &block.text,
+                        &language,
+                        style,
+                    );
                 } else {
                     text.push_str(&block.text);
                 }
@@ -550,47 +417,6 @@ fn render_blocks(
         highlights,
         region_ranges,
         regions,
-    }
-}
-
-fn render_code(
-    text: &mut String,
-    highlights: &mut Vec<(Range<usize>, HighlightStyle)>,
-    content: &str,
-    language: &Arc<Language>,
-    style: &EditorStyle,
-) {
-    let prev_len = text.len();
-    text.push_str(content);
-    for (range, highlight_id) in language.highlight_text(&content.into(), 0..content.len()) {
-        if let Some(style) = highlight_id.style(&style.syntax) {
-            highlights.push((prev_len + range.start..prev_len + range.end, style));
-        }
-    }
-}
-
-fn new_paragraph(text: &mut String, list_stack: &mut Vec<(Option<u64>, bool)>) {
-    let mut is_subsequent_paragraph_of_list = false;
-    if let Some((_, has_content)) = list_stack.last_mut() {
-        if *has_content {
-            is_subsequent_paragraph_of_list = true;
-        } else {
-            *has_content = true;
-            return;
-        }
-    }
-
-    if !text.is_empty() {
-        if !text.ends_with('\n') {
-            text.push('\n');
-        }
-        text.push('\n');
-    }
-    for _ in 0..list_stack.len().saturating_sub(1) {
-        text.push_str("  ");
-    }
-    if is_subsequent_paragraph_of_list {
-        text.push_str("  ");
     }
 }
 
@@ -666,12 +492,6 @@ struct RenderedInfo {
     regions: Vec<RenderedRegion>,
 }
 
-#[derive(Debug, Clone)]
-struct RenderedRegion {
-    code: bool,
-    link_url: Option<String>,
-}
-
 impl InfoPopover {
     pub fn render(
         &mut self,
@@ -689,7 +509,7 @@ impl InfoPopover {
                 style.theme_id,
                 &self.blocks,
                 self.project.read(cx).languages(),
-                self.language.as_ref(),
+                &self.language,
                 style,
             )
         });
@@ -829,7 +649,7 @@ mod tests {
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use collections::BTreeSet;
-    use gpui::fonts::Weight;
+    use gpui::fonts::{Underline, Weight};
     use indoc::indoc;
     use language::{language_settings::InlayHintSettings, Diagnostic, DiagnosticSet};
     use lsp::LanguageServerId;
@@ -1055,7 +875,7 @@ mod tests {
             );
 
             let style = editor.style(cx);
-            let rendered = render_blocks(0, &blocks, &Default::default(), None, &style);
+            let rendered = render_blocks(0, &blocks, &Default::default(), &None, &style);
             assert_eq!(
                 rendered.text,
                 code_str.trim(),
@@ -1247,7 +1067,7 @@ mod tests {
                 expected_styles,
             } in &rows[0..]
             {
-                let rendered = render_blocks(0, &blocks, &Default::default(), None, &style);
+                let rendered = render_blocks(0, &blocks, &Default::default(), &None, &style);
 
                 let (expected_text, ranges) = marked_text_ranges(expected_marked_text, false);
                 let expected_highlights = ranges
