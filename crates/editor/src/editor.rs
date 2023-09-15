@@ -1064,18 +1064,22 @@ impl CompletionsMenu {
                         .languages()
                         .clone();
                     let language = self.buffer.read(cx).language().map(Arc::clone);
+
+                    enum CompletionDocsMarkdown {}
                     Some(
-                        crate::markdown::render_markdown(
-                            &content.value,
-                            &registry,
-                            &language,
-                            &style,
-                            cx,
-                        )
-                        .constrained()
-                        .with_width(alongside_docs_width)
-                        .contained()
-                        .with_style(alongside_docs_container_style),
+                        Flex::column()
+                            .scrollable::<CompletionDocsMarkdown>(0, None, cx)
+                            .with_child(crate::markdown::render_markdown(
+                                &content.value,
+                                &registry,
+                                &language,
+                                &style,
+                                cx,
+                            ))
+                            .constrained()
+                            .with_width(alongside_docs_width)
+                            .contained()
+                            .with_style(alongside_docs_container_style),
                     )
                 } else {
                     None
