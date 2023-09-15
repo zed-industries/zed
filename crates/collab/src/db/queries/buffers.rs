@@ -249,6 +249,29 @@ impl Database {
         .await
     }
 
+    pub async fn channel_buffer_connection_lost(
+        &self,
+        connection: ConnectionId,
+        tx: &DatabaseTransaction,
+    ) -> Result<()> {
+        channel_buffer_collaborator::Entity::update_many()
+            .filter(
+                Condition::all()
+                    .add(channel_buffer_collaborator::Column::ConnectionId.eq(connection.id as i32))
+                    .add(
+                        channel_buffer_collaborator::Column::ConnectionServerId
+                            .eq(connection.owner_id as i32),
+                    ),
+            )
+            .set(channel_buffer_collaborator::ActiveModel {
+                connection_lost: ActiveValue::set(true),
+                ..Default::default()
+            })
+            .exec(&*tx)
+            .await?;
+        Ok(())
+    }
+
     pub async fn leave_channel_buffers(
         &self,
         connection: ConnectionId,

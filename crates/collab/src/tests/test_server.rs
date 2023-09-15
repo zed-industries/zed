@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::anyhow;
 use call::ActiveCall;
-use channel::{channel_buffer::ChannelBuffer, ChannelStore};
+use channel::{ChannelBuffer, ChannelStore};
 use client::{
     self, proto::PeerId, Client, Connection, Credentials, EstablishConnectionError, UserStore,
 };

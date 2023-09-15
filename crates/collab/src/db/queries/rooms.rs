@@ -890,52 +890,41 @@ impl Database {
 
     pub async fn connection_lost(&self, connection: ConnectionId) -> Result<()> {
         self.transaction(|tx| async move {
-            let participant = room_participant::Entity::find()
-                .filter(
-                    Condition::all()
-                        .add(
-                            room_participant::Column::AnsweringConnectionId
-                                .eq(connection.id as i32),
-                        )
-                        .add(
-                            room_participant::Column::AnsweringConnectionServerId
-                                .eq(connection.owner_id as i32),
-                        ),
-                )
-                .one(&*tx)
+            self.room_connection_lost(connection, &*tx).await?;
+            self.channel_buffer_connection_lost(connection, &*tx)
                 .await?;
-
-            if let Some(participant) = participant {
-                room_participant::Entity::update(room_participant::ActiveModel {
-                    answering_connection_lost: ActiveValue::set(true),
-                    ..participant.into_active_model()
-                })
-                .exec(&*tx)
-                .await?;
-            }
-
-            channel_buffer_collaborator::Entity::update_many()
-                .filter(
-                    Condition::all()
-                        .add(
-                            channel_buffer_collaborator::Column::ConnectionId
-                                .eq(connection.id as i32),
-                        )
-                        .add(
-                            channel_buffer_collaborator::Column::ConnectionServerId
-                                .eq(connection.owner_id as i32),
-                        ),
-                )
-                .set(channel_buffer_collaborator::ActiveModel {
-                    connection_lost: ActiveValue::set(true),
-                    ..Default::default()
-                })
-                .exec(&*tx)
-                .await?;
-
+            self.channel_chat_connection_lost(connection, &*tx).await?;
             Ok(())
         })
         .await
+    }
+
+    pub async fn room_connection_lost(
+        &self,
+        connection: ConnectionId,
+        tx: &DatabaseTransaction,
+    ) -> Result<()> {
+        let participant = room_participant::Entity::find()
+            .filter(
+                Condition::all()
+                    .add(room_participant::Column::AnsweringConnectionId.eq(connection.id as i32))
+                    .add(
+                        room_participant::Column::AnsweringConnectionServerId
+                            .eq(connection.owner_id as i32),
+                    ),
+            )
+            .one(&*tx)
+            .await?;
+
+        if let Some(participant) = participant {
+            room_participant::Entity::update(room_participant::ActiveModel {
+                answering_connection_lost: ActiveValue::set(true),
+                ..participant.into_active_model()
+            })
+            .exec(&*tx)
+            .await?;
+        }
+        Ok(())
     }
 
     fn build_incoming_call(
