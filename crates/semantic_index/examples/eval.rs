@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use client::{self, UserStore};
 use collections::HashMap;
 use git2::{Object, Oid, Repository};
-use gpui::{AssetSource, AsyncAppContext, ModelHandle, Task};
+use gpui::{AppContext, AssetSource, AsyncAppContext, ModelHandle, Task};
 use language::LanguageRegistry;
 use node_runtime::RealNodeRuntime;
 use project::{Project, RealFs};
@@ -50,17 +50,14 @@ struct EvaluationQuery {
 }
 
 impl EvaluationQuery {
-    fn match_pairs(&self) -> Vec<(PathBuf, usize)> {
+    fn match_pairs(&self) -> Vec<(PathBuf, u32)> {
         let mut pairs = Vec::new();
         for match_identifier in self.matches.iter() {
             let mut match_parts = match_identifier.split(":");
 
             if let Some(file_path) = match_parts.next() {
                 if let Some(row_number) = match_parts.next() {
-                    pairs.push((
-                        PathBuf::from(file_path),
-                        row_number.parse::<usize>().unwrap(),
-                    ));
+                    pairs.push((PathBuf::from(file_path), row_number.parse::<u32>().unwrap()));
                 }
             }
         }
@@ -156,11 +153,15 @@ fn dcg(hits: Vec<usize>) -> f32 {
         result += *hit as f32 / (2.0 + idx as f32).log2();
     }
 
-    println!("DCG: {:?}", result);
     result
 }
 
-fn evaluate_ndcg(eval_query: EvaluationQuery, search_results: Vec<SearchResult>, k: usize) -> f32 {
+fn evaluate_ndcg(
+    eval_query: EvaluationQuery,
+    search_results: Vec<SearchResult>,
+    k: usize,
+    cx: &AsyncAppContext,
+) -> Vec<f32> {
     // NDCG or Normalized Discounted Cumulative Gain, is determined by comparing the relevance of
     // items returned by the search engine relative to the hypothetical ideal.
     // Relevance is represented as a series of booleans, in which each search result returned
@@ -180,9 +181,58 @@ fn evaluate_ndcg(eval_query: EvaluationQuery, search_results: Vec<SearchResult>,
     // very high quality, whereas rank results quickly drop off after the first result.
 
     let ideal = vec![1; cmp::min(eval_query.matches.len(), k)];
-    let hits = vec![1];
 
-    return dcg(hits) / dcg(ideal);
+    let mut hits = Vec::new();
+    for result in search_results {
+        let (path, start_row, end_row) = result.buffer.read_with(cx, |buffer, cx| {
+            let path = buffer.file().unwrap().path().to_path_buf();
+            let start_row = buffer.offset_to_point(result.range.start.offset).row;
+            let end_row = buffer.offset_to_point(result.range.end.offset).row;
+            (path, start_row, end_row)
+        });
+
+        let match_pairs = eval_query.match_pairs();
+        let mut found = 0;
+        for (match_path, match_row) in match_pairs {
+            if match_path == path {
+                if match_row >= start_row && match_row <= end_row {
+                    found = 1;
+                    break;
+                }
+            }
+        }
+
+        hits.push(found);
+    }
+
+    // For now, we are calculating ideal_hits a bit different, as technically
+    // with overlapping ranges, one match can result in more than result.
+    let mut ideal_hits = hits.clone();
+    ideal_hits.retain(|x| x == &1);
+
+    let ideal = if ideal.len() > ideal_hits.len() {
+        ideal
+    } else {
+        ideal_hits
+    };
+
+    // Fill ideal to 10 length
+    let mut filled_ideal = [0; 10];
+    for (idx, i) in ideal.to_vec().into_iter().enumerate() {
+        filled_ideal[idx] = i;
+    }
+
+    let mut ndcg = Vec::new();
+    for idx in 1..(hits.len() + 1) {
+        let hits_at_k = hits[0..idx].to_vec();
+        let ideal_at_k = filled_ideal[0..idx].to_vec();
+
+        let at_k = dcg(hits_at_k.clone()) / dcg(ideal_at_k.clone());
+
+        ndcg.push(at_k);
+    }
+
+    ndcg
 }
 
 // fn evaluate_map(eval_query: EvaluationQuery, search_results: Vec<SearchResult>, k: usize) -> f32 {}
@@ -209,14 +259,17 @@ async fn evaluate_repo(
         // Query each match in order
         let search_t0 = Instant::now();
         let search_results = index
-            .update(cx, |index, mut cx| {
-                index.search_project(project.clone(), query.query, 10, vec![], vec![], cx)
+            .update(cx, |index, cx| {
+                index.search_project(project.clone(), query.clone().query, 10, vec![], vec![], cx)
             })
             .await?;
         let search_time = search_t0.elapsed();
         println!("Time to Search: {:?}", search_time.as_secs());
 
         // Evaluate ndcg@k, for k = 1, 3, 5, 10
+        let ndcg = evaluate_ndcg(query, search_results, 10, cx);
+        println!("NDCG: {:?}", ndcg);
+
         // Evaluate map@k, for k = 1, 3, 5, 10
         // Evaluate span count
         // Evaluate token count
@@ -259,6 +312,7 @@ fn main() {
 
         let node_runtime = RealNodeRuntime::new(http.clone());
         languages::init(languages.clone(), node_runtime.clone());
+        language::init(cx);
 
         project::Project::init(&client, cx);
         semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
