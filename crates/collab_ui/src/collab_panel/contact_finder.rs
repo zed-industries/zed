@@ -209,7 +209,7 @@ impl PickerDelegate for ContactFinderDelegate {
 
         let icon_path = match request_status {
             ContactRequestStatus::None | ContactRequestStatus::RequestReceived => {
-                Some("icons/check_8.svg")
+                Some("icons/check.svg")
             }
             ContactRequestStatus::RequestSent => Some("icons/x.svg"),
             ContactRequestStatus::RequestAccepted => None,

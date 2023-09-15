@@ -1127,7 +1127,7 @@ impl CollabPanel {
                         cx.font_cache(),
                     ))
                     .with_child(
-                        Svg::new("icons/disable_screen_sharing_12.svg")
+                        Svg::new("icons/desktop.svg")
                             .with_color(theme.channel_hash.color)
                             .constrained()
                             .with_width(theme.channel_hash.width)
