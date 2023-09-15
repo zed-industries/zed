@@ -67,6 +67,7 @@ dhat = "0.3"
 env_logger.workspace = true
 png = "0.16"
 simplelog = "0.9"
+util = { path = "../util", features = ["test-support"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 media = { path = "../media" }
