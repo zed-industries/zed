@@ -1,8 +1,9 @@
 const { Buffer } = require('buffer');
 const fs = require("fs");
 const path = require("path");
+const { once } = require('events');
 
-let prettierContainerPath = process.argv[2];
+const prettierContainerPath = process.argv[2];
 if (prettierContainerPath == null || prettierContainerPath.length == 0) {
     console.error(`Prettier path argument was not specified or empty.\nUsage: ${process.argv[0]} ${process.argv[1]} prettier/path`);
     process.exit(1);
@@ -18,48 +19,83 @@ fs.stat(prettierContainerPath, (err, stats) => {
         process.exit(1);
     }
 });
-let prettierPath = path.join(prettierContainerPath, 'node_modules/prettier');
+const prettierPath = path.join(prettierContainerPath, 'node_modules/prettier');
+
 
 (async () => {
     let prettier;
     try {
         prettier = await loadPrettier(prettierPath);
     } catch (error) {
-        console.error(error);
+        console.error("Failed to load prettier: ", error);
         process.exit(1);
     }
     console.log("Prettier loadded successfully.");
-    // TODO kb do the rest here
+    process.stdin.resume();
+    handleBuffer(prettier);
 })()
 
-let buffer = Buffer.alloc(0);
-process.stdin.resume();
-process.stdin.on('data', (data) => {
-    buffer = Buffer.concat([buffer, data]);
-    handleData();
-});
-process.stdin.on('end', () => {
-    handleData();
-});
-
-function handleData() {
-    if (buffer.length < 4) {
-        return;
+async function handleBuffer(prettier) {
+    for await (let messageText of readStdin()) {
+        handleData(messageText, prettier).catch(e => {
+            console.error("Failed to handle formatter request", e);
+        });
     }
+}
 
-    const length = buffer.readUInt32LE(0);
-    console.log(length);
-    console.log(buffer.toString());
-    if (buffer.length < 4 + length) {
-        return;
-    }
-
-    const bytes = buffer.subarray(4, 4 + length);
-    buffer = buffer.subarray(4 + length);
+async function* readStdin() {
+    const bufferLengthOffset = 4;
+    let buffer = Buffer.alloc(0);
+    let streamEnded = false;
+    process.stdin.on('end', () => {
+        streamEnded = true;
+    });
+    process.stdin.on('data', (data) => {
+        buffer = Buffer.concat([buffer, data]);
+    });
 
     try {
-        const message = JSON.parse(bytes);
-        handleMessage(message);
+        main_loop: while (true) {
+            while (buffer.length < bufferLengthOffset) {
+                if (streamEnded) {
+                    sendResponse(makeError(`Unexpected end of stream: less than ${bufferLengthOffset} characters passed`));
+                    buffer = Buffer.alloc(0);
+                    streamEnded = false;
+                    await once(process.stdin, 'readable');
+                    continue main_loop;
+                }
+                await once(process.stdin, 'readable');
+            }
+
+            const length = buffer.readUInt32LE(0);
+
+            while (buffer.length < (bufferLengthOffset + length)) {
+                if (streamEnded) {
+                    sendResponse(makeError(
+                        `Unexpected end of stream: buffer length ${buffer.length} does not match expected length ${bufferLengthOffset} + ${length}`));
+                    buffer = Buffer.alloc(0);
+                    streamEnded = false;
+                    await once(process.stdin, 'readable');
+                    continue main_loop;
+                }
+                await once(process.stdin, 'readable');
+            }
+
+            const message = buffer.subarray(4, 4 + length);
+            buffer = buffer.subarray(4 + length);
+            yield message.toString('utf8');
+        }
+    } catch (e) {
+        console.error(`Error reading stdin: ${e}`);
+    } finally {
+        process.stdin.off('data');
+    }
+}
+
+async function handleData(messageText, prettier) {
+    try {
+        const message = JSON.parse(messageText);
+        await handleMessage(prettier, message);
     } catch (e) {
         sendResponse(makeError(`Request JSON parse error: ${e}`));
         return;
@@ -72,8 +108,8 @@ function handleData() {
 // shutdown
 // error
 
-function handleMessage(message) {
-    console.log(message);
+async function handleMessage(prettier, message) {
+    console.log(`message: ${message}`);
     sendResponse({ method: "hi", result: null });
 }
 
@@ -82,8 +118,8 @@ function makeError(message) {
 }
 
 function sendResponse(response) {
-    let message = Buffer.from(JSON.stringify(response));
-    let length = Buffer.alloc(4);
+    const message = Buffer.from(JSON.stringify(response));
+    const length = Buffer.alloc(4);
     length.writeUInt32LE(message.length);
     process.stdout.write(length);
     process.stdout.write(message);
