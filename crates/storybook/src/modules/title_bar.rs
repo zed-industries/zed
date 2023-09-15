@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::components::{avatar, icon_button, text_button, tool_divider, Avatar, TextButton};
-use crate::prelude::{ButtonVariant, Shape};
+use crate::prelude::Shape;
 use crate::theme::theme;
 use gpui2::style::StyleHelpers;
 use gpui2::{elements::div, IntoElement};
@@ -94,9 +94,9 @@ impl<V: 'static> TitleBar<V> {
                             .flex()
                             .items_center()
                             .gap_1()
-                            .child(icon_button("icons/radix/mic.svg"))
-                            .child(icon_button("icons/radix/speaker-loud.svg"))
-                            .child(icon_button("icons/radix/desktop.svg")),
+                            .child(icon_button("icons/mic.svg"))
+                            .child(icon_button("icons/speaker-loud.svg"))
+                            .child(icon_button("icons/desktop.svg")),
                     )
                     .child(
                         div().px_2().flex().items_center().child(

@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use crate::components::icon_button;
+use crate::components::{icon_button, tool_divider};
 use crate::theme::{theme, Theme};
 use gpui2::style::StyleHelpers;
 use gpui2::{elements::div, IntoElement};
@@ -89,21 +89,58 @@ impl<V: 'static> StatusBar<V> {
         let theme = theme(cx);
 
         div()
+            .py_0p5()
+            .px_1()
             .flex()
             .items_center()
             .justify_between()
             .w_full()
             .fill(theme.lowest.base.default.background)
             .child(self.left_tools(theme))
-            .child(div())
+            .child(self.right_tools(theme))
     }
 
     fn left_tools(&self, theme: &Theme) -> impl Element<V> {
         div()
             .flex()
             .items_center()
-            .gap_px()
-            .child(icon_button("icons/folder_tree_16.svg"))
-            .child(icon_button("icons/bolt_16.svg"))
+            .gap_1()
+            .child(icon_button("icons/project.svg"))
+            .child(icon_button("icons/hash.svg"))
+            .child(tool_divider())
+            .child(icon_button("icons/error.svg"))
+    }
+    fn right_tools(&self, theme: &Theme) -> impl Element<V> {
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(div().px_1().text_xs().child("116:25"))
+                    .child(div().px_1().text_xs().child("Rust")),
+            )
+            .child(tool_divider())
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(icon_button("icons/copilot.svg"))
+                    .child(icon_button("icons/feedback.svg")),
+            )
+            .child(tool_divider())
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(icon_button("icons/terminal.svg"))
+                    .child(icon_button("icons/conversations.svg"))
+                    .child(icon_button("icons/ai.svg")),
+            )
     }
 }
