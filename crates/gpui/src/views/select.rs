@@ -1,5 +1,7 @@
 use crate::{
-    elements::*, platform::MouseButton, AppContext, Entity, View, ViewContext, WeakViewHandle,
+    elements::*,
+    platform::{CursorStyle, MouseButton},
+    AppContext, Entity, View, ViewContext, WeakViewHandle,
 };
 
 pub struct Select {
@@ -102,6 +104,7 @@ impl View for Select {
                 .contained()
                 .with_style(style.header)
             })
+            .with_cursor_style(CursorStyle::PointingHand)
             .on_click(MouseButton::Left, move |_, this, cx| {
                 this.toggle(cx);
             }),
@@ -128,6 +131,7 @@ impl View for Select {
                                     cx,
                                 )
                             })
+                            .with_cursor_style(CursorStyle::PointingHand)
                             .on_click(MouseButton::Left, move |_, this, cx| {
                                 this.set_selected_index(ix, cx);
                             })

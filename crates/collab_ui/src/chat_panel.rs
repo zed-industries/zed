@@ -97,7 +97,7 @@ impl ChatPanel {
             .with_style(move |cx| {
                 let style = &theme::current(cx).chat_panel.channel_select;
                 SelectStyle {
-                    header: style.header.container,
+                    header: Default::default(),
                     menu: style.menu,
                 }
             })
@@ -269,14 +269,17 @@ impl ChatPanel {
                     .contained()
                     .with_style(theme.chat_panel.channel_select.container),
             )
-            .with_child(self.render_active_channel_messages())
+            .with_child(self.render_active_channel_messages(&theme))
             .with_child(self.render_input_box(&theme, cx))
             .into_any()
     }
 
-    fn render_active_channel_messages(&self) -> AnyElement<Self> {
+    fn render_active_channel_messages(&self, theme: &Arc<Theme>) -> AnyElement<Self> {
         let messages = if self.active_chat.is_some() {
-            List::new(self.message_list.clone()).into_any()
+            List::new(self.message_list.clone())
+                .contained()
+                .with_style(theme.chat_panel.list)
+                .into_any()
         } else {
             Empty::new().into_any()
         };
@@ -381,6 +384,8 @@ impl ChatPanel {
                     .with_style(theme.hash.container),
             )
             .with_child(Label::new(channel.name.clone(), theme.name.clone()))
+            .aligned()
+            .left()
             .contained()
             .with_style(theme.container)
             .into_any()

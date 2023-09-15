@@ -13,10 +13,10 @@ export default function chat_panel(): any {
 
     const channel_name = {
         padding: {
-            // top: 4,
+            left: SPACING,
+            right: SPACING,
+            top: 4,
             bottom: 4,
-            // left: 4,
-            right: 4,
         },
         hash: {
             ...text(layer, "sans", "base"),
@@ -26,23 +26,33 @@ export default function chat_panel(): any {
 
     return {
         background: background(layer),
-        padding: {
-            top: SPACING,
-            bottom: SPACING,
-            left: SPACING,
-            right: SPACING,
+        list: {
+            margin: {
+                left: SPACING,
+                right: SPACING,
+            }
         },
         channel_select: {
-            header: { ...channel_name },
+            header: {
+                ...channel_name,
+                border: border(layer, { bottom: true })
+            },
             item: channel_name,
-            active_item: channel_name,
-            hovered_item: channel_name,
-            hovered_active_item: channel_name,
+            active_item: {
+                ...channel_name,
+                background: background(layer, "on", "active"),
+            },
+            hovered_item: {
+                ...channel_name,
+                background: background(layer, "on", "hovered"),
+            },
+            hovered_active_item: {
+                ...channel_name,
+                background: background(layer, "on", "active"),
+            },
             menu: {
-                padding: {
-                    top: 10,
-                    bottom: 10,
-                }
+                background: background(layer, "on"),
+                border: border(layer, { bottom: true })
             }
         },
         input_editor: {
@@ -54,6 +64,11 @@ export default function chat_panel(): any {
             }),
             selection: theme.players[0],
             border: border(layer, "on"),
+            margin: {
+                left: SPACING,
+                right: SPACING,
+                bottom: SPACING,
+            },
             padding: {
                 bottom: 4,
                 left: 8,

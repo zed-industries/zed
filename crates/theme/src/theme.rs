@@ -629,6 +629,7 @@ pub struct IconButton {
 pub struct ChatPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
+    pub list: ContainerStyle,
     pub channel_select: ChannelSelect,
     pub input_editor: FieldEditor,
     pub message: ChatMessage,
