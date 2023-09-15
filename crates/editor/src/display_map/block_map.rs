@@ -1,10 +1,10 @@
 use super::{
     wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot},
-    TextHighlights,
+    Highlights,
 };
 use crate::{Anchor, Editor, ExcerptId, ExcerptRange, ToPoint as _};
 use collections::{Bound, HashMap, HashSet};
-use gpui::{fonts::HighlightStyle, AnyElement, ViewContext};
+use gpui::{AnyElement, ViewContext};
 use language::{BufferSnapshot, Chunk, Patch, Point};
 use parking_lot::Mutex;
 use std::{
@@ -576,9 +576,7 @@ impl BlockSnapshot {
         self.chunks(
             0..self.transforms.summary().output_rows,
             false,
-            None,
-            None,
-            None,
+            Highlights::default(),
         )
         .map(|chunk| chunk.text)
         .collect()
@@ -588,9 +586,7 @@ impl BlockSnapshot {
         &'a self,
         rows: Range<u32>,
         language_aware: bool,
-        text_highlights: Option<&'a TextHighlights>,
-        hint_highlight_style: Option<HighlightStyle>,
-        suggestion_highlight_style: Option<HighlightStyle>,
+        highlights: Highlights<'a>,
     ) -> BlockChunks<'a> {
         let max_output_row = cmp::min(rows.end, self.transforms.summary().output_rows);
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
@@ -622,9 +618,7 @@ impl BlockSnapshot {
             input_chunks: self.wrap_snapshot.chunks(
                 input_start..input_end,
                 language_aware,
-                text_highlights,
-                hint_highlight_style,
-                suggestion_highlight_style,
+                highlights,
             ),
             input_chunk: Default::default(),
             transforms: cursor,
@@ -1501,9 +1495,7 @@ mod tests {
                     .chunks(
                         start_row as u32..blocks_snapshot.max_point().row + 1,
                         false,
-                        None,
-                        None,
-                        None,
+                        Highlights::default(),
                     )
                     .map(|chunk| chunk.text)
                     .collect::<String>();

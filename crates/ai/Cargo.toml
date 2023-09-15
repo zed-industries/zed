@@ -27,6 +27,7 @@ futures.workspace = true
 indoc.workspace = true
 isahc.workspace = true
 ordered-float.workspace = true
+parking_lot.workspace = true
 regex.workspace = true
 schemars.workspace = true
 serde.workspace = true

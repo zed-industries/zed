@@ -701,8 +701,9 @@ impl ProjectSearchView {
                         }));
                     return;
                 }
+            } else {
+                semantic_state.maintain_rate_limit = None;
             }
-            semantic_state.maintain_rate_limit = None;
         }
     }
 
@@ -1724,7 +1725,7 @@ pub mod tests {
             assert_eq!(
                 search_view
                     .results_editor
-                    .update(cx, |editor, cx| editor.all_background_highlights(cx)),
+                    .update(cx, |editor, cx| editor.all_text_background_highlights(cx)),
                 &[
                     (
                         DisplayPoint::new(2, 32)..DisplayPoint::new(2, 35),

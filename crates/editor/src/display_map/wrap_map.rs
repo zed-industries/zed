@@ -1,13 +1,11 @@
 use super::{
     fold_map::FoldBufferRows,
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
-    TextHighlights,
+    Highlights,
 };
 use crate::MultiBufferSnapshot;
 use gpui::{
-    fonts::{FontId, HighlightStyle},
-    text_layout::LineWrapper,
-    AppContext, Entity, ModelContext, ModelHandle, Task,
+    fonts::FontId, text_layout::LineWrapper, AppContext, Entity, ModelContext, ModelHandle, Task,
 };
 use language::{Chunk, Point};
 use lazy_static::lazy_static;
@@ -444,9 +442,7 @@ impl WrapSnapshot {
                 let mut chunks = new_tab_snapshot.chunks(
                     TabPoint::new(edit.new_rows.start, 0)..new_tab_snapshot.max_point(),
                     false,
-                    None,
-                    None,
-                    None,
+                    Highlights::default(),
                 );
                 let mut edit_transforms = Vec::<Transform>::new();
                 for _ in edit.new_rows.start..edit.new_rows.end {
@@ -575,9 +571,7 @@ impl WrapSnapshot {
         &'a self,
         rows: Range<u32>,
         language_aware: bool,
-        text_highlights: Option<&'a TextHighlights>,
-        hint_highlight_style: Option<HighlightStyle>,
-        suggestion_highlight_style: Option<HighlightStyle>,
+        highlights: Highlights<'a>,
     ) -> WrapChunks<'a> {
         let output_start = WrapPoint::new(rows.start, 0);
         let output_end = WrapPoint::new(rows.end, 0);
@@ -594,9 +588,7 @@ impl WrapSnapshot {
             input_chunks: self.tab_snapshot.chunks(
                 input_start..input_end,
                 language_aware,
-                text_highlights,
-                hint_highlight_style,
-                suggestion_highlight_style,
+                highlights,
             ),
             input_chunk: Default::default(),
             output_position: output_start,
@@ -1323,9 +1315,7 @@ mod tests {
             self.chunks(
                 wrap_row..self.max_point().row() + 1,
                 false,
-                None,
-                None,
-                None,
+                Highlights::default(),
             )
             .map(|h| h.text)
         }
@@ -1350,7 +1340,7 @@ mod tests {
                 }
 
                 let actual_text = self
-                    .chunks(start_row..end_row, true, None, None, None)
+                    .chunks(start_row..end_row, true, Highlights::default())
                     .map(|c| c.text)
                     .collect::<String>();
                 assert_eq!(

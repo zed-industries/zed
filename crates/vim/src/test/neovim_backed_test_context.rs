@@ -13,20 +13,13 @@ use util::test::{generate_marked_text, marked_text_offsets};
 use super::{neovim_connection::NeovimConnection, NeovimBackedBindingTestContext, VimTestContext};
 use crate::state::Mode;
 
-pub const SUPPORTED_FEATURES: &[ExemptionFeatures] = &[
-    ExemptionFeatures::DeletionOnEmptyLine,
-    ExemptionFeatures::OperatorAbortsOnFailedMotion,
-];
+pub const SUPPORTED_FEATURES: &[ExemptionFeatures] = &[];
 
 /// Enum representing features we have tests for but which don't work, yet. Used
 /// to add exemptions and automatically
 #[derive(PartialEq, Eq)]
 pub enum ExemptionFeatures {
     // MOTIONS
-    // Deletions on empty lines miss some newlines
-    DeletionOnEmptyLine,
-    // When a motion fails, it should should not apply linewise operations
-    OperatorAbortsOnFailedMotion,
     // When an operator completes at the end of the file, an extra newline is left
     OperatorLastNewlineRemains,
     // Deleting a word on an empty line doesn't remove the newline
@@ -68,6 +61,8 @@ pub struct NeovimBackedTestContext<'a> {
 
     last_set_state: Option<String>,
     recent_keystrokes: Vec<String>,
+
+    is_dirty: bool,
 }
 
 impl<'a> NeovimBackedTestContext<'a> {
@@ -81,6 +76,7 @@ impl<'a> NeovimBackedTestContext<'a> {
 
             last_set_state: None,
             recent_keystrokes: Default::default(),
+            is_dirty: false,
         }
     }
 
@@ -128,6 +124,7 @@ impl<'a> NeovimBackedTestContext<'a> {
         self.last_set_state = Some(marked_text.to_string());
         self.recent_keystrokes = Vec::new();
         self.neovim.set_state(marked_text).await;
+        self.is_dirty = true;
         context_handle
     }
 
@@ -153,6 +150,7 @@ impl<'a> NeovimBackedTestContext<'a> {
     }
 
     pub async fn assert_shared_state(&mut self, marked_text: &str) {
+        self.is_dirty = false;
         let marked_text = marked_text.replace("•", " ");
         let neovim = self.neovim_state().await;
         let editor = self.editor_state();
@@ -258,6 +256,7 @@ impl<'a> NeovimBackedTestContext<'a> {
     }
 
     pub async fn assert_state_matches(&mut self) {
+        self.is_dirty = false;
         let neovim = self.neovim_state().await;
         let editor = self.editor_state();
         let initial_state = self
@@ -380,6 +379,17 @@ impl<'a> Deref for NeovimBackedTestContext<'a> {
 impl<'a> DerefMut for NeovimBackedTestContext<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.cx
+    }
+}
+
+// a common mistake in tests is to call set_shared_state when
+// you mean asswert_shared_state. This notices that and lets
+// you know.
+impl<'a> Drop for NeovimBackedTestContext<'a> {
+    fn drop(&mut self) {
+        if self.is_dirty {
+            panic!("Test context was dropped after set_shared_state before assert_shared_state")
+        }
     }
 }
 
