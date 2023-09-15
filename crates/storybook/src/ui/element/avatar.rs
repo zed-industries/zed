@@ -13,7 +13,7 @@ pub struct Avatar {
     shape: Shape,
 }
 
-pub fn avatar<V: 'static>(src: impl Into<ArcCow<'static, str>>) -> Avatar {
+pub fn avatar(src: impl Into<ArcCow<'static, str>>) -> Avatar {
     Avatar {
         src: src.into(),
         shape: Shape::Circle,

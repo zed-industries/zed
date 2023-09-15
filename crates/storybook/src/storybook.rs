@@ -12,9 +12,9 @@ use simplelog::SimpleLogger;
 mod collab_panel;
 mod components;
 mod element_ext;
-mod modules;
 mod prelude;
 mod theme;
+mod ui;
 mod workspace;
 
 gpui2::actions! {

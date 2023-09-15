@@ -4,22 +4,6 @@ use gpui2::{
 };
 use std::{marker::PhantomData, rc::Rc};
 
-mod avatar;
-mod icon_button;
-mod tab;
-mod text_button;
-mod tool_divider;
-
-pub use avatar::avatar;
-pub use avatar::Avatar;
-pub use icon_button::icon_button;
-pub use tab::tab;
-pub use tab::Tab;
-pub use text_button::text_button;
-pub use text_button::TextButton;
-pub use tool_divider::tool_divider;
-pub use tool_divider::ToolDivider;
-
 struct ButtonHandlers<V, D> {
     click: Option<Rc<dyn Fn(&mut V, &D, &mut EventContext<V>)>>,
 }

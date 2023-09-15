@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
-use crate::components::{icon_button, tool_divider};
 use crate::theme::{theme, Theme};
+use crate::ui::{icon_button, text_button, tool_divider};
 use gpui2::style::StyleHelpers;
 use gpui2::{elements::div, IntoElement};
 use gpui2::{Element, ParentElement, ViewContext};
@@ -120,8 +120,8 @@ impl<V: 'static> StatusBar<V> {
                     .flex()
                     .items_center()
                     .gap_1()
-                    .child(div().px_1().text_xs().child("116:25"))
-                    .child(div().px_1().text_xs().child("Rust")),
+                    .child(text_button("116:25"))
+                    .child(text_button("Rust")),
             )
             .child(tool_divider())
             .child(

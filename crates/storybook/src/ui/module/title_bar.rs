@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
-use crate::components::{avatar, icon_button, text_button, tool_divider, Avatar, TextButton};
 use crate::prelude::Shape;
 use crate::theme::theme;
+use crate::ui::{avatar, icon_button, text_button, tool_divider};
 use gpui2::style::StyleHelpers;
 use gpui2::{elements::div, IntoElement};
 use gpui2::{Element, ParentElement, ViewContext};
@@ -100,7 +100,7 @@ impl<V: 'static> TitleBar<V> {
                     )
                     .child(
                         div().px_2().flex().items_center().child(
-                            avatar::<Avatar>("https://avatars.githubusercontent.com/u/1714999?v=4")
+                            avatar("https://avatars.githubusercontent.com/u/1714999?v=4")
                                 .shape(Shape::RoundedRectangle),
                         ),
                     ),
