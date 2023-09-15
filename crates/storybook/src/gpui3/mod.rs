@@ -38,7 +38,14 @@ pub trait Context {
     ) -> R;
 }
 
+#[derive(Clone, Eq, PartialEq)]
 pub struct SharedString(ArcCow<'static, str>);
+
+impl std::fmt::Debug for SharedString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 impl<T: Into<ArcCow<'static, str>>> From<T> for SharedString {
     fn from(value: T) -> Self {

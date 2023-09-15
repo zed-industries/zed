@@ -1,14 +1,12 @@
-use gpui2::fonts::TextStyleRefinement;
 use refineable::Refineable;
-use std::sync::Arc;
 
 pub use super::taffy::style::{
     AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap, JustifyContent,
     Overflow, Position,
 };
 use super::{
-    AbsoluteLength, DefiniteLength, Edges, EdgesRefinement, Hsla, Length, Point, PointRefinement,
-    SharedString, Size, SizeRefinement, WindowContext,
+    rems, AbsoluteLength, Bounds, DefiniteLength, Edges, EdgesRefinement, Hsla, Length, Pixels,
+    Point, PointRefinement, Rems, SharedString, Size, SizeRefinement, ViewContext, WindowContext,
 };
 pub use gpui2::style::{FontStyle, FontWeight};
 
@@ -98,30 +96,33 @@ pub struct Style {
     pub text_color: Option<Hsla>,
 
     /// The font size in rems.
-    pub font_size: Option<f32>,
+    pub font_size: Option<Rems>,
 
-    pub font_family: Option<Arc<str>>,
+    pub font_family: Option<SharedString>,
 
     pub font_weight: Option<FontWeight>,
 
     pub font_style: Option<FontStyle>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Refineable, Clone, Debug)]
+#[refineable(debug)]
 pub struct TextStyle {
-    pub color: Color,
-    pub font_family_name: SharedString,
-    pub font_size: FontSize,
+    pub color: Hsla,
+    pub font_family: SharedString,
+    pub font_size: Rems,
+    pub font_weight: FontWeight,
+    pub font_style: FontStyle,
     pub underline: Underline,
-    pub soft_wrap: bool,
 }
 
-#[derive(Clone, Default, Debug)]
+#[derive(Refineable, Clone, Default, Debug)]
+#[refineable(debug)]
 pub struct Underline {
-    pub origin: Vector2F,
-    pub width: f32,
-    pub thickness: f32,
-    pub color: Color,
+    pub origin: Point<Pixels>,
+    pub width: Pixels,
+    pub thickness: Pixels,
+    pub color: Hsla,
     pub squiggly: bool,
 }
 
@@ -137,75 +138,31 @@ impl Style {
         }
 
         Some(TextStyleRefinement {
-            color: self.text_color.map(Into::into),
+            color: self.text_color,
             font_family: self.font_family.clone(),
-            font_size: self.font_size.map(|size| size * cx.rem_size()),
-            font_weight: self.font_weight.map(Into::into),
+            font_size: self.font_size,
+            font_weight: self.font_weight,
             font_style: self.font_style,
             underline: None,
         })
     }
 
-    pub fn to_taffy(&self, rem_size: f32) -> taffy::style::Style {
-        taffy::style::Style {
-            display: self.display,
-            overflow: self.overflow.clone().into(),
-            scrollbar_width: self.scrollbar_width,
-            position: self.position,
-            inset: self.inset.to_taffy(rem_size),
-            size: self.size.to_taffy(rem_size),
-            min_size: self.min_size.to_taffy(rem_size),
-            max_size: self.max_size.to_taffy(rem_size),
-            aspect_ratio: self.aspect_ratio,
-            margin: self.margin.to_taffy(rem_size),
-            padding: self.padding.to_taffy(rem_size),
-            border: self.border_widths.to_taffy(rem_size),
-            align_items: self.align_items,
-            align_self: self.align_self,
-            align_content: self.align_content,
-            justify_content: self.justify_content,
-            gap: self.gap.to_taffy(rem_size),
-            flex_direction: self.flex_direction,
-            flex_wrap: self.flex_wrap,
-            flex_basis: self.flex_basis.to_taffy(rem_size).into(),
-            flex_grow: self.flex_grow,
-            flex_shrink: self.flex_shrink,
-            ..Default::default() // Ignore grid properties for now
-        }
-    }
-
     /// Paints the background of an element styled with this style.
-    pub fn paint_background<V: 'static>(&self, bounds: RectF, cx: &mut ViewContext<V>) {
+    pub fn paint_background<V: 'static>(&self, bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
         let rem_size = cx.rem_size();
         if let Some(color) = self.fill.as_ref().and_then(Fill::color) {
-            cx.scene().push_quad(gpui::Quad {
-                bounds,
-                background: Some(color.into()),
-                corner_radii: self.corner_radii.to_gpui(bounds.size(), rem_size),
-                border: Default::default(),
-            });
+            todo!();
         }
     }
 
     /// Paints the foreground of an element styled with this style.
-    pub fn paint_foreground<V: 'static>(&self, bounds: RectF, cx: &mut ViewContext<V>) {
+    pub fn paint_foreground<V: 'static>(&self, bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
         let rem_size = cx.rem_size();
 
         if let Some(color) = self.border_color {
             let border = self.border_widths.to_pixels(rem_size);
             if !border.is_empty() {
-                cx.scene().push_quad(gpui::Quad {
-                    bounds,
-                    background: None,
-                    corner_radii: self.corner_radii.to_gpui(bounds.size(), rem_size),
-                    border: scene::Border {
-                        color: color.into(),
-                        top: border.top,
-                        right: border.right,
-                        bottom: border.bottom,
-                        left: border.left,
-                    },
-                });
+                todo!();
             }
         }
     }
@@ -245,7 +202,7 @@ impl Default for Style {
             border_color: None,
             corner_radii: CornerRadii::default(),
             text_color: None,
-            font_size: Some(1.),
+            font_size: Some(rems(1.)),
             font_family: None,
             font_weight: None,
             font_style: None,
@@ -285,17 +242,4 @@ pub struct CornerRadii {
     top_right: AbsoluteLength,
     bottom_left: AbsoluteLength,
     bottom_right: AbsoluteLength,
-}
-
-impl CornerRadii {
-    pub fn to_gpui(&self, box_size: Vector2F, rem_size: f32) -> gpui::scene::CornerRadii {
-        let max_radius = box_size.x().min(box_size.y()) / 2.;
-
-        gpui::scene::CornerRadii {
-            top_left: self.top_left.to_pixels(rem_size).min(max_radius),
-            top_right: self.top_right.to_pixels(rem_size).min(max_radius),
-            bottom_left: self.bottom_left.to_pixels(rem_size).min(max_radius),
-            bottom_right: self.bottom_right.to_pixels(rem_size).min(max_radius),
-        }
-    }
 }

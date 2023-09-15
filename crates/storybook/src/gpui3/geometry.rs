@@ -4,12 +4,13 @@ use refineable::Refineable;
 use std::ops::Mul;
 
 #[derive(Refineable, Default, Add, AddAssign, Sub, Mul, Div, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct Point<T: Clone> {
+#[refineable(debug)]
+pub struct Point<T: Clone + Debug> {
     pub x: T,
     pub y: T,
 }
 
-impl<T: Clone> Clone for Point<T> {
+impl<T: Clone + Debug> Clone for Point<T> {
     fn clone(&self) -> Self {
         Self {
             x: self.x.clone(),
@@ -18,8 +19,9 @@ impl<T: Clone> Clone for Point<T> {
     }
 }
 
-#[derive(Default, Clone, Refineable, Debug)]
-pub struct Size<T: Clone> {
+#[derive(Refineable, Default, Clone, Debug)]
+#[refineable(debug)]
+pub struct Size<T: Clone + Debug> {
     pub width: T,
     pub height: T,
 }
@@ -52,13 +54,15 @@ impl Size<Length> {
 }
 
 #[derive(Refineable, Clone, Default, Debug)]
-pub struct Bounds<F: Clone> {
-    pub origin: Point<F>,
-    pub size: Size<F>,
+#[refineable(debug)]
+pub struct Bounds<T: Clone + Debug> {
+    pub origin: Point<T>,
+    pub size: Size<T>,
 }
 
 #[derive(Refineable, Clone, Default, Debug)]
-pub struct Edges<T: Clone> {
+#[refineable(debug)]
+pub struct Edges<T: Clone + Debug> {
     pub top: T,
     pub right: T,
     pub bottom: T,

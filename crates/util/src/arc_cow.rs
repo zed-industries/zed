@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    fmt::{self, Debug},
+    sync::Arc,
+};
 
 #[derive(PartialEq, Eq)]
 pub enum ArcCow<'a, T: ?Sized> {
@@ -69,6 +72,15 @@ impl<T: ?Sized> AsRef<T> for ArcCow<'_, T> {
         match self {
             ArcCow::Borrowed(borrowed) => borrowed,
             ArcCow::Owned(owned) => owned.as_ref(),
+        }
+    }
+}
+
+impl<'a, T: ?Sized + Debug> Debug for ArcCow<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ArcCow::Borrowed(borrowed) => Debug::fmt(borrowed, f),
+            ArcCow::Owned(owned) => Debug::fmt(&**owned, f),
         }
     }
 }
