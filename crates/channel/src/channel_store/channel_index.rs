@@ -123,6 +123,7 @@ impl<'a> ChannelPathsEditGuard<'a> {
     }
 
     fn insert_edge(&mut self, parent_id: ChannelId, channel_id: ChannelId) {
+        debug_assert!(self.channels_by_id.contains_key(&parent_id));
         let mut ix = 0;
         while ix < self.paths.len() {
             let path = &self.paths[ix];
@@ -131,8 +132,9 @@ impl<'a> ChannelPathsEditGuard<'a> {
                 new_path.push(channel_id);
                 self.paths.insert(ix + 1, ChannelPath(new_path.into()));
                 ix += 2;
-            } else if path.len() == 1 && path[0] == channel_id {
-                self.paths.swap_remove(ix);
+            } else if path.get(0) == Some(&channel_id) {
+                // Clear out any paths that have this chahnnel as their root
+                self.paths.remove(ix);
             } else {
                 ix += 1;
             }

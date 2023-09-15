@@ -780,7 +780,6 @@ async fn test_lost_channel_creation(
     deterministic: Arc<Deterministic>,
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
-    cx_c: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
     let mut server = TestServer::start(&deterministic).await;
@@ -953,7 +952,7 @@ async fn test_channel_moving(
         .await
         .unwrap();
 
-    // Current shape:
+    // Current shape for A:
     //      /------\
     // a - b -- c -- d
     assert_channels_list_shape(
@@ -982,21 +981,23 @@ async fn test_channel_moving(
     let channel_ga_id = b_channels[1];
     let channel_ep_id = b_channels[2];
 
-
     // Current shape for B:
     //    /- ep
     // mu -- ga
     assert_channels_list_shape(
         client_b.channel_store(),
         cx_b,
-        &[
-            (channel_mu_id, 0),
-            (channel_ep_id, 1),
-            (channel_ga_id, 1),
-        ],
+        &[(channel_mu_id, 0), (channel_ep_id, 1), (channel_ga_id, 1)],
     );
 
-    client_a.add_admin_to_channel((&client_b, cx_b), channel_b_id, cx_a).await;
+    client_a
+        .add_admin_to_channel((&client_b, cx_b), channel_b_id, cx_a)
+        .await;
+
+    client_b
+        .add_admin_to_channel((&client_c, cx_c), channel_ep_id, cx_b)
+        .await;
+
     // Current shape for B:
     //    /- ep
     // mu -- ga
@@ -1011,12 +1012,20 @@ async fn test_channel_moving(
             (channel_c_id, 1),
             (channel_d_id, 2),
             (channel_d_id, 1),
-
             // B's old channels
             (channel_mu_id, 0),
             (channel_ep_id, 1),
             (channel_ga_id, 1),
+        ],
+    );
 
+    // Current shape for C:
+    // - ep
+    assert_channels_list_shape(
+        client_c.channel_store(),
+        cx_c,
+        &[
+            (channel_ep_id, 0),
         ],
     );
 
@@ -1036,16 +1045,28 @@ async fn test_channel_moving(
         client_b.channel_store(),
         cx_b,
         &[
-            // B's old channels
             (channel_mu_id, 0),
-            (channel_ga_id, 1),
             (channel_ep_id, 1),
-
-            // New channels from a, now under epsilon
             (channel_b_id, 2),
             (channel_c_id, 3),
-            (channel_d_id, 3),
             (channel_d_id, 4),
+            (channel_d_id, 3),
+            (channel_ga_id, 1),
+        ],
+    );
+
+    // Current shape for C:
+    //        /---------\
+    // ep -- b  -- c  -- d
+    assert_channels_list_shape(
+        client_c.channel_store(),
+        cx_c,
+        &[
+            (channel_ep_id, 0),
+            (channel_b_id, 1),
+            (channel_c_id, 2),
+            (channel_d_id, 3),
+            (channel_d_id, 2),
         ],
     );
 
@@ -1066,34 +1087,50 @@ async fn test_channel_moving(
         client_b.channel_store(),
         cx_b,
         &[
-            // B's old channels
             (channel_mu_id, 0),
-            (channel_ga_id, 1),
             (channel_ep_id, 1),
-
-            // New channels from a, now under epsilon, with gamma
             (channel_b_id, 2),
-            (channel_ga_id, 3),
             (channel_c_id, 3),
-            (channel_d_id, 3),
             (channel_d_id, 4),
+            (channel_d_id, 3),
+            (channel_ga_id, 3),
+            (channel_ga_id, 1),
         ],
     );
 
     // Current shape for A:
+    //      /------\
+    // a - b -- c -- d
+    //      \-- ga
     assert_channels_list_shape(
         client_a.channel_store(),
         cx_a,
         &[
             (channel_a_id, 0),
             (channel_b_id, 1),
-            (channel_ga_id, 1),
             (channel_c_id, 2),
             (channel_d_id, 3),
             (channel_d_id, 2),
+            (channel_ga_id, 2),
         ],
     );
-    // TODO: Make sure to test that non-local root removing problem I was thinking about
+
+    // Current shape for C:
+    //        /-------\
+    // ep -- b -- c -- d
+    //        \-- ga
+    assert_channels_list_shape(
+        client_c.channel_store(),
+        cx_c,
+        &[
+            (channel_ep_id, 0),
+            (channel_b_id, 1),
+            (channel_c_id, 2),
+            (channel_d_id, 3),
+            (channel_d_id, 2),
+            (channel_ga_id, 2),
+        ],
+    );
 }
 
 #[derive(Debug, PartialEq)]
