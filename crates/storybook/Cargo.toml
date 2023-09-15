@@ -12,6 +12,7 @@ path = "src/storybook.rs"
 anyhow.workspace = true
 derive_more.workspace = true
 gpui2 = { path = "../gpui2" }
+itertools = "0.11.0"
 log.workspace = true
 refineable = { path = "../refineable" }
 rust-embed.workspace = true

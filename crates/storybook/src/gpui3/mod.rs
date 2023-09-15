@@ -3,25 +3,27 @@ mod color;
 mod element;
 mod elements;
 mod geometry;
+mod ordered;
+mod scene;
 mod style;
 mod taffy;
 mod window;
 
+use self::editor::Editor;
 use anyhow::Result;
-pub use gpui2::ArcCow;
-use gpui2::Reference;
-
 pub use app::*;
 pub use color::*;
 pub use element::*;
 pub use elements::*;
 pub use geometry::*;
+pub use gpui2::ArcCow;
+use gpui2::Reference;
+use ordered::*;
+pub use scene::*;
 pub use style::*;
 pub use taffy::LayoutId;
 use taffy::TaffyLayoutEngine;
 pub use window::*;
-
-use self::editor::Editor;
 
 pub trait Context {
     type EntityContext<'a, 'w, T: 'static>;
