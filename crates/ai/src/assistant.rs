@@ -1471,7 +1471,10 @@ impl Conversation {
         language_registry: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let id = saved_conversation.id;
+        let id = match saved_conversation.id {
+            Some(id) => Some(id),
+            None => Some(Uuid::new_v4().to_string()),
+        };
         let model = saved_conversation.model;
         let markdown = language_registry.language_for_name("Markdown");
         let mut message_anchors = Vec::new();
