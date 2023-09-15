@@ -108,7 +108,7 @@ impl<'a> ChannelPathsEditGuard<'a> {
             if path.ends_with(&[parent_id]) {
                 let mut new_path = path.to_vec();
                 new_path.push(channel_id);
-                self.paths.insert(ix + 1, ChannelPath(new_path.into()));
+                self.paths.insert(ix + 1, ChannelPath::new(new_path.into()));
                 ix += 2;
             } else if path.get(0) == Some(&channel_id) {
                 // Clear out any paths that have this chahnnel as their root
@@ -120,7 +120,7 @@ impl<'a> ChannelPathsEditGuard<'a> {
     }
 
     fn insert_root(&mut self, channel_id: ChannelId) {
-        self.paths.push(ChannelPath(Arc::from([channel_id])));
+        self.paths.push(ChannelPath::new(Arc::from([channel_id])));
     }
 }
 

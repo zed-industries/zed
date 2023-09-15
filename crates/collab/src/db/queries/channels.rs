@@ -1,6 +1,8 @@
+use smallvec::SmallVec;
+
 use super::*;
 
-type ChannelDescendants = HashMap<ChannelId, HashSet<ChannelId>>;
+type ChannelDescendants = HashMap<ChannelId, SmallSet<ChannelId>>;
 
 impl Database {
     #[cfg(test)]
@@ -150,7 +152,7 @@ impl Database {
                 .exec(&*tx)
                 .await?;
 
-            // Delete any other paths that incldue this channel
+            // Delete any other paths that include this channel
             let sql = r#"
                     DELETE FROM channel_paths
                     WHERE
@@ -351,7 +353,7 @@ impl Database {
                 let parents = parents_by_child_id.get(&row.id).unwrap();
                 if parents.len() > 0 {
                     let mut added_channel = false;
-                    for parent in parents {
+                    for parent in parents.iter() {
                         // Trim out any dangling parent pointers.
                         // That the user doesn't have access to
                         if trim_dangling_parents {
@@ -843,7 +845,7 @@ impl Database {
         );
         tx.execute(channel_paths_stmt).await?;
         for (from_id, to_ids) in from_descendants.iter().filter(|(id, _)| id != &&channel) {
-            for to_id in to_ids {
+            for to_id in to_ids.iter() {
                 let channel_paths_stmt = Statement::from_sql_and_values(
                     self.pool.get_database_backend(),
                     sql,
@@ -978,4 +980,39 @@ impl Database {
 #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
 enum QueryUserIds {
     UserId,
+}
+
+struct SmallSet<T>(SmallVec<[T; 1]>);
+
+impl<T> Deref for SmallSet<T> {
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
+        self.0.deref()
+    }
+}
+
+impl<T> Default for SmallSet<T> {
+    fn default() -> Self {
+        Self(SmallVec::new())
+    }
+}
+
+impl<T> SmallSet<T> {
+    fn insert(&mut self, value: T) -> bool
+    where
+        T: Ord,
+    {
+        match self.binary_search(&value) {
+            Ok(_) => false,
+            Err(ix) => {
+                self.0.insert(ix, value);
+                true
+            },
+        }
+    }
+
+    fn clear(&mut self) {
+        self.0.clear();
+    }
 }

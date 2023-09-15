@@ -3,12 +3,12 @@ mod channel_index;
 use crate::{channel_buffer::ChannelBuffer, channel_chat::ChannelChat};
 use anyhow::{anyhow, Result};
 use client::{Client, Subscription, User, UserId, UserStore};
-use collections::{hash_map, HashMap, HashSet};
+use collections::{hash_map::{self, DefaultHasher}, HashMap, HashSet};
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
 use rpc::{proto, TypedEnvelope};
 use serde_derive::{Deserialize, Serialize};
-use std::{mem, ops::Deref, sync::Arc, time::Duration};
+use std::{mem, ops::Deref, sync::Arc, time::Duration, borrow::Cow, hash::{Hash, Hasher}};
 use util::ResultExt;
 
 use self::channel_index::ChannelIndex;
@@ -42,26 +42,6 @@ pub struct Channel {
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
 pub struct ChannelPath(Arc<[ChannelId]>);
-
-impl Deref for ChannelPath {
-    type Target = [ChannelId];
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl ChannelPath {
-    pub fn parent_id(&self) -> Option<ChannelId> {
-        self.0.len().checked_sub(2).map(|i| self.0[i])
-    }
-}
-
-impl Default for ChannelPath {
-    fn default() -> Self {
-        ChannelPath(Arc::from([]))
-    }
-}
 
 pub struct ChannelMembership {
     pub user: Arc<User>,
@@ -858,5 +838,52 @@ impl ChannelStore {
             });
             anyhow::Ok(())
         }))
+    }
+}
+
+impl Deref for ChannelPath {
+    type Target = [ChannelId];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl ChannelPath {
+    pub fn new(path: Arc<[ChannelId]>) -> Self {
+        debug_assert!(path.len() >= 1);
+        Self(path)
+    }
+
+    pub fn parent_id(&self) -> Option<ChannelId> {
+        self.0.len().checked_sub(2).map(|i| self.0[i])
+    }
+
+    pub fn channel_id(&self) -> ChannelId {
+        self.0[self.0.len() - 1]
+    }
+
+    pub fn unique_id(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.0.deref().hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+impl From<ChannelPath> for Cow<'static, ChannelPath> {
+    fn from(value: ChannelPath) -> Self {
+        Cow::Owned(value)
+    }
+}
+
+impl<'a> From<&'a ChannelPath> for Cow<'a, ChannelPath> {
+    fn from(value: &'a ChannelPath) -> Self {
+        Cow::Borrowed(value)
+    }
+}
+
+impl Default for ChannelPath {
+    fn default() -> Self {
+        ChannelPath(Arc::from([]))
     }
 }
