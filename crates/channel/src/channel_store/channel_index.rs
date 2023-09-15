@@ -134,7 +134,7 @@ impl<'a> ChannelPathsEditGuard<'a> {
                 ix += 2;
             } else if path.get(0) == Some(&channel_id) {
                 // Clear out any paths that have this chahnnel as their root
-                self.paths.remove(ix);
+                self.paths.swap_remove(ix);
             } else {
                 ix += 1;
             }

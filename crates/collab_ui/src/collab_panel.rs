@@ -95,19 +95,19 @@ struct OpenChannelBuffer {
     channel_id: ChannelId,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-struct LinkChannel {
-    channel_id: ChannelId,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-struct MoveChannel {
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct StartMoveChannel {
     channel_id: ChannelId,
     parent_id: Option<ChannelId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-struct PutChannel {
+struct LinkChannel {
+    to: ChannelId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct MoveChannel {
     to: ChannelId,
 }
 
@@ -141,8 +141,8 @@ impl_actions!(
         JoinChannelCall,
         OpenChannelBuffer,
         LinkChannel,
+        StartMoveChannel,
         MoveChannel,
-        PutChannel,
         UnlinkChannel
     ]
 );
@@ -198,42 +198,40 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(CollabPanel::open_channel_buffer);
 
     cx.add_action(
-        |panel: &mut CollabPanel, action: &LinkChannel, _: &mut ViewContext<CollabPanel>| {
-            panel.link_or_move = Some(ChannelCopy::Link(action.channel_id));
+        |panel: &mut CollabPanel, action: &StartMoveChannel, _: &mut ViewContext<CollabPanel>| {
+            dbg!(action);
+            panel.channel_move = Some(*action);
         },
     );
 
     cx.add_action(
-        |panel: &mut CollabPanel, action: &MoveChannel, _: &mut ViewContext<CollabPanel>| {
-            panel.link_or_move = Some(ChannelCopy::Move {
-                channel_id: action.channel_id,
-                parent_id: action.parent_id,
-            });
+        |panel: &mut CollabPanel, action: &LinkChannel, cx: &mut ViewContext<CollabPanel>| {
+            if let Some(move_start) = panel.channel_move.take() {
+                dbg!(action.to, &move_start);
+                panel.channel_store.update(cx, |channel_store, cx| {
+                    channel_store
+                        .link_channel(move_start.channel_id, action.to, cx)
+                        .detach_and_log_err(cx)
+                })
+            }
         },
     );
 
     cx.add_action(
-        |panel: &mut CollabPanel, action: &PutChannel, cx: &mut ViewContext<CollabPanel>| {
-            if let Some(copy) = panel.link_or_move.take() {
-                match copy {
-                    ChannelCopy::Move {
-                        channel_id,
-                        parent_id: Some(parent_id),
-                    } => panel.channel_store.update(cx, |channel_store, cx| {
+        |panel: &mut CollabPanel, action: &MoveChannel, cx: &mut ViewContext<CollabPanel>| {
+            if let Some(move_start) = panel.channel_move.take() {
+                dbg!(&move_start, action.to);
+                panel.channel_store.update(cx, |channel_store, cx| {
+                    if let Some(parent) = move_start.parent_id {
                         channel_store
-                            .move_channel(channel_id, parent_id, action.to, cx)
+                            .move_channel(move_start.channel_id, parent, action.to, cx)
                             .detach_and_log_err(cx)
-                    }),
-                    ChannelCopy::Link(channel)
-                    | ChannelCopy::Move {
-                        channel_id: channel,
-                        parent_id: None,
-                    } => panel.channel_store.update(cx, |channel_store, cx| {
+                    } else {
                         channel_store
-                            .link_channel(channel, action.to, cx)
+                            .link_channel(move_start.channel_id, action.to, cx)
                             .detach_and_log_err(cx)
-                    }),
-                }
+                    }
+                })
             }
         },
     );
@@ -270,36 +268,11 @@ impl ChannelEditingState {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ChannelCopy {
-    Move {
-        channel_id: u64,
-        parent_id: Option<u64>,
-    },
-    Link(u64),
-}
-
-impl ChannelCopy {
-    fn channel_id(&self) -> u64 {
-        match self {
-            ChannelCopy::Move { channel_id, .. } => *channel_id,
-            ChannelCopy::Link(channel_id) => *channel_id,
-        }
-    }
-
-    fn is_move(&self) -> bool {
-        match self {
-            ChannelCopy::Move { .. } => true,
-            ChannelCopy::Link(_) => false,
-        }
-    }
-}
-
 pub struct CollabPanel {
     width: Option<f32>,
     fs: Arc<dyn Fs>,
     has_focus: bool,
-    link_or_move: Option<ChannelCopy>,
+    channel_move: Option<StartMoveChannel>,
     pending_serialization: Task<Option<()>>,
     context_menu: ViewHandle<ContextMenu>,
     filter_editor: ViewHandle<Editor>,
@@ -562,7 +535,7 @@ impl CollabPanel {
             let mut this = Self {
                 width: None,
                 has_focus: false,
-                link_or_move: None,
+                channel_move: None,
                 fs: workspace.app_state().fs.clone(),
                 pending_serialization: Task::ready(None),
                 context_menu: cx.add_view(|cx| ContextMenu::new(view_id, cx)),
@@ -2071,13 +2044,13 @@ impl CollabPanel {
     ) {
         self.context_menu_on_selected = position.is_none();
 
-        let operation_details = self.link_or_move.as_ref().and_then(|link_or_move| {
+        let channel_name = self.channel_move.as_ref().and_then(|channel| {
             let channel_name = self
                 .channel_store
                 .read(cx)
-                .channel_for_id(link_or_move.channel_id())
+                .channel_for_id(channel.channel_id)
                 .map(|channel| channel.name.clone())?;
-            Some((channel_name, link_or_move.is_move()))
+            Some(channel_name)
         });
 
         self.context_menu.update(cx, |context_menu, cx| {
@@ -2089,14 +2062,16 @@ impl CollabPanel {
 
             let mut items = Vec::new();
 
-            if let Some((channel_name, is_move)) = operation_details {
+            if let Some(channel_name) = channel_name {
                 items.push(ContextMenuItem::action(
-                    format!(
-                        "{} '#{}' here",
-                        if is_move { "Move" } else { "Link" },
-                        channel_name
-                    ),
-                    PutChannel {
+                    format!("Move '#{}' here", channel_name),
+                    MoveChannel {
+                        to: location.channel,
+                    },
+                ));
+                items.push(ContextMenuItem::action(
+                    format!("Link '#{}' here", channel_name),
+                    LinkChannel {
                         to: location.channel,
                     },
                 ));
@@ -2156,14 +2131,8 @@ impl CollabPanel {
 
                 items.extend([
                     ContextMenuItem::action(
-                        "Link this channel",
-                        LinkChannel {
-                            channel_id: location.channel,
-                        },
-                    ),
-                    ContextMenuItem::action(
                         "Move this channel",
-                        MoveChannel {
+                        StartMoveChannel {
                             channel_id: location.channel,
                             parent_id,
                         },
