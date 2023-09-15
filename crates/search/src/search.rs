@@ -63,8 +63,8 @@ impl SearchOptions {
 
     pub fn icon(&self) -> &'static str {
         match *self {
-            SearchOptions::WHOLE_WORD => "icons/word_search_12.svg",
-            SearchOptions::CASE_SENSITIVE => "icons/case_insensitive_12.svg",
+            SearchOptions::WHOLE_WORD => "icons/word_search.svg",
+            SearchOptions::CASE_SENSITIVE => "icons/case_insensitive.svg",
             _ => panic!("{:?} is not a named SearchOption", self),
         }
     }

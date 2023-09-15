@@ -386,10 +386,12 @@ impl AssistantPanel {
                                             );
                                         })
                                     }
-                                }
-                            }
 
-                            this.finish_inline_assist(inline_assist_id, false, cx);
+                                    this.finish_inline_assist(inline_assist_id, false, cx);
+                                }
+                            } else {
+                                this.finish_inline_assist(inline_assist_id, false, cx);
+                            }
                         }
                     }),
                 ],
@@ -702,7 +704,7 @@ impl AssistantPanel {
             }
 
             if foreground_ranges.is_empty() {
-                editor.clear_text_highlights::<PendingInlineAssist>(cx);
+                editor.clear_highlights::<PendingInlineAssist>(cx);
             } else {
                 editor.highlight_text::<PendingInlineAssist>(
                     foreground_ranges,
@@ -2374,7 +2376,7 @@ impl ConversationEditor {
                                 .with_children(
                                     if let MessageStatus::Error(error) = &message.status {
                                         Some(
-                                            Svg::new("icons/circle_x_mark_12.svg")
+                                            Svg::new("icons/error.svg")
                                                 .with_color(style.error_icon.color)
                                                 .constrained()
                                                 .with_width(style.error_icon.width)
@@ -2702,7 +2704,7 @@ impl View for InlineAssistant {
                     )
                     .with_children(if let Some(error) = self.codegen.read(cx).error() {
                         Some(
-                            Svg::new("icons/circle_x_mark_12.svg")
+                            Svg::new("icons/error.svg")
                                 .with_color(theme.assistant.error_icon.color)
                                 .constrained()
                                 .with_width(theme.assistant.error_icon.width)
@@ -2837,6 +2839,7 @@ impl InlineAssistant {
                         cx,
                     );
                 } else {
+                    self.confirmed = false;
                     editor.set_read_only(false);
                     editor.set_field_editor_style(
                         Some(Arc::new(|theme| theme.assistant.inline.editor.clone())),

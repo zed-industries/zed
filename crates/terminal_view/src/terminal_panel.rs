@@ -70,7 +70,7 @@ impl TerminalPanel {
                 Flex::row()
                     .with_child(Pane::render_tab_bar_button(
                         0,
-                        "icons/plus_12.svg",
+                        "icons/plus.svg",
                         false,
                         Some(("New Terminal", Some(Box::new(workspace::NewTerminal)))),
                         cx,
@@ -90,9 +90,9 @@ impl TerminalPanel {
                     .with_child(Pane::render_tab_bar_button(
                         1,
                         if pane.is_zoomed() {
-                            "icons/minimize_8.svg"
+                            "icons/minimize.svg"
                         } else {
-                            "icons/maximize_8.svg"
+                            "icons/maximize.svg"
                         },
                         pane.is_zoomed(),
                         Some(("Toggle Zoom".into(), Some(Box::new(workspace::ToggleZoom)))),

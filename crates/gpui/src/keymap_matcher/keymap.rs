@@ -162,7 +162,8 @@ mod tests {
                 shift: false,
                 cmd: false,
                 function: false,
-                key: "q".to_string()
+                key: "q".to_string(),
+                ime_key: None,
             }],
             "{keystroke_duplicate_to_1:?} should have the expected keystroke in the keymap"
         );
@@ -179,7 +180,8 @@ mod tests {
                     shift: false,
                     cmd: false,
                     function: false,
-                    key: "w".to_string()
+                    key: "w".to_string(),
+                    ime_key: None,
                 },
                 &Keystroke {
                     ctrl: true,
@@ -187,7 +189,8 @@ mod tests {
                     shift: false,
                     cmd: false,
                     function: false,
-                    key: "w".to_string()
+                    key: "w".to_string(),
+                    ime_key: None,
                 }
             ],
             "{full_duplicate_to_2:?} should have a duplicated keystroke in the keymap"
@@ -339,7 +342,8 @@ mod tests {
                     shift: false,
                     cmd: false,
                     function: false,
-                    key: expected_key.to_string()
+                    key: expected_key.to_string(),
+                    ime_key: None,
                 }],
                 "{expected:?} should have the expected keystroke with key '{expected_key}' in the keymap for element {i}"
             );
