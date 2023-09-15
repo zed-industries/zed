@@ -44,7 +44,6 @@ async function handleBuffer(prettier) {
 }
 
 async function* readStdin() {
-    const bufferLengthOffset = 4;
     let buffer = Buffer.alloc(0);
     let streamEnded = false;
     process.stdin.on('end', () => {
@@ -54,41 +53,63 @@ async function* readStdin() {
         buffer = Buffer.concat([buffer, data]);
     });
 
+    async function handleStreamEnded(errorMessage) {
+        sendResponse(makeError(errorMessage));
+        buffer = Buffer.alloc(0);
+        messageLength = null;
+        await once(process.stdin, 'readable');
+        streamEnded = false;
+    }
+
     try {
+        const headersSeparator = "\r\n\r\n";
+        let contentLengthHeaderName = 'Content-Length';
+        let headersLength = null;
+        let messageLength = null;
         main_loop: while (true) {
-            while (buffer.length < bufferLengthOffset) {
-                if (streamEnded) {
-                    sendResponse(makeError(`Unexpected end of stream: less than ${bufferLengthOffset} characters passed`));
-                    buffer = Buffer.alloc(0);
-                    streamEnded = false;
+            if (messageLength === null) {
+                while (buffer.indexOf(headersSeparator) === -1) {
+                    if (streamEnded) {
+                        await handleStreamEnded('Unexpected end of stream: headers not found');
+                        continue main_loop;
+                    } else if (buffer.length > contentLengthHeaderName.length * 10) {
+                        await handleStreamEnded(`Unexpected stream of bytes: no headers end found after ${buffer.length} bytes of input`);
+                        continue main_loop;
+                    }
                     await once(process.stdin, 'readable');
+                }
+                const headers = buffer.subarray(0, buffer.indexOf(headersSeparator)).toString('ascii');
+                const contentLengthHeader = headers.split('\r\n').map(header => header.split(': '))
+                    .filter(header => header[2] === undefined)
+                    .filter(header => (header[1] || '').length > 0)
+                    .find(header => header[0].trim() === contentLengthHeaderName);
+                if (contentLengthHeader === undefined) {
+                    await handleStreamEnded(`Missing or incorrect Content-Length header: ${headers}`);
+                    continue main_loop;
+                }
+                headersLength = headers.length + headersSeparator.length;
+                messageLength = parseInt(contentLengthHeader[1], 10);
+            }
+
+            while (buffer.length < (headersLength + messageLength)) {
+                if (streamEnded) {
+                    await handleStreamEnded(
+                        `Unexpected end of stream: buffer length ${buffer.length} does not match expected header length ${headersLength} + body length ${messageLength}`);
                     continue main_loop;
                 }
                 await once(process.stdin, 'readable');
             }
 
-            const length = buffer.readUInt32LE(0);
-
-            while (buffer.length < (bufferLengthOffset + length)) {
-                if (streamEnded) {
-                    sendResponse(makeError(
-                        `Unexpected end of stream: buffer length ${buffer.length} does not match expected length ${bufferLengthOffset} + ${length}`));
-                    buffer = Buffer.alloc(0);
-                    streamEnded = false;
-                    await once(process.stdin, 'readable');
-                    continue main_loop;
-                }
-                await once(process.stdin, 'readable');
-            }
-
-            const message = buffer.subarray(4, 4 + length);
-            buffer = buffer.subarray(4 + length);
+            const messageEnd = headersLength + messageLength;
+            const message = buffer.subarray(headersLength, messageEnd);
+            buffer = buffer.subarray(messageEnd);
+            messageLength = null;
             yield message.toString('utf8');
         }
     } catch (e) {
         console.error(`Error reading stdin: ${e}`);
     } finally {
-        process.stdin.off('data');
+        process.stdin.off('data', () => { });
     }
 }
 
@@ -98,7 +119,6 @@ async function handleData(messageText, prettier) {
         await handleMessage(prettier, message);
     } catch (e) {
         sendResponse(makeError(`Request JSON parse error: ${e}`));
-        return;
     }
 }
 
@@ -109,7 +129,8 @@ async function handleData(messageText, prettier) {
 // error
 
 async function handleMessage(prettier, message) {
-    console.log(`message: ${message}`);
+    // TODO kb handle message.method, message.params and message.id
+    console.log(`message: ${JSON.stringify(message)}`);
     sendResponse({ method: "hi", result: null });
 }
 
