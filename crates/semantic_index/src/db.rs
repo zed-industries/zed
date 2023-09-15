@@ -7,12 +7,13 @@ use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 use futures::channel::oneshot;
 use gpui::executor;
+use ordered_float::OrderedFloat;
 use project::{search::PathMatcher, Fs};
 use rpc::proto::Timestamp;
 use rusqlite::params;
 use rusqlite::types::Value;
 use std::{
-    cmp::Ordering,
+    cmp::Reverse,
     future::Future,
     ops::Range,
     path::{Path, PathBuf},
@@ -407,16 +408,16 @@ impl VectorDatabase {
         query_embedding: &Embedding,
         limit: usize,
         file_ids: &[i64],
-    ) -> impl Future<Output = Result<Vec<(i64, f32)>>> {
+    ) -> impl Future<Output = Result<Vec<(i64, OrderedFloat<f32>)>>> {
         let query_embedding = query_embedding.clone();
         let file_ids = file_ids.to_vec();
         self.transact(move |db| {
-            let mut results = Vec::<(i64, f32)>::with_capacity(limit + 1);
+            let mut results = Vec::<(i64, OrderedFloat<f32>)>::with_capacity(limit + 1);
             Self::for_each_span(db, &file_ids, |id, embedding| {
                 let similarity = embedding.similarity(&query_embedding);
-                let ix = match results.binary_search_by(|(_, s)| {
-                    similarity.partial_cmp(&s).unwrap_or(Ordering::Equal)
-                }) {
+                let ix = match results
+                    .binary_search_by_key(&Reverse(similarity), |(_, s)| Reverse(*s))
+                {
                     Ok(ix) => ix,
                     Err(ix) => ix,
                 };

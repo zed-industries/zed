@@ -6739,6 +6739,7 @@ dependencies = [
  "lazy_static",
  "log",
  "matrixmultiply",
+ "ordered-float",
  "parking_lot 0.11.2",
  "parse_duration",
  "picker",
