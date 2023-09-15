@@ -986,10 +986,7 @@ fn calculate_hint_updates(
                 match cached_excerpt_hints
                     .ordered_hints
                     .binary_search_by(|probe| {
-                        cached_excerpt_hints
-                            .hints_by_id
-                            .get(probe)
-                            .unwrap()
+                        cached_excerpt_hints.hints_by_id[probe]
                             .position
                             .cmp(&new_hint.position, buffer_snapshot)
                     }) {
@@ -1101,6 +1098,9 @@ fn apply_hint_update(
     cached_excerpt_hints
         .ordered_hints
         .retain(|hint_id| !new_update.remove_from_cache.contains(hint_id));
+    cached_excerpt_hints
+        .hints_by_id
+        .retain(|hint_id, _| !new_update.remove_from_cache.contains(hint_id));
     let mut splice = InlaySplice {
         to_remove: new_update.remove_from_visible,
         to_insert: Vec::new(),
@@ -3327,8 +3327,7 @@ all hints should be invalidated and requeried for all of its visible excerpts"
         for (_, excerpt_hints) in &editor.inlay_hint_cache().hints {
             let excerpt_hints = excerpt_hints.read();
             for id in &excerpt_hints.ordered_hints {
-                let inlay = excerpt_hints.hints_by_id.get(id).unwrap();
-                labels.push(inlay.text());
+                labels.push(excerpt_hints.hints_by_id[id].text());
             }
         }
 
