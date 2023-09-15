@@ -1249,7 +1249,7 @@ impl CollabPanel {
                             .collab_panel
                             .add_contact_button
                             .style_for(is_selected, state),
-                        "icons/plus_16.svg",
+                        "icons/plus.svg",
                     )
                 })
                 .with_cursor_style(CursorStyle::PointingHand)
@@ -1668,7 +1668,7 @@ impl CollabPanel {
                     cx.font_cache(),
                 ))
                 .with_child(
-                    Svg::new("icons/radix/file.svg")
+                    Svg::new("icons/file.svg")
                         .with_color(theme.channel_hash.color)
                         .constrained()
                         .with_width(theme.channel_hash.width)

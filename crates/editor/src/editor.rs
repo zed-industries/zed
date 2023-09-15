@@ -3827,7 +3827,7 @@ impl Editor {
             enum CodeActions {}
             Some(
                 MouseEventHandler::new::<CodeActions, _>(0, cx, |state, _| {
-                    Svg::new("icons/bolt_8.svg").with_color(
+                    Svg::new("icons/bolt.svg").with_color(
                         style
                             .code_actions
                             .indicator
