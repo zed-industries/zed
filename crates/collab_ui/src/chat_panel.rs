@@ -1,5 +1,6 @@
-use crate::ChatPanelSettings;
+use crate::{channel_view::ChannelView, ChatPanelSettings};
 use anyhow::Result;
+use call::ActiveCall;
 use channel::{ChannelChat, ChannelChatEvent, ChannelMessageId, ChannelStore};
 use client::Client;
 use db::kvp::KEY_VALUE_STORE;
@@ -80,8 +81,11 @@ impl ChatPanel {
             editor
         });
 
+        let workspace_handle = workspace.weak_handle();
+
         let channel_select = cx.add_view(|cx| {
             let channel_store = channel_store.clone();
+            let workspace = workspace_handle.clone();
             Select::new(0, cx, {
                 move |ix, item_type, is_hovered, cx| {
                     Self::render_channel_name(
@@ -89,7 +93,8 @@ impl ChatPanel {
                         ix,
                         item_type,
                         is_hovered,
-                        &theme::current(cx).chat_panel.channel_select,
+                        &theme::current(cx).chat_panel,
+                        workspace,
                         cx,
                     )
                 }
@@ -334,7 +339,7 @@ impl ChatPanel {
                             cx,
                             |mouse_state, _| {
                                 let button_style =
-                                    theme.collab_panel.contact_button.style_for(mouse_state);
+                                    theme.chat_panel.icon_button.style_for(mouse_state);
                                 render_icon_button(button_style, "icons/x.svg")
                                     .aligned()
                                     .into_any()
@@ -366,28 +371,62 @@ impl ChatPanel {
         ix: usize,
         item_type: ItemType,
         is_hovered: bool,
-        theme: &theme::ChannelSelect,
-        cx: &AppContext,
+        theme: &theme::ChatPanel,
+        workspace: WeakViewHandle<Workspace>,
+        cx: &mut ViewContext<Select>,
     ) -> AnyElement<Select> {
+        enum ChannelNotes {}
+        enum JoinCall {}
+
         let channel = &channel_store.read(cx).channel_at_index(ix).unwrap().1;
-        let theme = match (item_type, is_hovered) {
-            (ItemType::Header, _) => &theme.header,
-            (ItemType::Selected, false) => &theme.active_item,
-            (ItemType::Selected, true) => &theme.hovered_active_item,
-            (ItemType::Unselected, false) => &theme.item,
-            (ItemType::Unselected, true) => &theme.hovered_item,
+        let channel_id = channel.id;
+        let style = &theme.channel_select;
+        let style = match (&item_type, is_hovered) {
+            (ItemType::Header, _) => &style.header,
+            (ItemType::Selected, _) => &style.active_item,
+            (ItemType::Unselected, false) => &style.item,
+            (ItemType::Unselected, true) => &style.hovered_item,
         };
-        Flex::row()
+        let mut row = Flex::row()
             .with_child(
-                Label::new("#".to_string(), theme.hash.text.clone())
+                Label::new("#".to_string(), style.hash.text.clone())
                     .contained()
-                    .with_style(theme.hash.container),
+                    .with_style(style.hash.container),
             )
-            .with_child(Label::new(channel.name.clone(), theme.name.clone()))
-            .aligned()
-            .left()
+            .with_child(Label::new(channel.name.clone(), style.name.clone()));
+
+        if matches!(item_type, ItemType::Header) {
+            row.add_children([
+                MouseEventHandler::new::<ChannelNotes, _>(0, cx, |mouse_state, _| {
+                    render_icon_button(
+                        theme.icon_button.style_for(mouse_state),
+                        "icons/radix/file.svg",
+                    )
+                })
+                .on_click(MouseButton::Left, move |_, _, cx| {
+                    if let Some(workspace) = workspace.upgrade(cx) {
+                        ChannelView::deploy(channel_id, workspace, cx);
+                    }
+                })
+                .flex_float(),
+                MouseEventHandler::new::<JoinCall, _>(0, cx, |mouse_state, _| {
+                    render_icon_button(
+                        theme.icon_button.style_for(mouse_state),
+                        "icons/radix/speaker-loud.svg",
+                    )
+                })
+                .on_click(MouseButton::Left, move |_, _, cx| {
+                    ActiveCall::global(cx)
+                        .update(cx, |call, cx| call.join_channel(channel_id, cx))
+                        .detach_and_log_err(cx);
+                })
+                .flex_float(),
+            ]);
+        }
+
+        row.align_children_center()
             .contained()
-            .with_style(theme.container)
+            .with_style(style.container)
             .into_any()
     }
 
@@ -511,12 +550,17 @@ impl View for ChatPanel {
     }
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
+        self.has_focus = true;
         if matches!(
             *self.client.status().borrow(),
             client::Status::Connected { .. }
         ) {
             cx.focus(&self.input_editor);
         }
+    }
+
+    fn focus_out(&mut self, _: AnyViewHandle, _: &mut ViewContext<Self>) {
+        self.has_focus = false;
     }
 }
 
@@ -594,7 +638,7 @@ fn format_timestamp(
     }
 }
 
-fn render_icon_button(style: &IconButton, svg_path: &'static str) -> impl Element<ChatPanel> {
+fn render_icon_button<V: View>(style: &IconButton, svg_path: &'static str) -> impl Element<V> {
     Svg::new(svg_path)
         .with_color(style.color)
         .constrained()

@@ -6,7 +6,7 @@ use crate::{
 
 pub struct Select {
     handle: WeakViewHandle<Self>,
-    render_item: Box<dyn Fn(usize, ItemType, bool, &AppContext) -> AnyElement<Self>>,
+    render_item: Box<dyn Fn(usize, ItemType, bool, &mut ViewContext<Select>) -> AnyElement<Self>>,
     selected_item_ix: usize,
     item_count: usize,
     is_open: bool,
@@ -29,7 +29,9 @@ pub enum ItemType {
 pub enum Event {}
 
 impl Select {
-    pub fn new<F: 'static + Fn(usize, ItemType, bool, &AppContext) -> AnyElement<Self>>(
+    pub fn new<
+        F: 'static + Fn(usize, ItemType, bool, &mut ViewContext<Self>) -> AnyElement<Self>,
+    >(
         item_count: usize,
         cx: &mut ViewContext<Self>,
         render_item: F,

@@ -3,6 +3,7 @@ import {
     border,
     text,
 } from "./components"
+import { icon_button } from "../component/icon_button"
 import { useTheme } from "../theme"
 
 export default function chat_panel(): any {
@@ -46,15 +47,16 @@ export default function chat_panel(): any {
                 ...channel_name,
                 background: background(layer, "on", "hovered"),
             },
-            hovered_active_item: {
-                ...channel_name,
-                background: background(layer, "on", "active"),
-            },
             menu: {
                 background: background(layer, "on"),
                 border: border(layer, { bottom: true })
             }
         },
+        icon_button: icon_button({
+            variant: "ghost",
+            color: "variant",
+            size: "sm",
+        }),
         input_editor: {
             background: background(layer, "on"),
             corner_radius: 6,

@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use call::ActiveCall;
 use channel::{ChannelBuffer, ChannelBufferEvent, ChannelId};
 use client::proto;
 use clock::ReplicaId;
@@ -35,6 +36,30 @@ pub struct ChannelView {
 }
 
 impl ChannelView {
+    pub fn deploy(channel_id: ChannelId, workspace: ViewHandle<Workspace>, cx: &mut AppContext) {
+        let pane = workspace.read(cx).active_pane().clone();
+        let channel_view = Self::open(channel_id, pane.clone(), workspace.clone(), cx);
+        cx.spawn(|mut cx| async move {
+            let channel_view = channel_view.await?;
+            pane.update(&mut cx, |pane, cx| {
+                let room_id = ActiveCall::global(cx)
+                    .read(cx)
+                    .room()
+                    .map(|room| room.read(cx).id());
+                ActiveCall::report_call_event_for_room(
+                    "open channel notes",
+                    room_id,
+                    Some(channel_id),
+                    &workspace.read(cx).app_state().client,
+                    cx,
+                );
+                pane.add_item(Box::new(channel_view), true, true, None, cx);
+            });
+            anyhow::Ok(())
+        })
+        .detach();
+    }
+
     pub fn open(
         channel_id: ChannelId,
         pane: ViewHandle<Pane>,

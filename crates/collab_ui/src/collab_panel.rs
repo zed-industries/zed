@@ -2252,29 +2252,7 @@ impl CollabPanel {
 
     fn open_channel_notes(&mut self, action: &OpenChannelNotes, cx: &mut ViewContext<Self>) {
         if let Some(workspace) = self.workspace.upgrade(cx) {
-            let pane = workspace.read(cx).active_pane().clone();
-            let channel_id = action.channel_id;
-            let channel_view = ChannelView::open(channel_id, pane.clone(), workspace, cx);
-            cx.spawn(|_, mut cx| async move {
-                let channel_view = channel_view.await?;
-                pane.update(&mut cx, |pane, cx| {
-                    pane.add_item(Box::new(channel_view), true, true, None, cx)
-                });
-                anyhow::Ok(())
-            })
-            .detach();
-            let room_id = ActiveCall::global(cx)
-                .read(cx)
-                .room()
-                .map(|room| room.read(cx).id());
-
-            ActiveCall::report_call_event_for_room(
-                "open channel notes",
-                room_id,
-                Some(channel_id),
-                &self.client,
-                cx,
-            );
+            ChannelView::deploy(action.channel_id, workspace, cx);
         }
     }
 
@@ -2436,8 +2414,6 @@ impl CollabPanel {
     }
 
     fn join_channel_chat(&mut self, channel_id: u64, cx: &mut ViewContext<Self>) {
-        self.open_channel_notes(&OpenChannelNotes { channel_id }, cx);
-
         if let Some(workspace) = self.workspace.upgrade(cx) {
             cx.app_context().defer(move |cx| {
                 workspace.update(cx, |workspace, cx| {

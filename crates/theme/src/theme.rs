@@ -635,6 +635,7 @@ pub struct ChatPanel {
     pub message: ChatMessage,
     pub pending_message: ChatMessage,
     pub sign_in_prompt: Interactive<TextStyle>,
+    pub icon_button: Interactive<IconButton>,
 }
 
 #[derive(Deserialize, Default, JsonSchema)]
@@ -654,7 +655,6 @@ pub struct ChannelSelect {
     pub item: ChannelName,
     pub active_item: ChannelName,
     pub hovered_item: ChannelName,
-    pub hovered_active_item: ChannelName,
     pub menu: ContainerStyle,
 }
 
