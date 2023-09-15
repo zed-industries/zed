@@ -5,13 +5,12 @@ use crate::{
     channel_view::{self, ChannelView},
     chat_panel::ChatPanel,
     face_pile::FacePile,
-    CollaborationPanelSettings,
+    panel_settings, CollaborationPanelSettings,
 };
 use anyhow::Result;
 use call::ActiveCall;
-use channel::{Channel, ChannelEvent, ChannelId, ChannelStore, ChannelPath};
-use channel_modal::ChannelModal;
 use channel::{Channel, ChannelEvent, ChannelId, ChannelPath, ChannelStore};
+use channel_modal::ChannelModal;
 use client::{proto::PeerId, Client, Contact, User, UserStore};
 use contact_finder::ContactFinder;
 use context_menu::{ContextMenu, ContextMenuItem};
@@ -195,7 +194,6 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(CollabPanel::collapse_selected_channel);
     cx.add_action(CollabPanel::expand_selected_channel);
     cx.add_action(CollabPanel::open_channel_notes);
-    cx.add_action(CollabPanel::open_channel_buffer);
 
     cx.add_action(
         |panel: &mut CollabPanel, action: &StartMoveChannel, _: &mut ViewContext<CollabPanel>| {

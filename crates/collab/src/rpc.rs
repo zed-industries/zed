@@ -3,8 +3,8 @@ mod connection_pool;
 use crate::{
     auth,
     db::{
-        self, Channel, ChannelId, ChannelsForUser, Database, MessageId, ProjectId, RoomId, ServerId, User,
-        UserId,
+        self, Channel, ChannelId, ChannelsForUser, Database, MessageId, ProjectId, RoomId,
+        ServerId, User, UserId,
     },
     executor::Executor,
     AppState, Result,

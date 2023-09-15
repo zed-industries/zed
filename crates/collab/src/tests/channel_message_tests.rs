@@ -15,7 +15,12 @@ async fn test_basic_channel_messages(
     let client_b = server.create_client(cx_b, "user_b").await;
 
     let channel_id = server
-        .make_channel("the-channel", (&client_a, cx_a), &mut [(&client_b, cx_b)])
+        .make_channel(
+            "the-channel",
+            None,
+            (&client_a, cx_a),
+            &mut [(&client_b, cx_b)],
+        )
         .await;
 
     let channel_chat_a = client_a
@@ -68,7 +73,12 @@ async fn test_rejoin_channel_chat(
     let client_b = server.create_client(cx_b, "user_b").await;
 
     let channel_id = server
-        .make_channel("the-channel", (&client_a, cx_a), &mut [(&client_b, cx_b)])
+        .make_channel(
+            "the-channel",
+            None,
+            (&client_a, cx_a),
+            &mut [(&client_b, cx_b)],
+        )
         .await;
 
     let channel_chat_a = client_a
@@ -139,6 +149,7 @@ async fn test_remove_channel_message(
     let channel_id = server
         .make_channel(
             "the-channel",
+            None,
             (&client_a, cx_a),
             &mut [(&client_b, cx_b), (&client_c, cx_c)],
         )

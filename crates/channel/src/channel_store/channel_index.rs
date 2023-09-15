@@ -2,34 +2,12 @@ use std::{ops::Deref, sync::Arc};
 
 use collections::HashMap;
 use rpc::proto;
-use serde_derive::{Deserialize, Serialize};
 
 use crate::{Channel, ChannelId};
 
+use super::ChannelPath;
+
 pub type ChannelsById = HashMap<ChannelId, Arc<Channel>>;
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
-pub struct ChannelPath(Arc<[ChannelId]>);
-
-impl Deref for ChannelPath {
-    type Target = [ChannelId];
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl ChannelPath {
-    pub fn parent_id(&self) -> Option<ChannelId> {
-        self.0.len().checked_sub(2).map(|i| self.0[i])
-    }
-}
-
-impl Default for ChannelPath {
-    fn default() -> Self {
-        ChannelPath(Arc::from([]))
-    }
-}
 
 #[derive(Default, Debug)]
 pub struct ChannelIndex {

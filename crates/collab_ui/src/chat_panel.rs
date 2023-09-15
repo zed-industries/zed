@@ -167,7 +167,7 @@ impl ChatPanel {
                     .channel_store
                     .read(cx)
                     .channel_at_index(selected_ix)
-                    .map(|e| e.1.id);
+                    .map(|e| e.0.id);
                 if let Some(selected_channel_id) = selected_channel_id {
                     this.select_channel(selected_channel_id, cx)
                         .detach_and_log_err(cx);
@@ -391,7 +391,7 @@ impl ChatPanel {
             (ItemType::Unselected, true) => &theme.channel_select.hovered_item,
         };
 
-        let channel = &channel_store.read(cx).channel_at_index(ix).unwrap().1;
+        let channel = &channel_store.read(cx).channel_at_index(ix).unwrap().0;
         let channel_id = channel.id;
 
         let mut row = Flex::row()

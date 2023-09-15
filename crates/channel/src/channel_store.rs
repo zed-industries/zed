@@ -7,11 +7,11 @@ use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
 use rpc::{proto, TypedEnvelope};
-use std::{mem, sync::Arc, time::Duration};
+use serde_derive::{Deserialize, Serialize};
+use std::{mem, ops::Deref, sync::Arc, time::Duration};
 use util::ResultExt;
 
 use self::channel_index::ChannelIndex;
-pub use self::channel_index::ChannelPath;
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -38,6 +38,29 @@ pub struct ChannelStore {
 pub struct Channel {
     pub id: ChannelId,
     pub name: String,
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
+pub struct ChannelPath(Arc<[ChannelId]>);
+
+impl Deref for ChannelPath {
+    type Target = [ChannelId];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl ChannelPath {
+    pub fn parent_id(&self) -> Option<ChannelId> {
+        self.0.len().checked_sub(2).map(|i| self.0[i])
+    }
+}
+
+impl Default for ChannelPath {
+    fn default() -> Self {
+        ChannelPath(Arc::from([]))
+    }
 }
 
 pub struct ChannelMembership {

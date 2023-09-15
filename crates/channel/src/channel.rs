@@ -4,7 +4,9 @@ mod channel_store;
 
 pub use channel_buffer::{ChannelBuffer, ChannelBufferEvent};
 pub use channel_chat::{ChannelChat, ChannelChatEvent, ChannelMessage, ChannelMessageId};
-pub use channel_store::{Channel, ChannelEvent, ChannelId, ChannelMembership, ChannelStore};
+pub use channel_store::{
+    Channel, ChannelEvent, ChannelId, ChannelMembership, ChannelPath, ChannelStore,
+};
 
 use client::Client;
 use std::sync::Arc;
