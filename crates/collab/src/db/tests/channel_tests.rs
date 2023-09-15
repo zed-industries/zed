@@ -664,7 +664,7 @@ async fn test_channels_moving(db: &Arc<Database>) {
         .unlink_channel(
             a_id,
             livestreaming_dag_sub_id,
-            Some(livestreaming_id),
+            livestreaming_id,
         )
         .await
         .unwrap();
@@ -688,7 +688,7 @@ async fn test_channels_moving(db: &Arc<Database>) {
 
     // ========================================================================
     // Test unlinking in a complex DAG by removing the inner link
-    db.unlink_channel(a_id, livestreaming_id, Some(gpui2_id))
+    db.unlink_channel(a_id, livestreaming_id, gpui2_id)
         .await
         .unwrap();
 
@@ -709,7 +709,7 @@ async fn test_channels_moving(db: &Arc<Database>) {
 
     // ========================================================================
     // Test moving DAG nodes by moving livestreaming to be below gpui2
-    db.move_channel(a_id, livestreaming_id, Some(crdb_id), gpui2_id)
+    db.move_channel(a_id, livestreaming_id, crdb_id, gpui2_id)
         .await
         .unwrap();
 
@@ -746,7 +746,7 @@ async fn test_channels_moving(db: &Arc<Database>) {
 
     // ========================================================================
     // Unlinking a channel from it's parent should automatically promote it to a root channel
-    db.unlink_channel(a_id, crdb_id, Some(zed_id))
+    db.unlink_channel(a_id, crdb_id, zed_id)
         .await
         .unwrap();
 
@@ -755,26 +755,6 @@ async fn test_channels_moving(db: &Arc<Database>) {
     // zed
     //    \- livestreaming - livestreaming_dag - livestreaming_dag_sub
 
-    let result = db.get_channels_for_user(a_id).await.unwrap();
-    assert_dag(result.channels, &[
-        (zed_id, None),
-        (crdb_id, None),
-        (livestreaming_id, Some(zed_id)),
-        (livestreaming_dag_id, Some(livestreaming_id)),
-        (livestreaming_dag_sub_id, Some(livestreaming_dag_id)),
-    ]);
-
-    // ========================================================================
-    // Unlinking a root channel should not have any effect
-    db.unlink_channel(a_id, crdb_id, None)
-        .await
-        .unwrap();
-
-    // DAG is now:
-    // crdb
-    // zed
-    //    \- livestreaming - livestreaming_dag - livestreaming_dag_sub
-    //
     let result = db.get_channels_for_user(a_id).await.unwrap();
     assert_dag(result.channels, &[
         (zed_id, None),
@@ -786,7 +766,7 @@ async fn test_channels_moving(db: &Arc<Database>) {
 
     // ========================================================================
     // You should be able to move a root channel into a non-root channel
-    db.move_channel(a_id, crdb_id, None, zed_id)
+    db.link_channel(a_id, crdb_id, zed_id)
         .await
         .unwrap();
 
@@ -805,8 +785,8 @@ async fn test_channels_moving(db: &Arc<Database>) {
 
 
     // ========================================================================
-    // Moving a non-root channel without a parent id should be the equivalent of a link operation
-    db.move_channel(a_id, livestreaming_id, None, crdb_id)
+    // Prep for DAG deletion test
+    db.link_channel(a_id, livestreaming_id, crdb_id)
         .await
         .unwrap();
 
@@ -824,10 +804,10 @@ async fn test_channels_moving(db: &Arc<Database>) {
         (livestreaming_dag_sub_id, Some(livestreaming_dag_id)),
     ]);
 
-    // ========================================================================
-    // Deleting a parent of a DAG should delete the whole DAG:
+    // Deleting the parent of a DAG should delete the whole DAG:
     db.delete_channel(zed_id, a_id).await.unwrap();
     let result = db.get_channels_for_user(a_id).await.unwrap();
+
     assert!(
         result.channels.is_empty()
     )

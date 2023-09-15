@@ -48,7 +48,6 @@ impl Database {
             .insert(&*tx)
             .await?;
 
-            let channel_paths_stmt;
             if let Some(parent) = parent {
                 let sql = r#"
                     INSERT INTO channel_paths
@@ -60,7 +59,7 @@ impl Database {
                     WHERE
                         channel_id = $3
                 "#;
-                channel_paths_stmt = Statement::from_sql_and_values(
+                let channel_paths_stmt = Statement::from_sql_and_values(
                     self.pool.get_database_backend(),
                     sql,
                     [
@@ -796,6 +795,8 @@ impl Database {
                 return Err(anyhow!("Cannot create a channel cycle").into());
             }
         }
+
+        // Now insert all of the new paths
         let sql = r#"
                 INSERT INTO channel_paths
                 (id_path, channel_id)
@@ -832,6 +833,21 @@ impl Database {
             }
         }
 
+        // If we're linking a channel, remove any root edges for the channel
+        {
+            let sql = r#"
+                    DELETE FROM channel_paths
+                    WHERE
+                        id_path = '/' || $1 || '/'
+                "#;
+            let channel_paths_stmt = Statement::from_sql_and_values(
+                self.pool.get_database_backend(),
+                sql,
+                [channel.to_proto().into()],
+            );
+            tx.execute(channel_paths_stmt).await?;
+        }
+
         if let Some(channel) = from_descendants.get_mut(&channel) {
             // Remove the other parents
             channel.clear();
@@ -849,7 +865,7 @@ impl Database {
         &self,
         user: UserId,
         channel: ChannelId,
-        from: Option<ChannelId>,
+        from: ChannelId,
     ) -> Result<()> {
         self.transaction(|tx| async move {
             // Note that even with these maxed permissions, this linking operation
@@ -926,10 +942,6 @@ impl Database {
 
             self.unlink_channel_internal(user, channel, from, &*tx)
                 .await?;
-
-            dbg!(channel_path::Entity::find().all(&*tx).await);
-
-            dbg!(&moved_channels);
 
             Ok(moved_channels)
         })

@@ -114,7 +114,7 @@ struct PutChannel {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct UnlinkChannel {
     channel_id: ChannelId,
-    parent_id: Option<ChannelId>,
+    parent_id: ChannelId,
 }
 
 actions!(
@@ -218,19 +218,21 @@ pub fn init(cx: &mut AppContext) {
                 match copy {
                     ChannelCopy::Move {
                         channel_id,
-                        parent_id,
+                        parent_id: Some(parent_id),
                     } => panel.channel_store.update(cx, |channel_store, cx| {
                         channel_store
                             .move_channel(channel_id, parent_id, action.to, cx)
                             .detach_and_log_err(cx)
                     }),
-                    ChannelCopy::Link(channel) => {
-                        panel.channel_store.update(cx, |channel_store, cx| {
-                            channel_store
-                                .link_channel(channel, action.to, cx)
-                                .detach_and_log_err(cx)
-                        })
-                    }
+                    ChannelCopy::Link(channel)
+                    | ChannelCopy::Move {
+                        channel_id: channel,
+                        parent_id: None,
+                    } => panel.channel_store.update(cx, |channel_store, cx| {
+                        channel_store
+                            .link_channel(channel, action.to, cx)
+                            .detach_and_log_err(cx)
+                    }),
                 }
             }
         },
@@ -2142,17 +2144,15 @@ impl CollabPanel {
                     ContextMenuItem::Separator,
                 ]);
 
-                items.push(ContextMenuItem::action(
-                    if parent_id.is_some() {
-                        "Unlink from parent"
-                    } else {
-                        "Unlink from root"
-                    },
-                    UnlinkChannel {
-                        channel_id: location.channel,
-                        parent_id,
-                    },
-                ));
+                if let Some(parent_id) = parent_id {
+                    items.push(ContextMenuItem::action(
+                        "Unlink from parent",
+                        UnlinkChannel {
+                            channel_id: location.channel,
+                            parent_id,
+                        },
+                    ));
+                }
 
                 items.extend([
                     ContextMenuItem::action(

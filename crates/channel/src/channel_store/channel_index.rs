@@ -62,16 +62,13 @@ impl ChannelIndex {
 
     /// Remove the given edge from this index. This will not remove the channel.
     /// If this operation would result in a dangling edge, re-insert it.
-    pub fn delete_edge(&mut self, parent_id: Option<ChannelId>, channel_id: ChannelId) {
-        if let Some(parent_id) = parent_id {
-            self.paths.retain(|path| {
-                !path
-                    .windows(2)
-                    .any(|window| window == [parent_id, channel_id])
-            });
-        } else {
-            self.paths.retain(|path| path.first() != Some(&channel_id));
-        }
+    pub fn delete_edge(&mut self, parent_id: ChannelId, channel_id: ChannelId) {
+        self.paths.retain(|path| {
+            !path
+                .windows(2)
+                .any(|window| window == [parent_id, channel_id])
+        });
+
 
         // Ensure that there is at least one channel path in the index
         if !self

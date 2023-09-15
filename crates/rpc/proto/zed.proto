@@ -1091,12 +1091,12 @@ message LinkChannel {
 
 message UnlinkChannel {
     uint64 channel_id = 1;
-    optional uint64 from = 2;
+    uint64 from = 2;
 }
 
 message MoveChannel {
     uint64 channel_id = 1;
-    optional uint64 from = 2;
+    uint64 from = 2;
     uint64 to = 3;
 }
 

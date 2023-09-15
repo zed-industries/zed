@@ -346,7 +346,7 @@ impl ChannelStore {
     pub fn unlink_channel(
         &mut self,
         channel_id: ChannelId,
-        from: Option<ChannelId>,
+        from: ChannelId,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let client = self.client.clone();
@@ -362,7 +362,7 @@ impl ChannelStore {
     pub fn move_channel(
         &mut self,
         channel_id: ChannelId,
-        from: Option<ChannelId>,
+        from: ChannelId,
         to: ChannelId,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {

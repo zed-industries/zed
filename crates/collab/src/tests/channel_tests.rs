@@ -905,10 +905,15 @@ async fn test_channel_moving(
             (&client_a, cx_a),
         )
         .await;
-    let channel_a_a_id = channels[0];
-    let channel_a_b_id = channels[1];
-    let channel_a_c_id = channels[2];
-    let channel_a_d_id = channels[3];
+    let channel_a_id = channels[0];
+    let channel_b_id = channels[1];
+    let channel_c_id = channels[2];
+    let channel_d_id = channels[3];
+
+    dbg!(channel_a_id);
+    dbg!(channel_b_id);
+    dbg!(channel_c_id);
+    dbg!(channel_d_id);
 
     // Current shape:
     // a - b - c - d
@@ -916,17 +921,17 @@ async fn test_channel_moving(
         client_a.channel_store(),
         cx_a,
         &[
-            (channel_a_a_id, 0),
-            (channel_a_b_id, 1),
-            (channel_a_c_id, 2),
-            (channel_a_d_id, 3),
+            (channel_a_id, 0),
+            (channel_b_id, 1),
+            (channel_c_id, 2),
+            (channel_d_id, 3),
         ],
     );
 
     client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
-            channel_store.move_channel(channel_a_d_id, Some(channel_a_c_id), channel_a_b_id, cx)
+            channel_store.move_channel(channel_d_id, channel_c_id, channel_b_id, cx)
         })
         .await
         .unwrap();
@@ -938,17 +943,17 @@ async fn test_channel_moving(
         client_a.channel_store(),
         cx_a,
         &[
-            (channel_a_a_id, 0),
-            (channel_a_b_id, 1),
-            (channel_a_c_id, 2),
-            (channel_a_d_id, 2),
+            (channel_a_id, 0),
+            (channel_b_id, 1),
+            (channel_c_id, 2),
+            (channel_d_id, 2),
         ],
     );
 
     client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
-            channel_store.link_channel(channel_a_d_id, channel_a_c_id, cx)
+            channel_store.link_channel(channel_d_id, channel_c_id, cx)
         })
         .await
         .unwrap();
@@ -960,11 +965,11 @@ async fn test_channel_moving(
         client_a.channel_store(),
         cx_a,
         &[
-            (channel_a_a_id, 0),
-            (channel_a_b_id, 1),
-            (channel_a_c_id, 2),
-            (channel_a_d_id, 3),
-            (channel_a_d_id, 2),
+            (channel_a_id, 0),
+            (channel_b_id, 1),
+            (channel_c_id, 2),
+            (channel_d_id, 3),
+            (channel_d_id, 2),
         ],
     );
 
@@ -978,9 +983,9 @@ async fn test_channel_moving(
             (&client_b, cx_b),
         )
         .await;
-    let channel_b_mu_id = b_channels[0];
-    let channel_b_gamma_id = b_channels[1];
-    let channel_b_epsilon_id = b_channels[2];
+    let channel_mu_id = b_channels[0];
+    let channel_ga_id = b_channels[1];
+    let channel_ep_id = b_channels[2];
 
     // Current shape for B:
     //    /- ep
@@ -989,13 +994,13 @@ async fn test_channel_moving(
         client_b.channel_store(),
         cx_b,
         &[
-            (channel_b_mu_id, 0),
-            (channel_b_gamma_id, 1),
-            (channel_b_epsilon_id, 1)
+            (channel_mu_id, 0),
+            (channel_ga_id, 1),
+            (channel_ep_id, 1)
         ],
     );
 
-    client_a.add_admin_to_channel((&client_b, cx_b), channel_a_b_id, cx_a).await;
+    client_a.add_admin_to_channel((&client_b, cx_b), channel_b_id, cx_a).await;
     // Current shape for B:
     //    /- ep
     // mu -- ga
@@ -1006,51 +1011,51 @@ async fn test_channel_moving(
         cx_b,
         &[
             // B's old channels
-            (channel_b_mu_id, 0),
-            (channel_b_gamma_id, 1),
-            (channel_b_epsilon_id, 1),
+            (channel_mu_id, 0),
+            (channel_ga_id, 1),
+            (channel_ep_id, 1),
 
             // New channels from a
-            (channel_a_b_id, 0),
-            (channel_a_c_id, 1),
-            (channel_a_d_id, 1),
-            (channel_a_d_id, 2),
+            (channel_b_id, 0),
+            (channel_c_id, 1),
+            (channel_d_id, 1),
+            (channel_d_id, 2),
         ],
     );
+
+    // client_b
+    //     .channel_store()
+    //     .update(cx_a, |channel_store, cx| {
+    //         channel_store.move_channel(channel_a_b_id, None, channel_b_epsilon_id, cx)
+    //     })
+    //     .await
+    //     .unwrap();
+
+    // // Current shape for B:
+    // //              /---------\
+    // //    /- ep -- b  -- c  -- d
+    // // mu -- ga
+    // assert_channels_list_shape(
+    //     client_b.channel_store(),
+    //     cx_b,
+    //     &[
+    //         // B's old channels
+    //         (channel_b_mu_id, 0),
+    //         (channel_b_gamma_id, 1),
+    //         (channel_b_epsilon_id, 1),
+
+    //         // New channels from a, now under epsilon
+    //         (channel_a_b_id, 2),
+    //         (channel_a_c_id, 3),
+    //         (channel_a_d_id, 3),
+    //         (channel_a_d_id, 4),
+    //     ],
+    // );
 
     client_b
         .channel_store()
         .update(cx_a, |channel_store, cx| {
-            channel_store.move_channel(channel_a_b_id, None, channel_b_epsilon_id, cx)
-        })
-        .await
-        .unwrap();
-
-    // Current shape for B:
-    //              /---------\
-    //    /- ep -- b  -- c  -- d
-    // mu -- ga
-    assert_channels_list_shape(
-        client_b.channel_store(),
-        cx_b,
-        &[
-            // B's old channels
-            (channel_b_mu_id, 0),
-            (channel_b_gamma_id, 1),
-            (channel_b_epsilon_id, 1),
-
-            // New channels from a, now under epsilon
-            (channel_a_b_id, 2),
-            (channel_a_c_id, 3),
-            (channel_a_d_id, 3),
-            (channel_a_d_id, 4),
-        ],
-    );
-
-    client_b
-        .channel_store()
-        .update(cx_a, |channel_store, cx| {
-            channel_store.link_channel(channel_b_gamma_id, channel_a_b_id, cx)
+            channel_store.link_channel(channel_ga_id, channel_b_id, cx)
         })
         .await
         .unwrap();
@@ -1065,16 +1070,16 @@ async fn test_channel_moving(
         cx_b,
         &[
             // B's old channels
-            (channel_b_mu_id, 0),
-            (channel_b_gamma_id, 1),
-            (channel_b_epsilon_id, 1),
+            (channel_mu_id, 0),
+            (channel_ga_id, 1),
+            (channel_ep_id, 1),
 
             // New channels from a, now under epsilon, with gamma
-            (channel_a_b_id, 2),
-            (channel_b_gamma_id, 3),
-            (channel_a_c_id, 3),
-            (channel_a_d_id, 3),
-            (channel_a_d_id, 4),
+            (channel_b_id, 2),
+            (channel_ga_id, 3),
+            (channel_c_id, 3),
+            (channel_d_id, 3),
+            (channel_d_id, 4),
         ],
     );
 
@@ -1083,12 +1088,12 @@ async fn test_channel_moving(
         client_a.channel_store(),
         cx_a,
         &[
-            (channel_a_a_id, 0),
-            (channel_a_b_id, 1),
-            (channel_b_gamma_id, 1),
-            (channel_a_c_id, 2),
-            (channel_a_d_id, 3),
-            (channel_a_d_id, 2),
+            (channel_a_id, 0),
+            (channel_b_id, 1),
+            (channel_ga_id, 1),
+            (channel_c_id, 2),
+            (channel_d_id, 3),
+            (channel_d_id, 2),
         ],
     );
     // TODO: Make sure to test that non-local root removing problem I was thinking about
