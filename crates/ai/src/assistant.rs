@@ -2376,7 +2376,7 @@ impl ConversationEditor {
                                 .with_children(
                                     if let MessageStatus::Error(error) = &message.status {
                                         Some(
-                                            Svg::new("icons/circle_x_mark_12.svg")
+                                            Svg::new("icons/error.svg")
                                                 .with_color(style.error_icon.color)
                                                 .constrained()
                                                 .with_width(style.error_icon.width)
@@ -2704,7 +2704,7 @@ impl View for InlineAssistant {
                     )
                     .with_children(if let Some(error) = self.codegen.read(cx).error() {
                         Some(
-                            Svg::new("icons/circle_x_mark_12.svg")
+                            Svg::new("icons/error.svg")
                                 .with_color(theme.assistant.error_icon.color)
                                 .constrained()
                                 .with_width(theme.assistant.error_icon.width)

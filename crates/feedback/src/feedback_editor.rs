@@ -276,7 +276,7 @@ impl Item for FeedbackEditor {
     ) -> AnyElement<T> {
         Flex::row()
             .with_child(
-                Svg::new("icons/feedback_16.svg")
+                Svg::new("icons/feedback.svg")
                     .with_color(style.label.text.color)
                     .constrained()
                     .with_width(style.type_icon_width)

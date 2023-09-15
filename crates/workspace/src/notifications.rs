@@ -292,7 +292,7 @@ pub mod simple_message_notification {
                         .with_child(
                             MouseEventHandler::new::<Cancel, _>(0, cx, |state, _| {
                                 let style = theme.dismiss_button.style_for(state);
-                                Svg::new("icons/x_mark_8.svg")
+                                Svg::new("icons/x.svg")
                                     .with_color(style.color)
                                     .constrained()
                                     .with_width(style.icon_width)
