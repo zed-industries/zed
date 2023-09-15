@@ -1621,7 +1621,7 @@ impl CollabPanel {
                                     }))
                                     .into_any()
                             } else if row_hovered {
-                                Svg::new("icons/radix/speaker-loud.svg")
+                                Svg::new("icons/speaker-loud.svg")
                                     .with_color(theme.channel_hash.color)
                                     .constrained()
                                     .with_width(theme.channel_hash.width)

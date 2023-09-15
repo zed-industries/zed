@@ -405,10 +405,7 @@ impl ChatPanel {
         if matches!(item_type, ItemType::Header) {
             row.add_children([
                 MouseEventHandler::new::<OpenChannelNotes, _>(0, cx, |mouse_state, _| {
-                    render_icon_button(
-                        theme.icon_button.style_for(mouse_state),
-                        "icons/radix/file.svg",
-                    )
+                    render_icon_button(theme.icon_button.style_for(mouse_state), "icons/file.svg")
                 })
                 .on_click(MouseButton::Left, move |_, _, cx| {
                     if let Some(workspace) = workspace.upgrade(cx) {
@@ -426,7 +423,7 @@ impl ChatPanel {
                 MouseEventHandler::new::<ActiveCall, _>(0, cx, |mouse_state, _| {
                     render_icon_button(
                         theme.icon_button.style_for(mouse_state),
-                        "icons/radix/speaker-loud.svg",
+                        "icons/speaker-loud.svg",
                     )
                 })
                 .on_click(MouseButton::Left, move |_, _, cx| {
