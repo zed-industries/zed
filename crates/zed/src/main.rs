@@ -119,12 +119,6 @@ fn main() {
     app.run(move |cx| {
         cx.set_global(*RELEASE_CHANNEL);
 
-        #[cfg(debug_assertions)]
-        {
-            use feature_flags::FeatureFlagAppExt;
-            cx.set_staff(true);
-        }
-
         let mut store = SettingsStore::default();
         store
             .set_default_settings(default_settings().as_ref(), cx)

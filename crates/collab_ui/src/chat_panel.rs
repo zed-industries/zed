@@ -5,6 +5,7 @@ use channel::{ChannelChat, ChannelChatEvent, ChannelMessageId, ChannelStore};
 use client::Client;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
+use feature_flags::{ChannelsAlpha, FeatureFlagAppExt};
 use gpui::{
     actions,
     elements::*,
@@ -628,9 +629,14 @@ impl Panel for ChatPanel {
         cx.notify();
     }
 
+    fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
+        if active && !is_chat_feature_enabled(cx) {
+            cx.emit(Event::Dismissed);
+        }
+    }
+
     fn icon_path(&self, cx: &gpui::WindowContext) -> Option<&'static str> {
-        settings::get::<ChatPanelSettings>(cx)
-            .button
+        (settings::get::<ChatPanelSettings>(cx).button && is_chat_feature_enabled(cx))
             .then(|| "icons/conversations.svg")
     }
 
@@ -642,6 +648,10 @@ impl Panel for ChatPanel {
         matches!(event, Event::DockPositionChanged)
     }
 
+    fn should_close_on_event(event: &Self::Event) -> bool {
+        matches!(event, Event::Dismissed)
+    }
+
     fn has_focus(&self, _cx: &gpui::WindowContext) -> bool {
         self.has_focus
     }
@@ -649,6 +659,10 @@ impl Panel for ChatPanel {
     fn is_focus_event(event: &Self::Event) -> bool {
         matches!(event, Event::Focus)
     }
+}
+
+fn is_chat_feature_enabled(cx: &gpui::WindowContext<'_>) -> bool {
+    cx.is_staff() || cx.has_flag::<ChannelsAlpha>()
 }
 
 fn format_timestamp(
