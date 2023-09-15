@@ -1,3 +1,4 @@
+use collections::{HashMap, HashSet};
 use rpc::{proto, ConnectionId};
 
 use crate::{
@@ -459,12 +460,12 @@ async fn test_channel_renames(db: &Arc<Database>) {
 }
 
 test_both_dbs!(
-    test_channels_moving,
+    test_db_channel_moving,
     test_channels_moving_postgres,
     test_channels_moving_sqlite
 );
 
-async fn test_channels_moving(db: &Arc<Database>) {
+async fn test_db_channel_moving(db: &Arc<Database>) {
     let a_id = db
         .create_user(
             "user1@example.com",
@@ -661,9 +662,9 @@ async fn test_channels_moving(db: &Arc<Database>) {
             (zed_id, None),
             (crdb_id, Some(zed_id)),
             (gpui2_id, Some(zed_id)),
-            (livestreaming_id, Some(gpui2_id)),
             (livestreaming_id, Some(zed_id)),
             (livestreaming_id, Some(crdb_id)),
+            (livestreaming_id, Some(gpui2_id)),
             (livestreaming_dag_id, Some(livestreaming_id)),
             (livestreaming_dag_sub_id, Some(livestreaming_id)),
             (livestreaming_dag_sub_id, Some(livestreaming_dag_id)),
@@ -836,10 +837,25 @@ async fn test_channels_moving(db: &Arc<Database>) {
 
 #[track_caller]
 fn assert_dag(actual: Vec<Channel>, expected: &[(ChannelId, Option<ChannelId>)]) {
+    /// This is used to allow tests to be ordering independent
+    fn make_parents_map(association_table: impl IntoIterator<Item= (ChannelId, Option<ChannelId>)>) -> HashMap<ChannelId, HashSet<ChannelId>> {
+        let mut map: HashMap<ChannelId, HashSet<ChannelId>> = HashMap::default();
+
+        for (child, parent) in association_table {
+            let entry = map.entry(child).or_default();
+            if let Some(parent) = parent {
+                entry.insert(parent);
+            }
+        }
+
+        map
+    }
     let actual = actual
         .iter()
-        .map(|channel| (channel.id, channel.parent_id))
-        .collect::<Vec<_>>();
+        .map(|channel| (channel.id, channel.parent_id));
 
-    pretty_assertions::assert_eq!(actual, expected)
+    let actual_map = make_parents_map(actual);
+    let expected_map = make_parents_map(expected.iter().copied());
+
+    pretty_assertions::assert_eq!(actual_map, expected_map)
 }
