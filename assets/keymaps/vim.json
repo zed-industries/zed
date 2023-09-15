@@ -452,6 +452,8 @@
       "shift-o": "vim::OtherEnd",
       "d": "vim::VisualDelete",
       "x": "vim::VisualDelete",
+      "shift-d": "vim::VisualDelete",
+      "shift-x": "vim::VisualDelete",
       "y": "vim::VisualYank",
       "p": "vim::Paste",
       "shift-p": [
