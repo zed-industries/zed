@@ -132,9 +132,9 @@ impl<V: 'static> CollabPanelElement<V> {
                 div().flex().h_full().gap_1().items_center().child(
                     svg()
                         .path(if expanded {
-                            "icons/radix/caret-down.svg"
+                            "icons/caret_down.svg"
                         } else {
-                            "icons/radix/caret-up.svg"
+                            "icons/caret_up.svg"
                         })
                         .w_3p5()
                         .h_3p5()

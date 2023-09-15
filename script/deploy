@@ -13,6 +13,7 @@ version=$2
 export_vars_for_environment ${environment}
 image_id=$(image_id_for_version ${version})
 
+export ZED_DO_CERTIFICATE_ID=$(doctl compute certificate list --format ID --no-header)
 export ZED_KUBE_NAMESPACE=${environment}
 export ZED_IMAGE_ID=${image_id}
 

@@ -1,6 +1,6 @@
 use crate::{
     display_map::{InlayOffset, ToDisplayPoint},
-    link_go_to_definition::{DocumentRange, InlayRange},
+    link_go_to_definition::{InlayHighlight, RangeInEditor},
     Anchor, AnchorRangeExt, DisplayPoint, Editor, EditorSettings, EditorSnapshot, EditorStyle,
     ExcerptId, RangeToAnchorExt,
 };
@@ -50,19 +50,18 @@ pub fn hover_at(editor: &mut Editor, point: Option<DisplayPoint>, cx: &mut ViewC
 
 pub struct InlayHover {
     pub excerpt: ExcerptId,
-    pub triggered_from: InlayOffset,
-    pub range: InlayRange,
+    pub range: InlayHighlight,
     pub tooltip: HoverBlock,
 }
 
 pub fn find_hovered_hint_part(
     label_parts: Vec<InlayHintLabelPart>,
-    hint_range: Range<InlayOffset>,
+    hint_start: InlayOffset,
     hovered_offset: InlayOffset,
 ) -> Option<(InlayHintLabelPart, Range<InlayOffset>)> {
-    if hovered_offset >= hint_range.start && hovered_offset <= hint_range.end {
-        let mut hovered_character = (hovered_offset - hint_range.start).0;
-        let mut part_start = hint_range.start;
+    if hovered_offset >= hint_start {
+        let mut hovered_character = (hovered_offset - hint_start).0;
+        let mut part_start = hint_start;
         for part in label_parts {
             let part_len = part.value.chars().count();
             if hovered_character > part_len {
@@ -88,27 +87,13 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
         };
 
         if let Some(InfoPopover { symbol_range, .. }) = &editor.hover_state.info_popover {
-            if let DocumentRange::Inlay(range) = symbol_range {
-                if (range.highlight_start..range.highlight_end)
-                    .contains(&inlay_hover.triggered_from)
-                {
+            if let RangeInEditor::Inlay(range) = symbol_range {
+                if range == &inlay_hover.range {
                     // Hover triggered from same location as last time. Don't show again.
                     return;
                 }
             }
             hide_hover(editor, cx);
-        }
-
-        let snapshot = editor.snapshot(cx);
-        // Don't request again if the location is the same as the previous request
-        if let Some(triggered_from) = editor.hover_state.triggered_from {
-            if inlay_hover.triggered_from
-                == snapshot
-                    .display_snapshot
-                    .anchor_to_inlay_offset(triggered_from)
-            {
-                return;
-            }
         }
 
         let task = cx.spawn(|this, mut cx| {
@@ -122,7 +107,7 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
 
                 let hover_popover = InfoPopover {
                     project: project.clone(),
-                    symbol_range: DocumentRange::Inlay(inlay_hover.range),
+                    symbol_range: RangeInEditor::Inlay(inlay_hover.range.clone()),
                     blocks: vec![inlay_hover.tooltip],
                     language: None,
                     rendered_content: None,
@@ -326,7 +311,7 @@ fn show_hover(
 
                 Some(InfoPopover {
                     project: project.clone(),
-                    symbol_range: DocumentRange::Text(range),
+                    symbol_range: RangeInEditor::Text(range),
                     blocks: hover_result.contents,
                     language: hover_result.language,
                     rendered_content: None,
@@ -608,8 +593,8 @@ impl HoverState {
                 self.info_popover
                     .as_ref()
                     .map(|info_popover| match &info_popover.symbol_range {
-                        DocumentRange::Text(range) => &range.start,
-                        DocumentRange::Inlay(range) => &range.inlay_position,
+                        RangeInEditor::Text(range) => &range.start,
+                        RangeInEditor::Inlay(range) => &range.inlay_position,
                     })
             })?;
         let point = anchor.to_display_point(&snapshot.display_snapshot);
@@ -635,7 +620,7 @@ impl HoverState {
 #[derive(Debug, Clone)]
 pub struct InfoPopover {
     pub project: ModelHandle<Project>,
-    symbol_range: DocumentRange,
+    symbol_range: RangeInEditor,
     pub blocks: Vec<HoverBlock>,
     language: Option<Arc<Language>>,
     rendered_content: Option<RenderedInfo>,
@@ -811,6 +796,7 @@ mod tests {
         inlay_hint_cache::tests::{cached_hint_labels, visible_hint_labels},
         link_go_to_definition::update_inlay_link_and_hover_points,
         test::editor_lsp_test_context::EditorLspTestContext,
+        InlayId,
     };
     use collections::BTreeSet;
     use gpui::fonts::Weight;
@@ -1477,25 +1463,16 @@ mod tests {
             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
         cx.foreground().run_until_parked();
         cx.update_editor(|editor, cx| {
-            let snapshot = editor.snapshot(cx);
             let hover_state = &editor.hover_state;
             assert!(hover_state.diagnostic_popover.is_none() && hover_state.info_popover.is_some());
             let popover = hover_state.info_popover.as_ref().unwrap();
             let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
-            let entire_inlay_start = snapshot.display_point_to_inlay_offset(
-                inlay_range.start.to_display_point(&snapshot),
-                Bias::Left,
-            );
-
-            let expected_new_type_label_start = InlayOffset(entire_inlay_start.0 + ": ".len());
             assert_eq!(
                 popover.symbol_range,
-                DocumentRange::Inlay(InlayRange {
+                RangeInEditor::Inlay(InlayHighlight {
+                    inlay: InlayId::Hint(0),
                     inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
-                    highlight_start: expected_new_type_label_start,
-                    highlight_end: InlayOffset(
-                        expected_new_type_label_start.0 + new_type_label.len()
-                    ),
+                    range: ": ".len()..": ".len() + new_type_label.len(),
                 }),
                 "Popover range should match the new type label part"
             );
@@ -1543,23 +1520,17 @@ mod tests {
             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
         cx.foreground().run_until_parked();
         cx.update_editor(|editor, cx| {
-            let snapshot = editor.snapshot(cx);
             let hover_state = &editor.hover_state;
             assert!(hover_state.diagnostic_popover.is_none() && hover_state.info_popover.is_some());
             let popover = hover_state.info_popover.as_ref().unwrap();
             let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
-            let entire_inlay_start = snapshot.display_point_to_inlay_offset(
-                inlay_range.start.to_display_point(&snapshot),
-                Bias::Left,
-            );
-            let expected_struct_label_start =
-                InlayOffset(entire_inlay_start.0 + ": ".len() + new_type_label.len() + "<".len());
             assert_eq!(
                 popover.symbol_range,
-                DocumentRange::Inlay(InlayRange {
+                RangeInEditor::Inlay(InlayHighlight {
+                    inlay: InlayId::Hint(0),
                     inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
-                    highlight_start: expected_struct_label_start,
-                    highlight_end: InlayOffset(expected_struct_label_start.0 + struct_label.len()),
+                    range: ": ".len() + new_type_label.len() + "<".len()
+                        ..": ".len() + new_type_label.len() + "<".len() + struct_label.len(),
                 }),
                 "Popover range should match the struct label part"
             );

@@ -483,10 +483,10 @@ impl CollabTitlebarItem {
         let icon;
         let tooltip;
         if room.read(cx).is_screen_sharing() {
-            icon = "icons/radix/desktop.svg";
+            icon = "icons/desktop.svg";
             tooltip = "Stop Sharing Screen"
         } else {
-            icon = "icons/radix/desktop.svg";
+            icon = "icons/desktop.svg";
             tooltip = "Share Screen";
         }
 
@@ -533,10 +533,10 @@ impl CollabTitlebarItem {
         let tooltip;
         let is_muted = room.read(cx).is_muted(cx);
         if is_muted {
-            icon = "icons/radix/mic-mute.svg";
+            icon = "icons/mic-mute.svg";
             tooltip = "Unmute microphone";
         } else {
-            icon = "icons/radix/mic.svg";
+            icon = "icons/mic.svg";
             tooltip = "Mute microphone";
         }
 
@@ -586,10 +586,10 @@ impl CollabTitlebarItem {
         let tooltip;
         let is_deafened = room.read(cx).is_deafened().unwrap_or(false);
         if is_deafened {
-            icon = "icons/radix/speaker-off.svg";
+            icon = "icons/speaker-off.svg";
             tooltip = "Unmute speakers";
         } else {
-            icon = "icons/radix/speaker-loud.svg";
+            icon = "icons/speaker-loud.svg";
             tooltip = "Mute speakers";
         }
 
@@ -625,7 +625,7 @@ impl CollabTitlebarItem {
         .into_any()
     }
     fn render_leave_call(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let icon = "icons/radix/exit.svg";
+        let icon = "icons/exit.svg";
         let tooltip = "Leave call";
 
         let titlebar = &theme.titlebar;
@@ -748,7 +748,7 @@ impl CollabTitlebarItem {
 
                     dropdown
                         .with_child(
-                            Svg::new("icons/caret_down_8.svg")
+                            Svg::new("icons/caret_down.svg")
                                 .with_color(user_menu_button_style.icon.color)
                                 .constrained()
                                 .with_width(user_menu_button_style.icon.width)
@@ -1116,7 +1116,7 @@ impl CollabTitlebarItem {
             | client::Status::Reauthenticating { .. }
             | client::Status::Reconnecting { .. }
             | client::Status::ReconnectionError { .. } => Some(
-                Svg::new("icons/cloud_slash_12.svg")
+                Svg::new("icons/disconnected.svg")
                     .with_color(theme.titlebar.offline_icon.color)
                     .constrained()
                     .with_width(theme.titlebar.offline_icon.width)

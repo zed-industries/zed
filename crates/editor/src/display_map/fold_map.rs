@@ -1,6 +1,6 @@
 use super::{
     inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlayOffset, InlayPoint, InlaySnapshot},
-    TextHighlights,
+    Highlights,
 };
 use crate::{Anchor, AnchorRangeExt, MultiBufferSnapshot, ToOffset};
 use gpui::{color::Color, fonts::HighlightStyle};
@@ -475,7 +475,7 @@ pub struct FoldSnapshot {
 impl FoldSnapshot {
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks(FoldOffset(0)..self.len(), false, None, None, None)
+        self.chunks(FoldOffset(0)..self.len(), false, Highlights::default())
             .map(|c| c.text)
             .collect()
     }
@@ -651,9 +651,7 @@ impl FoldSnapshot {
         &'a self,
         range: Range<FoldOffset>,
         language_aware: bool,
-        text_highlights: Option<&'a TextHighlights>,
-        hint_highlight_style: Option<HighlightStyle>,
-        suggestion_highlight_style: Option<HighlightStyle>,
+        highlights: Highlights<'a>,
     ) -> FoldChunks<'a> {
         let mut transform_cursor = self.transforms.cursor::<(FoldOffset, InlayOffset)>();
 
@@ -674,9 +672,7 @@ impl FoldSnapshot {
             inlay_chunks: self.inlay_snapshot.chunks(
                 inlay_start..inlay_end,
                 language_aware,
-                text_highlights,
-                hint_highlight_style,
-                suggestion_highlight_style,
+                highlights,
             ),
             inlay_chunk: None,
             inlay_offset: inlay_start,
@@ -687,8 +683,12 @@ impl FoldSnapshot {
     }
 
     pub fn chars_at(&self, start: FoldPoint) -> impl '_ + Iterator<Item = char> {
-        self.chunks(start.to_offset(self)..self.len(), false, None, None, None)
-            .flat_map(|chunk| chunk.text.chars())
+        self.chunks(
+            start.to_offset(self)..self.len(),
+            false,
+            Highlights::default(),
+        )
+        .flat_map(|chunk| chunk.text.chars())
     }
 
     #[cfg(test)]
@@ -1496,7 +1496,7 @@ mod tests {
                 let text = &expected_text[start.0..end.0];
                 assert_eq!(
                     snapshot
-                        .chunks(start..end, false, None, None, None)
+                        .chunks(start..end, false, Highlights::default())
                         .map(|c| c.text)
                         .collect::<String>(),
                     text,

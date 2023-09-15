@@ -3146,6 +3146,7 @@ async fn test_local_settings(
         )
         .await;
     let (project_a, _) = client_a.build_local_project("/dir", cx_a).await;
+    deterministic.run_until_parked();
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
