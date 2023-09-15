@@ -910,11 +910,6 @@ async fn test_channel_moving(
     let channel_c_id = channels[2];
     let channel_d_id = channels[3];
 
-    dbg!(channel_a_id);
-    dbg!(channel_b_id);
-    dbg!(channel_c_id);
-    dbg!(channel_d_id);
-
     // Current shape:
     // a - b - c - d
     assert_channels_list_shape(
@@ -987,6 +982,7 @@ async fn test_channel_moving(
     let channel_ga_id = b_channels[1];
     let channel_ep_id = b_channels[2];
 
+
     // Current shape for B:
     //    /- ep
     // mu -- ga
@@ -995,8 +991,8 @@ async fn test_channel_moving(
         cx_b,
         &[
             (channel_mu_id, 0),
+            (channel_ep_id, 1),
             (channel_ga_id, 1),
-            (channel_ep_id, 1)
         ],
     );
 
@@ -1010,51 +1006,52 @@ async fn test_channel_moving(
         client_b.channel_store(),
         cx_b,
         &[
+            // New channels from a
+            (channel_b_id, 0),
+            (channel_c_id, 1),
+            (channel_d_id, 2),
+            (channel_d_id, 1),
+
+            // B's old channels
+            (channel_mu_id, 0),
+            (channel_ep_id, 1),
+            (channel_ga_id, 1),
+
+        ],
+    );
+
+    client_b
+        .channel_store()
+        .update(cx_b, |channel_store, cx| {
+            channel_store.link_channel(channel_b_id, channel_ep_id, cx)
+        })
+        .await
+        .unwrap();
+
+    // Current shape for B:
+    //              /---------\
+    //    /- ep -- b  -- c  -- d
+    // mu -- ga
+    assert_channels_list_shape(
+        client_b.channel_store(),
+        cx_b,
+        &[
             // B's old channels
             (channel_mu_id, 0),
             (channel_ga_id, 1),
             (channel_ep_id, 1),
 
-            // New channels from a
-            (channel_b_id, 0),
-            (channel_c_id, 1),
-            (channel_d_id, 1),
-            (channel_d_id, 2),
+            // New channels from a, now under epsilon
+            (channel_b_id, 2),
+            (channel_c_id, 3),
+            (channel_d_id, 3),
+            (channel_d_id, 4),
         ],
     );
 
-    // client_b
-    //     .channel_store()
-    //     .update(cx_a, |channel_store, cx| {
-    //         channel_store.move_channel(channel_a_b_id, None, channel_b_epsilon_id, cx)
-    //     })
-    //     .await
-    //     .unwrap();
-
-    // // Current shape for B:
-    // //              /---------\
-    // //    /- ep -- b  -- c  -- d
-    // // mu -- ga
-    // assert_channels_list_shape(
-    //     client_b.channel_store(),
-    //     cx_b,
-    //     &[
-    //         // B's old channels
-    //         (channel_b_mu_id, 0),
-    //         (channel_b_gamma_id, 1),
-    //         (channel_b_epsilon_id, 1),
-
-    //         // New channels from a, now under epsilon
-    //         (channel_a_b_id, 2),
-    //         (channel_a_c_id, 3),
-    //         (channel_a_d_id, 3),
-    //         (channel_a_d_id, 4),
-    //     ],
-    // );
-
     client_b
         .channel_store()
-        .update(cx_a, |channel_store, cx| {
+        .update(cx_b, |channel_store, cx| {
             channel_store.link_channel(channel_ga_id, channel_b_id, cx)
         })
         .await

@@ -747,7 +747,7 @@ impl ChannelStore {
             }
         }
 
-        let channels_changed = !payload.channels.is_empty() || !payload.delete_channels.is_empty();
+        let channels_changed = !payload.channels.is_empty() || !payload.delete_channels.is_empty() || !payload.delete_edge.is_empty();
         if channels_changed {
             if !payload.delete_channels.is_empty() {
                 self.channel_index.delete_channels(&payload.delete_channels);
@@ -768,16 +768,19 @@ impl ChannelStore {
                 }
             }
 
-            let mut channel_index = self.channel_index.start_upsert();
+            let mut index_edit = self.channel_index.bulk_edit();
+
             for channel in payload.channels {
-                channel_index.upsert(channel)
+                index_edit.upsert(channel)
+            }
+
+            for edge in payload.delete_edge {
+                index_edit
+                    .delete_edge(edge.parent_id, edge.channel_id);
             }
         }
 
-        for edge in payload.delete_channel_edge {
-            self.channel_index
-                .delete_edge(edge.parent_id, edge.channel_id);
-        }
+
 
         for permission in payload.channel_permissions {
             if permission.is_admin {

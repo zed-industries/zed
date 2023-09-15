@@ -959,7 +959,7 @@ message LspDiskBasedDiagnosticsUpdated {}
 
 message UpdateChannels {
     repeated Channel channels = 1;
-    repeated ChannelEdge delete_channel_edge = 2;
+    repeated ChannelEdge delete_edge = 2;
     repeated uint64 delete_channels = 3;
     repeated Channel channel_invitations = 4;
     repeated uint64 remove_channel_invitations = 5;

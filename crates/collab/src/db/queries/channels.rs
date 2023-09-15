@@ -333,9 +333,10 @@ impl Database {
         .await
     }
 
-    async fn get_all_channels(
+    async fn get_channels_internal(
         &self,
         parents_by_child_id: ChannelDescendants,
+        trim_dangling_parents: bool,
         tx: &DatabaseTransaction,
     ) -> Result<Vec<Channel>> {
         let mut channels = Vec::with_capacity(parents_by_child_id.len());
@@ -346,15 +347,36 @@ impl Database {
                 .await?;
             while let Some(row) = rows.next().await {
                 let row = row?;
-
                 // As these rows are pulled from the map's keys, this unwrap is safe.
                 let parents = parents_by_child_id.get(&row.id).unwrap();
                 if parents.len() > 0 {
+                    let mut added_channel = false;
                     for parent in parents {
+                        // Trim out any dangling parent pointers.
+                        // That the user doesn't have access to
+                        if trim_dangling_parents {
+                            if parents_by_child_id.contains_key(parent) {
+                                added_channel = true;
+                                channels.push(Channel {
+                                    id: row.id,
+                                    name: row.name.clone(),
+                                    parent_id: Some(*parent),
+                                });
+                            }
+                        } else {
+                            added_channel = true;
+                            channels.push(Channel {
+                                id: row.id,
+                                name: row.name.clone(),
+                                parent_id: Some(*parent),
+                            });
+                        }
+                    }
+                    if !added_channel {
                         channels.push(Channel {
                             id: row.id,
-                            name: row.name.clone(),
-                            parent_id: Some(*parent),
+                            name: row.name,
+                            parent_id: None,
                         });
                     }
                 } else {
@@ -392,7 +414,8 @@ impl Database {
                 .filter_map(|membership| membership.admin.then_some(membership.channel_id))
                 .collect();
 
-            let channels = self.get_all_channels(parents_by_child_id, &tx).await?;
+            let channels = self.get_channels_internal(parents_by_child_id, true, &tx).await?;
+
 
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
             enum QueryUserIdsAndChannelIds {
@@ -854,7 +877,7 @@ impl Database {
             channel.insert(to);
         }
 
-        let channels = self.get_all_channels(from_descendants, &*tx).await?;
+        let channels = self.get_channels_internal(from_descendants, false, &*tx).await?;
 
         Ok(channels)
     }

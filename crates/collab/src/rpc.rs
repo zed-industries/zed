@@ -2441,7 +2441,7 @@ async fn unlink_channel(
     let members = db.get_channel_members(from).await?;
 
     let update = proto::UpdateChannels {
-        delete_channel_edge: vec![proto::ChannelEdge {
+        delete_edge: vec![proto::ChannelEdge {
             channel_id: channel_id.to_proto(),
             parent_id: from.to_proto(),
         }],
@@ -2478,7 +2478,7 @@ async fn move_channel(
     let members_to = db.get_channel_members(channel_id).await?;
 
     let update = proto::UpdateChannels {
-        delete_channel_edge: vec![proto::ChannelEdge {
+        delete_edge: vec![proto::ChannelEdge {
             channel_id: channel_id.to_proto(),
             parent_id: from_parent.to_proto(),
         }],
