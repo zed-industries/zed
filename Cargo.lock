@@ -101,6 +101,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "client",
  "collections",
  "ctor",
  "editor",
@@ -127,6 +128,7 @@ dependencies = [
  "theme",
  "tiktoken-rs 0.4.5",
  "util",
+ "uuid 1.4.1",
  "workspace",
 ]
 
