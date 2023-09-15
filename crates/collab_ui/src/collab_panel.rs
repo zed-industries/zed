@@ -80,8 +80,13 @@ struct RenameChannel {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-struct OpenChannelNotes {
-    channel_id: u64,
+pub struct OpenChannelNotes {
+    pub channel_id: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct JoinChannelCall {
+    pub channel_id: u64,
 }
 
 actions!(
@@ -104,7 +109,8 @@ impl_actions!(
         ManageMembers,
         RenameChannel,
         ToggleCollapse,
-        OpenChannelNotes
+        OpenChannelNotes,
+        JoinChannelCall,
     ]
 );
 

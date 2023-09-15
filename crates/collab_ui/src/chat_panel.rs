@@ -43,6 +43,7 @@ pub struct ChatPanel {
     width: Option<f32>,
     pending_serialization: Task<Option<()>>,
     subscriptions: Vec<gpui::Subscription>,
+    workspace: WeakViewHandle<Workspace>,
     has_focus: bool,
 }
 
@@ -58,11 +59,16 @@ pub enum Event {
     Dismissed,
 }
 
-actions!(chat_panel, [LoadMoreMessages, ToggleFocus]);
+actions!(
+    chat_panel,
+    [LoadMoreMessages, ToggleFocus, OpenChannelNotes, JoinCall]
+);
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(ChatPanel::send);
     cx.add_action(ChatPanel::load_more_messages);
+    cx.add_action(ChatPanel::open_notes);
+    cx.add_action(ChatPanel::join_call);
 }
 
 impl ChatPanel {
@@ -93,7 +99,6 @@ impl ChatPanel {
                         ix,
                         item_type,
                         is_hovered,
-                        &theme::current(cx).chat_panel,
                         workspace,
                         cx,
                     )
@@ -131,6 +136,7 @@ impl ChatPanel {
                 local_timezone: cx.platform().local_timezone(),
                 has_focus: false,
                 subscriptions: Vec::new(),
+                workspace: workspace_handle,
                 width: None,
             };
 
@@ -371,22 +377,22 @@ impl ChatPanel {
         ix: usize,
         item_type: ItemType,
         is_hovered: bool,
-        theme: &theme::ChatPanel,
         workspace: WeakViewHandle<Workspace>,
         cx: &mut ViewContext<Select>,
     ) -> AnyElement<Select> {
-        enum ChannelNotes {}
-        enum JoinCall {}
+        let theme = theme::current(cx);
+        let tooltip_style = &theme.tooltip;
+        let theme = &theme.chat_panel;
+        let style = match (&item_type, is_hovered) {
+            (ItemType::Header, _) => &theme.channel_select.header,
+            (ItemType::Selected, _) => &theme.channel_select.active_item,
+            (ItemType::Unselected, false) => &theme.channel_select.item,
+            (ItemType::Unselected, true) => &theme.channel_select.hovered_item,
+        };
 
         let channel = &channel_store.read(cx).channel_at_index(ix).unwrap().1;
         let channel_id = channel.id;
-        let style = &theme.channel_select;
-        let style = match (&item_type, is_hovered) {
-            (ItemType::Header, _) => &style.header,
-            (ItemType::Selected, _) => &style.active_item,
-            (ItemType::Unselected, false) => &style.item,
-            (ItemType::Unselected, true) => &style.hovered_item,
-        };
+
         let mut row = Flex::row()
             .with_child(
                 Label::new("#".to_string(), style.hash.text.clone())
@@ -397,7 +403,7 @@ impl ChatPanel {
 
         if matches!(item_type, ItemType::Header) {
             row.add_children([
-                MouseEventHandler::new::<ChannelNotes, _>(0, cx, |mouse_state, _| {
+                MouseEventHandler::new::<OpenChannelNotes, _>(0, cx, |mouse_state, _| {
                     render_icon_button(
                         theme.icon_button.style_for(mouse_state),
                         "icons/radix/file.svg",
@@ -408,8 +414,15 @@ impl ChatPanel {
                         ChannelView::deploy(channel_id, workspace, cx);
                     }
                 })
+                .with_tooltip::<OpenChannelNotes>(
+                    channel_id as usize,
+                    "Open Notes",
+                    Some(Box::new(OpenChannelNotes)),
+                    tooltip_style.clone(),
+                    cx,
+                )
                 .flex_float(),
-                MouseEventHandler::new::<JoinCall, _>(0, cx, |mouse_state, _| {
+                MouseEventHandler::new::<ActiveCall, _>(0, cx, |mouse_state, _| {
                     render_icon_button(
                         theme.icon_button.style_for(mouse_state),
                         "icons/radix/speaker-loud.svg",
@@ -420,6 +433,13 @@ impl ChatPanel {
                         .update(cx, |call, cx| call.join_channel(channel_id, cx))
                         .detach_and_log_err(cx);
                 })
+                .with_tooltip::<ActiveCall>(
+                    channel_id as usize,
+                    "Join Call",
+                    Some(Box::new(JoinCall)),
+                    tooltip_style.clone(),
+                    cx,
+                )
                 .flex_float(),
             ]);
         }
@@ -522,6 +542,24 @@ impl ChatPanel {
                 this.set_active_chat(chat, cx);
             })
         })
+    }
+
+    fn open_notes(&mut self, _: &OpenChannelNotes, cx: &mut ViewContext<Self>) {
+        if let Some((chat, _)) = &self.active_chat {
+            let channel_id = chat.read(cx).channel().id;
+            if let Some(workspace) = self.workspace.upgrade(cx) {
+                ChannelView::deploy(channel_id, workspace, cx);
+            }
+        }
+    }
+
+    fn join_call(&mut self, _: &JoinCall, cx: &mut ViewContext<Self>) {
+        if let Some((chat, _)) = &self.active_chat {
+            let channel_id = chat.read(cx).channel().id;
+            ActiveCall::global(cx)
+                .update(cx, |call, cx| call.join_channel(channel_id, cx))
+                .detach_and_log_err(cx);
+        }
     }
 }
 
