@@ -1,3 +1,4 @@
+.idea
 **/target
 **/cargo-target
 /zed.xcworkspace
