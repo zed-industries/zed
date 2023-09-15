@@ -227,7 +227,7 @@ mod test {
         deterministic.run_until_parked();
 
         cx.update_editor(|editor, cx| {
-            let highlights = editor.all_background_highlights(cx);
+            let highlights = editor.all_text_background_highlights(cx);
             assert_eq!(3, highlights.len());
             assert_eq!(
                 DisplayPoint::new(2, 0)..DisplayPoint::new(2, 2),
