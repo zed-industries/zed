@@ -386,10 +386,12 @@ impl AssistantPanel {
                                             );
                                         })
                                     }
-                                }
-                            }
 
-                            this.finish_inline_assist(inline_assist_id, false, cx);
+                                    this.finish_inline_assist(inline_assist_id, false, cx);
+                                }
+                            } else {
+                                this.finish_inline_assist(inline_assist_id, false, cx);
+                            }
                         }
                     }),
                 ],
@@ -2837,6 +2839,7 @@ impl InlineAssistant {
                         cx,
                     );
                 } else {
+                    self.confirmed = false;
                     editor.set_read_only(false);
                     editor.set_field_editor_style(
                         Some(Arc::new(|theme| theme.assistant.inline.editor.clone())),
