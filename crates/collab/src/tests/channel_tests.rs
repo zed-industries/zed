@@ -142,6 +142,8 @@ async fn test_core_channels(
         ],
     );
 
+    println!("STARTING CREATE CHANNEL C");
+
     let channel_c_id = client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
@@ -994,10 +996,6 @@ async fn test_channel_moving(
         .add_admin_to_channel((&client_b, cx_b), channel_b_id, cx_a)
         .await;
 
-    client_b
-        .add_admin_to_channel((&client_c, cx_c), channel_ep_id, cx_b)
-        .await;
-
     // Current shape for B:
     //    /- ep
     // mu -- ga
@@ -1019,10 +1017,18 @@ async fn test_channel_moving(
         ],
     );
 
+    client_b
+        .add_admin_to_channel((&client_c, cx_c), channel_ep_id, cx_b)
+        .await;
+
     // Current shape for C:
     // - ep
     assert_channels_list_shape(client_c.channel_store(), cx_c, &[(channel_ep_id, 0)]);
 
+    println!("*******************************************");
+    println!("********** STARTING LINK CHANNEL **********");
+    println!("*******************************************");
+    dbg!(client_b.user_id());
     client_b
         .channel_store()
         .update(cx_b, |channel_store, cx| {
@@ -1190,5 +1196,5 @@ fn assert_channels_list_shape(
             .map(|(depth, channel)| (channel.id, depth))
             .collect::<Vec<_>>()
     });
-    pretty_assertions::assert_eq!(actual, expected_channels);
+    pretty_assertions::assert_eq!(dbg!(actual), expected_channels);
 }

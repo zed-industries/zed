@@ -7,6 +7,7 @@ mod message_tests;
 use super::*;
 use gpui::executor::Background;
 use parking_lot::Mutex;
+use rpc::proto::ChannelEdge;
 use sea_orm::ConnectionTrait;
 use sqlx::migrate::MigrateDatabase;
 use std::sync::Arc;
@@ -143,4 +144,28 @@ impl Drop for TestDb {
             })
         }
     }
+}
+
+/// The second tuples are (channel_id, parent)
+fn graph(channels: &[(ChannelId, &'static str)], edges: &[(ChannelId, ChannelId)]) -> ChannelGraph {
+    let mut graph = ChannelGraph {
+        channels: vec![],
+        edges: vec![],
+    };
+
+    for (id, name) in channels {
+        graph.channels.push(Channel {
+            id: *id,
+            name: name.to_string(),
+        })
+    }
+
+    for (channel, parent) in edges {
+        graph.edges.push(ChannelEdge {
+            channel_id: channel.to_proto(),
+            parent_id: parent.to_proto(),
+        })
+    }
+
+    graph
 }

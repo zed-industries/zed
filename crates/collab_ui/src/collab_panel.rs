@@ -173,7 +173,6 @@ pub fn init(cx: &mut AppContext) {
 
     cx.add_action(
         |panel: &mut CollabPanel, action: &StartMoveChannel, _: &mut ViewContext<CollabPanel>| {
-            dbg!(action);
             panel.channel_move = Some(*action);
         },
     );
@@ -181,7 +180,6 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(
         |panel: &mut CollabPanel, action: &LinkChannel, cx: &mut ViewContext<CollabPanel>| {
             if let Some(move_start) = panel.channel_move.take() {
-                dbg!(action.to, &move_start);
                 panel.channel_store.update(cx, |channel_store, cx| {
                     channel_store
                         .link_channel(move_start.channel_id, action.to, cx)
@@ -194,7 +192,6 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(
         |panel: &mut CollabPanel, action: &MoveChannel, cx: &mut ViewContext<CollabPanel>| {
             if let Some(move_start) = panel.channel_move.take() {
-                dbg!(&move_start, action.to);
                 panel.channel_store.update(cx, |channel_store, cx| {
                     if let Some(parent) = move_start.parent_id {
                         channel_store

@@ -135,7 +135,7 @@ message Envelope {
         RefreshInlayHints refresh_inlay_hints = 118;
 
         CreateChannel create_channel = 119;
-        ChannelResponse channel_response = 120;
+        CreateChannelResponse create_channel_response = 120;
         InviteChannelMember invite_channel_member = 121;
         RemoveChannelMember remove_channel_member = 122;
         RespondToChannelInvite respond_to_channel_invite = 123;
@@ -146,6 +146,7 @@ message Envelope {
         GetChannelMembersResponse get_channel_members_response = 128;
         SetChannelMemberAdmin set_channel_member_admin = 129;
         RenameChannel rename_channel = 130;
+        RenameChannelResponse rename_channel_response = 154;
 
         JoinChannelBuffer join_channel_buffer = 131;
         JoinChannelBufferResponse join_channel_buffer_response = 132;
@@ -169,7 +170,7 @@ message Envelope {
 
         LinkChannel link_channel = 151;
         UnlinkChannel unlink_channel = 152;
-        MoveChannel move_channel = 153; // Current max
+        MoveChannel move_channel = 153; // Current max: 154
     }
 }
 
@@ -959,12 +960,13 @@ message LspDiskBasedDiagnosticsUpdated {}
 
 message UpdateChannels {
     repeated Channel channels = 1;
-    repeated ChannelEdge delete_edge = 2;
-    repeated uint64 delete_channels = 3;
-    repeated Channel channel_invitations = 4;
-    repeated uint64 remove_channel_invitations = 5;
-    repeated ChannelParticipants channel_participants = 6;
-    repeated ChannelPermission channel_permissions = 7;
+    repeated ChannelEdge insert_edge = 2;
+    repeated ChannelEdge delete_edge = 3;
+    repeated uint64 delete_channels = 4;
+    repeated Channel channel_invitations = 5;
+    repeated uint64 remove_channel_invitations = 6;
+    repeated ChannelParticipants channel_participants = 7;
+    repeated ChannelPermission channel_permissions = 8;
 }
 
 message ChannelEdge {
@@ -1015,8 +1017,9 @@ message CreateChannel {
     optional uint64 parent_id = 2;
 }
 
-message ChannelResponse {
+message CreateChannelResponse {
     Channel channel = 1;
+    optional uint64 parent_id = 2;
 }
 
 message InviteChannelMember {
@@ -1039,6 +1042,10 @@ message SetChannelMemberAdmin {
 message RenameChannel {
     uint64 channel_id = 1;
     string name = 2;
+}
+
+message RenameChannelResponse {
+    Channel channel = 1;
 }
 
 message JoinChannelChat {
@@ -1512,7 +1519,6 @@ message Nonce {
 message Channel {
     uint64 id = 1;
     string name = 2;
-    optional uint64 parent_id = 3;
 }
 
 message Contact {

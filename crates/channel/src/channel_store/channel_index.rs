@@ -53,6 +53,7 @@ impl Deref for ChannelIndex {
 
 /// A guard for ensuring that the paths index maintains its sort and uniqueness
 /// invariants after a series of insertions
+#[derive(Debug)]
 pub struct ChannelPathsEditGuard<'a> {
     paths: &'a mut Vec<ChannelPath>,
     channels_by_id: &'a mut ChannelsById,
@@ -78,42 +79,81 @@ impl<'a> ChannelPathsEditGuard<'a> {
         }
     }
 
-    pub fn upsert(&mut self, channel_proto: proto::Channel) {
+    pub fn insert(&mut self, channel_proto: proto::Channel) {
         if let Some(existing_channel) = self.channels_by_id.get_mut(&channel_proto.id) {
             Arc::make_mut(existing_channel).name = channel_proto.name;
-
-            if let Some(parent_id) = channel_proto.parent_id {
-                self.insert_edge(parent_id, channel_proto.id)
-            }
         } else {
-            let channel = Arc::new(Channel {
-                id: channel_proto.id,
-                name: channel_proto.name,
-            });
-            self.channels_by_id.insert(channel.id, channel.clone());
-
-            if let Some(parent_id) = channel_proto.parent_id {
-                self.insert_edge(parent_id, channel.id);
-            } else {
-                self.insert_root(channel.id);
-            }
+            self.channels_by_id.insert(
+                channel_proto.id,
+                Arc::new(Channel {
+                    id: channel_proto.id,
+                    name: channel_proto.name,
+                }),
+            );
+            self.insert_root(channel_proto.id);
         }
     }
 
-    fn insert_edge(&mut self, parent_id: ChannelId, channel_id: ChannelId) {
+    pub fn insert_edge(&mut self, parent_id: ChannelId, channel_id: ChannelId) {
         debug_assert!(self.channels_by_id.contains_key(&parent_id));
         let mut ix = 0;
+        println!("*********** INSERTING EDGE {}, {} ***********", channel_id, parent_id);
+        dbg!(&self.paths);
         while ix < self.paths.len() {
             let path = &self.paths[ix];
+            println!("*********");
+            dbg!(path);
+
             if path.ends_with(&[parent_id]) {
-                let mut new_path = path.to_vec();
+                dbg!("Appending to parent path");
+                let mut new_path = Vec::with_capacity(path.len() + 1);
+                new_path.extend_from_slice(path);
                 new_path.push(channel_id);
-                self.paths.insert(ix + 1, ChannelPath::new(new_path.into()));
+                self.paths.insert(ix + 1, dbg!(ChannelPath::new(new_path.into())));
                 ix += 2;
-            } else if path.get(0) == Some(&channel_id) {
-                // Clear out any paths that have this chahnnel as their root
-                self.paths.swap_remove(ix);
+            } else if let Some(path_ix) = path.iter().position(|c| c == &channel_id) {
+                if path.contains(&parent_id) {
+                    dbg!("Doing nothing");
+                    ix += 1;
+                    continue;
+                }
+                if path_ix == 0 && path.len() == 1 {
+                    dbg!("Removing path that is just this");
+                    self.paths.swap_remove(ix);
+                    continue;
+                }
+                // This is the busted section rn
+                // We're trying to do this weird, unsorted context
+                // free insertion thing, but we can't insert 'parent_id',
+                // we have to _prepend_ with _parent path to_,
+                // or something like that.
+                // It's a bit busted rn, I think I need to keep this whole thing
+                // sorted now, as this is a huge mess.
+                // Basically, we want to do the exact thing we do in the
+                // server, except explicitly.
+                // Also, rethink the bulk edit abstraction, it's use may no longer
+                // be as needed with the channel names and edges seperated.
+                dbg!("Expanding path which contains");
+                let (left, right) = path.split_at(path_ix);
+                let mut new_path = Vec::with_capacity(left.len() + right.len() + 1);
+
+                /// WRONG WRONG WRONG
+                new_path.extend_from_slice(left);
+                new_path.push(parent_id);
+                /// WRONG WRONG WRONG
+
+                new_path.extend_from_slice(right);
+                if path_ix == 0 {
+                    dbg!("Replacing path that starts with this");
+                    self.paths[ix] = dbg!(ChannelPath::new(new_path.into()));
+                } else {
+                    dbg!("inserting new path");
+                    self.paths.insert(ix + 1, dbg!(ChannelPath::new(new_path.into())));
+                    ix += 1;
+                }
+                ix += 1;
             } else {
+                dbg!("Doing nothing");
                 ix += 1;
             }
         }

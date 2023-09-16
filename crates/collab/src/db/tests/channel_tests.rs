@@ -1,8 +1,11 @@
 use collections::{HashMap, HashSet};
-use rpc::{proto, ConnectionId};
+use rpc::{
+    proto::{self},
+    ConnectionId,
+};
 
 use crate::{
-    db::{Channel, ChannelId, Database, NewUserParams},
+    db::{queries::channels::ChannelGraph, ChannelId, Database, NewUserParams, tests::graph},
     test_both_dbs,
 };
 use std::sync::Arc;
@@ -82,70 +85,42 @@ async fn test_channels(db: &Arc<Database>) {
     let result = db.get_channels_for_user(a_id).await.unwrap();
     assert_eq!(
         result.channels,
-        vec![
-            Channel {
-                id: zed_id,
-                name: "zed".to_string(),
-                parent_id: None,
-            },
-            Channel {
-                id: crdb_id,
-                name: "crdb".to_string(),
-                parent_id: Some(zed_id),
-            },
-            Channel {
-                id: livestreaming_id,
-                name: "livestreaming".to_string(),
-                parent_id: Some(zed_id),
-            },
-            Channel {
-                id: replace_id,
-                name: "replace".to_string(),
-                parent_id: Some(zed_id),
-            },
-            Channel {
-                id: rust_id,
-                name: "rust".to_string(),
-                parent_id: None,
-            },
-            Channel {
-                id: cargo_id,
-                name: "cargo".to_string(),
-                parent_id: Some(rust_id),
-            },
-            Channel {
-                id: cargo_ra_id,
-                name: "cargo-ra".to_string(),
-                parent_id: Some(cargo_id),
-            }
-        ]
+        graph(
+            &[
+                (zed_id, "zed"),
+                (crdb_id, "crdb"),
+                (livestreaming_id, "livestreaming"),
+                (replace_id, "replace"),
+                (rust_id, "rust"),
+                (cargo_id, "cargo"),
+                (cargo_ra_id, "cargo-ra")
+            ],
+            &[
+                (crdb_id, zed_id),
+                (livestreaming_id, zed_id),
+                (replace_id, zed_id),
+                (cargo_id, rust_id),
+                (cargo_ra_id, cargo_id),
+            ]
+        )
     );
 
     let result = db.get_channels_for_user(b_id).await.unwrap();
     assert_eq!(
         result.channels,
-        vec![
-            Channel {
-                id: zed_id,
-                name: "zed".to_string(),
-                parent_id: None,
-            },
-            Channel {
-                id: crdb_id,
-                name: "crdb".to_string(),
-                parent_id: Some(zed_id),
-            },
-            Channel {
-                id: livestreaming_id,
-                name: "livestreaming".to_string(),
-                parent_id: Some(zed_id),
-            },
-            Channel {
-                id: replace_id,
-                name: "replace".to_string(),
-                parent_id: Some(zed_id),
-            },
-        ]
+        graph(
+            &[
+                (zed_id, "zed"),
+                (crdb_id, "crdb"),
+                (livestreaming_id, "livestreaming"),
+                (replace_id, "replace")
+            ],
+            &[
+                (crdb_id, zed_id),
+                (livestreaming_id, zed_id),
+                (replace_id, zed_id)
+            ]
+        )
     );
 
     // Update member permissions
@@ -157,28 +132,19 @@ async fn test_channels(db: &Arc<Database>) {
     let result = db.get_channels_for_user(b_id).await.unwrap();
     assert_eq!(
         result.channels,
-        vec![
-            Channel {
-                id: zed_id,
-                name: "zed".to_string(),
-                parent_id: None,
-            },
-            Channel {
-                id: crdb_id,
-                name: "crdb".to_string(),
-                parent_id: Some(zed_id),
-            },
-            Channel {
-                id: livestreaming_id,
-                name: "livestreaming".to_string(),
-                parent_id: Some(zed_id),
-            },
-            Channel {
-                id: replace_id,
-                name: "replace".to_string(),
-                parent_id: Some(zed_id),
-            },
-        ]
+        graph(
+            &[
+                (zed_id, "zed"),
+                (crdb_id, "crdb"),
+                (livestreaming_id, "livestreaming"),
+                (replace_id, "replace")
+            ],
+            &[
+                (crdb_id, zed_id),
+                (livestreaming_id, zed_id),
+                (replace_id, zed_id)
+            ]
+        )
     );
 
     // Remove a single channel
@@ -594,11 +560,10 @@ async fn test_db_channel_moving(db: &Arc<Database>) {
     // Not using the assert_dag helper because we want to make sure we're returning the full data
     pretty_assertions::assert_eq!(
         returned_channels,
-        vec![Channel {
-            id: livestreaming_dag_sub_id,
-            name: "livestreaming_dag_sub".to_string(),
-            parent_id: Some(livestreaming_id),
-        }]
+        graph(
+            &[(livestreaming_dag_sub_id, "livestreaming_dag_sub")],
+            &[(livestreaming_dag_sub_id, livestreaming_id)]
+        )
     );
 
     let result = db.get_channels_for_user(a_id).await.unwrap();
@@ -631,28 +596,19 @@ async fn test_db_channel_moving(db: &Arc<Database>) {
     // Make sure that we're correctly getting the full sub-dag
     pretty_assertions::assert_eq!(
         returned_channels,
-        vec![
-            Channel {
-                id: livestreaming_id,
-                name: "livestreaming".to_string(),
-                parent_id: Some(gpui2_id),
-            },
-            Channel {
-                id: livestreaming_dag_id,
-                name: "livestreaming_dag".to_string(),
-                parent_id: Some(livestreaming_id),
-            },
-            Channel {
-                id: livestreaming_dag_sub_id,
-                name: "livestreaming_dag_sub".to_string(),
-                parent_id: Some(livestreaming_id),
-            },
-            Channel {
-                id: livestreaming_dag_sub_id,
-                name: "livestreaming_dag_sub".to_string(),
-                parent_id: Some(livestreaming_dag_id),
-            }
-        ]
+        graph(
+            &[
+                (livestreaming_id, "livestreaming"),
+                (livestreaming_dag_id, "livestreaming_dag"),
+                (livestreaming_dag_sub_id, "livestreaming_dag_sub"),
+            ],
+            &[
+                (livestreaming_id, gpui2_id),
+                (livestreaming_dag_id, livestreaming_id),
+                (livestreaming_dag_sub_id, livestreaming_id),
+                (livestreaming_dag_sub_id, livestreaming_dag_id),
+            ]
+        )
     );
 
     let result = db.get_channels_for_user(a_id).await.unwrap();
@@ -836,26 +792,26 @@ async fn test_db_channel_moving(db: &Arc<Database>) {
 }
 
 #[track_caller]
-fn assert_dag(actual: Vec<Channel>, expected: &[(ChannelId, Option<ChannelId>)]) {
-    /// This is used to allow tests to be ordering independent
-    fn make_parents_map(association_table: impl IntoIterator<Item= (ChannelId, Option<ChannelId>)>) -> HashMap<ChannelId, HashSet<ChannelId>> {
-        let mut map: HashMap<ChannelId, HashSet<ChannelId>> = HashMap::default();
-
-        for (child, parent) in association_table {
-            let entry = map.entry(child).or_default();
-            if let Some(parent) = parent {
-                entry.insert(parent);
-            }
-        }
-
-        map
+fn assert_dag(actual: ChannelGraph, expected: &[(ChannelId, Option<ChannelId>)]) {
+    let mut actual_map: HashMap<ChannelId, HashSet<ChannelId>> = HashMap::default();
+    for channel in actual.channels {
+        actual_map.insert(channel.id, HashSet::default());
     }
-    let actual = actual
-        .iter()
-        .map(|channel| (channel.id, channel.parent_id));
+    for edge in actual.edges {
+        actual_map
+            .get_mut(&ChannelId::from_proto(edge.channel_id))
+            .unwrap()
+            .insert(ChannelId::from_proto(edge.parent_id));
+    }
 
-    let actual_map = make_parents_map(actual);
-    let expected_map = make_parents_map(expected.iter().copied());
+    let mut expected_map: HashMap<ChannelId, HashSet<ChannelId>> = HashMap::default();
+
+    for (child, parent) in expected {
+        let entry = expected_map.entry(*child).or_default();
+        if let Some(parent) = parent {
+            entry.insert(*parent);
+        }
+    }
 
     pretty_assertions::assert_eq!(actual_map, expected_map)
 }

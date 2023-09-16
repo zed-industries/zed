@@ -3,12 +3,25 @@ mod channel_index;
 use crate::{channel_buffer::ChannelBuffer, channel_chat::ChannelChat};
 use anyhow::{anyhow, Result};
 use client::{Client, Subscription, User, UserId, UserStore};
-use collections::{hash_map::{self, DefaultHasher}, HashMap, HashSet};
+use collections::{
+    hash_map::{self, DefaultHasher},
+    HashMap, HashSet,
+};
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
-use rpc::{proto, TypedEnvelope};
+use rpc::{
+    proto::{self, ChannelEdge, ChannelPermission},
+    TypedEnvelope,
+};
 use serde_derive::{Deserialize, Serialize};
-use std::{mem, ops::Deref, sync::Arc, time::Duration, borrow::Cow, hash::{Hash, Hasher}};
+use std::{
+    borrow::Cow,
+    hash::{Hash, Hasher},
+    mem,
+    ops::Deref,
+    sync::Arc,
+    time::Duration,
+};
 use util::ResultExt;
 
 use self::channel_index::ChannelIndex;
@@ -301,18 +314,33 @@ impl ChannelStore {
         let client = self.client.clone();
         let name = name.trim_start_matches("#").to_owned();
         cx.spawn(|this, mut cx| async move {
-            let channel = client
+            let response = client
                 .request(proto::CreateChannel { name, parent_id })
-                .await?
+                .await?;
+
+            let channel = response
                 .channel
                 .ok_or_else(|| anyhow!("missing channel in response"))?;
-
             let channel_id = channel.id;
+
+            let parent_edge = if let Some(parent_id) = parent_id {
+                vec![ChannelEdge {
+                    channel_id: channel.id,
+                    parent_id,
+                }]
+            } else {
+                vec![]
+            };
 
             this.update(&mut cx, |this, cx| {
                 let task = this.update_channels(
                     proto::UpdateChannels {
                         channels: vec![channel],
+                        insert_edge: parent_edge,
+                        channel_permissions: vec![ChannelPermission {
+                            channel_id,
+                            is_admin: true,
+                        }],
                         ..Default::default()
                     },
                     cx,
@@ -730,6 +758,8 @@ impl ChannelStore {
         payload: proto::UpdateChannels,
         cx: &mut ModelContext<ChannelStore>,
     ) -> Option<Task<Result<()>>> {
+        dbg!(self.client.user_id(), &payload);
+
         if !payload.remove_channel_invitations.is_empty() {
             self.channel_invitations
                 .retain(|channel| !payload.remove_channel_invitations.contains(&channel.id));
@@ -752,7 +782,9 @@ impl ChannelStore {
 
         let channels_changed = !payload.channels.is_empty()
             || !payload.delete_channels.is_empty()
+            || !payload.insert_edge.is_empty()
             || !payload.delete_edge.is_empty();
+
         if channels_changed {
             if !payload.delete_channels.is_empty() {
                 self.channel_index.delete_channels(&payload.delete_channels);
@@ -774,14 +806,20 @@ impl ChannelStore {
             }
 
             let mut index_edit = self.channel_index.bulk_edit();
-
+            dbg!(&index_edit);
             for channel in payload.channels {
-                index_edit.upsert(channel)
+                index_edit.insert(channel)
+            }
+
+            for edge in payload.insert_edge {
+                index_edit.insert_edge(edge.parent_id, edge.channel_id);
             }
 
             for edge in payload.delete_edge {
                 index_edit.delete_edge(edge.parent_id, edge.channel_id);
             }
+            drop(index_edit);
+            dbg!(&self.channel_index);
         }
 
         for permission in payload.channel_permissions {

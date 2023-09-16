@@ -3,7 +3,7 @@ mod connection_pool;
 use crate::{
     auth,
     db::{
-        self, Channel, ChannelId, ChannelsForUser, Database, MessageId, ProjectId, RoomId,
+        self, ChannelId, ChannelsForUser, Database, MessageId, ProjectId, RoomId,
         ServerId, User, UserId,
     },
     executor::Executor,
@@ -39,7 +39,7 @@ use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
         self, Ack, AddChannelBufferCollaborator, AnyTypedEnvelope, EntityMessage, EnvelopedMessage,
-        LiveKitConnectionInfo, RequestMessage,
+        LiveKitConnectionInfo, RequestMessage, ChannelEdge,
     },
     Connection, ConnectionId, Peer, Receipt, TypedEnvelope,
 };
@@ -2200,33 +2200,38 @@ async fn create_channel(
     let channel = proto::Channel {
         id: id.to_proto(),
         name: request.name,
-        parent_id: request.parent_id,
     };
 
-    response.send(proto::ChannelResponse {
+    response.send(proto::CreateChannelResponse {
         channel: Some(channel.clone()),
+        parent_id: request.parent_id,
     })?;
 
-    let mut update = proto::UpdateChannels::default();
-    update.channels.push(channel);
-
-    let user_ids_to_notify = if let Some(parent_id) = parent_id {
-        db.get_channel_members(parent_id).await?
-    } else {
-        vec![session.user_id]
+    let Some(parent_id) = parent_id else {
+        return Ok(());
     };
+
+    let update = proto::UpdateChannels {
+        channels: vec![channel],
+        insert_edge: vec![
+            ChannelEdge {
+                parent_id: parent_id.to_proto(),
+                channel_id: id.to_proto(),
+            }
+        ],
+        ..Default::default()
+    };
+
+    let user_ids_to_notify =
+        db.get_channel_members(parent_id).await?;
 
     let connection_pool = session.connection_pool().await;
     for user_id in user_ids_to_notify {
         for connection_id in connection_pool.user_connection_ids(user_id) {
-            let mut update = update.clone();
             if user_id == session.user_id {
-                update.channel_permissions.push(proto::ChannelPermission {
-                    channel_id: id.to_proto(),
-                    is_admin: true,
-                });
+                continue;
             }
-            session.peer.send(connection_id, update)?;
+            session.peer.send(connection_id, update.clone())?;
         }
     }
 
@@ -2282,7 +2287,6 @@ async fn invite_channel_member(
     update.channel_invitations.push(proto::Channel {
         id: channel.id.to_proto(),
         name: channel.name,
-        parent_id: None,
     });
     for connection_id in session
         .connection_pool()
@@ -2373,9 +2377,8 @@ async fn rename_channel(
     let channel = proto::Channel {
         id: request.channel_id,
         name: new_name,
-        parent_id: None,
     };
-    response.send(proto::ChannelResponse {
+    response.send(proto::RenameChannelResponse {
         channel: Some(channel.clone()),
     })?;
     let mut update = proto::UpdateChannels::default();
@@ -2407,13 +2410,14 @@ async fn link_channel(
     let connection_pool = session.connection_pool().await;
     let update = proto::UpdateChannels {
         channels: channels_to_send
+            .channels
             .into_iter()
             .map(|channel| proto::Channel {
                 id: channel.id.to_proto(),
                 name: channel.name,
-                parent_id: channel.parent_id.map(ChannelId::to_proto),
             })
             .collect(),
+        insert_edge: channels_to_send.edges,
         ..Default::default()
     };
     for member_id in members {
@@ -2469,13 +2473,12 @@ async fn move_channel(
     let from_parent = ChannelId::from_proto(request.from);
     let to = ChannelId::from_proto(request.to);
 
-    let members_from = db.get_channel_members(channel_id).await?;
-
-    let channels_to_send: Vec<Channel> = db
+    let channels_to_send = db
         .move_channel(session.user_id, channel_id, from_parent, to)
         .await?;
 
-    let members_to = db.get_channel_members(channel_id).await?;
+    let members_from = db.get_channel_members(from_parent).await?;
+    let members_to = db.get_channel_members(to).await?;
 
     let update = proto::UpdateChannels {
         delete_edge: vec![proto::ChannelEdge {
@@ -2493,13 +2496,14 @@ async fn move_channel(
 
     let update = proto::UpdateChannels {
         channels: channels_to_send
+            .channels
             .into_iter()
             .map(|channel| proto::Channel {
                 id: channel.id.to_proto(),
                 name: channel.name,
-                parent_id: channel.parent_id.map(ChannelId::to_proto),
             })
             .collect(),
+        insert_edge: channels_to_send.edges,
         ..Default::default()
     };
     for member_id in members_to {
@@ -2542,14 +2546,14 @@ async fn respond_to_channel_invite(
         .remove_channel_invitations
         .push(channel_id.to_proto());
     if request.accept {
-        let result = db.get_channels_for_user(session.user_id).await?;
+        let result = db.get_channel_for_user(channel_id, session.user_id).await?;
         update
             .channels
-            .extend(result.channels.into_iter().map(|channel| proto::Channel {
+            .extend(result.channels.channels.into_iter().map(|channel| proto::Channel {
                 id: channel.id.to_proto(),
                 name: channel.name,
-                parent_id: channel.parent_id.map(ChannelId::to_proto),
             }));
+        update.insert_edge = result.channels.edges;
         update
             .channel_participants
             .extend(
@@ -2967,13 +2971,14 @@ fn build_initial_channels_update(
 ) -> proto::UpdateChannels {
     let mut update = proto::UpdateChannels::default();
 
-    for channel in channels.channels {
+    for channel in channels.channels.channels{
         update.channels.push(proto::Channel {
             id: channel.id.to_proto(),
             name: channel.name,
-            parent_id: channel.parent_id.map(|id| id.to_proto()),
         });
     }
+
+    update.insert_edge = channels.channels.edges;
 
     for (channel_id, participants) in channels.channel_participants {
         update
@@ -3000,7 +3005,6 @@ fn build_initial_channels_update(
         update.channel_invitations.push(proto::Channel {
             id: channel.id.to_proto(),
             name: channel.name,
-            parent_id: None,
         });
     }
 
