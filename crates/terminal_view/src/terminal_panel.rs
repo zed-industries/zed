@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use crate::TerminalView;
 use db::kvp::KEY_VALUE_STORE;
@@ -23,6 +23,7 @@ actions!(terminal_panel, [ToggleFocus]);
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(TerminalPanel::new_terminal);
+    cx.add_action(TerminalPanel::open_terminal);
 }
 
 #[derive(Debug)]
@@ -79,7 +80,7 @@ impl TerminalPanel {
                             cx.window_context().defer(move |cx| {
                                 if let Some(this) = this.upgrade(cx) {
                                     this.update(cx, |this, cx| {
-                                        this.add_terminal(cx);
+                                        this.add_terminal(None, cx);
                                     });
                                 }
                             })
@@ -230,6 +231,21 @@ impl TerminalPanel {
         }
     }
 
+    pub fn open_terminal(
+        workspace: &mut Workspace,
+        action: &workspace::OpenTerminal,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let Some(this) = workspace.focus_panel::<Self>(cx) else {
+            return;
+        };
+
+        this.update(cx, |this, cx| {
+            this.add_terminal(Some(action.working_directory.clone()), cx)
+        })
+    }
+
+    ///Create a new Terminal in the current working directory or the user's home directory
     fn new_terminal(
         workspace: &mut Workspace,
         _: &workspace::NewTerminal,
@@ -239,19 +255,23 @@ impl TerminalPanel {
             return;
         };
 
-        this.update(cx, |this, cx| this.add_terminal(cx))
+        this.update(cx, |this, cx| this.add_terminal(None, cx))
     }
 
-    fn add_terminal(&mut self, cx: &mut ViewContext<Self>) {
+    fn add_terminal(&mut self, working_directory: Option<PathBuf>, cx: &mut ViewContext<Self>) {
         let workspace = self.workspace.clone();
         cx.spawn(|this, mut cx| async move {
             let pane = this.read_with(&cx, |this, _| this.pane.clone())?;
             workspace.update(&mut cx, |workspace, cx| {
-                let working_directory_strategy = settings::get::<TerminalSettings>(cx)
-                    .working_directory
-                    .clone();
-                let working_directory =
-                    crate::get_working_directory(workspace, cx, working_directory_strategy);
+                let working_directory = if let Some(working_directory) = working_directory {
+                    Some(working_directory)
+                } else {
+                    let working_directory_strategy = settings::get::<TerminalSettings>(cx)
+                        .working_directory
+                        .clone();
+                    crate::get_working_directory(workspace, cx, working_directory_strategy)
+                };
+
                 let window = cx.window();
                 if let Some(terminal) = workspace.project().update(cx, |project, cx| {
                     project
@@ -389,7 +409,7 @@ impl Panel for TerminalPanel {
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         if active && self.pane.read(cx).items_len() == 0 {
-            self.add_terminal(cx)
+            self.add_terminal(None, cx)
         }
     }
 
