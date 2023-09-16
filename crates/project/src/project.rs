@@ -79,7 +79,7 @@ use std::{
     time::{Duration, Instant},
 };
 use terminals::Terminals;
-use text::Anchor;
+use text::{Anchor, LineEnding, Rope};
 use util::{
     debug_panic, defer,
     http::HttpClient,
@@ -8350,10 +8350,10 @@ impl Project {
         let fs = Arc::clone(&self.fs);
         cx.background()
             .spawn(async move {
-                let prettier_dir_metadata = fs.metadata(default_prettier_dir).await.with_context(|| format!("fetching FS metadata for prettier default dir {default_prettier_dir:?}"))?;
-                if prettier_dir_metadata.is_none() {
-                    fs.create_dir(default_prettier_dir).await.with_context(|| format!("creating prettier default dir {default_prettier_dir:?}"))?;
-                }
+                let prettier_wrapper_path = default_prettier_dir.join("prettier_server.js");
+                // method creates parent directory if it doesn't exist
+                fs.save(&prettier_wrapper_path, &Rope::from(prettier::PRETTIER_SERVER_JS), LineEnding::Unix).await
+                .with_context(|| format!("writing prettier_server.js file at {prettier_wrapper_path:?}"))?;
 
                 let packages_to_versions = future::try_join_all(
                     prettier_plugins

@@ -18,6 +18,8 @@ pub struct LocateStart {
     pub starting_path: Arc<Path>,
 }
 
+pub const PRETTIER_SERVER_JS: &str = include_str!("./prettier_server.js");
+
 impl Prettier {
     // This was taken from the prettier-vscode extension.
     pub const CONFIG_FILE_NAMES: &'static [&'static str] = &[
