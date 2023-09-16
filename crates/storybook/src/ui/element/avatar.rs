@@ -7,7 +7,7 @@ use gpui2::{Element, ViewContext};
 
 pub type UnknownString = ArcCow<'static, str>;
 
-#[derive(Element)]
+#[derive(Element, Clone)]
 pub struct Avatar {
     src: ArcCow<'static, str>,
     shape: Shape,

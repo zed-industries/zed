@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use crate::prelude::Shape;
 use crate::theme::theme;
-use crate::ui::{avatar, icon_button, text_button, tool_divider};
+use crate::ui::{avatar, follow_group, icon_button, text_button, tool_divider};
 use gpui2::style::StyleHelpers;
 use gpui2::{elements::div, IntoElement};
 use gpui2::{Element, ParentElement, ViewContext};
@@ -21,6 +21,10 @@ pub fn title_bar<V: 'static>() -> TitleBar<V> {
 impl<V: 'static> TitleBar<V> {
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
+        let player_list = vec![
+            avatar("https://avatars.githubusercontent.com/u/1714999?v=4"),
+            avatar("https://avatars.githubusercontent.com/u/1714999?v=4"),
+        ];
 
         div()
             .flex()
@@ -70,9 +74,13 @@ impl<V: 'static> TitleBar<V> {
                             .flex()
                             .items_center()
                             .gap_1()
+                            .child(text_button("maxbrunsfeld"))
                             .child(text_button("zed"))
                             .child(text_button("nate/gpui2-ui-components")),
-                    ),
+                    )
+                    .child(follow_group(player_list.clone()).player(0))
+                    .child(follow_group(player_list.clone()).player(1))
+                    .child(follow_group(player_list.clone()).player(2)),
             )
             .child(
                 div()

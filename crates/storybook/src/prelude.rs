@@ -5,7 +5,7 @@ pub enum ButtonVariant {
     Filled,
 }
 
-#[derive(Default, PartialEq)]
+#[derive(Default, PartialEq, Clone, Copy)]
 pub enum Shape {
     #[default]
     Circle,
