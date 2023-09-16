@@ -203,7 +203,15 @@ impl Clone for Toast {
     }
 }
 
-impl_actions!(workspace, [ActivatePane, ActivatePaneInDirection, Toast]);
+#[derive(Clone, Deserialize, PartialEq)]
+pub struct OpenTerminal {
+    pub working_directory: PathBuf,
+}
+
+impl_actions!(
+    workspace,
+    [ActivatePane, ActivatePaneInDirection, Toast, OpenTerminal]
+);
 
 pub type WorkspaceId = i64;
 

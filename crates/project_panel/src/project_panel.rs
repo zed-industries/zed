@@ -122,6 +122,7 @@ actions!(
         CopyPath,
         CopyRelativePath,
         RevealInFinder,
+        OpenInTerminal,
         Cut,
         Paste,
         Delete,
@@ -156,6 +157,7 @@ pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     cx.add_action(ProjectPanel::copy_path);
     cx.add_action(ProjectPanel::copy_relative_path);
     cx.add_action(ProjectPanel::reveal_in_finder);
+    cx.add_action(ProjectPanel::open_in_terminal);
     cx.add_action(ProjectPanel::new_search_in_directory);
     cx.add_action(
         |this: &mut ProjectPanel, action: &Paste, cx: &mut ViewContext<ProjectPanel>| {
@@ -423,24 +425,30 @@ impl ProjectPanel {
             menu_entries.push(ContextMenuItem::Separator);
             menu_entries.push(ContextMenuItem::action("Cut", Cut));
             menu_entries.push(ContextMenuItem::action("Copy", Copy));
+            if let Some(clipboard_entry) = self.clipboard_entry {
+                if clipboard_entry.worktree_id() == worktree.id() {
+                    menu_entries.push(ContextMenuItem::action("Paste", Paste));
+                }
+            }
             menu_entries.push(ContextMenuItem::Separator);
             menu_entries.push(ContextMenuItem::action("Copy Path", CopyPath));
             menu_entries.push(ContextMenuItem::action(
                 "Copy Relative Path",
                 CopyRelativePath,
             ));
+
+            if entry.is_dir() {
+                menu_entries.push(ContextMenuItem::Separator);
+            }
             menu_entries.push(ContextMenuItem::action("Reveal in Finder", RevealInFinder));
             if entry.is_dir() {
+                menu_entries.push(ContextMenuItem::action("Open in Terminal", OpenInTerminal));
                 menu_entries.push(ContextMenuItem::action(
                     "Search Inside",
                     NewSearchInDirectory,
                 ));
             }
-            if let Some(clipboard_entry) = self.clipboard_entry {
-                if clipboard_entry.worktree_id() == worktree.id() {
-                    menu_entries.push(ContextMenuItem::action("Paste", Paste));
-                }
-            }
+
             menu_entries.push(ContextMenuItem::Separator);
             menu_entries.push(ContextMenuItem::action("Rename", Rename));
             if !is_root {
@@ -962,6 +970,26 @@ impl ProjectPanel {
     fn reveal_in_finder(&mut self, _: &RevealInFinder, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             cx.reveal_path(&worktree.abs_path().join(&entry.path));
+        }
+    }
+
+    fn open_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            let window = cx.window();
+            let view_id = cx.view_id();
+            let path = worktree.abs_path().join(&entry.path);
+
+            cx.app_context()
+                .spawn(|mut cx| async move {
+                    window.dispatch_action(
+                        view_id,
+                        &workspace::OpenTerminal {
+                            working_directory: path,
+                        },
+                        &mut cx,
+                    );
+                })
+                .detach();
         }
     }
 
