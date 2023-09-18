@@ -187,6 +187,7 @@ impl Prettier {
         buffer: &ModelHandle<Buffer>,
         cx: &AsyncAppContext,
     ) -> anyhow::Result<Diff> {
+        // TODO kb prettier needs either a path or a `parser` (depends on a language) option to format
         let (buffer_text, buffer_language) =
             buffer.read_with(cx, |buffer, _| (buffer.text(), buffer.language().cloned()));
         let response = self
@@ -198,8 +199,8 @@ impl Prettier {
             })
             .await
             .context("prettier format request")?;
-        dbg!("Formatted text", response.text);
-        anyhow::bail!("TODO kb calculate the diff")
+        let diff_task = buffer.read_with(cx, |buffer, cx| buffer.diff(response.text, cx));
+        Ok(diff_task.await)
     }
 
     pub async fn clear_cache(&self) -> anyhow::Result<()> {
