@@ -783,14 +783,21 @@ impl BufferSearchBar {
                         }
                     }
                 } else {
-                    SearchQuery::text(
+                    match SearchQuery::text(
                         query,
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                         Vec::new(),
                         Vec::new(),
-                    )
-                    .with_replacement(Some(self.replacement(cx)).filter(|s| !s.is_empty()))
+                    ) {
+                        Ok(query) => query
+                            .with_replacement(Some(self.replacement(cx)).filter(|s| !s.is_empty())),
+                        Err(_) => {
+                            self.query_contains_error = true;
+                            cx.notify();
+                            return done_rx;
+                        }
+                    }
                 }
                 .into();
                 self.active_search = Some(query.clone());

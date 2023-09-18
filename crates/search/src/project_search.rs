@@ -1050,13 +1050,23 @@ impl ProjectSearchView {
                     }
                 }
             }
-            _ => Some(SearchQuery::text(
+            _ => match SearchQuery::text(
                 text,
                 self.search_options.contains(SearchOptions::WHOLE_WORD),
                 self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                 included_files,
                 excluded_files,
-            )),
+            ) {
+                Ok(query) => {
+                    self.panels_with_errors.remove(&InputPanel::Query);
+                    Some(query)
+                }
+                Err(_e) => {
+                    self.panels_with_errors.insert(InputPanel::Query);
+                    cx.notify();
+                    None
+                }
+            },
         }
     }
 
