@@ -54,6 +54,7 @@ enum VimEvent {
 }
 
 pub fn init(cx: &mut AppContext) {
+    cx.set_global(Vim::default());
     settings::register::<VimModeSetting>(cx);
 
     editor_events::init(cx);
@@ -90,11 +91,11 @@ pub fn init(cx: &mut AppContext) {
     cx.update_default_global::<CommandPaletteFilter, _, _>(|filter, _| {
         filter.filtered_namespaces.insert("vim");
     });
-    cx.update_default_global(|vim: &mut Vim, cx: &mut AppContext| {
+    cx.update_global(|vim: &mut Vim, cx: &mut AppContext| {
         vim.set_enabled(settings::get::<VimModeSetting>(cx).0, cx)
     });
     cx.observe_global::<SettingsStore, _>(|cx| {
-        cx.update_default_global(|vim: &mut Vim, cx: &mut AppContext| {
+        cx.update_global(|vim: &mut Vim, cx: &mut AppContext| {
             vim.set_enabled(settings::get::<VimModeSetting>(cx).0, cx)
         });
     })
@@ -159,7 +160,7 @@ impl Vim {
     where
         F: FnOnce(&mut Self, &mut WindowContext) -> S,
     {
-        cx.update_default_global(update)
+        cx.update_global(update)
     }
 
     fn set_active_editor(&mut self, editor: ViewHandle<Editor>, cx: &mut WindowContext) {

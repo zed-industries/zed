@@ -40,6 +40,7 @@ fn blurred(EditorBlurred(editor): &EditorBlurred, cx: &mut AppContext) {
             if let Some(previous_editor) = vim.active_editor.clone() {
                 if previous_editor == editor.clone() {
                     vim.active_editor = None;
+                    vim.editor_subscription = None;
                 }
             }
 
@@ -50,10 +51,11 @@ fn blurred(EditorBlurred(editor): &EditorBlurred, cx: &mut AppContext) {
 
 fn released(EditorReleased(editor): &EditorReleased, cx: &mut AppContext) {
     editor.window().update(cx, |cx| {
-        cx.update_default_global(|vim: &mut Vim, _| {
+        Vim::update(cx, |vim, _| {
             if let Some(previous_editor) = vim.active_editor.clone() {
                 if previous_editor == editor.clone() {
                     vim.active_editor = None;
+                    vim.editor_subscription = None;
                 }
             }
             vim.editor_states.remove(&editor.id())
