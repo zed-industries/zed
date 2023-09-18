@@ -455,6 +455,7 @@
       "shift-d": "vim::VisualDelete",
       "shift-x": "vim::VisualDelete",
       "y": "vim::VisualYank",
+      "shift-y": "vim::VisualYank",
       "p": "vim::Paste",
       "shift-p": [
         "vim::Paste",
