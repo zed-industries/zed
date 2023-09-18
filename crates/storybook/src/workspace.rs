@@ -1,7 +1,6 @@
 use crate::{
-    collab_panel::collab_panel,
     theme::theme,
-    ui::{chat_panel, status_bar, tab_bar, title_bar},
+    ui::{chat_panel, project_panel, status_bar, tab_bar, title_bar},
 };
 use gpui2::{
     elements::{div, div::ScrollState},
@@ -42,7 +41,7 @@ impl WorkspaceElement {
                     .flex()
                     .flex_row()
                     .overflow_hidden()
-                    .child(collab_panel(self.left_scroll_state.clone()))
+                    .child(project_panel(self.left_scroll_state.clone()))
                     .child(
                         div()
                             .h_full()

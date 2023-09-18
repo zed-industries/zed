@@ -5,6 +5,13 @@ pub enum ButtonVariant {
     Filled,
 }
 
+#[derive(Default, PartialEq)]
+pub enum InputVariant {
+    #[default]
+    Ghost,
+    Filled,
+}
+
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum Shape {
     #[default]
