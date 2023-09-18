@@ -43,6 +43,8 @@ async function handleBuffer(prettier) {
     }
 }
 
+const headerSeparator = "\r\n";
+
 async function* readStdin() {
     let buffer = Buffer.alloc(0);
     let streamEnded = false;
@@ -62,13 +64,12 @@ async function* readStdin() {
     }
 
     try {
-        const headersSeparator = "\r\n\r\n";
         let contentLengthHeaderName = 'Content-Length';
         let headersLength = null;
         let messageLength = null;
         main_loop: while (true) {
             if (messageLength === null) {
-                while (buffer.indexOf(headersSeparator) === -1) {
+                while (buffer.indexOf(`${headerSeparator}${headerSeparator}`) === -1) {
                     if (streamEnded) {
                         await handleStreamEnded('Unexpected end of stream: headers not found');
                         continue main_loop;
@@ -78,16 +79,16 @@ async function* readStdin() {
                     }
                     await once(process.stdin, 'readable');
                 }
-                const headers = buffer.subarray(0, buffer.indexOf(headersSeparator)).toString('ascii');
-                const contentLengthHeader = headers.split('\r\n').map(header => header.split(': '))
+                const headers = buffer.subarray(0, buffer.indexOf(`${headerSeparator}${headerSeparator}`)).toString('ascii');
+                const contentLengthHeader = headers.split(headerSeparator).map(header => header.split(':'))
                     .filter(header => header[2] === undefined)
                     .filter(header => (header[1] || '').length > 0)
                     .find(header => header[0].trim() === contentLengthHeaderName);
                 if (contentLengthHeader === undefined) {
-                    await handleStreamEnded(`Missing or incorrect Content-Length header: ${headers}`);
+                    await handleStreamEnded(`Missing or incorrect ${contentLengthHeaderName} header: ${headers}`);
                     continue main_loop;
                 }
-                headersLength = headers.length + headersSeparator.length;
+                headersLength = headers.length + headerSeparator.length * 2;
                 messageLength = parseInt(contentLengthHeader[1], 10);
             }
 
@@ -130,7 +131,14 @@ async function handleMessage(messageText, prettier) {
         if (params === undefined || params.text === undefined) {
             throw new Error(`Message params.text is undefined: ${messageText}`);
         }
-        let formattedText = await prettier.format(params.text);
+
+        let options = {};
+        if (message.path !== undefined) {
+            options.filepath = message.path;
+        } else {
+            options.parser = message.parser || 'babel';
+        }
+        const formattedText = await prettier.format(params.text, options);
         sendResponse({ id, result: { text: formattedText } });
     } else if (method === 'prettier/clear_cache') {
         prettier.clearConfigCache();
@@ -161,7 +169,7 @@ function sendResponse(response) {
         jsonrpc: "2.0",
         ...response
     });
-    let headers = `Content-Length: ${Buffer.byteLength(responsePayloadString)}\r\n\r\n`;
+    let headers = `Content-Length: ${Buffer.byteLength(responsePayloadString)}${headerSeparator}${headerSeparator}`;
     let dataToSend = headers + responsePayloadString;
     process.stdout.write(dataToSend);
 }

@@ -187,10 +187,15 @@ impl Prettier {
         buffer: &ModelHandle<Buffer>,
         cx: &AsyncAppContext,
     ) -> anyhow::Result<Diff> {
-        let buffer_text = buffer.read_with(cx, |buffer, _| buffer.text());
+        let (buffer_text, buffer_language) =
+            buffer.read_with(cx, |buffer, _| (buffer.text(), buffer.language().cloned()));
         let response = self
             .server
-            .request::<PrettierFormat>(PrettierFormatParams { text: buffer_text })
+            .request::<PrettierFormat>(PrettierFormatParams {
+                text: buffer_text,
+                path: None,
+                parser: None,
+            })
             .await
             .context("prettier format request")?;
         dbg!("Formatted text", response.text);
@@ -256,6 +261,9 @@ enum PrettierFormat {}
 #[serde(rename_all = "camelCase")]
 struct PrettierFormatParams {
     text: String,
+    // TODO kb have "options" or something more generic instead?
+    parser: Option<String>,
+    path: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
