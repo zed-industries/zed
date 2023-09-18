@@ -541,7 +541,8 @@ fn down(
             .clip_point(FoldPoint::new(new_row, new_col), Bias::Left),
     );
 
-    (point, goal)
+    // clip twice to "clip at end of line"
+    (map.clip_point(point, Bias::Left), goal)
 }
 
 fn down_display(
@@ -581,7 +582,7 @@ pub(crate) fn up(
             .clip_point(FoldPoint::new(new_row, new_col), Bias::Left),
     );
 
-    (point, goal)
+    (map.clip_point(point, Bias::Left), goal)
 }
 
 fn up_display(
