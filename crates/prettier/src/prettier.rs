@@ -5,6 +5,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use fs::Fs;
 use gpui::{AsyncAppContext, ModelHandle, Task};
+use language::language_settings::language_settings;
 use language::{Buffer, BundledFormatter, Diff};
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId};
 use node_runtime::NodeRuntime;
@@ -188,11 +189,13 @@ impl Prettier {
         cx: &AsyncAppContext,
     ) -> anyhow::Result<Diff> {
         let params = buffer.read_with(cx, |buffer, cx| {
-            let path = buffer
-                .file()
+            let buffer_file = buffer.file();
+            let buffer_language = buffer.language();
+            let language_settings = language_settings(buffer_language, buffer_file, cx);
+            let path = buffer_file
                 .map(|file| file.full_path(cx))
                 .map(|path| path.to_path_buf());
-            let parser = buffer.language().and_then(|language| {
+            let parser = buffer_language.and_then(|language| {
                 language
                     .lsp_adapters()
                     .iter()
@@ -203,9 +206,14 @@ impl Prettier {
                         }
                     })
             });
+            let tab_width = Some(language_settings.tab_size.get());
             PrettierFormatParams {
                 text: buffer.text(),
-                options: FormatOptions { parser, path },
+                options: FormatOptions {
+                    parser,
+                    path,
+                    tab_width,
+                },
             }
         });
         let response = self
@@ -283,7 +291,9 @@ struct PrettierFormatParams {
 #[serde(rename_all = "camelCase")]
 struct FormatOptions {
     parser: Option<String>,
+    #[serde(rename = "filepath")]
     path: Option<PathBuf>,
+    tab_width: Option<u32>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

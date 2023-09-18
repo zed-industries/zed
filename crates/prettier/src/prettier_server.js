@@ -134,15 +134,7 @@ async function handleMessage(messageText, prettier) {
         if (params.options === undefined) {
             throw new Error(`Message params.options is undefined: ${messageText}`);
         }
-
-        let options = {};
-        if (params.options.path !== undefined) {
-            options.filepath = params.options.path;
-        }
-        if (params.options.parser !== undefined) {
-            options.parser = params.options.parser;
-        }
-        const formattedText = await prettier.format(params.text, options);
+        const formattedText = await prettier.format(params.text, params.options);
         sendResponse({ id, result: { text: formattedText } });
     } else if (method === 'prettier/clear_cache') {
         prettier.clearConfigCache();
