@@ -126,6 +126,8 @@ fn clone_repo(repo_eval: RepoEval) -> anyhow::Result<PathBuf> {
     let clone_path = fs::canonicalize(env::current_dir()?)?
         .parent()
         .ok_or(anyhow!("path canonicalization failed"))?
+        .parent()
+        .unwrap()
         .join(TMP_REPO_PATH)
         .join(&repo_name);
 
@@ -156,30 +158,12 @@ fn dcg(hits: Vec<usize>) -> f32 {
     result
 }
 
-fn evaluate_ndcg(
+fn get_hits(
     eval_query: EvaluationQuery,
     search_results: Vec<SearchResult>,
     k: usize,
     cx: &AsyncAppContext,
-) -> Vec<f32> {
-    // NDCG or Normalized Discounted Cumulative Gain, is determined by comparing the relevance of
-    // items returned by the search engine relative to the hypothetical ideal.
-    // Relevance is represented as a series of booleans, in which each search result returned
-    // is identified as being inside the test set of matches (1) or not (0).
-
-    // For example, if result 1, 3 and 5 match the 3 relevant results provided
-    // actual dcg is calculated against a vector of [1, 0, 1, 0, 1]
-    // whereas ideal dcg is calculated against a vector of [1, 1, 1, 0, 0]
-    // as this ideal vector assumes the 3 relevant results provided were returned first
-    // normalized dcg is then calculated as actual dcg / ideal dcg.
-
-    // NDCG ranges from 0 to 1, which higher values indicating better performance
-    // Commonly NDCG is expressed as NDCG@k, in which k represents the metric calculated
-    // including only the top k values returned.
-    // The @k metrics can help you identify, at what point does the relevant results start to fall off.
-    // Ie. a NDCG@1 of 0.9 and a NDCG@3 of 0.5 may indicate that the first result returned in usually
-    // very high quality, whereas rank results quickly drop off after the first result.
-
+) -> (Vec<usize>, Vec<usize>) {
     let ideal = vec![1; cmp::min(eval_query.matches.len(), k)];
 
     let mut hits = Vec::new();
@@ -222,10 +206,32 @@ fn evaluate_ndcg(
         filled_ideal[idx] = i;
     }
 
+    (filled_ideal.to_vec(), hits)
+}
+
+fn evaluate_ndcg(hits: Vec<usize>, ideal: Vec<usize>) -> Vec<f32> {
+    // NDCG or Normalized Discounted Cumulative Gain, is determined by comparing the relevance of
+    // items returned by the search engine relative to the hypothetical ideal.
+    // Relevance is represented as a series of booleans, in which each search result returned
+    // is identified as being inside the test set of matches (1) or not (0).
+
+    // For example, if result 1, 3 and 5 match the 3 relevant results provided
+    // actual dcg is calculated against a vector of [1, 0, 1, 0, 1]
+    // whereas ideal dcg is calculated against a vector of [1, 1, 1, 0, 0]
+    // as this ideal vector assumes the 3 relevant results provided were returned first
+    // normalized dcg is then calculated as actual dcg / ideal dcg.
+
+    // NDCG ranges from 0 to 1, which higher values indicating better performance
+    // Commonly NDCG is expressed as NDCG@k, in which k represents the metric calculated
+    // including only the top k values returned.
+    // The @k metrics can help you identify, at what point does the relevant results start to fall off.
+    // Ie. a NDCG@1 of 0.9 and a NDCG@3 of 0.5 may indicate that the first result returned in usually
+    // very high quality, whereas rank results quickly drop off after the first result.
+
     let mut ndcg = Vec::new();
     for idx in 1..(hits.len() + 1) {
         let hits_at_k = hits[0..idx].to_vec();
-        let ideal_at_k = filled_ideal[0..idx].to_vec();
+        let ideal_at_k = ideal[0..idx].to_vec();
 
         let at_k = dcg(hits_at_k.clone()) / dcg(ideal_at_k.clone());
 
@@ -235,7 +241,24 @@ fn evaluate_ndcg(
     ndcg
 }
 
-// fn evaluate_map(eval_query: EvaluationQuery, search_results: Vec<SearchResult>, k: usize) -> f32 {}
+fn evaluate_map(hits: Vec<usize>) -> Vec<f32> {
+    let mut map_at_k = Vec::new();
+
+    let non_zero = hits.iter().sum::<usize>() as f32;
+    if non_zero == 0.0 {
+        return vec![0.0; hits.len()];
+    }
+
+    let mut rolling_non_zero = 0.0;
+    let mut rolling_map = 0.0;
+    for (idx, h) in hits.into_iter().enumerate() {
+        rolling_non_zero += h as f32;
+        rolling_map += rolling_non_zero / (idx + 1) as f32;
+        map_at_k.push(rolling_map / non_zero);
+    }
+
+    map_at_k
+}
 
 fn init_logger() {
     env_logger::init();
@@ -253,7 +276,7 @@ async fn evaluate_repo(
         .update(cx, |index, cx| index.index_project(project.clone(), cx))
         .await?;
     let index_time = index_t0.elapsed();
-    println!("Time to Index: {:?}", index_time.as_secs());
+    println!("Time to Index: {:?}", index_time.as_millis());
 
     for query in query_matches {
         // Query each match in order
@@ -264,17 +287,22 @@ async fn evaluate_repo(
             })
             .await?;
         let search_time = search_t0.elapsed();
-        println!("Time to Search: {:?}", search_time.as_secs());
+        println!("Time to Search: {:?}", search_time.as_millis());
+
+        // Get Hits/Ideal
+        let k = 10;
+        let (ideal, hits) = self::get_hits(query, search_results, k, cx);
 
         // Evaluate ndcg@k, for k = 1, 3, 5, 10
-        let ndcg = evaluate_ndcg(query, search_results, 10, cx);
+        let ndcg = evaluate_ndcg(hits.clone(), ideal);
         println!("NDCG: {:?}", ndcg);
 
         // Evaluate map@k, for k = 1, 3, 5, 10
+        let map = evaluate_map(hits);
+        println!("MAP: {:?}", map);
+
         // Evaluate span count
         // Evaluate token count
-        // Evaluate time to index
-        // Evaluate time to search
     }
 
     anyhow::Ok(())
