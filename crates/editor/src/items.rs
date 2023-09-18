@@ -995,7 +995,7 @@ impl SearchableItem for Editor {
             joined_chunks.into()
         };
 
-        if let Some(replacement) = query.replacement(&text) {
+        if let Some(replacement) = query.replacement_for(&text) {
             self.edit([(identifier.clone(), Arc::from(&*replacement))], cx);
         }
     }

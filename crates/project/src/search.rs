@@ -232,7 +232,16 @@ impl SearchQuery {
             }
         }
     }
-    pub fn replacement<'a>(&self, text: &'a str) -> Option<Cow<'a, str>> {
+    /// Returns the replacement text for this `SearchQuery`.
+    pub fn replacement(&self) -> Option<&str> {
+        match self {
+            SearchQuery::Text { replacement, .. } | SearchQuery::Regex { replacement, .. } => {
+                replacement.as_deref()
+            }
+        }
+    }
+    /// Replaces search hits if replacement is set. `text` is assumed to be a string that matches this `SearchQuery` exactly, without any leftovers on either side.
+    pub fn replacement_for<'a>(&self, text: &'a str) -> Option<Cow<'a, str>> {
         match self {
             SearchQuery::Text { replacement, .. } => replacement.clone().map(Cow::from),
             SearchQuery::Regex {

@@ -906,6 +906,7 @@ impl BufferSearchBar {
         }
     }
     fn replace_next(&mut self, _: &ReplaceNext, cx: &mut ViewContext<Self>) {
+        let mut should_propagate = true;
         if !self.dismissed && self.active_search.is_some() {
             if let Some(searchable_item) = self.active_searchable_item.as_ref() {
                 if let Some(query) = self.active_search.as_ref() {
@@ -919,11 +920,16 @@ impl BufferSearchBar {
                             );
                             searchable_item.replace(&matches[active_index], &query, cx);
                         }
-
+                        should_propagate = false;
                         self.focus_editor(&FocusEditor, cx);
                     }
                 }
             }
+        }
+        dbg!("prop?");
+        if should_propagate {
+            dbg!("Prop!");
+            cx.propagate_action();
         }
     }
     fn replace_all(&mut self, _: &ReplaceAll, cx: &mut ViewContext<Self>) {

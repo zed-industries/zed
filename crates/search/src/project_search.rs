@@ -2,8 +2,8 @@ use crate::{
     history::SearchHistory,
     mode::{SearchMode, Side},
     search_bar::{render_nav_button, render_option_button_icon, render_search_mode_button},
-    ActivateRegexMode, CycleMode, NextHistoryQuery, PreviousHistoryQuery, SearchOptions,
-    SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
+    ActivateRegexMode, CycleMode, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext,
+    SearchOptions, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
 };
 use anyhow::{Context, Result};
 use collections::HashMap;
@@ -59,12 +59,16 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(ProjectSearchBar::search_in_new);
     cx.add_action(ProjectSearchBar::select_next_match);
     cx.add_action(ProjectSearchBar::select_prev_match);
+    cx.add_action(ProjectSearchBar::replace_next);
+    cx.add_action(ProjectSearchBar::replace_all);
     cx.add_action(ProjectSearchBar::cycle_mode);
     cx.add_action(ProjectSearchBar::next_history_query);
     cx.add_action(ProjectSearchBar::previous_history_query);
     cx.add_action(ProjectSearchBar::activate_regex_mode);
     cx.capture_action(ProjectSearchBar::tab);
     cx.capture_action(ProjectSearchBar::tab_previous);
+    cx.capture_action(ProjectSearchView::replace_all);
+    cx.capture_action(ProjectSearchView::replace_next);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
     add_toggle_option_action::<ToggleWholeWord>(SearchOptions::WHOLE_WORD, cx);
     add_toggle_filters_action::<ToggleFilters>(cx);
@@ -115,6 +119,7 @@ enum InputPanel {
 pub struct ProjectSearchView {
     model: ModelHandle<ProjectSearch>,
     query_editor: ViewHandle<Editor>,
+    replacement_editor: ViewHandle<Editor>,
     results_editor: ViewHandle<Editor>,
     semantic_state: Option<SemanticState>,
     semantic_permissioned: Option<bool>,
@@ -787,11 +792,54 @@ impl ProjectSearchView {
 
         cx.notify();
     }
-
+    fn replace_next(&mut self, _: &ReplaceNext, cx: &mut ViewContext<Self>) {
+        let model = self.model.read(cx);
+        if let Some(query) = model.active_query.as_ref() {
+            if model.match_ranges.is_empty() {
+                return;
+            }
+            if let Some(active_index) = self.active_match_index {
+                let query = query
+                    .clone()
+                    .with_replacement(Some(self.replacement(cx)).filter(|rep| !rep.is_empty()));
+                self.results_editor.replace(
+                    &(Box::new(model.match_ranges[active_index].clone()) as _),
+                    &query,
+                    cx,
+                );
+                self.select_match(Direction::Next, cx)
+            }
+        }
+    }
+    pub fn replacement(&self, cx: &AppContext) -> String {
+        self.replacement_editor.read(cx).text(cx)
+    }
+    fn replace_all(&mut self, _: &ReplaceAll, cx: &mut ViewContext<Self>) {
+        let model = self.model.read(cx);
+        if let Some(query) = model.active_query.as_ref() {
+            if model.match_ranges.is_empty() {
+                return;
+            }
+            if self.active_match_index.is_some() {
+                let query = query
+                    .clone()
+                    .with_replacement(Some(self.replacement(cx)).filter(|rep| !rep.is_empty()));
+                let matches = model
+                    .match_ranges
+                    .iter()
+                    .map(|item| Box::new(item.clone()) as _)
+                    .collect::<Vec<_>>();
+                for item in matches {
+                    self.results_editor.replace(&item, &query, cx);
+                }
+            }
+        }
+    }
     fn new(model: ModelHandle<ProjectSearch>, cx: &mut ViewContext<Self>) -> Self {
         let project;
         let excerpts;
         let mut query_text = String::new();
+        let mut replacement_text = None;
         let mut options = SearchOptions::NONE;
 
         {
@@ -800,6 +848,7 @@ impl ProjectSearchView {
             excerpts = model.excerpts.clone();
             if let Some(active_query) = model.active_query.as_ref() {
                 query_text = active_query.as_str().to_string();
+                replacement_text = active_query.replacement().map(ToOwned::to_owned);
                 options = SearchOptions::from_query(active_query);
             }
         }
@@ -820,7 +869,17 @@ impl ProjectSearchView {
             cx.emit(ViewEvent::EditorEvent(event.clone()))
         })
         .detach();
-
+        let replacement_editor = cx.add_view(|cx| {
+            let mut editor = Editor::single_line(
+                Some(Arc::new(|theme| theme.search.editor.input.clone())),
+                cx,
+            );
+            editor.set_placeholder_text("Replace in project..", cx);
+            if let Some(text) = replacement_text {
+                editor.set_text(text, cx);
+            }
+            editor
+        });
         let results_editor = cx.add_view(|cx| {
             let mut editor = Editor::for_multibuffer(excerpts, Some(project.clone()), cx);
             editor.set_searchable(false);
@@ -875,6 +934,7 @@ impl ProjectSearchView {
 
         // Check if Worktrees have all been previously indexed
         let mut this = ProjectSearchView {
+            replacement_editor,
             search_id: model.read(cx).search_id,
             model,
             query_editor,
@@ -1254,6 +1314,26 @@ impl ProjectSearchBar {
         }
     }
 
+    fn replace_next(pane: &mut Pane, _: &ReplaceNext, cx: &mut ViewContext<Pane>) {
+        if let Some(search_view) = pane
+            .active_item()
+            .and_then(|item| item.downcast::<ProjectSearchView>())
+        {
+            search_view.update(cx, |view, cx| view.replace_next(&ReplaceNext, cx));
+        } else {
+            cx.propagate_action();
+        }
+    }
+    fn replace_all(pane: &mut Pane, _: &ReplaceAll, cx: &mut ViewContext<Pane>) {
+        if let Some(search_view) = pane
+            .active_item()
+            .and_then(|item| item.downcast::<ProjectSearchView>())
+        {
+            search_view.update(cx, |view, cx| view.replace_all(&ReplaceAll, cx));
+        } else {
+            cx.propagate_action();
+        }
+    }
     fn select_prev_match(pane: &mut Pane, _: &SelectPrevMatch, cx: &mut ViewContext<Pane>) {
         if let Some(search_view) = pane
             .active_item()
@@ -1528,7 +1608,43 @@ impl View for ProjectSearchBar {
                 .with_style(theme.search.match_index.container)
                 .aligned()
             });
-
+            let should_show_replace_input = true;
+            let replacement = should_show_replace_input.then(|| {
+                Flex::row()
+                    .with_child(
+                        Svg::for_style(theme.search.replace_icon.clone().icon)
+                            .contained()
+                            .with_style(theme.search.replace_icon.clone().container),
+                    )
+                    .with_child(ChildView::new(&search.replacement_editor, cx).flex(1., true))
+                    .align_children_center()
+                    .flex(1., true)
+                    .contained()
+                    .with_style(query_container_style)
+                    .constrained()
+                    .with_min_width(theme.search.editor.min_width)
+                    .with_max_width(theme.search.editor.max_width)
+                    .with_height(theme.search.search_bar_row_height)
+                    .flex(1., false)
+            });
+            let replace_all = should_show_replace_input.then(|| {
+                super::replace_action(
+                    ReplaceAll,
+                    "Replace all",
+                    "icons/replace_all.svg",
+                    theme.tooltip.clone(),
+                    theme.search.action_button.clone(),
+                )
+            });
+            let replace_next = should_show_replace_input.then(|| {
+                super::replace_action(
+                    ReplaceNext,
+                    "Replace next",
+                    "icons/replace_next.svg",
+                    theme.tooltip.clone(),
+                    theme.search.action_button.clone(),
+                )
+            });
             let query_column = Flex::column()
                 .with_spacing(theme.search.search_row_spacing)
                 .with_child(
@@ -1619,6 +1735,8 @@ impl View for ProjectSearchBar {
             };
 
             let nav_column = Flex::row()
+                .with_children(replace_next)
+                .with_children(replace_all)
                 .with_child(Flex::row().with_children(matches))
                 .with_child(nav_button_for_direction("<", Direction::Prev, cx))
                 .with_child(nav_button_for_direction(">", Direction::Next, cx))
@@ -1628,6 +1746,7 @@ impl View for ProjectSearchBar {
 
             Flex::row()
                 .with_child(query_column)
+                .with_children(replacement)
                 .with_child(mode_column)
                 .with_child(nav_column)
                 .contained()
