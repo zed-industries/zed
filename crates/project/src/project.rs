@@ -8323,7 +8323,7 @@ impl Project {
             .flat_map(|adapter| adapter.enabled_formatters())
         {
             match formatter {
-                BundledFormatter::Prettier { plugin_names } => prettier_plugins
+                BundledFormatter::Prettier { plugin_names, .. } => prettier_plugins
                     .get_or_insert_with(|| HashSet::default())
                     .extend(plugin_names),
             }

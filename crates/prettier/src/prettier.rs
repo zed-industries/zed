@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use fs::Fs;
 use gpui::{AsyncAppContext, ModelHandle, Task};
-use language::{Buffer, Diff};
+use language::{Buffer, BundledFormatter, Diff};
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId};
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
@@ -187,16 +187,30 @@ impl Prettier {
         buffer: &ModelHandle<Buffer>,
         cx: &AsyncAppContext,
     ) -> anyhow::Result<Diff> {
-        // TODO kb prettier needs either a path or a `parser` (depends on a language) option to format
-        let (buffer_text, buffer_language) =
-            buffer.read_with(cx, |buffer, _| (buffer.text(), buffer.language().cloned()));
+        let params = buffer.read_with(cx, |buffer, cx| {
+            let path = buffer
+                .file()
+                .map(|file| file.full_path(cx))
+                .map(|path| path.to_path_buf());
+            let parser = buffer.language().and_then(|language| {
+                language
+                    .lsp_adapters()
+                    .iter()
+                    .flat_map(|adapter| adapter.enabled_formatters())
+                    .find_map(|formatter| match formatter {
+                        BundledFormatter::Prettier { parser_name, .. } => {
+                            Some(parser_name.to_string())
+                        }
+                    })
+            });
+            PrettierFormatParams {
+                text: buffer.text(),
+                options: FormatOptions { parser, path },
+            }
+        });
         let response = self
             .server
-            .request::<PrettierFormat>(PrettierFormatParams {
-                text: buffer_text,
-                path: None,
-                parser: None,
-            })
+            .request::<PrettierFormat>(params)
             .await
             .context("prettier format request")?;
         let diff_task = buffer.read_with(cx, |buffer, cx| buffer.diff(response.text, cx));
@@ -262,9 +276,14 @@ enum PrettierFormat {}
 #[serde(rename_all = "camelCase")]
 struct PrettierFormatParams {
     text: String,
-    // TODO kb have "options" or something more generic instead?
+    options: FormatOptions,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FormatOptions {
     parser: Option<String>,
-    path: Option<String>,
+    path: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

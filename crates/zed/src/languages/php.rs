@@ -3,7 +3,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 
-use language::{BundledFormatter, LanguageServerName, LspAdapter, LspAdapterDelegate};
+use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 
@@ -100,12 +100,9 @@ impl LspAdapter for IntelephenseLspAdapter {
     async fn initialization_options(&self) -> Option<serde_json::Value> {
         None
     }
+
     async fn language_ids(&self) -> HashMap<String, String> {
         HashMap::from_iter([("PHP".into(), "php".into())])
-    }
-
-    fn enabled_formatters(&self) -> Vec<BundledFormatter> {
-        vec![BundledFormatter::prettier()]
     }
 }
 

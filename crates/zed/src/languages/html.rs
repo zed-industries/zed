@@ -98,7 +98,7 @@ impl LspAdapter for HtmlLspAdapter {
     }
 
     fn enabled_formatters(&self) -> Vec<BundledFormatter> {
-        vec![BundledFormatter::prettier()]
+        vec![BundledFormatter::prettier("html")]
     }
 }
 

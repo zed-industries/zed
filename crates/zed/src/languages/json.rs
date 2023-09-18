@@ -148,7 +148,7 @@ impl LspAdapter for JsonLspAdapter {
     }
 
     fn enabled_formatters(&self) -> Vec<BundledFormatter> {
-        vec![BundledFormatter::prettier()]
+        vec![BundledFormatter::prettier("json")]
     }
 }
 

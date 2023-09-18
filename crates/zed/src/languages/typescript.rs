@@ -163,7 +163,7 @@ impl LspAdapter for TypeScriptLspAdapter {
     }
 
     fn enabled_formatters(&self) -> Vec<BundledFormatter> {
-        vec![BundledFormatter::prettier()]
+        vec![BundledFormatter::prettier("typescript")]
     }
 }
 
@@ -315,7 +315,7 @@ impl LspAdapter for EsLintLspAdapter {
     }
 
     fn enabled_formatters(&self) -> Vec<BundledFormatter> {
-        vec![BundledFormatter::prettier()]
+        vec![BundledFormatter::prettier("babel")]
     }
 }
 

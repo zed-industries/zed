@@ -131,12 +131,16 @@ async function handleMessage(messageText, prettier) {
         if (params === undefined || params.text === undefined) {
             throw new Error(`Message params.text is undefined: ${messageText}`);
         }
+        if (params.options === undefined) {
+            throw new Error(`Message params.options is undefined: ${messageText}`);
+        }
 
         let options = {};
-        if (message.path !== undefined) {
-            options.filepath = message.path;
-        } else {
-            options.parser = message.parser || 'babel';
+        if (params.options.path !== undefined) {
+            options.filepath = params.options.path;
+        }
+        if (params.options.parser !== undefined) {
+            options.parser = params.options.parser;
         }
         const formattedText = await prettier.format(params.text, options);
         sendResponse({ id, result: { text: formattedText } });
