@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use bytemuck::{Pod, Zeroable};
 use serde::de::{self, Deserialize, Deserializer, Visitor};
 use std::fmt;
 use std::num::ParseIntError;
@@ -101,12 +102,16 @@ impl TryFrom<&'_ str> for Rgba {
 }
 
 #[derive(Default, Copy, Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Hsla {
     pub h: f32,
     pub s: f32,
     pub l: f32,
     pub a: f32,
 }
+
+unsafe impl Zeroable for Hsla {}
+unsafe impl Pod for Hsla {}
 
 pub fn hsla(h: f32, s: f32, l: f32, a: f32) -> Hsla {
     Hsla {
@@ -123,6 +128,13 @@ pub fn black() -> Hsla {
         s: 0.,
         l: 0.,
         a: 1.,
+    }
+}
+
+impl Hsla {
+    /// Returns true if the HSLA color is fully transparent, false otherwise.
+    pub fn is_transparent(&self) -> bool {
+        self.a == 0.0
     }
 }
 

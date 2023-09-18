@@ -1,3 +1,4 @@
+use bytemuck::{Pod, Zeroable};
 use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, Mul, Sub};
 use refineable::Refineable;
@@ -5,9 +6,16 @@ use std::ops::Mul;
 
 #[derive(Refineable, Default, Add, AddAssign, Sub, Mul, Div, Copy, Debug, PartialEq, Eq, Hash)]
 #[refineable(debug)]
+#[repr(C)]
 pub struct Point<T: Clone + Debug> {
     pub x: T,
     pub y: T,
+}
+
+impl<T: Clone + Debug> Point<T> {
+    pub fn new(x: T, y: T) -> Self {
+        Self { x, y }
+    }
 }
 
 impl<T: Clone + Debug> Clone for Point<T> {
@@ -19,7 +27,11 @@ impl<T: Clone + Debug> Clone for Point<T> {
     }
 }
 
-#[derive(Refineable, Default, Clone, Debug)]
+unsafe impl<T: Clone + Debug + Zeroable + Pod> Zeroable for Point<T> {}
+
+unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Point<T> {}
+
+#[derive(Refineable, Default, Clone, Copy, Debug)]
 #[refineable(debug)]
 pub struct Size<T: Clone + Debug> {
     pub width: T,
@@ -59,6 +71,8 @@ pub struct Bounds<T: Clone + Debug> {
     pub origin: Point<T>,
     pub size: Size<T>,
 }
+
+impl<T: Clone + Debug + Copy> Copy for Bounds<T> {}
 
 #[derive(Refineable, Clone, Default, Debug)]
 #[refineable(debug)]
@@ -127,7 +141,11 @@ impl Edges<Pixels> {
 }
 
 #[derive(Clone, Copy, Default, Add, AddAssign, Sub, Mul, Div, PartialEq)]
+#[repr(transparent)]
 pub struct Pixels(pub(crate) f32);
+
+unsafe impl bytemuck::Pod for Pixels {}
+unsafe impl bytemuck::Zeroable for Pixels {}
 
 impl Debug for Pixels {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
