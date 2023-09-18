@@ -5,17 +5,17 @@ const { once } = require('events');
 
 const prettierContainerPath = process.argv[2];
 if (prettierContainerPath == null || prettierContainerPath.length == 0) {
-    console.error(`Prettier path argument was not specified or empty.\nUsage: ${process.argv[0]} ${process.argv[1]} prettier/path`);
+    sendResponse(makeError(`Prettier path argument was not specified or empty.\nUsage: ${process.argv[0]} ${process.argv[1]} prettier/path`));
     process.exit(1);
 }
 fs.stat(prettierContainerPath, (err, stats) => {
     if (err) {
-        console.error(`Path '${prettierContainerPath}' does not exist.`);
+        sendResponse(makeError(`Path '${prettierContainerPath}' does not exist.`));
         process.exit(1);
     }
 
     if (!stats.isDirectory()) {
-        console.log(`Path '${prettierContainerPath}' exists but is not a directory.`);
+        sendResponse(makeError(`Path '${prettierContainerPath}' exists but is not a directory.`));
         process.exit(1);
     }
 });
@@ -26,19 +26,19 @@ const prettierPath = path.join(prettierContainerPath, 'node_modules/prettier');
     let prettier;
     try {
         prettier = await loadPrettier(prettierPath);
-    } catch (error) {
-        console.error("Failed to load prettier: ", error);
+    } catch (e) {
+        sendResponse(makeError(`Failed to load prettier: ${e}`));
         process.exit(1);
     }
-    console.log("Prettier loadded successfully.");
+    sendResponse(makeError("Prettier loadded successfully."));
     process.stdin.resume();
     handleBuffer(prettier);
 })()
 
 async function handleBuffer(prettier) {
     for await (let messageText of readStdin()) {
-        handleData(messageText, prettier).catch(e => {
-            console.error("Failed to handle formatter request", e);
+        handleMessage(messageText, prettier).catch(e => {
+            sendResponse(makeError(`error during message handling: ${e}`));
         });
     }
 }
@@ -107,43 +107,63 @@ async function* readStdin() {
             yield message.toString('utf8');
         }
     } catch (e) {
-        console.error(`Error reading stdin: ${e}`);
+        sendResponse(makeError(`Error reading stdin: ${e}`));
     } finally {
         process.stdin.off('data', () => { });
     }
 }
 
-async function handleData(messageText, prettier) {
-    try {
-        const message = JSON.parse(messageText);
-        await handleMessage(prettier, message);
-    } catch (e) {
-        sendResponse(makeError(`Request JSON parse error: ${e}`));
+// ?
+// shutdown
+// error
+async function handleMessage(messageText, prettier) {
+    const message = JSON.parse(messageText);
+    const { method, id, params } = message;
+    if (method === undefined) {
+        throw new Error(`Message method is undefined: ${messageText}`);
+    }
+    if (id === undefined) {
+        throw new Error(`Message id is undefined: ${messageText}`);
+    }
+
+    if (method === 'prettier/format') {
+        if (params === undefined || params.text === undefined) {
+            throw new Error(`Message params.text is undefined: ${messageText}`);
+        }
+        let formattedText = await prettier.format(params.text);
+        sendResponse({ id, result: { text: formattedText } });
+    } else if (method === 'prettier/clear_cache') {
+        prettier.clearConfigCache();
+        sendResponse({ id, result: null });
+    } else if (method === 'initialize') {
+        sendResponse({
+            id,
+            result: {
+                "capabilities": {}
+            }
+        });
+    } else {
+        throw new Error(`Unknown method: ${method}`);
     }
 }
 
-// format
-// clear_cache
-//
-// shutdown
-// error
-
-async function handleMessage(prettier, message) {
-    // TODO kb handle message.method, message.params and message.id
-    console.log(`message: ${JSON.stringify(message)}`);
-    sendResponse({ method: "hi", result: null });
-}
-
 function makeError(message) {
-    return { method: "error", message };
+    return {
+        error: {
+            "code": -32600, // invalid request code
+            message,
+        }
+    };
 }
 
 function sendResponse(response) {
-    const message = Buffer.from(JSON.stringify(response));
-    const length = Buffer.alloc(4);
-    length.writeUInt32LE(message.length);
-    process.stdout.write(length);
-    process.stdout.write(message);
+    let responsePayloadString = JSON.stringify({
+        jsonrpc: "2.0",
+        ...response
+    });
+    let headers = `Content-Length: ${Buffer.byteLength(responsePayloadString)}\r\n\r\n`;
+    let dataToSend = headers + responsePayloadString;
+    process.stdout.write(dataToSend);
 }
 
 function loadPrettier(prettierPath) {

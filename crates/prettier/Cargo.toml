@@ -10,6 +10,7 @@ path = "src/prettier.rs"
 language = { path = "../language" }
 gpui = { path = "../gpui" }
 fs = { path = "../fs" }
+lsp = { path = "../lsp" }
 node_runtime = { path = "../node_runtime"}
 util = { path = "../util" }
 

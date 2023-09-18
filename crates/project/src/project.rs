@@ -53,7 +53,7 @@ use lsp::{
 use lsp_command::*;
 use node_runtime::NodeRuntime;
 use postage::watch;
-use prettier::{LocateStart, Prettier};
+use prettier::{LocateStart, Prettier, PRETTIER_SERVER_FILE, PRETTIER_SERVER_JS};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use search::SearchQuery;
@@ -4138,7 +4138,7 @@ impl Project {
                                         Ok(prettier) => {
                                             format_operation = Some(FormatOperation::Prettier(
                                                 prettier
-                                                    .format(buffer)
+                                                    .format(buffer, &cx)
                                                     .await
                                                     .context("formatting via prettier")?,
                                             ));
@@ -4176,7 +4176,7 @@ impl Project {
                                         Ok(prettier) => {
                                             format_operation = Some(FormatOperation::Prettier(
                                                 prettier
-                                                    .format(buffer)
+                                                    .format(buffer, &cx)
                                                     .await
                                                     .context("formatting via prettier")?,
                                             ));
@@ -8283,18 +8283,12 @@ impl Project {
                 return existing_prettier;
             }
 
-            let task_prettier_dir = prettier_dir.clone();
+            let start_task = Prettier::start(prettier_dir.clone(), node, cx.clone());
             let new_prettier_task = cx
                 .background()
                 .spawn(async move {
-                    Ok(Arc::new(
-                        Prettier::start(&task_prettier_dir, node)
-                            .await
-                            .with_context(|| {
-                                format!("starting new prettier for path {task_prettier_dir:?}")
-                            })?,
-                    ))
-                    .map_err(Arc::new)
+                    Ok(Arc::new(start_task.await.context("starting new prettier")?))
+                        .map_err(Arc::new)
                 })
                 .shared();
             this.update(&mut cx, |project, _| {
@@ -8344,16 +8338,17 @@ impl Project {
             .get(&(worktree, default_prettier_dir.to_path_buf()))
         {
             // TODO kb need to compare plugins, install missing and restart prettier
+            // TODO kb move the entire prettier init logic into prettier.rs
             return;
         }
 
         let fs = Arc::clone(&self.fs);
         cx.background()
             .spawn(async move {
-                let prettier_wrapper_path = default_prettier_dir.join("prettier_server.js");
+                let prettier_wrapper_path = default_prettier_dir.join(PRETTIER_SERVER_FILE);
                 // method creates parent directory if it doesn't exist
-                fs.save(&prettier_wrapper_path, &Rope::from(prettier::PRETTIER_SERVER_JS), LineEnding::Unix).await
-                .with_context(|| format!("writing prettier_server.js file at {prettier_wrapper_path:?}"))?;
+                fs.save(&prettier_wrapper_path, &Rope::from(PRETTIER_SERVER_JS), LineEnding::Unix).await
+                .with_context(|| format!("writing {PRETTIER_SERVER_FILE} file at {prettier_wrapper_path:?}"))?;
 
                 let packages_to_versions = future::try_join_all(
                     prettier_plugins

@@ -4,12 +4,15 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use fs::Fs;
-use gpui::ModelHandle;
+use gpui::{AsyncAppContext, ModelHandle, Task};
 use language::{Buffer, Diff};
+use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId};
 use node_runtime::NodeRuntime;
+use serde::{Deserialize, Serialize};
+use util::paths::DEFAULT_PRETTIER_DIR;
 
 pub struct Prettier {
-    _private: (),
+    server: Arc<LanguageServer>,
 }
 
 #[derive(Debug)]
@@ -18,7 +21,9 @@ pub struct LocateStart {
     pub starting_path: Arc<Path>,
 }
 
+pub const PRETTIER_SERVER_FILE: &str = "prettier_server.js";
 pub const PRETTIER_SERVER_JS: &str = include_str!("./prettier_server.js");
+const PRETTIER_PACKAGE_NAME: &str = "prettier";
 
 impl Prettier {
     // This was taken from the prettier-vscode extension.
@@ -141,16 +146,55 @@ impl Prettier {
         }
     }
 
-    pub async fn start(prettier_dir: &Path, node: Arc<dyn NodeRuntime>) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            prettier_dir.is_dir(),
-            "Prettier dir {prettier_dir:?} is not a directory"
-        );
-        anyhow::bail!("TODO kb: start prettier server in {prettier_dir:?}")
+    pub fn start(
+        prettier_dir: PathBuf,
+        node: Arc<dyn NodeRuntime>,
+        cx: AsyncAppContext,
+    ) -> Task<anyhow::Result<Self>> {
+        cx.spawn(|cx| async move {
+            anyhow::ensure!(
+                prettier_dir.is_dir(),
+                "Prettier dir {prettier_dir:?} is not a directory"
+            );
+            let prettier_server = DEFAULT_PRETTIER_DIR.join(PRETTIER_SERVER_FILE);
+            anyhow::ensure!(
+                prettier_server.is_file(),
+                "no prettier server package found at {prettier_server:?}"
+            );
+
+            let node_path = node.binary_path().await?;
+            let server = LanguageServer::new(
+                LanguageServerId(0),
+                LanguageServerBinary {
+                    path: node_path,
+                    arguments: vec![prettier_server.into(), prettier_dir.into()],
+                },
+                Path::new("/"),
+                None,
+                cx,
+            )
+            .context("prettier server creation")?;
+            let server = server
+                .initialize(None)
+                .await
+                .context("prettier server initialization")?;
+            Ok(Self { server })
+        })
     }
 
-    pub async fn format(&self, buffer: &ModelHandle<Buffer>) -> anyhow::Result<Diff> {
-        todo!()
+    pub async fn format(
+        &self,
+        buffer: &ModelHandle<Buffer>,
+        cx: &AsyncAppContext,
+    ) -> anyhow::Result<Diff> {
+        let buffer_text = buffer.read_with(cx, |buffer, _| buffer.text());
+        let response = self
+            .server
+            .request::<PrettierFormat>(PrettierFormatParams { text: buffer_text })
+            .await
+            .context("prettier format request")?;
+        dbg!("Formatted text", response.text);
+        anyhow::bail!("TODO kb calculate the diff")
     }
 
     pub async fn clear_cache(&self) -> anyhow::Result<()> {
@@ -158,7 +202,6 @@ impl Prettier {
     }
 }
 
-const PRETTIER_PACKAGE_NAME: &str = "prettier";
 async fn find_closest_prettier_dir(
     paths_to_check: Vec<PathBuf>,
     fs: &dyn Fs,
@@ -205,4 +248,24 @@ async fn find_closest_prettier_dir(
         }
     }
     Ok(None)
+}
+
+enum PrettierFormat {}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PrettierFormatParams {
+    text: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PrettierFormatResult {
+    text: String,
+}
+
+impl lsp::request::Request for PrettierFormat {
+    type Params = PrettierFormatParams;
+    type Result = PrettierFormatResult;
+    const METHOD: &'static str = "prettier/format";
 }
