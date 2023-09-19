@@ -31,12 +31,7 @@ use std::{
     sync::{Arc, Weak},
     time::{Duration, Instant, SystemTime},
 };
-use util::{
-    channel::{RELEASE_CHANNEL_NAME},
-    http::HttpClient,
-    paths::EMBEDDINGS_DIR,
-    ResultExt,
-};
+use util::{channel::RELEASE_CHANNEL_NAME, http::HttpClient, paths::EMBEDDINGS_DIR, ResultExt};
 use workspace::WorkspaceCreated;
 
 const SEMANTIC_INDEX_VERSION: usize = 11;
