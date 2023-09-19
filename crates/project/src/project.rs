@@ -2790,18 +2790,6 @@ impl Project {
         };
 
         language_server
-            .on_notification::<lsp::notification::LogMessage, _>({
-                move |params, mut cx| {
-                    if let Some(this) = this.upgrade(&cx) {
-                        this.update(&mut cx, |_, cx| {
-                            cx.emit(Event::LanguageServerLog(server_id, params.message))
-                        });
-                    }
-                }
-            })
-            .detach();
-
-        language_server
             .on_notification::<lsp::notification::PublishDiagnostics, _>({
                 let adapter = adapter.clone();
                 move |mut params, mut cx| {

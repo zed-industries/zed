@@ -38,7 +38,8 @@ struct ProjectState {
 struct LanguageServerState {
     log_buffer: ModelHandle<Buffer>,
     rpc_state: Option<LanguageServerRpcState>,
-    _subscription: Option<lsp::Subscription>,
+    _io_logs_subscription: Option<lsp::Subscription>,
+    _lsp_logs_subscription: Option<lsp::Subscription>,
 }
 
 struct LanguageServerRpcState {
@@ -134,8 +135,6 @@ impl LogStore {
     }
 
     pub fn add_project(&mut self, project: &ModelHandle<Project>, cx: &mut ModelContext<Self>) {
-        use project::Event::*;
-
         let weak_project = project.downgrade();
         self.projects.insert(
             weak_project,
@@ -146,13 +145,13 @@ impl LogStore {
                         this.projects.remove(&weak_project);
                     }),
                     cx.subscribe(project, |this, project, event, cx| match event {
-                        LanguageServerAdded(id) => {
+                        project::Event::LanguageServerAdded(id) => {
                             this.add_language_server(&project, *id, cx);
                         }
-                        LanguageServerRemoved(id) => {
+                        project::Event::LanguageServerRemoved(id) => {
                             this.remove_language_server(&project, *id, cx);
                         }
-                        LanguageServerLog(id, message) => {
+                        project::Event::LanguageServerLog(id, message) => {
                             this.add_language_server_log(&project, *id, message, cx);
                         }
                         _ => {}
@@ -176,18 +175,32 @@ impl LogStore {
                 log_buffer: cx
                     .add_model(|cx| Buffer::new(0, cx.model_id() as u64, ""))
                     .clone(),
-                _subscription: None,
+                _io_logs_subscription: None,
+                _lsp_logs_subscription: None,
             }
         });
 
         let server = project.read(cx).language_server_for_id(id);
         let weak_project = project.downgrade();
         let io_tx = self.io_tx.clone();
-        server_state._subscription = server.map(|server| {
+        server_state._io_logs_subscription = server.as_ref().map(|server| {
             server.on_io(move |io_kind, message| {
                 io_tx
                     .unbounded_send((weak_project, id, io_kind, message.to_string()))
                     .ok();
+            })
+        });
+        let weak_project = project.downgrade();
+        server_state._lsp_logs_subscription = server.map(|server| {
+            let server_id = server.server_id();
+            server.on_notification::<lsp::notification::LogMessage, _>({
+                move |params, mut cx| {
+                    if let Some(project) = weak_project.upgrade(&cx) {
+                        project.update(&mut cx, |_, cx| {
+                            cx.emit(project::Event::LanguageServerLog(server_id, params.message))
+                        });
+                    }
+                }
             })
         });
 
@@ -201,7 +214,16 @@ impl LogStore {
         message: &str,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
-        let buffer = self.add_language_server(&project, id, cx)?;
+        let buffer = match self
+            .projects
+            .get_mut(&project.downgrade())?
+            .servers
+            .get(&id)
+            .map(|state| state.log_buffer.clone())
+        {
+            Some(existing_buffer) => existing_buffer,
+            None => self.add_language_server(&project, id, cx)?,
+        };
         buffer.update(cx, |buffer, cx| {
             let len = buffer.len();
             let has_newline = message.ends_with("\n");
