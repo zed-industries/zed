@@ -185,10 +185,11 @@ impl<V: 'static> DragAndDrop<V> {
                 Some(&State::Dragging {
                     region_offset,
                     region,
+                    modifiers,
                     ..
                 }) => {
                     this.currently_dragged = Some(State::Dragging {
-                        modifiers: event.modifiers,
+                        modifiers,
                         window,
                         region_offset,
                         region,
@@ -205,7 +206,7 @@ impl<V: 'static> DragAndDrop<V> {
     }
 
     pub fn update_modifiers(new_modifiers: Modifiers, cx: &mut ViewContext<V>) -> bool {
-        cx.update_global(|this: &mut Self, _| match &mut this.currently_dragged {
+        let result = cx.update_global(|this: &mut Self, _| match &mut this.currently_dragged {
             Some(state) => match state {
                 State::Dragging { modifiers, .. } => {
                     *modifiers = new_modifiers;
@@ -214,7 +215,13 @@ impl<V: 'static> DragAndDrop<V> {
                 _ => false,
             },
             None => false,
-        })
+        });
+
+        if result {
+            cx.notify();
+        }
+
+        result
     }
 
     pub fn render(cx: &mut ViewContext<V>) -> Option<AnyElement<V>> {

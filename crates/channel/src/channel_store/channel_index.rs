@@ -6,16 +6,14 @@ use rpc::proto;
 
 use super::ChannelPath;
 
-pub type ChannelsById = HashMap<ChannelId, Arc<Channel>>;
-
 #[derive(Default, Debug)]
 pub struct ChannelIndex {
     paths: Vec<ChannelPath>,
-    channels_by_id: ChannelsById,
+    channels_by_id: HashMap<ChannelId, Arc<Channel>>,
 }
 
 impl ChannelIndex {
-    pub fn by_id(&self) -> &ChannelsById {
+    pub fn by_id(&self) -> &HashMap<ChannelId, Arc<Channel>> {
         &self.channels_by_id
     }
 
@@ -55,7 +53,7 @@ impl Deref for ChannelIndex {
 #[derive(Debug)]
 pub struct ChannelPathsInsertGuard<'a> {
     paths: &'a mut Vec<ChannelPath>,
-    channels_by_id: &'a mut ChannelsById,
+    channels_by_id: &'a mut HashMap<ChannelId, Arc<Channel>>,
 }
 
 impl<'a> ChannelPathsInsertGuard<'a> {
@@ -122,13 +120,13 @@ impl<'a> ChannelPathsInsertGuard<'a> {
                 let mut new_path = Vec::with_capacity(parent.len() + 1);
                 new_path.extend_from_slice(parent);
                 new_path.push(channel_id);
-                new_paths.push(ChannelPath(new_path.into()));
+                new_paths.push(ChannelPath::new(new_path.into()));
             } else {
                 for descendant in descendants.iter() {
                     let mut new_path = Vec::with_capacity(parent.len() + descendant.len());
                     new_path.extend_from_slice(parent);
                     new_path.extend_from_slice(descendant);
-                    new_paths.push(ChannelPath(new_path.into()));
+                    new_paths.push(ChannelPath::new(new_path.into()));
                 }
             }
         }
@@ -157,7 +155,7 @@ impl<'a> Drop for ChannelPathsInsertGuard<'a> {
 
 fn channel_path_sorting_key<'a>(
     path: &'a [ChannelId],
-    channels_by_id: &'a ChannelsById,
+    channels_by_id: &'a HashMap<ChannelId, Arc<Channel>>,
 ) -> impl 'a + Iterator<Item = Option<&'a str>> {
     path.iter()
         .map(|id| Some(channels_by_id.get(id)?.name.as_str()))

@@ -33,7 +33,7 @@ use gpui::{
         vector::{vec2f, Vector2F},
     },
     impl_actions,
-    platform::{CursorStyle, ModifiersChangedEvent, MouseButton, PromptLevel},
+    platform::{CursorStyle, MouseButton, PromptLevel},
     serde_json, AnyElement, AppContext, AsyncAppContext, Element, Entity, FontCache, ModelHandle,
     Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
@@ -263,7 +263,7 @@ pub struct CollabPanel {
     subscriptions: Vec<Subscription>,
     collapsed_sections: Vec<Section>,
     collapsed_channels: Vec<ChannelPath>,
-    dragged_channel_target: Option<ChannelData>,
+    drag_target_channel: Option<ChannelData>,
     workspace: WeakViewHandle<Workspace>,
     context_menu_on_selected: bool,
 }
@@ -529,7 +529,7 @@ impl CollabPanel {
                 workspace: workspace.weak_handle(),
                 client: workspace.app_state().client.clone(),
                 context_menu_on_selected: true,
-                dragged_channel_target: None,
+                drag_target_channel: None,
                 list_state,
             };
 
@@ -1672,7 +1672,7 @@ impl CollabPanel {
             .currently_dragged::<DraggedChannel>(cx.window())
             .is_some()
             && self
-                .dragged_channel_target
+                .drag_target_channel
                 .as_ref()
                 .filter(|(_, dragged_path)| path.starts_with(dragged_path))
                 .is_some()
@@ -1771,7 +1771,7 @@ impl CollabPanel {
                 )
         })
         .on_click(MouseButton::Left, move |_, this, cx| {
-            if this.dragged_channel_target.take().is_none() {
+            if this.drag_target_channel.take().is_none() {
                 this.join_channel_chat(channel_id, cx);
             }
         })
@@ -1814,19 +1814,20 @@ impl CollabPanel {
             let channel = channel.clone();
             let path = path.clone();
             move |_, this, cx| {
-                if cx
-                    .global::<DragAndDrop<Workspace>>()
-                    .currently_dragged::<DraggedChannel>(cx.window())
-                    .is_some()
+                if let Some((_, _dragged_channel)) =
+                    cx.global::<DragAndDrop<Workspace>>()
+                        .currently_dragged::<DraggedChannel>(cx.window())
                 {
-                    if let Some(dragged_channel_target) = &this.dragged_channel_target {
-                        if dragged_channel_target.0 != channel || dragged_channel_target.1 != path {
-                            this.dragged_channel_target = Some((channel.clone(), path.clone()));
+                    match &this.drag_target_channel {
+                        Some(current_target)
+                            if current_target.0 == channel && current_target.1 == path =>
+                        {
+                            return
+                        }
+                        _ => {
+                            this.drag_target_channel = Some((channel.clone(), path.clone()));
                             cx.notify();
                         }
-                    } else {
-                        this.dragged_channel_target = Some((channel.clone(), path.clone()));
-                        cx.notify();
                     }
                 }
             }
@@ -2838,19 +2839,6 @@ impl View for CollabPanel {
 
     fn focus_out(&mut self, _: gpui::AnyViewHandle, _: &mut ViewContext<Self>) {
         self.has_focus = false;
-    }
-
-    fn modifiers_changed(&mut self, _: &ModifiersChangedEvent, cx: &mut ViewContext<Self>) -> bool {
-        if cx
-            .global::<DragAndDrop<Workspace>>()
-            .currently_dragged::<DraggedChannel>(cx.window())
-            .is_some()
-        {
-            cx.notify();
-            true
-        } else {
-            false
-        }
     }
 
     fn render(&mut self, cx: &mut gpui::ViewContext<'_, '_, Self>) -> gpui::AnyElement<Self> {
