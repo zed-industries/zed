@@ -2024,11 +2024,15 @@ impl CollabPanel {
             if let Some(channel_name) = channel_name {
                 items.push(ContextMenuItem::action(
                     format!("Move '#{}' here", channel_name),
-                    MoveChannel { to: path.channel_id() },
+                    MoveChannel {
+                        to: path.channel_id(),
+                    },
                 ));
                 items.push(ContextMenuItem::action(
                     format!("Link '#{}' here", channel_name),
-                    LinkChannel { to: path.channel_id() },
+                    LinkChannel {
+                        to: path.channel_id(),
+                    },
                 ));
                 items.push(ContextMenuItem::Separator)
             }
@@ -2046,7 +2050,12 @@ impl CollabPanel {
                         location: path.clone(),
                     },
                 ),
-                ContextMenuItem::action("Open Notes", OpenChannelBuffer { channel_id: path.channel_id() }),
+                ContextMenuItem::action(
+                    "Open Notes",
+                    OpenChannelBuffer {
+                        channel_id: path.channel_id(),
+                    },
+                ),
             ]);
 
             if self.channel_store.read(cx).is_user_admin(path.channel_id()) {
@@ -2306,7 +2315,6 @@ impl CollabPanel {
         }
 
         self.toggle_channel_collapsed(&path.clone(), cx);
-
     }
 
     fn expand_selected_channel(&mut self, _: &ExpandSelectedChannel, cx: &mut ViewContext<Self>) {
@@ -2324,11 +2332,19 @@ impl CollabPanel {
         self.toggle_channel_collapsed(path.to_owned(), cx)
     }
 
-    fn toggle_channel_collapsed_action(&mut self, action: &ToggleCollapse, cx: &mut ViewContext<Self>) {
+    fn toggle_channel_collapsed_action(
+        &mut self,
+        action: &ToggleCollapse,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.toggle_channel_collapsed(&action.location, cx);
     }
 
-    fn toggle_channel_collapsed<'a>(&mut self, path: impl Into<Cow<'a, ChannelPath>>, cx: &mut ViewContext<Self>) {
+    fn toggle_channel_collapsed<'a>(
+        &mut self,
+        path: impl Into<Cow<'a, ChannelPath>>,
+        cx: &mut ViewContext<Self>,
+    ) {
         let path = path.into();
         match self.collapsed_channels.binary_search(&path) {
             Ok(ix) => {

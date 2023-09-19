@@ -28,6 +28,7 @@ anyhow.workspace = true
 futures.workspace = true
 image = "0.23"
 lazy_static.workspace = true
+smallvec.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 postage.workspace = true

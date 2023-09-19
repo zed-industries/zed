@@ -5,7 +5,7 @@ use rpc::{
 };
 
 use crate::{
-    db::{queries::channels::ChannelGraph, ChannelId, Database, NewUserParams, tests::graph},
+    db::{queries::channels::ChannelGraph, tests::graph, ChannelId, Database, NewUserParams},
     test_both_dbs,
 };
 use std::sync::Arc;

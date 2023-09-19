@@ -375,10 +375,7 @@ impl Database {
             }
         }
 
-        Ok(ChannelGraph {
-            channels,
-            edges,
-        })
+        Ok(ChannelGraph { channels, edges })
     }
 
     pub async fn get_channels_for_user(&self, user_id: UserId) -> Result<ChannelsForUser> {
@@ -394,12 +391,16 @@ impl Database {
                 .all(&*tx)
                 .await?;
 
-            self.get_user_channels(channel_memberships, user_id, &tx).await
+            self.get_user_channels(channel_memberships, &tx).await
         })
         .await
     }
 
-    pub async fn get_channel_for_user(&self, channel_id: ChannelId, user_id: UserId) -> Result<ChannelsForUser> {
+    pub async fn get_channel_for_user(
+        &self,
+        channel_id: ChannelId,
+        user_id: UserId,
+    ) -> Result<ChannelsForUser> {
         self.transaction(|tx| async move {
             let tx = tx;
 
@@ -413,12 +414,16 @@ impl Database {
                 .all(&*tx)
                 .await?;
 
-            self.get_user_channels(channel_membership, user_id, &tx).await
+            self.get_user_channels(channel_membership, &tx).await
         })
         .await
     }
 
-    pub async fn get_user_channels(&self, channel_memberships: Vec<channel_member::Model>, user_id: UserId, tx: &DatabaseTransaction)  -> Result<ChannelsForUser> {
+    pub async fn get_user_channels(
+        &self,
+        channel_memberships: Vec<channel_member::Model>,
+        tx: &DatabaseTransaction,
+    ) -> Result<ChannelsForUser> {
         let parents_by_child_id = self
             .get_channel_descendants(channel_memberships.iter().map(|m| m.channel_id), &*tx)
             .await?;
@@ -824,9 +829,9 @@ impl Database {
         self.check_user_is_channel_admin(to, user, &*tx).await?;
 
         let to_ancestors = self.get_channel_ancestors(to, &*tx).await?;
-        let mut from_descendants = self.get_channel_descendants([channel], &*tx).await?;
+        let mut channel_descendants = self.get_channel_descendants([channel], &*tx).await?;
         for ancestor in to_ancestors {
-            if from_descendants.contains_key(&ancestor) {
+            if channel_descendants.contains_key(&ancestor) {
                 return Err(anyhow!("Cannot create a channel cycle").into());
             }
         }
@@ -853,15 +858,17 @@ impl Database {
             ],
         );
         tx.execute(channel_paths_stmt).await?;
-        for (from_id, to_ids) in from_descendants.iter().filter(|(id, _)| id != &&channel) {
-            for to_id in to_ids.iter() {
+        for (descdenant_id, descendant_parent_ids) in
+            channel_descendants.iter().filter(|(id, _)| id != &&channel)
+        {
+            for descendant_parent_id in descendant_parent_ids.iter() {
                 let channel_paths_stmt = Statement::from_sql_and_values(
                     self.pool.get_database_backend(),
                     sql,
                     [
-                        from_id.to_proto().into(),
-                        from_id.to_proto().into(),
-                        to_id.to_proto().into(),
+                        descdenant_id.to_proto().into(),
+                        descdenant_id.to_proto().into(),
+                        descendant_parent_id.to_proto().into(),
                     ],
                 );
                 tx.execute(channel_paths_stmt).await?;
@@ -883,14 +890,14 @@ impl Database {
             tx.execute(channel_paths_stmt).await?;
         }
 
-        if let Some(channel) = from_descendants.get_mut(&channel) {
+        if let Some(channel) = channel_descendants.get_mut(&channel) {
             // Remove the other parents
             channel.clear();
             channel.insert(to);
         }
 
         let channels = self
-            .get_channel_graph(from_descendants, false, &*tx)
+            .get_channel_graph(channel_descendants, false, &*tx)
             .await?;
 
         Ok(channels)
@@ -1009,8 +1016,16 @@ impl PartialEq for ChannelGraph {
         // Order independent comparison for tests
         let channels_set = self.channels.iter().collect::<HashSet<_>>();
         let other_channels_set = other.channels.iter().collect::<HashSet<_>>();
-        let edges_set = self.edges.iter().map(|edge| (edge.channel_id, edge.parent_id)).collect::<HashSet<_>>();
-        let other_edges_set = other.edges.iter().map(|edge| (edge.channel_id, edge.parent_id)).collect::<HashSet<_>>();
+        let edges_set = self
+            .edges
+            .iter()
+            .map(|edge| (edge.channel_id, edge.parent_id))
+            .collect::<HashSet<_>>();
+        let other_edges_set = other
+            .edges
+            .iter()
+            .map(|edge| (edge.channel_id, edge.parent_id))
+            .collect::<HashSet<_>>();
 
         channels_set == other_channels_set && edges_set == other_edges_set
     }
@@ -1022,7 +1037,6 @@ impl PartialEq for ChannelGraph {
         self.channels == other.channels && self.edges == other.edges
     }
 }
-
 
 struct SmallSet<T>(SmallVec<[T; 1]>);
 

@@ -805,21 +805,18 @@ impl ChannelStore {
                 }
             }
 
-            let mut index_edit = self.channel_index.bulk_edit();
-            dbg!(&index_edit);
+            let mut index = self.channel_index.bulk_insert();
             for channel in payload.channels {
-                index_edit.insert(channel)
+                index.insert(channel)
             }
 
             for edge in payload.insert_edge {
-                index_edit.insert_edge(edge.parent_id, edge.channel_id);
+                index.insert_edge(edge.channel_id, edge.parent_id);
             }
 
             for edge in payload.delete_edge {
-                index_edit.delete_edge(edge.parent_id, edge.channel_id);
+                index.delete_edge(edge.parent_id, edge.channel_id);
             }
-            drop(index_edit);
-            dbg!(&self.channel_index);
         }
 
         for permission in payload.channel_permissions {

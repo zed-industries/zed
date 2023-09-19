@@ -14,7 +14,10 @@ use collections::{BTreeMap, HashMap, HashSet};
 use dashmap::DashMap;
 use futures::StreamExt;
 use rand::{prelude::StdRng, Rng, SeedableRng};
-use rpc::{proto::{self}, ConnectionId};
+use rpc::{
+    proto::{self},
+    ConnectionId,
+};
 use sea_orm::{
     entity::prelude::*, ActiveValue, Condition, ConnectionTrait, DatabaseConnection,
     DatabaseTransaction, DbErr, FromQueryResult, IntoActiveModel, IsolationLevel, JoinType,

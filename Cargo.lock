@@ -1222,6 +1222,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "settings",
+ "smallvec",
  "smol",
  "sum_tree",
  "tempfile",

@@ -3,8 +3,8 @@ mod connection_pool;
 use crate::{
     auth,
     db::{
-        self, ChannelId, ChannelsForUser, Database, MessageId, ProjectId, RoomId,
-        ServerId, User, UserId,
+        self, ChannelId, ChannelsForUser, Database, MessageId, ProjectId, RoomId, ServerId, User,
+        UserId,
     },
     executor::Executor,
     AppState, Result,
@@ -38,8 +38,8 @@ use lazy_static::lazy_static;
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
-        self, Ack, AddChannelBufferCollaborator, AnyTypedEnvelope, EntityMessage, EnvelopedMessage,
-        LiveKitConnectionInfo, RequestMessage, ChannelEdge,
+        self, Ack, AddChannelBufferCollaborator, AnyTypedEnvelope, ChannelEdge, EntityMessage,
+        EnvelopedMessage, LiveKitConnectionInfo, RequestMessage,
     },
     Connection, ConnectionId, Peer, Receipt, TypedEnvelope,
 };
@@ -2213,17 +2213,14 @@ async fn create_channel(
 
     let update = proto::UpdateChannels {
         channels: vec![channel],
-        insert_edge: vec![
-            ChannelEdge {
-                parent_id: parent_id.to_proto(),
-                channel_id: id.to_proto(),
-            }
-        ],
+        insert_edge: vec![ChannelEdge {
+            parent_id: parent_id.to_proto(),
+            channel_id: id.to_proto(),
+        }],
         ..Default::default()
     };
 
-    let user_ids_to_notify =
-        db.get_channel_members(parent_id).await?;
+    let user_ids_to_notify = db.get_channel_members(parent_id).await?;
 
     let connection_pool = session.connection_pool().await;
     for user_id in user_ids_to_notify {
@@ -2549,10 +2546,16 @@ async fn respond_to_channel_invite(
         let result = db.get_channel_for_user(channel_id, session.user_id).await?;
         update
             .channels
-            .extend(result.channels.channels.into_iter().map(|channel| proto::Channel {
-                id: channel.id.to_proto(),
-                name: channel.name,
-            }));
+            .extend(
+                result
+                    .channels
+                    .channels
+                    .into_iter()
+                    .map(|channel| proto::Channel {
+                        id: channel.id.to_proto(),
+                        name: channel.name,
+                    }),
+            );
         update.insert_edge = result.channels.edges;
         update
             .channel_participants
@@ -2971,7 +2974,7 @@ fn build_initial_channels_update(
 ) -> proto::UpdateChannels {
     let mut update = proto::UpdateChannels::default();
 
-    for channel in channels.channels.channels{
+    for channel in channels.channels.channels {
         update.channels.push(proto::Channel {
             id: channel.id.to_proto(),
             name: channel.name,

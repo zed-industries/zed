@@ -22,7 +22,6 @@ fn test_update_channels(cx: &mut AppContext) {
                 proto::Channel {
                     id: 2,
                     name: "a".to_string(),
-
                 },
             ],
             channel_permissions: vec![proto::ChannelPermission {
