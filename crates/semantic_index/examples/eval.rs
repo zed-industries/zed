@@ -1,12 +1,10 @@
 use anyhow::{anyhow, Result};
 use client::{self, UserStore};
-use collections::HashMap;
 use git2::{Object, Oid, Repository};
-use gpui::{AppContext, AssetSource, AsyncAppContext, ModelHandle, Task};
+use gpui::{AsyncAppContext, ModelHandle, Task};
 use language::LanguageRegistry;
 use node_runtime::RealNodeRuntime;
 use project::{Project, RealFs};
-use rust_embed::RustEmbed;
 use semantic_index::embedding::OpenAIEmbeddings;
 use semantic_index::semantic_index_settings::SemanticIndexSettings;
 use semantic_index::{SearchResult, SemanticIndex};
@@ -20,28 +18,6 @@ use util::channel::{RELEASE_CHANNEL, RELEASE_CHANNEL_NAME};
 use util::http::{self};
 use util::paths::{self, EMBEDDINGS_DIR};
 use zed::languages;
-
-#[derive(RustEmbed)]
-#[folder = "../../assets"]
-#[include = "fonts/**/*"]
-#[include = "icons/**/*"]
-#[include = "themes/**/*"]
-#[include = "sounds/**/*"]
-#[include = "*.md"]
-#[exclude = "*.DS_Store"]
-pub struct Assets;
-
-impl AssetSource for Assets {
-    fn load(&self, path: &str) -> Result<std::borrow::Cow<[u8]>> {
-        Self::get(path)
-            .map(|f| f.data)
-            .ok_or_else(|| anyhow!("could not find asset at path \"{}\"", path))
-    }
-
-    fn list(&self, path: &str) -> Vec<std::borrow::Cow<'static, str>> {
-        Self::iter().filter(|p| p.starts_with(path)).collect()
-    }
-}
 
 #[derive(Deserialize, Clone, Serialize)]
 struct EvaluationQuery {
@@ -455,11 +431,9 @@ async fn evaluate_repo(
 
 fn main() {
     // Launch new repo as a new Zed workspace/project
-    let app = gpui::App::new(Assets).unwrap();
+    let app = gpui::App::new(()).unwrap();
     let fs = Arc::new(RealFs);
     let http = http::client();
-    let user_settings_file_rx =
-        watch_config_file(app.background(), fs.clone(), paths::SETTINGS.clone());
     let http_client = http::client();
     init_logger();
 
@@ -475,7 +449,6 @@ fn main() {
             .set_default_settings(default_settings().as_ref(), cx)
             .unwrap();
         cx.set_global(store);
-        handle_settings_file_changes(user_settings_file_rx, cx);
 
         // Initialize Languages
         let login_shell_env_loaded = Task::ready(());
