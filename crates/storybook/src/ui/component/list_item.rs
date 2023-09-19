@@ -1,4 +1,4 @@
-use crate::prelude::InteractionState;
+use crate::prelude::{InteractionState, ToggleState};
 use crate::theme::theme;
 use crate::ui::{icon, IconAsset, Label};
 use gpui2::geometry::rems;
@@ -12,6 +12,7 @@ pub struct ListItem {
     left_icon: Option<IconAsset>,
     indent_level: f32,
     state: InteractionState,
+    toggle: Option<ToggleState>,
 }
 
 pub fn list_item(label: Label) -> ListItem {
@@ -20,6 +21,7 @@ pub fn list_item(label: Label) -> ListItem {
         indent_level: 0.0,
         left_icon: None,
         state: InteractionState::default(),
+        toggle: None,
     }
 }
 
@@ -28,10 +30,17 @@ impl ListItem {
         self.indent_level = indent_level;
         self
     }
+
+    pub fn set_toggle(mut self, toggle: ToggleState) -> Self {
+        self.toggle = Some(toggle);
+        self
+    }
+
     pub fn left_icon(mut self, left_icon: Option<IconAsset>) -> Self {
         self.left_icon = left_icon;
         self
     }
+
     pub fn state(mut self, state: InteractionState) -> Self {
         self.state = state;
         self
@@ -40,7 +49,7 @@ impl ListItem {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
 
-        let mut el = div()
+        div()
             .fill(theme.middle.base.default.background)
             .hover()
             .fill(theme.middle.base.hovered.background)
@@ -53,13 +62,14 @@ impl ListItem {
                     .ml(rems(0.75 * self.indent_level.clone()))
                     .flex()
                     .gap_2()
-                    .items_center(),
-            );
-
-        if self.left_icon.is_some() {
-            el = el.child(icon(self.left_icon.clone().unwrap()))
-        }
-
-        el.child(self.label.clone())
+                    .items_center()
+                    .children(match self.toggle {
+                        Some(ToggleState::NotToggled) => Some(icon(IconAsset::ChevronRight)),
+                        Some(ToggleState::Toggled) => Some(icon(IconAsset::ChevronDown)),
+                        None => None,
+                    })
+                    .children(self.left_icon.map(|i| icon(i)))
+                    .child(self.label.clone()),
+            )
     }
 }

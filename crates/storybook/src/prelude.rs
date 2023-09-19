@@ -47,3 +47,9 @@ pub enum SelectedState {
     PartiallySelected,
     Selected,
 }
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ToggleState {
+    Toggled,
+    NotToggled,
+}

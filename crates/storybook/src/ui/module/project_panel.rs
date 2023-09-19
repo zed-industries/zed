@@ -1,5 +1,5 @@
 use crate::{
-    prelude::InteractionState,
+    prelude::{InteractionState, ToggleState},
     theme::theme,
     ui::{input, label, list_item, IconAsset, LabelColor},
 };
@@ -44,21 +44,30 @@ impl<V: 'static> ProjectPanel<V> {
                         div().flex().flex_col().children(
                             std::iter::repeat_with(|| {
                                 vec![
+                                    list_item(label("sqlez").color(LabelColor::Modified))
+                                        .left_icon(IconAsset::FolderOpen.into())
+                                        .indent_level(0.0)
+                                        .set_toggle(ToggleState::NotToggled),
                                     list_item(label("storybook").color(LabelColor::Modified))
                                         .left_icon(IconAsset::FolderOpen.into())
-                                        .indent_level(0.0),
+                                        .indent_level(0.0)
+                                        .set_toggle(ToggleState::Toggled),
                                     list_item(label("docs").color(LabelColor::Default))
                                         .left_icon(IconAsset::Folder.into())
-                                        .indent_level(1.0),
+                                        .indent_level(1.0)
+                                        .set_toggle(ToggleState::Toggled),
                                     list_item(label("src").color(LabelColor::Modified))
                                         .left_icon(IconAsset::FolderOpen.into())
-                                        .indent_level(2.0),
+                                        .indent_level(2.0)
+                                        .set_toggle(ToggleState::Toggled),
                                     list_item(label("ui").color(LabelColor::Modified))
                                         .left_icon(IconAsset::FolderOpen.into())
-                                        .indent_level(3.0),
+                                        .indent_level(3.0)
+                                        .set_toggle(ToggleState::Toggled),
                                     list_item(label("component").color(LabelColor::Created))
                                         .left_icon(IconAsset::FolderOpen.into())
-                                        .indent_level(4.0),
+                                        .indent_level(4.0)
+                                        .set_toggle(ToggleState::Toggled),
                                     list_item(label("facepile.rs").color(LabelColor::Default))
                                         .left_icon(IconAsset::File.into())
                                         .indent_level(5.0),
