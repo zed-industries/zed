@@ -34,6 +34,27 @@ pub trait Element<V: 'static>: 'static + IntoElement<V> {
             phase: ElementPhase::Init,
         }))
     }
+
+    /// Applies a given function `then` to the current element if `condition` is true.
+    /// This function is used to conditionally modify the element based on a given condition.
+    /// If `condition` is false, it just returns the current element as it is.
+    ///
+    /// # Parameters
+    /// - `self`: The current element
+    /// - `condition`: The boolean condition based on which `then` is applied to the element.
+    /// - `then`: A function that takes in the current element and returns a possibly modified element.
+    ///
+    /// # Return
+    /// It returns the potentially modified element.
+    fn when(mut self, condition: bool, then: impl FnOnce(Self) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        if condition {
+            self = then(self);
+        }
+        self
+    }
 }
 
 /// Used to make ElementState<V, E> into a trait object, so we can wrap it in AnyElement<V>.

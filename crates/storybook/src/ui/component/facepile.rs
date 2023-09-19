@@ -18,13 +18,11 @@ impl Facepile {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
         let player_count = self.players.len();
-        let player_list = self.players.iter().enumerate().map(|(i, player)| {
-            let element = div().child(player.clone());
-            if i < player_count - 1 {
-                element.mr(-rems(0.5))
-            } else {
-                element
-            }
+        let player_list = self.players.iter().enumerate().map(|(ix, player)| {
+            let before_last = ix < player_count - 1;
+            div()
+                .when(before_last, |div| div.mr(-rems(0.5)))
+                .child(player.clone())
         });
         div().p_1().flex().items_center().children(player_list)
     }
