@@ -1537,6 +1537,7 @@ dependencies = [
  "collections",
  "context_menu",
  "db",
+ "drag_and_drop",
  "editor",
  "feature_flags",
  "feedback",

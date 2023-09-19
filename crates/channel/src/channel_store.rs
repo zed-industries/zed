@@ -47,6 +47,8 @@ pub struct ChannelStore {
     _update_channels: Task<()>,
 }
 
+pub type ChannelData = (Channel, ChannelPath);
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Channel {
     pub id: ChannelId,
@@ -758,8 +760,6 @@ impl ChannelStore {
         payload: proto::UpdateChannels,
         cx: &mut ModelContext<ChannelStore>,
     ) -> Option<Task<Result<()>>> {
-        dbg!(self.client.user_id(), &payload);
-
         if !payload.remove_channel_invitations.is_empty() {
             self.channel_invitations
                 .retain(|channel| !payload.remove_channel_invitations.contains(&channel.id));

@@ -9,12 +9,13 @@ use crate::{
 };
 use anyhow::Result;
 use call::ActiveCall;
-use channel::{Channel, ChannelEvent, ChannelId, ChannelPath, ChannelStore};
+use channel::{Channel, ChannelData, ChannelEvent, ChannelId, ChannelPath, ChannelStore};
 use channel_modal::ChannelModal;
 use client::{proto::PeerId, Client, Contact, User, UserStore};
 use contact_finder::ContactFinder;
 use context_menu::{ContextMenu, ContextMenuItem};
 use db::kvp::KEY_VALUE_STORE;
+use drag_and_drop::{DragAndDrop, Draggable};
 use editor::{Cancel, Editor};
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
 use futures::StreamExt;
@@ -115,6 +116,8 @@ struct UnlinkChannel {
     channel_id: ChannelId,
     parent_id: ChannelId,
 }
+
+type DraggedChannel = (Channel, Option<ChannelId>);
 
 actions!(
     collab_panel,
@@ -260,6 +263,7 @@ pub struct CollabPanel {
     subscriptions: Vec<Subscription>,
     collapsed_sections: Vec<Section>,
     collapsed_channels: Vec<ChannelPath>,
+    dragged_channel_target: Option<ChannelData>,
     workspace: WeakViewHandle<Workspace>,
     context_menu_on_selected: bool,
 }
@@ -525,6 +529,7 @@ impl CollabPanel {
                 workspace: workspace.weak_handle(),
                 client: workspace.app_state().client.clone(),
                 context_menu_on_selected: true,
+                dragged_channel_target: None,
                 list_state,
             };
 
@@ -1661,6 +1666,20 @@ impl CollabPanel {
 
         enum ChannelCall {}
 
+        let mut is_dragged_over = false;
+        if cx
+            .global::<DragAndDrop<Workspace>>()
+            .currently_dragged::<Channel>(cx.window())
+            .is_some()
+            && self
+                .dragged_channel_target
+                .as_ref()
+                .filter(|(_, dragged_path)| path.starts_with(dragged_path))
+                .is_some()
+        {
+            is_dragged_over = true;
+        }
+
         MouseEventHandler::new::<Channel, _>(path.unique_id() as usize, cx, |state, cx| {
             let row_hovered = state.hovered();
 
@@ -1741,7 +1760,11 @@ impl CollabPanel {
                 .constrained()
                 .with_height(theme.row_height)
                 .contained()
-                .with_style(*theme.channel_row.style_for(is_selected || is_active, state))
+                .with_style(
+                    *theme
+                        .channel_row
+                        .style_for(is_selected || is_active || is_dragged_over, state),
+                )
                 .with_padding_left(
                     theme.channel_row.default_style().padding.left
                         + theme.channel_indent * depth as f32,
@@ -1750,9 +1773,85 @@ impl CollabPanel {
         .on_click(MouseButton::Left, move |_, this, cx| {
             this.join_channel_chat(channel_id, cx);
         })
-        .on_click(MouseButton::Right, move |e, this, cx| {
-            this.deploy_channel_context_menu(Some(e.position), &path, cx);
+        .on_click(MouseButton::Right, {
+            let path = path.clone();
+            move |e, this, cx| {
+                this.deploy_channel_context_menu(Some(e.position), &path, cx);
+            }
         })
+        .on_up(MouseButton::Left, move |e, this, cx| {
+            if let Some((_, dragged_channel)) = cx
+                .global::<DragAndDrop<Workspace>>()
+                .currently_dragged::<DraggedChannel>(cx.window())
+            {
+                if e.modifiers.alt {
+                    this.channel_store.update(cx, |channel_store, cx| {
+                        channel_store
+                            .link_channel(dragged_channel.0.id, channel_id, cx)
+                            .detach_and_log_err(cx)
+                    })
+                } else {
+                    this.channel_store.update(cx, |channel_store, cx| {
+                        match dragged_channel.1 {
+                            Some(parent_id) => channel_store.move_channel(
+                                dragged_channel.0.id,
+                                parent_id,
+                                channel_id,
+                                cx,
+                            ),
+                            None => {
+                                channel_store.link_channel(dragged_channel.0.id, channel_id, cx)
+                            }
+                        }
+                        .detach_and_log_err(cx)
+                    })
+                }
+            }
+        })
+        .on_move({
+            let channel = channel.clone();
+            let path = path.clone();
+            move |_, this, cx| {
+                if cx
+                    .global::<DragAndDrop<Workspace>>()
+                    .currently_dragged::<DraggedChannel>(cx.window())
+                    .is_some()
+                {
+                    this.dragged_channel_target = Some((channel.clone(), path.clone()));
+                }
+            }
+        })
+        .as_draggable(
+            (channel.clone(), path.parent_id()),
+            move |(channel, _), cx: &mut ViewContext<Workspace>| {
+                let theme = &theme::current(cx).collab_panel;
+
+                Flex::<Workspace>::row()
+                    .with_child(
+                        Svg::new("icons/hash.svg")
+                            .with_color(theme.channel_hash.color)
+                            .constrained()
+                            .with_width(theme.channel_hash.width)
+                            .aligned()
+                            .left(),
+                    )
+                    .with_child(
+                        Label::new(channel.name.clone(), theme.channel_name.text.clone())
+                            .contained()
+                            .with_style(theme.channel_name.container)
+                            .aligned()
+                            .left()
+                            .flex(1., true),
+                    )
+                    .align_children_center()
+                    .contained()
+                    .with_padding_left(
+                        theme.channel_row.default_style().padding.left
+                            + theme.channel_indent * depth as f32,
+                    )
+                    .into_any()
+            },
+        )
         .with_cursor_style(CursorStyle::PointingHand)
         .into_any()
     }
