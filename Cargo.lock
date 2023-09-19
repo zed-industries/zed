@@ -3341,6 +3341,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpui3"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "derive_more",
+ "font-kit",
+ "itertools 0.11.0",
+ "log",
+ "parking_lot 0.11.2",
+ "plane-split",
+ "raw-window-handle",
+ "refineable",
+ "rust-embed",
+ "schemars",
+ "serde",
+ "simplelog",
+ "slotmap",
+ "smallvec",
+ "taffy",
+ "util",
+ "wgpu",
+]
+
+[[package]]
 name = "gpui_macros"
 version = "0.1.0"
 dependencies = [

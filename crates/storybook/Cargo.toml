@@ -8,6 +8,9 @@ publish = false
 name = "storybook"
 path = "src/storybook.rs"
 
+[features]
+test-support = []
+
 [dependencies]
 anyhow.workspace = true
 bytemuck = "1.14.0"
