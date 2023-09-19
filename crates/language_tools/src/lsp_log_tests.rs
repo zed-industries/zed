@@ -77,7 +77,14 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
             &[LogMenuItem {
                 server_id: language_server.server.server_id(),
                 server_name: LanguageServerName("the-rust-language-server".into()),
-                worktree: project.read(cx).worktrees(cx).next().unwrap(),
+                worktree_root_name: project
+                    .read(cx)
+                    .worktrees(cx)
+                    .next()
+                    .unwrap()
+                    .read(cx)
+                    .root_name()
+                    .to_string(),
                 rpc_trace_enabled: false,
                 rpc_trace_selected: false,
                 logs_selected: true,

@@ -13,7 +13,7 @@ use gpui::{
 };
 use language::{Buffer, LanguageServerId, LanguageServerName};
 use lsp::IoKind;
-use project::{search::SearchQuery, Project, Worktree};
+use project::{search::SearchQuery, Project};
 use std::{borrow::Cow, sync::Arc};
 use theme::{ui, Theme};
 use workspace::{
@@ -70,7 +70,7 @@ enum MessageKind {
 pub(crate) struct LogMenuItem {
     pub server_id: LanguageServerId,
     pub server_name: LanguageServerName,
-    pub worktree: ModelHandle<Worktree>,
+    pub worktree_root_name: String,
     pub rpc_trace_enabled: bool,
     pub rpc_trace_selected: bool,
     pub logs_selected: bool,
@@ -203,7 +203,6 @@ impl LogStore {
                 }
             })
         });
-
         Some(server_state.log_buffer.clone())
     }
 
@@ -410,7 +409,7 @@ impl LspLogView {
                 Some(LogMenuItem {
                     server_id,
                     server_name: language_server_name,
-                    worktree,
+                    worktree_root_name: worktree.read(cx).root_name().to_string(),
                     rpc_trace_enabled: state.rpc_state.is_some(),
                     rpc_trace_selected: self.is_showing_rpc_trace
                         && self.current_server_id == Some(server_id),
@@ -418,6 +417,24 @@ impl LspLogView {
                         && self.current_server_id == Some(server_id),
                 })
             })
+            .chain(
+                self.project
+                    .read(cx)
+                    .supplementary_language_servers()
+                    .filter_map(|(&server_id, (name, _))| {
+                        let state = state.servers.get(&server_id)?;
+                        Some(LogMenuItem {
+                            server_id,
+                            server_name: name.clone(),
+                            worktree_root_name: "supplementary".to_string(),
+                            rpc_trace_enabled: state.rpc_state.is_some(),
+                            rpc_trace_selected: self.is_showing_rpc_trace
+                                && self.current_server_id == Some(server_id),
+                            logs_selected: !self.is_showing_rpc_trace
+                                && self.current_server_id == Some(server_id),
+                        })
+                    }),
+            )
             .collect::<Vec<_>>();
         rows.sort_by_key(|row| row.server_id);
         rows.dedup_by_key(|row| row.server_id);
@@ -635,7 +652,7 @@ impl View for LspLogToolbarItemView {
                                     Self::render_language_server_menu_item(
                                         row.server_id,
                                         row.server_name,
-                                        row.worktree,
+                                        &row.worktree_root_name,
                                         row.rpc_trace_enabled,
                                         row.logs_selected,
                                         row.rpc_trace_selected,
@@ -767,15 +784,14 @@ impl LspLogToolbarItemView {
         cx: &mut ViewContext<Self>,
     ) -> impl Element<Self> {
         enum ToggleMenu {}
-        MouseEventHandler::new::<ToggleMenu, _>(0, cx, move |state, cx| {
+        MouseEventHandler::new::<ToggleMenu, _>(0, cx, move |state, _| {
             let label: Cow<str> = current_server
                 .and_then(|row| {
-                    let worktree = row.worktree.read(cx);
                     Some(
                         format!(
                             "{} ({}) - {}",
                             row.server_name.0,
-                            worktree.root_name(),
+                            row.worktree_root_name,
                             if row.rpc_trace_selected {
                                 RPC_MESSAGES
                             } else {
@@ -800,7 +816,7 @@ impl LspLogToolbarItemView {
     fn render_language_server_menu_item(
         id: LanguageServerId,
         name: LanguageServerName,
-        worktree: ModelHandle<Worktree>,
+        worktree_root_name: &str,
         rpc_trace_enabled: bool,
         logs_selected: bool,
         rpc_trace_selected: bool,
@@ -814,7 +830,7 @@ impl LspLogToolbarItemView {
             .with_child({
                 let style = &theme.toolbar_dropdown_menu.section_header;
                 Label::new(
-                    format!("{} ({})", name.0, worktree.read(cx).root_name()),
+                    format!("{} ({})", name.0, worktree_root_name),
                     style.text.clone(),
                 )
                 .contained()

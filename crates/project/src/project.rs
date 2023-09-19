@@ -108,7 +108,8 @@ pub struct Project {
     active_entry: Option<ProjectEntryId>,
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
     languages: Arc<LanguageRegistry>,
-    supplementary_language_servers: HashMap<LanguageServerId, Arc<LanguageServer>>,
+    supplementary_language_servers:
+        HashMap<LanguageServerId, (LanguageServerName, Arc<LanguageServer>)>,
     language_servers: HashMap<LanguageServerId, LanguageServerState>,
     language_server_ids: HashMap<(WorktreeId, LanguageServerName), LanguageServerId>,
     language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
@@ -7951,10 +7952,22 @@ impl Project {
             })
     }
 
+    pub fn supplementary_language_servers(
+        &self,
+    ) -> impl '_
+           + Iterator<
+        Item = (
+            &LanguageServerId,
+            &(LanguageServerName, Arc<LanguageServer>),
+        ),
+    > {
+        self.supplementary_language_servers.iter()
+    }
+
     pub fn language_server_for_id(&self, id: LanguageServerId) -> Option<Arc<LanguageServer>> {
         if let LanguageServerState::Running { server, .. } = self.language_servers.get(&id)? {
             Some(server.clone())
-        } else if let Some(server) = self.supplementary_language_servers.get(&id) {
+        } else if let Some((_, server)) = self.supplementary_language_servers.get(&id) {
             Some(Arc::clone(server))
         } else {
             None
@@ -8023,13 +8036,13 @@ fn subscribe_for_copilot_events(
         copilot,
         |project, copilot, copilot_event, cx| match copilot_event {
             copilot::Event::CopilotReady => {
-                if let Some(copilot_server) = copilot.read(cx).language_server() {
+                if let Some((name, copilot_server)) = copilot.read(cx).language_server() {
                     let new_server_id = copilot_server.server_id();
                     if let hash_map::Entry::Vacant(v) =
                         project.supplementary_language_servers.entry(new_server_id)
                     {
-                        v.insert(Arc::clone(copilot_server));
-                        cx.emit(Event::LanguageServerAdded(new_server_id))
+                        v.insert((name.clone(), Arc::clone(copilot_server)));
+                        cx.emit(Event::LanguageServerAdded(new_server_id));
                     }
                 }
             }

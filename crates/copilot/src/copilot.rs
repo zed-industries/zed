@@ -11,8 +11,8 @@ use gpui::{
 };
 use language::{
     language_settings::{all_language_settings, language_settings},
-    point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16,
-    ToPointUtf16,
+    point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language,
+    LanguageServerName, PointUtf16, ToPointUtf16,
 };
 use log::{debug, error};
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId};
@@ -130,6 +130,7 @@ impl CopilotServer {
 }
 
 struct RunningCopilotServer {
+    name: LanguageServerName,
     lsp: Arc<LanguageServer>,
     sign_in_status: SignInStatus,
     registered_buffers: HashMap<usize, RegisteredBuffer>,
@@ -361,6 +362,7 @@ impl Copilot {
             http: http.clone(),
             node_runtime,
             server: CopilotServer::Running(RunningCopilotServer {
+                name: LanguageServerName(Arc::from("copilot")),
                 lsp: Arc::new(server),
                 sign_in_status: SignInStatus::Authorized,
                 registered_buffers: Default::default(),
@@ -439,6 +441,7 @@ impl Copilot {
                 match server {
                     Ok((server, status)) => {
                         this.server = CopilotServer::Running(RunningCopilotServer {
+                            name: LanguageServerName(Arc::from("copilot")),
                             lsp: server,
                             sign_in_status: SignInStatus::SignedOut,
                             registered_buffers: Default::default(),
@@ -576,9 +579,9 @@ impl Copilot {
         cx.foreground().spawn(start_task)
     }
 
-    pub fn language_server(&self) -> Option<&Arc<LanguageServer>> {
+    pub fn language_server(&self) -> Option<(&LanguageServerName, &Arc<LanguageServer>)> {
         if let CopilotServer::Running(server) = &self.server {
-            Some(&server.lsp)
+            Some((&server.name, &server.lsp))
         } else {
             None
         }
