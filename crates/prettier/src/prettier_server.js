@@ -44,6 +44,7 @@ async function handleBuffer(prettier) {
 }
 
 const headerSeparator = "\r\n";
+const contentLengthHeaderName = 'Content-Length';
 
 async function* readStdin() {
     let buffer = Buffer.alloc(0);
@@ -64,7 +65,6 @@ async function* readStdin() {
     }
 
     try {
-        let contentLengthHeaderName = 'Content-Length';
         let headersLength = null;
         let messageLength = null;
         main_loop: while (true) {
@@ -165,7 +165,7 @@ function sendResponse(response) {
         jsonrpc: "2.0",
         ...response
     });
-    let headers = `Content-Length: ${Buffer.byteLength(responsePayloadString)}${headerSeparator}${headerSeparator}`;
+    let headers = `${contentLengthHeaderName}: ${Buffer.byteLength(responsePayloadString)}${headerSeparator}${headerSeparator}`;
     let dataToSend = headers + responsePayloadString;
     process.stdout.write(dataToSend);
 }
