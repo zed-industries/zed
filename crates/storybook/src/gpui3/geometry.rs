@@ -31,7 +31,7 @@ unsafe impl<T: Clone + Debug + Zeroable + Pod> Zeroable for Point<T> {}
 
 unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Point<T> {}
 
-#[derive(Refineable, Default, Clone, Copy, Debug)]
+#[derive(Refineable, Default, Clone, Copy, Debug, PartialEq)]
 #[refineable(debug)]
 pub struct Size<T: Clone + Debug> {
     pub width: T,
@@ -65,7 +65,7 @@ impl Size<Length> {
     }
 }
 
-#[derive(Refineable, Clone, Default, Debug)]
+#[derive(Refineable, Clone, Default, Debug, PartialEq)]
 #[refineable(debug)]
 pub struct Bounds<T: Clone + Debug> {
     pub origin: Point<T>,

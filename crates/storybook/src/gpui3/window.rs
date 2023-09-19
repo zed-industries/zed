@@ -5,7 +5,10 @@ use super::{
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui2::Reference;
-use std::{any::Any, marker::PhantomData};
+use std::{
+    any::{Any, TypeId},
+    marker::PhantomData,
+};
 
 pub struct AnyWindow {}
 
@@ -214,6 +217,11 @@ impl<S> WindowHandle<S> {
             state_type: PhantomData,
         }
     }
+}
+
+pub struct AnyWindowHandle {
+    id: WindowId,
+    state_type: TypeId,
 }
 
 #[derive(Clone)]

@@ -3,6 +3,7 @@ mod color;
 mod element;
 mod elements;
 mod geometry;
+mod platform;
 mod renderer;
 mod scene;
 mod style;

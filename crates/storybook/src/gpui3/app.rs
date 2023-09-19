@@ -1,13 +1,15 @@
 use anyhow::{anyhow, Result};
 use slotmap::SlotMap;
-use std::{any::Any, marker::PhantomData};
+use std::{any::Any, marker::PhantomData, rc::Rc};
 
 use super::{
+    platform::Platform,
     window::{Window, WindowHandle, WindowId},
     Context, LayoutId, Reference, View, WindowContext,
 };
 
 pub struct AppContext {
+    platform: Rc<dyn Platform>,
     pub(crate) entities: SlotMap<EntityId, Option<Box<dyn Any>>>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     // We recycle this memory across layout requests.
@@ -15,12 +17,17 @@ pub struct AppContext {
 }
 
 impl AppContext {
-    pub fn new() -> Self {
+    pub fn new(platform: Rc<dyn Platform>) -> Self {
         AppContext {
+            platform,
             entities: SlotMap::with_key(),
             windows: SlotMap::with_key(),
             layout_id_buffer: Default::default(),
         }
+    }
+
+    pub fn test() -> Self {
+        Self::new(TestPlatform::new())
     }
 
     pub fn open_window<S: 'static>(
