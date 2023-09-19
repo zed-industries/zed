@@ -8,7 +8,7 @@ use semantic_index::embedding::OpenAIEmbeddings;
 use semantic_index::semantic_index_settings::SemanticIndexSettings;
 use semantic_index::{SearchResult, SemanticIndex};
 use serde::{Deserialize, Serialize};
-use settings::{default_settings, handle_settings_file_changes, watch_config_file, SettingsStore};
+use settings::{default_settings, SettingsStore};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use std::{cmp, env, fs};
 use util::channel::{RELEASE_CHANNEL, RELEASE_CHANNEL_NAME};
 use util::http::{self};
-use util::paths::{self, EMBEDDINGS_DIR};
+use util::paths::EMBEDDINGS_DIR;
 use zed::languages;
 
 #[derive(Deserialize, Clone, Serialize)]
@@ -134,7 +134,7 @@ fn get_hits(
 
     let mut hits = Vec::new();
     for result in search_results {
-        let (path, start_row, end_row) = result.buffer.read_with(cx, |buffer, cx| {
+        let (path, start_row, end_row) = result.buffer.read_with(cx, |buffer, _cx| {
             let path = buffer.file().unwrap().path().to_path_buf();
             let start_row = buffer.offset_to_point(result.range.start.offset).row;
             let end_row = buffer.offset_to_point(result.range.end.offset).row;
@@ -423,7 +423,7 @@ async fn evaluate_repo(
     }
 
     repo_metrics.summarize();
-    repo_metrics.save(repo_name);
+    let _ = repo_metrics.save(repo_name);
 
     anyhow::Ok(repo_metrics)
 }
@@ -508,7 +508,7 @@ fn main() {
                                 })
                                 .await;
 
-                            let repo_metrics = evaluate_repo(
+                            let _ = evaluate_repo(
                                 repo_name,
                                 semantic_index.clone(),
                                 project,
