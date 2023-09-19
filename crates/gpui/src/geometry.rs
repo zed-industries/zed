@@ -1,12 +1,12 @@
-use std::fmt::Debug;
-
 use super::scene::{Path, PathVertex};
 use crate::{color::Color, json::ToJson};
+use derive_more::Neg;
 pub use pathfinder_geometry::*;
 use rect::RectF;
 use refineable::Refineable;
 use serde::{Deserialize, Deserializer};
 use serde_json::json;
+use std::fmt::Debug;
 use vector::{vec2f, Vector2F};
 
 pub struct PathBuilder {
@@ -235,6 +235,17 @@ pub struct Edges<T: Clone + Default + Debug> {
     pub left: T,
 }
 
+impl<T: Clone + Default + Debug> Edges<T> {
+    pub fn uniform(value: T) -> Self {
+        Self {
+            top: value.clone(),
+            right: value.clone(),
+            bottom: value.clone(),
+            left: value.clone(),
+        }
+    }
+}
+
 impl Edges<Length> {
     pub fn auto() -> Self {
         Self {
@@ -322,7 +333,7 @@ impl Edges<f32> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Neg)]
 pub enum AbsoluteLength {
     Pixels(f32),
     Rems(f32),
@@ -360,7 +371,7 @@ impl Default for AbsoluteLength {
 }
 
 /// A non-auto length that can be defined in pixels, rems, or percent of parent.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Neg)]
 pub enum DefiniteLength {
     Absolute(AbsoluteLength),
     Relative(f32), // 0. to 1.
@@ -404,7 +415,7 @@ impl Default for DefiniteLength {
 }
 
 /// A length that can be defined in pixels, rems, percent of parent, or auto.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Neg)]
 pub enum Length {
     Definite(DefiniteLength),
     Auto,

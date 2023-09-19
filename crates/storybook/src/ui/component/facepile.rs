@@ -1,5 +1,6 @@
 use crate::theme::theme;
 use crate::ui::Avatar;
+use gpui2::geometry::rems;
 use gpui2::style::StyleHelpers;
 use gpui2::{elements::div, IntoElement};
 use gpui2::{Element, ParentElement, ViewContext};
@@ -24,6 +25,7 @@ impl Facepile {
         div()
             .relative()
             .p_1()
+            .mx(rems(-0.125))
             .flex()
             .items_center()
             .children(player_list)

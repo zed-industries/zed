@@ -28,28 +28,58 @@ fn generate_methods() -> Vec<TokenStream2> {
     let mut methods = Vec::new();
 
     for (prefix, auto_allowed, fields) in box_prefixes() {
+        methods.push(generate_method_with_parameter(
+            prefix,
+            if auto_allowed {
+                quote! { Length }
+            } else {
+                quote! { DefiniteLength }
+            },
+            &fields,
+        ));
+
         for (suffix, length_tokens, doc_string) in box_suffixes() {
-            if auto_allowed || suffix != "auto" {
-                let method = generate_method(prefix, suffix, &fields, length_tokens, doc_string);
-                methods.push(method);
+            if suffix != "auto" || auto_allowed {
+                methods.push(generate_method(
+                    prefix,
+                    suffix,
+                    &fields,
+                    length_tokens,
+                    doc_string,
+                ));
             }
         }
     }
 
     for (prefix, fields) in corner_prefixes() {
+        methods.push(generate_method_with_parameter(
+            prefix,
+            quote! { AbsoluteLength },
+            &fields,
+        ));
+
         for (suffix, radius_tokens, doc_string) in corner_suffixes() {
-            let method = generate_method(prefix, suffix, &fields, radius_tokens, doc_string);
-            methods.push(method);
+            methods.push(generate_method(
+                prefix,
+                suffix,
+                &fields,
+                radius_tokens,
+                doc_string,
+            ));
         }
     }
 
     for (prefix, fields) in border_prefixes() {
         for (suffix, width_tokens, doc_string) in border_suffixes() {
-            let method = generate_method(prefix, suffix, &fields, width_tokens, doc_string);
-            methods.push(method);
+            methods.push(generate_method(
+                prefix,
+                suffix,
+                &fields,
+                width_tokens,
+                doc_string,
+            ));
         }
     }
-
     methods
 }
 
@@ -70,7 +100,7 @@ fn generate_method(
         .iter()
         .map(|field_tokens| {
             quote! {
-                style.#field_tokens = Some(gpui::geometry::#length_tokens);
+                style.#field_tokens = Some(gpui2::geometry::#length_tokens);
             }
         })
         .collect::<Vec<_>>();
@@ -78,6 +108,33 @@ fn generate_method(
     let method = quote! {
         #[doc = #doc_string]
         fn #method_name(mut self) -> Self where Self: std::marker::Sized {
+            let mut style = self.declared_style();
+            #(#field_assignments)*
+            self
+        }
+    };
+
+    method
+}
+
+fn generate_method_with_parameter(
+    prefix: &'static str,
+    length_type: TokenStream2,
+    fields: &Vec<TokenStream2>,
+) -> TokenStream2 {
+    let method_name = format_ident!("{}", prefix);
+
+    let field_assignments = fields
+        .iter()
+        .map(|field_tokens| {
+            quote! {
+                style.#field_tokens = Some(length);
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let method = quote! {
+        fn #method_name(mut self, length: gpui2::geometry::#length_type) -> Self where Self: std::marker::Sized {
             let mut style = self.declared_style();
             #(#field_assignments)*
             self
@@ -96,10 +153,10 @@ fn box_prefixes() -> Vec<(&'static str, bool, Vec<TokenStream2>)> {
             true,
             vec![quote! {size.width}, quote! {size.height}],
         ),
-        ("min_w", false, vec![quote! { min_size.width }]),
-        ("min_h", false, vec![quote! { min_size.height }]),
-        ("max_w", false, vec![quote! { max_size.width }]),
-        ("max_h", false, vec![quote! { max_size.height }]),
+        ("min_w", true, vec![quote! { min_size.width }]),
+        ("min_h", true, vec![quote! { min_size.height }]),
+        ("max_w", true, vec![quote! { max_size.width }]),
+        ("max_h", true, vec![quote! { max_size.height }]),
         (
             "m",
             true,

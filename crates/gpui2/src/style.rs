@@ -314,6 +314,8 @@ pub trait Styleable {
     }
 }
 
+use crate as gpui2;
+
 // Helpers methods that take and return mut self. This includes tailwind style methods for standard sizes etc.
 //
 // Example:
@@ -321,27 +323,6 @@ pub trait Styleable {
 // fn p_2(mut self) -> Self where Self: Sized;
 pub trait StyleHelpers: Styleable<Style = Style> {
     styleable_helpers!();
-
-    fn h(mut self, height: Length) -> Self
-    where
-        Self: Sized,
-    {
-        self.declared_style().size.height = Some(height);
-        self
-    }
-
-    /// size_{n}: Sets width & height to {n}
-    ///
-    /// Example:
-    /// size_1: Sets width & height to 1
-    fn size(mut self, size: Length) -> Self
-    where
-        Self: Sized,
-    {
-        self.declared_style().size.height = Some(size);
-        self.declared_style().size.width = Some(size);
-        self
-    }
 
     fn full(mut self) -> Self
     where
