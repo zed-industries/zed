@@ -925,6 +925,7 @@ impl BufferSearchBar {
                                 Some(self.replacement(cx)).filter(|rep| !rep.is_empty()),
                             );
                             searchable_item.replace(&matches[active_index], &query, cx);
+                            self.select_next_match(&SelectNextMatch, cx);
                         }
 
                         self.focus_editor(&FocusEditor, cx);
