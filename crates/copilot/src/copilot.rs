@@ -276,8 +276,12 @@ pub struct Copilot {
     server_id: LanguageServerId,
 }
 
+pub enum Event {
+    CopilotReady,
+}
+
 impl Entity for Copilot {
-    type Event = ();
+    type Event = Event;
 
     fn app_will_quit(
         &mut self,
@@ -881,6 +885,7 @@ impl Copilot {
                             self.register_buffer(&buffer, cx);
                         }
                     }
+                    cx.emit(Event::CopilotReady);
                 }
                 request::SignInStatus::NotAuthorized { .. } => {
                     server.sign_in_status = SignInStatus::Unauthorized;

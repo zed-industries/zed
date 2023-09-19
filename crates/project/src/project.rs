@@ -148,7 +148,7 @@ pub struct Project {
     _maintain_buffer_languages: Task<()>,
     _maintain_workspace_config: Task<()>,
     terminals: Terminals,
-    copilot_enabled: bool,
+    copilot_lsp_subscription: Option<gpui::Subscription>,
     current_lsp_settings: HashMap<Arc<str>, LspSettings>,
 }
 
@@ -619,6 +619,8 @@ impl Project {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn_weak(|this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
+            let copilot_lsp_subscription =
+                Copilot::global(cx).map(|copilot| subscribe_for_copilot_events(&copilot, cx));
             Self {
                 worktrees: Default::default(),
                 buffer_ordered_messages_tx: tx,
@@ -660,7 +662,7 @@ impl Project {
                 terminals: Terminals {
                     local_handles: Vec::new(),
                 },
-                copilot_enabled: Copilot::global(cx).is_some(),
+                copilot_lsp_subscription,
                 current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
             }
         })
@@ -696,6 +698,8 @@ impl Project {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn_weak(|this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
+            let copilot_lsp_subscription =
+                Copilot::global(cx).map(|copilot| subscribe_for_copilot_events(&copilot, cx));
             let mut this = Self {
                 worktrees: Vec::new(),
                 buffer_ordered_messages_tx: tx,
@@ -754,7 +758,7 @@ impl Project {
                 terminals: Terminals {
                     local_handles: Vec::new(),
                 },
-                copilot_enabled: Copilot::global(cx).is_some(),
+                copilot_lsp_subscription,
                 current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
             };
             for worktree in worktrees {
@@ -885,12 +889,14 @@ impl Project {
             self.restart_language_servers(worktree, language, cx);
         }
 
-        if !self.copilot_enabled && Copilot::global(cx).is_some() {
-            self.copilot_enabled = true;
-            for buffer in self.opened_buffers.values() {
-                if let Some(buffer) = buffer.upgrade(cx) {
-                    self.register_buffer_with_copilot(&buffer, cx);
+        if self.copilot_lsp_subscription.is_none() {
+            if let Some(copilot) = Copilot::global(cx) {
+                for buffer in self.opened_buffers.values() {
+                    if let Some(buffer) = buffer.upgrade(cx) {
+                        self.register_buffer_with_copilot(&buffer, cx);
+                    }
                 }
+                self.copilot_lsp_subscription = Some(subscribe_for_copilot_events(&copilot, cx));
             }
         }
 
@@ -1918,7 +1924,6 @@ impl Project {
         self.detect_language_for_buffer(buffer, cx);
         self.register_buffer_with_language_servers(buffer, cx);
         self.register_buffer_with_copilot(buffer, cx);
-        self.register_copilot_language_server(cx);
         cx.observe_release(buffer, |this, buffer, cx| {
             if let Some(file) = File::from_dyn(buffer.file()) {
                 if file.is_local() {
@@ -2068,20 +2073,6 @@ impl Project {
     ) {
         if let Some(copilot) = Copilot::global(cx) {
             copilot.update(cx, |copilot, cx| copilot.register_buffer(buffer_handle, cx));
-        }
-    }
-
-    fn register_copilot_language_server(&mut self, cx: &mut ModelContext<Self>) {
-        if let Some(copilot_language_server) =
-            Copilot::global(cx).and_then(|copilot| copilot.read(cx).language_server())
-        {
-            let new_server_id = copilot_language_server.server_id();
-            if let hash_map::Entry::Vacant(v) =
-                self.supplementary_language_servers.entry(new_server_id)
-            {
-                v.insert(Arc::clone(copilot_language_server));
-                cx.emit(Event::LanguageServerAdded(new_server_id))
-            }
         }
     }
 
@@ -8022,6 +8013,28 @@ impl Project {
             Vec::new()
         }
     }
+}
+
+fn subscribe_for_copilot_events(
+    copilot: &ModelHandle<Copilot>,
+    cx: &mut ModelContext<'_, Project>,
+) -> gpui::Subscription {
+    cx.subscribe(
+        copilot,
+        |project, copilot, copilot_event, cx| match copilot_event {
+            copilot::Event::CopilotReady => {
+                if let Some(copilot_server) = copilot.read(cx).language_server() {
+                    let new_server_id = copilot_server.server_id();
+                    if let hash_map::Entry::Vacant(v) =
+                        project.supplementary_language_servers.entry(new_server_id)
+                    {
+                        v.insert(Arc::clone(copilot_server));
+                        cx.emit(Event::LanguageServerAdded(new_server_id))
+                    }
+                }
+            }
+        },
+    )
 }
 
 fn glob_literal_prefix<'a>(glob: &'a str) -> &'a str {
