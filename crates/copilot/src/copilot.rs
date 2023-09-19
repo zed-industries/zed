@@ -572,6 +572,14 @@ impl Copilot {
         cx.foreground().spawn(start_task)
     }
 
+    pub fn language_server(&self) -> Option<&Arc<LanguageServer>> {
+        if let CopilotServer::Running(server) = &self.server {
+            Some(&server.lsp)
+        } else {
+            None
+        }
+    }
+
     pub fn register_buffer(&mut self, buffer: &ModelHandle<Buffer>, cx: &mut ModelContext<Self>) {
         let weak_buffer = buffer.downgrade();
         self.buffers.insert(weak_buffer.clone());

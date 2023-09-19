@@ -108,6 +108,7 @@ pub struct Project {
     active_entry: Option<ProjectEntryId>,
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
     languages: Arc<LanguageRegistry>,
+    supplementary_language_servers: HashMap<LanguageServerId, Arc<LanguageServer>>,
     language_servers: HashMap<LanguageServerId, LanguageServerState>,
     language_server_ids: HashMap<(WorktreeId, LanguageServerName), LanguageServerId>,
     language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
@@ -647,6 +648,7 @@ impl Project {
                 fs,
                 next_entry_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
+                supplementary_language_servers: HashMap::default(),
                 language_servers: Default::default(),
                 language_server_ids: Default::default(),
                 language_server_statuses: Default::default(),
@@ -723,6 +725,7 @@ impl Project {
                     remote_id,
                     replica_id,
                 }),
+                supplementary_language_servers: HashMap::default(),
                 language_servers: Default::default(),
                 language_server_ids: Default::default(),
                 language_server_statuses: response
@@ -1915,6 +1918,7 @@ impl Project {
         self.detect_language_for_buffer(buffer, cx);
         self.register_buffer_with_language_servers(buffer, cx);
         self.register_buffer_with_copilot(buffer, cx);
+        self.register_copilot_language_server(cx);
         cx.observe_release(buffer, |this, buffer, cx| {
             if let Some(file) = File::from_dyn(buffer.file()) {
                 if file.is_local() {
@@ -2064,6 +2068,20 @@ impl Project {
     ) {
         if let Some(copilot) = Copilot::global(cx) {
             copilot.update(cx, |copilot, cx| copilot.register_buffer(buffer_handle, cx));
+        }
+    }
+
+    fn register_copilot_language_server(&mut self, cx: &mut ModelContext<Self>) {
+        if let Some(copilot_language_server) =
+            Copilot::global(cx).and_then(|copilot| copilot.read(cx).language_server())
+        {
+            let new_server_id = copilot_language_server.server_id();
+            if let hash_map::Entry::Vacant(v) =
+                self.supplementary_language_servers.entry(new_server_id)
+            {
+                v.insert(Arc::clone(copilot_language_server));
+                cx.emit(Event::LanguageServerAdded(new_server_id))
+            }
         }
     }
 
@@ -7945,6 +7963,8 @@ impl Project {
     pub fn language_server_for_id(&self, id: LanguageServerId) -> Option<Arc<LanguageServer>> {
         if let LanguageServerState::Running { server, .. } = self.language_servers.get(&id)? {
             Some(server.clone())
+        } else if let Some(server) = self.supplementary_language_servers.get(&id) {
+            Some(Arc::clone(server))
         } else {
             None
         }
