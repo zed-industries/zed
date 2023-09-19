@@ -2,7 +2,7 @@ use crate::prelude::InteractionState;
 use crate::theme::theme;
 use crate::ui::{icon, IconAsset, Label};
 use gpui2::geometry::rems;
-use gpui2::style::StyleHelpers;
+use gpui2::style::{StyleHelpers, Styleable};
 use gpui2::{elements::div, IntoElement};
 use gpui2::{Element, ParentElement, ViewContext};
 
@@ -41,12 +41,20 @@ impl ListItem {
         let theme = theme(cx);
 
         let mut el = div()
-            .h_7()
-            .px_2()
-            .ml(rems(0.75 * self.indent_level.clone()))
-            .flex()
-            .gap_2()
-            .items_center();
+            .fill(theme.middle.base.default.background)
+            .hover()
+            .fill(theme.middle.base.hovered.background)
+            .active()
+            .fill(theme.middle.base.pressed.background)
+            .child(
+                div()
+                    .h_7()
+                    .px_2()
+                    .ml(rems(0.75 * self.indent_level.clone()))
+                    .flex()
+                    .gap_2()
+                    .items_center(),
+            );
 
         if self.left_icon.is_some() {
             el = el.child(icon(self.left_icon.clone().unwrap()))
