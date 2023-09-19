@@ -41,7 +41,7 @@ export default function copilot(): any {
             base: {
                 icon: svg(
                     foreground(theme.middle, "variant"),
-                    "icons/link_out_12.svg",
+                    "icons/external_link.svg",
                     12,
                     12
                 ),
@@ -91,7 +91,7 @@ export default function copilot(): any {
                 base: {
                     icon: svg(
                         foreground(theme.middle, "variant"),
-                        "icons/x_mark_8.svg",
+                        "icons/x.svg",
                         8,
                         8
                     ),
@@ -112,7 +112,7 @@ export default function copilot(): any {
                     hovered: {
                         icon: svg(
                             foreground(theme.middle, "on"),
-                            "icons/x_mark_8.svg",
+                            "icons/x.svg",
                             8,
                             8
                         ),
@@ -120,7 +120,7 @@ export default function copilot(): any {
                     clicked: {
                         icon: svg(
                             foreground(theme.middle, "base"),
-                            "icons/x_mark_8.svg",
+                            "icons/x.svg",
                             8,
                             8
                         ),
@@ -141,7 +141,7 @@ export default function copilot(): any {
             header: {
                 icon: svg(
                     foreground(theme.middle, "default"),
-                    "icons/zed_plus_copilot_32.svg",
+                    "icons/zed_x_copilot.svg",
                     92,
                     32
                 ),

@@ -125,6 +125,8 @@
       "g shift-t": "pane::ActivatePrevItem",
       "g d": "editor::GoToDefinition",
       "g shift-d": "editor::GoToTypeDefinition",
+      "g s": "outline::Toggle",
+      "g shift-s": "project_symbols::Toggle",
       "g .": "editor::ToggleCodeActions", // zed specific
       "g shift-a": "editor::FindAllReferences", // zed specific
       "g *": [
@@ -450,7 +452,10 @@
       "shift-o": "vim::OtherEnd",
       "d": "vim::VisualDelete",
       "x": "vim::VisualDelete",
+      "shift-d": "vim::VisualDelete",
+      "shift-x": "vim::VisualDelete",
       "y": "vim::VisualYank",
+      "shift-y": "vim::VisualYank",
       "p": "vim::Paste",
       "shift-p": [
         "vim::Paste",

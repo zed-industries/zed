@@ -23,13 +23,13 @@ pub struct ChannelBuffer {
     subscription: Option<client::Subscription>,
 }
 
-pub enum Event {
+pub enum ChannelBufferEvent {
     CollaboratorsChanged,
     Disconnected,
 }
 
 impl Entity for ChannelBuffer {
-    type Event = Event;
+    type Event = ChannelBufferEvent;
 
     fn release(&mut self, _: &mut AppContext) {
         if self.connected {
@@ -101,7 +101,7 @@ impl ChannelBuffer {
             }
         }
         self.collaborators = collaborators;
-        cx.emit(Event::CollaboratorsChanged);
+        cx.emit(ChannelBufferEvent::CollaboratorsChanged);
         cx.notify();
     }
 
@@ -141,7 +141,7 @@ impl ChannelBuffer {
 
         this.update(&mut cx, |this, cx| {
             this.collaborators.push(collaborator);
-            cx.emit(Event::CollaboratorsChanged);
+            cx.emit(ChannelBufferEvent::CollaboratorsChanged);
             cx.notify();
         });
 
@@ -165,7 +165,7 @@ impl ChannelBuffer {
                     true
                 }
             });
-            cx.emit(Event::CollaboratorsChanged);
+            cx.emit(ChannelBufferEvent::CollaboratorsChanged);
             cx.notify();
         });
 
@@ -185,7 +185,7 @@ impl ChannelBuffer {
                     break;
                 }
             }
-            cx.emit(Event::CollaboratorsChanged);
+            cx.emit(ChannelBufferEvent::CollaboratorsChanged);
             cx.notify();
         });
 
@@ -230,7 +230,7 @@ impl ChannelBuffer {
         if self.connected {
             self.connected = false;
             self.subscription.take();
-            cx.emit(Event::Disconnected);
+            cx.emit(ChannelBufferEvent::Disconnected);
             cx.notify()
         }
     }

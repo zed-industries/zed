@@ -714,7 +714,14 @@ impl SemanticIndex {
 
             let search_start = Instant::now();
             let modified_buffer_results = this.update(&mut cx, |this, cx| {
-                this.search_modified_buffers(&project, query.clone(), limit, &excludes, cx)
+                this.search_modified_buffers(
+                    &project,
+                    query.clone(),
+                    limit,
+                    &includes,
+                    &excludes,
+                    cx,
+                )
             });
             let file_results = this.update(&mut cx, |this, cx| {
                 this.search_files(project, query, limit, includes, excludes, cx)
@@ -877,6 +884,7 @@ impl SemanticIndex {
         project: &ModelHandle<Project>,
         query: Embedding,
         limit: usize,
+        includes: &[PathMatcher],
         excludes: &[PathMatcher],
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<SearchResult>>> {
@@ -890,7 +898,16 @@ impl SemanticIndex {
                 let excluded = snapshot.resolve_file_path(cx, false).map_or(false, |path| {
                     excludes.iter().any(|matcher| matcher.is_match(&path))
                 });
-                if buffer.is_dirty() && !excluded {
+
+                let included = if includes.len() == 0 {
+                    true
+                } else {
+                    snapshot.resolve_file_path(cx, false).map_or(false, |path| {
+                        includes.iter().any(|matcher| matcher.is_match(&path))
+                    })
+                };
+
+                if buffer.is_dirty() && !excluded && included {
                     Some((buffer_handle, snapshot))
                 } else {
                     None

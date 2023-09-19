@@ -6,6 +6,7 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
+use client::{telemetry::AssistantKind, ClickhouseEvent, TelemetrySettings};
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     display_map::{
@@ -48,6 +49,7 @@ use theme::{
     AssistantStyle,
 };
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
+use uuid::Uuid;
 use workspace::{
     dock::{DockPosition, Panel},
     searchable::Direction,
@@ -296,6 +298,7 @@ impl AssistantPanel {
                 self.include_conversation_in_next_inline_assist,
                 self.inline_prompt_history.clone(),
                 codegen.clone(),
+                self.workspace.clone(),
                 cx,
             );
             cx.focus_self();
@@ -724,6 +727,7 @@ impl AssistantPanel {
                 self.api_key.clone(),
                 self.languages.clone(),
                 self.fs.clone(),
+                self.workspace.clone(),
                 cx,
             )
         });
@@ -1059,6 +1063,7 @@ impl AssistantPanel {
         }
 
         let fs = self.fs.clone();
+        let workspace = self.workspace.clone();
         let api_key = self.api_key.clone();
         let languages = self.languages.clone();
         cx.spawn(|this, mut cx| async move {
@@ -1073,8 +1078,9 @@ impl AssistantPanel {
                 if let Some(ix) = this.editor_index_for_path(&path, cx) {
                     this.set_active_editor_index(Some(ix), cx);
                 } else {
-                    let editor = cx
-                        .add_view(|cx| ConversationEditor::for_conversation(conversation, fs, cx));
+                    let editor = cx.add_view(|cx| {
+                        ConversationEditor::for_conversation(conversation, fs, workspace, cx)
+                    });
                     this.add_conversation(editor, cx);
                 }
             })?;
@@ -1348,6 +1354,7 @@ struct Summary {
 }
 
 struct Conversation {
+    id: Option<String>,
     buffer: ModelHandle<Buffer>,
     message_anchors: Vec<MessageAnchor>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
@@ -1398,6 +1405,7 @@ impl Conversation {
         let model = settings.default_open_ai_model.clone();
 
         let mut this = Self {
+            id: Some(Uuid::new_v4().to_string()),
             message_anchors: Default::default(),
             messages_metadata: Default::default(),
             next_message_id: Default::default(),
@@ -1435,6 +1443,7 @@ impl Conversation {
 
     fn serialize(&self, cx: &AppContext) -> SavedConversation {
         SavedConversation {
+            id: self.id.clone(),
             zed: "conversation".into(),
             version: SavedConversation::VERSION.into(),
             text: self.buffer.read(cx).text(),
@@ -1462,6 +1471,10 @@ impl Conversation {
         language_registry: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
+        let id = match saved_conversation.id {
+            Some(id) => Some(id),
+            None => Some(Uuid::new_v4().to_string()),
+        };
         let model = saved_conversation.model;
         let markdown = language_registry.language_for_name("Markdown");
         let mut message_anchors = Vec::new();
@@ -1491,6 +1504,7 @@ impl Conversation {
         });
 
         let mut this = Self {
+            id,
             message_anchors,
             messages_metadata: saved_conversation.message_metadata,
             next_message_id,
@@ -2108,6 +2122,7 @@ struct ScrollPosition {
 struct ConversationEditor {
     conversation: ModelHandle<Conversation>,
     fs: Arc<dyn Fs>,
+    workspace: WeakViewHandle<Workspace>,
     editor: ViewHandle<Editor>,
     blocks: HashSet<BlockId>,
     scroll_position: Option<ScrollPosition>,
@@ -2119,15 +2134,17 @@ impl ConversationEditor {
         api_key: Rc<RefCell<Option<String>>>,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
+        workspace: WeakViewHandle<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let conversation = cx.add_model(|cx| Conversation::new(api_key, language_registry, cx));
-        Self::for_conversation(conversation, fs, cx)
+        Self::for_conversation(conversation, fs, workspace, cx)
     }
 
     fn for_conversation(
         conversation: ModelHandle<Conversation>,
         fs: Arc<dyn Fs>,
+        workspace: WeakViewHandle<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let editor = cx.add_view(|cx| {
@@ -2150,6 +2167,7 @@ impl ConversationEditor {
             blocks: Default::default(),
             scroll_position: None,
             fs,
+            workspace,
             _subscriptions,
         };
         this.update_message_headers(cx);
@@ -2157,6 +2175,13 @@ impl ConversationEditor {
     }
 
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
+        report_assistant_event(
+            self.workspace.clone(),
+            self.conversation.read(cx).id.clone(),
+            AssistantKind::Panel,
+            cx,
+        );
+
         let cursors = self.cursors(cx);
 
         let user_messages = self.conversation.update(cx, |conversation, cx| {
@@ -2376,7 +2401,7 @@ impl ConversationEditor {
                                 .with_children(
                                     if let MessageStatus::Error(error) = &message.status {
                                         Some(
-                                            Svg::new("icons/circle_x_mark_12.svg")
+                                            Svg::new("icons/error.svg")
                                                 .with_color(style.error_icon.color)
                                                 .constrained()
                                                 .with_width(style.error_icon.width)
@@ -2665,6 +2690,7 @@ enum InlineAssistantEvent {
 struct InlineAssistant {
     id: usize,
     prompt_editor: ViewHandle<Editor>,
+    workspace: WeakViewHandle<Workspace>,
     confirmed: bool,
     has_focus: bool,
     include_conversation: bool,
@@ -2704,7 +2730,7 @@ impl View for InlineAssistant {
                     )
                     .with_children(if let Some(error) = self.codegen.read(cx).error() {
                         Some(
-                            Svg::new("icons/circle_x_mark_12.svg")
+                            Svg::new("icons/error.svg")
                                 .with_color(theme.assistant.error_icon.color)
                                 .constrained()
                                 .with_width(theme.assistant.error_icon.width)
@@ -2780,6 +2806,7 @@ impl InlineAssistant {
         include_conversation: bool,
         prompt_history: VecDeque<String>,
         codegen: ModelHandle<Codegen>,
+        workspace: WeakViewHandle<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let prompt_editor = cx.add_view(|cx| {
@@ -2801,6 +2828,7 @@ impl InlineAssistant {
         Self {
             id,
             prompt_editor,
+            workspace,
             confirmed: false,
             has_focus: false,
             include_conversation,
@@ -2859,6 +2887,8 @@ impl InlineAssistant {
         if self.confirmed {
             cx.emit(InlineAssistantEvent::Dismissed);
         } else {
+            report_assistant_event(self.workspace.clone(), None, AssistantKind::Inline, cx);
+
             let prompt = self.prompt_editor.read(cx).text(cx);
             self.prompt_editor.update(cx, |editor, cx| {
                 editor.set_read_only(true);
@@ -3346,4 +3376,31 @@ mod tests {
             .map(|message| (message.id, message.role, message.offset_range))
             .collect()
     }
+}
+
+fn report_assistant_event(
+    workspace: WeakViewHandle<Workspace>,
+    conversation_id: Option<String>,
+    assistant_kind: AssistantKind,
+    cx: &AppContext,
+) {
+    let Some(workspace) = workspace.upgrade(cx) else {
+        return;
+    };
+
+    let client = workspace.read(cx).project().read(cx).client();
+    let telemetry = client.telemetry();
+
+    let model = settings::get::<AssistantSettings>(cx)
+        .default_open_ai_model
+        .clone();
+
+    let event = ClickhouseEvent::Assistant {
+        conversation_id,
+        kind: assistant_kind,
+        model: model.full_name(),
+    };
+    let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
+
+    telemetry.report_clickhouse_event(event, telemetry_settings)
 }

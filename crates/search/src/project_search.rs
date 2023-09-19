@@ -511,7 +511,7 @@ impl Item for ProjectSearchView {
     ) -> AnyElement<T> {
         Flex::row()
             .with_child(
-                Svg::new("icons/magnifying_glass_12.svg")
+                Svg::new("icons/magnifying_glass.svg")
                     .with_color(tab_theme.label.text.color)
                     .constrained()
                     .with_width(tab_theme.type_icon_width)
@@ -1050,13 +1050,23 @@ impl ProjectSearchView {
                     }
                 }
             }
-            _ => Some(SearchQuery::text(
+            _ => match SearchQuery::text(
                 text,
                 self.search_options.contains(SearchOptions::WHOLE_WORD),
                 self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                 included_files,
                 excluded_files,
-            )),
+            ) {
+                Ok(query) => {
+                    self.panels_with_errors.remove(&InputPanel::Query);
+                    Some(query)
+                }
+                Err(_e) => {
+                    self.panels_with_errors.insert(InputPanel::Query);
+                    cx.notify();
+                    None
+                }
+            },
         }
     }
 
@@ -1440,7 +1450,7 @@ impl View for ProjectSearchBar {
             let search = _search.read(cx);
             let filter_button = render_option_button_icon(
                 search.filters_enabled,
-                "icons/filter_12.svg",
+                "icons/filter.svg",
                 0,
                 "Toggle filters",
                 Box::new(ToggleFilters),
@@ -1471,14 +1481,14 @@ impl View for ProjectSearchBar {
             };
             let case_sensitive = is_semantic_disabled.then(|| {
                 render_option_button_icon(
-                    "icons/case_insensitive_12.svg",
+                    "icons/case_insensitive.svg",
                     SearchOptions::CASE_SENSITIVE,
                     cx,
                 )
             });
 
             let whole_word = is_semantic_disabled.then(|| {
-                render_option_button_icon("icons/word_search_12.svg", SearchOptions::WHOLE_WORD, cx)
+                render_option_button_icon("icons/word_search.svg", SearchOptions::WHOLE_WORD, cx)
             });
 
             let search_button_for_mode = |mode, side, cx: &mut ViewContext<ProjectSearchBar>| {

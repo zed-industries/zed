@@ -170,8 +170,7 @@ impl FakeServer {
                         staff: false,
                         flags: Default::default(),
                     },
-                )
-                .await;
+                );
                 continue;
             }
 
@@ -182,11 +181,7 @@ impl FakeServer {
         }
     }
 
-    pub async fn respond<T: proto::RequestMessage>(
-        &self,
-        receipt: Receipt<T>,
-        response: T::Response,
-    ) {
+    pub fn respond<T: proto::RequestMessage>(&self, receipt: Receipt<T>, response: T::Response) {
         self.peer.respond(receipt, response).unwrap()
     }
 

@@ -209,9 +209,9 @@ impl PickerDelegate for ContactFinderDelegate {
 
         let icon_path = match request_status {
             ContactRequestStatus::None | ContactRequestStatus::RequestReceived => {
-                Some("icons/check_8.svg")
+                Some("icons/check.svg")
             }
-            ContactRequestStatus::RequestSent => Some("icons/x_mark_8.svg"),
+            ContactRequestStatus::RequestSent => Some("icons/x.svg"),
             ContactRequestStatus::RequestAccepted => None,
         };
         let button_style = if self.user_store.read(cx).is_contact_request_pending(user) {

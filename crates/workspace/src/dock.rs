@@ -4,7 +4,8 @@ use gpui::{
     elements::*, platform::CursorStyle, platform::MouseButton, Action, AnyViewHandle, AppContext,
     Axis, Entity, Subscription, View, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
-use serde::Deserialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 use theme::ThemeSettings;
 
@@ -132,7 +133,8 @@ pub struct Dock {
     active_panel_index: usize,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "lowercase")]
 pub enum DockPosition {
     Left,
     Bottom,

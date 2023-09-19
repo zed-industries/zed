@@ -128,7 +128,7 @@ export default function welcome(): any {
             },
             icon: svg(
                 foreground(theme.highest, "on"),
-                "icons/check_12.svg",
+                "icons/check.svg",
                 12,
                 12
             ),

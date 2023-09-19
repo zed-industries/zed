@@ -131,6 +131,14 @@
     // Default width of the channels panel.
     "default_width": 240
   },
+  "chat_panel": {
+    // Whether to show the collaboration panel button in the status bar.
+    "button": true,
+    // Where to dock channels panel. Can be 'left' or 'right'.
+    "dock": "right",
+    // Default width of the channels panel.
+    "default_width": 240
+  },
   "assistant": {
     // Whether to show the assistant panel button in the status bar.
     "button": true,
