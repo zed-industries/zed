@@ -32,7 +32,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 use util::{
-    channel::{ReleaseChannel, RELEASE_CHANNEL, RELEASE_CHANNEL_NAME},
+    channel::{RELEASE_CHANNEL_NAME},
     http::HttpClient,
     paths::EMBEDDINGS_DIR,
     ResultExt,
@@ -54,11 +54,6 @@ pub fn init(
     let db_file_path = EMBEDDINGS_DIR
         .join(Path::new(RELEASE_CHANNEL_NAME.as_str()))
         .join("embeddings_db");
-
-    // This needs to be removed at some point before stable.
-    if *RELEASE_CHANNEL == ReleaseChannel::Stable {
-        return;
-    }
 
     cx.subscribe_global::<WorkspaceCreated, _>({
         move |event, cx| {
@@ -282,7 +277,6 @@ impl SemanticIndex {
 
     pub fn enabled(cx: &AppContext) -> bool {
         settings::get::<SemanticIndexSettings>(cx).enabled
-            && *RELEASE_CHANNEL != ReleaseChannel::Stable
     }
 
     pub fn status(&self, project: &ModelHandle<Project>) -> SemanticIndexStatus {
