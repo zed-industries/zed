@@ -10,7 +10,7 @@ use gpui2::{Element, ParentElement, ViewContext};
 pub struct ListItem {
     label: Label,
     left_icon: Option<IconAsset>,
-    indent_level: f32,
+    indent_level: u32,
     state: InteractionState,
     toggle: Option<ToggleState>,
 }
@@ -18,7 +18,7 @@ pub struct ListItem {
 pub fn list_item(label: Label) -> ListItem {
     ListItem {
         label,
-        indent_level: 0.0,
+        indent_level: 0,
         left_icon: None,
         state: InteractionState::default(),
         toggle: None,
@@ -26,7 +26,7 @@ pub fn list_item(label: Label) -> ListItem {
 }
 
 impl ListItem {
-    pub fn indent_level(mut self, indent_level: f32) -> Self {
+    pub fn indent_level(mut self, indent_level: u32) -> Self {
         self.indent_level = indent_level;
         self
     }
@@ -59,7 +59,7 @@ impl ListItem {
                 div()
                     .h_7()
                     .px_2()
-                    .ml(rems(0.75 * self.indent_level.clone()))
+                    .ml(rems(0.75 * self.indent_level as f32))
                     .flex()
                     .gap_2()
                     .items_center()

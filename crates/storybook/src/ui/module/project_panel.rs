@@ -46,40 +46,40 @@ impl<V: 'static> ProjectPanel<V> {
                                 vec![
                                     list_item(label("sqlez").color(LabelColor::Modified))
                                         .left_icon(IconAsset::FolderOpen.into())
-                                        .indent_level(0.0)
+                                        .indent_level(0)
                                         .set_toggle(ToggleState::NotToggled),
                                     list_item(label("storybook").color(LabelColor::Modified))
                                         .left_icon(IconAsset::FolderOpen.into())
-                                        .indent_level(0.0)
+                                        .indent_level(0)
                                         .set_toggle(ToggleState::Toggled),
                                     list_item(label("docs").color(LabelColor::Default))
                                         .left_icon(IconAsset::Folder.into())
-                                        .indent_level(1.0)
+                                        .indent_level(1)
                                         .set_toggle(ToggleState::Toggled),
                                     list_item(label("src").color(LabelColor::Modified))
                                         .left_icon(IconAsset::FolderOpen.into())
-                                        .indent_level(2.0)
+                                        .indent_level(2)
                                         .set_toggle(ToggleState::Toggled),
                                     list_item(label("ui").color(LabelColor::Modified))
                                         .left_icon(IconAsset::FolderOpen.into())
-                                        .indent_level(3.0)
+                                        .indent_level(3)
                                         .set_toggle(ToggleState::Toggled),
                                     list_item(label("component").color(LabelColor::Created))
                                         .left_icon(IconAsset::FolderOpen.into())
-                                        .indent_level(4.0)
+                                        .indent_level(4)
                                         .set_toggle(ToggleState::Toggled),
                                     list_item(label("facepile.rs").color(LabelColor::Default))
                                         .left_icon(IconAsset::File.into())
-                                        .indent_level(5.0),
+                                        .indent_level(5),
                                     list_item(label("follow_group.rs").color(LabelColor::Default))
                                         .left_icon(IconAsset::File.into())
-                                        .indent_level(5.0),
+                                        .indent_level(5),
                                     list_item(label("list_item.rs").color(LabelColor::Created))
                                         .left_icon(IconAsset::File.into())
-                                        .indent_level(5.0),
+                                        .indent_level(5),
                                     list_item(label("tab.rs").color(LabelColor::Default))
                                         .left_icon(IconAsset::File.into())
-                                        .indent_level(5.0),
+                                        .indent_level(5),
                                 ]
                             })
                             .take(10)
