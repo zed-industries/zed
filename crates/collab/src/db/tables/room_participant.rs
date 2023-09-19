@@ -1,4 +1,5 @@
 use crate::db::{ProjectId, RoomId, RoomParticipantId, ServerId, UserId};
+use rpc::ConnectionId;
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
@@ -17,6 +18,15 @@ pub struct Model {
     pub calling_user_id: UserId,
     pub calling_connection_id: i32,
     pub calling_connection_server_id: Option<ServerId>,
+}
+
+impl Model {
+    pub fn answering_connection(&self) -> Option<ConnectionId> {
+        Some(ConnectionId {
+            owner_id: self.answering_connection_server_id?.0 as u32,
+            id: self.answering_connection_id? as u32,
+        })
+    }
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

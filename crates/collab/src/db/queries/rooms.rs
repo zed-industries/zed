@@ -960,6 +960,65 @@ impl Database {
         Ok(room)
     }
 
+    pub async fn room_id_for_connection(&self, connection_id: ConnectionId) -> Result<RoomId> {
+        #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+        enum QueryRoomId {
+            RoomId,
+        }
+
+        self.transaction(|tx| async move {
+            Ok(room_participant::Entity::find()
+                .select_only()
+                .column(room_participant::Column::RoomId)
+                .filter(
+                    Condition::all()
+                        .add(room_participant::Column::AnsweringConnectionId.eq(connection_id.id))
+                        .add(
+                            room_participant::Column::AnsweringConnectionServerId
+                                .eq(ServerId(connection_id.owner_id as i32)),
+                        ),
+                )
+                .into_values::<_, QueryRoomId>()
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no room for connection {:?}", connection_id))?)
+        })
+        .await
+    }
+
+    pub async fn room_connection_ids(
+        &self,
+        room_id: RoomId,
+        connection_id: ConnectionId,
+    ) -> Result<RoomGuard<HashSet<ConnectionId>>> {
+        self.room_transaction(room_id, |tx| async move {
+            let mut participants = room_participant::Entity::find()
+                .filter(room_participant::Column::RoomId.eq(room_id))
+                .stream(&*tx)
+                .await?;
+
+            let mut is_participant = false;
+            let mut connection_ids = HashSet::default();
+            while let Some(participant) = participants.next().await {
+                let participant = participant?;
+                if let Some(answering_connection) = participant.answering_connection() {
+                    if answering_connection == connection_id {
+                        is_participant = true;
+                    } else {
+                        connection_ids.insert(answering_connection);
+                    }
+                }
+            }
+
+            if !is_participant {
+                Err(anyhow!("not a room participant"))?;
+            }
+
+            Ok(connection_ids)
+        })
+        .await
+    }
+
     async fn get_channel_room(
         &self,
         room_id: RoomId,
@@ -1064,7 +1123,7 @@ impl Database {
             followers.push(proto::Follower {
                 leader_id: Some(db_follower.leader_connection().into()),
                 follower_id: Some(db_follower.follower_connection().into()),
-                project_id: db_follower.project_id.to_proto(),
+                project_id: db_follower.project_id.map(|id| id.to_proto()),
             });
         }
 

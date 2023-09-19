@@ -8,7 +8,7 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: FollowerId,
     pub room_id: RoomId,
-    pub project_id: ProjectId,
+    pub project_id: Option<ProjectId>,
     pub leader_connection_server_id: ServerId,
     pub leader_connection_id: i32,
     pub follower_connection_server_id: ServerId,
