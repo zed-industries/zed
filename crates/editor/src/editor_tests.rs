@@ -3669,10 +3669,12 @@ async fn test_select_next(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
     cx.set_state("abc\nˇabc abc\ndefabc\nabc");
 
-    cx.update_editor(|e, cx| e.select_next(&SelectNext::default(), cx));
+    cx.update_editor(|e, cx| e.select_next(&SelectNext::default(), cx))
+        .unwrap();
     cx.assert_editor_state("abc\n«abcˇ» abc\ndefabc\nabc");
 
-    cx.update_editor(|e, cx| e.select_next(&SelectNext::default(), cx));
+    cx.update_editor(|e, cx| e.select_next(&SelectNext::default(), cx))
+        .unwrap();
     cx.assert_editor_state("abc\n«abcˇ» «abcˇ»\ndefabc\nabc");
 
     cx.update_editor(|view, cx| view.undo_selection(&UndoSelection, cx));
@@ -3681,10 +3683,12 @@ async fn test_select_next(cx: &mut gpui::TestAppContext) {
     cx.update_editor(|view, cx| view.redo_selection(&RedoSelection, cx));
     cx.assert_editor_state("abc\n«abcˇ» «abcˇ»\ndefabc\nabc");
 
-    cx.update_editor(|e, cx| e.select_next(&SelectNext::default(), cx));
+    cx.update_editor(|e, cx| e.select_next(&SelectNext::default(), cx))
+        .unwrap();
     cx.assert_editor_state("abc\n«abcˇ» «abcˇ»\ndefabc\n«abcˇ»");
 
-    cx.update_editor(|e, cx| e.select_next(&SelectNext::default(), cx));
+    cx.update_editor(|e, cx| e.select_next(&SelectNext::default(), cx))
+        .unwrap();
     cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndefabc\n«abcˇ»");
 }
 
@@ -3696,10 +3700,12 @@ async fn test_select_previous(cx: &mut gpui::TestAppContext) {
         let mut cx = EditorTestContext::new(cx).await;
         cx.set_state("abc\nˇabc abc\ndefabc\nabc");
 
-        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
+            .unwrap();
         cx.assert_editor_state("abc\n«abcˇ» abc\ndefabc\nabc");
 
-        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
+            .unwrap();
         cx.assert_editor_state("«abcˇ»\n«abcˇ» abc\ndefabc\nabc");
 
         cx.update_editor(|view, cx| view.undo_selection(&UndoSelection, cx));
@@ -3708,10 +3714,12 @@ async fn test_select_previous(cx: &mut gpui::TestAppContext) {
         cx.update_editor(|view, cx| view.redo_selection(&RedoSelection, cx));
         cx.assert_editor_state("«abcˇ»\n«abcˇ» abc\ndefabc\nabc");
 
-        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
+            .unwrap();
         cx.assert_editor_state("«abcˇ»\n«abcˇ» abc\ndefabc\n«abcˇ»");
 
-        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
+            .unwrap();
         cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndefabc\n«abcˇ»");
     }
     {
@@ -3719,10 +3727,12 @@ async fn test_select_previous(cx: &mut gpui::TestAppContext) {
         let mut cx = EditorTestContext::new(cx).await;
         cx.set_state("abc\n«ˇabc» abc\ndefabc\nabc");
 
-        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
+            .unwrap();
         cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\nabc");
 
-        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
+            .unwrap();
         cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\n«abcˇ»");
 
         cx.update_editor(|view, cx| view.undo_selection(&UndoSelection, cx));
@@ -3731,10 +3741,12 @@ async fn test_select_previous(cx: &mut gpui::TestAppContext) {
         cx.update_editor(|view, cx| view.redo_selection(&RedoSelection, cx));
         cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\n«abcˇ»");
 
-        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
+            .unwrap();
         cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndef«abcˇ»\n«abcˇ»");
 
-        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx));
+        cx.update_editor(|e, cx| e.select_previous(&SelectPrevious::default(), cx))
+            .unwrap();
         cx.assert_editor_state("«abcˇ»\n«ˇabc» «abcˇ»\ndef«abcˇ»\n«abcˇ»");
     }
 }

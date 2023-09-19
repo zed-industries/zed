@@ -5936,7 +5936,7 @@ impl Editor {
         }
     }
 
-    pub fn select_next(&mut self, action: &SelectNext, cx: &mut ViewContext<Self>) {
+    pub fn select_next(&mut self, action: &SelectNext, cx: &mut ViewContext<Self>) -> Result<()> {
         self.push_to_selection_history();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
@@ -6005,7 +6005,7 @@ impl Editor {
                     .text_for_range(selection.start..selection.end)
                     .collect::<String>();
                 let select_state = SelectNextState {
-                    query: AhoCorasick::new_auto_configured(&[query]),
+                    query: AhoCorasick::new(&[query])?,
                     wordwise: true,
                     done: false,
                 };
@@ -6019,16 +6019,21 @@ impl Editor {
                     .text_for_range(selection.start..selection.end)
                     .collect::<String>();
                 self.select_next_state = Some(SelectNextState {
-                    query: AhoCorasick::new_auto_configured(&[query]),
+                    query: AhoCorasick::new(&[query])?,
                     wordwise: false,
                     done: false,
                 });
-                self.select_next(action, cx);
+                self.select_next(action, cx)?;
             }
         }
+        Ok(())
     }
 
-    pub fn select_previous(&mut self, action: &SelectPrevious, cx: &mut ViewContext<Self>) {
+    pub fn select_previous(
+        &mut self,
+        action: &SelectPrevious,
+        cx: &mut ViewContext<Self>,
+    ) -> Result<()> {
         self.push_to_selection_history();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
@@ -6099,7 +6104,7 @@ impl Editor {
                     .collect::<String>();
                 let query = query.chars().rev().collect::<String>();
                 let select_state = SelectNextState {
-                    query: AhoCorasick::new_auto_configured(&[query]),
+                    query: AhoCorasick::new(&[query])?,
                     wordwise: true,
                     done: false,
                 };
@@ -6114,13 +6119,14 @@ impl Editor {
                     .collect::<String>();
                 let query = query.chars().rev().collect::<String>();
                 self.select_prev_state = Some(SelectNextState {
-                    query: AhoCorasick::new_auto_configured(&[query]),
+                    query: AhoCorasick::new(&[query])?,
                     wordwise: false,
                     done: false,
                 });
-                self.select_previous(action, cx);
+                self.select_previous(action, cx)?;
             }
         }
+        Ok(())
     }
 
     pub fn toggle_comments(&mut self, action: &ToggleComments, cx: &mut ViewContext<Self>) {

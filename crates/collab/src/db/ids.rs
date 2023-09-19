@@ -112,8 +112,10 @@ fn value_to_integer(v: Value) -> Result<i32, ValueTypeErr> {
 
 id_type!(BufferId);
 id_type!(AccessTokenId);
+id_type!(ChannelChatParticipantId);
 id_type!(ChannelId);
 id_type!(ChannelMemberId);
+id_type!(MessageId);
 id_type!(ContactId);
 id_type!(FollowerId);
 id_type!(RoomId);

@@ -52,6 +52,7 @@ pub struct Theme {
     pub copilot: Copilot,
     pub collab_panel: CollabPanel,
     pub project_panel: ProjectPanel,
+    pub chat_panel: ChatPanel,
     pub command_palette: CommandPalette,
     pub picker: Picker,
     pub editor: Editor,
@@ -625,6 +626,19 @@ pub struct IconButton {
 }
 
 #[derive(Deserialize, Default, JsonSchema)]
+pub struct ChatPanel {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub list: ContainerStyle,
+    pub channel_select: ChannelSelect,
+    pub input_editor: FieldEditor,
+    pub message: ChatMessage,
+    pub pending_message: ChatMessage,
+    pub sign_in_prompt: Interactive<TextStyle>,
+    pub icon_button: Interactive<IconButton>,
+}
+
+#[derive(Deserialize, Default, JsonSchema)]
 pub struct ChatMessage {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -641,7 +655,6 @@ pub struct ChannelSelect {
     pub item: ChannelName,
     pub active_item: ChannelName,
     pub hovered_item: ChannelName,
-    pub hovered_active_item: ChannelName,
     pub menu: ContainerStyle,
 }
 

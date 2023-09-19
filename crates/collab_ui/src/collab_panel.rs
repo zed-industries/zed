@@ -1,15 +1,21 @@
 mod channel_modal;
 mod contact_finder;
-mod panel_settings;
 
+use crate::{
+    channel_view::{self, ChannelView},
+    chat_panel::ChatPanel,
+    face_pile::FacePile,
+    CollaborationPanelSettings,
+};
 use anyhow::Result;
 use call::ActiveCall;
 use channel::{Channel, ChannelEvent, ChannelId, ChannelStore};
+use channel_modal::ChannelModal;
 use client::{proto::PeerId, Client, Contact, User, UserStore};
+use contact_finder::ContactFinder;
 use context_menu::{ContextMenu, ContextMenuItem};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Cancel, Editor};
-
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt, FeatureFlagViewExt};
 use futures::StreamExt;
 use fuzzy::{match_strings, StringMatchCandidate};
@@ -31,7 +37,6 @@ use gpui::{
     Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
-use panel_settings::{CollaborationPanelDockPosition, CollaborationPanelSettings};
 use project::{Fs, Project};
 use serde_derive::{Deserialize, Serialize};
 use settings::SettingsStore;
@@ -43,14 +48,6 @@ use workspace::{
     item::ItemHandle,
     Workspace,
 };
-
-use crate::{
-    channel_view::{self, ChannelView},
-    face_pile::FacePile,
-};
-use channel_modal::ChannelModal;
-
-use self::contact_finder::ContactFinder;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct RemoveChannel {
@@ -83,8 +80,13 @@ struct RenameChannel {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-struct OpenChannelBuffer {
-    channel_id: u64,
+pub struct OpenChannelNotes {
+    pub channel_id: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct JoinChannelCall {
+    pub channel_id: u64,
 }
 
 actions!(
@@ -107,14 +109,14 @@ impl_actions!(
         ManageMembers,
         RenameChannel,
         ToggleCollapse,
-        OpenChannelBuffer
+        OpenChannelNotes,
+        JoinChannelCall,
     ]
 );
 
 const COLLABORATION_PANEL_KEY: &'static str = "CollaborationPanel";
 
-pub fn init(_client: Arc<Client>, cx: &mut AppContext) {
-    settings::register::<panel_settings::CollaborationPanelSettings>(cx);
+pub fn init(cx: &mut AppContext) {
     contact_finder::init(cx);
     channel_modal::init(cx);
     channel_view::init(cx);
@@ -134,7 +136,7 @@ pub fn init(_client: Arc<Client>, cx: &mut AppContext) {
     cx.add_action(CollabPanel::toggle_channel_collapsed);
     cx.add_action(CollabPanel::collapse_selected_channel);
     cx.add_action(CollabPanel::expand_selected_channel);
-    cx.add_action(CollabPanel::open_channel_buffer);
+    cx.add_action(CollabPanel::open_channel_notes);
 }
 
 #[derive(Debug)]
@@ -208,7 +210,7 @@ enum Section {
 
 #[derive(Clone, Debug)]
 enum ListEntry {
-    Header(Section, usize),
+    Header(Section),
     CallParticipant {
         user: Arc<User>,
         is_pending: bool,
@@ -274,7 +276,7 @@ impl CollabPanel {
                         this.selection = this
                             .entries
                             .iter()
-                            .position(|entry| !matches!(entry, ListEntry::Header(_, _)));
+                            .position(|entry| !matches!(entry, ListEntry::Header(_)));
                     }
                 }
             })
@@ -310,16 +312,9 @@ impl CollabPanel {
                     let current_project_id = this.project.read(cx).remote_id();
 
                     match &this.entries[ix] {
-                        ListEntry::Header(section, depth) => {
+                        ListEntry::Header(section) => {
                             let is_collapsed = this.collapsed_sections.contains(section);
-                            this.render_header(
-                                *section,
-                                &theme,
-                                *depth,
-                                is_selected,
-                                is_collapsed,
-                                cx,
-                            )
+                            this.render_header(*section, &theme, is_selected, is_collapsed, cx)
                         }
                         ListEntry::CallParticipant { user, is_pending } => {
                             Self::render_call_participant(
@@ -452,7 +447,7 @@ impl CollabPanel {
             let mut old_dock_position = this.position(cx);
             this.subscriptions
                 .push(
-                    cx.observe_global::<SettingsStore, _>(move |this: &mut CollabPanel, cx| {
+                    cx.observe_global::<SettingsStore, _>(move |this: &mut Self, cx| {
                         let new_dock_position = this.position(cx);
                         if new_dock_position != old_dock_position {
                             old_dock_position = new_dock_position;
@@ -563,7 +558,7 @@ impl CollabPanel {
         let old_entries = mem::take(&mut self.entries);
 
         if let Some(room) = ActiveCall::global(cx).read(cx).room() {
-            self.entries.push(ListEntry::Header(Section::ActiveCall, 0));
+            self.entries.push(ListEntry::Header(Section::ActiveCall));
 
             if !self.collapsed_sections.contains(&Section::ActiveCall) {
                 let room = room.read(cx);
@@ -678,7 +673,7 @@ impl CollabPanel {
         let mut request_entries = Vec::new();
 
         if cx.has_flag::<ChannelsAlpha>() {
-            self.entries.push(ListEntry::Header(Section::Channels, 0));
+            self.entries.push(ListEntry::Header(Section::Channels));
 
             if channel_store.channel_count() > 0 || self.channel_editing_state.is_some() {
                 self.match_candidates.clear();
@@ -781,7 +776,7 @@ impl CollabPanel {
 
                 if !request_entries.is_empty() {
                     self.entries
-                        .push(ListEntry::Header(Section::ChannelInvites, 1));
+                        .push(ListEntry::Header(Section::ChannelInvites));
                     if !self.collapsed_sections.contains(&Section::ChannelInvites) {
                         self.entries.append(&mut request_entries);
                     }
@@ -789,7 +784,7 @@ impl CollabPanel {
             }
         }
 
-        self.entries.push(ListEntry::Header(Section::Contacts, 0));
+        self.entries.push(ListEntry::Header(Section::Contacts));
 
         request_entries.clear();
         let incoming = user_store.incoming_contact_requests();
@@ -852,7 +847,7 @@ impl CollabPanel {
 
         if !request_entries.is_empty() {
             self.entries
-                .push(ListEntry::Header(Section::ContactRequests, 1));
+                .push(ListEntry::Header(Section::ContactRequests));
             if !self.collapsed_sections.contains(&Section::ContactRequests) {
                 self.entries.append(&mut request_entries);
             }
@@ -891,7 +886,7 @@ impl CollabPanel {
                 (offline_contacts, Section::Offline),
             ] {
                 if !matches.is_empty() {
-                    self.entries.push(ListEntry::Header(section, 1));
+                    self.entries.push(ListEntry::Header(section));
                     if !self.collapsed_sections.contains(&section) {
                         let active_call = &ActiveCall::global(cx).read(cx);
                         for mat in matches {
@@ -1132,7 +1127,7 @@ impl CollabPanel {
                         cx.font_cache(),
                     ))
                     .with_child(
-                        Svg::new("icons/disable_screen_sharing_12.svg")
+                        Svg::new("icons/desktop.svg")
                             .with_color(theme.channel_hash.color)
                             .constrained()
                             .with_width(theme.channel_hash.width)
@@ -1179,7 +1174,6 @@ impl CollabPanel {
         &self,
         section: Section,
         theme: &theme::Theme,
-        depth: usize,
         is_selected: bool,
         is_collapsed: bool,
         cx: &mut ViewContext<Self>,
@@ -1287,7 +1281,13 @@ impl CollabPanel {
             _ => None,
         };
 
-        let can_collapse = depth > 0;
+        let can_collapse = match section {
+            Section::ActiveCall | Section::Channels | Section::Contacts => false,
+            Section::ChannelInvites
+            | Section::ContactRequests
+            | Section::Online
+            | Section::Offline => true,
+        };
         let icon_size = (&theme.collab_panel).section_icon_size;
         let mut result = MouseEventHandler::new::<Header, _>(section as usize, cx, |state, _| {
             let header_style = if can_collapse {
@@ -1567,7 +1567,11 @@ impl CollabPanel {
 
         const FACEPILE_LIMIT: usize = 3;
 
+        enum ChannelCall {}
+
         MouseEventHandler::new::<Channel, _>(channel.id as usize, cx, |state, cx| {
+            let row_hovered = state.hovered();
+
             Flex::<Self>::row()
                 .with_child(
                     Svg::new("icons/hash.svg")
@@ -1585,37 +1589,52 @@ impl CollabPanel {
                         .left()
                         .flex(1., true),
                 )
-                .with_children({
-                    let participants = self.channel_store.read(cx).channel_participants(channel_id);
-                    if !participants.is_empty() {
-                        let extra_count = participants.len().saturating_sub(FACEPILE_LIMIT);
+                .with_child(
+                    MouseEventHandler::new::<ChannelCall, _>(
+                        channel.id as usize,
+                        cx,
+                        move |_, cx| {
+                            let participants =
+                                self.channel_store.read(cx).channel_participants(channel_id);
+                            if !participants.is_empty() {
+                                let extra_count = participants.len().saturating_sub(FACEPILE_LIMIT);
 
-                        Some(
-                            FacePile::new(theme.face_overlap)
-                                .with_children(
-                                    participants
-                                        .iter()
-                                        .filter_map(|user| {
-                                            Some(
-                                                Image::from_data(user.avatar.clone()?)
-                                                    .with_style(theme.channel_avatar),
-                                            )
-                                        })
-                                        .take(FACEPILE_LIMIT),
-                                )
-                                .with_children((extra_count > 0).then(|| {
-                                    Label::new(
-                                        format!("+{}", extra_count),
-                                        theme.extra_participant_label.text.clone(),
+                                FacePile::new(theme.face_overlap)
+                                    .with_children(
+                                        participants
+                                            .iter()
+                                            .filter_map(|user| {
+                                                Some(
+                                                    Image::from_data(user.avatar.clone()?)
+                                                        .with_style(theme.channel_avatar),
+                                                )
+                                            })
+                                            .take(FACEPILE_LIMIT),
                                     )
-                                    .contained()
-                                    .with_style(theme.extra_participant_label.container)
-                                })),
-                        )
-                    } else {
-                        None
-                    }
-                })
+                                    .with_children((extra_count > 0).then(|| {
+                                        Label::new(
+                                            format!("+{}", extra_count),
+                                            theme.extra_participant_label.text.clone(),
+                                        )
+                                        .contained()
+                                        .with_style(theme.extra_participant_label.container)
+                                    }))
+                                    .into_any()
+                            } else if row_hovered {
+                                Svg::new("icons/speaker-loud.svg")
+                                    .with_color(theme.channel_hash.color)
+                                    .constrained()
+                                    .with_width(theme.channel_hash.width)
+                                    .into_any()
+                            } else {
+                                Empty::new().into_any()
+                            }
+                        },
+                    )
+                    .on_click(MouseButton::Left, move |_, this, cx| {
+                        this.join_channel_call(channel_id, cx);
+                    }),
+                )
                 .align_children_center()
                 .styleable_component()
                 .disclosable(disclosed, Box::new(ToggleCollapse { channel_id }))
@@ -1632,7 +1651,7 @@ impl CollabPanel {
                 )
         })
         .on_click(MouseButton::Left, move |_, this, cx| {
-            this.join_channel(channel_id, cx);
+            this.join_channel_chat(channel_id, cx);
         })
         .on_click(MouseButton::Right, move |e, this, cx| {
             this.deploy_channel_context_menu(Some(e.position), channel_id, cx);
@@ -1690,7 +1709,7 @@ impl CollabPanel {
                 .with_padding_left(theme.channel_row.default_style().padding.left)
         })
         .on_click(MouseButton::Left, move |_, this, cx| {
-            this.open_channel_buffer(&OpenChannelBuffer { channel_id }, cx);
+            this.open_channel_notes(&OpenChannelNotes { channel_id }, cx);
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .into_any()
@@ -1902,7 +1921,7 @@ impl CollabPanel {
 
             let mut items = vec![
                 ContextMenuItem::action(expand_action_name, ToggleCollapse { channel_id }),
-                ContextMenuItem::action("Open Notes", OpenChannelBuffer { channel_id }),
+                ContextMenuItem::action("Open Notes", OpenChannelNotes { channel_id }),
             ];
 
             if self.channel_store.read(cx).is_user_admin(channel_id) {
@@ -1987,7 +2006,7 @@ impl CollabPanel {
         if let Some(selection) = self.selection {
             if let Some(entry) = self.entries.get(selection) {
                 match entry {
-                    ListEntry::Header(section, _) => match section {
+                    ListEntry::Header(section) => match section {
                         Section::ActiveCall => Self::leave_call(cx),
                         Section::Channels => self.new_root_channel(cx),
                         Section::Contacts => self.toggle_contact_finder(cx),
@@ -2027,7 +2046,7 @@ impl CollabPanel {
                         }
                     }
                     ListEntry::Channel { channel, .. } => {
-                        self.join_channel(channel.id, cx);
+                        self.join_channel_chat(channel.id, cx);
                     }
                     ListEntry::ContactPlaceholder => self.toggle_contact_finder(cx),
                     _ => {}
@@ -2237,31 +2256,9 @@ impl CollabPanel {
         }
     }
 
-    fn open_channel_buffer(&mut self, action: &OpenChannelBuffer, cx: &mut ViewContext<Self>) {
+    fn open_channel_notes(&mut self, action: &OpenChannelNotes, cx: &mut ViewContext<Self>) {
         if let Some(workspace) = self.workspace.upgrade(cx) {
-            let pane = workspace.read(cx).active_pane().clone();
-            let channel_id = action.channel_id;
-            let channel_view = ChannelView::open(channel_id, pane.clone(), workspace, cx);
-            cx.spawn(|_, mut cx| async move {
-                let channel_view = channel_view.await?;
-                pane.update(&mut cx, |pane, cx| {
-                    pane.add_item(Box::new(channel_view), true, true, None, cx)
-                });
-                anyhow::Ok(())
-            })
-            .detach();
-            let room_id = ActiveCall::global(cx)
-                .read(cx)
-                .room()
-                .map(|room| room.read(cx).id());
-
-            ActiveCall::report_call_event_for_room(
-                "open channel notes",
-                room_id,
-                Some(channel_id),
-                &self.client,
-                cx,
-            );
+            ChannelView::deploy(action.channel_id, workspace, cx);
         }
     }
 
@@ -2416,10 +2413,24 @@ impl CollabPanel {
             .detach_and_log_err(cx);
     }
 
-    fn join_channel(&self, channel: u64, cx: &mut ViewContext<Self>) {
+    fn join_channel_call(&self, channel: u64, cx: &mut ViewContext<Self>) {
         ActiveCall::global(cx)
             .update(cx, |call, cx| call.join_channel(channel, cx))
             .detach_and_log_err(cx);
+    }
+
+    fn join_channel_chat(&mut self, channel_id: u64, cx: &mut ViewContext<Self>) {
+        if let Some(workspace) = self.workspace.upgrade(cx) {
+            cx.app_context().defer(move |cx| {
+                workspace.update(cx, |workspace, cx| {
+                    if let Some(panel) = workspace.focus_panel::<ChatPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel.select_channel(channel_id, cx).detach_and_log_err(cx);
+                        });
+                    }
+                });
+            });
+        }
     }
 }
 
@@ -2556,10 +2567,7 @@ impl View for CollabPanel {
 
 impl Panel for CollabPanel {
     fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
-        match settings::get::<CollaborationPanelSettings>(cx).dock {
-            CollaborationPanelDockPosition::Left => DockPosition::Left,
-            CollaborationPanelDockPosition::Right => DockPosition::Right,
-        }
+        settings::get::<CollaborationPanelSettings>(cx).dock
     }
 
     fn position_is_valid(&self, position: DockPosition) -> bool {
@@ -2570,15 +2578,7 @@ impl Panel for CollabPanel {
         settings::update_settings_file::<CollaborationPanelSettings>(
             self.fs.clone(),
             cx,
-            move |settings| {
-                let dock = match position {
-                    DockPosition::Left | DockPosition::Bottom => {
-                        CollaborationPanelDockPosition::Left
-                    }
-                    DockPosition::Right => CollaborationPanelDockPosition::Right,
-                };
-                settings.dock = Some(dock);
-            },
+            move |settings| settings.dock = Some(position),
         );
     }
 
@@ -2596,7 +2596,7 @@ impl Panel for CollabPanel {
     fn icon_path(&self, cx: &gpui::WindowContext) -> Option<&'static str> {
         settings::get::<CollaborationPanelSettings>(cx)
             .button
-            .then(|| "icons/conversations.svg")
+            .then(|| "icons/user_group_16.svg")
     }
 
     fn icon_tooltip(&self) -> (String, Option<Box<dyn gpui::Action>>) {
@@ -2622,9 +2622,9 @@ impl Panel for CollabPanel {
 impl PartialEq for ListEntry {
     fn eq(&self, other: &Self) -> bool {
         match self {
-            ListEntry::Header(section_1, depth_1) => {
-                if let ListEntry::Header(section_2, depth_2) = other {
-                    return section_1 == section_2 && depth_1 == depth_2;
+            ListEntry::Header(section_1) => {
+                if let ListEntry::Header(section_2) = other {
+                    return section_1 == section_2;
                 }
             }
             ListEntry::CallParticipant { user: user_1, .. } => {
