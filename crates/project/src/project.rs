@@ -150,6 +150,7 @@ pub struct Project {
     _maintain_workspace_config: Task<()>,
     terminals: Terminals,
     copilot_lsp_subscription: Option<gpui::Subscription>,
+    copilot_log_subscription: Option<lsp::Subscription>,
     current_lsp_settings: HashMap<Arc<str>, LspSettings>,
 }
 
@@ -664,6 +665,7 @@ impl Project {
                     local_handles: Vec::new(),
                 },
                 copilot_lsp_subscription,
+                copilot_log_subscription: None,
                 current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
             }
         })
@@ -760,6 +762,7 @@ impl Project {
                     local_handles: Vec::new(),
                 },
                 copilot_lsp_subscription,
+                copilot_log_subscription: None,
                 current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
             };
             for worktree in worktrees {
@@ -8041,6 +8044,21 @@ fn subscribe_for_copilot_events(
                     if let hash_map::Entry::Vacant(v) =
                         project.supplementary_language_servers.entry(new_server_id)
                     {
+                        let weak_project = cx.weak_handle();
+                        let copilot_log_subscription = copilot_server
+                            .on_notification::<copilot::request::LogMessage, _>(
+                                move |params, mut cx| {
+                                    if let Some(project) = weak_project.upgrade(&mut cx) {
+                                        project.update(&mut cx, |_, cx| {
+                                            cx.emit(Event::LanguageServerLog(
+                                                new_server_id,
+                                                params.message,
+                                            ));
+                                        })
+                                    }
+                                },
+                            );
+                        project.copilot_log_subscription = Some(copilot_log_subscription);
                         v.insert((name.clone(), Arc::clone(copilot_server)));
                         cx.emit(Event::LanguageServerAdded(new_server_id));
                     }

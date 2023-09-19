@@ -14,10 +14,9 @@ use language::{
     point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language,
     LanguageServerName, PointUtf16, ToPointUtf16,
 };
-use log::{debug, error};
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId};
 use node_runtime::NodeRuntime;
-use request::{LogMessage, StatusNotification};
+use request::StatusNotification;
 use settings::SettingsStore;
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
@@ -390,20 +389,6 @@ impl Copilot {
                 };
                 let server =
                     LanguageServer::new(new_server_id, binary, Path::new("/"), None, cx.clone())?;
-
-                server
-                    .on_notification::<LogMessage, _>(|params, _cx| {
-                        match params.level {
-                            // Copilot is pretty aggressive about logging
-                            0 => debug!("copilot: {}", params.message),
-                            1 => debug!("copilot: {}", params.message),
-                            _ => error!("copilot: {}", params.message),
-                        }
-
-                        debug!("copilot metadata: {}", params.metadata_str);
-                        debug!("copilot extra: {:?}", params.extra);
-                    })
-                    .detach();
 
                 server
                     .on_notification::<StatusNotification, _>(
