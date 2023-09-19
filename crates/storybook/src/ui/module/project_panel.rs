@@ -1,7 +1,7 @@
 use crate::{
     prelude::InteractionState,
     theme::theme,
-    ui::{input, label, LabelColor},
+    ui::{input, label, list_item, IconAsset, LabelColor},
 };
 use gpui2::{
     elements::{div, div::ScrollState},
@@ -29,7 +29,7 @@ impl<V: 'static> ProjectPanel<V> {
         let theme = theme(cx);
 
         div()
-            .w_64()
+            .w_56()
             .h_full()
             .flex()
             .flex_col()
@@ -41,17 +41,39 @@ impl<V: 'static> ProjectPanel<V> {
                     .flex_col()
                     .overflow_y_scroll(self.scroll_state.clone())
                     .child(
-                        div().py_2().flex().flex_col().children(
+                        div().flex().flex_col().children(
                             std::iter::repeat_with(|| {
                                 vec![
-                                    label("File"),
-                                    label("Modified File").color(LabelColor::Modified),
-                                    label("Created File").color(LabelColor::Created),
-                                    label("Deleted File").color(LabelColor::Deleted),
-                                    label("Hidden File").color(LabelColor::Hidden),
+                                    list_item(label("storybook").color(LabelColor::Modified))
+                                        .left_icon(IconAsset::FolderOpen.into())
+                                        .indent_level(0.0),
+                                    list_item(label("docs").color(LabelColor::Default))
+                                        .left_icon(IconAsset::Folder.into())
+                                        .indent_level(1.0),
+                                    list_item(label("src").color(LabelColor::Modified))
+                                        .left_icon(IconAsset::FolderOpen.into())
+                                        .indent_level(2.0),
+                                    list_item(label("ui").color(LabelColor::Modified))
+                                        .left_icon(IconAsset::FolderOpen.into())
+                                        .indent_level(3.0),
+                                    list_item(label("component").color(LabelColor::Created))
+                                        .left_icon(IconAsset::FolderOpen.into())
+                                        .indent_level(4.0),
+                                    list_item(label("facepile.rs").color(LabelColor::Default))
+                                        .left_icon(IconAsset::File.into())
+                                        .indent_level(5.0),
+                                    list_item(label("follow_group.rs").color(LabelColor::Default))
+                                        .left_icon(IconAsset::File.into())
+                                        .indent_level(5.0),
+                                    list_item(label("list_item.rs").color(LabelColor::Created))
+                                        .left_icon(IconAsset::File.into())
+                                        .indent_level(5.0),
+                                    list_item(label("tab.rs").color(LabelColor::Default))
+                                        .left_icon(IconAsset::File.into())
+                                        .indent_level(5.0),
                                 ]
                             })
-                            .take(60)
+                            .take(10)
                             .flatten(),
                         ),
                     ),

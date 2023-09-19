@@ -5,8 +5,6 @@ use gpui2::style::StyleHelpers;
 use gpui2::{ArcCow, IntoElement};
 use gpui2::{Element, ViewContext};
 
-pub type UnknownString = ArcCow<'static, str>;
-
 #[derive(Element, Clone)]
 pub struct Avatar {
     src: ArcCow<'static, str>,

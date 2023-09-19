@@ -22,7 +22,7 @@ pub struct Label {
 
 pub fn label(label: &'static str) -> Label {
     Label {
-        label: "Label",
+        label,
         color: LabelColor::Default,
     }
 }
