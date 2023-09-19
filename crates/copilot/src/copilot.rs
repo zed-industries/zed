@@ -41,10 +41,15 @@ actions!(
     [Suggest, NextSuggestion, PreviousSuggestion, Reinstall]
 );
 
-pub fn init(http: Arc<dyn HttpClient>, node_runtime: Arc<dyn NodeRuntime>, cx: &mut AppContext) {
+pub fn init(
+    new_server_id: LanguageServerId,
+    http: Arc<dyn HttpClient>,
+    node_runtime: Arc<dyn NodeRuntime>,
+    cx: &mut AppContext,
+) {
     let copilot = cx.add_model({
         let node_runtime = node_runtime.clone();
-        move |cx| Copilot::start(http, node_runtime, cx)
+        move |cx| Copilot::start(new_server_id, http, node_runtime, cx)
     });
     cx.set_global(copilot.clone());
 
@@ -268,6 +273,7 @@ pub struct Copilot {
     node_runtime: Arc<dyn NodeRuntime>,
     server: CopilotServer,
     buffers: HashSet<WeakModelHandle<Buffer>>,
+    server_id: LanguageServerId,
 }
 
 impl Entity for Copilot {
@@ -298,11 +304,13 @@ impl Copilot {
     }
 
     fn start(
+        new_server_id: LanguageServerId,
         http: Arc<dyn HttpClient>,
         node_runtime: Arc<dyn NodeRuntime>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let mut this = Self {
+            server_id: new_server_id,
             http,
             node_runtime,
             server: CopilotServer::Disabled,
@@ -315,13 +323,16 @@ impl Copilot {
     }
 
     fn enable_or_disable_copilot(&mut self, cx: &mut ModelContext<Copilot>) {
+        let server_id = self.server_id;
         let http = self.http.clone();
         let node_runtime = self.node_runtime.clone();
         if all_language_settings(None, cx).copilot_enabled(None, None) {
             if matches!(self.server, CopilotServer::Disabled) {
                 let start_task = cx
                     .spawn({
-                        move |this, cx| Self::start_language_server(http, node_runtime, this, cx)
+                        move |this, cx| {
+                            Self::start_language_server(server_id, http, node_runtime, this, cx)
+                        }
                     })
                     .shared();
                 self.server = CopilotServer::Starting { task: start_task };
@@ -342,6 +353,7 @@ impl Copilot {
         let http = util::http::FakeHttpClient::create(|_| async { unreachable!() });
         let node_runtime = FakeNodeRuntime::new();
         let this = cx.add_model(|_| Self {
+            server_id: LanguageServerId(0),
             http: http.clone(),
             node_runtime,
             server: CopilotServer::Running(RunningCopilotServer {
@@ -355,6 +367,7 @@ impl Copilot {
     }
 
     fn start_language_server(
+        new_server_id: LanguageServerId,
         http: Arc<dyn HttpClient>,
         node_runtime: Arc<dyn NodeRuntime>,
         this: ModelHandle<Self>,
@@ -369,13 +382,8 @@ impl Copilot {
                     path: node_path,
                     arguments,
                 };
-                let server = LanguageServer::new(
-                    LanguageServerId(0),
-                    binary,
-                    Path::new("/"),
-                    None,
-                    cx.clone(),
-                )?;
+                let server =
+                    LanguageServer::new(new_server_id, binary, Path::new("/"), None, cx.clone())?;
 
                 server
                     .on_notification::<LogMessage, _>(|params, _cx| {
@@ -547,9 +555,10 @@ impl Copilot {
             .spawn({
                 let http = self.http.clone();
                 let node_runtime = self.node_runtime.clone();
+                let server_id = self.server_id;
                 move |this, cx| async move {
                     clear_copilot_dir().await;
-                    Self::start_language_server(http, node_runtime, this, cx).await
+                    Self::start_language_server(server_id, http, node_runtime, this, cx).await
                 }
             })
             .shared();
