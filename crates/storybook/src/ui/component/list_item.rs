@@ -55,11 +55,24 @@ impl ListItem {
             .fill(theme.middle.base.hovered.background)
             .active()
             .fill(theme.middle.base.pressed.background)
+            .relative()
             .child(
                 div()
                     .h_7()
                     .px_2()
-                    .ml(rems(0.75 * self.indent_level as f32))
+                    // .ml(rems(0.75 * self.indent_level as f32))
+                    .children((0..self.indent_level).map(|_| {
+                        div().w(rems(0.75)).h_full().flex().justify_center().child(
+                            div()
+                                .w_px()
+                                .h_full()
+                                .fill(theme.middle.base.default.border)
+                                .hover()
+                                .fill(theme.middle.warning.default.border)
+                                .active()
+                                .fill(theme.middle.negative.default.border),
+                        )
+                    }))
                     .flex()
                     .gap_2()
                     .items_center()
