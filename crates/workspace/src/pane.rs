@@ -1383,7 +1383,7 @@ impl Pane {
                         let theme = theme::current(cx).clone();
 
                         let detail = detail.clone();
-                        move |dragged_item: &DraggedItem, cx: &mut ViewContext<Workspace>| {
+                        move |_, dragged_item: &DraggedItem, cx: &mut ViewContext<Workspace>| {
                             let tab_style = &theme.workspace.tab_bar.dragged_tab;
                             Self::render_dragged_tab(
                                 &dragged_item.handle,

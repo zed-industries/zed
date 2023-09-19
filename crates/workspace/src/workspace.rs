@@ -33,8 +33,8 @@ use gpui::{
     },
     impl_actions,
     platform::{
-        CursorStyle, MouseButton, PathPromptOptions, Platform, PromptLevel, WindowBounds,
-        WindowOptions,
+        CursorStyle, ModifiersChangedEvent, MouseButton, PathPromptOptions, Platform, PromptLevel,
+        WindowBounds, WindowOptions,
     },
     AnyModelHandle, AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity,
     ModelContext, ModelHandle, SizeConstraint, Subscription, Task, View, ViewContext, ViewHandle,
@@ -3806,6 +3806,10 @@ impl View for Workspace {
         if cx.is_self_focused() {
             cx.focus(&self.active_pane);
         }
+    }
+
+    fn modifiers_changed(&mut self, e: &ModifiersChangedEvent, cx: &mut ViewContext<Self>) -> bool {
+        DragAndDrop::<Workspace>::update_modifiers(e.modifiers, cx)
     }
 }
 

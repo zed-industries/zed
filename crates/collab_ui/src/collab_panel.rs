@@ -33,7 +33,7 @@ use gpui::{
         vector::{vec2f, Vector2F},
     },
     impl_actions,
-    platform::{CursorStyle, MouseButton, PromptLevel},
+    platform::{CursorStyle, ModifiersChangedEvent, MouseButton, PromptLevel},
     serde_json, AnyElement, AppContext, AsyncAppContext, Element, Entity, FontCache, ModelHandle,
     Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
@@ -1669,7 +1669,7 @@ impl CollabPanel {
         let mut is_dragged_over = false;
         if cx
             .global::<DragAndDrop<Workspace>>()
-            .currently_dragged::<Channel>(cx.window())
+            .currently_dragged::<DraggedChannel>(cx.window())
             .is_some()
             && self
                 .dragged_channel_target
@@ -1771,7 +1771,9 @@ impl CollabPanel {
                 )
         })
         .on_click(MouseButton::Left, move |_, this, cx| {
-            this.join_channel_chat(channel_id, cx);
+            if this.dragged_channel_target.take().is_none() {
+                this.join_channel_chat(channel_id, cx);
+            }
         })
         .on_click(MouseButton::Right, {
             let path = path.clone();
@@ -1817,16 +1819,32 @@ impl CollabPanel {
                     .currently_dragged::<DraggedChannel>(cx.window())
                     .is_some()
                 {
-                    this.dragged_channel_target = Some((channel.clone(), path.clone()));
+                    if let Some(dragged_channel_target) = &this.dragged_channel_target {
+                        if dragged_channel_target.0 != channel || dragged_channel_target.1 != path {
+                            this.dragged_channel_target = Some((channel.clone(), path.clone()));
+                            cx.notify();
+                        }
+                    } else {
+                        this.dragged_channel_target = Some((channel.clone(), path.clone()));
+                        cx.notify();
+                    }
                 }
             }
         })
         .as_draggable(
             (channel.clone(), path.parent_id()),
-            move |(channel, _), cx: &mut ViewContext<Workspace>| {
+            move |e, (channel, _), cx: &mut ViewContext<Workspace>| {
                 let theme = &theme::current(cx).collab_panel;
 
                 Flex::<Workspace>::row()
+                    .with_children(e.alt.then(|| {
+                        Svg::new("icons/plus.svg")
+                            .with_color(theme.channel_hash.color)
+                            .constrained()
+                            .with_width(theme.channel_hash.width)
+                            .aligned()
+                            .left()
+                    }))
                     .with_child(
                         Svg::new("icons/hash.svg")
                             .with_color(theme.channel_hash.color)
@@ -1840,10 +1858,16 @@ impl CollabPanel {
                             .contained()
                             .with_style(theme.channel_name.container)
                             .aligned()
-                            .left()
-                            .flex(1., true),
+                            .left(),
                     )
                     .align_children_center()
+                    .contained()
+                    .with_background_color(
+                        theme
+                            .container
+                            .background_color
+                            .unwrap_or(gpui::color::Color::transparent_black()),
+                    )
                     .contained()
                     .with_padding_left(
                         theme.channel_row.default_style().padding.left
@@ -2814,6 +2838,19 @@ impl View for CollabPanel {
 
     fn focus_out(&mut self, _: gpui::AnyViewHandle, _: &mut ViewContext<Self>) {
         self.has_focus = false;
+    }
+
+    fn modifiers_changed(&mut self, _: &ModifiersChangedEvent, cx: &mut ViewContext<Self>) -> bool {
+        if cx
+            .global::<DragAndDrop<Workspace>>()
+            .currently_dragged::<DraggedChannel>(cx.window())
+            .is_some()
+        {
+            cx.notify();
+            true
+        } else {
+            false
+        }
     }
 
     fn render(&mut self, cx: &mut gpui::ViewContext<'_, '_, Self>) -> gpui::AnyElement<Self> {
