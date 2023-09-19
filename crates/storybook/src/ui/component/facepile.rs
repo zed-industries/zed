@@ -17,17 +17,15 @@ pub fn facepile(players: Vec<Avatar>) -> Facepile {
 impl Facepile {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
-        let player_list = self
-            .players
-            .iter()
-            .map(|player| div().right_1().child(player.clone()));
-
-        div()
-            .relative()
-            .p_1()
-            .mx(rems(-0.125))
-            .flex()
-            .items_center()
-            .children(player_list)
+        let player_count = self.players.len();
+        let player_list = self.players.iter().enumerate().map(|(i, player)| {
+            let element = div().child(player.clone());
+            if i < player_count - 1 {
+                element.mr(-rems(0.5))
+            } else {
+                element
+            }
+        });
+        div().p_1().flex().items_center().children(player_list)
     }
 }

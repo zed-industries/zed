@@ -28,7 +28,7 @@ fn generate_methods() -> Vec<TokenStream2> {
     let mut methods = Vec::new();
 
     for (prefix, auto_allowed, fields) in box_prefixes() {
-        methods.push(generate_method_with_parameter(
+        methods.push(generate_custom_value_setter(
             prefix,
             if auto_allowed {
                 quote! { Length }
@@ -40,7 +40,7 @@ fn generate_methods() -> Vec<TokenStream2> {
 
         for (suffix, length_tokens, doc_string) in box_suffixes() {
             if suffix != "auto" || auto_allowed {
-                methods.push(generate_method(
+                methods.push(generate_predefined_setter(
                     prefix,
                     suffix,
                     &fields,
@@ -52,14 +52,14 @@ fn generate_methods() -> Vec<TokenStream2> {
     }
 
     for (prefix, fields) in corner_prefixes() {
-        methods.push(generate_method_with_parameter(
+        methods.push(generate_custom_value_setter(
             prefix,
             quote! { AbsoluteLength },
             &fields,
         ));
 
         for (suffix, radius_tokens, doc_string) in corner_suffixes() {
-            methods.push(generate_method(
+            methods.push(generate_predefined_setter(
                 prefix,
                 suffix,
                 &fields,
@@ -71,7 +71,7 @@ fn generate_methods() -> Vec<TokenStream2> {
 
     for (prefix, fields) in border_prefixes() {
         for (suffix, width_tokens, doc_string) in border_suffixes() {
-            methods.push(generate_method(
+            methods.push(generate_predefined_setter(
                 prefix,
                 suffix,
                 &fields,
@@ -83,7 +83,7 @@ fn generate_methods() -> Vec<TokenStream2> {
     methods
 }
 
-fn generate_method(
+fn generate_predefined_setter(
     prefix: &'static str,
     suffix: &'static str,
     fields: &Vec<TokenStream2>,
@@ -100,7 +100,7 @@ fn generate_method(
         .iter()
         .map(|field_tokens| {
             quote! {
-                style.#field_tokens = Some(gpui2::geometry::#length_tokens);
+                style.#field_tokens = Some(gpui2::geometry::#length_tokens.into());
             }
         })
         .collect::<Vec<_>>();
@@ -117,24 +117,28 @@ fn generate_method(
     method
 }
 
-fn generate_method_with_parameter(
+fn generate_custom_value_setter(
     prefix: &'static str,
     length_type: TokenStream2,
     fields: &Vec<TokenStream2>,
 ) -> TokenStream2 {
     let method_name = format_ident!("{}", prefix);
 
-    let field_assignments = fields
-        .iter()
+    let mut iter = fields.into_iter();
+    let last = iter.next_back().unwrap();
+    let field_assignments = iter
         .map(|field_tokens| {
             quote! {
-                style.#field_tokens = Some(length);
+                style.#field_tokens = Some(length.clone().into());
             }
         })
+        .chain(std::iter::once(quote! {
+            style.#last = Some(length.into());
+        }))
         .collect::<Vec<_>>();
 
     let method = quote! {
-        fn #method_name(mut self, length: gpui2::geometry::#length_type) -> Self where Self: std::marker::Sized {
+        fn #method_name(mut self, length: impl std::clone::Clone + Into<gpui2::geometry::#length_type>) -> Self where Self: std::marker::Sized {
             let mut style = self.declared_style();
             #(#field_assignments)*
             self

@@ -328,8 +328,8 @@ pub trait StyleHelpers: Styleable<Style = Style> {
     where
         Self: Sized,
     {
-        self.declared_style().size.width = Some(relative(1.));
-        self.declared_style().size.height = Some(relative(1.));
+        self.declared_style().size.width = Some(relative(1.).into());
+        self.declared_style().size.height = Some(relative(1.).into());
         self
     }
 
@@ -387,7 +387,7 @@ pub trait StyleHelpers: Styleable<Style = Style> {
     {
         self.declared_style().flex_grow = Some(1.);
         self.declared_style().flex_shrink = Some(1.);
-        self.declared_style().flex_basis = Some(relative(0.));
+        self.declared_style().flex_basis = Some(relative(0.).into());
         self
     }
 

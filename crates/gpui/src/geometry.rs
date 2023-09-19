@@ -194,8 +194,8 @@ where
 impl Size<DefiniteLength> {
     pub fn zero() -> Self {
         Self {
-            width: pixels(0.),
-            height: pixels(0.),
+            width: pixels(0.).into(),
+            height: pixels(0.).into(),
         }
     }
 
@@ -258,10 +258,10 @@ impl Edges<Length> {
 
     pub fn zero() -> Self {
         Self {
-            top: pixels(0.),
-            right: pixels(0.),
-            bottom: pixels(0.),
-            left: pixels(0.),
+            top: pixels(0.).into(),
+            right: pixels(0.).into(),
+            bottom: pixels(0.).into(),
+            left: pixels(0.).into(),
         }
     }
 
@@ -281,10 +281,10 @@ impl Edges<Length> {
 impl Edges<DefiniteLength> {
     pub fn zero() -> Self {
         Self {
-            top: pixels(0.),
-            right: pixels(0.),
-            bottom: pixels(0.),
-            left: pixels(0.),
+            top: pixels(0.).into(),
+            right: pixels(0.).into(),
+            bottom: pixels(0.).into(),
+            left: pixels(0.).into(),
         }
     }
 
@@ -430,16 +430,16 @@ impl std::fmt::Debug for Length {
     }
 }
 
-pub fn relative<T: From<DefiniteLength>>(fraction: f32) -> T {
-    DefiniteLength::Relative(fraction).into()
+pub fn relative(fraction: f32) -> DefiniteLength {
+    DefiniteLength::Relative(fraction)
 }
 
-pub fn rems<T: From<AbsoluteLength>>(rems: f32) -> T {
-    AbsoluteLength::Rems(rems).into()
+pub fn rems(rems: f32) -> AbsoluteLength {
+    AbsoluteLength::Rems(rems)
 }
 
-pub fn pixels<T: From<AbsoluteLength>>(pixels: f32) -> T {
-    AbsoluteLength::Pixels(pixels).into()
+pub fn pixels(pixels: f32) -> AbsoluteLength {
+    AbsoluteLength::Pixels(pixels)
 }
 
 pub fn auto() -> Length {
