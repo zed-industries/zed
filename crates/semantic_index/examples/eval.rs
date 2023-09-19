@@ -1,6 +1,5 @@
 use anyhow::{anyhow, Result};
 use client::{self, UserStore};
-use git2::{Object, Oid, Repository};
 use gpui::{AsyncAppContext, ModelHandle, Task};
 use language::LanguageRegistry;
 use node_runtime::RealNodeRuntime;
@@ -11,6 +10,7 @@ use semantic_index::{SearchResult, SemanticIndex};
 use serde::{Deserialize, Serialize};
 use settings::{default_settings, handle_settings_file_changes, watch_config_file, SettingsStore};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{cmp, env, fs};
@@ -95,23 +95,22 @@ fn clone_repo(repo_eval: RepoEval) -> anyhow::Result<(String, PathBuf)> {
         .ok_or(anyhow!("path canonicalization failed"))?
         .parent()
         .unwrap()
-        .join(TMP_REPO_PATH)
-        .join(&repo_name);
+        .join(TMP_REPO_PATH);
 
     // Delete Clone Path if already exists
     let _ = fs::remove_dir_all(&clone_path);
+    let _ = fs::create_dir(&clone_path);
 
-    // Clone in Repo
-    git2::build::RepoBuilder::new()
-        // .branch(repo_eval.sha.as_str())
-        .clone(repo_eval.repo.as_str(), clone_path.as_path())?;
-
-    let repo: Repository = Repository::open(clone_path.clone())?;
-    let obj: Object = repo
-        .find_commit(Oid::from_str(repo_eval.commit.as_str())?)?
-        .into_object();
-    repo.checkout_tree(&obj, None)?;
-    repo.set_head_detached(obj.id())?;
+    let _ = Command::new("git")
+        .args(["clone", repo_eval.repo.as_str()])
+        .current_dir(clone_path.clone())
+        .output()?;
+    // Update clone path to be new directory housing the repo.
+    let clone_path = clone_path.join(repo_name.clone());
+    let _ = Command::new("git")
+        .args(["checkout", repo_eval.commit.as_str()])
+        .current_dir(clone_path.clone())
+        .output()?;
 
     Ok((repo_name, clone_path))
 }

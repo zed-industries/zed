@@ -55,7 +55,6 @@ rust-embed = { version = "8.0", features = ["include-exclude"] }
 client = { path = "../client" }
 zed = { path = "../zed"}
 node_runtime = { path = "../node_runtime"}
-git2.workspace = true
 
 pretty_assertions.workspace = true
 rand.workspace = true
