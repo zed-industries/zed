@@ -44,7 +44,19 @@ fn generate_methods() -> Vec<TokenStream2> {
                     prefix,
                     suffix,
                     &fields,
-                    length_tokens,
+                    &length_tokens,
+                    false,
+                    doc_string,
+                ));
+            }
+
+            if suffix != "auto" {
+                methods.push(generate_predefined_setter(
+                    prefix,
+                    suffix,
+                    &fields,
+                    &length_tokens,
+                    true,
                     doc_string,
                 ));
             }
@@ -63,7 +75,8 @@ fn generate_methods() -> Vec<TokenStream2> {
                 prefix,
                 suffix,
                 &fields,
-                radius_tokens,
+                &radius_tokens,
+                false,
                 doc_string,
             ));
         }
@@ -75,7 +88,8 @@ fn generate_methods() -> Vec<TokenStream2> {
                 prefix,
                 suffix,
                 &fields,
-                width_tokens,
+                &width_tokens,
+                false,
                 doc_string,
             ));
         }
@@ -84,23 +98,30 @@ fn generate_methods() -> Vec<TokenStream2> {
 }
 
 fn generate_predefined_setter(
-    prefix: &'static str,
-    suffix: &'static str,
+    name: &'static str,
+    length: &'static str,
     fields: &Vec<TokenStream2>,
-    length_tokens: TokenStream2,
+    length_tokens: &TokenStream2,
+    negate: bool,
     doc_string: &'static str,
 ) -> TokenStream2 {
-    let method_name = if suffix.is_empty() {
-        format_ident!("{}", prefix)
+    let (negation_prefix, negation_token) = if negate {
+        ("neg_", quote! { - })
     } else {
-        format_ident!("{}_{}", prefix, suffix)
+        ("", quote! {})
+    };
+
+    let method_name = if length.is_empty() {
+        format_ident!("{}{}", negation_prefix, name)
+    } else {
+        format_ident!("{}{}_{}", negation_prefix, name, length)
     };
 
     let field_assignments = fields
         .iter()
         .map(|field_tokens| {
             quote! {
-                style.#field_tokens = Some(gpui2::geometry::#length_tokens.into());
+                style.#field_tokens = Some((#negation_token gpui2::geometry::#length_tokens).into());
             }
         })
         .collect::<Vec<_>>();
@@ -113,6 +134,10 @@ fn generate_predefined_setter(
             self
         }
     };
+
+    if negate {
+        dbg!(method.to_string());
+    }
 
     method
 }
