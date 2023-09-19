@@ -1,5 +1,5 @@
 mod db;
-mod embedding;
+pub mod embedding;
 mod embedding_queue;
 mod parsing;
 pub mod semantic_index_settings;
@@ -294,7 +294,7 @@ impl SemanticIndex {
         }
     }
 
-    async fn new(
+    pub async fn new(
         fs: Arc<dyn Fs>,
         database_path: PathBuf,
         embedding_provider: Arc<dyn EmbeddingProvider>,
@@ -966,8 +966,6 @@ impl SemanticIndex {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         if !self.projects.contains_key(&project.downgrade()) {
-            log::trace!("Registering Project for Semantic Index");
-
             let subscription = cx.subscribe(&project, |this, project, event, cx| match event {
                 project::Event::WorktreeAdded | project::Event::WorktreeRemoved(_) => {
                     this.project_worktrees_changed(project.clone(), cx);
