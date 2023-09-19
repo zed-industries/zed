@@ -1,5 +1,6 @@
 mod element;
 pub use element::avatar::*;
+pub use element::details::*;
 pub use element::icon::*;
 pub use element::icon_button::*;
 pub use element::indicator::*;

@@ -1,7 +1,7 @@
 use crate::{
     prelude::{InteractionState, ToggleState},
     theme::theme,
-    ui::{input, label, list_item, IconAsset, LabelColor},
+    ui::{details, input, label, list_item, IconAsset, LabelColor},
 };
 use gpui2::{
     elements::{div, div::ScrollState},
@@ -36,10 +36,11 @@ impl<V: 'static> ProjectPanel<V> {
             .fill(theme.middle.base.default.background)
             .child(
                 div()
-                    .w_full()
+                    .w_56()
                     .flex()
                     .flex_col()
                     .overflow_y_scroll(self.scroll_state.clone())
+                    .child(details("This is a long string that should wrap when it keeps going for a long time.").meta_text("6 h ago)"))
                     .child(
                         div().flex().flex_col().children(
                             std::iter::repeat_with(|| {
