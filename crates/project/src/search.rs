@@ -159,7 +159,7 @@ impl SearchQuery {
             )
         }
     }
-    pub fn with_replacement(mut self, new_replacement: Option<String>) -> Self {
+    pub fn with_replacement(mut self, new_replacement: String) -> Self {
         match self {
             Self::Text {
                 ref mut replacement,
@@ -169,7 +169,7 @@ impl SearchQuery {
                 ref mut replacement,
                 ..
             } => {
-                *replacement = new_replacement;
+                *replacement = Some(new_replacement);
                 self
             }
         }
