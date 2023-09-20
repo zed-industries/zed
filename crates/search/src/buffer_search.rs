@@ -702,6 +702,9 @@ impl BufferSearchBar {
                 .searchable_items_with_matches
                 .get(&searchable_item.downgrade())
             {
+                if matches.len() == 0 {
+                    return;
+                }
                 let new_match_index = matches.len() - 1;
                 searchable_item.update_matches(matches, cx);
                 searchable_item.activate_match(new_match_index, matches, cx);

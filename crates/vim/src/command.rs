@@ -355,6 +355,9 @@ mod test {
             dd
             ˇcc"})
             .await;
+
+        cx.simulate_shared_keystrokes([":", "%", "s", "/", "/", "/", "enter"])
+            .await;
     }
 
     #[gpui::test]

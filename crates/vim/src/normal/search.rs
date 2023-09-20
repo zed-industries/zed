@@ -1,7 +1,7 @@
 use gpui::{actions, impl_actions, AppContext, ViewContext};
 use search::{buffer_search, BufferSearchBar, SearchMode, SearchOptions};
 use serde_derive::Deserialize;
-use workspace::{searchable::Direction, Pane, Toast, Workspace};
+use workspace::{searchable::Direction, Pane, Workspace};
 
 use crate::{motion::Motion, normal::move_cursor, state::SearchState, Vim};
 
@@ -36,7 +36,7 @@ pub struct ReplaceCommand {
     pub query: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct Replacement {
     search: String,
     replacement: String,
@@ -212,15 +212,7 @@ fn replace_command(
     action: &ReplaceCommand,
     cx: &mut ViewContext<Workspace>,
 ) {
-    let replacement = match parse_replace_all(&action.query) {
-        Ok(replacement) => replacement,
-        Err(message) => {
-            cx.handle().update(cx, |workspace, cx| {
-                workspace.show_toast(Toast::new(1544, message), cx)
-            });
-            return;
-        }
-    };
+    let replacement = parse_replace_all(&action.query);
     let pane = workspace.active_pane().clone();
     pane.update(cx, |pane, cx| {
         if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
@@ -270,18 +262,15 @@ fn replace_command(
     })
 }
 
-fn parse_replace_all(query: &str) -> Result<Replacement, String> {
+fn parse_replace_all(query: &str) -> Replacement {
     let mut chars = query.chars();
     if Some('%') != chars.next() || Some('s') != chars.next() {
-        return Err("unsupported pattern".to_string());
+        return Replacement::default();
     }
 
     let Some(delimeter) = chars.next() else {
-        return Err("unsupported pattern".to_string());
+        return Replacement::default();
     };
-    if delimeter == '\\' || !delimeter.is_ascii_punctuation() {
-        return Err(format!("cannot use {:?} as a search delimeter", delimeter));
-    }
 
     let mut search = String::new();
     let mut replacement = String::new();
@@ -315,7 +304,7 @@ fn parse_replace_all(query: &str) -> Result<Replacement, String> {
                 buffer = &mut flags;
                 phase = 2;
             } else {
-                return Err("trailing characters".to_string());
+                break;
             }
         } else {
             buffer.push(c)
@@ -331,14 +320,14 @@ fn parse_replace_all(query: &str) -> Result<Replacement, String> {
 
     for c in flags.chars() {
         match c {
-            'g' | 'I' => {} // defaults,
+            'g' | 'I' => {}
             'c' | 'n' => replacement.should_replace_all = false,
             'i' => replacement.is_case_sensitive = false,
-            _ => return Err(format!("unsupported flag {:?}", c)),
+            _ => {}
         }
     }
 
-    Ok(replacement)
+    replacement
 }
 
 #[cfg(test)]
