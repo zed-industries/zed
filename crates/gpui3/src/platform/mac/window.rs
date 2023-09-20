@@ -1379,13 +1379,13 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
 }
 
 extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
-    unsafe {
-        // let window_state = get_window_state(this);
-        // let mut window_state = window_state.as_ref().borrow_mut();
-        // if let Some(scene) = window_state.scene_to_render.take() {
-        //     window_state.renderer.render(&scene);
-        // };
-    }
+    // unsafe {
+    // let window_state = get_window_state(this);
+    // let mut window_state = window_state.as_ref().borrow_mut();
+    // if let Some(scene) = window_state.scene_to_render.take() {
+    //     window_state.renderer.render(&scene);
+    // };
+    // }
 }
 
 extern "C" fn valid_attributes_for_marked_text(_: &Object, _: Sel) -> id {

@@ -1,7 +1,6 @@
-use crate::{black, px};
-
-use super::{
-    point, Bounds, FontId, Hsla, Pixels, PlatformTextSystem, Point, UnderlineStyle, WindowContext,
+use crate::{
+    black, point, px, Bounds, FontId, Glyph, Hsla, LineLayout, Pixels, PlatformTextSystem, Point,
+    Run, RunStyle, UnderlineStyle, WindowContext,
 };
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
@@ -9,50 +8,13 @@ use std::{
     borrow::Borrow,
     collections::HashMap,
     hash::{Hash, Hasher},
-    iter,
     sync::Arc,
 };
 
-pub struct TextLayoutCache {
+pub(crate) struct TextLayoutCache {
     prev_frame: Mutex<HashMap<CacheKeyValue, Arc<LineLayout>>>,
     curr_frame: RwLock<HashMap<CacheKeyValue, Arc<LineLayout>>>,
     fonts: Arc<dyn PlatformTextSystem>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RunStyle {
-    pub color: Hsla,
-    pub font_id: FontId,
-    pub underline: Option<UnderlineStyle>,
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-pub struct GlyphId(u32);
-
-impl From<GlyphId> for u32 {
-    fn from(value: GlyphId) -> Self {
-        value.0
-    }
-}
-
-impl From<u16> for GlyphId {
-    fn from(num: u16) -> Self {
-        GlyphId(num as u32)
-    }
-}
-
-impl From<u32> for GlyphId {
-    fn from(num: u32) -> Self {
-        GlyphId(num)
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct Glyph {
-    pub id: GlyphId,
-    pub position: Point<Pixels>,
-    pub index: usize,
-    pub is_emoji: bool,
 }
 
 impl TextLayoutCache {
@@ -207,20 +169,10 @@ struct StyleRun {
     underline: UnderlineStyle,
 }
 
-#[derive(Default, Debug)]
-pub struct LineLayout {
-    pub font_size: Pixels,
-    pub width: Pixels,
-    pub ascent: Pixels,
-    pub descent: Pixels,
-    pub runs: Vec<Run>,
-    pub len: usize,
-}
-
-#[derive(Debug)]
-pub struct Run {
-    pub font_id: FontId,
-    pub glyphs: Vec<Glyph>,
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ShapedBoundary {
+    pub run_ix: usize,
+    pub glyph_ix: usize,
 }
 
 impl Line {
@@ -311,7 +263,7 @@ impl Line {
 
         for run in &self.layout.runs {
             let max_glyph_width = cx
-                .font_cache()
+                .text_system()
                 .bounding_box(run.font_id, self.layout.font_size)
                 .width;
 
@@ -485,7 +437,7 @@ impl Line {
                 let _glyph_bounds = Bounds {
                     origin: glyph_origin,
                     size: cx
-                        .font_cache()
+                        .text_system()
                         .bounding_box(run.font_id, self.layout.font_size),
                 };
                 // todo!()
@@ -526,355 +478,5 @@ impl Line {
 impl Run {
     pub fn glyphs(&self) -> &[Glyph] {
         &self.glyphs
-    }
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct Boundary {
-    pub ix: usize,
-    pub next_indent: u32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ShapedBoundary {
-    pub run_ix: usize,
-    pub glyph_ix: usize,
-}
-
-impl Boundary {
-    fn new(ix: usize, next_indent: u32) -> Self {
-        Self { ix, next_indent }
-    }
-}
-
-pub struct LineWrapper {
-    font_system: Arc<dyn PlatformTextSystem>,
-    pub(crate) font_id: FontId,
-    pub(crate) font_size: Pixels,
-    cached_ascii_char_widths: [Option<Pixels>; 128],
-    cached_other_char_widths: HashMap<char, Pixels>,
-}
-
-impl LineWrapper {
-    pub const MAX_INDENT: u32 = 256;
-
-    pub fn new(
-        font_id: FontId,
-        font_size: Pixels,
-        font_system: Arc<dyn PlatformTextSystem>,
-    ) -> Self {
-        Self {
-            font_system,
-            font_id,
-            font_size,
-            cached_ascii_char_widths: [None; 128],
-            cached_other_char_widths: HashMap::new(),
-        }
-    }
-
-    pub fn wrap_line<'a>(
-        &'a mut self,
-        line: &'a str,
-        wrap_width: Pixels,
-    ) -> impl Iterator<Item = Boundary> + 'a {
-        let mut width = px(0.);
-        let mut first_non_whitespace_ix = None;
-        let mut indent = None;
-        let mut last_candidate_ix = 0;
-        let mut last_candidate_width = px(0.);
-        let mut last_wrap_ix = 0;
-        let mut prev_c = '\0';
-        let mut char_indices = line.char_indices();
-        iter::from_fn(move || {
-            for (ix, c) in char_indices.by_ref() {
-                if c == '\n' {
-                    continue;
-                }
-
-                if self.is_boundary(prev_c, c) && first_non_whitespace_ix.is_some() {
-                    last_candidate_ix = ix;
-                    last_candidate_width = width;
-                }
-
-                if c != ' ' && first_non_whitespace_ix.is_none() {
-                    first_non_whitespace_ix = Some(ix);
-                }
-
-                let char_width = self.width_for_char(c);
-                width += char_width;
-                if width > wrap_width && ix > last_wrap_ix {
-                    if let (None, Some(first_non_whitespace_ix)) = (indent, first_non_whitespace_ix)
-                    {
-                        indent = Some(
-                            Self::MAX_INDENT.min((first_non_whitespace_ix - last_wrap_ix) as u32),
-                        );
-                    }
-
-                    if last_candidate_ix > 0 {
-                        last_wrap_ix = last_candidate_ix;
-                        width -= last_candidate_width;
-                        last_candidate_ix = 0;
-                    } else {
-                        last_wrap_ix = ix;
-                        width = char_width;
-                    }
-
-                    if let Some(indent) = indent {
-                        width += self.width_for_char(' ') * indent as f32;
-                    }
-
-                    return Some(Boundary::new(last_wrap_ix, indent.unwrap_or(0)));
-                }
-                prev_c = c;
-            }
-
-            None
-        })
-    }
-
-    pub fn wrap_shaped_line<'a>(
-        &'a mut self,
-        str: &'a str,
-        line: &'a Line,
-        wrap_width: Pixels,
-    ) -> impl Iterator<Item = ShapedBoundary> + 'a {
-        let mut first_non_whitespace_ix = None;
-        let mut last_candidate_ix = None;
-        let mut last_candidate_x = px(0.);
-        let mut last_wrap_ix = ShapedBoundary {
-            run_ix: 0,
-            glyph_ix: 0,
-        };
-        let mut last_wrap_x = px(0.);
-        let mut prev_c = '\0';
-        let mut glyphs = line
-            .runs()
-            .iter()
-            .enumerate()
-            .flat_map(move |(run_ix, run)| {
-                run.glyphs()
-                    .iter()
-                    .enumerate()
-                    .map(move |(glyph_ix, glyph)| {
-                        let character = str[glyph.index..].chars().next().unwrap();
-                        (
-                            ShapedBoundary { run_ix, glyph_ix },
-                            character,
-                            glyph.position.x,
-                        )
-                    })
-            })
-            .peekable();
-
-        iter::from_fn(move || {
-            while let Some((ix, c, x)) = glyphs.next() {
-                if c == '\n' {
-                    continue;
-                }
-
-                if self.is_boundary(prev_c, c) && first_non_whitespace_ix.is_some() {
-                    last_candidate_ix = Some(ix);
-                    last_candidate_x = x;
-                }
-
-                if c != ' ' && first_non_whitespace_ix.is_none() {
-                    first_non_whitespace_ix = Some(ix);
-                }
-
-                let next_x = glyphs.peek().map_or(line.width(), |(_, _, x)| *x);
-                let width = next_x - last_wrap_x;
-                if width > wrap_width && ix > last_wrap_ix {
-                    if let Some(last_candidate_ix) = last_candidate_ix.take() {
-                        last_wrap_ix = last_candidate_ix;
-                        last_wrap_x = last_candidate_x;
-                    } else {
-                        last_wrap_ix = ix;
-                        last_wrap_x = x;
-                    }
-
-                    return Some(last_wrap_ix);
-                }
-                prev_c = c;
-            }
-
-            None
-        })
-    }
-
-    fn is_boundary(&self, prev: char, next: char) -> bool {
-        (prev == ' ') && (next != ' ')
-    }
-
-    #[inline(always)]
-    fn width_for_char(&mut self, c: char) -> Pixels {
-        if (c as u32) < 128 {
-            if let Some(cached_width) = self.cached_ascii_char_widths[c as usize] {
-                cached_width
-            } else {
-                let width = self.compute_width_for_char(c);
-                self.cached_ascii_char_widths[c as usize] = Some(width);
-                width
-            }
-        } else {
-            if let Some(cached_width) = self.cached_other_char_widths.get(&c) {
-                *cached_width
-            } else {
-                let width = self.compute_width_for_char(c);
-                self.cached_other_char_widths.insert(c, width);
-                width
-            }
-        }
-    }
-
-    fn compute_width_for_char(&self, c: char) -> Pixels {
-        self.font_system
-            .layout_line(
-                &c.to_string(),
-                self.font_size,
-                &[(
-                    1,
-                    RunStyle {
-                        font_id: self.font_id,
-                        color: Default::default(),
-                        underline: Default::default(),
-                    },
-                )],
-            )
-            .width
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{AppContext, FontWeight};
-
-    #[test]
-    fn test_wrap_line() {
-        let cx = AppContext::test();
-
-        let font_cache = cx.font_cache().clone();
-        let font_system = cx.platform().text_system();
-        let family = font_cache
-            .load_family(&["Courier"], &Default::default())
-            .unwrap();
-        let font_id = font_cache
-            .select_font(family, Default::default(), Default::default())
-            .unwrap();
-
-        let mut wrapper = LineWrapper::new(font_id, px(16.), font_system);
-        assert_eq!(
-            wrapper
-                .wrap_line("aa bbb cccc ddddd eeee", px(72.))
-                .collect::<Vec<_>>(),
-            &[
-                Boundary::new(7, 0),
-                Boundary::new(12, 0),
-                Boundary::new(18, 0)
-            ],
-        );
-        assert_eq!(
-            wrapper
-                .wrap_line("aaa aaaaaaaaaaaaaaaaaa", px(72.0))
-                .collect::<Vec<_>>(),
-            &[
-                Boundary::new(4, 0),
-                Boundary::new(11, 0),
-                Boundary::new(18, 0)
-            ],
-        );
-        assert_eq!(
-            wrapper
-                .wrap_line("     aaaaaaa", px(72.))
-                .collect::<Vec<_>>(),
-            &[
-                Boundary::new(7, 5),
-                Boundary::new(9, 5),
-                Boundary::new(11, 5),
-            ]
-        );
-        assert_eq!(
-            wrapper
-                .wrap_line("                            ", px(72.))
-                .collect::<Vec<_>>(),
-            &[
-                Boundary::new(7, 0),
-                Boundary::new(14, 0),
-                Boundary::new(21, 0)
-            ]
-        );
-        assert_eq!(
-            wrapper
-                .wrap_line("          aaaaaaaaaaaaaa", px(72.))
-                .collect::<Vec<_>>(),
-            &[
-                Boundary::new(7, 0),
-                Boundary::new(14, 3),
-                Boundary::new(18, 3),
-                Boundary::new(22, 3),
-            ]
-        );
-    }
-
-    // todo! repeat this test
-    #[test]
-    fn test_wrap_shaped_line() {
-        let cx = AppContext::test();
-        let font_cache = cx.font_cache().clone();
-        let font_system = cx.platform().text_system();
-        let text_layout_cache = TextLayoutCache::new(font_system.clone());
-
-        let family = font_cache
-            .load_family(&["Helvetica"], &Default::default())
-            .unwrap();
-        let font_id = font_cache
-            .select_font(family, Default::default(), Default::default())
-            .unwrap();
-        let normal = RunStyle {
-            font_id,
-            color: Default::default(),
-            underline: Default::default(),
-        };
-        let bold = RunStyle {
-            font_id: font_cache
-                .select_font(family, FontWeight::BOLD, Default::default())
-                .unwrap(),
-            color: Default::default(),
-            underline: Default::default(),
-        };
-
-        let text = "aa bbb cccc ddddd eeee";
-        let line = text_layout_cache.layout_str(
-            text,
-            px(16.),
-            &[
-                (4, normal.clone()),
-                (5, bold.clone()),
-                (6, normal.clone()),
-                (1, bold),
-                (7, normal),
-            ],
-        );
-
-        let mut wrapper = LineWrapper::new(font_id, px(16.), font_system);
-        assert_eq!(
-            wrapper
-                .wrap_shaped_line(text, &line, px(72.))
-                .collect::<Vec<_>>(),
-            &[
-                ShapedBoundary {
-                    run_ix: 1,
-                    glyph_ix: 3
-                },
-                ShapedBoundary {
-                    run_ix: 2,
-                    glyph_ix: 3
-                },
-                ShapedBoundary {
-                    run_ix: 4,
-                    glyph_ix: 2
-                }
-            ],
-        );
     }
 }

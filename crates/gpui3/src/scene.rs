@@ -1,4 +1,4 @@
-use crate::{text::GlyphId, FontId};
+use crate::{FontId, GlyphId};
 
 use super::{Bounds, Hsla, Pixels, Point};
 use bytemuck::{Pod, Zeroable};

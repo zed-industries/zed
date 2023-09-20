@@ -1,6 +1,6 @@
 use crate::{
-    Context, FontCache, LayoutId, Platform, Reference, View, Window, WindowContext, WindowHandle,
-    WindowId,
+    current_platform, Context, LayoutId, Platform, Reference, TextSystem, View, Window,
+    WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use slotmap::SlotMap;
@@ -10,14 +10,25 @@ use std::{any::Any, cell::RefCell, marker::PhantomData, rc::Rc, sync::Arc};
 pub struct App(Rc<RefCell<AppContext>>);
 
 impl App {
-    pub fn new(platform: Rc<dyn Platform>) -> Self {
-        Self(Rc::new(RefCell::new(AppContext::new(platform))))
+    pub fn new() -> Self {
+        Self(Rc::new(RefCell::new(AppContext::new(current_platform()))))
+    }
+
+    pub fn run<F>(self, on_finish_launching: F)
+    where
+        F: 'static + FnOnce(&mut AppContext),
+    {
+        let platform = self.0.borrow().platform().clone();
+        platform.run(Box::new(move || {
+            let mut cx = self.0.borrow_mut();
+            on_finish_launching(&mut *cx);
+        }));
     }
 }
 
 pub struct AppContext {
     platform: Rc<dyn Platform>,
-    font_cache: Arc<FontCache>,
+    text_system: Arc<TextSystem>,
     pub(crate) entities: SlotMap<EntityId, Option<Box<dyn Any>>>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     // We recycle this memory across layout requests.
@@ -26,10 +37,10 @@ pub struct AppContext {
 
 impl AppContext {
     pub fn new(platform: Rc<dyn Platform>) -> Self {
-        let font_cache = Arc::new(FontCache::new(platform.text_system()));
+        let text_system = Arc::new(TextSystem::new(platform.text_system()));
         AppContext {
             platform,
-            font_cache,
+            text_system,
             entities: SlotMap::with_key(),
             windows: SlotMap::with_key(),
             layout_id_buffer: Default::default(),
@@ -45,8 +56,8 @@ impl AppContext {
         &self.platform
     }
 
-    pub fn font_cache(&self) -> &Arc<FontCache> {
-        &self.font_cache
+    pub fn text_system(&self) -> &Arc<TextSystem> {
+        &self.text_system
     }
 
     pub fn open_window<S: 'static>(

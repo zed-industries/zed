@@ -1,16 +1,9 @@
-use crate::{px, Bounds, LineWrapper, Pixels, PlatformTextSystem, Result, Size};
+use crate::{
+    px, Bounds, FontFeatures, FontStyle, FontWeight, Pixels, PlatformTextSystem, Result, Size,
+};
 use anyhow::anyhow;
-pub use font_kit::properties::{
-    Properties as FontProperties, Stretch as FontStretch, Style as FontStyle, Weight as FontWeight,
-};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    ops::{Deref, DerefMut},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct FontFamilyId(usize);
@@ -18,73 +11,14 @@ pub struct FontFamilyId(usize);
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct FontId(pub usize);
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct FontFeatures {
-    pub calt: Option<bool>,
-    pub case: Option<bool>,
-    pub cpsp: Option<bool>,
-    pub frac: Option<bool>,
-    pub liga: Option<bool>,
-    pub onum: Option<bool>,
-    pub ordn: Option<bool>,
-    pub pnum: Option<bool>,
-    pub ss01: Option<bool>,
-    pub ss02: Option<bool>,
-    pub ss03: Option<bool>,
-    pub ss04: Option<bool>,
-    pub ss05: Option<bool>,
-    pub ss06: Option<bool>,
-    pub ss07: Option<bool>,
-    pub ss08: Option<bool>,
-    pub ss09: Option<bool>,
-    pub ss10: Option<bool>,
-    pub ss11: Option<bool>,
-    pub ss12: Option<bool>,
-    pub ss13: Option<bool>,
-    pub ss14: Option<bool>,
-    pub ss15: Option<bool>,
-    pub ss16: Option<bool>,
-    pub ss17: Option<bool>,
-    pub ss18: Option<bool>,
-    pub ss19: Option<bool>,
-    pub ss20: Option<bool>,
-    pub subs: Option<bool>,
-    pub sups: Option<bool>,
-    pub swsh: Option<bool>,
-    pub titl: Option<bool>,
-    pub tnum: Option<bool>,
-    pub zero: Option<bool>,
-}
+pub(crate) struct FontCache(RwLock<FontCacheState>);
 
-#[allow(non_camel_case_types)]
-#[derive(Deserialize)]
-enum WeightJson {
-    thin,
-    extra_light,
-    light,
-    normal,
-    medium,
-    semibold,
-    bold,
-    extra_bold,
-    black,
-}
-
-struct Family {
-    name: Arc<str>,
-    font_features: FontFeatures,
-    font_ids: Vec<FontId>,
-}
-
-pub struct FontCache(RwLock<FontCacheState>);
-
-pub struct FontCacheState {
-    font_system: Arc<dyn PlatformTextSystem>,
+pub(crate) struct FontCacheState {
+    platform_text_system: Arc<dyn PlatformTextSystem>,
     families: Vec<Family>,
     default_family: Option<FontFamilyId>,
     font_selections: HashMap<FontFamilyId, HashMap<(FontWeight, FontStyle), FontId>>,
     metrics: HashMap<FontId, FontMetrics>,
-    wrapper_pool: HashMap<(FontId, Pixels), Vec<LineWrapper>>,
 }
 
 unsafe impl Send for FontCache {}
@@ -92,12 +26,11 @@ unsafe impl Send for FontCache {}
 impl FontCache {
     pub fn new(fonts: Arc<dyn PlatformTextSystem>) -> Self {
         Self(RwLock::new(FontCacheState {
-            font_system: fonts,
+            platform_text_system: fonts,
             families: Default::default(),
             default_family: None,
             font_selections: Default::default(),
             metrics: Default::default(),
-            wrapper_pool: Default::default(),
         }))
     }
 
@@ -124,14 +57,18 @@ impl FontCache {
 
             let mut state = RwLockUpgradableReadGuard::upgrade(state);
 
-            if let Ok(font_ids) = state.font_system.load_family(name, features) {
+            if let Ok(font_ids) = state.platform_text_system.load_family(name, features) {
                 if font_ids.is_empty() {
                     continue;
                 }
 
                 let family_id = FontFamilyId(state.families.len());
                 for font_id in &font_ids {
-                    if state.font_system.glyph_for_char(*font_id, 'm').is_none() {
+                    if state
+                        .platform_text_system
+                        .glyph_for_char(*font_id, 'm')
+                        .is_none()
+                    {
                         return Err(anyhow!("font must contain a glyph for the 'm' character"));
                     }
                 }
@@ -162,7 +99,7 @@ impl FontCache {
                 &Default::default(),
             )
             .unwrap_or_else(|_| {
-                let all_family_names = self.0.read().font_system.all_families();
+                let all_family_names = self.0.read().platform_text_system.all_families();
                 let all_family_names: Vec<_> = all_family_names
                     .iter()
                     .map(|string| string.as_str())
@@ -197,7 +134,7 @@ impl FontCache {
             let mut inner = RwLockUpgradableReadGuard::upgrade(inner);
             let family = &inner.families[family_id.0];
             let font_id = inner
-                .font_system
+                .platform_text_system
                 .select_font(&family.font_ids, weight, style)
                 .unwrap_or(family.font_ids[0]);
             inner
@@ -209,7 +146,7 @@ impl FontCache {
         }
     }
 
-    pub fn metric<F, T>(&self, font_id: FontId, f: F) -> T
+    pub fn read_metric<F, T>(&self, font_id: FontId, f: F) -> T
     where
         F: FnOnce(&FontMetrics) -> T,
         T: 'static,
@@ -218,7 +155,7 @@ impl FontCache {
         if let Some(metrics) = state.metrics.get(&font_id) {
             f(metrics)
         } else {
-            let metrics = state.font_system.font_metrics(font_id);
+            let metrics = state.platform_text_system.font_metrics(font_id);
             let metric = f(&metrics);
             let mut state = RwLockUpgradableReadGuard::upgrade(state);
             state.metrics.insert(font_id, metrics);
@@ -227,7 +164,7 @@ impl FontCache {
     }
 
     pub fn bounding_box(&self, font_id: FontId, font_size: Pixels) -> Size<Pixels> {
-        let bounding_box = self.metric(font_id, |m| m.bounding_box);
+        let bounding_box = self.read_metric(font_id, |m| m.bounding_box);
 
         let width = px(bounding_box.size.width) * self.em_size(font_id, font_size);
         let height = px(bounding_box.size.height) * self.em_size(font_id, font_size);
@@ -239,9 +176,12 @@ impl FontCache {
         let bounds;
         {
             let state = self.0.read();
-            glyph_id = state.font_system.glyph_for_char(font_id, 'm').unwrap();
+            glyph_id = state
+                .platform_text_system
+                .glyph_for_char(font_id, 'm')
+                .unwrap();
             bounds = state
-                .font_system
+                .platform_text_system
                 .typographic_bounds(font_id, glyph_id)
                 .unwrap();
         }
@@ -253,8 +193,14 @@ impl FontCache {
         let advance;
         {
             let state = self.0.read();
-            glyph_id = state.font_system.glyph_for_char(font_id, 'm').unwrap();
-            advance = state.font_system.advance(font_id, glyph_id).unwrap();
+            glyph_id = state
+                .platform_text_system
+                .glyph_for_char(font_id, 'm')
+                .unwrap();
+            advance = state
+                .platform_text_system
+                .advance(font_id, glyph_id)
+                .unwrap();
         }
         self.em_size(font_id, font_size) * advance.width
     }
@@ -264,23 +210,23 @@ impl FontCache {
     }
 
     pub fn cap_height(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        self.em_size(font_id, font_size) * self.metric(font_id, |m| m.cap_height)
+        self.em_size(font_id, font_size) * self.read_metric(font_id, |m| m.cap_height)
     }
 
     pub fn x_height(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        self.em_size(font_id, font_size) * self.metric(font_id, |m| m.x_height)
+        self.em_size(font_id, font_size) * self.read_metric(font_id, |m| m.x_height)
     }
 
     pub fn ascent(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        self.em_size(font_id, font_size) * self.metric(font_id, |m| m.ascent)
+        self.em_size(font_id, font_size) * self.read_metric(font_id, |m| m.ascent)
     }
 
     pub fn descent(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        self.em_size(font_id, font_size) * self.metric(font_id, |m| -m.descent)
+        self.em_size(font_id, font_size) * self.read_metric(font_id, |m| -m.descent)
     }
 
     pub fn em_size(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        font_size / self.metric(font_id, |m| m.units_per_em as f32)
+        font_size / self.read_metric(font_id, |m| m.units_per_em as f32)
     }
 
     pub fn baseline_offset(&self, font_id: FontId, font_size: Pixels) -> Pixels {
@@ -289,49 +235,6 @@ impl FontCache {
         let descent = self.descent(font_id, font_size);
         let padding_top = (line_height - ascent - descent) / 2.;
         padding_top + ascent
-    }
-
-    pub fn line_wrapper(self: &Arc<Self>, font_id: FontId, font_size: Pixels) -> LineWrapperHandle {
-        let mut state = self.0.write();
-        let wrappers = state.wrapper_pool.entry((font_id, font_size)).or_default();
-        let wrapper = wrappers
-            .pop()
-            .unwrap_or_else(|| LineWrapper::new(font_id, font_size, state.font_system.clone()));
-        LineWrapperHandle {
-            wrapper: Some(wrapper),
-            font_cache: self.clone(),
-        }
-    }
-}
-
-pub struct LineWrapperHandle {
-    wrapper: Option<LineWrapper>,
-    font_cache: Arc<FontCache>,
-}
-
-impl Drop for LineWrapperHandle {
-    fn drop(&mut self) {
-        let mut state = self.font_cache.0.write();
-        let wrapper = self.wrapper.take().unwrap();
-        state
-            .wrapper_pool
-            .get_mut(&(wrapper.font_id, wrapper.font_size))
-            .unwrap()
-            .push(wrapper);
-    }
-}
-
-impl Deref for LineWrapperHandle {
-    type Target = LineWrapper;
-
-    fn deref(&self) -> &Self::Target {
-        self.wrapper.as_ref().unwrap()
-    }
-}
-
-impl DerefMut for LineWrapperHandle {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.wrapper.as_mut().unwrap()
     }
 }
 
@@ -346,6 +249,12 @@ pub struct FontMetrics {
     pub cap_height: f32,
     pub x_height: f32,
     pub bounding_box: Bounds<f32>,
+}
+
+struct Family {
+    name: Arc<str>,
+    font_features: FontFeatures,
+    font_ids: Vec<FontId>,
 }
 
 #[cfg(test)]

@@ -529,7 +529,7 @@ impl Platform for MacPlatform {
                     None
                 };
 
-                if let Some(mut done_tx) = done_tx.take() {
+                if let Some(done_tx) = done_tx.take() {
                     let _ = done_tx.send(result);
                 }
             });
@@ -557,7 +557,7 @@ impl Platform for MacPlatform {
                     }
                 }
 
-                if let Some(mut done_tx) = done_tx.take() {
+                if let Some(done_tx) = done_tx.take() {
                     let _ = done_tx.send(result);
                 }
             });

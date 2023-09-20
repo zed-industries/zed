@@ -3,7 +3,7 @@ use super::{
     Hsla, Length, Pixels, Point, PointRefinement, Rems, Result, RunStyle, SharedString, Size,
     SizeRefinement, ViewContext, WindowContext,
 };
-use crate::FontCache;
+use crate::{FontCache, TextSystem};
 use refineable::Refineable;
 pub use taffy::style::{
     AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap, JustifyContent,
@@ -114,7 +114,7 @@ pub struct TextStyle {
 }
 
 impl TextStyle {
-    pub fn highlight(mut self, style: HighlightStyle, _font_cache: &FontCache) -> Result<Self> {
+    pub fn highlight(mut self, style: HighlightStyle) -> Result<Self> {
         if let Some(weight) = style.font_weight {
             self.font_weight = weight;
         }

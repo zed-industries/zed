@@ -18,7 +18,11 @@ use core_graphics::{
 };
 use core_text::{font::CTFont, line::CTLine, string_attributes::kCTFontAttributeName};
 use font_kit::{
-    handle::Handle, hinting::HintingOptions, metrics::Metrics, source::SystemSource,
+    handle::Handle,
+    hinting::HintingOptions,
+    metrics::Metrics,
+    properties::{Style as FontkitStyle, Weight as FontkitWeight},
+    source::SystemSource,
     sources::mem::MemSource,
 };
 use parking_lot::RwLock;
@@ -187,8 +191,8 @@ impl TextSystemState {
         let idx = font_kit::matching::find_best_match(
             &candidates,
             &font_kit::properties::Properties {
-                style,
-                weight,
+                style: style.into(),
+                weight: weight.into(),
                 stretch: Default::default(),
             },
         )?;
@@ -586,6 +590,22 @@ impl From<Point<u32>> for Vector2I {
 impl From<Vector2F> for Size<f32> {
     fn from(vec: Vector2F) -> Self {
         size(vec.x(), vec.y())
+    }
+}
+
+impl From<FontWeight> for FontkitWeight {
+    fn from(value: FontWeight) -> Self {
+        FontkitWeight(value.0)
+    }
+}
+
+impl From<FontStyle> for FontkitStyle {
+    fn from(style: FontStyle) -> Self {
+        match style {
+            FontStyle::Normal => FontkitStyle::Normal,
+            FontStyle::Italic => FontkitStyle::Italic,
+            FontStyle::Oblique => FontkitStyle::Oblique,
+        }
     }
 }
 

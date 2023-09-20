@@ -1,6 +1,6 @@
 use super::{
     event::key_to_native, screen::Screen, status_item::StatusItem, BoolExt as _, Dispatcher,
-    MacWindow, TextSystem,
+    FontSystem, MacWindow,
 };
 use crate::{
     executor,
@@ -488,7 +488,7 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
 
 pub struct MacPlatform {
     dispatcher: Arc<Dispatcher>,
-    fonts: Arc<TextSystem>,
+    fonts: Arc<FontSystem>,
     pasteboard: id,
     text_hash_pasteboard_type: id,
     metadata_pasteboard_type: id,
@@ -498,7 +498,7 @@ impl MacPlatform {
     pub fn new() -> Self {
         Self {
             dispatcher: Arc::new(Dispatcher),
-            fonts: Arc::new(TextSystem::new()),
+            fonts: Arc::new(FontSystem::new()),
             pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },
             text_hash_pasteboard_type: unsafe { ns_string("zed-text-hash") },
             metadata_pasteboard_type: unsafe { ns_string("zed-metadata") },

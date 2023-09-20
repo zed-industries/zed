@@ -47,7 +47,7 @@ impl<S: 'static> Element for Div<S> {
             cx.pop_text_style();
         }
 
-        Ok((cx.request_layout(style, children.clone())?, children))
+        Ok((cx.request_layout(style.into(), children.clone())?, children))
     }
 
     fn paint(

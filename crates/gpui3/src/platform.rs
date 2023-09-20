@@ -35,10 +35,10 @@ pub use mac::*;
 #[cfg(any(test, feature = "test"))]
 pub use test::*;
 
-// #[cfg(target_os = "macos")]
-// pub fn current() -> Rc<dyn Platform> {
-//     MacPlatform
-// }
+#[cfg(target_os = "macos")]
+pub(crate) fn current_platform() -> Rc<dyn Platform> {
+    Rc::new(MacPlatform::new())
+}
 
 pub trait Platform {
     fn executor(&self) -> Rc<ForegroundExecutor>;
