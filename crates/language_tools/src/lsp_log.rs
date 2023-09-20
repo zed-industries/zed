@@ -190,14 +190,17 @@ impl LogStore {
                     .ok();
             })
         });
+        let this = cx.weak_handle();
         let weak_project = project.downgrade();
         server_state._lsp_logs_subscription = server.map(|server| {
             let server_id = server.server_id();
             server.on_notification::<lsp::notification::LogMessage, _>({
                 move |params, mut cx| {
-                    if let Some(project) = weak_project.upgrade(&cx) {
-                        project.update(&mut cx, |_, cx| {
-                            cx.emit(project::Event::LanguageServerLog(server_id, params.message))
+                    if let Some((project, this)) =
+                        weak_project.upgrade(&mut cx).zip(this.upgrade(&mut cx))
+                    {
+                        this.update(&mut cx, |this, cx| {
+                            this.add_language_server_log(&project, server_id, &params.message, cx);
                         });
                     }
                 }
@@ -309,19 +312,15 @@ impl LogStore {
         language_server_id: LanguageServerId,
         io_kind: IoKind,
         message: &str,
-        cx: &mut AppContext,
+        cx: &mut ModelContext<Self>,
     ) -> Option<()> {
         let is_received = match io_kind {
             IoKind::StdOut => true,
             IoKind::StdIn => false,
             IoKind::StdErr => {
                 let project = project.upgrade(cx)?;
-                project.update(cx, |_, cx| {
-                    cx.emit(project::Event::LanguageServerLog(
-                        language_server_id,
-                        format!("stderr: {}\n", message.trim()),
-                    ))
-                });
+                let message = format!("stderr: {}\n", message.trim());
+                self.add_language_server_log(&project, language_server_id, &message, cx);
                 return Some(());
             }
         };
