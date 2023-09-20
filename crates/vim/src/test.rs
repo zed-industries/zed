@@ -576,6 +576,26 @@ async fn test_folds(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_folds_panic(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+    cx.set_neovim_option("foldmethod=manual").await;
+
+    cx.set_shared_state(indoc! { "
+        fn boop() {
+          ˇbarp()
+          bazp()
+        }
+    "})
+        .await;
+    cx.simulate_shared_keystrokes(["shift-v", "j", "z", "f"])
+        .await;
+    cx.simulate_shared_keystrokes(["escape"]).await;
+    cx.simulate_shared_keystrokes(["g", "g"]).await;
+    cx.simulate_shared_keystrokes(["5", "d", "j"]).await;
+    cx.assert_shared_state(indoc! { "ˇ"}).await;
+}
+
+#[gpui::test]
 async fn test_clear_counts(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
 
