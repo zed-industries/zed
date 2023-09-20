@@ -305,6 +305,9 @@ impl ActiveCall {
             let room = join.await?;
             this.update(&mut cx, |this, cx| this.set_room(Some(room.clone()), cx))
                 .await?;
+            room.update(&mut cx, |room, _| {
+                room.set_channel_id(Some(channel_id));
+            });
             this.update(&mut cx, |this, cx| {
                 this.report_call_event("join channel", cx)
             });

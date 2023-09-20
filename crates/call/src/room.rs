@@ -98,6 +98,10 @@ impl Room {
         self.channel_id
     }
 
+    pub fn set_channel_id(&mut self, channel_id: Option<u64>) {
+        self.channel_id = channel_id
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn is_connected(&self) -> bool {
         if let Some(live_kit) = self.live_kit.as_ref() {
