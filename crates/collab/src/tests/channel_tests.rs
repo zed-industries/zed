@@ -56,7 +56,10 @@ async fn test_core_channels(
     );
 
     client_b.channel_store().read_with(cx_b, |channels, _| {
-        assert!(channels.channels().collect::<Vec<_>>().is_empty())
+        assert!(channels
+            .channel_dag_entries()
+            .collect::<Vec<_>>()
+            .is_empty())
     });
 
     // Invite client B to channel A as client A.
@@ -141,6 +144,8 @@ async fn test_core_channels(
             },
         ],
     );
+
+    println!("STARTING CREATE CHANNEL C");
 
     let channel_c_id = client_a
         .channel_store()
@@ -326,7 +331,7 @@ async fn test_joining_channel_ancestor_member(
     let client_b = server.create_client(cx_b, "user_b").await;
 
     let parent_id = server
-        .make_channel("parent", (&client_a, cx_a), &mut [(&client_b, cx_b)])
+        .make_channel("parent", None, (&client_a, cx_a), &mut [(&client_b, cx_b)])
         .await;
 
     let sub_id = client_a
@@ -361,6 +366,7 @@ async fn test_channel_room(
     let zed_id = server
         .make_channel(
             "zed",
+            None,
             (&client_a, cx_a),
             &mut [(&client_b, cx_b), (&client_c, cx_c)],
         )
@@ -544,9 +550,11 @@ async fn test_channel_jumping(deterministic: Arc<Deterministic>, cx_a: &mut Test
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
 
-    let zed_id = server.make_channel("zed", (&client_a, cx_a), &mut []).await;
+    let zed_id = server
+        .make_channel("zed", None, (&client_a, cx_a), &mut [])
+        .await;
     let rust_id = server
-        .make_channel("rust", (&client_a, cx_a), &mut [])
+        .make_channel("rust", None, (&client_a, cx_a), &mut [])
         .await;
 
     let active_call_a = cx_a.read(ActiveCall::global);
@@ -597,7 +605,7 @@ async fn test_permissions_update_while_invited(
     let client_b = server.create_client(cx_b, "user_b").await;
 
     let rust_id = server
-        .make_channel("rust", (&client_a, cx_a), &mut [])
+        .make_channel("rust", None, (&client_a, cx_a), &mut [])
         .await;
 
     client_a
@@ -658,7 +666,7 @@ async fn test_channel_rename(
     let client_b = server.create_client(cx_b, "user_b").await;
 
     let rust_id = server
-        .make_channel("rust", (&client_a, cx_a), &mut [(&client_b, cx_b)])
+        .make_channel("rust", None, (&client_a, cx_a), &mut [(&client_b, cx_b)])
         .await;
 
     // Rename the channel
@@ -716,6 +724,7 @@ async fn test_call_from_channel(
     let channel_id = server
         .make_channel(
             "x",
+            None,
             (&client_a, cx_a),
             &mut [(&client_b, cx_b), (&client_c, cx_c)],
         )
@@ -786,7 +795,9 @@ async fn test_lost_channel_creation(
         .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
 
-    let channel_id = server.make_channel("x", (&client_a, cx_a), &mut []).await;
+    let channel_id = server
+        .make_channel("x", None, (&client_a, cx_a), &mut [])
+        .await;
 
     // Invite a member
     client_a
@@ -874,6 +885,257 @@ async fn test_lost_channel_creation(
     );
 }
 
+#[gpui::test]
+async fn test_channel_moving(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
+
+    let channels = server
+        .make_channel_tree(
+            &[
+                ("channel-a", None),
+                ("channel-b", Some("channel-a")),
+                ("channel-c", Some("channel-b")),
+                ("channel-d", Some("channel-c")),
+            ],
+            (&client_a, cx_a),
+        )
+        .await;
+    let channel_a_id = channels[0];
+    let channel_b_id = channels[1];
+    let channel_c_id = channels[2];
+    let channel_d_id = channels[3];
+
+    // Current shape:
+    // a - b - c - d
+    assert_channels_list_shape(
+        client_a.channel_store(),
+        cx_a,
+        &[
+            (channel_a_id, 0),
+            (channel_b_id, 1),
+            (channel_c_id, 2),
+            (channel_d_id, 3),
+        ],
+    );
+
+    client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.move_channel(channel_d_id, channel_c_id, channel_b_id, cx)
+        })
+        .await
+        .unwrap();
+
+    // Current shape:
+    //       /- d
+    // a - b -- c
+    assert_channels_list_shape(
+        client_a.channel_store(),
+        cx_a,
+        &[
+            (channel_a_id, 0),
+            (channel_b_id, 1),
+            (channel_c_id, 2),
+            (channel_d_id, 2),
+        ],
+    );
+
+    client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.link_channel(channel_d_id, channel_c_id, cx)
+        })
+        .await
+        .unwrap();
+
+    // Current shape for A:
+    //      /------\
+    // a - b -- c -- d
+    assert_channels_list_shape(
+        client_a.channel_store(),
+        cx_a,
+        &[
+            (channel_a_id, 0),
+            (channel_b_id, 1),
+            (channel_c_id, 2),
+            (channel_d_id, 3),
+            (channel_d_id, 2),
+        ],
+    );
+
+    let b_channels = server
+        .make_channel_tree(
+            &[
+                ("channel-mu", None),
+                ("channel-gamma", Some("channel-mu")),
+                ("channel-epsilon", Some("channel-mu")),
+            ],
+            (&client_b, cx_b),
+        )
+        .await;
+    let channel_mu_id = b_channels[0];
+    let channel_ga_id = b_channels[1];
+    let channel_ep_id = b_channels[2];
+
+    // Current shape for B:
+    //    /- ep
+    // mu -- ga
+    assert_channels_list_shape(
+        client_b.channel_store(),
+        cx_b,
+        &[(channel_mu_id, 0), (channel_ep_id, 1), (channel_ga_id, 1)],
+    );
+
+    client_a
+        .add_admin_to_channel((&client_b, cx_b), channel_b_id, cx_a)
+        .await;
+
+    // Current shape for B:
+    //    /- ep
+    // mu -- ga
+    //  /---------\
+    // b  -- c  -- d
+    assert_channels_list_shape(
+        client_b.channel_store(),
+        cx_b,
+        &[
+            // New channels from a
+            (channel_b_id, 0),
+            (channel_c_id, 1),
+            (channel_d_id, 2),
+            (channel_d_id, 1),
+            // B's old channels
+            (channel_mu_id, 0),
+            (channel_ep_id, 1),
+            (channel_ga_id, 1),
+        ],
+    );
+
+    client_b
+        .add_admin_to_channel((&client_c, cx_c), channel_ep_id, cx_b)
+        .await;
+
+    // Current shape for C:
+    // - ep
+    assert_channels_list_shape(client_c.channel_store(), cx_c, &[(channel_ep_id, 0)]);
+
+    println!("*******************************************");
+    println!("********** STARTING LINK CHANNEL **********");
+    println!("*******************************************");
+    dbg!(client_b.user_id());
+    client_b
+        .channel_store()
+        .update(cx_b, |channel_store, cx| {
+            channel_store.link_channel(channel_b_id, channel_ep_id, cx)
+        })
+        .await
+        .unwrap();
+
+    // Current shape for B:
+    //              /---------\
+    //    /- ep -- b  -- c  -- d
+    // mu -- ga
+    assert_channels_list_shape(
+        client_b.channel_store(),
+        cx_b,
+        &[
+            (channel_mu_id, 0),
+            (channel_ep_id, 1),
+            (channel_b_id, 2),
+            (channel_c_id, 3),
+            (channel_d_id, 4),
+            (channel_d_id, 3),
+            (channel_ga_id, 1),
+        ],
+    );
+
+    // Current shape for C:
+    //        /---------\
+    // ep -- b  -- c  -- d
+    assert_channels_list_shape(
+        client_c.channel_store(),
+        cx_c,
+        &[
+            (channel_ep_id, 0),
+            (channel_b_id, 1),
+            (channel_c_id, 2),
+            (channel_d_id, 3),
+            (channel_d_id, 2),
+        ],
+    );
+
+    client_b
+        .channel_store()
+        .update(cx_b, |channel_store, cx| {
+            channel_store.link_channel(channel_ga_id, channel_b_id, cx)
+        })
+        .await
+        .unwrap();
+
+    // Current shape for B:
+    //              /---------\
+    //    /- ep -- b  -- c  -- d
+    //   /          \
+    // mu ---------- ga
+    assert_channels_list_shape(
+        client_b.channel_store(),
+        cx_b,
+        &[
+            (channel_mu_id, 0),
+            (channel_ep_id, 1),
+            (channel_b_id, 2),
+            (channel_c_id, 3),
+            (channel_d_id, 4),
+            (channel_d_id, 3),
+            (channel_ga_id, 3),
+            (channel_ga_id, 1),
+        ],
+    );
+
+    // Current shape for A:
+    //      /------\
+    // a - b -- c -- d
+    //      \-- ga
+    assert_channels_list_shape(
+        client_a.channel_store(),
+        cx_a,
+        &[
+            (channel_a_id, 0),
+            (channel_b_id, 1),
+            (channel_c_id, 2),
+            (channel_d_id, 3),
+            (channel_d_id, 2),
+            (channel_ga_id, 2),
+        ],
+    );
+
+    // Current shape for C:
+    //        /-------\
+    // ep -- b -- c -- d
+    //        \-- ga
+    assert_channels_list_shape(
+        client_c.channel_store(),
+        cx_c,
+        &[
+            (channel_ep_id, 0),
+            (channel_b_id, 1),
+            (channel_c_id, 2),
+            (channel_d_id, 3),
+            (channel_d_id, 2),
+            (channel_ga_id, 2),
+        ],
+    );
+}
+
 #[derive(Debug, PartialEq)]
 struct ExpectedChannel {
     depth: usize,
@@ -911,7 +1173,7 @@ fn assert_channels(
 ) {
     let actual = channel_store.read_with(cx, |store, _| {
         store
-            .channels()
+            .channel_dag_entries()
             .map(|(depth, channel)| ExpectedChannel {
                 depth,
                 name: channel.name.clone(),
@@ -920,5 +1182,22 @@ fn assert_channels(
             })
             .collect::<Vec<_>>()
     });
-    assert_eq!(actual, expected_channels);
+    pretty_assertions::assert_eq!(actual, expected_channels);
+}
+
+#[track_caller]
+fn assert_channels_list_shape(
+    channel_store: &ModelHandle<ChannelStore>,
+    cx: &TestAppContext,
+    expected_channels: &[(u64, usize)],
+) {
+    cx.foreground().run_until_parked();
+
+    let actual = channel_store.read_with(cx, |store, _| {
+        store
+            .channel_dag_entries()
+            .map(|(depth, channel)| (channel.id, depth))
+            .collect::<Vec<_>>()
+    });
+    pretty_assertions::assert_eq!(dbg!(actual), expected_channels);
 }

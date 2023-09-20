@@ -586,6 +586,14 @@
     }
   },
   {
+    "context": "CollabPanel > Editor",
+    "bindings": {
+      "cmd-c": "collab_panel::StartLinkChannel",
+      "cmd-x": "collab_panel::StartMoveChannel",
+      "cmd-v": "collab_panel::MoveOrLinkToSelected"
+    }
+  },
+  {
     "context": "ChannelModal",
     "bindings": {
       "tab": "channel_modal::ToggleMode"

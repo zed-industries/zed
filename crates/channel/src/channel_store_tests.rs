@@ -18,12 +18,10 @@ fn test_update_channels(cx: &mut AppContext) {
                 proto::Channel {
                     id: 1,
                     name: "b".to_string(),
-                    parent_id: None,
                 },
                 proto::Channel {
                     id: 2,
                     name: "a".to_string(),
-                    parent_id: None,
                 },
             ],
             channel_permissions: vec![proto::ChannelPermission {
@@ -51,12 +49,20 @@ fn test_update_channels(cx: &mut AppContext) {
                 proto::Channel {
                     id: 3,
                     name: "x".to_string(),
-                    parent_id: Some(1),
                 },
                 proto::Channel {
                     id: 4,
                     name: "y".to_string(),
-                    parent_id: Some(2),
+                },
+            ],
+            insert_edge: vec![
+                proto::ChannelEdge {
+                    parent_id: 1,
+                    channel_id: 3,
+                },
+                proto::ChannelEdge {
+                    parent_id: 2,
+                    channel_id: 4,
                 },
             ],
             ..Default::default()
@@ -86,17 +92,24 @@ fn test_dangling_channel_paths(cx: &mut AppContext) {
                 proto::Channel {
                     id: 0,
                     name: "a".to_string(),
-                    parent_id: None,
                 },
                 proto::Channel {
                     id: 1,
                     name: "b".to_string(),
-                    parent_id: Some(0),
                 },
                 proto::Channel {
                     id: 2,
                     name: "c".to_string(),
-                    parent_id: Some(1),
+                },
+            ],
+            insert_edge: vec![
+                proto::ChannelEdge {
+                    parent_id: 0,
+                    channel_id: 1,
+                },
+                proto::ChannelEdge {
+                    parent_id: 1,
+                    channel_id: 2,
                 },
             ],
             channel_permissions: vec![proto::ChannelPermission {
@@ -122,7 +135,7 @@ fn test_dangling_channel_paths(cx: &mut AppContext) {
     update_channels(
         &channel_store,
         proto::UpdateChannels {
-            remove_channels: vec![1, 2],
+            delete_channels: vec![1, 2],
             ..Default::default()
         },
         cx,
@@ -145,7 +158,6 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
         channels: vec![proto::Channel {
             id: channel_id,
             name: "the-channel".to_string(),
-            parent_id: None,
         }],
         ..Default::default()
     });
@@ -169,7 +181,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
 
     // Join a channel and populate its existing messages.
     let channel = channel_store.update(cx, |store, cx| {
-        let channel_id = store.channels().next().unwrap().1.id;
+        let channel_id = store.channel_dag_entries().next().unwrap().1.id;
         store.open_channel_chat(channel_id, cx)
     });
     let join_channel = server.receive::<proto::JoinChannelChat>().await.unwrap();
@@ -351,7 +363,7 @@ fn assert_channels(
 ) {
     let actual = channel_store.read_with(cx, |store, _| {
         store
-            .channels()
+            .channel_dag_entries()
             .map(|(depth, channel)| {
                 (
                     depth,

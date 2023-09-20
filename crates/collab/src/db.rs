@@ -14,7 +14,10 @@ use collections::{BTreeMap, HashMap, HashSet};
 use dashmap::DashMap;
 use futures::StreamExt;
 use rand::{prelude::StdRng, Rng, SeedableRng};
-use rpc::{proto, ConnectionId};
+use rpc::{
+    proto::{self},
+    ConnectionId,
+};
 use sea_orm::{
     entity::prelude::*, ActiveValue, Condition, ConnectionTrait, DatabaseConnection,
     DatabaseTransaction, DbErr, FromQueryResult, IntoActiveModel, IsolationLevel, JoinType,
@@ -42,6 +45,8 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 pub use ids::*;
 pub use sea_orm::ConnectOptions;
 pub use tables::user::Model as User;
+
+use self::queries::channels::ChannelGraph;
 
 pub struct Database {
     options: ConnectOptions,
@@ -421,16 +426,15 @@ pub struct NewUserResult {
     pub signup_device_id: Option<String>,
 }
 
-#[derive(FromQueryResult, Debug, PartialEq)]
+#[derive(FromQueryResult, Debug, PartialEq, Eq, Hash)]
 pub struct Channel {
     pub id: ChannelId,
     pub name: String,
-    pub parent_id: Option<ChannelId>,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct ChannelsForUser {
-    pub channels: Vec<Channel>,
+    pub channels: ChannelGraph,
     pub channel_participants: HashMap<ChannelId, Vec<UserId>>,
     pub channels_with_admin_privileges: HashSet<ChannelId>,
 }
