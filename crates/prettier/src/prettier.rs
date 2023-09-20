@@ -209,7 +209,7 @@ impl Prettier {
                     })
             });
             let tab_width = Some(language_settings.tab_size.get());
-            PrettierFormatParams {
+            FormatParams {
                 text: buffer.text(),
                 options: FormatOptions {
                     parser,
@@ -220,7 +220,7 @@ impl Prettier {
         });
         let response = self
             .server
-            .request::<PrettierFormat>(params)
+            .request::<Format>(params)
             .await
             .context("prettier format request")?;
         let diff_task = buffer.read_with(cx, |buffer, cx| buffer.diff(response.text, cx));
@@ -228,7 +228,10 @@ impl Prettier {
     }
 
     pub async fn clear_cache(&self) -> anyhow::Result<()> {
-        todo!()
+        self.server
+            .request::<ClearCache>(())
+            .await
+            .context("prettier clear cache")
     }
 
     pub fn server(&self) -> &Arc<LanguageServer> {
@@ -284,11 +287,11 @@ async fn find_closest_prettier_dir(
     Ok(None)
 }
 
-enum PrettierFormat {}
+enum Format {}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct PrettierFormatParams {
+struct FormatParams {
     text: String,
     options: FormatOptions,
 }
@@ -304,12 +307,20 @@ struct FormatOptions {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct PrettierFormatResult {
+struct FormatResult {
     text: String,
 }
 
-impl lsp::request::Request for PrettierFormat {
-    type Params = PrettierFormatParams;
-    type Result = PrettierFormatResult;
+impl lsp::request::Request for Format {
+    type Params = FormatParams;
+    type Result = FormatResult;
     const METHOD: &'static str = "prettier/format";
+}
+
+enum ClearCache {}
+
+impl lsp::request::Request for ClearCache {
+    type Params = ();
+    type Result = ();
+    const METHOD: &'static str = "prettier/clear_cache";
 }
