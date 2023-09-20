@@ -4,7 +4,7 @@ use gpui2::{elements::div, IntoElement};
 use gpui2::{Element, ParentElement, ViewContext};
 
 #[derive(Element)]
-pub(crate) struct Tab {
+pub struct Tab {
     title: &'static str,
     enabled: bool,
 }

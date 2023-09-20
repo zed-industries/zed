@@ -1,7 +1,8 @@
 use std::marker::PhantomData;
 
-use crate::components::{icon_button, tab, ButtonVariant};
+use crate::prelude::InteractionState;
 use crate::theme::theme;
+use crate::ui::{icon_button, tab};
 use gpui2::elements::div::ScrollState;
 use gpui2::style::StyleHelpers;
 use gpui2::{elements::div, IntoElement};
@@ -23,7 +24,8 @@ pub fn tab_bar<V: 'static>(scroll_state: ScrollState) -> TabBar<V> {
 impl<V: 'static> TabBar<V> {
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
-
+        let can_navigate_back = true;
+        let can_navigate_forward = false;
         div()
             .w_full()
             .flex()
@@ -40,15 +42,22 @@ impl<V: 'static> TabBar<V> {
                             .flex()
                             .items_center()
                             .gap_px()
-                            .child(icon_button("icons/arrow_left.svg", ButtonVariant::Filled))
-                            .child(icon_button("icons/arrow_right.svg", ButtonVariant::Ghost)),
+                            .child(
+                                icon_button("icons/arrow_left.svg")
+                                    .state(InteractionState::Enabled.if_enabled(can_navigate_back)),
+                            )
+                            .child(
+                                icon_button("icons/arrow_right.svg").state(
+                                    InteractionState::Enabled.if_enabled(can_navigate_forward),
+                                ),
+                            ),
                     ),
             )
             .child(
                 div().w_0().flex_1().h_full().child(
                     div()
                         .flex()
-                        .gap_px()
+                        .gap_1()
                         .overflow_x_scroll(self.scroll_state.clone())
                         .child(tab("Cargo.toml", false))
                         .child(tab("Channels Panel", true))
@@ -74,8 +83,8 @@ impl<V: 'static> TabBar<V> {
                             .flex()
                             .items_center()
                             .gap_px()
-                            .child(icon_button("icons/plus.svg", ButtonVariant::Ghost))
-                            .child(icon_button("icons/split.svg", ButtonVariant::Ghost)),
+                            .child(icon_button("icons/plus.svg"))
+                            .child(icon_button("icons/split.svg")),
                     ),
             )
     }

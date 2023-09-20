@@ -1,12 +1,12 @@
-use std::fmt::Debug;
-
 use super::scene::{Path, PathVertex};
 use crate::{color::Color, json::ToJson};
+use derive_more::Neg;
 pub use pathfinder_geometry::*;
 use rect::RectF;
 use refineable::Refineable;
 use serde::{Deserialize, Deserializer};
 use serde_json::json;
+use std::fmt::Debug;
 use vector::{vec2f, Vector2F};
 
 pub struct PathBuilder {
@@ -194,8 +194,8 @@ where
 impl Size<DefiniteLength> {
     pub fn zero() -> Self {
         Self {
-            width: pixels(0.),
-            height: pixels(0.),
+            width: pixels(0.).into(),
+            height: pixels(0.).into(),
         }
     }
 
@@ -235,6 +235,17 @@ pub struct Edges<T: Clone + Default + Debug> {
     pub left: T,
 }
 
+impl<T: Clone + Default + Debug> Edges<T> {
+    pub fn uniform(value: T) -> Self {
+        Self {
+            top: value.clone(),
+            right: value.clone(),
+            bottom: value.clone(),
+            left: value.clone(),
+        }
+    }
+}
+
 impl Edges<Length> {
     pub fn auto() -> Self {
         Self {
@@ -247,10 +258,10 @@ impl Edges<Length> {
 
     pub fn zero() -> Self {
         Self {
-            top: pixels(0.),
-            right: pixels(0.),
-            bottom: pixels(0.),
-            left: pixels(0.),
+            top: pixels(0.).into(),
+            right: pixels(0.).into(),
+            bottom: pixels(0.).into(),
+            left: pixels(0.).into(),
         }
     }
 
@@ -270,10 +281,10 @@ impl Edges<Length> {
 impl Edges<DefiniteLength> {
     pub fn zero() -> Self {
         Self {
-            top: pixels(0.),
-            right: pixels(0.),
-            bottom: pixels(0.),
-            left: pixels(0.),
+            top: pixels(0.).into(),
+            right: pixels(0.).into(),
+            bottom: pixels(0.).into(),
+            left: pixels(0.).into(),
         }
     }
 
@@ -322,7 +333,7 @@ impl Edges<f32> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Neg)]
 pub enum AbsoluteLength {
     Pixels(f32),
     Rems(f32),
@@ -360,7 +371,7 @@ impl Default for AbsoluteLength {
 }
 
 /// A non-auto length that can be defined in pixels, rems, or percent of parent.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Neg)]
 pub enum DefiniteLength {
     Absolute(AbsoluteLength),
     Relative(f32), // 0. to 1.
@@ -404,7 +415,7 @@ impl Default for DefiniteLength {
 }
 
 /// A length that can be defined in pixels, rems, percent of parent, or auto.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Neg)]
 pub enum Length {
     Definite(DefiniteLength),
     Auto,
@@ -419,16 +430,16 @@ impl std::fmt::Debug for Length {
     }
 }
 
-pub fn relative<T: From<DefiniteLength>>(fraction: f32) -> T {
-    DefiniteLength::Relative(fraction).into()
+pub fn relative(fraction: f32) -> DefiniteLength {
+    DefiniteLength::Relative(fraction)
 }
 
-pub fn rems<T: From<AbsoluteLength>>(rems: f32) -> T {
-    AbsoluteLength::Rems(rems).into()
+pub fn rems(rems: f32) -> AbsoluteLength {
+    AbsoluteLength::Rems(rems)
 }
 
-pub fn pixels<T: From<AbsoluteLength>>(pixels: f32) -> T {
-    AbsoluteLength::Pixels(pixels).into()
+pub fn pixels(pixels: f32) -> AbsoluteLength {
+    AbsoluteLength::Pixels(pixels)
 }
 
 pub fn auto() -> Length {
