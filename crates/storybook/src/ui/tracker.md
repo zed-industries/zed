@@ -25,6 +25,7 @@
 - [ ] Project Files Palette (⌘-P)
 - [ ] Command Palette (⌘-SHIFT-P)
 - [ ] Recent Projects Palette (⌘-OPT-O)
+- [ ] Recent Branches Palette (⌘-OPT-B)
 - [ ] Project Symbols (⌘-T)
 - [ ] Theme Palette (⌘-K, ⌘-T)
 - [ ] Outline View (⌘-SHIFT-O)
@@ -50,11 +51,15 @@
 - [ ] Open Editors*
 - [ ] Open Files (Non-project files)
 - [ ] Project Files
+- [ ] Root Folder - Context Menu
+- [ ] Folder - Context Menu
+- [ ] File - Context Menu
 - [ ] Project Filter*
 
 ### Collab Panel
 - [ ] Current Call
 - [ ] Channels
+- [ ] Channel - Context Menu
 - [ ] Contacts
 - [ ] Collab Filter
 
@@ -86,6 +91,9 @@ WIP
 ### Status Bar
 - [ ] Status Bar Tool (Icon)
 - [ ] Status Bar Tool (Text)
+- [ ] Status Bar Tool - Context Menu
+- [ ] Status Bar Tool - Popover Palette
+- [ ] Status Bar Tool - Popover Menu
 - [ ] Diagnostic Message
 - [ ] LSP Message
 - [ ] Update message (New version available, downloading, etc)
@@ -96,6 +104,9 @@ WIP
 - [ ] Split Divider/Control
 
 ### Editor
+- [ ] Editor
+- [ ] Read-only Editor
+- [ ] Rendered Markdown View*
 
 ### Tab Bar
 - [ ] Navigation History / Control
@@ -106,3 +117,17 @@ WIP
 - [ ] Breadcrumb
 - [ ] Editor Tool (Togglable)
 - [ ] Buffer Search
+
+### Buffer
+
+### Zoomed Editor (Modal)
+- [ ] Modal View
+
+### Palette
+- [ ] Input
+- [ ] Section Title
+- [ ] List
+
+## Components
+
+- [ ] Context Menu
