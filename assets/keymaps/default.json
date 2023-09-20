@@ -294,6 +294,7 @@
           "replace_newest": false
         }
       ],
+      "cmd-shift-d": "editor::SelectAllMatches",
       "ctrl-cmd-d": [
         "editor::SelectPrevious",
         {
@@ -453,7 +454,6 @@
     "context": "Editor",
     "bindings": {
       "ctrl-shift-k": "editor::DeleteLine",
-      "cmd-shift-d": "editor::DuplicateLine",
       "cmd-shift-l": "editor::SplitSelectionIntoLines",
       "ctrl-j": "editor::JoinLines",
       "ctrl-cmd-up": "editor::MoveLineUp",
