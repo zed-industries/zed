@@ -134,7 +134,7 @@ fn main() {
         let languages = Arc::new(languages);
         let node_runtime = RealNodeRuntime::new(http.clone());
 
-        languages::init(languages.clone(), node_runtime.clone());
+        languages::init(languages.clone(), node_runtime.clone(), cx);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
         let channel_store =
             cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));

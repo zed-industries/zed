@@ -9861,6 +9861,7 @@ dependencies = [
  "rpc",
  "rsa",
  "rust-embed",
+ "schemars",
  "search",
  "semantic_index",
  "serde",

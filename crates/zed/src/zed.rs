@@ -2392,7 +2392,7 @@ mod tests {
         languages.set_executor(cx.background().clone());
         let languages = Arc::new(languages);
         let node_runtime = node_runtime::FakeNodeRuntime::new();
-        languages::init(languages.clone(), node_runtime);
+        languages::init(languages.clone(), node_runtime, cx);
         for name in languages.language_names() {
             languages.language_for_name(&name);
         }

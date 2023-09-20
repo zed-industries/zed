@@ -99,6 +99,7 @@ rust-embed.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
+schemars.workspace = true
 simplelog = "0.9"
 smallvec.workspace = true
 smol.workspace = true

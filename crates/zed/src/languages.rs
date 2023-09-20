@@ -1,13 +1,17 @@
 use anyhow::Context;
+use gpui::AppContext;
 pub use language::*;
 use node_runtime::NodeRuntime;
 use rust_embed::RustEmbed;
 use std::{borrow::Cow, str, sync::Arc};
 use util::asset_str;
 
+use self::elixir_next::ElixirSettings;
+
 mod c;
 mod css;
 mod elixir;
+mod elixir_next;
 mod go;
 mod html;
 mod json;
@@ -37,7 +41,13 @@ mod yaml;
 #[exclude = "*.rs"]
 struct LanguageDir;
 
-pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<dyn NodeRuntime>) {
+pub fn init(
+    languages: Arc<LanguageRegistry>,
+    node_runtime: Arc<dyn NodeRuntime>,
+    cx: &mut AppContext,
+) {
+    settings::register::<elixir_next::ElixirSettings>(cx);
+
     let language = |name, grammar, adapters| {
         languages.register(name, load_config(name), grammar, adapters, load_queries)
     };
@@ -61,11 +71,25 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<dyn NodeRuntime>
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
     );
-    language(
-        "elixir",
-        tree_sitter_elixir::language(),
-        vec![Arc::new(elixir::ElixirLspAdapter)],
-    );
+
+    match settings::get::<ElixirSettings>(cx).next {
+        elixir_next::ElixirNextSetting::Off => language(
+            "elixir",
+            tree_sitter_elixir::language(),
+            vec![Arc::new(elixir::ElixirLspAdapter)],
+        ),
+        elixir_next::ElixirNextSetting::On => language(
+            "elixir",
+            tree_sitter_elixir::language(),
+            vec![Arc::new(elixir_next::BundledNextLspAdapter)],
+        ),
+        elixir_next::ElixirNextSetting::Local { port } => unimplemented!(), /*language(
+                                                                            "elixir",
+                                                                            tree_sitter_elixir::language(),
+                                                                            vec![Arc::new(elixir_next::LocalNextLspAdapter { port })],
+                                                                            )*/
+    }
+
     language(
         "go",
         tree_sitter_go::language(),
