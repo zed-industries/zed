@@ -206,11 +206,13 @@ impl TestServer {
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
         let channel_store =
             cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
+        let mut language_registry = LanguageRegistry::test();
+        language_registry.set_executor(cx.background());
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
             channel_store: channel_store.clone(),
-            languages: Arc::new(LanguageRegistry::test()),
+            languages: Arc::new(language_registry),
             fs: fs.clone(),
             build_window_options: |_, _, _| Default::default(),
             initialize_workspace: |_, _, _, _| Task::ready(Ok(())),

@@ -274,7 +274,10 @@ async fn test_channel_buffer_replica_ids(
 }
 
 #[gpui::test]
-async fn test_reopen_channel_buffer(deterministic: Arc<Deterministic>, cx_a: &mut TestAppContext) {
+async fn test_multiple_handles_to_channel_buffer(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+) {
     deterministic.forbid_parking();
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
@@ -575,6 +578,92 @@ async fn test_channel_buffers_and_server_restarts(
             );
             assert_eq!(buffer_a.collaborators(), buffer_b.collaborators());
         });
+    });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_following_to_channel_notes_without_a_shared_project(
+    deterministic: Arc<Deterministic>,
+    mut cx_a: &mut TestAppContext,
+    mut cx_b: &mut TestAppContext,
+    mut cx_c: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
+
+    let channel_1_id = server
+        .make_channel(
+            "channel-1",
+            (&client_a, cx_a),
+            &mut [(&client_b, cx_b), (&client_c, cx_c)],
+        )
+        .await;
+    let channel_2_id = server
+        .make_channel(
+            "channel-2",
+            (&client_a, cx_a),
+            &mut [(&client_b, cx_b), (&client_c, cx_c)],
+        )
+        .await;
+
+    // Clients A, B, and C join a channel.
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+    let active_call_c = cx_c.read(ActiveCall::global);
+    for (call, cx) in [
+        (&active_call_a, &mut cx_a),
+        (&active_call_b, &mut cx_b),
+        (&active_call_c, &mut cx_c),
+    ] {
+        call.update(*cx, |call, cx| call.join_channel(channel_1_id, cx))
+            .await
+            .unwrap();
+    }
+    deterministic.run_until_parked();
+
+    // Clients A, B, and C all open their own unshared projects.
+    client_a.fs().insert_tree("/a", json!({})).await;
+    client_b.fs().insert_tree("/b", json!({})).await;
+    client_c.fs().insert_tree("/c", json!({})).await;
+    let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
+    let (project_b, _) = client_b.build_local_project("/b", cx_b).await;
+    let (project_c, _) = client_b.build_local_project("/c", cx_c).await;
+    let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
+    let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
+    let workspace_c = client_c.build_workspace(&project_c, cx_c).root(cx_c);
+
+    // Client A opens the notes for channel 1.
+    let channel_view_1_a = cx_a
+        .update(|cx| {
+            ChannelView::open(
+                channel_1_id,
+                workspace_a.read(cx).active_pane().clone(),
+                workspace_a.clone(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    // Client B follows client A.
+    workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace
+                .toggle_follow(client_a.peer_id().unwrap(), cx)
+                .unwrap()
+        })
+        .await
+        .unwrap();
+
+    deterministic.run_until_parked();
+    workspace_b.read_with(cx_b, |workspace, _| {
+        assert_eq!(
+            workspace.leader_for_pane(workspace.active_pane()),
+            Some(client_a.peer_id().unwrap())
+        );
     });
 }
 

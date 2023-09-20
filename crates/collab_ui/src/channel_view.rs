@@ -14,6 +14,7 @@ use gpui::{
 };
 use project::Project;
 use std::any::{Any, TypeId};
+use util::ResultExt;
 use workspace::{
     item::{FollowableItem, Item, ItemHandle},
     register_followable_item,
@@ -53,7 +54,7 @@ impl ChannelView {
                     &workspace.read(cx).app_state().client,
                     cx,
                 );
-                pane.add_item(Box::new(channel_view), true, true, None, cx);
+                pane.add_item(Box::new(channel_view.clone()), true, true, None, cx);
             });
             anyhow::Ok(())
         })
@@ -79,12 +80,13 @@ impl ChannelView {
         cx.spawn(|mut cx| async move {
             let channel_buffer = channel_buffer.await?;
 
-            let markdown = markdown.await?;
-            channel_buffer.update(&mut cx, |buffer, cx| {
-                buffer.buffer().update(cx, |buffer, cx| {
-                    buffer.set_language(Some(markdown), cx);
-                })
-            });
+            if let Some(markdown) = markdown.await.log_err() {
+                channel_buffer.update(&mut cx, |buffer, cx| {
+                    buffer.buffer().update(cx, |buffer, cx| {
+                        buffer.set_language(Some(markdown), cx);
+                    })
+                });
+            }
 
             pane.update(&mut cx, |pane, cx| {
                 pane.items_of_type::<Self>()
