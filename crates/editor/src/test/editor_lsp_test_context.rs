@@ -14,7 +14,7 @@ use language::{point_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageQ
 use lsp::{notification, request};
 use project::Project;
 use smol::stream::StreamExt;
-use workspace::{pane, AppState, Workspace, WorkspaceHandle};
+use workspace::{AppState, Workspace, WorkspaceHandle};
 
 use crate::{multi_buffer::ToPointUtf16, Editor, ToPoint};
 
@@ -38,12 +38,10 @@ impl<'a> EditorLspTestContext<'a> {
         let app_state = cx.update(AppState::test);
 
         cx.update(|cx| {
-            theme::init((), cx);
             language::init(cx);
             crate::init(cx);
-            pane::init(cx);
+            workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);
-            workspace::init_settings(cx);
         });
 
         let file_name = format!(
