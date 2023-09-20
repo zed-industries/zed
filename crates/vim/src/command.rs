@@ -355,8 +355,33 @@ mod test {
             dd
             ˇcc"})
             .await;
+    }
 
-        cx.simulate_shared_keystrokes([":", "%", "s", "/", "/", "/", "enter"])
+    #[gpui::test]
+    async fn test_command_search(cx: &mut TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+                ˇa
+                b
+                a
+                c"})
+            .await;
+        cx.simulate_shared_keystrokes([":", "/", "b", "enter"])
+            .await;
+        cx.assert_shared_state(indoc! {"
+                a
+                ˇb
+                a
+                c"})
+            .await;
+        cx.simulate_shared_keystrokes([":", "?", "a", "enter"])
+            .await;
+        cx.assert_shared_state(indoc! {"
+                ˇa
+                b
+                a
+                c"})
             .await;
     }
 

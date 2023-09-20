@@ -195,10 +195,15 @@ fn find_command(workspace: &mut Workspace, action: &FindCommand, cx: &mut ViewCo
             });
             let Some(search) = search else { return };
             let search_bar = search_bar.downgrade();
+            let direction = if action.backwards {
+                Direction::Prev
+            } else {
+                Direction::Next
+            };
             cx.spawn(|_, mut cx| async move {
                 search.await?;
                 search_bar.update(&mut cx, |search_bar, cx| {
-                    search_bar.select_match(Direction::Next, 1, cx)
+                    search_bar.select_match(direction, 1, cx)
                 })?;
                 anyhow::Ok(())
             })
