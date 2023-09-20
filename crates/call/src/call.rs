@@ -8,19 +8,23 @@ use anyhow::{anyhow, Result};
 use audio::Audio;
 use call_settings::CallSettings;
 use channel::ChannelId;
-use client::{proto, ClickhouseEvent, Client, TelemetrySettings, TypedEnvelope, User, UserStore};
+use client::{
+    proto::{self, PeerId},
+    ClickhouseEvent, Client, TelemetrySettings, TypedEnvelope, User, UserStore,
+};
 use collections::HashSet;
 use futures::{future::Shared, FutureExt};
 use postage::watch;
 
 use gpui::{
-    AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Subscription, Task,
-    WeakModelHandle,
+    AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity, ModelContext,
+    ModelHandle, Subscription, Task, ViewContext, WeakModelHandle,
 };
 use project::Project;
 
 pub use participant::ParticipantLocation;
 pub use room::Room;
+use util::ResultExt;
 
 pub fn init(client: Arc<Client>, user_store: ModelHandle<UserStore>, cx: &mut AppContext) {
     settings::register::<CallSettings>(cx);
@@ -49,7 +53,23 @@ pub struct ActiveCall {
     ),
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
+    follow_handlers: Vec<FollowHandler>,
+    followers: Vec<Follower>,
     _subscriptions: Vec<client::Subscription>,
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct Follower {
+    project_id: Option<u64>,
+    peer_id: PeerId,
+}
+
+struct FollowHandler {
+    project_id: Option<u64>,
+    root_view: AnyWeakViewHandle,
+    get_views:
+        Box<dyn Fn(&AnyViewHandle, Option<u64>, &mut AppContext) -> Option<proto::FollowResponse>>,
+    update_view: Box<dyn Fn(&AnyViewHandle, PeerId, proto::UpdateFollowers, &mut AppContext)>,
 }
 
 impl Entity for ActiveCall {
@@ -68,9 +88,14 @@ impl ActiveCall {
             location: None,
             pending_invites: Default::default(),
             incoming_call: watch::channel(),
+            follow_handlers: Default::default(),
+            followers: Default::default(),
             _subscriptions: vec![
                 client.add_request_handler(cx.handle(), Self::handle_incoming_call),
                 client.add_message_handler(cx.handle(), Self::handle_call_canceled),
+                client.add_request_handler(cx.handle(), Self::handle_follow),
+                client.add_message_handler(cx.handle(), Self::handle_unfollow),
+                client.add_message_handler(cx.handle(), Self::handle_update_followers),
             ],
             client,
             user_store,
@@ -79,6 +104,48 @@ impl ActiveCall {
 
     pub fn channel_id(&self, cx: &AppContext) -> Option<ChannelId> {
         self.room()?.read(cx).channel_id()
+    }
+
+    pub fn add_follow_handler<V: gpui::View, GetViews, UpdateView>(
+        &mut self,
+        root_view: gpui::ViewHandle<V>,
+        project_id: Option<u64>,
+        get_views: GetViews,
+        update_view: UpdateView,
+        _cx: &mut ModelContext<Self>,
+    ) where
+        GetViews: 'static
+            + Fn(&mut V, Option<u64>, &mut gpui::ViewContext<V>) -> Result<proto::FollowResponse>,
+        UpdateView:
+            'static + Fn(&mut V, PeerId, proto::UpdateFollowers, &mut ViewContext<V>) -> Result<()>,
+    {
+        self.follow_handlers
+            .retain(|h| h.root_view.id() != root_view.id());
+        if let Err(ix) = self
+            .follow_handlers
+            .binary_search_by_key(&(project_id, root_view.id()), |f| {
+                (f.project_id, f.root_view.id())
+            })
+        {
+            self.follow_handlers.insert(
+                ix,
+                FollowHandler {
+                    project_id,
+                    root_view: root_view.into_any().downgrade(),
+                    get_views: Box::new(move |view, project_id, cx| {
+                        let view = view.clone().downcast::<V>().unwrap();
+                        view.update(cx, |view, cx| get_views(view, project_id, cx).log_err())
+                            .flatten()
+                    }),
+                    update_view: Box::new(move |view, leader_id, message, cx| {
+                        let view = view.clone().downcast::<V>().unwrap();
+                        view.update(cx, |view, cx| {
+                            update_view(view, leader_id, message, cx).log_err()
+                        });
+                    }),
+                },
+            );
+        }
     }
 
     async fn handle_incoming_call(
@@ -125,6 +192,127 @@ impl ActiveCall {
             }
         });
         Ok(())
+    }
+
+    async fn handle_follow(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::Follow>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::FollowResponse> {
+        this.update(&mut cx, |this, cx| {
+            let follower = Follower {
+                project_id: envelope.payload.project_id,
+                peer_id: envelope.original_sender_id()?,
+            };
+            let active_project_id = this
+                .location
+                .as_ref()
+                .and_then(|project| project.upgrade(cx)?.read(cx).remote_id());
+
+            let mut response = proto::FollowResponse::default();
+            for handler in &this.follow_handlers {
+                if follower.project_id != handler.project_id && follower.project_id.is_some() {
+                    continue;
+                }
+
+                let Some(root_view) = handler.root_view.upgrade(cx) else {
+                    continue;
+                };
+
+                let Some(handler_response) =
+                    (handler.get_views)(&root_view, follower.project_id, cx)
+                else {
+                    continue;
+                };
+
+                if response.views.is_empty() {
+                    response.views = handler_response.views;
+                } else {
+                    response.views.extend_from_slice(&handler_response.views);
+                }
+
+                if let Some(active_view_id) = handler_response.active_view_id.clone() {
+                    if response.active_view_id.is_none() || handler.project_id == active_project_id
+                    {
+                        response.active_view_id = Some(active_view_id);
+                    }
+                }
+            }
+
+            if let Err(ix) = this.followers.binary_search(&follower) {
+                this.followers.insert(ix, follower);
+            }
+
+            Ok(response)
+        })
+    }
+
+    async fn handle_unfollow(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::Unfollow>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, _| {
+            let follower = Follower {
+                project_id: envelope.payload.project_id,
+                peer_id: envelope.original_sender_id()?,
+            };
+            if let Err(ix) = this.followers.binary_search(&follower) {
+                this.followers.remove(ix);
+            }
+            Ok(())
+        })
+    }
+
+    async fn handle_update_followers(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::UpdateFollowers>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        let leader_id = envelope.original_sender_id()?;
+        let update = envelope.payload;
+        this.update(&mut cx, |this, cx| {
+            for handler in &this.follow_handlers {
+                if update.project_id != handler.project_id && update.project_id.is_some() {
+                    continue;
+                }
+                let Some(root_view) = handler.root_view.upgrade(cx) else {
+                    continue;
+                };
+                (handler.update_view)(&root_view, leader_id, update.clone(), cx);
+            }
+            Ok(())
+        })
+    }
+
+    pub fn update_followers(
+        &self,
+        project_id: Option<u64>,
+        update: proto::update_followers::Variant,
+        cx: &AppContext,
+    ) -> Option<()> {
+        let room_id = self.room()?.read(cx).id();
+        let follower_ids: Vec<_> = self
+            .followers
+            .iter()
+            .filter_map(|follower| {
+                (follower.project_id == project_id).then_some(follower.peer_id.into())
+            })
+            .collect();
+        if follower_ids.is_empty() {
+            return None;
+        }
+        self.client
+            .send(proto::UpdateFollowers {
+                room_id,
+                project_id,
+                follower_ids,
+                variant: Some(update),
+            })
+            .log_err()
     }
 
     pub fn global(cx: &AppContext) -> ModelHandle<Self> {
