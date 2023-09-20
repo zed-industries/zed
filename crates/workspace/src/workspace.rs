@@ -157,6 +157,9 @@ pub struct ActivatePane(pub usize);
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct ActivatePaneInDirection(pub SplitDirection);
 
+#[derive(Clone, Deserialize, PartialEq)]
+pub struct NewFileInDirection(pub SplitDirection);
+
 #[derive(Clone, PartialEq, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveAll {
@@ -230,6 +233,7 @@ impl_actions!(
     [
         ActivatePane,
         ActivatePaneInDirection,
+        NewFileInDirection,
         Toast,
         OpenTerminal,
         SaveAll,
@@ -1991,8 +1995,13 @@ impl Workspace {
             .update(cx, |pane, cx| pane.add_item(item, true, true, None, cx));
     }
 
-    pub fn split_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
-        let new_pane = self.split_pane(self.active_pane.clone(), SplitDirection::Right, cx);
+    pub fn split_item(
+        &mut self,
+        split_direction: SplitDirection,
+        item: Box<dyn ItemHandle>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let new_pane = self.split_pane(self.active_pane.clone(), split_direction, cx);
         new_pane.update(cx, move |new_pane, cx| {
             new_pane.add_item(item, true, true, None, cx)
         })
@@ -2170,7 +2179,7 @@ impl Workspace {
         }
 
         let item = cx.add_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
-        self.split_item(Box::new(item.clone()), cx);
+        self.split_item(SplitDirection::Right, Box::new(item.clone()), cx);
         item
     }
 

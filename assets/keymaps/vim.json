@@ -319,7 +319,17 @@
       "ctrl-w c": "pane::CloseAllItems",
       "ctrl-w ctrl-c": "pane::CloseAllItems",
       "ctrl-w q": "pane::CloseAllItems",
-      "ctrl-w ctrl-q": "pane::CloseAllItems"
+      "ctrl-w ctrl-q": "pane::CloseAllItems",
+      "ctrl-w o": "workspace::CloseInactiveTabsAndPanes",
+      "ctrl-w ctrl-o": "workspace::CloseInactiveTabsAndPanes",
+      "ctrl-w n": [
+        "workspace::NewFileInDirection",
+        "Up"
+      ],
+      "ctrl-w ctrl-n": [
+        "workspace::NewFileInDirection",
+        "Up"
+      ]
     }
   },
   {
