@@ -181,7 +181,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
 
     // Join a channel and populate its existing messages.
     let channel = channel_store.update(cx, |store, cx| {
-        let channel_id = store.channels().next().unwrap().1.id;
+        let channel_id = store.channel_dag_entries().next().unwrap().1.id;
         store.open_channel_chat(channel_id, cx)
     });
     let join_channel = server.receive::<proto::JoinChannelChat>().await.unwrap();
@@ -363,7 +363,7 @@ fn assert_channels(
 ) {
     let actual = channel_store.read_with(cx, |store, _| {
         store
-            .channels()
+            .channel_dag_entries()
             .map(|(depth, channel)| {
                 (
                     depth,

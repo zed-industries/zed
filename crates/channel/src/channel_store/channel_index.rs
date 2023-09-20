@@ -1,7 +1,7 @@
 use std::{ops::Deref, sync::Arc};
 
 use crate::{Channel, ChannelId};
-use collections::HashMap;
+use collections::BTreeMap;
 use rpc::proto;
 
 use super::ChannelPath;
@@ -9,11 +9,11 @@ use super::ChannelPath;
 #[derive(Default, Debug)]
 pub struct ChannelIndex {
     paths: Vec<ChannelPath>,
-    channels_by_id: HashMap<ChannelId, Arc<Channel>>,
+    channels_by_id: BTreeMap<ChannelId, Arc<Channel>>,
 }
 
 impl ChannelIndex {
-    pub fn by_id(&self) -> &HashMap<ChannelId, Arc<Channel>> {
+    pub fn by_id(&self) -> &BTreeMap<ChannelId, Arc<Channel>> {
         &self.channels_by_id
     }
 
@@ -53,7 +53,7 @@ impl Deref for ChannelIndex {
 #[derive(Debug)]
 pub struct ChannelPathsInsertGuard<'a> {
     paths: &'a mut Vec<ChannelPath>,
-    channels_by_id: &'a mut HashMap<ChannelId, Arc<Channel>>,
+    channels_by_id: &'a mut BTreeMap<ChannelId, Arc<Channel>>,
 }
 
 impl<'a> ChannelPathsInsertGuard<'a> {
@@ -155,7 +155,7 @@ impl<'a> Drop for ChannelPathsInsertGuard<'a> {
 
 fn channel_path_sorting_key<'a>(
     path: &'a [ChannelId],
-    channels_by_id: &'a HashMap<ChannelId, Arc<Channel>>,
+    channels_by_id: &'a BTreeMap<ChannelId, Arc<Channel>>,
 ) -> impl 'a + Iterator<Item = Option<&'a str>> {
     path.iter()
         .map(|id| Some(channels_by_id.get(id)?.name.as_str()))

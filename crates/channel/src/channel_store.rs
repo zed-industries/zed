@@ -146,17 +146,26 @@ impl ChannelStore {
         })
     }
 
+    /// Returns the number of unique channels in the store
     pub fn channel_count(&self) -> usize {
-        self.channel_index.len()
+        self.channel_index.by_id().len()
     }
 
+    /// Returns the index of a channel ID in the list of unique channels
     pub fn index_of_channel(&self, channel_id: ChannelId) -> Option<usize> {
         self.channel_index
-            .iter()
-            .position(|path| path.ends_with(&[channel_id]))
+            .by_id()
+            .keys()
+            .position(|id| *id == channel_id)
     }
 
-    pub fn channels(&self) -> impl '_ + Iterator<Item = (usize, &Arc<Channel>)> {
+    /// Returns an iterator over all unique channels
+    pub fn channels(&self) -> impl '_ + Iterator<Item = &Arc<Channel>> {
+        self.channel_index.by_id().values()
+    }
+
+    /// Iterate over all entries in the channel DAG
+    pub fn channel_dag_entries(&self) -> impl '_ + Iterator<Item = (usize, &Arc<Channel>)> {
         self.channel_index.iter().map(move |path| {
             let id = path.last().unwrap();
             let channel = self.channel_for_id(*id).unwrap();
@@ -164,12 +173,16 @@ impl ChannelStore {
         })
     }
 
-    pub fn channel_at_index(&self, ix: usize) -> Option<(&Arc<Channel>, &ChannelPath)> {
+    pub fn channel_dag_entry_at(&self, ix: usize) -> Option<(&Arc<Channel>, &ChannelPath)> {
         let path = self.channel_index.get(ix)?;
         let id = path.last().unwrap();
         let channel = self.channel_for_id(*id).unwrap();
 
         Some((channel, path))
+    }
+
+    pub fn channel_at(&self, ix: usize) -> Option<&Arc<Channel>> {
+        self.channel_index.by_id().values().nth(ix)
     }
 
     pub fn channel_invitations(&self) -> &[Arc<Channel>] {

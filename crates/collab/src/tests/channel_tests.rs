@@ -56,7 +56,10 @@ async fn test_core_channels(
     );
 
     client_b.channel_store().read_with(cx_b, |channels, _| {
-        assert!(channels.channels().collect::<Vec<_>>().is_empty())
+        assert!(channels
+            .channel_dag_entries()
+            .collect::<Vec<_>>()
+            .is_empty())
     });
 
     // Invite client B to channel A as client A.
@@ -1170,7 +1173,7 @@ fn assert_channels(
 ) {
     let actual = channel_store.read_with(cx, |store, _| {
         store
-            .channels()
+            .channel_dag_entries()
             .map(|(depth, channel)| ExpectedChannel {
                 depth,
                 name: channel.name.clone(),
@@ -1192,7 +1195,7 @@ fn assert_channels_list_shape(
 
     let actual = channel_store.read_with(cx, |store, _| {
         store
-            .channels()
+            .channel_dag_entries()
             .map(|(depth, channel)| (channel.id, depth))
             .collect::<Vec<_>>()
     });
