@@ -37,8 +37,15 @@ const prettierPath = path.join(prettierContainerPath, 'node_modules/prettier');
 
 async function handleBuffer(prettier) {
     for await (let messageText of readStdin()) {
-        handleMessage(messageText, prettier).catch(e => {
-            sendResponse(makeError(`error during message handling: ${e}`));
+        let message;
+        try {
+            message = JSON.parse(messageText);
+        } catch (e) {
+            sendResponse(makeError(`Failed to parse message '${messageText}': ${e}`));
+            continue;
+        }
+        handleMessage(message, prettier).catch(e => {
+            sendResponse({ id: message.id, ...makeError(`error during message handling: ${e}`) });
         });
     }
 }
@@ -117,22 +124,21 @@ async function* readStdin() {
 // ?
 // shutdown
 // error
-async function handleMessage(messageText, prettier) {
-    const message = JSON.parse(messageText);
+async function handleMessage(message, prettier) {
     const { method, id, params } = message;
     if (method === undefined) {
-        throw new Error(`Message method is undefined: ${messageText}`);
+        throw new Error(`Message method is undefined: ${JSON.stringify(message)}`);
     }
     if (id === undefined) {
-        throw new Error(`Message id is undefined: ${messageText}`);
+        throw new Error(`Message id is undefined: ${JSON.stringify(message)}`);
     }
 
     if (method === 'prettier/format') {
         if (params === undefined || params.text === undefined) {
-            throw new Error(`Message params.text is undefined: ${messageText}`);
+            throw new Error(`Message params.text is undefined: ${JSON.stringify(message)}`);
         }
         if (params.options === undefined) {
-            throw new Error(`Message params.options is undefined: ${messageText}`);
+            throw new Error(`Message params.options is undefined: ${JSON.stringify(message)}`);
         }
         const formattedText = await prettier.format(params.text, params.options);
         sendResponse({ id, result: { text: formattedText } });
