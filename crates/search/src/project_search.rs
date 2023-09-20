@@ -2,8 +2,8 @@ use crate::{
     history::SearchHistory,
     mode::{SearchMode, Side},
     search_bar::{render_nav_button, render_option_button_icon, render_search_mode_button},
-    ActivateRegexMode, CycleMode, NextHistoryQuery, PreviousHistoryQuery, SearchOptions,
-    SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
+    ActivateRegexMode, ActivateSemanticMode, CycleMode, NextHistoryQuery, PreviousHistoryQuery,
+    SearchOptions, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
 };
 use anyhow::{Context, Result};
 use collections::HashMap;
@@ -63,6 +63,12 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(ProjectSearchBar::next_history_query);
     cx.add_action(ProjectSearchBar::previous_history_query);
     cx.add_action(ProjectSearchBar::activate_regex_mode);
+
+    // This action should only be registered if the semantic index is enabled
+    if SemanticIndex::enabled(cx) {
+        cx.add_action(ProjectSearchBar::activate_semantic_mode);
+    }
+
     cx.capture_action(ProjectSearchBar::tab);
     cx.capture_action(ProjectSearchBar::tab_previous);
     add_toggle_option_action::<ToggleCaseSensitive>(SearchOptions::CASE_SENSITIVE, cx);
@@ -1342,6 +1348,23 @@ impl ProjectSearchBar {
         {
             search_view.update(cx, |view, cx| {
                 view.activate_search_mode(SearchMode::Regex, cx)
+            });
+        } else {
+            cx.propagate_action();
+        }
+    }
+
+    fn activate_semantic_mode(
+        pane: &mut Pane,
+        _: &ActivateSemanticMode,
+        cx: &mut ViewContext<Pane>,
+    ) {
+        if let Some(search_view) = pane
+            .active_item()
+            .and_then(|item| item.downcast::<ProjectSearchView>())
+        {
+            search_view.update(cx, |view, cx| {
+                view.activate_search_mode(SearchMode::Semantic, cx)
             });
         } else {
             cx.propagate_action();
