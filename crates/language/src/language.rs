@@ -1018,6 +1018,10 @@ impl LanguageRegistry {
                 .log_err();
         })
     }
+
+    pub fn next_language_server_id(&self) -> LanguageServerId {
+        self.state.write().next_language_server_id()
+    }
 }
 
 impl LanguageRegistryState {
