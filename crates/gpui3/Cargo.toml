@@ -35,6 +35,7 @@ num_cpus = "1.13"
 ordered-float.workspace = true
 parking = "2.0.0"
 parking_lot.workspace = true
+pathfinder_geometry = "0.5"
 postage.workspace = true
 rand.workspace = true
 refineable.workspace = true

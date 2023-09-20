@@ -6,13 +6,26 @@ mod mac;
 mod test;
 
 use crate::{
-    AnyWindowHandle, Bounds, FontFeatures, FontId, FontMetrics, FontStyle, FontWeight, GlyphId,
-    LineLayout, Pixels, Point, RunStyle, SharedString, Size,
+    AnyWindowHandle, Bounds, FontFeatures, FontId, FontMetrics, FontStyle, FontWeight,
+    ForegroundExecutor, GlyphId, LineLayout, Pixels, Point, Result, RunStyle, SharedString, Size,
 };
+use anyhow::anyhow;
 use async_task::Runnable;
 use futures::channel::oneshot;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
-use std::{any::Any, fmt::Debug, ops::Range, rc::Rc, sync::Arc};
+use seahash::SeaHasher;
+use serde::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
+use std::{
+    any::Any,
+    fmt::{self, Debug, Display},
+    ops::Range,
+    path::{Path, PathBuf},
+    rc::Rc,
+    str::FromStr,
+    sync::Arc,
+};
+pub use time::UtcOffset;
 use uuid::Uuid;
 
 pub use events::*;
@@ -22,15 +35,64 @@ pub use mac::*;
 #[cfg(any(test, feature = "test"))]
 pub use test::*;
 
-pub trait Platform {
-    fn dispatcher(&self) -> Arc<dyn PlatformDispatcher>;
-    fn font_system(&self) -> Arc<dyn PlatformTextSystem>;
+// #[cfg(target_os = "macos")]
+// pub fn current() -> Rc<dyn Platform> {
+//     MacPlatform
+// }
 
+pub trait Platform {
+    fn executor(&self) -> Rc<ForegroundExecutor>;
+    fn text_system(&self) -> Arc<dyn PlatformTextSystem>;
+
+    fn run(&self, on_finish_launching: Box<dyn FnOnce()>);
+    fn quit(&self);
+    fn restart(&self);
+    fn activate(&self, ignoring_other_apps: bool);
+    fn hide(&self);
+    fn hide_other_apps(&self);
+    fn unhide_other_apps(&self);
+
+    fn screens(&self) -> Vec<Rc<dyn PlatformScreen>>;
+    fn screen_by_id(&self, id: uuid::Uuid) -> Option<Rc<dyn PlatformScreen>>;
+    fn main_window(&self) -> Option<AnyWindowHandle>;
     fn open_window(
         &self,
         handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow>;
+    // fn add_status_item(&self, _handle: AnyWindowHandle) -> Box<dyn PlatformWindow>;
+
+    fn open_url(&self, url: &str);
+    fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>);
+    fn prompt_for_paths(
+        &self,
+        options: PathPromptOptions,
+    ) -> oneshot::Receiver<Option<Vec<PathBuf>>>;
+    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>>;
+    fn reveal_path(&self, path: &Path);
+
+    fn on_become_active(&self, callback: Box<dyn FnMut()>);
+    fn on_resign_active(&self, callback: Box<dyn FnMut()>);
+    fn on_quit(&self, callback: Box<dyn FnMut()>);
+    fn on_reopen(&self, callback: Box<dyn FnMut()>);
+    fn on_event(&self, callback: Box<dyn FnMut(Event) -> bool>);
+
+    fn os_name(&self) -> &'static str;
+    fn os_version(&self) -> Result<SemanticVersion>;
+    fn app_version(&self) -> Result<SemanticVersion>;
+    fn app_path(&self) -> Result<PathBuf>;
+    fn local_timezone(&self) -> UtcOffset;
+    fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
+
+    fn set_cursor_style(&self, style: CursorStyle);
+    fn should_auto_hide_scrollbars(&self) -> bool;
+
+    fn write_to_clipboard(&self, item: ClipboardItem);
+    fn read_from_clipboard(&self) -> Option<ClipboardItem>;
+
+    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Result<()>;
+    fn read_credentials(&self, url: &str) -> Result<Option<(String, Vec<u8>)>>;
+    fn delete_credentials(&self, url: &str) -> Result<()>;
 }
 
 pub trait PlatformScreen: Debug {
@@ -90,12 +152,9 @@ pub trait PlatformTextSystem: Send + Sync {
         style: FontStyle,
     ) -> anyhow::Result<FontId>;
     fn font_metrics(&self, font_id: FontId) -> FontMetrics;
-    fn typographic_bounds(
-        &self,
-        font_id: FontId,
-        glyph_id: GlyphId,
-    ) -> anyhow::Result<Bounds<Pixels>>;
-    fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> anyhow::Result<Point<Pixels>>;
+    fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId)
+        -> anyhow::Result<Bounds<f32>>;
+    fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> anyhow::Result<Size<f32>>;
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId>;
     fn rasterize_glyph(
         &self,
@@ -223,4 +282,110 @@ pub enum WindowPromptLevel {
     Info,
     Warning,
     Critical,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct PathPromptOptions {
+    pub files: bool,
+    pub directories: bool,
+    pub multiple: bool,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum PromptLevel {
+    Info,
+    Warning,
+    Critical,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum CursorStyle {
+    Arrow,
+    ResizeLeftRight,
+    ResizeUpDown,
+    PointingHand,
+    IBeam,
+}
+
+impl Default for CursorStyle {
+    fn default() -> Self {
+        Self::Arrow
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SemanticVersion {
+    major: usize,
+    minor: usize,
+    patch: usize,
+}
+
+impl FromStr for SemanticVersion {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        let mut components = s.trim().split('.');
+        let major = components
+            .next()
+            .ok_or_else(|| anyhow!("missing major version number"))?
+            .parse()?;
+        let minor = components
+            .next()
+            .ok_or_else(|| anyhow!("missing minor version number"))?
+            .parse()?;
+        let patch = components
+            .next()
+            .ok_or_else(|| anyhow!("missing patch version number"))?
+            .parse()?;
+        Ok(Self {
+            major,
+            minor,
+            patch,
+        })
+    }
+}
+
+impl Display for SemanticVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClipboardItem {
+    pub(crate) text: String,
+    pub(crate) metadata: Option<String>,
+}
+
+impl ClipboardItem {
+    pub fn new(text: String) -> Self {
+        Self {
+            text,
+            metadata: None,
+        }
+    }
+
+    pub fn with_metadata<T: Serialize>(mut self, metadata: T) -> Self {
+        self.metadata = Some(serde_json::to_string(&metadata).unwrap());
+        self
+    }
+
+    pub fn text(&self) -> &String {
+        &self.text
+    }
+
+    pub fn metadata<T>(&self) -> Option<T>
+    where
+        T: for<'a> Deserialize<'a>,
+    {
+        self.metadata
+            .as_ref()
+            .and_then(|m| serde_json::from_str(m).ok())
+    }
+
+    pub(crate) fn text_hash(text: &str) -> u64 {
+        let mut hasher = SeaHasher::new();
+        text.hash(&mut hasher);
+        hasher.finish()
+    }
 }

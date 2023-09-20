@@ -1,3 +1,5 @@
+use crate::{text::GlyphId, FontId};
+
 use super::{Bounds, Hsla, Pixels, Point};
 use bytemuck::{Pod, Zeroable};
 use plane_split::BspSplitter;
@@ -39,7 +41,7 @@ impl Scene {
 #[derive(Clone, Debug)]
 pub enum Primitive {
     Quad(Quad),
-    Glyph(Glyph),
+    Glyph(RenderedGlyph),
     Underline(Underline),
 }
 
@@ -58,7 +60,7 @@ impl Primitive {
 #[derive(Default)]
 pub struct PrimitiveBatch {
     pub quads: Vec<Quad>,
-    pub glyphs: Vec<Glyph>,
+    pub glyphs: Vec<RenderedGlyph>,
     pub underlines: Vec<Underline>,
 }
 
@@ -96,26 +98,24 @@ unsafe impl Zeroable for Quad {}
 
 unsafe impl Pod for Quad {}
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-pub struct GlyphId(u32);
-
-#[derive(Clone, Debug)]
-pub struct Glyph {
-    pub id: GlyphId,
-    pub position: Point<Pixels>,
-    pub color: Hsla,
-    pub index: usize,
-    pub is_emoji: bool,
-}
-
 impl From<Quad> for Primitive {
     fn from(quad: Quad) -> Self {
         Primitive::Quad(quad)
     }
 }
 
-impl From<Glyph> for Primitive {
-    fn from(glyph: Glyph) -> Self {
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct RenderedGlyph {
+    pub font_id: FontId,
+    pub font_size: f32,
+    pub id: GlyphId,
+    pub origin: Point<Pixels>,
+    pub color: Hsla,
+}
+
+impl From<RenderedGlyph> for Primitive {
+    fn from(glyph: RenderedGlyph) -> Self {
         Primitive::Glyph(glyph)
     }
 }

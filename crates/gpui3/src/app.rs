@@ -1,14 +1,19 @@
+use crate::{
+    Context, FontCache, LayoutId, Platform, Reference, View, Window, WindowContext, WindowHandle,
+    WindowId,
+};
 use anyhow::{anyhow, Result};
 use slotmap::SlotMap;
-use std::{any::Any, marker::PhantomData, rc::Rc, sync::Arc};
+use std::{any::Any, cell::RefCell, marker::PhantomData, rc::Rc, sync::Arc};
 
-use crate::FontCache;
+#[derive(Clone)]
+pub struct App(Rc<RefCell<AppContext>>);
 
-use super::{
-    platform::Platform,
-    window::{Window, WindowHandle, WindowId},
-    Context, LayoutId, Reference, View, WindowContext,
-};
+impl App {
+    pub fn new(platform: Rc<dyn Platform>) -> Self {
+        Self(Rc::new(RefCell::new(AppContext::new(platform))))
+    }
+}
 
 pub struct AppContext {
     platform: Rc<dyn Platform>,
@@ -21,7 +26,7 @@ pub struct AppContext {
 
 impl AppContext {
     pub fn new(platform: Rc<dyn Platform>) -> Self {
-        let font_cache = Arc::new(FontCache::new(platform.font_system()));
+        let font_cache = Arc::new(FontCache::new(platform.text_system()));
         AppContext {
             platform,
             font_cache,

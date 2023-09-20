@@ -246,6 +246,12 @@ impl std::hash::Hash for Pixels {
     }
 }
 
+impl From<f64> for Pixels {
+    fn from(val: f64) -> Self {
+        Pixels(val as f32)
+    }
+}
+
 unsafe impl bytemuck::Pod for Pixels {}
 unsafe impl bytemuck::Zeroable for Pixels {}
 

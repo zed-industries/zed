@@ -13,22 +13,16 @@ test-support = []
 
 [dependencies]
 anyhow.workspace = true
-bytemuck = "1.14.0"
 derive_more.workspace = true
 gpui2 = { path = "../gpui2" }
-itertools = "0.11.0"
 log.workspace = true
-plane-split = "0.18.0"
-raw-window-handle = "0.5.2"
 refineable = { path = "../refineable" }
 rust-embed.workspace = true
 serde.workspace = true
 settings = { path = "../settings" }
 simplelog = "0.9"
-slotmap = "1.0.6"
 theme = { path = "../theme" }
 util = { path = "../util" }
-wgpu = "0.17.0"
 
 [dev-dependencies]
 gpui2 = { path = "../gpui2", features = ["test-support"] }

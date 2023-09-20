@@ -34,6 +34,7 @@ pub use styled::*;
 pub use taffy::LayoutId;
 use taffy::TaffyLayoutEngine;
 use text::*;
+pub use text::{Glyph, GlyphId};
 pub use util::arc_cow::ArcCow;
 pub use window::*;
 

@@ -619,7 +619,7 @@ impl ExecutorEvent {
 }
 
 impl ForegroundExecutor {
-    pub fn platform(dispatcher: Arc<dyn PlatformDispatcher>) -> Result<Self> {
+    pub fn new(dispatcher: Arc<dyn PlatformDispatcher>) -> Result<Self> {
         if dispatcher.is_main_thread() {
             Ok(Self::Platform {
                 dispatcher,

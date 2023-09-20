@@ -1,8 +1,7 @@
 use crate::{black, px};
 
 use super::{
-    point, Bounds, FontId, Glyph, Hsla, Pixels, PlatformTextSystem, Point, UnderlineStyle,
-    WindowContext,
+    point, Bounds, FontId, Hsla, Pixels, PlatformTextSystem, Point, UnderlineStyle, WindowContext,
 };
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
@@ -25,6 +24,35 @@ pub struct RunStyle {
     pub color: Hsla,
     pub font_id: FontId,
     pub underline: Option<UnderlineStyle>,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub struct GlyphId(u32);
+
+impl From<GlyphId> for u32 {
+    fn from(value: GlyphId) -> Self {
+        value.0
+    }
+}
+
+impl From<u16> for GlyphId {
+    fn from(num: u16) -> Self {
+        GlyphId(num as u32)
+    }
+}
+
+impl From<u32> for GlyphId {
+    fn from(num: u32) -> Self {
+        GlyphId(num)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Glyph {
+    pub id: GlyphId,
+    pub position: Point<Pixels>,
+    pub index: usize,
+    pub is_emoji: bool,
 }
 
 impl TextLayoutCache {
@@ -726,7 +754,7 @@ mod tests {
         let cx = AppContext::test();
 
         let font_cache = cx.font_cache().clone();
-        let font_system = cx.platform().font_system();
+        let font_system = cx.platform().text_system();
         let family = font_cache
             .load_family(&["Courier"], &Default::default())
             .unwrap();
@@ -793,7 +821,7 @@ mod tests {
     fn test_wrap_shaped_line() {
         let cx = AppContext::test();
         let font_cache = cx.font_cache().clone();
-        let font_system = cx.platform().font_system();
+        let font_system = cx.platform().text_system();
         let text_layout_cache = TextLayoutCache::new(font_system.clone());
 
         let family = font_cache

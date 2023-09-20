@@ -245,7 +245,7 @@ impl FontCache {
                 .typographic_bounds(font_id, glyph_id)
                 .unwrap();
         }
-        bounds.size.width * self.em_size(font_id, font_size)
+        self.em_size(font_id, font_size) * bounds.size.width
     }
 
     pub fn em_advance(&self, font_id: FontId, font_size: Pixels) -> Pixels {
@@ -256,7 +256,7 @@ impl FontCache {
             glyph_id = state.font_system.glyph_for_char(font_id, 'm').unwrap();
             advance = state.font_system.advance(font_id, glyph_id).unwrap();
         }
-        advance.x * self.em_size(font_id, font_size)
+        self.em_size(font_id, font_size) * advance.width
     }
 
     pub fn line_height(&self, font_size: Pixels) -> Pixels {
@@ -356,7 +356,7 @@ mod tests {
     #[test]
     fn test_select_font() {
         let platform = TestPlatform::new();
-        let fonts = FontCache::new(platform.font_system());
+        let fonts = FontCache::new(platform.text_system());
         let arial = fonts
             .load_family(
                 &["Arial"],

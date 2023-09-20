@@ -983,7 +983,7 @@ dependencies = [
  "collections",
  "editor",
  "gpui",
- "itertools 0.10.5",
+ "itertools",
  "language",
  "outline",
  "project",
@@ -1960,7 +1960,7 @@ dependencies = [
  "cranelift-codegen",
  "cranelift-entity",
  "cranelift-frontend",
- "itertools 0.10.5",
+ "itertools",
  "log",
  "smallvec",
  "wasmparser",
@@ -2392,7 +2392,7 @@ dependencies = [
  "git",
  "gpui",
  "indoc",
- "itertools 0.10.5",
+ "itertools",
  "language",
  "lazy_static",
  "log",
@@ -3273,7 +3273,7 @@ dependencies = [
  "futures 0.3.28",
  "gpui_macros",
  "image",
- "itertools 0.10.5",
+ "itertools",
  "lazy_static",
  "log",
  "media",
@@ -3365,7 +3365,7 @@ dependencies = [
  "futures 0.3.28",
  "gpui_macros",
  "image",
- "itertools 0.10.5",
+ "itertools",
  "lazy_static",
  "log",
  "media",
@@ -3374,6 +3374,7 @@ dependencies = [
  "ordered-float",
  "parking",
  "parking_lot 0.11.2",
+ "pathfinder_geometry",
  "plane-split",
  "png",
  "postage",
@@ -3967,15 +3968,6 @@ name = "itertools"
 version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
 dependencies = [
  "either",
 ]
@@ -5772,7 +5764,7 @@ dependencies = [
  "globset",
  "gpui",
  "ignore",
- "itertools 0.10.5",
+ "itertools",
  "language",
  "lazy_static",
  "log",
@@ -5896,7 +5888,7 @@ checksum = "62941722fb675d463659e49c4f3fe1fe792ff24fe5bbaa9c08cd3b98a1c354f5"
 dependencies = [
  "bytes 1.4.0",
  "heck 0.3.3",
- "itertools 0.10.5",
+ "itertools",
  "lazy_static",
  "log",
  "multimap",
@@ -5915,7 +5907,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "600d2f334aa05acb02a755e217ef1ab6dea4d51b58b7846588b747edec04efba"
 dependencies = [
  "anyhow",
- "itertools 0.10.5",
+ "itertools",
  "proc-macro2",
  "quote",
  "syn 1.0.109",
@@ -5928,7 +5920,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9cc1a3263e07e0bf68e96268f37665207b49560d98739662cdfaae215c720fe"
 dependencies = [
  "anyhow",
- "itertools 0.10.5",
+ "itertools",
  "proc-macro2",
  "quote",
  "syn 1.0.109",
@@ -7568,7 +7560,7 @@ version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c12bc9199d1db8234678b7051747c07f517cdcf019262d1847b94ec8b1aee3e"
 dependencies = [
- "itertools 0.10.5",
+ "itertools",
  "nom",
  "unicode_categories",
 ]
@@ -7692,22 +7684,16 @@ name = "storybook"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bytemuck",
  "derive_more",
  "gpui2",
- "itertools 0.11.0",
  "log",
- "plane-split",
- "raw-window-handle",
  "refineable",
  "rust-embed",
  "serde",
  "settings",
  "simplelog",
- "slotmap",
  "theme",
  "util",
- "wgpu",
 ]
 
 [[package]]
@@ -7977,7 +7963,7 @@ dependencies = [
  "dirs 4.0.0",
  "futures 0.3.28",
  "gpui",
- "itertools 0.10.5",
+ "itertools",
  "lazy_static",
  "libc",
  "mio-extras",
@@ -8008,7 +7994,7 @@ dependencies = [
  "editor",
  "futures 0.3.28",
  "gpui",
- "itertools 0.10.5",
+ "itertools",
  "language",
  "lazy_static",
  "libc",
@@ -9190,7 +9176,7 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "indoc",
- "itertools 0.10.5",
+ "itertools",
  "language",
  "language_selector",
  "log",
@@ -10137,7 +10123,7 @@ dependencies = [
  "gpui",
  "indoc",
  "install_cli",
- "itertools 0.10.5",
+ "itertools",
  "language",
  "lazy_static",
  "log",

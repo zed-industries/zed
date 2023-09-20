@@ -2,17 +2,12 @@
 ///! an origin at the bottom left of the main display.
 mod dispatcher;
 mod events;
+mod open_type;
 mod platform;
 mod screen;
+mod text_system;
 mod window;
 mod window_appearence;
-
-use std::{
-    ffi::{c_char, CStr, OsStr},
-    ops::Range,
-    os::unix::prelude::OsStrExt,
-    path::PathBuf,
-};
 
 use crate::{px, size, Pixels, Size};
 use anyhow::anyhow;
@@ -25,8 +20,17 @@ use objc::{
     runtime::{BOOL, NO, YES},
     sel, sel_impl,
 };
+use std::{
+    ffi::{c_char, CStr, OsStr},
+    ops::Range,
+    os::unix::prelude::OsStrExt,
+    path::PathBuf,
+};
+
+pub use dispatcher::*;
 pub use platform::*;
 pub use screen::*;
+pub use text_system::*;
 pub use window::*;
 
 trait BoolExt {
