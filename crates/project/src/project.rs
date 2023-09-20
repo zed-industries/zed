@@ -8283,12 +8283,29 @@ impl Project {
                 return existing_prettier;
             }
 
-            let start_task = Prettier::start(prettier_dir.clone(), node, cx.clone());
+            let task_prettier_dir = prettier_dir.clone();
+            let weak_project = this.downgrade();
+            let new_server_id =
+                this.update(&mut cx, |this, _| this.languages.next_language_server_id());
             let new_prettier_task = cx
-                .background()
-                .spawn(async move {
-                    Ok(Arc::new(start_task.await.context("starting new prettier")?))
-                        .map_err(Arc::new)
+                .spawn(|mut cx| async move {
+                    let prettier =
+                        Prettier::start(new_server_id, task_prettier_dir, node, cx.clone())
+                            .await
+                            .context("prettier start")
+                            .map_err(Arc::new)?;
+                    if let Some(project) = weak_project.upgrade(&mut cx) {
+                        let prettier_server = Arc::clone(prettier.server());
+                        project.update(&mut cx, |project, cx| {
+                            project.supplementary_language_servers.insert(
+                                new_server_id,
+                                // TODO kb same name repeats for different prettiers, distinguish
+                                (LanguageServerName(Arc::from("prettier")), prettier_server),
+                            );
+                            cx.emit(Event::LanguageServerAdded(new_server_id));
+                        });
+                    }
+                    anyhow::Ok(Arc::new(prettier)).map_err(Arc::new)
                 })
                 .shared();
             this.update(&mut cx, |project, _| {

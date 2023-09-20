@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use fs::Fs;
-use gpui::{AsyncAppContext, ModelHandle, Task};
+use gpui::{AsyncAppContext, ModelHandle};
 use language::language_settings::language_settings;
 use language::{Buffer, BundledFormatter, Diff};
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId};
@@ -147,40 +147,42 @@ impl Prettier {
         }
     }
 
-    pub fn start(
+    pub async fn start(
+        server_id: LanguageServerId,
         prettier_dir: PathBuf,
         node: Arc<dyn NodeRuntime>,
         cx: AsyncAppContext,
-    ) -> Task<anyhow::Result<Self>> {
-        cx.spawn(|cx| async move {
-            anyhow::ensure!(
-                prettier_dir.is_dir(),
-                "Prettier dir {prettier_dir:?} is not a directory"
-            );
-            let prettier_server = DEFAULT_PRETTIER_DIR.join(PRETTIER_SERVER_FILE);
-            anyhow::ensure!(
-                prettier_server.is_file(),
-                "no prettier server package found at {prettier_server:?}"
-            );
+    ) -> anyhow::Result<Self> {
+        let backgroud = cx.background();
+        anyhow::ensure!(
+            prettier_dir.is_dir(),
+            "Prettier dir {prettier_dir:?} is not a directory"
+        );
+        let prettier_server = DEFAULT_PRETTIER_DIR.join(PRETTIER_SERVER_FILE);
+        anyhow::ensure!(
+            prettier_server.is_file(),
+            "no prettier server package found at {prettier_server:?}"
+        );
 
-            let node_path = node.binary_path().await?;
-            let server = LanguageServer::new(
-                LanguageServerId(0),
-                LanguageServerBinary {
-                    path: node_path,
-                    arguments: vec![prettier_server.into(), prettier_dir.into()],
-                },
-                Path::new("/"),
-                None,
-                cx,
-            )
-            .context("prettier server creation")?;
-            let server = server
-                .initialize(None)
-                .await
-                .context("prettier server initialization")?;
-            Ok(Self { server })
-        })
+        let node_path = backgroud
+            .spawn(async move { node.binary_path().await })
+            .await?;
+        let server = LanguageServer::new(
+            server_id,
+            LanguageServerBinary {
+                path: node_path,
+                arguments: vec![prettier_server.into(), prettier_dir.into()],
+            },
+            Path::new("/"),
+            None,
+            cx,
+        )
+        .context("prettier server creation")?;
+        let server = backgroud
+            .spawn(server.initialize(None))
+            .await
+            .context("prettier server initialization")?;
+        Ok(Self { server })
     }
 
     pub async fn format(
@@ -227,6 +229,10 @@ impl Prettier {
 
     pub async fn clear_cache(&self) -> anyhow::Result<()> {
         todo!()
+    }
+
+    pub fn server(&self) -> &Arc<LanguageServer> {
+        &self.server
     }
 }
 
