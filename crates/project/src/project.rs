@@ -8038,7 +8038,7 @@ fn subscribe_for_copilot_events(
     cx.subscribe(
         copilot,
         |project, copilot, copilot_event, cx| match copilot_event {
-            copilot::Event::CopilotReady => {
+            copilot::Event::CopilotLanguageServerStarted => {
                 if let Some((name, copilot_server)) = copilot.read(cx).language_server() {
                     let new_server_id = copilot_server.server_id();
                     if let hash_map::Entry::Vacant(v) =

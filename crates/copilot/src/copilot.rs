@@ -277,7 +277,7 @@ pub struct Copilot {
 }
 
 pub enum Event {
-    CopilotReady,
+    CopilotLanguageServerStarted,
 }
 
 impl Entity for Copilot {
@@ -431,6 +431,7 @@ impl Copilot {
                             sign_in_status: SignInStatus::SignedOut,
                             registered_buffers: Default::default(),
                         });
+                        cx.emit(Event::CopilotLanguageServerStarted);
                         this.update_sign_in_status(status, cx);
                     }
                     Err(error) => {
@@ -873,7 +874,6 @@ impl Copilot {
                             self.register_buffer(&buffer, cx);
                         }
                     }
-                    cx.emit(Event::CopilotReady);
                 }
                 request::SignInStatus::NotAuthorized { .. } => {
                     server.sign_in_status = SignInStatus::Unauthorized;
