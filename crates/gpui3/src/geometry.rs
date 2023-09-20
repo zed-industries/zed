@@ -2,9 +2,11 @@ use bytemuck::{Pod, Zeroable};
 use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, Mul, Sub, SubAssign};
 use refineable::Refineable;
-use std::ops::{Add, Mul};
+use std::ops::{Add, Mul, Sub, SubAssign};
 
-#[derive(Refineable, Default, Add, AddAssign, Sub, Mul, Div, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(
+    Refineable, Default, Add, AddAssign, Sub, SubAssign, Mul, Div, Copy, Debug, PartialEq, Eq, Hash,
+)]
 #[refineable(debug)]
 #[repr(C)]
 pub struct Point<T: Clone + Debug> {
@@ -25,6 +27,30 @@ impl<T: Clone + Debug> Point<T> {
         Point {
             x: f(self.x.clone()),
             y: f(self.y.clone()),
+        }
+    }
+}
+
+impl<T: Clone + Debug + Sub<Output = T>> SubAssign<Size<T>> for Point<T> {
+    fn sub_assign(&mut self, rhs: Size<T>) {
+        self.x = self.x.clone() - rhs.width;
+        self.y = self.y.clone() - rhs.height;
+    }
+}
+
+impl<T: Clone + Debug + std::cmp::PartialOrd> Point<T> {
+    pub fn max(&self, other: &Self) -> Self {
+        Point {
+            x: if self.x >= other.x {
+                self.x.clone()
+            } else {
+                other.x.clone()
+            },
+            y: if self.y >= other.y {
+                self.y.clone()
+            } else {
+                other.y.clone()
+            },
         }
     }
 }
@@ -93,6 +119,22 @@ impl<T: Clone + Debug + Copy + Add<T, Output = T>> Bounds<T> {
             x: self.origin.x + self.size.width,
             y: self.origin.y,
         }
+    }
+
+    pub fn lower_right(&self) -> Point<T> {
+        Point {
+            x: self.origin.x + self.size.width,
+            y: self.origin.y + self.size.height,
+        }
+    }
+}
+
+impl<T: Clone + Debug + Copy + PartialOrd + Add<T, Output = T>> Bounds<T> {
+    pub fn contains_point(&self, point: Point<T>) -> bool {
+        point.x >= self.origin.x
+            && point.x <= self.origin.x + self.size.width
+            && point.y >= self.origin.y
+            && point.y <= self.origin.y + self.size.height
     }
 }
 
@@ -168,9 +210,9 @@ impl Edges<Pixels> {
 #[repr(transparent)]
 pub struct Pixels(pub(crate) f32);
 
-impl From<Pixels> for f64 {
-    fn from(pixels: Pixels) -> Self {
-        pixels.0.into()
+impl Pixels {
+    pub fn round(&self) -> Self {
+        Self(self.0.round())
     }
 }
 
@@ -187,12 +229,6 @@ impl Mul<Pixels> for Pixels {
 
     fn mul(self, rhs: Pixels) -> Self::Output {
         Pixels(self.0 * rhs.0)
-    }
-}
-
-impl Pixels {
-    pub fn round(&self) -> Self {
-        Self(self.0.round())
     }
 }
 
@@ -228,6 +264,12 @@ impl From<Pixels> for f32 {
 impl From<&Pixels> for f32 {
     fn from(pixels: &Pixels) -> Self {
         pixels.0
+    }
+}
+
+impl From<Pixels> for f64 {
+    fn from(pixels: Pixels) -> Self {
+        pixels.0 as f64
     }
 }
 

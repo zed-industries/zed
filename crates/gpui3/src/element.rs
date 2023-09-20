@@ -1,3 +1,5 @@
+use smallvec::SmallVec;
+
 use super::{Handle, Layout, LayoutId, Pixels, Point, Result, ViewContext, WindowContext};
 use std::{any::Any, cell::RefCell, marker::PhantomData, rc::Rc};
 
@@ -21,7 +23,15 @@ pub trait Element: 'static {
 }
 
 pub trait ParentElement<S> {
-    fn child(self, child: impl IntoAnyElement<S>) -> Self;
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<S>; 2]>;
+
+    fn child(mut self, child: impl IntoAnyElement<S>) -> Self
+    where
+        Self: Sized,
+    {
+        self.children_mut().push(child.into_any());
+        self
+    }
 }
 
 trait ElementObject<S> {

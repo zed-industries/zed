@@ -28,7 +28,6 @@ use objc::{
 pub use platform::*;
 pub use screen::*;
 pub use window::*;
-use window_appearence::*;
 
 trait BoolExt {
     fn to_objc(self) -> BOOL;

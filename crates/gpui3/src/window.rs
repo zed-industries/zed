@@ -1,4 +1,4 @@
-use crate::PlatformWindow;
+use crate::{PlatformWindow, Point, TextStyleRefinement};
 
 use super::{
     px, taffy::LayoutId, AppContext, Bounds, Context, EntityId, Handle, Pixels, Reference, Style,
@@ -18,6 +18,7 @@ pub struct Window {
     platform_window: Box<dyn PlatformWindow>,
     rem_size: Pixels,
     layout_engine: TaffyLayoutEngine,
+    text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) root_view: Option<Box<dyn Any>>,
 }
 
@@ -28,6 +29,7 @@ impl Window {
             platform_window,
             rem_size: px(16.),
             layout_engine: TaffyLayoutEngine::new(),
+            text_style_stack: Vec::new(),
             root_view: None,
         }
     }
@@ -80,6 +82,18 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub fn rem_size(&self) -> Pixels {
         self.window.rem_size
+    }
+
+    pub fn push_text_style(&mut self, text_style: TextStyleRefinement) {
+        self.window.text_style_stack.push(text_style);
+    }
+
+    pub fn pop_text_style(&mut self) {
+        self.window.text_style_stack.pop();
+    }
+
+    pub fn mouse_position(&self) -> Point<Pixels> {
+        self.window.platform_window.mouse_position()
     }
 
     fn update_window<R>(
