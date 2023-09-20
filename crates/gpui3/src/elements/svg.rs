@@ -1,75 +1,72 @@
-use crate::{
-    self as gpui2, scene,
-    style::{Style, StyleHelpers, Styleable},
-    Element, IntoElement, Layout, LayoutId, Rgba,
-};
-use gpui::geometry::vector::Vector2F;
+use crate::{Element, Layout, LayoutId, Result, Style, Styled};
 use refineable::RefinementCascade;
-use std::borrow::Cow;
-use util::ResultExt;
+use std::{borrow::Cow, marker::PhantomData};
 
-#[derive(IntoElement)]
-pub struct Svg {
+pub struct Svg<S> {
     path: Option<Cow<'static, str>>,
     style: RefinementCascade<Style>,
+    state_type: PhantomData<S>,
 }
 
-pub fn svg() -> Svg {
+pub fn svg<S>() -> Svg<S> {
     Svg {
         path: None,
         style: RefinementCascade::<Style>::default(),
+        state_type: PhantomData,
     }
 }
 
-impl Svg {
+impl<S> Svg<S> {
     pub fn path(mut self, path: impl Into<Cow<'static, str>>) -> Self {
         self.path = Some(path.into());
         self
     }
 }
 
-impl<V: 'static> Element<V> for Svg {
-    type PaintState = ();
+impl<S: 'static> Element for Svg<S> {
+    type State = S;
+    type FrameState = ();
 
     fn layout(
         &mut self,
-        _: &mut V,
-        cx: &mut crate::ViewContext<V>,
-    ) -> anyhow::Result<(LayoutId, Self::PaintState)>
+        _: &mut S,
+        cx: &mut crate::ViewContext<S>,
+    ) -> anyhow::Result<(LayoutId, Self::FrameState)>
     where
         Self: Sized,
     {
         let style = self.computed_style();
-        Ok((cx.add_layout_node(style, [])?, ()))
+        Ok((cx.request_layout(style, [])?, ()))
     }
 
     fn paint(
         &mut self,
-        _: &mut V,
-        parent_origin: Vector2F,
-        layout: &Layout,
-        _: &mut Self::PaintState,
-        cx: &mut crate::ViewContext<V>,
-    ) where
+        layout: Layout,
+        _: &mut Self::State,
+        _: &mut Self::FrameState,
+        cx: &mut crate::ViewContext<S>,
+    ) -> Result<()>
+    where
         Self: Sized,
     {
-        let fill_color = self.computed_style().fill.and_then(|fill| fill.color());
-        if let Some((path, fill_color)) = self.path.as_ref().zip(fill_color) {
-            if let Some(svg_tree) = cx.asset_cache.svg(path).log_err() {
-                let icon = scene::Icon {
-                    bounds: layout.bounds + parent_origin,
-                    svg: svg_tree,
-                    path: path.clone(),
-                    color: Rgba::from(fill_color).into(),
-                };
+        // let fill_color = self.computed_style().fill.and_then(|fill| fill.color());
+        // if let Some((path, fill_color)) = self.path.as_ref().zip(fill_color) {
+        //     if let Some(svg_tree) = cx.asset_cache.svg(path).log_err() {
+        //         let icon = scene::Icon {
+        //             bounds: layout.bounds + parent_origin,
+        //             svg: svg_tree,
+        //             path: path.clone(),
+        //             color: Rgba::from(fill_color).into(),
+        //         };
 
-                cx.scene().push_icon(icon);
-            }
-        }
+        //         cx.scene().push_icon(icon);
+        //     }
+        // }
+        Ok(())
     }
 }
 
-impl Styleable for Svg {
+impl<S> Styled for Svg<S> {
     type Style = Style;
 
     fn style_cascade(&mut self) -> &mut refineable::RefinementCascade<Self::Style> {
@@ -80,5 +77,3 @@ impl Styleable for Svg {
         self.style.base()
     }
 }
-
-impl StyleHelpers for Svg {}

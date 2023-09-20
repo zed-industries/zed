@@ -113,6 +113,19 @@ pub struct TextStyle {
     pub underline: Option<UnderlineStyle>,
 }
 
+impl Default for TextStyle {
+    fn default() -> Self {
+        TextStyle {
+            color: Hsla::default(),
+            font_family: SharedString::default(),
+            font_size: rems(1.),
+            font_weight: FontWeight::default(),
+            font_style: FontStyle::default(),
+            underline: None,
+        }
+    }
+}
+
 impl TextStyle {
     pub fn highlight(mut self, style: HighlightStyle) -> Result<Self> {
         if let Some(weight) = style.font_weight {

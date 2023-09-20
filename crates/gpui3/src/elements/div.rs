@@ -77,7 +77,7 @@ impl<S: 'static> Element for Div<S> {
         // }
 
         for child in &mut self.children {
-            child.paint(scrolled_origin, state, cx);
+            child.paint(scrolled_origin, state, cx)?;
         }
 
         // if pop_layer {

@@ -4,7 +4,7 @@ use super::{
 };
 use std::fmt::Debug;
 pub use taffy::tree::NodeId as LayoutId;
-pub use taffy::*;
+use taffy::{style::AvailableSpace, tree::MeasureFunc, *};
 pub struct TaffyLayoutEngine(Taffy);
 
 impl TaffyLayoutEngine {
@@ -26,8 +26,35 @@ impl TaffyLayoutEngine {
         }
     }
 
+    pub fn request_measured_layout(
+        &mut self,
+        style: Style,
+        rem_size: Pixels,
+        measure: impl FnOnce(Size<Option<Pixels>>, Size<AvailableSpace>) + 'static,
+    ) -> Result<LayoutId> {
+        let style = style.to_taffy(rem_size);
+
+        self.0
+            .new_leaf_with_measure(style, Box::new(Measureable(measure)))
+    }
+
     pub fn layout(&mut self, id: LayoutId) -> Result<Layout> {
         Ok(self.0.layout(id).map(Into::into)?)
+    }
+}
+
+struct Measureable<F>(F);
+
+impl<F> taffy::tree::Measurable for Measureable<F>
+where
+    F: Send + Sync + FnOnce(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels>,
+{
+    fn measure(
+        &self,
+        known_dimensions: taffy::prelude::Size<Option<f32>>,
+        available_space: taffy::prelude::Size<AvailableSpace>,
+    ) -> taffy::prelude::Size<f32> {
+        (self.0)(known_dimensions.into(), available_space.into()).into()
     }
 }
 
@@ -226,11 +253,5 @@ impl From<&taffy::tree::Layout> for Layout {
                 size: layout.size.into(),
             },
         }
-    }
-}
-
-impl From<f32> for Pixels {
-    fn from(pixels: f32) -> Self {
-        Pixels(pixels)
     }
 }

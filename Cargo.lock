@@ -3363,6 +3363,7 @@ dependencies = [
  "font-kit",
  "foreign-types 0.3.2",
  "futures 0.3.28",
+ "gpui2_macros",
  "gpui_macros",
  "image",
  "itertools",
@@ -7688,6 +7689,21 @@ dependencies = [
  "gpui2",
  "log",
  "refineable",
+ "rust-embed",
+ "serde",
+ "settings",
+ "simplelog",
+ "theme",
+ "util",
+]
+
+[[package]]
+name = "storybook2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui3",
+ "log",
  "rust-embed",
  "serde",
  "settings",

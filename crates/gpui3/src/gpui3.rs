@@ -24,6 +24,8 @@ pub use geometry::*;
 pub use platform::*;
 pub use refineable::*;
 pub use scene::*;
+pub use serde;
+pub use serde_json;
 pub use smallvec;
 pub use smol::Timer;
 use std::ops::{Deref, DerefMut};
@@ -95,51 +97,5 @@ impl<'a, T> DerefMut for Reference<'a, T> {
             }
             Reference::Mutable(target) => target,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct Workspace {
-        left_panel: AnyView<Self>,
-    }
-
-    fn workspace(cx: &mut WindowContext) -> View<Workspace> {
-        let workspace = cx.entity(|cx| Workspace {
-            left_panel: collab_panel(cx).into_any(),
-        });
-        view(workspace, |workspace, _cx| {
-            div().child(workspace.left_panel.clone())
-        })
-    }
-
-    struct CollabPanel {
-        filter_editor: Handle<editor::Editor>,
-    }
-
-    fn collab_panel(cx: &mut WindowContext) -> View<CollabPanel> {
-        let panel = cx.entity(|cx| CollabPanel::new(cx));
-        view(panel, |panel, _cx| {
-            div().child(div()).child(
-                field(panel.filter_editor.clone()).placeholder_text("Search channels, contacts"),
-            )
-        })
-    }
-
-    impl CollabPanel {
-        fn new(cx: &mut ViewContext<Self>) -> Self {
-            Self {
-                filter_editor: cx.entity(|cx| editor::Editor::new(cx)),
-            }
-        }
-    }
-
-    #[test]
-    fn test() {
-        let mut cx = AppContext::test();
-
-        cx.open_window(WindowOptions::default(), |cx| workspace(cx));
     }
 }

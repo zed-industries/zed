@@ -79,6 +79,15 @@ pub fn size<T: Clone + Debug>(width: T, height: T) -> Size<T> {
     Size { width, height }
 }
 
+impl From<Size<Option<Pixels>>> for Size<Option<f32>> {
+    fn from(val: Size<Option<Pixels>>) -> Self {
+        Size {
+            width: val.width.map(|p| p.0 as f32),
+            height: val.height.map(|p| p.0 as f32),
+        }
+    }
+}
+
 impl Size<Length> {
     pub fn full() -> Self {
         Self {
@@ -249,6 +258,12 @@ impl std::hash::Hash for Pixels {
 impl From<f64> for Pixels {
     fn from(val: f64) -> Self {
         Pixels(val as f32)
+    }
+}
+
+impl From<f32> for Pixels {
+    fn from(val: f32) -> Self {
+        Pixels(val)
     }
 }
 

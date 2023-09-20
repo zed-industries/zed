@@ -1,4 +1,4 @@
-use crate::{PlatformWindow, Point, Style, TextStyleRefinement};
+use crate::{PlatformWindow, Point, Size, Style, TextStyle, TextStyleRefinement};
 
 use super::{
     px, taffy::LayoutId, AppContext, Bounds, Context, EntityId, Handle, Pixels, Reference,
@@ -6,10 +6,12 @@ use super::{
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
+use refineable::Refineable;
 use std::{
     any::{Any, TypeId},
     marker::PhantomData,
 };
+use taffy::style::AvailableSpace;
 
 pub struct AnyWindow {}
 
@@ -72,6 +74,19 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             .request_layout(style, rem_size, &self.app.layout_id_buffer)
     }
 
+    pub fn request_measured_layout<
+        F: FnOnce(Size<Option<Pixels>>, Size<AvailableSpace>) + 'static,
+    >(
+        &mut self,
+        style: Style,
+        rem_size: Pixels,
+        measure: F,
+    ) -> Result<LayoutId> {
+        self.window
+            .layout_engine
+            .request_measured_layout(style, rem_size, measure)
+    }
+
     pub fn layout(&mut self, layout_id: LayoutId) -> Result<Layout> {
         Ok(self
             .window
@@ -90,6 +105,13 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub fn pop_text_style(&mut self) {
         self.window.text_style_stack.pop();
+    }
+
+    pub fn text_style(&self) -> &Vec<TextStyle> {
+        let style = TextStyleRefinement::default();
+        for refinement in &self.window.text_style_stack {
+            style.refine(refinement);
+        }
     }
 
     pub fn mouse_position(&self) -> Point<Pixels> {

@@ -1,7 +1,8 @@
-pub mod div;
-pub mod editor;
+mod div;
+mod img;
+mod svg;
+mod text;
 
 use super::*;
 
-pub use div::div;
-pub use editor::field;
+pub use div::*;
