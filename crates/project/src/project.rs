@@ -7968,7 +7968,7 @@ impl Project {
     }
 
     pub fn language_server_for_id(&self, id: LanguageServerId) -> Option<Arc<LanguageServer>> {
-        if let LanguageServerState::Running { server, .. } = self.language_servers.get(&id)? {
+        if let Some(LanguageServerState::Running { server, .. }) = self.language_servers.get(&id) {
             Some(server.clone())
         } else if let Some((_, server)) = self.supplementary_language_servers.get(&id) {
             Some(Arc::clone(server))
