@@ -6,13 +6,11 @@ use settings::Setting;
 #[derive(Deserialize, Debug)]
 pub struct SemanticIndexSettings {
     pub enabled: bool,
-    pub reindexing_delay_seconds: usize,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct SemanticIndexSettingsContent {
     pub enabled: Option<bool>,
-    pub reindexing_delay_seconds: Option<usize>,
 }
 
 impl Setting for SemanticIndexSettings {

@@ -370,8 +370,7 @@
   },
   // Difference settings for semantic_index
   "semantic_index": {
-    "enabled": false,
-    "reindexing_delay_seconds": 600
+    "enabled": false
   },
   // Different settings for specific languages.
   "languages": {
