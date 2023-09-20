@@ -156,8 +156,8 @@ fn main() {
         project_panel::init(Assets, cx);
         channel::init(&client);
         diagnostics::init(cx);
-        semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
         search::init(cx);
+        semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
         vim::init(cx);
         terminal_view::init(cx);
         copilot::init(copilot_language_server_id, http.clone(), node_runtime, cx);

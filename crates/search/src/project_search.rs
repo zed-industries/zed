@@ -71,9 +71,9 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(ProjectSearchBar::activate_text_mode);
 
     // This action should only be registered if the semantic index is enabled
-    if SemanticIndex::enabled(cx) {
-        cx.add_action(ProjectSearchBar::activate_semantic_mode);
-    }
+    // We are registering it all the time, as I dont want to introduce a dependency
+    // for Semantic Index Settings globally whenever search is tested.
+    cx.add_action(ProjectSearchBar::activate_semantic_mode);
 
     cx.capture_action(ProjectSearchBar::tab);
     cx.capture_action(ProjectSearchBar::tab_previous);
@@ -1449,15 +1449,17 @@ impl ProjectSearchBar {
         _: &ActivateSemanticMode,
         cx: &mut ViewContext<Pane>,
     ) {
-        if let Some(search_view) = pane
-            .active_item()
-            .and_then(|item| item.downcast::<ProjectSearchView>())
-        {
-            search_view.update(cx, |view, cx| {
-                view.activate_search_mode(SearchMode::Semantic, cx)
-            });
-        } else {
-            cx.propagate_action();
+        if SemanticIndex::enabled(cx) {
+            if let Some(search_view) = pane
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+            {
+                search_view.update(cx, |view, cx| {
+                    view.activate_search_mode(SearchMode::Semantic, cx)
+                });
+            } else {
+                cx.propagate_action();
+            }
         }
     }
 
