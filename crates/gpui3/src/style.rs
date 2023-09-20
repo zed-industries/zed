@@ -3,7 +3,7 @@ use super::{
     Hsla, Length, Pixels, Point, PointRefinement, Rems, Result, RunStyle, SharedString, Size,
     SizeRefinement, ViewContext, WindowContext,
 };
-use crate::{FontCache};
+use crate::FontCache;
 use refineable::Refineable;
 pub use taffy::style::{
     AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap, JustifyContent,

@@ -9,7 +9,7 @@ impl TestPlatform {
 }
 
 impl Platform for TestPlatform {
-    fn font_system(&self) -> std::sync::Arc<dyn crate::PlatformFontSystem> {
+    fn font_system(&self) -> std::sync::Arc<dyn crate::PlatformTextSystem> {
         todo!()
     }
 
@@ -18,6 +18,10 @@ impl Platform for TestPlatform {
         handle: crate::AnyWindowHandle,
         options: crate::WindowOptions,
     ) -> Box<dyn crate::PlatformWindow> {
+        todo!()
+    }
+
+    fn dispatcher(&self) -> std::sync::Arc<dyn crate::PlatformDispatcher> {
         todo!()
     }
 }

@@ -51,9 +51,9 @@ impl AppContext {
     ) -> WindowHandle<S> {
         let id = self.windows.insert(None);
         let handle = WindowHandle::new(id);
-        self.platform.open_window(handle.into(), options);
+        let platform_window = self.platform.open_window(handle.into(), options);
 
-        let mut window = Window::new(id);
+        let mut window = Window::new(id, platform_window);
         let root_view = build_root_view(&mut WindowContext::mutable(self, &mut window));
         window.root_view.replace(Box::new(root_view));
 

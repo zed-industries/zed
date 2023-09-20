@@ -1,4 +1,4 @@
-use crate::{px, Bounds, LineWrapper, Pixels, PlatformFontSystem, Result, Size};
+use crate::{px, Bounds, LineWrapper, Pixels, PlatformTextSystem, Result, Size};
 use anyhow::anyhow;
 pub use font_kit::properties::{
     Properties as FontProperties, Stretch as FontStretch, Style as FontStyle, Weight as FontWeight,
@@ -79,7 +79,7 @@ struct Family {
 pub struct FontCache(RwLock<FontCacheState>);
 
 pub struct FontCacheState {
-    font_system: Arc<dyn PlatformFontSystem>,
+    font_system: Arc<dyn PlatformTextSystem>,
     families: Vec<Family>,
     default_family: Option<FontFamilyId>,
     font_selections: HashMap<FontFamilyId, HashMap<(FontWeight, FontStyle), FontId>>,
@@ -90,7 +90,7 @@ pub struct FontCacheState {
 unsafe impl Send for FontCache {}
 
 impl FontCache {
-    pub fn new(fonts: Arc<dyn PlatformFontSystem>) -> Self {
+    pub fn new(fonts: Arc<dyn PlatformTextSystem>) -> Self {
         Self(RwLock::new(FontCacheState {
             font_system: fonts,
             families: Default::default(),

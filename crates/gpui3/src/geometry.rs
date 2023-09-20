@@ -20,6 +20,13 @@ impl<T: Clone + Debug> Point<T> {
     pub fn new(x: T, y: T) -> Self {
         Self { x, y }
     }
+
+    pub fn map<U: Clone + Debug, F: Fn(T) -> U>(&self, f: F) -> Point<U> {
+        Point {
+            x: f(self.x.clone()),
+            y: f(self.y.clone()),
+        }
+    }
 }
 
 impl<T: Clone + Debug> Clone for Point<T> {
@@ -40,6 +47,10 @@ unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Point<T> {}
 pub struct Size<T: Clone + Debug> {
     pub width: T,
     pub height: T,
+}
+
+pub fn size<T: Clone + Debug>(width: T, height: T) -> Size<T> {
+    Size { width, height }
 }
 
 impl Size<Length> {
@@ -156,6 +167,12 @@ impl Edges<Pixels> {
 #[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd)]
 #[repr(transparent)]
 pub struct Pixels(pub(crate) f32);
+
+impl From<Pixels> for f64 {
+    fn from(pixels: Pixels) -> Self {
+        pixels.0.into()
+    }
+}
 
 impl Mul<f32> for Pixels {
     type Output = Pixels;
@@ -326,11 +343,11 @@ pub fn relative<T: From<DefiniteLength>>(fraction: f32) -> T {
 }
 
 pub fn rems(rems: f32) -> Rems {
-    Rems(rems).into()
+    Rems(rems)
 }
 
 pub fn px(pixels: f32) -> Pixels {
-    Pixels(pixels).into()
+    Pixels(pixels)
 }
 
 pub fn auto() -> Length {

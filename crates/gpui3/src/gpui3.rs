@@ -2,6 +2,7 @@ mod app;
 mod color;
 mod element;
 mod elements;
+mod executor;
 mod fonts;
 mod geometry;
 mod platform;
@@ -10,6 +11,7 @@ mod scene;
 mod style;
 mod taffy;
 mod text;
+mod util;
 mod window;
 
 use anyhow::Result;
@@ -17,10 +19,12 @@ pub use app::*;
 pub use color::*;
 pub use element::*;
 pub use elements::*;
+pub use executor::*;
 pub use fonts::*;
 pub use geometry::*;
 pub use platform::*;
 pub use scene::*;
+pub use smol::Timer;
 use std::ops::{Deref, DerefMut};
 pub use style::*;
 pub use taffy::LayoutId;
@@ -46,6 +50,12 @@ pub trait Context {
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct SharedString(ArcCow<'static, str>);
+
+impl AsRef<str> for SharedString {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
 
 impl std::fmt::Debug for SharedString {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -98,7 +108,7 @@ mod tests {
         let workspace = cx.entity(|cx| Workspace {
             left_panel: collab_panel(cx).into_any(),
         });
-        view(workspace, |workspace, cx| {
+        view(workspace, |workspace, _cx| {
             div().child(workspace.left_panel.clone())
         })
     }
@@ -109,7 +119,7 @@ mod tests {
 
     fn collab_panel(cx: &mut WindowContext) -> View<CollabPanel> {
         let panel = cx.entity(|cx| CollabPanel::new(cx));
-        view(panel, |panel, cx| {
+        view(panel, |panel, _cx| {
             div().child(div()).child(
                 field(panel.filter_editor.clone()).placeholder_text("Search channels, contacts"),
             )
@@ -121,14 +131,6 @@ mod tests {
             Self {
                 filter_editor: cx.entity(|cx| editor::Editor::new(cx)),
             }
-        }
-    }
-
-    struct Editor {}
-
-    impl Editor {
-        pub fn new(cx: &mut ViewContext<Self>) -> Self {
-            Self {}
         }
     }
 

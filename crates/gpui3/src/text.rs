@@ -1,7 +1,7 @@
 use crate::{black, px};
 
 use super::{
-    point, Bounds, FontId, Glyph, Hsla, Pixels, PlatformFontSystem, Point, UnderlineStyle,
+    point, Bounds, FontId, Glyph, Hsla, Pixels, PlatformTextSystem, Point, UnderlineStyle,
     WindowContext,
 };
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
@@ -17,7 +17,7 @@ use std::{
 pub struct TextLayoutCache {
     prev_frame: Mutex<HashMap<CacheKeyValue, Arc<LineLayout>>>,
     curr_frame: RwLock<HashMap<CacheKeyValue, Arc<LineLayout>>>,
-    fonts: Arc<dyn PlatformFontSystem>,
+    fonts: Arc<dyn PlatformTextSystem>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -28,7 +28,7 @@ pub struct RunStyle {
 }
 
 impl TextLayoutCache {
-    pub fn new(fonts: Arc<dyn PlatformFontSystem>) -> Self {
+    pub fn new(fonts: Arc<dyn PlatformTextSystem>) -> Self {
         Self {
             prev_frame: Mutex::new(HashMap::new()),
             curr_frame: RwLock::new(HashMap::new()),
@@ -520,7 +520,7 @@ impl Boundary {
 }
 
 pub struct LineWrapper {
-    font_system: Arc<dyn PlatformFontSystem>,
+    font_system: Arc<dyn PlatformTextSystem>,
     pub(crate) font_id: FontId,
     pub(crate) font_size: Pixels,
     cached_ascii_char_widths: [Option<Pixels>; 128],
@@ -533,7 +533,7 @@ impl LineWrapper {
     pub fn new(
         font_id: FontId,
         font_size: Pixels,
-        font_system: Arc<dyn PlatformFontSystem>,
+        font_system: Arc<dyn PlatformTextSystem>,
     ) -> Self {
         Self {
             font_system,

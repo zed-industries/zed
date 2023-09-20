@@ -1,3 +1,5 @@
+use crate::PlatformWindow;
+
 use super::{
     px, taffy::LayoutId, AppContext, Bounds, Context, EntityId, Handle, Pixels, Reference, Style,
     TaffyLayoutEngine,
@@ -13,17 +15,19 @@ pub struct AnyWindow {}
 
 pub struct Window {
     id: WindowId,
+    platform_window: Box<dyn PlatformWindow>,
     rem_size: Pixels,
     layout_engine: TaffyLayoutEngine,
     pub(crate) root_view: Option<Box<dyn Any>>,
 }
 
 impl Window {
-    pub fn new(id: WindowId) -> Window {
+    pub fn new(id: WindowId, platform_window: Box<dyn PlatformWindow>) -> Window {
         Window {
             id,
-            layout_engine: TaffyLayoutEngine::new(),
+            platform_window,
             rem_size: px(16.),
+            layout_engine: TaffyLayoutEngine::new(),
             root_view: None,
         }
     }
@@ -239,6 +243,7 @@ impl<S: 'static> Into<AnyWindowHandle> for WindowHandle<S> {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct AnyWindowHandle {
     id: WindowId,
     state_type: TypeId,
