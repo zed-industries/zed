@@ -46,13 +46,15 @@ use theme::{Theme, ThemeSettings};
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub enum SaveBehavior {
-    /// ask before overwriting conflicting files (used by default with %s)
+    /// ask before overwriting conflicting files (used by default with cmd-s)
     PromptOnConflict,
-    /// ask before writing any file that wouldn't be auto-saved (used by default with %w)
+    /// ask for a new path before writing (used with cmd-shift-s)
+    PromptForNewPath,
+    /// ask before writing any file that wouldn't be auto-saved (used by default with cmd-w)
     PromptOnWrite,
     /// never prompt, write on conflict (used with vim's :w!)
     SilentlyOverwrite,
-    /// skip all save-related behaviour (used with vim's :cq)
+    /// skip all save-related behaviour (used with vim's :q!)
     DontSave,
 }
 
@@ -1019,7 +1021,7 @@ impl Pane {
             return Ok(true);
         }
 
-        let (has_conflict, is_dirty, can_save, is_singleton) = cx.read(|cx| {
+        let (mut has_conflict, mut is_dirty, mut can_save, is_singleton) = cx.read(|cx| {
             (
                 item.has_conflict(cx),
                 item.is_dirty(cx),
@@ -1027,6 +1029,12 @@ impl Pane {
                 item.is_singleton(cx),
             )
         });
+
+        if save_behavior == SaveBehavior::PromptForNewPath {
+            has_conflict = false;
+            is_dirty = true;
+            can_save = false;
+        }
 
         if has_conflict && can_save {
             if save_behavior == SaveBehavior::SilentlyOverwrite {
@@ -2589,10 +2597,17 @@ mod tests {
         add_labeled_item(&pane, "C", false, cx);
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
-        pane.update(cx, |pane, cx| pane.close_all_items(&CloseAllItems, cx))
-            .unwrap()
-            .await
-            .unwrap();
+        pane.update(cx, |pane, cx| {
+            pane.close_all_items(
+                &CloseAllItems {
+                    save_behavior: None,
+                },
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .unwrap();
         assert_item_labels(&pane, [], cx);
     }
 

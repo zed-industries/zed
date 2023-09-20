@@ -122,6 +122,7 @@ actions!(
         Open,
         NewFile,
         NewWindow,
+        CloseWindow,
         CloseInactiveTabsAndPanes,
         AddFolderToProject,
         Unfollow,
@@ -165,12 +166,6 @@ pub struct SaveAll {
 #[derive(Clone, PartialEq, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Save {
-    pub save_behavior: Option<SaveBehavior>,
-}
-
-#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct CloseWindow {
     pub save_behavior: Option<SaveBehavior>,
 }
 
@@ -236,10 +231,9 @@ impl_actions!(
         ActivatePane,
         ActivatePaneInDirection,
         Toast,
-	OpenTerminal,
+        OpenTerminal,
         SaveAll,
         Save,
-        CloseWindow,
         CloseAllItemsAndPanes,
     ]
 );
@@ -294,13 +288,22 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
         },
     );
     cx.add_action(
-        |workspace: &mut Workspace, _: &Save, cx: &mut ViewContext<Workspace>| {
-            workspace.save_active_item(false, cx).detach_and_log_err(cx);
+        |workspace: &mut Workspace, action: &Save, cx: &mut ViewContext<Workspace>| {
+            workspace
+                .save_active_item(
+                    action
+                        .save_behavior
+                        .unwrap_or(SaveBehavior::PromptOnConflict),
+                    cx,
+                )
+                .detach_and_log_err(cx);
         },
     );
     cx.add_action(
         |workspace: &mut Workspace, _: &SaveAs, cx: &mut ViewContext<Workspace>| {
-            workspace.save_active_item(true, cx).detach_and_log_err(cx);
+            workspace
+                .save_active_item(SaveBehavior::PromptForNewPath, cx)
+                .detach_and_log_err(cx);
         },
     );
     cx.add_action(|workspace: &mut Workspace, _: &ActivatePreviousPane, cx| {
@@ -1294,15 +1297,11 @@ impl Workspace {
 
     pub fn close(
         &mut self,
-        action: &CloseWindow,
+        _: &CloseWindow,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let window = cx.window();
-        let prepare = self.prepare_to_close(
-            false,
-            action.save_behavior.unwrap_or(SaveBehavior::PromptOnWrite),
-            cx,
-        );
+        let prepare = self.prepare_to_close(false, cx);
         Some(cx.spawn(|_, mut cx| async move {
             if prepare.await? {
                 window.remove(&mut cx);
@@ -1685,51 +1684,31 @@ impl Workspace {
 
     pub fn save_active_item(
         &mut self,
-        force_name_change: bool,
+        save_behavior: SaveBehavior,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let project = self.project.clone();
-        if let Some(item) = self.active_item(cx) {
-            if !force_name_change && item.can_save(cx) {
-                if item.has_conflict(cx) {
-                    const CONFLICT_MESSAGE: &str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
+        let pane = self.active_pane();
+        let item_ix = pane.read(cx).active_item_index();
+        let item = pane.read(cx).active_item();
+        let pane = pane.downgrade();
 
-                    let mut answer = cx.prompt(
-                        PromptLevel::Warning,
-                        CONFLICT_MESSAGE,
-                        &["Overwrite", "Cancel"],
-                    );
-                    cx.spawn(|this, mut cx| async move {
-                        let answer = answer.recv().await;
-                        if answer == Some(0) {
-                            this.update(&mut cx, |this, cx| item.save(this.project.clone(), cx))?
-                                .await?;
-                        }
-                        Ok(())
-                    })
-                } else {
-                    item.save(self.project.clone(), cx)
-                }
-            } else if item.is_singleton(cx) {
-                let worktree = self.worktrees(cx).next();
-                let start_abs_path = worktree
-                    .and_then(|w| w.read(cx).as_local())
-                    .map_or(Path::new(""), |w| w.abs_path())
-                    .to_path_buf();
-                let mut abs_path = cx.prompt_for_new_path(&start_abs_path);
-                cx.spawn(|this, mut cx| async move {
-                    if let Some(abs_path) = abs_path.recv().await.flatten() {
-                        this.update(&mut cx, |_, cx| item.save_as(project, abs_path, cx))?
-                            .await?;
-                    }
-                    Ok(())
-                })
+        cx.spawn(|_, mut cx| async move {
+            if let Some(item) = item {
+                Pane::save_item(
+                    project,
+                    &pane,
+                    item_ix,
+                    item.as_ref(),
+                    save_behavior,
+                    &mut cx,
+                )
+                .await
+                .map(|_| ())
             } else {
-                Task::ready(Ok(()))
+                Ok(())
             }
-        } else {
-            Task::ready(Ok(()))
-        }
+        })
     }
 
     pub fn close_inactive_items_and_panes(
