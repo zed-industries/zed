@@ -1787,7 +1787,7 @@ impl CollabPanel {
             is_dragged_over = true;
         }
 
-        MouseEventHandler::new::<Channel, _>(path.unique_id() as usize, cx, |state, cx| {
+        MouseEventHandler::new::<Channel, _>(ix, cx, |state, cx| {
             let row_hovered = state.hovered();
 
             let mut select_state = |interactive: &Interactive<ContainerStyle>| {
@@ -1822,47 +1822,43 @@ impl CollabPanel {
                         .flex(1., true),
                 )
                 .with_child(
-                    MouseEventHandler::new::<ChannelCall, _>(
-                        channel.id as usize,
-                        cx,
-                        move |_, cx| {
-                            let participants =
-                                self.channel_store.read(cx).channel_participants(channel_id);
-                            if !participants.is_empty() {
-                                let extra_count = participants.len().saturating_sub(FACEPILE_LIMIT);
+                    MouseEventHandler::new::<ChannelCall, _>(ix, cx, move |_, cx| {
+                        let participants =
+                            self.channel_store.read(cx).channel_participants(channel_id);
+                        if !participants.is_empty() {
+                            let extra_count = participants.len().saturating_sub(FACEPILE_LIMIT);
 
-                                FacePile::new(theme.face_overlap)
-                                    .with_children(
-                                        participants
-                                            .iter()
-                                            .filter_map(|user| {
-                                                Some(
-                                                    Image::from_data(user.avatar.clone()?)
-                                                        .with_style(theme.channel_avatar),
-                                                )
-                                            })
-                                            .take(FACEPILE_LIMIT),
+                            FacePile::new(theme.face_overlap)
+                                .with_children(
+                                    participants
+                                        .iter()
+                                        .filter_map(|user| {
+                                            Some(
+                                                Image::from_data(user.avatar.clone()?)
+                                                    .with_style(theme.channel_avatar),
+                                            )
+                                        })
+                                        .take(FACEPILE_LIMIT),
+                                )
+                                .with_children((extra_count > 0).then(|| {
+                                    Label::new(
+                                        format!("+{}", extra_count),
+                                        theme.extra_participant_label.text.clone(),
                                     )
-                                    .with_children((extra_count > 0).then(|| {
-                                        Label::new(
-                                            format!("+{}", extra_count),
-                                            theme.extra_participant_label.text.clone(),
-                                        )
-                                        .contained()
-                                        .with_style(theme.extra_participant_label.container)
-                                    }))
-                                    .into_any()
-                            } else if row_hovered {
-                                Svg::new("icons/speaker-loud.svg")
-                                    .with_color(theme.channel_hash.color)
-                                    .constrained()
-                                    .with_width(theme.channel_hash.width)
-                                    .into_any()
-                            } else {
-                                Empty::new().into_any()
-                            }
-                        },
-                    )
+                                    .contained()
+                                    .with_style(theme.extra_participant_label.container)
+                                }))
+                                .into_any()
+                        } else if row_hovered {
+                            Svg::new("icons/speaker-loud.svg")
+                                .with_color(theme.channel_hash.color)
+                                .constrained()
+                                .with_width(theme.channel_hash.width)
+                                .into_any()
+                        } else {
+                            Empty::new().into_any()
+                        }
+                    })
                     .on_click(MouseButton::Left, move |_, this, cx| {
                         this.join_channel_call(channel_id, cx);
                     }),
@@ -1875,7 +1871,7 @@ impl CollabPanel {
                         location: path.clone(),
                     }),
                 )
-                .with_id(path.unique_id() as usize)
+                .with_id(ix)
                 .with_style(theme.disclosure.clone())
                 .element()
                 .constrained()
@@ -1955,11 +1951,11 @@ impl CollabPanel {
         })
         .as_draggable(
             (channel.clone(), path.parent_id()),
-            move |e, (channel, _), cx: &mut ViewContext<Workspace>| {
+            move |modifiers, (channel, _), cx: &mut ViewContext<Workspace>| {
                 let theme = &theme::current(cx).collab_panel;
 
                 Flex::<Workspace>::row()
-                    .with_children(e.alt.then(|| {
+                    .with_children(modifiers.alt.then(|| {
                         Svg::new("icons/plus.svg")
                             .with_color(theme.channel_hash.color)
                             .constrained()
