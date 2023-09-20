@@ -828,68 +828,53 @@ impl Database {
     ) -> Result<ChannelGraph> {
         self.check_user_is_channel_admin(to, user, &*tx).await?;
 
-        let to_ancestors = self.get_channel_ancestors(to, &*tx).await?;
+        let paths = channel_path::Entity::find()
+            .filter(channel_path::Column::IdPath.like(&format!("%/{}/%", channel)))
+            .all(tx)
+            .await?;
+
+        let mut new_path_suffixes = HashSet::default();
+        for path in paths {
+            if let Some(start_offset) = path.id_path.find(&format!("/{}/", channel)) {
+                new_path_suffixes.insert((
+                    path.channel_id,
+                    path.id_path[(start_offset + 1)..].to_string(),
+                ));
+            }
+        }
+
+        let paths_to_new_parent = channel_path::Entity::find()
+            .filter(channel_path::Column::ChannelId.eq(to))
+            .all(tx)
+            .await?;
+
+        let mut new_paths = Vec::new();
+        for path in paths_to_new_parent {
+            if path.id_path.contains(&format!("/{}/", channel)) {
+                Err(anyhow!("cycle"))?;
+            }
+
+            new_paths.extend(new_path_suffixes.iter().map(|(channel_id, path_suffix)| {
+                channel_path::ActiveModel {
+                    channel_id: ActiveValue::Set(*channel_id),
+                    id_path: ActiveValue::Set(format!("{}{}", &path.id_path, path_suffix)),
+                }
+            }));
+        }
+
+        channel_path::Entity::insert_many(new_paths)
+            .exec(&*tx)
+            .await?;
+
+        // remove any root edges for the channel we just linked
+        {
+            channel_path::Entity::delete_many()
+                .filter(channel_path::Column::IdPath.like(&format!("/{}/%", channel)))
+                .exec(&*tx)
+                .await?;
+        }
+
         let mut channel_descendants = self.get_channel_descendants([channel], &*tx).await?;
-        for ancestor in to_ancestors {
-            if channel_descendants.contains_key(&ancestor) {
-                return Err(anyhow!("Cannot create a channel cycle").into());
-            }
-        }
-
-        // Now insert all of the new paths
-        let sql = r#"
-                INSERT INTO channel_paths
-                (id_path, channel_id)
-                SELECT
-                    id_path || $1 || '/', $2
-                FROM
-                    channel_paths
-                WHERE
-                    channel_id = $3
-                ON CONFLICT (id_path) DO NOTHING;
-            "#;
-        let channel_paths_stmt = Statement::from_sql_and_values(
-            self.pool.get_database_backend(),
-            sql,
-            [
-                channel.to_proto().into(),
-                channel.to_proto().into(),
-                to.to_proto().into(),
-            ],
-        );
-        tx.execute(channel_paths_stmt).await?;
-        for (descdenant_id, descendant_parent_ids) in
-            channel_descendants.iter().filter(|(id, _)| id != &&channel)
-        {
-            for descendant_parent_id in descendant_parent_ids.iter() {
-                let channel_paths_stmt = Statement::from_sql_and_values(
-                    self.pool.get_database_backend(),
-                    sql,
-                    [
-                        descdenant_id.to_proto().into(),
-                        descdenant_id.to_proto().into(),
-                        descendant_parent_id.to_proto().into(),
-                    ],
-                );
-                tx.execute(channel_paths_stmt).await?;
-            }
-        }
-
-        // If we're linking a channel, remove any root edges for the channel
-        {
-            let sql = r#"
-                    DELETE FROM channel_paths
-                    WHERE
-                        id_path = '/' || $1 || '/'
-                "#;
-            let channel_paths_stmt = Statement::from_sql_and_values(
-                self.pool.get_database_backend(),
-                sql,
-                [channel.to_proto().into()],
-            );
-            tx.execute(channel_paths_stmt).await?;
-        }
-
         if let Some(channel) = channel_descendants.get_mut(&channel) {
             // Remove the other parents
             channel.clear();
@@ -936,35 +921,43 @@ impl Database {
         self.check_user_is_channel_admin(from, user, &*tx).await?;
 
         let sql = r#"
-                DELETE FROM channel_paths
-                WHERE
-                    id_path LIKE '%' || $1 || '/' || $2 || '%'
-            "#;
-        let channel_paths_stmt = Statement::from_sql_and_values(
-            self.pool.get_database_backend(),
-            sql,
-            [from.to_proto().into(), channel.to_proto().into()],
-        );
-        tx.execute(channel_paths_stmt).await?;
+            DELETE FROM channel_paths
+            WHERE
+                id_path LIKE '%/' || $1 || '/' || $2 || '/%'
+            RETURNING id_path, channel_id
+        "#;
+
+        let paths = channel_path::Entity::find()
+            .from_raw_sql(Statement::from_sql_and_values(
+                self.pool.get_database_backend(),
+                sql,
+                [from.to_proto().into(), channel.to_proto().into()],
+            ))
+            .all(&*tx)
+            .await?;
+
+        let is_stranded = channel_path::Entity::find()
+            .filter(channel_path::Column::ChannelId.eq(channel))
+            .count(&*tx)
+            .await?
+            == 0;
 
         // Make sure that there is always at least one path to the channel
-        let sql = r#"
-            INSERT INTO channel_paths
-            (id_path, channel_id)
-            SELECT
-                '/' || $1 || '/', $2
-            WHERE NOT EXISTS
-                (SELECT *
-                 FROM channel_paths
-                 WHERE channel_id = $2)
-            "#;
-
-        let channel_paths_stmt = Statement::from_sql_and_values(
-            self.pool.get_database_backend(),
-            sql,
-            [channel.to_proto().into(), channel.to_proto().into()],
-        );
-        tx.execute(channel_paths_stmt).await?;
+        if is_stranded {
+            let root_paths: Vec<_> = paths
+                .iter()
+                .map(|path| {
+                    let start_offset = path.id_path.find(&format!("/{}/", channel)).unwrap();
+                    channel_path::ActiveModel {
+                        channel_id: ActiveValue::Set(path.channel_id),
+                        id_path: ActiveValue::Set(path.id_path[start_offset..].to_string()),
+                    }
+                })
+                .collect();
+            channel_path::Entity::insert_many(root_paths)
+                .exec(&*tx)
+                .await?;
+        }
 
         Ok(())
     }
@@ -978,6 +971,13 @@ impl Database {
         from: ChannelId,
         to: ChannelId,
     ) -> Result<ChannelGraph> {
+        if from == to {
+            return Ok(ChannelGraph {
+                channels: vec![],
+                edges: vec![],
+            });
+        }
+
         self.transaction(|tx| async move {
             self.check_user_is_channel_admin(channel, user, &*tx)
                 .await?;
