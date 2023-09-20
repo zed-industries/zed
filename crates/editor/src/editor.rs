@@ -5957,16 +5957,18 @@ impl Editor {
         &mut self,
         display_map: &DisplaySnapshot,
         replace_newest: bool,
+        autoscroll: Option<Autoscroll>,
         cx: &mut ViewContext<Self>,
     ) -> Result<()> {
         fn select_next_match_ranges(
             this: &mut Editor,
             range: Range<usize>,
             replace_newest: bool,
+            auto_scroll: Option<Autoscroll>,
             cx: &mut ViewContext<Editor>,
         ) {
             this.unfold_ranges([range.clone()], false, true, cx);
-            this.change_selections(Some(Autoscroll::newest()), cx, |s| {
+            this.change_selections(auto_scroll, cx, |s| {
                 if replace_newest {
                     s.delete(s.newest_anchor().id);
                 }
@@ -6018,7 +6020,13 @@ impl Editor {
                 }
 
                 if let Some(next_selected_range) = next_selected_range {
-                    select_next_match_ranges(self, next_selected_range, replace_newest, cx);
+                    select_next_match_ranges(
+                        self,
+                        next_selected_range,
+                        replace_newest,
+                        autoscroll,
+                        cx,
+                    );
                 } else {
                     select_next_state.done = true;
                 }
@@ -6045,7 +6053,13 @@ impl Editor {
                     wordwise: true,
                     done: false,
                 };
-                select_next_match_ranges(self, selection.start..selection.end, replace_newest, cx);
+                select_next_match_ranges(
+                    self,
+                    selection.start..selection.end,
+                    replace_newest,
+                    autoscroll,
+                    cx,
+                );
                 self.select_next_state = Some(select_state);
             } else {
                 let query = buffer
@@ -6056,7 +6070,7 @@ impl Editor {
                     wordwise: false,
                     done: false,
                 });
-                self.select_next_match_internal(display_map, replace_newest, cx)?;
+                self.select_next_match_internal(display_map, replace_newest, autoscroll, cx)?;
             }
         }
         Ok(())
@@ -6071,7 +6085,7 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         loop {
-            self.select_next_match_internal(&display_map, action.replace_newest, cx)?;
+            self.select_next_match_internal(&display_map, action.replace_newest, None, cx)?;
 
             if self
                 .select_next_state
@@ -6089,7 +6103,12 @@ impl Editor {
     pub fn select_next(&mut self, action: &SelectNext, cx: &mut ViewContext<Self>) -> Result<()> {
         self.push_to_selection_history();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        self.select_next_match_internal(&display_map, action.replace_newest, cx)?;
+        self.select_next_match_internal(
+            &display_map,
+            action.replace_newest,
+            Some(Autoscroll::newest()),
+            cx,
+        )?;
         Ok(())
     }
 
