@@ -533,7 +533,7 @@ fn down(
 
     let new_row = cmp::min(
         start.row() + times as u32,
-        map.buffer_snapshot.max_point().row,
+        map.fold_snapshot.max_point().row(),
     );
     let new_col = cmp::min(goal_column, map.fold_snapshot.line_len(new_row));
     let point = map.fold_point_to_display_point(
