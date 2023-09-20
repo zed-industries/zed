@@ -5958,7 +5958,7 @@ impl Editor {
         display_map: &DisplaySnapshot,
         replace_newest: bool,
         cx: &mut ViewContext<Self>,
-    ) {
+    ) -> Result<()> {
         fn select_next_match_ranges(
             this: &mut Editor,
             range: Range<usize>,
@@ -5996,7 +5996,6 @@ impl Editor {
                     );
 
                 for (start_offset, query_match) in query_matches {
-                    (start_offset, &query_match);
                     let query_match = query_match.unwrap(); // can only fail due to I/O
                     let offset_range =
                         start_offset + query_match.start()..start_offset + query_match.end();
@@ -6057,18 +6056,22 @@ impl Editor {
                     wordwise: false,
                     done: false,
                 });
-                self.select_next(action, cx)?;
+                self.select_next_match_internal(display_map, replace_newest, cx)?;
             }
         }
         Ok(())
     }
 
-    pub fn select_all_matches(&mut self, action: &SelectAllMatches, cx: &mut ViewContext<Self>) {
+    pub fn select_all_matches(
+        &mut self,
+        action: &SelectAllMatches,
+        cx: &mut ViewContext<Self>,
+    ) -> Result<()> {
         self.push_to_selection_history();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         loop {
-            self.select_next_match_internal(&display_map, action.replace_newest, cx);
+            self.select_next_match_internal(&display_map, action.replace_newest, cx)?;
 
             if self
                 .select_next_state
@@ -6079,15 +6082,22 @@ impl Editor {
                 break;
             }
         }
+
+        Ok(())
     }
 
-    pub fn select_next(&mut self, action: &SelectNext, cx: &mut ViewContext<Self>) {
+    pub fn select_next(&mut self, action: &SelectNext, cx: &mut ViewContext<Self>) -> Result<()> {
         self.push_to_selection_history();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        self.select_next_match_internal(&display_map, action.replace_newest, cx);
+        self.select_next_match_internal(&display_map, action.replace_newest, cx)?;
+        Ok(())
     }
 
-    pub fn select_previous(&mut self, action: &SelectPrevious, cx: &mut ViewContext<Self>) {
+    pub fn select_previous(
+        &mut self,
+        action: &SelectPrevious,
+        cx: &mut ViewContext<Self>,
+    ) -> Result<()> {
         self.push_to_selection_history();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
