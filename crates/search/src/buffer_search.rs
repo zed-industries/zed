@@ -539,6 +539,23 @@ impl BufferSearchBar {
             .map(|searchable_item| searchable_item.query_suggestion(cx))
     }
 
+    pub fn set_replacement(&mut self, replacement: Option<&str>, cx: &mut ViewContext<Self>) {
+        if replacement.is_none() {
+            self.replace_is_active = false;
+            return;
+        }
+        self.replace_is_active = true;
+        self.replacement_editor
+            .update(cx, |replacement_editor, cx| {
+                replacement_editor
+                    .buffer()
+                    .update(cx, |replacement_buffer, cx| {
+                        let len = replacement_buffer.len(cx);
+                        replacement_buffer.edit([(0..len, replacement.unwrap())], None, cx);
+                    });
+            });
+    }
+
     pub fn search(
         &mut self,
         query: &str,
@@ -675,6 +692,19 @@ impl BufferSearchBar {
                     searchable_item.update_matches(matches, cx);
                     searchable_item.activate_match(new_match_index, matches, cx);
                 }
+            }
+        }
+    }
+
+    pub fn select_last_match(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(searchable_item) = self.active_searchable_item.as_ref() {
+            if let Some(matches) = self
+                .searchable_items_with_matches
+                .get(&searchable_item.downgrade())
+            {
+                let new_match_index = matches.len() - 1;
+                searchable_item.update_matches(matches, cx);
+                searchable_item.activate_match(new_match_index, matches, cx);
             }
         }
     }
@@ -934,7 +964,7 @@ impl BufferSearchBar {
             }
         }
     }
-    fn replace_all(&mut self, _: &ReplaceAll, cx: &mut ViewContext<Self>) {
+    pub fn replace_all(&mut self, _: &ReplaceAll, cx: &mut ViewContext<Self>) {
         if !self.dismissed && self.active_search.is_some() {
             if let Some(searchable_item) = self.active_searchable_item.as_ref() {
                 if let Some(query) = self.active_search.as_ref() {

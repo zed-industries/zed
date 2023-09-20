@@ -947,7 +947,9 @@ mod tests {
             assert!(editor.text(cx).is_empty());
         });
 
-        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
+        let save_task = workspace.update(cx, |workspace, cx| {
+            workspace.save_active_item(SaveBehavior::PromptOnConflict, cx)
+        });
         app_state.fs.create_dir(Path::new("/root")).await.unwrap();
         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name")));
         save_task.await.unwrap();
@@ -1311,7 +1313,9 @@ mod tests {
             .await;
         cx.read(|cx| assert!(editor.is_dirty(cx)));
 
-        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
+        let save_task = workspace.update(cx, |workspace, cx| {
+            workspace.save_active_item(SaveBehavior::PromptOnConflict, cx)
+        });
         window.simulate_prompt_answer(0, cx);
         save_task.await.unwrap();
         editor.read_with(cx, |editor, cx| {
@@ -1353,7 +1357,9 @@ mod tests {
         });
 
         // Save the buffer. This prompts for a filename.
-        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
+        let save_task = workspace.update(cx, |workspace, cx| {
+            workspace.save_active_item(SaveBehavior::PromptOnConflict, cx)
+        });
         cx.simulate_new_path_selection(|parent_dir| {
             assert_eq!(parent_dir, Path::new("/root"));
             Some(parent_dir.join("the-new-name.rs"))
@@ -1377,7 +1383,9 @@ mod tests {
             editor.handle_input(" there", cx);
             assert!(editor.is_dirty(cx));
         });
-        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
+        let save_task = workspace.update(cx, |workspace, cx| {
+            workspace.save_active_item(SaveBehavior::PromptOnConflict, cx)
+        });
         save_task.await.unwrap();
         assert!(!cx.did_prompt_for_new_path());
         editor.read_with(cx, |editor, cx| {
@@ -1444,7 +1452,9 @@ mod tests {
         });
 
         // Save the buffer. This prompts for a filename.
-        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
+        let save_task = workspace.update(cx, |workspace, cx| {
+            workspace.save_active_item(SaveBehavior::PromptOnConflict, cx)
+        });
         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name.rs")));
         save_task.await.unwrap();
         // The buffer is not dirty anymore and the language is assigned based on the path.

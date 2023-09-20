@@ -57,12 +57,7 @@ pub fn menus() -> Vec<Menu<'static>> {
                         save_behavior: None,
                     },
                 ),
-                MenuItem::action(
-                    "Close Window",
-                    workspace::CloseWindow {
-                        save_behavior: None,
-                    },
-                ),
+                MenuItem::action("Close Window", workspace::CloseWindow),
             ],
         },
         Menu {

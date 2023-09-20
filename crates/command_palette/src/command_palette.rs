@@ -126,7 +126,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                     }
                 })
                 .collect::<Vec<_>>();
-            let actions = cx.read(move |cx| {
+            let mut actions = cx.read(move |cx| {
                 let hit_counts = cx.optional_global::<HitCounts>();
                 actions.sort_by_key(|action| {
                     (
