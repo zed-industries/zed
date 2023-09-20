@@ -87,17 +87,12 @@ struct ManageMembers {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct OpenChannelNotes {
-    pub channel_id: u64,
+    pub channel_id: ChannelId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct JoinChannelCall {
     pub channel_id: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-struct OpenChannelBuffer {
-    channel_id: ChannelId,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -155,7 +150,6 @@ impl_actions!(
         ToggleCollapse,
         OpenChannelNotes,
         JoinChannelCall,
-        OpenChannelBuffer,
         LinkChannel,
         StartMoveChannelFor,
         StartLinkChannelFor,
@@ -2318,7 +2312,7 @@ impl CollabPanel {
 
             items.push(ContextMenuItem::action(
                 "Open Notes",
-                OpenChannelBuffer {
+                OpenChannelNotes {
                     channel_id: path.channel_id(),
                 },
             ));
