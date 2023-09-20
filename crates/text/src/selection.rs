@@ -100,6 +100,10 @@ impl Selection<usize> {
             reversed: false,
         }
     }
+
+    pub fn equals(&self, offset_range: &Range<usize>) -> bool {
+        self.start == offset_range.start && self.end == offset_range.end
+    }
 }
 
 impl Selection<Anchor> {

@@ -294,7 +294,7 @@
           "replace_newest": false
         }
       ],
-      "cmd-shift-d": "editor::SelectNextAll",
+      "cmd-shift-d": "editor::SelectAllMatches",
       "ctrl-cmd-d": [
         "editor::SelectPrevious",
         {

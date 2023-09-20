@@ -130,7 +130,7 @@ pub struct SelectPrevious {
 }
 
 #[derive(Clone, Deserialize, PartialEq, Default)]
-pub struct SelectNextAll {
+pub struct SelectAllMatches {
     #[serde(default)]
     pub replace_newest: bool,
 }
@@ -331,7 +331,7 @@ impl_actions!(
     [
         SelectNext,
         SelectPrevious,
-        SelectNextAll,
+        SelectAllMatches,
         SelectToBeginningOfLine,
         SelectToEndOfLine,
         ToggleCodeActions,
@@ -732,11 +732,20 @@ struct AddSelectionsState {
     stack: Vec<usize>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct SelectNextState {
     query: AhoCorasick,
     wordwise: bool,
     done: bool,
+}
+
+impl std::fmt::Debug for SelectNextState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct(std::any::type_name::<Self>())
+            .field("wordwise", &self.wordwise)
+            .field("done", &self.done)
+            .finish()
+    }
 }
 
 #[derive(Debug)]
@@ -5985,7 +5994,9 @@ impl Editor {
                             .stream_find_iter(bytes_before_first_selection)
                             .map(|result| (0, result)),
                     );
+
                 for (start_offset, query_match) in query_matches {
+                    (start_offset, &query_match);
                     let query_match = query_match.unwrap(); // can only fail due to I/O
                     let offset_range =
                         start_offset + query_match.start()..start_offset + query_match.end();
@@ -5996,8 +6007,14 @@ impl Editor {
                         || (!movement::is_inside_word(&display_map, display_range.start)
                             && !movement::is_inside_word(&display_map, display_range.end))
                     {
-                        next_selected_range = Some(offset_range);
-                        break;
+                        if selections
+                            .iter()
+                            .find(|selection| selection.equals(&offset_range))
+                            .is_none()
+                        {
+                            next_selected_range = Some(offset_range);
+                            break;
+                        }
                     }
                 }
 
@@ -6046,7 +6063,7 @@ impl Editor {
         Ok(())
     }
 
-    pub fn select_all_matches(&mut self, action: &SelectNextAll, cx: &mut ViewContext<Self>) {
+    pub fn select_all_matches(&mut self, action: &SelectAllMatches, cx: &mut ViewContext<Self>) {
         self.push_to_selection_history();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
