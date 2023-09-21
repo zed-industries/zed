@@ -1,5 +1,5 @@
 use crate::{
-    current_platform, Context, LayoutId, Platform, Reference, TextSystem, View, Window,
+    current_platform, Context, LayoutId, Platform, Reference, RootView, TextSystem, Window,
     WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
@@ -68,7 +68,7 @@ impl AppContext {
     pub fn open_window<S: 'static>(
         &mut self,
         options: crate::WindowOptions,
-        build_root_view: impl FnOnce(&mut WindowContext) -> View<S>,
+        build_root_view: impl FnOnce(&mut WindowContext) -> RootView<S>,
     ) -> WindowHandle<S> {
         let id = self.windows.insert(None);
         let handle = WindowHandle::new(id);

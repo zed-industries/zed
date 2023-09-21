@@ -1,25 +1,35 @@
-use crate::{collab_panel::collab_panel, theme::theme};
+use crate::{
+    collab_panel::{collab_panel, CollabPanel},
+    theme::theme,
+};
 use gpui3::{
-    div, img, svg, view, Element, ParentElement, ScrollState, StyleHelpers, View, ViewContext,
-    WindowAppearance, WindowContext,
+    div, img, svg, view, Context, Element, ParentElement, RootView, StyleHelpers, View,
+    ViewContext, WindowContext,
 };
 
-#[derive(Default)]
-struct Workspace {
-    left_scroll_state: ScrollState,
-    right_scroll_state: ScrollState,
+pub struct Workspace {
+    left_panel: View<CollabPanel, Self>,
+    right_panel: View<CollabPanel, Self>,
 }
 
-pub fn workspace(cx: &mut WindowContext) -> View<Workspace> {
-    let workspace = cx.entity(|_| Workspace::default());
-    view(workspace, |workspace, cx| workspace.render(cx))
+pub fn workspace(cx: &mut WindowContext) -> RootView<Workspace> {
+    view(cx.entity(|cx| Workspace::new(cx)), |workspace, cx| {
+        workspace.render(cx)
+    })
 }
 
 impl Workspace {
-    fn render<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl Element<State = V> {
+    fn new(cx: &mut ViewContext<Self>) -> Self {
+        Self {
+            left_panel: collab_panel(cx),
+            right_panel: collab_panel(cx),
+        }
+    }
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<State = Self> {
         let theme = theme(cx);
 
-        div()
+        div::<Self>()
             .size_full()
             .flex()
             .flex_col()
@@ -29,34 +39,40 @@ impl Workspace {
             .items_start()
             .text_color(theme.lowest.base.default.foreground)
             .fill(theme.middle.base.default.background)
-            .child(titlebar())
+            .child(titlebar(cx))
             .child(
-                div()
+                div::<Self>()
                     .flex_1()
                     .w_full()
                     .flex()
                     .flex_row()
                     .overflow_hidden()
-                    .child(collab_panel(self.left_scroll_state.clone()))
+                    .child(self.left_panel.clone())
                     .child(div().h_full().flex_1())
-                    .child(collab_panel(self.right_scroll_state.clone())),
+                    .child(self.right_panel.clone()),
             )
-            .child(statusbar())
+            .child(statusbar::statusbar(cx))
     }
 }
 
-struct TitleBar;
+struct Titlebar;
 
-pub fn titlebar<V: 'static>() -> impl Element<State = V> {
-    TitleBar
+pub fn titlebar<S: 'static>(cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    let ref mut this = Titlebar;
+    let theme = theme(cx);
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .w_full()
+        .h_8()
+        .fill(theme.lowest.base.default.background)
+        .child(this.left_group(cx))
+        .child(this.right_group(cx))
 }
 
-impl TitleBar {
-    fn render<V: 'static>(
-        &mut self,
-        _: &mut V,
-        cx: &mut ViewContext<V>,
-    ) -> impl Element<State = V> {
+impl Titlebar {
+    fn render<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl Element<State = V> {
         let theme = theme(cx);
         div()
             .flex()
@@ -276,7 +292,7 @@ mod statusbar {
 
     use super::*;
 
-    pub fn statusbar<V: 'static>(_: &mut V, cx: &mut ViewContext<V>) -> impl Element<State = V> {
+    pub fn statusbar<S: 'static>(cx: &mut ViewContext<S>) -> impl Element<State = S> {
         let theme = theme(cx);
         div()
             .flex()
@@ -285,8 +301,8 @@ mod statusbar {
             .w_full()
             .h_8()
             .fill(theme.lowest.base.default.background)
-            .child(left_group(cx))
-            .child(right_group(cx))
+        // .child(left_group(cx))
+        // .child(right_group(cx))
     }
 
     fn left_group<V: 'static>(cx: &mut ViewContext<V>) -> impl Element<State = V> {

@@ -4,11 +4,11 @@ use gpui3::{
     ScrollState, StyleHelpers, View, ViewContext, WindowContext,
 };
 
-struct CollabPanel {
+pub struct CollabPanel {
     scroll_state: ScrollState,
 }
 
-pub fn collab_panel(cx: &mut WindowContext) -> View<CollabPanel> {
+pub fn collab_panel<S: 'static>(cx: &mut WindowContext) -> View<CollabPanel, S> {
     view(cx.entity(|cx| CollabPanel::new(cx)), |panel, cx| {
         panel.render(cx)
     })

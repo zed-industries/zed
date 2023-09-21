@@ -52,7 +52,7 @@ fn main() {
 }
 
 fn storybook<V: 'static>(cx: &mut ViewContext<V>) -> impl Element {
-    workspace().themed(current_theme(cx))
+    workspace(cx).themed(current_theme(cx))
 }
 
 // Nathan: During the transition to gpui2, we will include the base theme on the legacy Theme struct.

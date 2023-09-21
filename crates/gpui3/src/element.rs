@@ -1,4 +1,4 @@
-use super::{Handle, Layout, LayoutId, Pixels, Point, Result, ViewContext, WindowContext};
+use super::{Handle, Layout, LayoutId, Pixels, Point, Result, ViewContext};
 pub(crate) use smallvec::SmallVec;
 use std::{any::Any, cell::RefCell, marker::PhantomData, rc::Rc};
 
