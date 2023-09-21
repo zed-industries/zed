@@ -17,6 +17,7 @@
       "ctrl-shift-down": "editor::AddSelectionBelow",
       "cmd-shift-space": "editor::SelectAll",
       "ctrl-shift-m": "editor::SelectLargerSyntaxNode",
+      "cmd-shift-l": "editor::SplitSelectionIntoLines",
       "cmd-shift-a": "editor::SelectLargerSyntaxNode",
       "shift-f12": "editor::FindAllReferences",
       "alt-cmd-down": "editor::GoToDefinition",
