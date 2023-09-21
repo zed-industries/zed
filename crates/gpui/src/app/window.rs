@@ -611,9 +611,10 @@ impl<'a> WindowContext<'a> {
             }
 
             Event::MouseUp(e) => {
-                // NOTE: The order of event pushes is important! MouseUp events MUST be fired
-                // before click events, and so the MouseUp events need to be pushed before
-                // MouseClick events.
+                mouse_events.push(MouseEvent::Up(MouseUp {
+                    region: Default::default(),
+                    platform_event: e.clone(),
+                }));
 
                 // Synthesize one last drag event to end the drag
                 mouse_events.push(MouseEvent::Drag(MouseDrag {
@@ -626,10 +627,7 @@ impl<'a> WindowContext<'a> {
                     },
                     end: true,
                 }));
-                mouse_events.push(MouseEvent::Up(MouseUp {
-                    region: Default::default(),
-                    platform_event: e.clone(),
-                }));
+
                 mouse_events.push(MouseEvent::UpOut(MouseUpOut {
                     region: Default::default(),
                     platform_event: e.clone(),
