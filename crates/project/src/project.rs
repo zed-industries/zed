@@ -7968,7 +7968,7 @@ impl Project {
     }
 
     pub fn language_server_for_id(&self, id: LanguageServerId) -> Option<Arc<LanguageServer>> {
-        if let LanguageServerState::Running { server, .. } = self.language_servers.get(&id)? {
+        if let Some(LanguageServerState::Running { server, .. }) = self.language_servers.get(&id) {
             Some(server.clone())
         } else if let Some((_, server)) = self.supplementary_language_servers.get(&id) {
             Some(Arc::clone(server))
@@ -8039,11 +8039,9 @@ fn subscribe_for_copilot_events(
         copilot,
         |project, copilot, copilot_event, cx| match copilot_event {
             copilot::Event::CopilotLanguageServerStarted => {
-                if let Some((name, copilot_server)) = copilot.read(cx).language_server() {
-                    let new_server_id = copilot_server.server_id();
-                    if let hash_map::Entry::Vacant(v) =
-                        project.supplementary_language_servers.entry(new_server_id)
-                    {
+                match copilot.read(cx).language_server() {
+                    Some((name, copilot_server)) => {
+                        let new_server_id = copilot_server.server_id();
                         let weak_project = cx.weak_handle();
                         let copilot_log_subscription = copilot_server
                             .on_notification::<copilot::request::LogMessage, _>(
@@ -8058,10 +8056,11 @@ fn subscribe_for_copilot_events(
                                     }
                                 },
                             );
+                        project.supplementary_language_servers.insert(new_server_id, (name.clone(), Arc::clone(copilot_server)));
                         project.copilot_log_subscription = Some(copilot_log_subscription);
-                        v.insert((name.clone(), Arc::clone(copilot_server)));
                         cx.emit(Event::LanguageServerAdded(new_server_id));
                     }
+                    None => debug_panic!("Received Copilot language server started event, but no language server is running"),
                 }
             }
         },

@@ -647,6 +647,7 @@ impl View for LspLogToolbarItemView {
                     Overlay::new(
                         MouseEventHandler::new::<Menu, _>(0, cx, move |_, cx| {
                             Flex::column()
+                                .scrollable::<Self>(0, None, cx)
                                 .with_children(menu_rows.into_iter().map(|row| {
                                     Self::render_language_server_menu_item(
                                         row.server_id,
