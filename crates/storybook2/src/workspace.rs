@@ -1,22 +1,22 @@
 use crate::{collab_panel::collab_panel, theme::theme};
-use gpui3::{div, img, svg, Element, ParentElement, ScrollState, StyleHelpers, ViewContext};
+use gpui3::{
+    div, img, svg, view, Element, ParentElement, ScrollState, StyleHelpers, View, ViewContext,
+    WindowAppearance, WindowContext,
+};
 
 #[derive(Default)]
-struct WorkspaceElement {
+struct Workspace {
     left_scroll_state: ScrollState,
     right_scroll_state: ScrollState,
 }
 
-pub fn workspace() -> impl Element {
-    WorkspaceElement::default()
+pub fn workspace(cx: &mut WindowContext) -> View<Workspace> {
+    let workspace = cx.entity(|_| Workspace::default());
+    view(workspace, |workspace, cx| workspace.render(cx))
 }
 
-impl WorkspaceElement {
-    fn render<V: 'static>(
-        &mut self,
-        _: &mut V,
-        cx: &mut ViewContext<V>,
-    ) -> impl Element<State = V> {
+impl Workspace {
+    fn render<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl Element<State = V> {
         let theme = theme(cx);
 
         div()

@@ -13,6 +13,7 @@ mod styled;
 mod taffy;
 mod text_system;
 mod util;
+mod view;
 mod window;
 
 pub use anyhow::Result;
@@ -38,6 +39,7 @@ use taffy::TaffyLayoutEngine;
 pub use taffy::{AvailableSpace, LayoutId};
 pub use text_system::*;
 pub use util::arc_cow::ArcCow;
+pub use view::*;
 pub use window::*;
 
 pub trait Context {
