@@ -1,12 +1,9 @@
-use crate::{
-    theme::theme,
-    ui::{chat_panel, project_panel, status_bar, tab_bar, title_bar},
-};
 use gpui2::{
     elements::{div, div::ScrollState},
     style::StyleHelpers,
     Element, IntoElement, ParentElement, ViewContext,
 };
+use ui::{chat_panel, project_panel, status_bar, tab_bar, theme, title_bar};
 
 #[derive(Element, Default)]
 struct WorkspaceElement {

@@ -5,7 +5,7 @@ use gpui2::elements::div::ScrollState;
 use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
-use crate::prelude::{InteractionState, ToggleState};
+use crate::prelude::*;
 use crate::{details, input, label, list_item, theme, IconAsset, LabelColor};
 
 #[derive(Element)]

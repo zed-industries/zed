@@ -2,7 +2,7 @@ use gpui2::elements::div;
 use gpui2::style::{StyleHelpers, Styleable};
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
-use crate::prelude::{InputVariant, InteractionState};
+use crate::prelude::*;
 use crate::theme;
 
 #[derive(Element)]

@@ -1,10 +1,10 @@
-use crate::theme::{theme, Theme};
 use gpui2::{
     elements::{div, div::ScrollState, img, svg},
     style::{StyleHelpers, Styleable},
     ArcCow, Element, IntoElement, ParentElement, ViewContext,
 };
 use std::marker::PhantomData;
+use ui::{theme, Theme};
 
 #[derive(Element)]
 pub struct CollabPanelElement<V: 'static> {
