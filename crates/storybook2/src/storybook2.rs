@@ -1,10 +1,9 @@
 #![allow(dead_code, unused_variables)]
 
 use crate::theme::Theme;
-use ::theme as legacy_theme;
 use element_ext::ElementExt;
 use gpui3::{Element, ViewContext};
-use legacy_theme::ThemeSettings;
+
 use log::LevelFilter;
 use simplelog::SimpleLogger;
 
@@ -22,7 +21,9 @@ mod workspace;
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
-    gpui3::App::new().run(|cx| cx.open_window(Default::default(), |cx| todo!()));
+    gpui3::App::new().run(|cx| {
+        let window: gpui3::WindowHandle<()> = cx.open_window(Default::default(), |cx| todo!());
+    });
 
     // gpui3::App::new(Assets).unwrap().run(|cx| {
     //     let mut store = SettingsStore::default();
@@ -56,19 +57,20 @@ fn storybook<V: 'static>(cx: &mut ViewContext<V>) -> impl Element {
 
 // Nathan: During the transition to gpui2, we will include the base theme on the legacy Theme struct.
 fn current_theme<V: 'static>(cx: &mut ViewContext<V>) -> Theme {
-    settings::get::<ThemeSettings>(cx)
-        .theme
-        .deserialized_base_theme
-        .lock()
-        .get_or_insert_with(|| {
-            let theme: Theme =
-                serde_json::from_value(settings::get::<ThemeSettings>(cx).theme.base_theme.clone())
-                    .unwrap();
-            Box::new(theme)
-        })
-        .downcast_ref::<Theme>()
-        .unwrap()
-        .clone()
+    todo!()
+    // settings::get::<ThemeSettings>(cx)
+    //     .theme
+    //     .deserialized_base_theme
+    //     .lock()
+    //     .get_or_insert_with(|| {
+    //         let theme: Theme =
+    //             serde_json::from_value(settings::get::<ThemeSettings>(cx).theme.base_theme.clone())
+    //                 .unwrap();
+    //         Box::new(theme)
+    //     })
+    //     .downcast_ref::<Theme>()
+    //     .unwrap()
+    //     .clone()
 }
 
 use rust_embed::RustEmbed;

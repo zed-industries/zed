@@ -3363,7 +3363,7 @@ dependencies = [
  "font-kit",
  "foreign-types 0.3.2",
  "futures 0.3.28",
- "gpui2_macros",
+ "gpui3_macros",
  "gpui_macros",
  "image",
  "itertools",
@@ -3403,6 +3403,15 @@ dependencies = [
  "uuid 1.4.1",
  "waker-fn",
  "wgpu",
+]
+
+[[package]]
+name = "gpui3_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]

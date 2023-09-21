@@ -36,6 +36,7 @@ members = [
     "crates/gpui2",
     "crates/gpui2_macros",
     "crates/gpui3",
+    "crates/gpui3_macros",
     "crates/install_cli",
     "crates/journal",
     "crates/language",

@@ -289,10 +289,10 @@ impl From<Hsla> for Fill {
 #[derive(Clone, Refineable, Default, Debug)]
 #[refineable(debug)]
 pub struct CornerRadii {
-    top_left: AbsoluteLength,
-    top_right: AbsoluteLength,
-    bottom_left: AbsoluteLength,
-    bottom_right: AbsoluteLength,
+    pub top_left: AbsoluteLength,
+    pub top_right: AbsoluteLength,
+    pub bottom_left: AbsoluteLength,
+    pub bottom_right: AbsoluteLength,
 }
 
 impl From<TextStyle> for HighlightStyle {

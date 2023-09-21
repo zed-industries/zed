@@ -1,5 +1,5 @@
 use crate::{collab_panel::collab_panel, theme::theme};
-use gpui3::{div, img, svg, Element, ParentElement, ScrollState, Styled, ViewContext};
+use gpui3::{div, img, svg, Element, ParentElement, ScrollState, StyleHelpers, ViewContext};
 
 #[derive(Default)]
 struct WorkspaceElement {
@@ -7,12 +7,16 @@ struct WorkspaceElement {
     right_scroll_state: ScrollState,
 }
 
-pub fn workspace<V: 'static>() -> impl Element {
+pub fn workspace() -> impl Element {
     WorkspaceElement::default()
 }
 
 impl WorkspaceElement {
-    fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl Element {
+    fn render<V: 'static>(
+        &mut self,
+        _: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> impl Element<State = V> {
         let theme = theme(cx);
 
         div()
@@ -43,12 +47,16 @@ impl WorkspaceElement {
 
 struct TitleBar;
 
-pub fn titlebar<V: 'static>() -> impl Element {
+pub fn titlebar<V: 'static>() -> impl Element<State = V> {
     TitleBar
 }
 
 impl TitleBar {
-    fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl Element {
+    fn render<V: 'static>(
+        &mut self,
+        _: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> impl Element<State = V> {
         let theme = theme(cx);
         div()
             .flex()
@@ -61,7 +69,7 @@ impl TitleBar {
             .child(self.right_group(cx))
     }
 
-    fn left_group<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl Element {
+    fn left_group<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl Element<State = V> {
         let theme = theme(cx);
         div()
             .flex()
@@ -111,10 +119,10 @@ impl TitleBar {
                             .justify_center()
                             .px_2()
                             .rounded_md()
-                            .hover()
-                            .fill(theme.lowest.base.hovered.background)
-                            .active()
-                            .fill(theme.lowest.base.pressed.background)
+                            // .hover()
+                            // .fill(theme.lowest.base.hovered.background)
+                            // .active()
+                            // .fill(theme.lowest.base.pressed.background)
                             .child(div().text_sm().child("project")),
                     )
                     .child(
@@ -126,16 +134,16 @@ impl TitleBar {
                             .px_2()
                             .rounded_md()
                             .text_color(theme.lowest.variant.default.foreground)
-                            .hover()
-                            .fill(theme.lowest.base.hovered.background)
-                            .active()
-                            .fill(theme.lowest.base.pressed.background)
+                            // .hover()
+                            // .fill(theme.lowest.base.hovered.background)
+                            // .active()
+                            // .fill(theme.lowest.base.pressed.background)
                             .child(div().text_sm().child("branch")),
                     ),
             )
     }
 
-    fn right_group<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl Element {
+    fn right_group<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl Element<State = V> {
         let theme = theme(cx);
         div()
             .flex()
@@ -173,10 +181,10 @@ impl TitleBar {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .hover()
-                                .fill(theme.lowest.base.hovered.background)
-                                .active()
-                                .fill(theme.lowest.base.pressed.background)
+                                // .hover()
+                                // .fill(theme.lowest.base.hovered.background)
+                                // .active()
+                                // .fill(theme.lowest.base.pressed.background)
                                 .child(
                                     svg()
                                         .path("icons/microphone.svg")
@@ -193,10 +201,10 @@ impl TitleBar {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .hover()
-                                .fill(theme.lowest.base.hovered.background)
-                                .active()
-                                .fill(theme.lowest.base.pressed.background)
+                                // .hover()
+                                // .fill(theme.lowest.base.hovered.background)
+                                // .active()
+                                // .fill(theme.lowest.base.pressed.background)
                                 .child(
                                     svg()
                                         .path("icons/radix/speaker-loud.svg")
@@ -213,10 +221,10 @@ impl TitleBar {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .hover()
-                                .fill(theme.lowest.base.hovered.background)
-                                .active()
-                                .fill(theme.lowest.base.pressed.background)
+                                // .hover()
+                                // .fill(theme.lowest.base.hovered.background)
+                                // .active()
+                                // .fill(theme.lowest.base.pressed.background)
                                 .child(
                                     svg()
                                         .path("icons/radix/desktop.svg")
@@ -238,10 +246,10 @@ impl TitleBar {
                         .justify_center()
                         .rounded_md()
                         .gap_0p5()
-                        .hover()
-                        .fill(theme.lowest.base.hovered.background)
-                        .active()
-                        .fill(theme.lowest.base.pressed.background)
+                        // .hover()
+                        // .fill(theme.lowest.base.hovered.background)
+                        // .active()
+                        // .fill(theme.lowest.base.pressed.background)
                         .child(
                             img()
                                 .uri("https://avatars.githubusercontent.com/u/1714999?v=4")
@@ -265,12 +273,16 @@ impl TitleBar {
 
 struct StatusBar;
 
-pub fn statusbar<V: 'static>() -> impl Element {
+pub fn statusbar<V: 'static>() -> impl Element<State = V> {
     StatusBar
 }
 
 impl StatusBar {
-    fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl Element {
+    fn render<V: 'static>(
+        &mut self,
+        _: &mut V,
+        cx: &mut ViewContext<V>,
+    ) -> impl Element<State = V> {
         let theme = theme(cx);
         div()
             .flex()
@@ -283,7 +295,7 @@ impl StatusBar {
             .child(self.right_group(cx))
     }
 
-    fn left_group<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl Element {
+    fn left_group<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl Element<State = V> {
         let theme = theme(cx);
         div()
             .flex()
@@ -358,10 +370,10 @@ impl StatusBar {
                             .gap_0p5()
                             .px_1()
                             .text_color(theme.lowest.variant.default.foreground)
-                            .hover()
-                            .fill(theme.lowest.base.hovered.background)
-                            .active()
-                            .fill(theme.lowest.base.pressed.background)
+                            // .hover()
+                            // .fill(theme.lowest.base.hovered.background)
+                            // .active()
+                            // .fill(theme.lowest.base.pressed.background)
                             .child(
                                 svg()
                                     .path("icons/error.svg")
@@ -380,7 +392,7 @@ impl StatusBar {
             )
     }
 
-    fn right_group<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl Element {
+    fn right_group<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl Element<State = V> {
         let theme = theme(cx);
         div()
             .flex()

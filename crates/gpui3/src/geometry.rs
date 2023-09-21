@@ -100,8 +100,8 @@ impl From<Size<Option<Pixels>>> for Size<Option<f32>> {
 impl Size<Length> {
     pub fn full() -> Self {
         Self {
-            width: relative(1.),
-            height: relative(1.),
+            width: relative(1.).into(),
+            height: relative(1.).into(),
         }
     }
 }
@@ -410,7 +410,7 @@ impl Debug for Length {
     }
 }
 
-pub fn relative<T: From<DefiniteLength>>(fraction: f32) -> T {
+pub fn relative(fraction: f32) -> DefiniteLength {
     DefiniteLength::Fraction(fraction).into()
 }
 

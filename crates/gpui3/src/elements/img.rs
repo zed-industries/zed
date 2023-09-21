@@ -1,4 +1,4 @@
-use crate::{Element, Layout, LayoutId, Result, Style, Styled};
+use crate::{Element, Layout, LayoutId, Result, Style, StyleHelpers, Styled};
 use refineable::RefinementCascade;
 use std::marker::PhantomData;
 use util::arc_cow::ArcCow;
@@ -98,3 +98,5 @@ impl<S> Styled for Img<S> {
         self.style.base()
     }
 }
+
+impl<S> StyleHelpers for Img<S> {}

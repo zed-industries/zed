@@ -1,6 +1,7 @@
 use crate::theme::{theme, Theme};
 use gpui3::{
-    div, img, svg, ArcCow, Element, IntoAnyElement, ParentElement, ScrollState, Styled, ViewContext,
+    div, img, svg, ArcCow, Element, IntoAnyElement, ParentElement, ScrollState, StyleHelpers,
+    ViewContext,
 };
 use std::marker::PhantomData;
 
@@ -117,7 +118,7 @@ impl<V: 'static> CollabPanelElement<V> {
         label: impl IntoAnyElement<V>,
         expanded: bool,
         theme: &Theme,
-    ) -> impl Element {
+    ) -> impl Element<State = V> {
         div()
             .h_7()
             .px_2()
@@ -145,16 +146,16 @@ impl<V: 'static> CollabPanelElement<V> {
         avatar_uri: impl Into<ArcCow<'static, str>>,
         label: impl IntoAnyElement<V>,
         theme: &Theme,
-    ) -> impl Element {
+    ) -> impl Element<State = V> {
         div()
             .h_7()
             .px_2()
             .flex()
             .items_center()
-            .hover()
-            .fill(theme.lowest.variant.hovered.background)
-            .active()
-            .fill(theme.lowest.variant.pressed.background)
+            // .hover()
+            // .fill(theme.lowest.variant.hovered.background)
+            // .active()
+            // .fill(theme.lowest.variant.pressed.background)
             .child(
                 div()
                     .flex()

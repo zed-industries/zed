@@ -32,6 +32,15 @@ pub trait ParentElement<S> {
         self.children_mut().push(child.into_any());
         self
     }
+
+    fn children(mut self, iter: impl IntoIterator<Item = impl IntoAnyElement<S>>) -> Self
+    where
+        Self: Sized,
+    {
+        self.children_mut()
+            .extend(iter.into_iter().map(|item| item.into_any()));
+        self
+    }
 }
 
 trait ElementObject<S> {

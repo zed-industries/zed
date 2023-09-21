@@ -1,10 +1,6 @@
-use gpui3::{
-    serde_json, AppContext, Element, Hsla, IntoAnyElement, Layout, LayoutId, Vector2F, ViewContext,
-    WindowContext,
-};
+use gpui3::{Element, Hsla, Layout, LayoutId, ViewContext, WindowContext};
 use serde::{de::Visitor, Deserialize, Deserializer};
-use std::{collections::HashMap, fmt, marker::PhantomData};
-use theme::ThemeSettings;
+use std::{collections::HashMap, fmt};
 
 #[derive(Deserialize, Clone, Default, Debug)]
 pub struct Theme {
@@ -137,6 +133,7 @@ pub struct Themed<E> {
 }
 
 impl<E: Element> Element for Themed<E> {
+    type State = E::State;
     type FrameState = E::FrameState;
 
     fn layout(
@@ -147,43 +144,45 @@ impl<E: Element> Element for Themed<E> {
     where
         Self: Sized,
     {
-        cx.push_theme(self.theme.clone());
+        // cx.push_theme(self.theme.clone());
         let result = self.child.layout(state, cx);
-        cx.pop_theme();
+        // cx.pop_theme();
         result
     }
 
     fn paint(
         &mut self,
-        view: &mut V,
-        layout: &Layout,
-        state: &mut Self::FrameState,
-        cx: &mut ViewContext<V>,
+        layout: Layout,
+        state: &mut Self::State,
+        frame_state: &mut Self::FrameState,
+        cx: &mut ViewContext<Self::State>,
     ) where
         Self: Sized,
     {
-        cx.push_theme(self.theme.clone());
-        self.child.paint(view, layout, state, cx);
-        cx.pop_theme();
+        // todo!
+        // cx.push_theme(self.theme.clone());
+        self.child.paint(layout, state, frame_state, cx);
+        // cx.pop_theme();
     }
 }
 
-fn preferred_theme<V: 'static>(cx: &AppContext) -> Theme {
-    settings::get::<ThemeSettings>(cx)
-        .theme
-        .deserialized_base_theme
-        .lock()
-        .get_or_insert_with(|| {
-            let theme: Theme =
-                serde_json::from_value(settings::get::<ThemeSettings>(cx).theme.base_theme.clone())
-                    .unwrap();
-            Box::new(theme)
-        })
-        .downcast_ref::<Theme>()
-        .unwrap()
-        .clone()
-}
+// fn preferred_theme<V: 'static>(cx: &AppContext) -> Theme {
+//     settings::get::<ThemeSettings>(cx)
+//         .theme
+//         .deserialized_base_theme
+//         .lock()
+//         .get_or_insert_with(|| {
+//             let theme: Theme =
+//                 serde_json::from_value(settings::get::<ThemeSettings>(cx).theme.base_theme.clone())
+//                     .unwrap();
+//             Box::new(theme)
+//         })
+//         .downcast_ref::<Theme>()
+//         .unwrap()
+//         .clone()
+// }
 
 pub fn theme<'a>(cx: &'a WindowContext) -> &'a Theme {
-    cx.theme::<Theme>()
+    todo!()
+    // cx.theme::<Theme>()
 }

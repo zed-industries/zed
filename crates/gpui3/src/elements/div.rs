@@ -1,6 +1,6 @@
 use crate::{
     AnyElement, Bounds, Element, Layout, LayoutId, Overflow, ParentElement, Pixels, Point,
-    Refineable, RefinementCascade, Result, Style, Styled, ViewContext,
+    Refineable, RefinementCascade, Result, Style, StyleHelpers, Styled, ViewContext,
 };
 use smallvec::SmallVec;
 use std::{cell::Cell, rc::Rc};
@@ -256,6 +256,8 @@ impl<V> Styled for Div<V> {
         self.styles.base()
     }
 }
+
+impl<V> StyleHelpers for Div<V> {}
 
 // impl<V> Interactive<V> for Div<V> {
 //     fn interaction_handlers(&mut self) -> &mut InteractionHandlers<V> {

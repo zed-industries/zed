@@ -203,8 +203,8 @@ where
 impl Size<DefiniteLength> {
     pub fn zero() -> Self {
         Self {
-            width: pixels(0.),
-            height: pixels(0.),
+            width: px(0.),
+            height: px(0.),
         }
     }
 
@@ -256,10 +256,10 @@ impl Edges<Length> {
 
     pub fn zero() -> Self {
         Self {
-            top: pixels(0.),
-            right: pixels(0.),
-            bottom: pixels(0.),
-            left: pixels(0.),
+            top: px(0.),
+            right: px(0.),
+            bottom: px(0.),
+            left: px(0.),
         }
     }
 
@@ -279,10 +279,10 @@ impl Edges<Length> {
 impl Edges<DefiniteLength> {
     pub fn zero() -> Self {
         Self {
-            top: pixels(0.),
-            right: pixels(0.),
-            bottom: pixels(0.),
-            left: pixels(0.),
+            top: px(0.),
+            right: px(0.),
+            bottom: px(0.),
+            left: px(0.),
         }
     }
 
@@ -299,10 +299,10 @@ impl Edges<DefiniteLength> {
 impl Edges<AbsoluteLength> {
     pub fn zero() -> Self {
         Self {
-            top: pixels(0.),
-            right: pixels(0.),
-            bottom: pixels(0.),
-            left: pixels(0.),
+            top: px(0.),
+            right: px(0.),
+            bottom: px(0.),
+            left: px(0.),
         }
     }
 
@@ -434,6 +434,10 @@ pub fn relative<T: From<DefiniteLength>>(fraction: f32) -> T {
 
 pub fn rems<T: From<AbsoluteLength>>(rems: f32) -> T {
     AbsoluteLength::Rems(rems).into()
+}
+
+pub fn px<T: From<AbsoluteLength>>(pixels: f32) -> T {
+    AbsoluteLength::Pixels(pixels).into()
 }
 
 pub fn pixels<T: From<AbsoluteLength>>(pixels: f32) -> T {

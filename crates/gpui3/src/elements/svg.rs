@@ -1,4 +1,4 @@
-use crate::{Element, Layout, LayoutId, Result, Style, Styled};
+use crate::{Element, Layout, LayoutId, Result, Style, StyleHelpers, Styled};
 use refineable::RefinementCascade;
 use std::{borrow::Cow, marker::PhantomData};
 
@@ -77,3 +77,5 @@ impl<S> Styled for Svg<S> {
         self.style.base()
     }
 }
+
+impl<S> StyleHelpers for Svg<S> {}
