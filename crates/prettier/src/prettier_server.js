@@ -5,17 +5,17 @@ const { once } = require('events');
 
 const prettierContainerPath = process.argv[2];
 if (prettierContainerPath == null || prettierContainerPath.length == 0) {
-    process.stderr.write(`Prettier path argument was not specified or empty.\nUsage: ${process.argv[0]} ${process.argv[1]} prettier/path`);
+    process.stderr.write(`Prettier path argument was not specified or empty.\nUsage: ${process.argv[0]} ${process.argv[1]} prettier/path\n`);
     process.exit(1);
 }
 fs.stat(prettierContainerPath, (err, stats) => {
     if (err) {
-        process.stderr.write(`Path '${prettierContainerPath}' does not exist.`);
+        process.stderr.write(`Path '${prettierContainerPath}' does not exist\n`);
         process.exit(1);
     }
 
     if (!stats.isDirectory()) {
-        process.stderr.write(`Path '${prettierContainerPath}' exists but is not a directory.`);
+        process.stderr.write(`Path '${prettierContainerPath}' exists but is not a directory\n`);
         process.exit(1);
     }
 });
@@ -27,10 +27,10 @@ const prettierPath = path.join(prettierContainerPath, 'node_modules/prettier');
     try {
         prettier = await loadPrettier(prettierPath);
     } catch (e) {
-        process.stderr.write(`Failed to load prettier: ${e}`);
+        process.stderr.write(`Failed to load prettier: ${e}\n`);
         process.exit(1);
     }
-    process.stderr.write("Prettier loadded successfully.");
+    process.stderr.write("Prettier loadded successfully\n");
     process.stdin.resume();
     handleBuffer(prettier);
 })()
