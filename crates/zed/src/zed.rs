@@ -744,7 +744,7 @@ mod tests {
     use theme::{ThemeRegistry, ThemeSettings};
     use workspace::{
         item::{Item, ItemHandle},
-        open_new, open_paths, pane, NewFile, SaveBehavior, SplitDirection, WorkspaceHandle,
+        open_new, open_paths, pane, NewFile, SaveIntent, SplitDirection, WorkspaceHandle,
     };
 
     #[gpui::test]
@@ -945,12 +945,14 @@ mod tests {
 
         editor.update(cx, |editor, cx| {
             assert!(editor.text(cx).is_empty());
+            assert!(!editor.is_dirty(cx));
         });
 
         let save_task = workspace.update(cx, |workspace, cx| {
-            workspace.save_active_item(SaveBehavior::PromptOnConflict, cx)
+            workspace.save_active_item(SaveIntent::Save, cx)
         });
         app_state.fs.create_dir(Path::new("/root")).await.unwrap();
+        cx.foreground().run_until_parked();
         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name")));
         save_task.await.unwrap();
         editor.read_with(cx, |editor, cx| {
@@ -1314,7 +1316,7 @@ mod tests {
         cx.read(|cx| assert!(editor.is_dirty(cx)));
 
         let save_task = workspace.update(cx, |workspace, cx| {
-            workspace.save_active_item(SaveBehavior::PromptOnConflict, cx)
+            workspace.save_active_item(SaveIntent::Save, cx)
         });
         window.simulate_prompt_answer(0, cx);
         save_task.await.unwrap();
@@ -1358,8 +1360,9 @@ mod tests {
 
         // Save the buffer. This prompts for a filename.
         let save_task = workspace.update(cx, |workspace, cx| {
-            workspace.save_active_item(SaveBehavior::PromptOnConflict, cx)
+            workspace.save_active_item(SaveIntent::Save, cx)
         });
+        cx.foreground().run_until_parked();
         cx.simulate_new_path_selection(|parent_dir| {
             assert_eq!(parent_dir, Path::new("/root"));
             Some(parent_dir.join("the-new-name.rs"))
@@ -1384,7 +1387,7 @@ mod tests {
             assert!(editor.is_dirty(cx));
         });
         let save_task = workspace.update(cx, |workspace, cx| {
-            workspace.save_active_item(SaveBehavior::PromptOnConflict, cx)
+            workspace.save_active_item(SaveIntent::Save, cx)
         });
         save_task.await.unwrap();
         assert!(!cx.did_prompt_for_new_path());
@@ -1453,8 +1456,9 @@ mod tests {
 
         // Save the buffer. This prompts for a filename.
         let save_task = workspace.update(cx, |workspace, cx| {
-            workspace.save_active_item(SaveBehavior::PromptOnConflict, cx)
+            workspace.save_active_item(SaveIntent::Save, cx)
         });
+        cx.foreground().run_until_parked();
         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name.rs")));
         save_task.await.unwrap();
         // The buffer is not dirty anymore and the language is assigned based on the path.
@@ -1692,7 +1696,7 @@ mod tests {
         pane.update(cx, |pane, cx| {
             let editor3_id = editor3.id();
             drop(editor3);
-            pane.close_item_by_id(editor3_id, SaveBehavior::PromptOnWrite, cx)
+            pane.close_item_by_id(editor3_id, SaveIntent::Close, cx)
         })
         .await
         .unwrap();
@@ -1727,7 +1731,7 @@ mod tests {
         pane.update(cx, |pane, cx| {
             let editor2_id = editor2.id();
             drop(editor2);
-            pane.close_item_by_id(editor2_id, SaveBehavior::PromptOnWrite, cx)
+            pane.close_item_by_id(editor2_id, SaveIntent::Close, cx)
         })
         .await
         .unwrap();
@@ -1884,28 +1888,28 @@ mod tests {
 
         // Close all the pane items in some arbitrary order.
         pane.update(cx, |pane, cx| {
-            pane.close_item_by_id(file1_item_id, SaveBehavior::PromptOnWrite, cx)
+            pane.close_item_by_id(file1_item_id, SaveIntent::Close, cx)
         })
         .await
         .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
         pane.update(cx, |pane, cx| {
-            pane.close_item_by_id(file4_item_id, SaveBehavior::PromptOnWrite, cx)
+            pane.close_item_by_id(file4_item_id, SaveIntent::Close, cx)
         })
         .await
         .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
         pane.update(cx, |pane, cx| {
-            pane.close_item_by_id(file2_item_id, SaveBehavior::PromptOnWrite, cx)
+            pane.close_item_by_id(file2_item_id, SaveIntent::Close, cx)
         })
         .await
         .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
         pane.update(cx, |pane, cx| {
-            pane.close_item_by_id(file3_item_id, SaveBehavior::PromptOnWrite, cx)
+            pane.close_item_by_id(file3_item_id, SaveIntent::Close, cx)
         })
         .await
         .unwrap();

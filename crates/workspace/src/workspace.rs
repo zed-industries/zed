@@ -163,19 +163,19 @@ pub struct NewFileInDirection(pub SplitDirection);
 #[derive(Clone, PartialEq, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveAll {
-    pub save_behavior: Option<SaveBehavior>,
+    pub save_behavior: Option<SaveIntent>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Save {
-    pub save_behavior: Option<SaveBehavior>,
+    pub save_behavior: Option<SaveIntent>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseAllItemsAndPanes {
-    pub save_behavior: Option<SaveBehavior>,
+    pub save_behavior: Option<SaveIntent>,
 }
 
 #[derive(Deserialize)]
@@ -294,19 +294,14 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     cx.add_action(
         |workspace: &mut Workspace, action: &Save, cx: &mut ViewContext<Workspace>| {
             workspace
-                .save_active_item(
-                    action
-                        .save_behavior
-                        .unwrap_or(SaveBehavior::PromptOnConflict),
-                    cx,
-                )
+                .save_active_item(action.save_behavior.unwrap_or(SaveIntent::Save), cx)
                 .detach_and_log_err(cx);
         },
     );
     cx.add_action(
         |workspace: &mut Workspace, _: &SaveAs, cx: &mut ViewContext<Workspace>| {
             workspace
-                .save_active_item(SaveBehavior::PromptForNewPath, cx)
+                .save_active_item(SaveIntent::SaveAs, cx)
                 .detach_and_log_err(cx);
         },
     );
@@ -1356,7 +1351,7 @@ impl Workspace {
 
             Ok(this
                 .update(&mut cx, |this, cx| {
-                    this.save_all_internal(SaveBehavior::PromptOnWrite, cx)
+                    this.save_all_internal(SaveIntent::Close, cx)
                 })?
                 .await?)
         })
@@ -1367,12 +1362,8 @@ impl Workspace {
         action: &SaveAll,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let save_all = self.save_all_internal(
-            action
-                .save_behavior
-                .unwrap_or(SaveBehavior::PromptOnConflict),
-            cx,
-        );
+        let save_all =
+            self.save_all_internal(action.save_behavior.unwrap_or(SaveIntent::SaveAll), cx);
         Some(cx.foreground().spawn(async move {
             save_all.await?;
             Ok(())
@@ -1381,7 +1372,7 @@ impl Workspace {
 
     fn save_all_internal(
         &mut self,
-        save_behaviour: SaveBehavior,
+        save_behaviour: SaveIntent,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
         if self.project.read(cx).is_read_only() {
@@ -1688,7 +1679,7 @@ impl Workspace {
 
     pub fn save_active_item(
         &mut self,
-        save_behavior: SaveBehavior,
+        save_behavior: SaveIntent,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let project = self.project.clone();
@@ -1720,7 +1711,7 @@ impl Workspace {
         _: &CloseInactiveTabsAndPanes,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        self.close_all_internal(true, SaveBehavior::PromptOnWrite, cx)
+        self.close_all_internal(true, SaveIntent::Close, cx)
     }
 
     pub fn close_all_items_and_panes(
@@ -1728,17 +1719,13 @@ impl Workspace {
         action: &CloseAllItemsAndPanes,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        self.close_all_internal(
-            false,
-            action.save_behavior.unwrap_or(SaveBehavior::PromptOnWrite),
-            cx,
-        )
+        self.close_all_internal(false, action.save_behavior.unwrap_or(SaveIntent::Close), cx)
     }
 
     fn close_all_internal(
         &mut self,
         retain_active_pane: bool,
-        save_behavior: SaveBehavior,
+        save_behavior: SaveIntent,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let current_pane = self.active_pane();
@@ -4433,7 +4420,7 @@ mod tests {
             let item1_id = item1.id();
             let item3_id = item3.id();
             let item4_id = item4.id();
-            pane.close_items(cx, SaveBehavior::PromptOnWrite, move |id| {
+            pane.close_items(cx, SaveIntent::Close, move |id| {
                 [item1_id, item3_id, item4_id].contains(&id)
             })
         });
@@ -4571,7 +4558,7 @@ mod tests {
         // prompts, the task should complete.
 
         let close = left_pane.update(cx, |pane, cx| {
-            pane.close_items(cx, SaveBehavior::PromptOnWrite, move |_| true)
+            pane.close_items(cx, SaveIntent::Close, move |_| true)
         });
         cx.foreground().run_until_parked();
         left_pane.read_with(cx, |pane, cx| {
@@ -4689,7 +4676,7 @@ mod tests {
         });
 
         pane.update(cx, |pane, cx| {
-            pane.close_items(cx, SaveBehavior::PromptOnWrite, move |id| id == item_id)
+            pane.close_items(cx, SaveIntent::Close, move |id| id == item_id)
         })
         .await
         .unwrap();
@@ -4712,7 +4699,7 @@ mod tests {
 
         // Ensure autosave is prevented for deleted files also when closing the buffer.
         let _close_items = pane.update(cx, |pane, cx| {
-            pane.close_items(cx, SaveBehavior::PromptOnWrite, move |id| id == item_id)
+            pane.close_items(cx, SaveIntent::Close, move |id| id == item_id)
         });
         deterministic.run_until_parked();
         assert!(window.has_pending_prompt(cx));

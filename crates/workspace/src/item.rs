@@ -475,11 +475,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                         match item_event {
                             ItemEvent::CloseItem => {
                                 pane.update(cx, |pane, cx| {
-                                    pane.close_item_by_id(
-                                        item.id(),
-                                        crate::SaveBehavior::PromptOnWrite,
-                                        cx,
-                                    )
+                                    pane.close_item_by_id(item.id(), crate::SaveIntent::Close, cx)
                                 })
                                 .detach_and_log_err(cx);
                                 return;
