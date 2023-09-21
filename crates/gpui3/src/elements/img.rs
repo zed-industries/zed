@@ -1,7 +1,7 @@
 use crate::{Element, Layout, LayoutId, Result, Style, Styled};
 use refineable::RefinementCascade;
 use std::marker::PhantomData;
-use util::{arc_cow::ArcCow, ResultExt};
+use util::arc_cow::ArcCow;
 
 pub struct Img<S> {
     style: RefinementCascade<Style>,

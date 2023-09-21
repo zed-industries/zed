@@ -1,6 +1,5 @@
 use crate::{
-    AnyElement, Element, IntoAnyElement, Layout, LayoutId, Line, LineLayout, Pixels, Result, Size,
-    ViewContext,
+    AnyElement, Element, IntoAnyElement, Layout, LayoutId, Line, Pixels, Result, Size, ViewContext,
 };
 use parking_lot::Mutex;
 use std::{marker::PhantomData, sync::Arc};
@@ -42,16 +41,18 @@ impl<S: 'static> Element for Text<S> {
     ) -> Result<(LayoutId, Self::FrameState)> {
         let text_system = cx.text_system().clone();
         let text_style = cx.text_style();
-        let line_height = cx.text_system().line_height(text_style.font_size);
+        let font_size = text_style.font_size * cx.rem_size();
+        let line_height = cx.text_system().line_height(font_size);
         let text = self.text.clone();
         let paint_state = Arc::new(Mutex::new(None));
 
-        let layout_id = cx.request_measured_layout(Default::default(), cx.rem_size(), {
+        let rem_size = cx.rem_size();
+        let layout_id = cx.request_measured_layout(Default::default(), rem_size, {
             let frame_state = paint_state.clone();
             move |_, _| {
                 let line_layout = text_system.layout_str(
                     text.as_ref(),
-                    text_style.font_size,
+                    font_size,
                     &[(text.len(), text_style.to_run())],
                 );
 
@@ -78,7 +79,7 @@ impl<S: 'static> Element for Text<S> {
         _: &mut Self::State,
         paint_state: &mut Self::FrameState,
         cx: &mut ViewContext<S>,
-    ) {
+    ) -> Result<()> {
         let bounds = layout.bounds;
 
         let line;
@@ -96,7 +97,9 @@ impl<S: 'static> Element for Text<S> {
 
         // todo!("We haven't added visible bounds to the new element system yet, so this is a placeholder.");
         let visible_bounds = bounds;
-        line.paint(bounds.origin, visible_bounds, line_height, cx.legacy_cx);
+        line.paint(bounds.origin, visible_bounds, line_height, cx);
+
+        Ok(())
     }
 }
 

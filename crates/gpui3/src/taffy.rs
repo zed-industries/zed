@@ -4,8 +4,23 @@ use super::{
 };
 use std::fmt::Debug;
 pub use taffy::tree::NodeId as LayoutId;
-use taffy::{style::AvailableSpace, tree::MeasureFunc, *};
+use taffy::{
+    geometry::Size as TaffySize,
+    style::AvailableSpace as TaffyAvailableSpace,
+    tree::{Measurable, MeasureFunc},
+    Taffy,
+};
 pub struct TaffyLayoutEngine(Taffy);
+
+#[derive(Copy, Clone, Debug)]
+pub enum AvailableSpace {
+    /// The amount of space available is the specified number of pixels
+    Definite(Pixels),
+    /// The amount of space available is indefinite and the node should be laid out under a min-content constraint
+    MinContent,
+    /// The amount of space available is indefinite and the node should be laid out under a max-content constraint
+    MaxContent,
+}
 
 impl TaffyLayoutEngine {
     pub fn new() -> Self {
@@ -30,12 +45,17 @@ impl TaffyLayoutEngine {
         &mut self,
         style: Style,
         rem_size: Pixels,
-        measure: impl FnOnce(Size<Option<Pixels>>, Size<AvailableSpace>) + 'static,
+        measure: impl Fn(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels>
+            + Send
+            + Sync
+            + 'static,
     ) -> Result<LayoutId> {
         let style = style.to_taffy(rem_size);
 
-        self.0
-            .new_leaf_with_measure(style, Box::new(Measureable(measure)))
+        let measurable = Box::new(Measureable(measure)) as Box<dyn Measurable>;
+        Ok(self
+            .0
+            .new_leaf_with_measure(style, MeasureFunc::Boxed(measurable))?)
     }
 
     pub fn layout(&mut self, id: LayoutId) -> Result<Layout> {
@@ -47,14 +67,18 @@ struct Measureable<F>(F);
 
 impl<F> taffy::tree::Measurable for Measureable<F>
 where
-    F: Send + Sync + FnOnce(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels>,
+    F: Send + Sync + Fn(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels>,
 {
     fn measure(
         &self,
-        known_dimensions: taffy::prelude::Size<Option<f32>>,
-        available_space: taffy::prelude::Size<AvailableSpace>,
-    ) -> taffy::prelude::Size<f32> {
-        (self.0)(known_dimensions.into(), available_space.into()).into()
+        known_dimensions: TaffySize<Option<f32>>,
+        available_space: TaffySize<TaffyAvailableSpace>,
+    ) -> TaffySize<f32> {
+        let known_dimensions: Size<Option<f32>> = known_dimensions.into();
+        let known_dimensions: Size<Option<Pixels>> = known_dimensions.map(|d| d.map(Into::into));
+        let available_space = available_space.into();
+        let size = (self.0)(known_dimensions, available_space);
+        size.into()
     }
 }
 
@@ -232,14 +256,48 @@ where
     }
 }
 
-impl<S, T: Clone + Default + Debug> From<taffy::geometry::Size<S>> for Size<T>
-where
-    S: Into<T>,
-{
-    fn from(value: taffy::geometry::Size<S>) -> Self {
-        Self {
-            width: value.width.into(),
-            height: value.height.into(),
+impl<T: Into<U>, U: Clone + Debug> From<TaffySize<T>> for Size<U> {
+    fn from(taffy_size: taffy::geometry::Size<T>) -> Self {
+        Size {
+            width: taffy_size.width.into(),
+            height: taffy_size.height.into(),
+        }
+    }
+}
+
+impl<T: Into<U> + Clone + Debug, U> From<Size<T>> for taffy::geometry::Size<U> {
+    fn from(size: Size<T>) -> Self {
+        taffy::geometry::Size {
+            width: size.width.into(),
+            height: size.height.into(),
+        }
+    }
+}
+
+// impl From<TaffySize<Option<f32>>> for Size<Option<Pixels>> {
+//     fn from(value: TaffySize<Option<f32>>) -> Self {
+//         Self {
+//             width: value.width.map(Into::into),
+//             height: value.height.map(Into::into),
+//         }
+//     }
+// }
+
+// impl From<TaffySize<TaffyAvailableSpace>> for Size<AvailableSpace> {
+//     fn from(taffy_size: TaffySize<TaffyAvailableSpace>) -> Self {
+//         Size {
+//             width: From::from(taffy_size.width),
+//             height: From::from(taffy_size.height),
+//         }
+//     }
+// }
+
+impl From<TaffyAvailableSpace> for AvailableSpace {
+    fn from(space: TaffyAvailableSpace) -> Self {
+        match space {
+            TaffyAvailableSpace::Definite(value) => AvailableSpace::Definite(Pixels(value)),
+            TaffyAvailableSpace::MinContent => AvailableSpace::MinContent,
+            TaffyAvailableSpace::MaxContent => AvailableSpace::MaxContent,
         }
     }
 }

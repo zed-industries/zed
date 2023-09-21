@@ -1,4 +1,4 @@
-use crate::{PlatformWindow, Point, Size, Style, TextStyle, TextStyleRefinement};
+use crate::{AvailableSpace, PlatformWindow, Point, Size, Style, TextStyle, TextStyleRefinement};
 
 use super::{
     px, taffy::LayoutId, AppContext, Bounds, Context, EntityId, Handle, Pixels, Reference,
@@ -11,7 +11,6 @@ use std::{
     any::{Any, TypeId},
     marker::PhantomData,
 };
-use taffy::style::AvailableSpace;
 
 pub struct AnyWindow {}
 
@@ -75,7 +74,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 
     pub fn request_measured_layout<
-        F: FnOnce(Size<Option<Pixels>>, Size<AvailableSpace>) + 'static,
+        F: Fn(Size<Option<Pixels>>, Size<AvailableSpace>) -> Size<Pixels> + Send + Sync + 'static,
     >(
         &mut self,
         style: Style,
@@ -107,11 +106,12 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         self.window.text_style_stack.pop();
     }
 
-    pub fn text_style(&self) -> &Vec<TextStyle> {
-        let style = TextStyleRefinement::default();
+    pub fn text_style(&self) -> TextStyle {
+        let mut style = TextStyle::default();
         for refinement in &self.window.text_style_stack {
             style.refine(refinement);
         }
+        style
     }
 
     pub fn mouse_position(&self) -> Point<Pixels> {

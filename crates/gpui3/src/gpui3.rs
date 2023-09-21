@@ -31,8 +31,8 @@ pub use smol::Timer;
 use std::ops::{Deref, DerefMut};
 pub use style::*;
 pub use styled::*;
-pub use taffy::LayoutId;
 use taffy::TaffyLayoutEngine;
+pub use taffy::{AvailableSpace, LayoutId};
 pub use text_system::*;
 pub use util::arc_cow::ArcCow;
 pub use window::*;
@@ -54,6 +54,12 @@ pub trait Context {
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct SharedString(ArcCow<'static, str>);
+
+impl Default for SharedString {
+    fn default() -> Self {
+        Self(ArcCow::Owned("".into()))
+    }
+}
 
 impl AsRef<str> for SharedString {
     fn as_ref(&self) -> &str {

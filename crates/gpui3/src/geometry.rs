@@ -79,6 +79,15 @@ pub fn size<T: Clone + Debug>(width: T, height: T) -> Size<T> {
     Size { width, height }
 }
 
+impl<T: Clone + Debug> Size<T> {
+    pub fn map<U: Clone + Debug, F: Fn(T) -> U>(&self, f: F) -> Size<U> {
+        Size {
+            width: f(self.width.clone()),
+            height: f(self.height.clone()),
+        }
+    }
+}
+
 impl From<Size<Option<Pixels>>> for Size<Option<f32>> {
     fn from(val: Size<Option<Pixels>>) -> Self {
         Size {
