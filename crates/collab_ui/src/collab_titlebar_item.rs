@@ -886,10 +886,12 @@ impl CollabTitlebarItem {
         theme: &Theme,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
+        let user_id = user.id;
         let project_id = workspace.read(cx).project().read(cx).remote_id();
-        let room = ActiveCall::global(cx).read(cx).room();
+        let room = ActiveCall::global(cx).read(cx).room().cloned();
         let is_being_followed = workspace.read(cx).is_being_followed(peer_id);
         let followed_by_self = room
+            .as_ref()
             .and_then(|room| {
                 Some(
                     is_being_followed
@@ -929,142 +931,139 @@ impl CollabTitlebarItem {
             }
         }
 
-        let mut content = Stack::new()
-            .with_children(user.avatar.as_ref().map(|avatar| {
-                let face_pile = FacePile::new(theme.titlebar.follower_avatar_overlap)
-                    .with_child(Self::render_face(
-                        avatar.clone(),
-                        Self::location_style(workspace, location, leader_style, cx),
-                        background_color,
-                        microphone_state,
-                    ))
-                    .with_children(
-                        (|| {
-                            let project_id = project_id?;
-                            let room = room?.read(cx);
-                            let followers = room.followers_for(peer_id, project_id);
+        enum TitlebarParticipant {}
 
-                            Some(followers.into_iter().flat_map(|&follower| {
-                                let remote_participant =
-                                    room.remote_participant_for_peer_id(follower);
+        let content = MouseEventHandler::new::<TitlebarParticipant, _>(
+            peer_id.as_u64() as usize,
+            cx,
+            move |_, cx| {
+                Stack::new()
+                    .with_children(user.avatar.as_ref().map(|avatar| {
+                        let face_pile = FacePile::new(theme.titlebar.follower_avatar_overlap)
+                            .with_child(Self::render_face(
+                                avatar.clone(),
+                                Self::location_style(workspace, location, leader_style, cx),
+                                background_color,
+                                microphone_state,
+                            ))
+                            .with_children(
+                                (|| {
+                                    let project_id = project_id?;
+                                    let room = room?.read(cx);
+                                    let followers = room.followers_for(peer_id, project_id);
 
-                                let avatar = remote_participant
-                                    .and_then(|p| p.user.avatar.clone())
-                                    .or_else(|| {
-                                        if follower == workspace.read(cx).client().peer_id()? {
-                                            workspace
-                                                .read(cx)
-                                                .user_store()
-                                                .read(cx)
-                                                .current_user()?
-                                                .avatar
-                                                .clone()
-                                        } else {
-                                            None
-                                        }
-                                    })?;
+                                    Some(followers.into_iter().flat_map(|&follower| {
+                                        let remote_participant =
+                                            room.remote_participant_for_peer_id(follower);
 
-                                Some(Self::render_face(
-                                    avatar.clone(),
-                                    follower_style,
-                                    background_color,
-                                    None,
-                                ))
-                            }))
-                        })()
-                        .into_iter()
-                        .flatten(),
-                    );
+                                        let avatar = remote_participant
+                                            .and_then(|p| p.user.avatar.clone())
+                                            .or_else(|| {
+                                                if follower
+                                                    == workspace.read(cx).client().peer_id()?
+                                                {
+                                                    workspace
+                                                        .read(cx)
+                                                        .user_store()
+                                                        .read(cx)
+                                                        .current_user()?
+                                                        .avatar
+                                                        .clone()
+                                                } else {
+                                                    None
+                                                }
+                                            })?;
 
-                let mut container = face_pile
-                    .contained()
-                    .with_style(theme.titlebar.leader_selection);
+                                        Some(Self::render_face(
+                                            avatar.clone(),
+                                            follower_style,
+                                            background_color,
+                                            None,
+                                        ))
+                                    }))
+                                })()
+                                .into_iter()
+                                .flatten(),
+                            );
 
-                if let Some(replica_id) = replica_id {
-                    if followed_by_self {
-                        let color = theme.editor.replica_selection_style(replica_id).selection;
-                        container = container.with_background_color(color);
-                    }
-                }
+                        let mut container = face_pile
+                            .contained()
+                            .with_style(theme.titlebar.leader_selection);
 
-                container
-            }))
-            .with_children((|| {
-                let replica_id = replica_id?;
-                let color = theme.editor.replica_selection_style(replica_id).cursor;
-                Some(
-                    AvatarRibbon::new(color)
-                        .constrained()
-                        .with_width(theme.titlebar.avatar_ribbon.width)
-                        .with_height(theme.titlebar.avatar_ribbon.height)
-                        .aligned()
-                        .bottom(),
-                )
-            })())
-            .into_any();
-
-        if let Some(location) = location {
-            match (replica_id, location) {
-                (None, ParticipantLocation::SharedProject { project_id }) => {
-                    enum JoinProject {}
-
-                    let user_id = user.id;
-                    content = MouseEventHandler::new::<JoinProject, _>(
-                        peer_id.as_u64() as usize,
-                        cx,
-                        move |_, _| content,
-                    )
-                    .with_cursor_style(CursorStyle::PointingHand)
-                    .on_click(MouseButton::Left, move |_, this, cx| {
-                        if let Some(workspace) = this.workspace.upgrade(cx) {
-                            let app_state = workspace.read(cx).app_state().clone();
-                            workspace::join_remote_project(project_id, user_id, app_state, cx)
-                                .detach_and_log_err(cx);
-                        }
-                    })
-                    .with_tooltip::<JoinProject>(
-                        peer_id.as_u64() as usize,
-                        format!("Follow {} into external project", user.github_login),
-                        Some(Box::new(FollowNextCollaborator)),
-                        theme.tooltip.clone(),
-                        cx,
-                    )
-                    .into_any();
-                }
-                _ => {
-                    enum ToggleFollow {}
-
-                    content = MouseEventHandler::new::<ToggleFollow, _>(
-                        user.id as usize,
-                        cx,
-                        move |_, _| content,
-                    )
-                    .with_cursor_style(CursorStyle::PointingHand)
-                    .on_click(MouseButton::Left, move |_, item, cx| {
-                        if let Some(workspace) = item.workspace.upgrade(cx) {
-                            if let Some(task) = workspace
-                                .update(cx, |workspace, cx| workspace.toggle_follow(peer_id, cx))
-                            {
-                                task.detach_and_log_err(cx);
+                        if let Some(replica_id) = replica_id {
+                            if followed_by_self {
+                                let color =
+                                    theme.editor.replica_selection_style(replica_id).selection;
+                                container = container.with_background_color(color);
                             }
                         }
-                    })
-                    .with_tooltip::<ToggleFollow>(
-                        peer_id.as_u64() as usize,
-                        if is_being_followed {
-                            format!("Unfollow {}", user.github_login)
-                        } else {
-                            format!("Follow {}", user.github_login)
-                        },
-                        Some(Box::new(FollowNextCollaborator)),
-                        theme.tooltip.clone(),
-                        cx,
-                    )
-                    .into_any();
-                }
-            }
+
+                        container
+                    }))
+                    .with_children((|| {
+                        let replica_id = replica_id?;
+                        let color = theme.editor.replica_selection_style(replica_id).cursor;
+                        Some(
+                            AvatarRibbon::new(color)
+                                .constrained()
+                                .with_width(theme.titlebar.avatar_ribbon.width)
+                                .with_height(theme.titlebar.avatar_ribbon.height)
+                                .aligned()
+                                .bottom(),
+                        )
+                    })())
+            },
+        );
+
+        match (replica_id, location) {
+            // If the user's location isn't known, do nothing.
+            (_, None) => content.into_any(),
+
+            // If the user is not in this project, but is in another share project,
+            // join that project.
+            (None, Some(ParticipantLocation::SharedProject { project_id })) => content
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(MouseButton::Left, move |_, this, cx| {
+                    if let Some(workspace) = this.workspace.upgrade(cx) {
+                        let app_state = workspace.read(cx).app_state().clone();
+                        workspace::join_remote_project(project_id, user_id, app_state, cx)
+                            .detach_and_log_err(cx);
+                    }
+                })
+                .with_tooltip::<TitlebarParticipant>(
+                    peer_id.as_u64() as usize,
+                    format!("Follow {} into external project", user.github_login),
+                    Some(Box::new(FollowNextCollaborator)),
+                    theme.tooltip.clone(),
+                    cx,
+                )
+                .into_any(),
+
+            // Otherwise, follow the user in the current window.
+            _ => content
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(MouseButton::Left, move |_, item, cx| {
+                    if let Some(workspace) = item.workspace.upgrade(cx) {
+                        if let Some(task) = workspace
+                            .update(cx, |workspace, cx| workspace.toggle_follow(peer_id, cx))
+                        {
+                            task.detach_and_log_err(cx);
+                        }
+                    }
+                })
+                .with_tooltip::<TitlebarParticipant>(
+                    peer_id.as_u64() as usize,
+                    if is_being_followed {
+                        format!("Unfollow {}", user.github_login)
+                    } else {
+                        format!("Follow {}", user.github_login)
+                    },
+                    Some(Box::new(FollowNextCollaborator)),
+                    theme.tooltip.clone(),
+                    cx,
+                )
+                .into_any(),
         }
-        content
     }
 
     fn location_style(
