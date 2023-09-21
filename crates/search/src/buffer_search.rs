@@ -932,9 +932,7 @@ impl BufferSearchBar {
                 }
             }
         }
-        dbg!("prop?");
         if should_propagate {
-            dbg!("Prop!");
             cx.propagate_action();
         }
     }
