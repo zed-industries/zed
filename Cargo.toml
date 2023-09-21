@@ -158,7 +158,6 @@ core-graphics = { git = "https://github.com/servo/core-foundation-rs", rev = "07
 
 [profile.dev]
 split-debuginfo = "unpacked"
-panic = "abort"
 
 [profile.release]
 debug = true
