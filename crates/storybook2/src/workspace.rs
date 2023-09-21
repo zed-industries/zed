@@ -1,18 +1,18 @@
 use crate::{collab_panel::collab_panel, theme::theme};
-use gpui3::{div, Element, IntoAnyElement, ParentElement, ScrollState, Styled, ViewContext};
+use gpui3::{div, img, svg, Element, ParentElement, ScrollState, Styled, ViewContext};
 
-#[derive(Element, Default)]
+#[derive(Default)]
 struct WorkspaceElement {
     left_scroll_state: ScrollState,
     right_scroll_state: ScrollState,
 }
 
-pub fn workspace<V: 'static>() -> impl Element<V> {
+pub fn workspace<V: 'static>() -> impl Element {
     WorkspaceElement::default()
 }
 
 impl WorkspaceElement {
-    fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
+    fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl Element {
         let theme = theme(cx);
 
         div()
@@ -41,15 +41,14 @@ impl WorkspaceElement {
     }
 }
 
-#[derive(Element)]
 struct TitleBar;
 
-pub fn titlebar<V: 'static>() -> impl Element<V> {
+pub fn titlebar<V: 'static>() -> impl Element {
     TitleBar
 }
 
 impl TitleBar {
-    fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
+    fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl Element {
         let theme = theme(cx);
         div()
             .flex()
@@ -62,7 +61,7 @@ impl TitleBar {
             .child(self.right_group(cx))
     }
 
-    fn left_group<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
+    fn left_group<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl Element {
         let theme = theme(cx);
         div()
             .flex()
@@ -136,7 +135,7 @@ impl TitleBar {
             )
     }
 
-    fn right_group<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
+    fn right_group<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl Element {
         let theme = theme(cx);
         div()
             .flex()
@@ -264,15 +263,14 @@ impl TitleBar {
 
 // ================================================================================ //
 
-#[derive(Element)]
 struct StatusBar;
 
-pub fn statusbar<V: 'static>() -> impl Element<V> {
+pub fn statusbar<V: 'static>() -> impl Element {
     StatusBar
 }
 
 impl StatusBar {
-    fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
+    fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl Element {
         let theme = theme(cx);
         div()
             .flex()
@@ -285,7 +283,7 @@ impl StatusBar {
             .child(self.right_group(cx))
     }
 
-    fn left_group<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
+    fn left_group<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl Element {
         let theme = theme(cx);
         div()
             .flex()
@@ -382,7 +380,7 @@ impl StatusBar {
             )
     }
 
-    fn right_group<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
+    fn right_group<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl Element {
         let theme = theme(cx);
         div()
             .flex()

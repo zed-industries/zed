@@ -1,12 +1,9 @@
 use crate::theme::{theme, Theme};
-use gpui2::{
-    elements::{div, div::ScrollState, img, svg},
-    style::{StyleHelpers, Styleable},
-    ArcCow, Element, IntoElement, ParentElement, ViewContext,
+use gpui3::{
+    div, img, svg, ArcCow, Element, IntoAnyElement, ParentElement, ScrollState, Styled, ViewContext,
 };
 use std::marker::PhantomData;
 
-#[derive(Element)]
 pub struct CollabPanelElement<V: 'static> {
     view_type: PhantomData<V>,
     scroll_state: ScrollState,
@@ -22,7 +19,7 @@ pub fn collab_panel<V: 'static>(scroll_state: ScrollState) -> CollabPanelElement
 }
 
 impl<V: 'static> CollabPanelElement<V> {
-    fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
+    fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl Element {
         let theme = theme(cx);
 
         // Panel
@@ -117,10 +114,10 @@ impl<V: 'static> CollabPanelElement<V> {
 
     fn list_section_header(
         &self,
-        label: impl IntoElement<V>,
+        label: impl IntoAnyElement<V>,
         expanded: bool,
         theme: &Theme,
-    ) -> impl Element<V> {
+    ) -> impl Element {
         div()
             .h_7()
             .px_2()
@@ -146,9 +143,9 @@ impl<V: 'static> CollabPanelElement<V> {
     fn list_item(
         &self,
         avatar_uri: impl Into<ArcCow<'static, str>>,
-        label: impl IntoElement<V>,
+        label: impl IntoAnyElement<V>,
         theme: &Theme,
-    ) -> impl Element<V> {
+    ) -> impl Element {
         div()
             .h_7()
             .px_2()

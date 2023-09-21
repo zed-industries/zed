@@ -1,5 +1,5 @@
 use gpui3::{
-    serde_json, AppContext, Element, Hsla, IntoAnyElement, Layout, Vector2F, ViewContext,
+    serde_json, AppContext, Element, Hsla, IntoAnyElement, Layout, LayoutId, Vector2F, ViewContext,
     WindowContext,
 };
 use serde::{de::Visitor, Deserialize, Deserializer};
@@ -131,25 +131,24 @@ where
     deserializer.deserialize_map(SyntaxVisitor)
 }
 
-pub struct Themed<V: 'static, E: Element<V>> {
+pub struct Themed<E> {
     pub(crate) theme: Theme,
     pub(crate) child: E,
-    pub(crate) view_type: PhantomData<V>,
 }
 
-impl<V: 'static, E: Element<V>> Element<V> for Themed<V, E> {
+impl<E: Element> Element for Themed<E> {
     type FrameState = E::FrameState;
 
     fn layout(
         &mut self,
-        view: &mut V,
-        cx: &mut ViewContext<V>,
-    ) -> anyhow::Result<(gpui2::LayoutId, Self::FrameState)>
+        state: &mut E::State,
+        cx: &mut ViewContext<E::State>,
+    ) -> anyhow::Result<(LayoutId, Self::FrameState)>
     where
         Self: Sized,
     {
         cx.push_theme(self.theme.clone());
-        let result = self.child.layout(view, cx);
+        let result = self.child.layout(state, cx);
         cx.pop_theme();
         result
     }

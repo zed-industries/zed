@@ -1123,7 +1123,7 @@ mod tests {
     }
 
     fn build_platform() -> MacPlatform {
-        let mut platform = MacPlatform::new();
+        let platform = MacPlatform::new();
         platform.0.borrow_mut().pasteboard = unsafe { NSPasteboard::pasteboardWithUniqueName(nil) };
         platform
     }
