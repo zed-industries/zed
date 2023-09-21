@@ -791,6 +791,64 @@ async fn test_db_channel_moving(db: &Arc<Database>) {
     assert!(result.channels.is_empty())
 }
 
+test_both_dbs!(
+    test_db_channel_moving_bugs,
+    test_db_channel_moving_bugs_postgres,
+    test_db_channel_moving_bugs_sqlite
+);
+
+async fn test_db_channel_moving_bugs(db: &Arc<Database>) {
+    let user_id = db
+        .create_user(
+            "user1@example.com",
+            false,
+            NewUserParams {
+                github_login: "user1".into(),
+                github_user_id: 5,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap()
+        .user_id;
+
+    let zed_id = db.create_root_channel("zed", "1", user_id).await.unwrap();
+
+    let projects_id = db
+        .create_channel("projects", Some(zed_id), "2", user_id)
+        .await
+        .unwrap();
+
+    let livestreaming_id = db
+        .create_channel("livestreaming", Some(projects_id), "3", user_id)
+        .await
+        .unwrap();
+
+    // Dag is: zed - projects - livestreaming
+
+    // Move to same parent should be a no-op
+    assert!(db
+        .move_channel(user_id, projects_id, zed_id, zed_id)
+        .await
+        .unwrap()
+        .is_empty());
+
+    // Stranding a channel should retain it's sub channels
+    db.unlink_channel(user_id, projects_id, zed_id)
+        .await
+        .unwrap();
+
+    let result = db.get_channels_for_user(user_id).await.unwrap();
+    assert_dag(
+        result.channels,
+        &[
+            (zed_id, None),
+            (projects_id, None),
+            (livestreaming_id, Some(projects_id)),
+        ],
+    );
+}
+
 #[track_caller]
 fn assert_dag(actual: ChannelGraph, expected: &[(ChannelId, Option<ChannelId>)]) {
     let mut actual_map: HashMap<ChannelId, HashSet<ChannelId>> = HashMap::default();
