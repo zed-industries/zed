@@ -6048,10 +6048,12 @@ impl Editor {
                 let query = buffer
                     .text_for_range(selection.start..selection.end)
                     .collect::<String>();
+
+                let is_empty = query.is_empty();
                 let select_state = SelectNextState {
                     query: AhoCorasick::new(&[query])?,
                     wordwise: true,
-                    done: false,
+                    done: is_empty,
                 };
                 select_next_match_ranges(
                     self,
