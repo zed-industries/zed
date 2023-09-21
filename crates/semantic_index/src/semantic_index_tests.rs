@@ -1267,6 +1267,9 @@ impl FakeEmbeddingProvider {
 
 #[async_trait]
 impl EmbeddingProvider for FakeEmbeddingProvider {
+    fn is_authenticated(&self) -> bool {
+        true
+    }
     fn truncate(&self, span: &str) -> (String, usize) {
         (span.to_string(), 1)
     }

@@ -117,6 +117,7 @@ struct OpenAIEmbeddingUsage {
 
 #[async_trait]
 pub trait EmbeddingProvider: Sync + Send {
+    fn is_authenticated(&self) -> bool;
     async fn embed_batch(&self, spans: Vec<String>) -> Result<Vec<Embedding>>;
     fn max_tokens_per_batch(&self) -> usize;
     fn truncate(&self, span: &str) -> (String, usize);
@@ -127,6 +128,9 @@ pub struct DummyEmbeddings {}
 
 #[async_trait]
 impl EmbeddingProvider for DummyEmbeddings {
+    fn is_authenticated(&self) -> bool {
+        true
+    }
     fn rate_limit_expiration(&self) -> Option<Instant> {
         None
     }
@@ -229,6 +233,9 @@ impl OpenAIEmbeddings {
 
 #[async_trait]
 impl EmbeddingProvider for OpenAIEmbeddings {
+    fn is_authenticated(&self) -> bool {
+        OPENAI_API_KEY.as_ref().is_some()
+    }
     fn max_tokens_per_batch(&self) -> usize {
         50000
     }
