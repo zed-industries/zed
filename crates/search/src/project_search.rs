@@ -1369,12 +1369,16 @@ impl ProjectSearchBar {
         };
 
         active_project_search.update(cx, |project_view, cx| {
-            let views = &[
-                &project_view.query_editor,
-                &project_view.included_files_editor,
-                &project_view.excluded_files_editor,
-            ];
-
+            let mut views = vec![&project_view.query_editor];
+            if project_view.filters_enabled {
+                views.extend([
+                    &project_view.included_files_editor,
+                    &project_view.excluded_files_editor,
+                ]);
+            }
+            if project_view.replace_enabled {
+                views.push(&project_view.replacement_editor);
+            }
             let current_index = match views
                 .iter()
                 .enumerate()
@@ -1411,8 +1415,13 @@ impl ProjectSearchBar {
     }
     fn toggle_replace(&mut self, _: &ToggleReplace, cx: &mut ViewContext<Self>) {
         if let Some(search) = &self.active_project_search {
-            search.update(cx, |this, _| this.replace_enabled = !this.replace_enabled);
-            cx.notify();
+            search.update(cx, |this, cx| {
+                this.replace_enabled = !this.replace_enabled;
+                if !this.replace_enabled {
+                    cx.focus(&this.query_editor);
+                }
+                cx.notify();
+            });
         }
     }
     fn toggle_replace_on_a_pane(pane: &mut Pane, _: &ToggleReplace, cx: &mut ViewContext<Pane>) {
@@ -1421,9 +1430,12 @@ impl ProjectSearchBar {
             .active_item()
             .and_then(|item| item.downcast::<ProjectSearchView>())
         {
-            search_view.update(cx, |bar, cx| {
+            search_view.update(cx, |this, cx| {
                 should_propagate = false;
-                bar.replace_enabled = !bar.replace_enabled;
+                this.replace_enabled = !this.replace_enabled;
+                if !this.replace_enabled {
+                    cx.focus(&this.query_editor);
+                }
                 cx.notify();
             });
         }

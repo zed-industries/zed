@@ -887,6 +887,9 @@ impl BufferSearchBar {
     fn toggle_replace(&mut self, _: &ToggleReplace, cx: &mut ViewContext<Self>) {
         if let Some(_) = &self.active_searchable_item {
             self.replace_enabled = !self.replace_enabled;
+            if !self.replace_enabled {
+                cx.focus(&self.query_editor);
+            }
             cx.notify();
         }
     }
@@ -897,6 +900,9 @@ impl BufferSearchBar {
                 if let Some(_) = &bar.active_searchable_item {
                     should_propagate = false;
                     bar.replace_enabled = !bar.replace_enabled;
+                    if !bar.replace_enabled {
+                        cx.focus(&bar.query_editor);
+                    }
                     cx.notify();
                 }
             });
