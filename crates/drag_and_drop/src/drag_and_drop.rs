@@ -364,9 +364,15 @@ impl<V: 'static> Draggable<V> for MouseEventHandler<V> {
             DragAndDrop::<D>::drag_started(e, cx);
         })
         .on_drag(MouseButton::Left, move |e, _, cx| {
-            let payload = payload.clone();
-            let render = render.clone();
-            DragAndDrop::<D>::dragging(e, payload, cx, render)
+            if e.end {
+                cx.update_global::<DragAndDrop<D>, _, _>(|drag_and_drop, cx| {
+                    drag_and_drop.finish_dragging(cx)
+                })
+            } else {
+                let payload = payload.clone();
+                let render = render.clone();
+                DragAndDrop::<D>::dragging(e, payload, cx, render)
+            }
         })
     }
 }

@@ -2474,6 +2474,11 @@ async fn move_channel(
         .move_channel(session.user_id, channel_id, from_parent, to)
         .await?;
 
+    if channels_to_send.is_empty() {
+        response.send(Ack {})?;
+        return Ok(());
+    }
+
     let members_from = db.get_channel_members(from_parent).await?;
     let members_to = db.get_channel_members(to).await?;
 
