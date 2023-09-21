@@ -6,8 +6,7 @@ use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
 use crate::prelude::InteractionState;
-use crate::theme::theme;
-use crate::{icon_button, tab};
+use crate::{icon_button, tab, theme};
 
 #[derive(Element)]
 pub struct TabBar<V: 'static> {

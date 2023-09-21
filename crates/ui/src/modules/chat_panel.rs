@@ -5,8 +5,7 @@ use gpui2::elements::div::ScrollState;
 use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
-use crate::icon_button;
-use crate::theme::theme;
+use crate::{icon_button, theme};
 
 #[derive(Element)]
 pub struct ChatPanel<V: 'static> {

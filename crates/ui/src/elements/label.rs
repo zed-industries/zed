@@ -2,7 +2,7 @@ use gpui2::elements::div;
 use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
-use crate::theme::theme;
+use crate::theme;
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum LabelColor {

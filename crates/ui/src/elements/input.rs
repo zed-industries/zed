@@ -3,7 +3,7 @@ use gpui2::style::{StyleHelpers, Styleable};
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
 use crate::prelude::{InputVariant, InteractionState};
-use crate::theme::theme;
+use crate::theme;
 
 #[derive(Element)]
 pub struct Input {

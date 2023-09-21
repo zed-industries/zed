@@ -5,8 +5,7 @@ use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
 use crate::prelude::Shape;
-use crate::theme::theme;
-use crate::{avatar, follow_group, icon_button, text_button, tool_divider};
+use crate::{avatar, follow_group, icon_button, text_button, theme, tool_divider};
 
 #[derive(Element)]
 pub struct TitleBar<V: 'static> {

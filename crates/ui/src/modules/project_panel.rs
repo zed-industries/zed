@@ -6,8 +6,7 @@ use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
 use crate::prelude::{InteractionState, ToggleState};
-use crate::theme::theme;
-use crate::{details, input, label, list_item, IconAsset, LabelColor};
+use crate::{details, input, label, list_item, theme, IconAsset, LabelColor};
 
 #[derive(Element)]
 pub struct ProjectPanel<V: 'static> {

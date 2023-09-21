@@ -2,7 +2,7 @@ use gpui2::elements::div;
 use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ViewContext};
 
-use crate::theme::theme;
+use crate::theme;
 
 #[derive(Element)]
 pub struct ToolDivider {}
