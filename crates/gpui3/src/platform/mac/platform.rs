@@ -996,7 +996,7 @@ extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
     }
 }
 
-extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
+extern "C" fn handle_menu_item(__this: &mut Object, _: Sel, __item: id) {
     todo!()
     // unsafe {
     //     let platform = get_foreground_platform(this);
@@ -1012,7 +1012,7 @@ extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
     // }
 }
 
-extern "C" fn validate_menu_item(this: &mut Object, _: Sel, item: id) -> bool {
+extern "C" fn validate_menu_item(__this: &mut Object, _: Sel, __item: id) -> bool {
     todo!()
     // unsafe {
     //     let mut result = false;

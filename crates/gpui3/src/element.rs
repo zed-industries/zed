@@ -47,8 +47,8 @@ trait ElementObject<S> {
     fn layout(&mut self, state: &mut S, cx: &mut ViewContext<S>) -> Result<LayoutId>;
     fn paint(
         &mut self,
-        parent_origin: super::Point<Pixels>,
         state: &mut S,
+        offset: Option<Point<Pixels>>,
         cx: &mut ViewContext<S>,
     ) -> Result<()>;
 }
@@ -96,8 +96,8 @@ impl<E: Element> ElementObject<E::State> for RenderedElement<E> {
 
     fn paint(
         &mut self,
-        parent_origin: Point<Pixels>,
         state: &mut E::State,
+        offset: Option<Point<Pixels>>,
         cx: &mut ViewContext<E::State>,
     ) -> Result<()> {
         self.phase = match std::mem::take(&mut self.phase) {
@@ -107,8 +107,8 @@ impl<E: Element> ElementObject<E::State> for RenderedElement<E> {
                 layout_id,
                 mut frame_state,
             } => {
-                let mut layout = cx.layout(layout_id)?;
-                layout.bounds.origin += parent_origin;
+                let mut layout = cx.layout(layout_id)?.clone();
+                offset.map(|offset| layout.bounds.origin += offset);
                 self.element
                     .paint(layout.clone(), state, &mut frame_state, cx)?;
                 ElementRenderPhase::Painted {
@@ -143,11 +143,11 @@ impl<S> AnyElement<S> {
 
     pub fn paint(
         &mut self,
-        parent_origin: Point<Pixels>,
         state: &mut S,
+        offset: Option<Point<Pixels>>,
         cx: &mut ViewContext<S>,
     ) -> Result<()> {
-        self.0.paint(parent_origin, state, cx)
+        self.0.paint(state, offset, cx)
     }
 }
 
@@ -215,9 +215,8 @@ impl<S: 'static> Element for View<S> {
         element: &mut Self::FrameState,
         cx: &mut ViewContext<Self::State>,
     ) -> Result<()> {
-        self.state.update(cx, |state, cx| {
-            element.paint(layout.bounds.origin, state, cx)
-        })
+        self.state
+            .update(cx, |state, cx| element.paint(state, None, cx))
     }
 }
 
@@ -251,7 +250,7 @@ impl<S: 'static> ViewObject for View<S> {
             element
                 .downcast_mut::<AnyElement<S>>()
                 .unwrap()
-                .paint(layout.bounds.origin, state, cx)
+                .paint(state, None, cx)
         })
     }
 }

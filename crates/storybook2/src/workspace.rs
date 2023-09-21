@@ -1,7 +1,7 @@
 use crate::{collab_panel::collab_panel, theme::theme};
 use gpui3::{div, img, svg, Element, ParentElement, ScrollState, StyleHelpers, ViewContext};
 
-#[derive(Default)]
+#[derive(Element, Default)]
 struct WorkspaceElement {
     left_scroll_state: ScrollState,
     right_scroll_state: ScrollState,

@@ -67,8 +67,6 @@ impl<S: 'static> Element for Div<S> {
         style.paint_background(bounds, cx);
         // self.interaction_handlers().paint(order, bounds, cx);
 
-        let scrolled_origin = bounds.origin - self.scroll_offset(&style.overflow);
-
         // // TODO: Support only one dimension being hidden
         // let mut pop_layer = false;
         // if style.overflow.y != Overflow::Visible || style.overflow.x != Overflow::Visible {
@@ -76,8 +74,9 @@ impl<S: 'static> Element for Div<S> {
         //     pop_layer = true;
         // }
 
+        let scroll_offset = self.scroll_offset(&style.overflow);
         for child in &mut self.children {
-            child.paint(scrolled_origin, state, cx)?;
+            child.paint(state, Some(scroll_offset), cx)?;
         }
 
         // if pop_layer {

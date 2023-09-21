@@ -2,7 +2,7 @@ use bytemuck::{Pod, Zeroable};
 use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, Mul, Sub, SubAssign};
 use refineable::Refineable;
-use std::ops::{Add, Mul, Sub, SubAssign};
+use std::ops::{Add, AddAssign, Mul, Sub, SubAssign};
 
 #[derive(
     Refineable, Default, Add, AddAssign, Sub, SubAssign, Mul, Div, Copy, Debug, PartialEq, Eq, Hash,
@@ -35,6 +35,13 @@ impl<T: Clone + Debug + Sub<Output = T>> SubAssign<Size<T>> for Point<T> {
     fn sub_assign(&mut self, rhs: Size<T>) {
         self.x = self.x.clone() - rhs.width;
         self.y = self.y.clone() - rhs.height;
+    }
+}
+
+impl<T: Clone + Debug + Add<Output = T> + Copy> AddAssign<T> for Point<T> {
+    fn add_assign(&mut self, rhs: T) {
+        self.x = self.x.clone() + rhs;
+        self.y = self.y.clone() + rhs;
     }
 }
 

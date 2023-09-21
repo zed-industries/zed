@@ -2,29 +2,28 @@ use super::{
     AbsoluteLength, Bounds, DefiniteLength, Edges, Layout, Length, Pixels, Point, Result, Size,
     Style,
 };
+use collections::HashMap;
 use std::fmt::Debug;
-pub use taffy::tree::NodeId as LayoutId;
 use taffy::{
     geometry::Size as TaffySize,
     style::AvailableSpace as TaffyAvailableSpace,
-    tree::{Measurable, MeasureFunc},
+    tree::{Measurable, MeasureFunc, NodeId},
     Taffy,
 };
-pub struct TaffyLayoutEngine(Taffy);
 
-#[derive(Copy, Clone, Debug)]
-pub enum AvailableSpace {
-    /// The amount of space available is the specified number of pixels
-    Definite(Pixels),
-    /// The amount of space available is indefinite and the node should be laid out under a min-content constraint
-    MinContent,
-    /// The amount of space available is indefinite and the node should be laid out under a max-content constraint
-    MaxContent,
+pub struct TaffyLayoutEngine {
+    taffy: Taffy,
+    children_to_parents: HashMap<LayoutId, LayoutId>,
+    absolute_layouts: HashMap<LayoutId, Layout>,
 }
 
 impl TaffyLayoutEngine {
     pub fn new() -> Self {
-        TaffyLayoutEngine(Taffy::new())
+        TaffyLayoutEngine {
+            taffy: Taffy::new(),
+            children_to_parents: HashMap::default(),
+            absolute_layouts: HashMap::default(),
+        }
     }
 
     pub fn request_layout(
@@ -35,9 +34,17 @@ impl TaffyLayoutEngine {
     ) -> Result<LayoutId> {
         let style = style.to_taffy(rem_size);
         if children.is_empty() {
-            Ok(self.0.new_leaf(style)?)
+            Ok(self.taffy.new_leaf(style)?.into())
         } else {
-            Ok(self.0.new_with_children(style, children)?)
+            let parent_id = self
+                .taffy
+                // This is safe because LayoutId is repr(transparent) to taffy::tree::NodeId.
+                .new_with_children(style, unsafe { std::mem::transmute(children) })?
+                .into();
+            for child_id in children {
+                self.children_to_parents.insert(*child_id, parent_id);
+            }
+            Ok(parent_id)
         }
     }
 
@@ -54,13 +61,57 @@ impl TaffyLayoutEngine {
 
         let measurable = Box::new(Measureable(measure)) as Box<dyn Measurable>;
         Ok(self
-            .0
-            .new_leaf_with_measure(style, MeasureFunc::Boxed(measurable))?)
+            .taffy
+            .new_leaf_with_measure(style, MeasureFunc::Boxed(measurable))?
+            .into())
     }
 
     pub fn layout(&mut self, id: LayoutId) -> Result<Layout> {
-        Ok(self.0.layout(id).map(Into::into)?)
+        if let Some(layout) = self.absolute_layouts.get(&id).cloned() {
+            return Ok(layout);
+        }
+
+        let mut relative_layout: Layout = self.taffy.layout(id.into()).map(Into::into)?;
+        if let Some(parent_id) = self.children_to_parents.get(&id).copied() {
+            let parent_layout = self.layout(parent_id)?;
+            relative_layout.bounds.origin += parent_layout.bounds.origin;
+        }
+        self.absolute_layouts.insert(id, relative_layout.clone());
+
+        Ok(relative_layout)
     }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[repr(transparent)]
+pub struct LayoutId(NodeId);
+
+impl std::hash::Hash for LayoutId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        u64::from(self.0).hash(state);
+    }
+}
+
+impl From<NodeId> for LayoutId {
+    fn from(node_id: NodeId) -> Self {
+        Self(node_id)
+    }
+}
+
+impl From<LayoutId> for NodeId {
+    fn from(layout_id: LayoutId) -> NodeId {
+        layout_id.0
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum AvailableSpace {
+    /// The amount of space available is the specified number of pixels
+    Definite(Pixels),
+    /// The amount of space available is indefinite and the node should be laid out under a min-content constraint
+    MinContent,
+    /// The amount of space available is indefinite and the node should be laid out under a max-content constraint
+    MaxContent,
 }
 
 struct Measureable<F>(F);

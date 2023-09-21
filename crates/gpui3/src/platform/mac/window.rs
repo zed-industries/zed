@@ -1378,7 +1378,7 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
     };
 }
 
-extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
+extern "C" fn display_layer(_this: &Object, _: Sel, _: id) {
     // unsafe {
     // let window_state = get_window_state(this);
     // let mut window_state = window_state.as_ref().borrow_mut();

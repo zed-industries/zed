@@ -1,4 +1,4 @@
-use gpui3::{Element, Hsla, Layout, LayoutId, ViewContext, WindowContext};
+use gpui3::{Element, Hsla, Layout, LayoutId, Result, ViewContext, WindowContext};
 use serde::{de::Visitor, Deserialize, Deserializer};
 use std::{collections::HashMap, fmt};
 
@@ -156,13 +156,15 @@ impl<E: Element> Element for Themed<E> {
         state: &mut Self::State,
         frame_state: &mut Self::FrameState,
         cx: &mut ViewContext<Self::State>,
-    ) where
+    ) -> Result<()>
+    where
         Self: Sized,
     {
         // todo!
         // cx.push_theme(self.theme.clone());
         self.child.paint(layout, state, frame_state, cx);
         // cx.pop_theme();
+        Ok(())
     }
 }
 

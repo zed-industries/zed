@@ -17,7 +17,7 @@ impl Platform for TestPlatform {
         todo!()
     }
 
-    fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
+    fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {
         todo!()
     }
 
@@ -29,7 +29,7 @@ impl Platform for TestPlatform {
         todo!()
     }
 
-    fn activate(&self, ignoring_other_apps: bool) {
+    fn activate(&self, _ignoring_other_apps: bool) {
         todo!()
     }
 
@@ -49,7 +49,7 @@ impl Platform for TestPlatform {
         todo!()
     }
 
-    fn screen_by_id(&self, id: uuid::Uuid) -> Option<std::rc::Rc<dyn crate::PlatformScreen>> {
+    fn screen_by_id(&self, _id: uuid::Uuid) -> Option<std::rc::Rc<dyn crate::PlatformScreen>> {
         todo!()
     }
 
@@ -59,55 +59,55 @@ impl Platform for TestPlatform {
 
     fn open_window(
         &self,
-        handle: crate::AnyWindowHandle,
-        options: crate::WindowOptions,
+        _handle: crate::AnyWindowHandle,
+        _options: crate::WindowOptions,
     ) -> Box<dyn crate::PlatformWindow> {
         todo!()
     }
 
-    fn open_url(&self, url: &str) {
+    fn open_url(&self, _url: &str) {
         todo!()
     }
 
-    fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
+    fn on_open_urls(&self, _callback: Box<dyn FnMut(Vec<String>)>) {
         todo!()
     }
 
     fn prompt_for_paths(
         &self,
-        options: crate::PathPromptOptions,
+        _options: crate::PathPromptOptions,
     ) -> futures::channel::oneshot::Receiver<Option<Vec<std::path::PathBuf>>> {
         todo!()
     }
 
     fn prompt_for_new_path(
         &self,
-        directory: &std::path::Path,
+        _directory: &std::path::Path,
     ) -> futures::channel::oneshot::Receiver<Option<std::path::PathBuf>> {
         todo!()
     }
 
-    fn reveal_path(&self, path: &std::path::Path) {
+    fn reveal_path(&self, _path: &std::path::Path) {
         todo!()
     }
 
-    fn on_become_active(&self, callback: Box<dyn FnMut()>) {
+    fn on_become_active(&self, _callback: Box<dyn FnMut()>) {
         todo!()
     }
 
-    fn on_resign_active(&self, callback: Box<dyn FnMut()>) {
+    fn on_resign_active(&self, _callback: Box<dyn FnMut()>) {
         todo!()
     }
 
-    fn on_quit(&self, callback: Box<dyn FnMut()>) {
+    fn on_quit(&self, _callback: Box<dyn FnMut()>) {
         todo!()
     }
 
-    fn on_reopen(&self, callback: Box<dyn FnMut()>) {
+    fn on_reopen(&self, _callback: Box<dyn FnMut()>) {
         todo!()
     }
 
-    fn on_event(&self, callback: Box<dyn FnMut(crate::Event) -> bool>) {
+    fn on_event(&self, _callback: Box<dyn FnMut(crate::Event) -> bool>) {
         todo!()
     }
 
@@ -131,11 +131,11 @@ impl Platform for TestPlatform {
         todo!()
     }
 
-    fn path_for_auxiliary_executable(&self, name: &str) -> anyhow::Result<std::path::PathBuf> {
+    fn path_for_auxiliary_executable(&self, _name: &str) -> anyhow::Result<std::path::PathBuf> {
         todo!()
     }
 
-    fn set_cursor_style(&self, style: crate::CursorStyle) {
+    fn set_cursor_style(&self, _style: crate::CursorStyle) {
         todo!()
     }
 
@@ -143,7 +143,7 @@ impl Platform for TestPlatform {
         todo!()
     }
 
-    fn write_to_clipboard(&self, item: crate::ClipboardItem) {
+    fn write_to_clipboard(&self, _item: crate::ClipboardItem) {
         todo!()
     }
 
@@ -151,15 +151,20 @@ impl Platform for TestPlatform {
         todo!()
     }
 
-    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> anyhow::Result<()> {
+    fn write_credentials(
+        &self,
+        _url: &str,
+        _username: &str,
+        _password: &[u8],
+    ) -> anyhow::Result<()> {
         todo!()
     }
 
-    fn read_credentials(&self, url: &str) -> anyhow::Result<Option<(String, Vec<u8>)>> {
+    fn read_credentials(&self, _url: &str) -> anyhow::Result<Option<(String, Vec<u8>)>> {
         todo!()
     }
 
-    fn delete_credentials(&self, url: &str) -> anyhow::Result<()> {
+    fn delete_credentials(&self, _url: &str) -> anyhow::Result<()> {
         todo!()
     }
 }

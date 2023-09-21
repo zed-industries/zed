@@ -17,15 +17,9 @@ impl Parse for StyleableMacroInput {
 pub fn style_helpers(input: TokenStream) -> TokenStream {
     let _ = parse_macro_input!(input as StyleableMacroInput);
     let methods = generate_methods();
-
-    for method in &methods {
-        println!("method: {}", method);
-    }
-
     let output = quote! {
         #(#methods)*
     };
-
     output.into()
 }
 
@@ -74,7 +68,7 @@ fn generate_method(
         .iter()
         .map(|field_tokens| {
             quote! {
-                style.#field_tokens = Some(gpui2::#length_tokens.into());
+                style.#field_tokens = Some(gpui3::#length_tokens.into());
             }
         })
         .collect::<Vec<_>>();
