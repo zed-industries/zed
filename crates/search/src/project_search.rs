@@ -3,7 +3,8 @@ use crate::{
     mode::{SearchMode, Side},
     search_bar::{render_nav_button, render_option_button_icon, render_search_mode_button},
     ActivateRegexMode, CycleMode, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext,
-    SearchOptions, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleWholeWord,
+    SearchOptions, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleReplace,
+    ToggleWholeWord,
 };
 use anyhow::{Context, Result};
 use collections::HashMap;
@@ -65,6 +66,8 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(ProjectSearchBar::next_history_query);
     cx.add_action(ProjectSearchBar::previous_history_query);
     cx.add_action(ProjectSearchBar::activate_regex_mode);
+    cx.add_action(ProjectSearchBar::toggle_replace);
+    cx.add_action(ProjectSearchBar::toggle_replace_on_a_pane);
     cx.capture_action(ProjectSearchBar::tab);
     cx.capture_action(ProjectSearchBar::tab_previous);
     cx.capture_action(ProjectSearchView::replace_all);
@@ -131,6 +134,7 @@ pub struct ProjectSearchView {
     included_files_editor: ViewHandle<Editor>,
     excluded_files_editor: ViewHandle<Editor>,
     filters_enabled: bool,
+    replace_enabled: bool,
     current_mode: SearchMode,
 }
 
@@ -949,6 +953,7 @@ impl ProjectSearchView {
             excluded_files_editor,
             filters_enabled,
             current_mode: Default::default(),
+            replace_enabled: false,
         };
         this.model_changed(cx);
         this
@@ -1404,7 +1409,28 @@ impl ProjectSearchBar {
             false
         }
     }
-
+    fn toggle_replace(&mut self, _: &ToggleReplace, cx: &mut ViewContext<Self>) {
+        if let Some(search) = &self.active_project_search {
+            search.update(cx, |this, _| this.replace_enabled = !this.replace_enabled);
+            cx.notify();
+        }
+    }
+    fn toggle_replace_on_a_pane(pane: &mut Pane, _: &ToggleReplace, cx: &mut ViewContext<Pane>) {
+        let mut should_propagate = true;
+        if let Some(search_view) = pane
+            .active_item()
+            .and_then(|item| item.downcast::<ProjectSearchView>())
+        {
+            search_view.update(cx, |bar, cx| {
+                should_propagate = false;
+                bar.replace_enabled = !bar.replace_enabled;
+                cx.notify();
+            });
+        }
+        if should_propagate {
+            cx.propagate_action();
+        }
+    }
     fn activate_regex_mode(pane: &mut Pane, _: &ActivateRegexMode, cx: &mut ViewContext<Pane>) {
         if let Some(search_view) = pane
             .active_item()
@@ -1608,7 +1634,7 @@ impl View for ProjectSearchBar {
                 .with_style(theme.search.match_index.container)
                 .aligned()
             });
-            let should_show_replace_input = true;
+            let should_show_replace_input = search.replace_enabled;
             let replacement = should_show_replace_input.then(|| {
                 Flex::row()
                     .with_child(
@@ -1697,7 +1723,17 @@ impl View for ProjectSearchBar {
                         .flex(1., false)
                 }))
                 .flex(1., false);
-
+            let switches_column = Flex::row()
+                .align_children_center()
+                .with_child(super::toggle_replace_button(
+                    search.replace_enabled,
+                    theme.tooltip.clone(),
+                    theme.search.option_button_component.clone(),
+                ))
+                .constrained()
+                .with_height(theme.search.search_bar_row_height)
+                .contained()
+                .with_style(theme.search.option_button_group);
             let mode_column =
                 Flex::row()
                     .with_child(search_button_for_mode(
@@ -1746,6 +1782,7 @@ impl View for ProjectSearchBar {
 
             Flex::row()
                 .with_child(query_column)
+                .with_child(switches_column)
                 .with_children(replacement)
                 .with_child(mode_column)
                 .with_child(nav_column)
