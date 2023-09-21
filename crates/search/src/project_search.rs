@@ -303,7 +303,7 @@ impl View for ProjectSearchView {
             // If Text -> Major: "Text search all files and folders", Minor: {...}
 
             let current_mode = self.current_mode;
-            let major_text = if model.pending_search.is_some() {
+            let mut major_text = if model.pending_search.is_some() {
                 Cow::Borrowed("Searching...")
             } else if model.no_results.is_some_and(|v| v) {
                 Cow::Borrowed("No Results")
@@ -317,9 +317,18 @@ impl View for ProjectSearchView {
                 }
             };
 
+            let mut show_minor_text = true;
             let semantic_status = self.semantic_state.as_ref().and_then(|semantic| {
                 let status = semantic.index_status;
                 match status {
+                    SemanticIndexStatus::NotAuthenticated => {
+                        major_text = Cow::Borrowed("Not Authenticated");
+                        show_minor_text = false;
+                        Some(
+                            "API Key Missing: Please set 'OPENAI_API_KEY' in Environment Variables"
+                                .to_string(),
+                        )
+                    }
                     SemanticIndexStatus::Indexed => Some("Indexing complete".to_string()),
                     SemanticIndexStatus::Indexing {
                         remaining_files,
@@ -361,10 +370,13 @@ impl View for ProjectSearchView {
                         let mut minor_text = Vec::new();
                         minor_text.push("".into());
                         minor_text.extend(semantic_status);
-                        minor_text.push("Simply explain the code you are looking to find.".into());
-                        minor_text.push(
-                            "ex. 'prompt user for permissions to index their project'".into(),
-                        );
+                        if show_minor_text {
+                            minor_text
+                                .push("Simply explain the code you are looking to find.".into());
+                            minor_text.push(
+                                "ex. 'prompt user for permissions to index their project'".into(),
+                            );
+                        }
                         minor_text
                     }
                     _ => vec![
