@@ -281,12 +281,8 @@ impl SemanticIndex {
         settings::get::<SemanticIndexSettings>(cx).enabled
     }
 
-    pub fn has_api_key(&self) -> bool {
-        OPENAI_API_KEY.as_ref().is_some()
-    }
-
     pub fn status(&self, project: &ModelHandle<Project>) -> SemanticIndexStatus {
-        if !self.has_api_key() {
+        if !self.embedding_provider.is_authenticated() {
             return SemanticIndexStatus::NotAuthenticated;
         }
 
@@ -980,8 +976,8 @@ impl SemanticIndex {
         project: ModelHandle<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        if !self.has_api_key() {
-            return Task::ready(Err(anyhow!("no open ai key present")));
+        if !self.embedding_provider.is_authenticated() {
+            return Task::ready(Err(anyhow!("user is not authenticated")));
         }
 
         if !self.projects.contains_key(&project.downgrade()) {
