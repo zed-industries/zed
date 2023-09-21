@@ -90,7 +90,7 @@ pub struct BufferSearchBar {
     dismissed: bool,
     search_history: SearchHistory,
     current_mode: SearchMode,
-    replace_is_active: bool,
+    replace_enabled: bool,
 }
 
 impl Entity for BufferSearchBar {
@@ -266,7 +266,7 @@ impl View for BufferSearchBar {
             .with_max_width(theme.search.editor.max_width)
             .with_height(theme.search.search_bar_row_height)
             .flex(1., false);
-        let should_show_replace_input = self.replace_is_active && supported_options.replacement;
+        let should_show_replace_input = self.replace_enabled && supported_options.replacement;
 
         let replacement = should_show_replace_input.then(|| {
             Flex::row()
@@ -308,7 +308,7 @@ impl View for BufferSearchBar {
             Flex::row()
                 .align_children_center()
                 .with_child(super::toggle_replace_button(
-                    self.replace_is_active,
+                    self.replace_enabled,
                     theme.tooltip.clone(),
                     theme.search.option_button_component.clone(),
                 ))
@@ -447,7 +447,7 @@ impl BufferSearchBar {
             search_history: SearchHistory::default(),
             current_mode: SearchMode::default(),
             active_search: None,
-            replace_is_active: false,
+            replace_enabled: false,
         }
     }
 
@@ -891,7 +891,10 @@ impl BufferSearchBar {
     }
     fn toggle_replace(&mut self, _: &ToggleReplace, cx: &mut ViewContext<Self>) {
         if let Some(_) = &self.active_searchable_item {
-            self.replace_is_active = !self.replace_is_active;
+            self.replace_enabled = !self.replace_enabled;
+            if !self.replace_enabled {
+                cx.focus(&self.query_editor);
+            }
             cx.notify();
         }
     }
@@ -901,9 +904,12 @@ impl BufferSearchBar {
             search_bar.update(cx, |bar, cx| {
                 if let Some(_) = &bar.active_searchable_item {
                     should_propagate = false;
-                    bar.replace_is_active = !bar.replace_is_active;
+                    bar.replace_enabled = !bar.replace_enabled;
                     if bar.dismissed {
                         bar.show(cx);
+                    }
+                    if !bar.replace_enabled {
+                        cx.focus(&bar.query_editor);
                     }
                     cx.notify();
                 }
@@ -914,6 +920,7 @@ impl BufferSearchBar {
         }
     }
     fn replace_next(&mut self, _: &ReplaceNext, cx: &mut ViewContext<Self>) {
+        let mut should_propagate = true;
         if !self.dismissed && self.active_search.is_some() {
             if let Some(searchable_item) = self.active_searchable_item.as_ref() {
                 if let Some(query) = self.active_search.as_ref() {
@@ -929,9 +936,14 @@ impl BufferSearchBar {
                             searchable_item.replace(&matches[active_index], &query, cx);
                             self.select_next_match(&SelectNextMatch, cx);
                         }
+                        should_propagate = false;
+                        self.focus_editor(&FocusEditor, cx);
                     }
                 }
             }
+        }
+        if should_propagate {
+            cx.propagate_action();
         }
     }
     fn replace_all(&mut self, _: &ReplaceAll, cx: &mut ViewContext<Self>) {
