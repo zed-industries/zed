@@ -101,7 +101,6 @@ impl FontCache {
             "could not find a non-empty font family matching one of the given names: {}",
             names
                 .iter()
-                // Quote each of the font names.
                 .map(|name| format!("`{name}`"))
                 .collect::<Vec<_>>()
                 .join(", ")
