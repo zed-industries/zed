@@ -210,7 +210,6 @@ impl Member {
                             } else {
                                 let leader_user = leader.user.clone();
                                 let leader_user_id = leader.user.id;
-                                let app_state = Arc::downgrade(app_state);
                                 Some(
                                     MouseEventHandler::new::<FollowIntoExternalProject, _>(
                                         pane.id(),
@@ -234,16 +233,14 @@ impl Member {
                                         },
                                     )
                                     .with_cursor_style(CursorStyle::PointingHand)
-                                    .on_click(MouseButton::Left, move |_, _, cx| {
-                                        if let Some(app_state) = app_state.upgrade() {
-                                            crate::join_remote_project(
-                                                leader_project_id,
-                                                leader_user_id,
-                                                app_state,
-                                                cx,
-                                            )
-                                            .detach_and_log_err(cx);
-                                        }
+                                    .on_click(MouseButton::Left, move |_, this, cx| {
+                                        crate::join_remote_project(
+                                            leader_project_id,
+                                            leader_user_id,
+                                            this.app_state().clone(),
+                                            cx,
+                                        )
+                                        .detach_and_log_err(cx);
                                     })
                                     .aligned()
                                     .bottom()

@@ -2745,7 +2745,7 @@ impl CollabPanel {
 
     fn open_channel_notes(&mut self, action: &OpenChannelNotes, cx: &mut ViewContext<Self>) {
         if let Some(workspace) = self.workspace.upgrade(cx) {
-            ChannelView::deploy(action.channel_id, workspace, cx);
+            ChannelView::open(action.channel_id, workspace, cx).detach();
         }
     }
 

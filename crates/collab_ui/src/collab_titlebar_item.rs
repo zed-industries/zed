@@ -1004,61 +1004,64 @@ impl CollabTitlebarItem {
             .into_any();
 
         if let Some(location) = location {
-            if let Some(replica_id) = replica_id {
-                enum ToggleFollow {}
+            match (replica_id, location) {
+                (None, ParticipantLocation::SharedProject { project_id }) => {
+                    enum JoinProject {}
 
-                content = MouseEventHandler::new::<ToggleFollow, _>(
-                    replica_id.into(),
-                    cx,
-                    move |_, _| content,
-                )
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, item, cx| {
-                    if let Some(workspace) = item.workspace.upgrade(cx) {
-                        if let Some(task) = workspace
-                            .update(cx, |workspace, cx| workspace.toggle_follow(peer_id, cx))
-                        {
-                            task.detach_and_log_err(cx);
+                    let user_id = user.id;
+                    content = MouseEventHandler::new::<JoinProject, _>(
+                        peer_id.as_u64() as usize,
+                        cx,
+                        move |_, _| content,
+                    )
+                    .with_cursor_style(CursorStyle::PointingHand)
+                    .on_click(MouseButton::Left, move |_, this, cx| {
+                        if let Some(workspace) = this.workspace.upgrade(cx) {
+                            let app_state = workspace.read(cx).app_state().clone();
+                            workspace::join_remote_project(project_id, user_id, app_state, cx)
+                                .detach_and_log_err(cx);
                         }
-                    }
-                })
-                .with_tooltip::<ToggleFollow>(
-                    peer_id.as_u64() as usize,
-                    if is_being_followed {
-                        format!("Unfollow {}", user.github_login)
-                    } else {
-                        format!("Follow {}", user.github_login)
-                    },
-                    Some(Box::new(FollowNextCollaborator)),
-                    theme.tooltip.clone(),
-                    cx,
-                )
-                .into_any();
-            } else if let ParticipantLocation::SharedProject { project_id } = location {
-                enum JoinProject {}
+                    })
+                    .with_tooltip::<JoinProject>(
+                        peer_id.as_u64() as usize,
+                        format!("Follow {} into external project", user.github_login),
+                        Some(Box::new(FollowNextCollaborator)),
+                        theme.tooltip.clone(),
+                        cx,
+                    )
+                    .into_any();
+                }
+                _ => {
+                    enum ToggleFollow {}
 
-                let user_id = user.id;
-                content = MouseEventHandler::new::<JoinProject, _>(
-                    peer_id.as_u64() as usize,
-                    cx,
-                    move |_, _| content,
-                )
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, this, cx| {
-                    if let Some(workspace) = this.workspace.upgrade(cx) {
-                        let app_state = workspace.read(cx).app_state().clone();
-                        workspace::join_remote_project(project_id, user_id, app_state, cx)
-                            .detach_and_log_err(cx);
-                    }
-                })
-                .with_tooltip::<JoinProject>(
-                    peer_id.as_u64() as usize,
-                    format!("Follow {} into external project", user.github_login),
-                    Some(Box::new(FollowNextCollaborator)),
-                    theme.tooltip.clone(),
-                    cx,
-                )
-                .into_any();
+                    content = MouseEventHandler::new::<ToggleFollow, _>(
+                        user.id as usize,
+                        cx,
+                        move |_, _| content,
+                    )
+                    .with_cursor_style(CursorStyle::PointingHand)
+                    .on_click(MouseButton::Left, move |_, item, cx| {
+                        if let Some(workspace) = item.workspace.upgrade(cx) {
+                            if let Some(task) = workspace
+                                .update(cx, |workspace, cx| workspace.toggle_follow(peer_id, cx))
+                            {
+                                task.detach_and_log_err(cx);
+                            }
+                        }
+                    })
+                    .with_tooltip::<ToggleFollow>(
+                        peer_id.as_u64() as usize,
+                        if is_being_followed {
+                            format!("Unfollow {}", user.github_login)
+                        } else {
+                            format!("Follow {}", user.github_login)
+                        },
+                        Some(Box::new(FollowNextCollaborator)),
+                        theme.tooltip.clone(),
+                        cx,
+                    )
+                    .into_any();
+                }
             }
         }
         content

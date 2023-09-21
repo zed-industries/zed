@@ -594,9 +594,17 @@ async fn test_following_to_channel_notes_without_a_shared_project(
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
 
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+    cx_c.update(editor::init);
+    cx_a.update(collab_ui::channel_view::init);
+    cx_b.update(collab_ui::channel_view::init);
+    cx_c.update(collab_ui::channel_view::init);
+
     let channel_1_id = server
         .make_channel(
             "channel-1",
+            None,
             (&client_a, cx_a),
             &mut [(&client_b, cx_b), (&client_c, cx_c)],
         )
@@ -604,6 +612,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
     let channel_2_id = server
         .make_channel(
             "channel-2",
+            None,
             (&client_a, cx_a),
             &mut [(&client_b, cx_b), (&client_c, cx_c)],
         )
@@ -633,20 +642,27 @@ async fn test_following_to_channel_notes_without_a_shared_project(
     let (project_c, _) = client_b.build_local_project("/c", cx_c).await;
     let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
     let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
-    let workspace_c = client_c.build_workspace(&project_c, cx_c).root(cx_c);
+    let _workspace_c = client_c.build_workspace(&project_c, cx_c).root(cx_c);
+
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
 
     // Client A opens the notes for channel 1.
     let channel_view_1_a = cx_a
-        .update(|cx| {
-            ChannelView::open(
-                channel_1_id,
-                workspace_a.read(cx).active_pane().clone(),
-                workspace_a.clone(),
-                cx,
-            )
-        })
+        .update(|cx| ChannelView::open(channel_1_id, workspace_a.clone(), cx))
         .await
         .unwrap();
+    channel_view_1_a.update(cx_a, |notes, cx| {
+        assert_eq!(notes.channel(cx).name, "channel-1");
+        notes.editor.update(cx, |editor, cx| {
+            editor.insert("Hello from A.", cx);
+            editor.change_selections(None, cx, |selections| {
+                selections.select_ranges(vec![3..4]);
+            });
+        });
+    });
 
     // Client B follows client A.
     workspace_b
@@ -658,12 +674,51 @@ async fn test_following_to_channel_notes_without_a_shared_project(
         .await
         .unwrap();
 
+    // Client B is taken to the notes for channel 1, with the same
+    // text selected as client A.
     deterministic.run_until_parked();
-    workspace_b.read_with(cx_b, |workspace, _| {
+    let channel_view_1_b = workspace_b.read_with(cx_b, |workspace, cx| {
         assert_eq!(
             workspace.leader_for_pane(workspace.active_pane()),
             Some(client_a.peer_id().unwrap())
         );
+        workspace
+            .active_item(cx)
+            .expect("no active item")
+            .downcast::<ChannelView>()
+            .expect("active item is not a channel view")
+    });
+    channel_view_1_b.read_with(cx_b, |notes, cx| {
+        assert_eq!(notes.channel(cx).name, "channel-1");
+        let editor = notes.editor.read(cx);
+        assert_eq!(editor.text(cx), "Hello from A.");
+        assert_eq!(editor.selections.ranges::<usize>(cx), &[3..4]);
+    });
+
+    // Client A opens the notes for channel 2.
+    let channel_view_2_a = cx_a
+        .update(|cx| ChannelView::open(channel_2_id, workspace_a.clone(), cx))
+        .await
+        .unwrap();
+    channel_view_2_a.read_with(cx_a, |notes, cx| {
+        assert_eq!(notes.channel(cx).name, "channel-2");
+    });
+
+    // Client B is taken to the notes for channel 2.
+    deterministic.run_until_parked();
+    let channel_view_2_b = workspace_b.read_with(cx_b, |workspace, cx| {
+        assert_eq!(
+            workspace.leader_for_pane(workspace.active_pane()),
+            Some(client_a.peer_id().unwrap())
+        );
+        workspace
+            .active_item(cx)
+            .expect("no active item")
+            .downcast::<ChannelView>()
+            .expect("active item is not a channel view")
+    });
+    channel_view_2_b.read_with(cx_b, |notes, cx| {
+        assert_eq!(notes.channel(cx).name, "channel-2");
     });
 }
 

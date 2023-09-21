@@ -2832,14 +2832,12 @@ impl Workspace {
             .read_with(cx, |this, _| this.project.clone())
             .ok_or_else(|| anyhow!("window dropped"))?;
 
-        let replica_id = project
-            .read_with(cx, |project, _| {
-                project
-                    .collaborators()
-                    .get(&leader_id)
-                    .map(|c| c.replica_id)
-            })
-            .ok_or_else(|| anyhow!("no such collaborator {}", leader_id))?;
+        let replica_id = project.read_with(cx, |project, _| {
+            project
+                .collaborators()
+                .get(&leader_id)
+                .map(|c| c.replica_id)
+        });
 
         let item_builders = cx.update(|cx| {
             cx.default_global::<FollowableItemBuilders>()
@@ -2884,7 +2882,7 @@ impl Workspace {
                     .get_mut(&pane)?;
 
                 for (id, item) in leader_view_ids.into_iter().zip(items) {
-                    item.set_leader_replica_id(Some(replica_id), cx);
+                    item.set_leader_replica_id(replica_id, cx);
                     state.items_by_leader_view_id.insert(id, item);
                 }
 
@@ -2947,30 +2945,40 @@ impl Workspace {
         let room = call.read(cx).room()?.read(cx);
         let participant = room.remote_participant_for_peer_id(leader_id)?;
         let mut items_to_activate = Vec::new();
+
+        let leader_in_this_app;
+        let leader_in_this_project;
         match participant.location {
             call::ParticipantLocation::SharedProject { project_id } => {
-                if Some(project_id) == self.project.read(cx).remote_id() {
-                    for (pane, state) in self.follower_states_by_leader.get(&leader_id)? {
-                        if let Some(item) = state
-                            .active_view_id
-                            .and_then(|id| state.items_by_leader_view_id.get(&id))
-                        {
-                            items_to_activate.push((pane.clone(), item.boxed_clone()));
-                        } else if let Some(shared_screen) =
-                            self.shared_screen_for_peer(leader_id, pane, cx)
-                        {
-                            items_to_activate.push((pane.clone(), Box::new(shared_screen)));
-                        }
-                    }
-                }
+                leader_in_this_app = true;
+                leader_in_this_project = Some(project_id) == self.project.read(cx).remote_id();
             }
-            call::ParticipantLocation::UnsharedProject => {}
+            call::ParticipantLocation::UnsharedProject => {
+                leader_in_this_app = true;
+                leader_in_this_project = false;
+            }
             call::ParticipantLocation::External => {
-                for (pane, _) in self.follower_states_by_leader.get(&leader_id)? {
-                    if let Some(shared_screen) = self.shared_screen_for_peer(leader_id, pane, cx) {
-                        items_to_activate.push((pane.clone(), Box::new(shared_screen)));
+                leader_in_this_app = false;
+                leader_in_this_project = false;
+            }
+        };
+
+        for (pane, state) in self.follower_states_by_leader.get(&leader_id)? {
+            let item = state
+                .active_view_id
+                .and_then(|id| state.items_by_leader_view_id.get(&id));
+            let shared_screen = self.shared_screen_for_peer(leader_id, pane, cx);
+
+            if leader_in_this_app {
+                if let Some(item) = item {
+                    if leader_in_this_project || !item.is_project_item(cx) {
+                        items_to_activate.push((pane.clone(), item.boxed_clone()));
                     }
+                } else if let Some(shared_screen) = shared_screen {
+                    items_to_activate.push((pane.clone(), Box::new(shared_screen)));
                 }
+            } else if let Some(shared_screen) = shared_screen {
+                items_to_activate.push((pane.clone(), Box::new(shared_screen)));
             }
         }
 

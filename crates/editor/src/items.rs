@@ -309,6 +309,10 @@ impl FollowableItem for Editor {
             _ => false,
         }
     }
+
+    fn is_project_item(&self, _cx: &AppContext) -> bool {
+        true
+    }
 }
 
 async fn update_editor_from_message(

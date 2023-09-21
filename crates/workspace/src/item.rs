@@ -696,6 +696,7 @@ pub trait FollowableItem: Item {
         message: proto::update_view::Variant,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>>;
+    fn is_project_item(&self, cx: &AppContext) -> bool;
 
     fn set_leader_replica_id(&mut self, leader_replica_id: Option<u16>, cx: &mut ViewContext<Self>);
     fn should_unfollow_on_event(event: &Self::Event, cx: &AppContext) -> bool;
@@ -718,6 +719,7 @@ pub trait FollowableItemHandle: ItemHandle {
         cx: &mut WindowContext,
     ) -> Task<Result<()>>;
     fn should_unfollow_on_event(&self, event: &dyn Any, cx: &AppContext) -> bool;
+    fn is_project_item(&self, cx: &AppContext) -> bool;
 }
 
 impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
@@ -768,6 +770,10 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
         } else {
             false
         }
+    }
+
+    fn is_project_item(&self, cx: &AppContext) -> bool {
+        self.read(cx).is_project_item(cx)
     }
 }
 

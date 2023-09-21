@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use call::ActiveCall;
-use channel::{ChannelBuffer, ChannelBufferEvent, ChannelId};
+use channel::{Channel, ChannelBuffer, ChannelBufferEvent, ChannelId};
 use client::proto;
 use clock::ReplicaId;
 use collections::HashMap;
@@ -13,7 +13,10 @@ use gpui::{
     ViewContext, ViewHandle,
 };
 use project::Project;
-use std::any::{Any, TypeId};
+use std::{
+    any::{Any, TypeId},
+    sync::Arc,
+};
 use util::ResultExt;
 use workspace::{
     item::{FollowableItem, Item, ItemHandle},
@@ -24,7 +27,7 @@ use workspace::{
 
 actions!(channel_view, [Deploy]);
 
-pub(crate) fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut AppContext) {
     register_followable_item::<ChannelView>(cx)
 }
 
@@ -37,9 +40,13 @@ pub struct ChannelView {
 }
 
 impl ChannelView {
-    pub fn deploy(channel_id: ChannelId, workspace: ViewHandle<Workspace>, cx: &mut AppContext) {
+    pub fn open(
+        channel_id: ChannelId,
+        workspace: ViewHandle<Workspace>,
+        cx: &mut AppContext,
+    ) -> Task<Result<ViewHandle<Self>>> {
         let pane = workspace.read(cx).active_pane().clone();
-        let channel_view = Self::open(channel_id, pane.clone(), workspace.clone(), cx);
+        let channel_view = Self::open_in_pane(channel_id, pane.clone(), workspace.clone(), cx);
         cx.spawn(|mut cx| async move {
             let channel_view = channel_view.await?;
             pane.update(&mut cx, |pane, cx| {
@@ -56,12 +63,11 @@ impl ChannelView {
                 );
                 pane.add_item(Box::new(channel_view.clone()), true, true, None, cx);
             });
-            anyhow::Ok(())
+            anyhow::Ok(channel_view)
         })
-        .detach();
     }
 
-    pub fn open(
+    pub fn open_in_pane(
         channel_id: ChannelId,
         pane: ViewHandle<Pane>,
         workspace: ViewHandle<Workspace>,
@@ -119,6 +125,10 @@ impl ChannelView {
         };
         this.refresh_replica_id_map(cx);
         this
+    }
+
+    pub fn channel(&self, cx: &AppContext) -> Arc<Channel> {
+        self.channel_buffer.read(cx).channel()
     }
 
     fn handle_project_event(
@@ -318,7 +328,7 @@ impl FollowableItem for ChannelView {
             unreachable!()
         };
 
-        let open = ChannelView::open(state.channel_id, pane, workspace, cx);
+        let open = ChannelView::open_in_pane(state.channel_id, pane, workspace, cx);
 
         Some(cx.spawn(|mut cx| async move {
             let this = open.await?;
@@ -390,5 +400,9 @@ impl FollowableItem for ChannelView {
 
     fn should_unfollow_on_event(event: &Self::Event, cx: &AppContext) -> bool {
         Editor::should_unfollow_on_event(event, cx)
+    }
+
+    fn is_project_item(&self, _cx: &AppContext) -> bool {
+        false
     }
 }
