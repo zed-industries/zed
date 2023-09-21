@@ -1,8 +1,8 @@
-use crate::theme::theme;
-use crate::ui::{facepile, indicator, Avatar};
+use gpui2::elements::div;
 use gpui2::style::StyleHelpers;
-use gpui2::{elements::div, IntoElement};
-use gpui2::{Element, ParentElement, ViewContext};
+use gpui2::{Element, IntoElement, ParentElement, ViewContext};
+
+use crate::{facepile, indicator, theme, Avatar};
 
 #[derive(Element)]
 pub struct FollowGroup {

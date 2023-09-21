@@ -1,6 +1,8 @@
-use crate::theme::{Theme, Themed};
-use gpui2::Element;
 use std::marker::PhantomData;
+
+use gpui2::Element;
+
+use crate::theme::{Theme, Themed};
 
 pub trait ElementExt<V: 'static>: Element<V> {
     fn themed(self, theme: Theme) -> Themed<V, Self>

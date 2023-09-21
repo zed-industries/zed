@@ -17,6 +17,7 @@ serde.workspace = true
 settings = { path = "../settings" }
 simplelog = "0.9"
 theme = { path = "../theme" }
+ui = { path = "../ui" }
 util = { path = "../util" }
 
 [dev-dependencies]

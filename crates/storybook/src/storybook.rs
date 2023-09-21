@@ -1,20 +1,14 @@
 #![allow(dead_code, unused_variables)]
 
-use crate::theme::Theme;
 use ::theme as legacy_theme;
-use element_ext::ElementExt;
 use gpui2::{serde_json, vec2f, view, Element, RectF, ViewContext, WindowBounds};
 use legacy_theme::ThemeSettings;
 use log::LevelFilter;
 use settings::{default_settings, SettingsStore};
 use simplelog::SimpleLogger;
+use ui::{ElementExt, Theme};
 
 mod collab_panel;
-mod components;
-mod element_ext;
-mod prelude;
-mod theme;
-mod ui;
 mod workspace;
 
 gpui2::actions! {

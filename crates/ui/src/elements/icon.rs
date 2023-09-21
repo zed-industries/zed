@@ -1,8 +1,8 @@
-use crate::theme::theme;
 use gpui2::elements::svg;
 use gpui2::style::StyleHelpers;
-use gpui2::IntoElement;
-use gpui2::{Element, ViewContext};
+use gpui2::{Element, IntoElement, ViewContext};
+
+use crate::theme;
 
 // Icon::Hash
 // icon(IconAsset::Hash).color(IconColor::Warning)

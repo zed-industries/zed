@@ -1,11 +1,11 @@
 use std::marker::PhantomData;
 
-use crate::prelude::Shape;
-use crate::theme::theme;
-use crate::ui::{avatar, follow_group, icon_button, text_button, tool_divider};
+use gpui2::elements::div;
 use gpui2::style::StyleHelpers;
-use gpui2::{elements::div, IntoElement};
-use gpui2::{Element, ParentElement, ViewContext};
+use gpui2::{Element, IntoElement, ParentElement, ViewContext};
+
+use crate::prelude::Shape;
+use crate::{avatar, follow_group, icon_button, text_button, theme, tool_divider};
 
 #[derive(Element)]
 pub struct TitleBar<V: 'static> {

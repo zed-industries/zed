@@ -1,9 +1,9 @@
-use crate::prelude::Shape;
-use crate::theme::theme;
 use gpui2::elements::img;
 use gpui2::style::StyleHelpers;
-use gpui2::{ArcCow, IntoElement};
-use gpui2::{Element, ViewContext};
+use gpui2::{ArcCow, Element, IntoElement, ViewContext};
+
+use crate::prelude::*;
+use crate::theme;
 
 #[derive(Element, Clone)]
 pub struct Avatar {
