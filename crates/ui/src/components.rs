@@ -3,18 +3,19 @@ mod follow_group;
 mod list_item;
 mod tab;
 
+pub use facepile::*;
+pub use follow_group::*;
+pub use list_item::*;
+pub use tab::*;
+
 use std::marker::PhantomData;
 use std::rc::Rc;
 
-pub use facepile::*;
-pub use follow_group::*;
 use gpui2::elements::div;
 use gpui2::interactive::Interactive;
 use gpui2::platform::MouseButton;
 use gpui2::style::StyleHelpers;
 use gpui2::{ArcCow, Element, EventContext, IntoElement, ParentElement, ViewContext};
-pub use list_item::*;
-pub use tab::*;
 
 struct ButtonHandlers<V, D> {
     click: Option<Rc<dyn Fn(&mut V, &D, &mut EventContext<V>)>>,
