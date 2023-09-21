@@ -1,10 +1,11 @@
 use std::marker::PhantomData;
 
-use crate::theme::{theme, Theme};
-use crate::ui::{icon_button, text_button, tool_divider};
+use gpui2::elements::div;
 use gpui2::style::StyleHelpers;
-use gpui2::{elements::div, IntoElement};
-use gpui2::{Element, ParentElement, ViewContext};
+use gpui2::{Element, IntoElement, ParentElement, ViewContext};
+
+use crate::theme::{theme, Theme};
+use crate::{icon_button, text_button, tool_divider};
 
 #[derive(Default, PartialEq)]
 pub enum Tool {

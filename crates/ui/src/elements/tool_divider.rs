@@ -1,7 +1,8 @@
-use crate::theme::theme;
+use gpui2::elements::div;
 use gpui2::style::StyleHelpers;
-use gpui2::{elements::div, IntoElement};
-use gpui2::{Element, ViewContext};
+use gpui2::{Element, IntoElement, ViewContext};
+
+use crate::theme::theme;
 
 #[derive(Element)]
 pub struct ToolDivider {}

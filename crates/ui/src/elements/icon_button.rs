@@ -1,5 +1,4 @@
-use gpui2::elements::div;
-use gpui2::elements::svg;
+use gpui2::elements::{div, svg};
 use gpui2::style::{StyleHelpers, Styleable};
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 

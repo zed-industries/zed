@@ -1,15 +1,13 @@
-use crate::{
-    prelude::{InteractionState, ToggleState},
-    theme::theme,
-    ui::{details, input, label, list_item, IconAsset, LabelColor},
-};
-use gpui2::{
-    elements::{div, div::ScrollState},
-    style::StyleHelpers,
-    ParentElement, ViewContext,
-};
-use gpui2::{Element, IntoElement};
 use std::marker::PhantomData;
+
+use gpui2::elements::div;
+use gpui2::elements::div::ScrollState;
+use gpui2::style::StyleHelpers;
+use gpui2::{Element, IntoElement, ParentElement, ViewContext};
+
+use crate::prelude::{InteractionState, ToggleState};
+use crate::theme::theme;
+use crate::{details, input, label, list_item, IconAsset, LabelColor};
 
 #[derive(Element)]
 pub struct ProjectPanel<V: 'static> {

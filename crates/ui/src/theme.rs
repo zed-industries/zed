@@ -1,9 +1,12 @@
-use gpui2::{
-    color::Hsla, element::Element, serde_json, AppContext, IntoElement, Vector2F, ViewContext,
-    WindowContext,
-};
-use serde::{de::Visitor, Deserialize, Deserializer};
-use std::{collections::HashMap, fmt, marker::PhantomData};
+use std::collections::HashMap;
+use std::fmt;
+use std::marker::PhantomData;
+
+use gpui2::color::Hsla;
+use gpui2::element::Element;
+use gpui2::{serde_json, AppContext, IntoElement, Vector2F, ViewContext, WindowContext};
+use serde::de::Visitor;
+use serde::{Deserialize, Deserializer};
 use theme::ThemeSettings;
 
 #[derive(Deserialize, Clone, Default, Debug)]
