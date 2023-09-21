@@ -8289,19 +8289,60 @@ impl Project {
                 this.update(&mut cx, |this, _| this.languages.next_language_server_id());
             let new_prettier_task = cx
                 .spawn(|mut cx| async move {
-                    let prettier =
-                        Prettier::start(new_server_id, task_prettier_dir, node, cx.clone())
-                            .await
-                            .context("prettier start")
-                            .map_err(Arc::new)?;
+                    let prettier = Prettier::start(
+                        worktree_id.map(|id| id.to_usize()),
+                        new_server_id,
+                        task_prettier_dir,
+                        node,
+                        cx.clone(),
+                    )
+                    .await
+                    .context("prettier start")
+                    .map_err(Arc::new)?;
                     if let Some(project) = weak_project.upgrade(&mut cx) {
-                        let prettier_server = Arc::clone(prettier.server());
                         project.update(&mut cx, |project, cx| {
-                            project.supplementary_language_servers.insert(
-                                new_server_id,
-                                // TODO kb same name repeats for different prettiers, distinguish
-                                (LanguageServerName(Arc::from("prettier")), prettier_server),
-                            );
+                            let name = if prettier.is_default() {
+                                LanguageServerName(Arc::from("prettier (default)"))
+                            } else {
+                                let prettier_dir = prettier.prettier_dir();
+                                let worktree_path = prettier
+                                    .worktree_id()
+                                    .map(WorktreeId::from_usize)
+                                    .and_then(|id| project.worktree_for_id(id, cx))
+                                    .map(|worktree| worktree.read(cx).abs_path());
+                                match worktree_path {
+                                    Some(worktree_path) => {
+                                        if worktree_path.as_ref() == prettier_dir {
+                                            LanguageServerName(Arc::from(format!(
+                                                "prettier ({})",
+                                                prettier_dir
+                                                    .file_name()
+                                                    .and_then(|name| name.to_str())
+                                                    .unwrap_or_default()
+                                            )))
+                                        } else {
+                                            let dir_to_display = match prettier_dir
+                                                .strip_prefix(&worktree_path)
+                                                .ok()
+                                            {
+                                                Some(relative_path) => relative_path,
+                                                None => prettier_dir,
+                                            };
+                                            LanguageServerName(Arc::from(format!(
+                                                "prettier ({})",
+                                                dir_to_display.display(),
+                                            )))
+                                        }
+                                    }
+                                    None => LanguageServerName(Arc::from(format!(
+                                        "prettier ({})",
+                                        prettier_dir.display(),
+                                    ))),
+                                }
+                            };
+                            project
+                                .supplementary_language_servers
+                                .insert(new_server_id, (name, Arc::clone(prettier.server())));
                             cx.emit(Event::LanguageServerAdded(new_server_id));
                         });
                     }

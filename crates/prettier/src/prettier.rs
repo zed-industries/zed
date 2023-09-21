@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 use util::paths::DEFAULT_PRETTIER_DIR;
 
 pub struct Prettier {
+    worktree_id: Option<usize>,
+    default: bool,
+    prettier_dir: PathBuf,
     server: Arc<LanguageServer>,
 }
 
@@ -143,11 +146,12 @@ impl Prettier {
             .with_context(|| format!("finding prettier starting with {starting_path:?}"))?
         {
             Some(prettier_dir) => Ok(prettier_dir),
-            None => Ok(util::paths::DEFAULT_PRETTIER_DIR.to_path_buf()),
+            None => Ok(DEFAULT_PRETTIER_DIR.to_path_buf()),
         }
     }
 
     pub async fn start(
+        worktree_id: Option<usize>,
         server_id: LanguageServerId,
         prettier_dir: PathBuf,
         node: Arc<dyn NodeRuntime>,
@@ -171,7 +175,7 @@ impl Prettier {
             server_id,
             LanguageServerBinary {
                 path: node_path,
-                arguments: vec![prettier_server.into(), prettier_dir.into()],
+                arguments: vec![prettier_server.into(), prettier_dir.as_path().into()],
             },
             Path::new("/"),
             None,
@@ -182,7 +186,12 @@ impl Prettier {
             .spawn(server.initialize(None))
             .await
             .context("prettier server initialization")?;
-        Ok(Self { server })
+        Ok(Self {
+            worktree_id,
+            server,
+            default: prettier_dir == DEFAULT_PRETTIER_DIR.as_path(),
+            prettier_dir,
+        })
     }
 
     pub async fn format(
@@ -236,6 +245,18 @@ impl Prettier {
 
     pub fn server(&self) -> &Arc<LanguageServer> {
         &self.server
+    }
+
+    pub fn is_default(&self) -> bool {
+        self.default
+    }
+
+    pub fn prettier_dir(&self) -> &Path {
+        &self.prettier_dir
+    }
+
+    pub fn worktree_id(&self) -> Option<usize> {
+        self.worktree_id
     }
 }
 
