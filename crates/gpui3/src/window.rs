@@ -220,6 +220,16 @@ impl<'a, 'w, T: 'static> ViewContext<'a, 'w, T> {
             entity_type: PhantomData,
         }
     }
+
+    pub fn erase_state<R>(&mut self, f: impl FnOnce(&mut ViewContext<()>) -> R) -> R {
+        let unit_entity_id = self.unit_entity_id;
+        let mut cx = ViewContext::mutable(
+            &mut *self.window_cx.app,
+            &mut *self.window_cx.window,
+            unit_entity_id,
+        );
+        f(&mut cx)
+    }
 }
 
 impl<'a, 'w, T: 'static> Context for ViewContext<'a, 'w, T> {

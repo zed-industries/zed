@@ -29,6 +29,7 @@ impl App {
 pub struct AppContext {
     platform: Rc<dyn Platform>,
     text_system: Arc<TextSystem>,
+    pub(crate) unit_entity_id: EntityId,
     pub(crate) entities: SlotMap<EntityId, Option<Box<dyn Any>>>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     // We recycle this memory across layout requests.
@@ -38,10 +39,14 @@ pub struct AppContext {
 impl AppContext {
     pub fn new(platform: Rc<dyn Platform>) -> Self {
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
+        let mut entities = SlotMap::with_key();
+        let unit_entity_id = entities.insert(Some(Box::new(()) as Box<dyn Any>));
+
         AppContext {
             platform,
             text_system,
-            entities: SlotMap::with_key(),
+            unit_entity_id,
+            entities,
             windows: SlotMap::with_key(),
             layout_id_buffer: Default::default(),
         }

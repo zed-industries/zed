@@ -1,7 +1,7 @@
 use crate::{collab_panel::collab_panel, theme::theme};
 use gpui3::{div, img, svg, Element, ParentElement, ScrollState, StyleHelpers, ViewContext};
 
-#[derive(Element, Default)]
+#[derive(Default)]
 struct WorkspaceElement {
     left_scroll_state: ScrollState,
     right_scroll_state: ScrollState,
@@ -271,18 +271,12 @@ impl TitleBar {
 
 // ================================================================================ //
 
-struct StatusBar;
+mod statusbar {
+    use gpui3::WindowContext;
 
-pub fn statusbar<V: 'static>() -> impl Element<State = V> {
-    StatusBar
-}
+    use super::*;
 
-impl StatusBar {
-    fn render<V: 'static>(
-        &mut self,
-        _: &mut V,
-        cx: &mut ViewContext<V>,
-    ) -> impl Element<State = V> {
+    pub fn statusbar<V: 'static>(_: &mut V, cx: &mut ViewContext<V>) -> impl Element<State = V> {
         let theme = theme(cx);
         div()
             .flex()
@@ -291,11 +285,11 @@ impl StatusBar {
             .w_full()
             .h_8()
             .fill(theme.lowest.base.default.background)
-            .child(self.left_group(cx))
-            .child(self.right_group(cx))
+            .child(left_group(cx))
+            .child(right_group(cx))
     }
 
-    fn left_group<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl Element<State = V> {
+    fn left_group<V: 'static>(cx: &mut ViewContext<V>) -> impl Element<State = V> {
         let theme = theme(cx);
         div()
             .flex()
@@ -392,7 +386,7 @@ impl StatusBar {
             )
     }
 
-    fn right_group<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl Element<State = V> {
+    fn right_group<S: 'static>(cx: &mut ViewContext<S>) -> impl Element<State = S> {
         let theme = theme(cx);
         div()
             .flex()

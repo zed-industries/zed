@@ -1,26 +1,29 @@
 use crate::theme::{theme, Theme};
 use gpui3::{
-    div, img, svg, ArcCow, Element, IntoAnyElement, ParentElement, ScrollState, StyleHelpers,
-    ViewContext,
+    div, img, svg, view, AppContext, ArcCow, Context, Element, IntoAnyElement, ParentElement,
+    ScrollState, StyleHelpers, View, ViewContext, WindowContext,
 };
-use std::marker::PhantomData;
 
-pub struct CollabPanelElement<V: 'static> {
-    view_type: PhantomData<V>,
+struct CollabPanel {
     scroll_state: ScrollState,
 }
 
-// When I improve child view rendering, I'd like to have V implement a trait  that
-// provides the scroll state, among other things.
-pub fn collab_panel<V: 'static>(scroll_state: ScrollState) -> CollabPanelElement<V> {
-    CollabPanelElement {
-        view_type: PhantomData,
-        scroll_state,
+pub fn collab_panel(cx: &mut WindowContext) -> View<CollabPanel> {
+    view(cx.entity(|cx| CollabPanel::new(cx)), |panel, cx| {
+        panel.render(cx)
+    })
+}
+
+impl CollabPanel {
+    fn new(_: &mut AppContext) -> Self {
+        CollabPanel {
+            scroll_state: ScrollState::default(),
+        }
     }
 }
 
-impl<V: 'static> CollabPanelElement<V> {
-    fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl Element {
+impl CollabPanel {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<State = Self> {
         let theme = theme(cx);
 
         // Panel
@@ -115,10 +118,10 @@ impl<V: 'static> CollabPanelElement<V> {
 
     fn list_section_header(
         &self,
-        label: impl IntoAnyElement<V>,
+        label: impl IntoAnyElement<Self>,
         expanded: bool,
         theme: &Theme,
-    ) -> impl Element<State = V> {
+    ) -> impl Element<State = Self> {
         div()
             .h_7()
             .px_2()
@@ -144,9 +147,9 @@ impl<V: 'static> CollabPanelElement<V> {
     fn list_item(
         &self,
         avatar_uri: impl Into<ArcCow<'static, str>>,
-        label: impl IntoAnyElement<V>,
+        label: impl IntoAnyElement<Self>,
         theme: &Theme,
-    ) -> impl Element<State = V> {
+    ) -> impl Element<State = Self> {
         div()
             .h_7()
             .px_2()
