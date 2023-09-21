@@ -206,13 +206,13 @@
       "shift-z shift-q": [
         "pane::CloseActiveItem",
         {
-          "saveBehavior": "dontSave"
+          "saveIntent": "skip"
         }
       ],
       "shift-z shift-z": [
         "pane::CloseActiveItem",
         {
-          "saveBehavior": "promptOnConflict"
+          "saveIntent": "saveAll"
         }
       ],
       // Count support

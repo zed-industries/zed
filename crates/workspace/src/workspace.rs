@@ -163,19 +163,19 @@ pub struct NewFileInDirection(pub SplitDirection);
 #[derive(Clone, PartialEq, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveAll {
-    pub save_behavior: Option<SaveIntent>,
+    pub save_intent: Option<SaveIntent>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Save {
-    pub save_behavior: Option<SaveIntent>,
+    pub save_intent: Option<SaveIntent>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseAllItemsAndPanes {
-    pub save_behavior: Option<SaveIntent>,
+    pub save_intent: Option<SaveIntent>,
 }
 
 #[derive(Deserialize)]
@@ -294,7 +294,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     cx.add_action(
         |workspace: &mut Workspace, action: &Save, cx: &mut ViewContext<Workspace>| {
             workspace
-                .save_active_item(action.save_behavior.unwrap_or(SaveIntent::Save), cx)
+                .save_active_item(action.save_intent.unwrap_or(SaveIntent::Save), cx)
                 .detach_and_log_err(cx);
         },
     );
@@ -1363,7 +1363,7 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let save_all =
-            self.save_all_internal(action.save_behavior.unwrap_or(SaveIntent::SaveAll), cx);
+            self.save_all_internal(action.save_intent.unwrap_or(SaveIntent::SaveAll), cx);
         Some(cx.foreground().spawn(async move {
             save_all.await?;
             Ok(())
@@ -1372,7 +1372,7 @@ impl Workspace {
 
     fn save_all_internal(
         &mut self,
-        save_behaviour: SaveIntent,
+        save_intent: SaveIntent,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
         if self.project.read(cx).is_read_only() {
@@ -1407,7 +1407,7 @@ impl Workspace {
                             &pane,
                             ix,
                             &*item,
-                            save_behaviour,
+                            save_intent,
                             &mut cx,
                         )
                         .await?
@@ -1679,7 +1679,7 @@ impl Workspace {
 
     pub fn save_active_item(
         &mut self,
-        save_behavior: SaveIntent,
+        save_intent: SaveIntent,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let project = self.project.clone();
@@ -1690,16 +1690,9 @@ impl Workspace {
 
         cx.spawn(|_, mut cx| async move {
             if let Some(item) = item {
-                Pane::save_item(
-                    project,
-                    &pane,
-                    item_ix,
-                    item.as_ref(),
-                    save_behavior,
-                    &mut cx,
-                )
-                .await
-                .map(|_| ())
+                Pane::save_item(project, &pane, item_ix, item.as_ref(), save_intent, &mut cx)
+                    .await
+                    .map(|_| ())
             } else {
                 Ok(())
             }
@@ -1719,13 +1712,13 @@ impl Workspace {
         action: &CloseAllItemsAndPanes,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        self.close_all_internal(false, action.save_behavior.unwrap_or(SaveIntent::Close), cx)
+        self.close_all_internal(false, action.save_intent.unwrap_or(SaveIntent::Close), cx)
     }
 
     fn close_all_internal(
         &mut self,
         retain_active_pane: bool,
-        save_behavior: SaveIntent,
+        save_intent: SaveIntent,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let current_pane = self.active_pane();
@@ -1748,7 +1741,7 @@ impl Workspace {
             if let Some(close_pane_items) = pane.update(cx, |pane: &mut Pane, cx| {
                 pane.close_all_items(
                     &CloseAllItems {
-                        save_behavior: Some(save_behavior),
+                        save_intent: Some(save_intent),
                     },
                     cx,
                 )

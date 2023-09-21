@@ -33,7 +33,7 @@ use super::{
 
 #[derive(Clone)]
 pub struct TestAppContext {
-    pub cx: Rc<RefCell<AppContext>>,
+    cx: Rc<RefCell<AppContext>>,
     foreground_platform: Rc<platform::test::ForegroundPlatform>,
     condition_duration: Option<Duration>,
     pub function_name: String,

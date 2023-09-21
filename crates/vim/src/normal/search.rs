@@ -220,53 +220,58 @@ fn replace_command(
     let replacement = parse_replace_all(&action.query);
     let pane = workspace.active_pane().clone();
     pane.update(cx, |pane, cx| {
-        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-            let search = search_bar.update(cx, |search_bar, cx| {
-                if !search_bar.show(cx) {
-                    return None;
-                }
+        let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() else {
+            return;
+        };
+        let search = search_bar.update(cx, |search_bar, cx| {
+            if !search_bar.show(cx) {
+                return None;
+            }
 
-                let mut options = SearchOptions::default();
-                if replacement.is_case_sensitive {
-                    options.set(SearchOptions::CASE_SENSITIVE, true)
-                }
-                let search = if replacement.search == "" {
-                    search_bar.query(cx)
-                } else {
-                    replacement.search
-                };
+            let mut options = SearchOptions::default();
+            if replacement.is_case_sensitive {
+                options.set(SearchOptions::CASE_SENSITIVE, true)
+            }
+            let search = if replacement.search == "" {
+                search_bar.query(cx)
+            } else {
+                replacement.search
+            };
 
-                search_bar.set_replacement(Some(&replacement.replacement), cx);
-                search_bar.activate_search_mode(SearchMode::Regex, cx);
-                Some(search_bar.search(&search, Some(options), cx))
-            });
-            let Some(search) = search else { return };
-            let search_bar = search_bar.downgrade();
-            cx.spawn(|_, mut cx| async move {
-                search.await?;
-                search_bar.update(&mut cx, |search_bar, cx| {
-                    if replacement.should_replace_all {
-                        search_bar.select_last_match(cx);
-                        search_bar.replace_all(&Default::default(), cx);
-                        Vim::update(cx, |vim, cx| {
-                            move_cursor(
-                                vim,
-                                Motion::StartOfLine {
-                                    display_lines: false,
-                                },
-                                None,
-                                cx,
-                            )
-                        })
-                    }
-                })?;
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-        }
+            search_bar.set_replacement(Some(&replacement.replacement), cx);
+            search_bar.activate_search_mode(SearchMode::Regex, cx);
+            Some(search_bar.search(&search, Some(options), cx))
+        });
+        let Some(search) = search else { return };
+        let search_bar = search_bar.downgrade();
+        cx.spawn(|_, mut cx| async move {
+            search.await?;
+            search_bar.update(&mut cx, |search_bar, cx| {
+                if replacement.should_replace_all {
+                    search_bar.select_last_match(cx);
+                    search_bar.replace_all(&Default::default(), cx);
+                    Vim::update(cx, |vim, cx| {
+                        move_cursor(
+                            vim,
+                            Motion::StartOfLine {
+                                display_lines: false,
+                            },
+                            None,
+                            cx,
+                        )
+                    })
+                }
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     })
 }
 
+// convert a vim query into something more usable by zed.
+// we don't attempt to fully convert between the two regex syntaxes,
+// but we do flip \( and \) to ( and ) (and vice-versa) in the pattern,
+// and convert \0..\9 to $0..$9 in the replacement so that common idioms work.
 fn parse_replace_all(query: &str) -> Replacement {
     let mut chars = query.chars();
     if Some('%') != chars.next() || Some('s') != chars.next() {
@@ -284,17 +289,18 @@ fn parse_replace_all(query: &str) -> Replacement {
     let mut buffer = &mut search;
 
     let mut escaped = false;
+    // 0 - parsing search
+    // 1 - parsing replacement
+    // 2 - parsing flags
     let mut phase = 0;
 
     for c in chars {
         if escaped {
             escaped = false;
             if phase == 1 && c.is_digit(10) {
-                // help vim users discover zed regex syntax
-                // (though we don't try and fix arbitrary patterns for them)
                 buffer.push('$')
+            // unescape escaped parens
             } else if phase == 0 && c == '(' || c == ')' {
-                // un-escape parens
             } else if c != delimeter {
                 buffer.push('\\')
             }
@@ -312,6 +318,10 @@ fn parse_replace_all(query: &str) -> Replacement {
                 break;
             }
         } else {
+            // escape unescaped parens
+            if phase == 0 && c == '(' || c == ')' {
+                buffer.push('\\')
+            }
             buffer.push(c)
         }
     }

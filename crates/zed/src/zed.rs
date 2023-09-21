@@ -1318,6 +1318,7 @@ mod tests {
         let save_task = workspace.update(cx, |workspace, cx| {
             workspace.save_active_item(SaveIntent::Save, cx)
         });
+        cx.foreground().run_until_parked();
         window.simulate_prompt_answer(0, cx);
         save_task.await.unwrap();
         editor.read_with(cx, |editor, cx| {
@@ -1522,9 +1523,7 @@ mod tests {
         });
         cx.dispatch_action(
             window.into(),
-            workspace::CloseActiveItem {
-                save_behavior: None,
-            },
+            workspace::CloseActiveItem { save_intent: None },
         );
 
         cx.foreground().run_until_parked();
@@ -1535,9 +1534,7 @@ mod tests {
 
         cx.dispatch_action(
             window.into(),
-            workspace::CloseActiveItem {
-                save_behavior: None,
-            },
+            workspace::CloseActiveItem { save_intent: None },
         );
         cx.foreground().run_until_parked();
         window.simulate_prompt_answer(1, cx);

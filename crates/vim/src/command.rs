@@ -50,119 +50,119 @@ pub fn command_interceptor(mut query: &str, _: &AppContext) -> Option<CommandInt
         "w" | "wr" | "wri" | "writ" | "write" => (
             "write",
             workspace::Save {
-                save_behavior: Some(SaveIntent::Save),
+                save_intent: Some(SaveIntent::Save),
             }
             .boxed_clone(),
         ),
         "w!" | "wr!" | "wri!" | "writ!" | "write!" => (
             "write!",
             workspace::Save {
-                save_behavior: Some(SaveIntent::Overwrite),
+                save_intent: Some(SaveIntent::Overwrite),
             }
             .boxed_clone(),
         ),
         "q" | "qu" | "qui" | "quit" => (
             "quit",
             workspace::CloseActiveItem {
-                save_behavior: Some(SaveIntent::Close),
+                save_intent: Some(SaveIntent::Close),
             }
             .boxed_clone(),
         ),
         "q!" | "qu!" | "qui!" | "quit!" => (
             "quit!",
             workspace::CloseActiveItem {
-                save_behavior: Some(SaveIntent::Skip),
+                save_intent: Some(SaveIntent::Skip),
             }
             .boxed_clone(),
         ),
         "wq" => (
             "wq",
             workspace::CloseActiveItem {
-                save_behavior: Some(SaveIntent::Save),
+                save_intent: Some(SaveIntent::Save),
             }
             .boxed_clone(),
         ),
         "wq!" => (
             "wq!",
             workspace::CloseActiveItem {
-                save_behavior: Some(SaveIntent::Overwrite),
+                save_intent: Some(SaveIntent::Overwrite),
             }
             .boxed_clone(),
         ),
         "x" | "xi" | "xit" | "exi" | "exit" => (
             "exit",
             workspace::CloseActiveItem {
-                save_behavior: Some(SaveIntent::Save),
+                save_intent: Some(SaveIntent::SaveAll),
             }
             .boxed_clone(),
         ),
         "x!" | "xi!" | "xit!" | "exi!" | "exit!" => (
             "exit!",
             workspace::CloseActiveItem {
-                save_behavior: Some(SaveIntent::Overwrite),
+                save_intent: Some(SaveIntent::Overwrite),
             }
             .boxed_clone(),
         ),
         "up" | "upd" | "upda" | "updat" | "update" => (
             "update",
             workspace::Save {
-                save_behavior: Some(SaveIntent::SaveAll),
+                save_intent: Some(SaveIntent::SaveAll),
             }
             .boxed_clone(),
         ),
         "wa" | "wal" | "wall" => (
             "wall",
             workspace::SaveAll {
-                save_behavior: Some(SaveIntent::SaveAll),
+                save_intent: Some(SaveIntent::SaveAll),
             }
             .boxed_clone(),
         ),
         "wa!" | "wal!" | "wall!" => (
             "wall!",
             workspace::SaveAll {
-                save_behavior: Some(SaveIntent::Overwrite),
+                save_intent: Some(SaveIntent::Overwrite),
             }
             .boxed_clone(),
         ),
         "qa" | "qal" | "qall" | "quita" | "quital" | "quitall" => (
             "quitall",
             workspace::CloseAllItemsAndPanes {
-                save_behavior: Some(SaveIntent::Close),
+                save_intent: Some(SaveIntent::Close),
             }
             .boxed_clone(),
         ),
         "qa!" | "qal!" | "qall!" | "quita!" | "quital!" | "quitall!" => (
             "quitall!",
             workspace::CloseAllItemsAndPanes {
-                save_behavior: Some(SaveIntent::Skip),
+                save_intent: Some(SaveIntent::Skip),
             }
             .boxed_clone(),
         ),
         "xa" | "xal" | "xall" => (
             "xall",
             workspace::CloseAllItemsAndPanes {
-                save_behavior: Some(SaveIntent::SaveAll),
+                save_intent: Some(SaveIntent::SaveAll),
             }
             .boxed_clone(),
         ),
         "xa!" | "xal!" | "xall!" => (
             "xall!",
             workspace::CloseAllItemsAndPanes {
-                save_behavior: Some(SaveIntent::Overwrite),
+                save_intent: Some(SaveIntent::Overwrite),
             }
             .boxed_clone(),
         ),
         "wqa" | "wqal" | "wqall" => (
             "wqall",
             workspace::CloseAllItemsAndPanes {
-                save_behavior: Some(SaveIntent::SaveAll),
+                save_intent: Some(SaveIntent::SaveAll),
             }
             .boxed_clone(),
         ),
         "wqa!" | "wqal!" | "wqall!" => (
             "wqall!",
             workspace::CloseAllItemsAndPanes {
-                save_behavior: Some(SaveIntent::Overwrite),
+                save_intent: Some(SaveIntent::Overwrite),
             }
             .boxed_clone(),
         ),
@@ -197,7 +197,7 @@ pub fn command_interceptor(mut query: &str, _: &AppContext) -> Option<CommandInt
         "tabc" | "tabcl" | "tabclo" | "tabclos" | "tabclose" => (
             "tabclose",
             workspace::CloseActiveItem {
-                save_behavior: Some(SaveIntent::Close),
+                save_intent: Some(SaveIntent::Close),
             }
             .boxed_clone(),
         ),

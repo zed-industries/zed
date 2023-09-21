@@ -86,13 +86,13 @@ pub struct CloseItemsToTheRightById {
 #[derive(Clone, PartialEq, Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseActiveItem {
-    pub save_behavior: Option<SaveIntent>,
+    pub save_intent: Option<SaveIntent>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseAllItems {
-    pub save_behavior: Option<SaveIntent>,
+    pub save_intent: Option<SaveIntent>,
 }
 
 actions!(
@@ -734,7 +734,7 @@ impl Pane {
         let active_item_id = self.items[self.active_item_index].id();
         Some(self.close_item_by_id(
             active_item_id,
-            action.save_behavior.unwrap_or(SaveIntent::Close),
+            action.save_intent.unwrap_or(SaveIntent::Close),
             cx,
         ))
     }
@@ -742,12 +742,10 @@ impl Pane {
     pub fn close_item_by_id(
         &mut self,
         item_id_to_close: usize,
-        save_behavior: SaveIntent,
+        save_intent: SaveIntent,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        self.close_items(cx, save_behavior, move |view_id| {
-            view_id == item_id_to_close
-        })
+        self.close_items(cx, save_intent, move |view_id| view_id == item_id_to_close)
     }
 
     pub fn close_inactive_items(
@@ -844,17 +842,17 @@ impl Pane {
             return None;
         }
 
-        Some(self.close_items(
-            cx,
-            action.save_behavior.unwrap_or(SaveIntent::Close),
-            |_| true,
-        ))
+        Some(
+            self.close_items(cx, action.save_intent.unwrap_or(SaveIntent::Close), |_| {
+                true
+            }),
+        )
     }
 
     pub fn close_items(
         &mut self,
         cx: &mut ViewContext<Pane>,
-        save_behavior: SaveIntent,
+        save_intent: SaveIntent,
         should_close: impl 'static + Fn(usize) -> bool,
     ) -> Task<Result<()>> {
         // Find the items to close.
@@ -912,7 +910,7 @@ impl Pane {
                         &pane,
                         item_ix,
                         &*item,
-                        save_behavior,
+                        save_intent,
                         &mut cx,
                     )
                     .await?
@@ -1010,14 +1008,14 @@ impl Pane {
         pane: &WeakViewHandle<Pane>,
         item_ix: usize,
         item: &dyn ItemHandle,
-        save_behavior: SaveIntent,
+        save_intent: SaveIntent,
         cx: &mut AsyncAppContext,
     ) -> Result<bool> {
         const CONFLICT_MESSAGE: &str =
             "This file has changed on disk since you started editing it. Do you want to overwrite it?";
         const DIRTY_MESSAGE: &str = "This file contains unsaved edits. Do you want to save it?";
 
-        if save_behavior == SaveIntent::Skip {
+        if save_intent == SaveIntent::Skip {
             return Ok(true);
         }
 
@@ -1031,17 +1029,17 @@ impl Pane {
         });
 
         // when saving a single buffer, we ignore whether or not it's dirty.
-        if save_behavior == SaveIntent::Save {
+        if save_intent == SaveIntent::Save {
             is_dirty = true;
         }
 
-        if save_behavior == SaveIntent::SaveAs {
+        if save_intent == SaveIntent::SaveAs {
             is_dirty = true;
             has_conflict = false;
             can_save = false;
         }
 
-        if save_behavior == SaveIntent::Overwrite {
+        if save_intent == SaveIntent::Overwrite {
             has_conflict = false;
         }
 
@@ -1060,7 +1058,7 @@ impl Pane {
                 _ => return Ok(false),
             }
         } else if is_dirty && (can_save || can_save_as) {
-            if save_behavior == SaveIntent::Close {
+            if save_intent == SaveIntent::Close {
                 let will_autosave = cx.read(|cx| {
                     matches!(
                         settings::get::<WorkspaceSettings>(cx).autosave,
@@ -1188,9 +1186,7 @@ impl Pane {
                     vec![
                         ContextMenuItem::action(
                             "Close Active Item",
-                            CloseActiveItem {
-                                save_behavior: None,
-                            },
+                            CloseActiveItem { save_intent: None },
                         ),
                         ContextMenuItem::action("Close Inactive Items", CloseInactiveItems),
                         ContextMenuItem::action("Close Clean Items", CloseCleanItems),
@@ -1198,9 +1194,7 @@ impl Pane {
                         ContextMenuItem::action("Close Items To The Right", CloseItemsToTheRight),
                         ContextMenuItem::action(
                             "Close All Items",
-                            CloseAllItems {
-                                save_behavior: None,
-                            },
+                            CloseAllItems { save_intent: None },
                         ),
                     ]
                 } else {
@@ -1247,9 +1241,7 @@ impl Pane {
                         }),
                         ContextMenuItem::action(
                             "Close All Items",
-                            CloseAllItems {
-                                save_behavior: None,
-                            },
+                            CloseAllItems { save_intent: None },
                         ),
                     ]
                 },
@@ -2182,12 +2174,7 @@ mod tests {
 
         pane.update(cx, |pane, cx| {
             assert!(pane
-                .close_active_item(
-                    &CloseActiveItem {
-                        save_behavior: None
-                    },
-                    cx
-                )
+                .close_active_item(&CloseActiveItem { save_intent: None }, cx)
                 .is_none())
         });
     }
@@ -2439,12 +2426,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
 
         pane.update(cx, |pane, cx| {
-            pane.close_active_item(
-                &CloseActiveItem {
-                    save_behavior: None,
-                },
-                cx,
-            )
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
         })
         .unwrap()
         .await
@@ -2455,12 +2437,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
         pane.update(cx, |pane, cx| {
-            pane.close_active_item(
-                &CloseActiveItem {
-                    save_behavior: None,
-                },
-                cx,
-            )
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
         })
         .unwrap()
         .await
@@ -2468,12 +2445,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "B*", "C"], cx);
 
         pane.update(cx, |pane, cx| {
-            pane.close_active_item(
-                &CloseActiveItem {
-                    save_behavior: None,
-                },
-                cx,
-            )
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
         })
         .unwrap()
         .await
@@ -2481,12 +2453,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "C*"], cx);
 
         pane.update(cx, |pane, cx| {
-            pane.close_active_item(
-                &CloseActiveItem {
-                    save_behavior: None,
-                },
-                cx,
-            )
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
         })
         .unwrap()
         .await
@@ -2597,12 +2564,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
         pane.update(cx, |pane, cx| {
-            pane.close_all_items(
-                &CloseAllItems {
-                    save_behavior: None,
-                },
-                cx,
-            )
+            pane.close_all_items(&CloseAllItems { save_intent: None }, cx)
         })
         .unwrap()
         .await

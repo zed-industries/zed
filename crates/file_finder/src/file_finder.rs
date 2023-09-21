@@ -1528,13 +1528,8 @@ mod tests {
         let active_pane = cx.read(|cx| workspace.read(cx).active_pane().clone());
         active_pane
             .update(cx, |pane, cx| {
-                pane.close_active_item(
-                    &workspace::CloseActiveItem {
-                        save_behavior: None,
-                    },
-                    cx,
-                )
-                .unwrap()
+                pane.close_active_item(&workspace::CloseActiveItem { save_intent: None }, cx)
+                    .unwrap()
             })
             .await
             .unwrap();
