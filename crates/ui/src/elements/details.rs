@@ -1,8 +1,8 @@
-use crate::theme::theme;
 use gpui2::elements::div;
 use gpui2::style::StyleHelpers;
-use gpui2::{Element, ViewContext};
-use gpui2::{IntoElement, ParentElement};
+use gpui2::{Element, IntoElement, ParentElement, ViewContext};
+
+use crate::theme;
 
 #[derive(Element, Clone)]
 pub struct Details {

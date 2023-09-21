@@ -1,9 +1,10 @@
-use crate::prelude::{ButtonVariant, InteractionState};
-use crate::theme::theme;
+use gpui2::elements::div;
 use gpui2::elements::svg;
 use gpui2::style::{StyleHelpers, Styleable};
-use gpui2::{elements::div, IntoElement};
-use gpui2::{Element, ParentElement, ViewContext};
+use gpui2::{Element, IntoElement, ParentElement, ViewContext};
+
+use crate::prelude::{ButtonVariant, InteractionState};
+use crate::theme::theme;
 
 #[derive(Element)]
 pub struct IconButton {
