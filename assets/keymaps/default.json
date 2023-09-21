@@ -303,7 +303,7 @@
           "replace_newest": false
         }
       ],
-      "cmd-shift-d": "editor::SelectAllMatches",
+      "cmd-shift-l": "editor::SelectAllMatches",
       "ctrl-cmd-d": [
         "editor::SelectPrevious",
         {
@@ -463,7 +463,7 @@
     "context": "Editor",
     "bindings": {
       "ctrl-shift-k": "editor::DeleteLine",
-      "cmd-shift-l": "editor::SplitSelectionIntoLines",
+      "cmd-shift-d": "editor::DuplicateLine",
       "ctrl-j": "editor::JoinLines",
       "ctrl-cmd-up": "editor::MoveLineUp",
       "ctrl-cmd-down": "editor::MoveLineDown",
