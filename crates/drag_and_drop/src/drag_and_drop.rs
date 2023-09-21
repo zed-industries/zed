@@ -4,7 +4,7 @@ use collections::HashSet;
 use gpui::{
     elements::{Empty, MouseEventHandler, Overlay},
     geometry::{rect::RectF, vector::Vector2F},
-    platform::{CursorStyle, MouseButton},
+    platform::{CursorStyle, Modifiers, MouseButton},
     scene::{MouseDown, MouseDrag},
     AnyElement, AnyWindowHandle, Element, View, ViewContext, WeakViewHandle, WindowContext,
 };
@@ -21,12 +21,13 @@ enum State<V> {
         region: RectF,
     },
     Dragging {
+        modifiers: Modifiers,
         window: AnyWindowHandle,
         position: Vector2F,
         region_offset: Vector2F,
         region: RectF,
         payload: Rc<dyn Any + 'static>,
-        render: Rc<dyn Fn(Rc<dyn Any>, &mut ViewContext<V>) -> AnyElement<V>>,
+        render: Rc<dyn Fn(&Modifiers, Rc<dyn Any>, &mut ViewContext<V>) -> AnyElement<V>>,
     },
     Canceled,
 }
@@ -49,6 +50,7 @@ impl<V> Clone for State<V> {
                 region,
             },
             State::Dragging {
+                modifiers,
                 window,
                 position,
                 region_offset,
@@ -62,6 +64,7 @@ impl<V> Clone for State<V> {
                 region: region.clone(),
                 payload: payload.clone(),
                 render: render.clone(),
+                modifiers: modifiers.clone(),
             },
             State::Canceled => State::Canceled,
         }
@@ -111,6 +114,27 @@ impl<V: 'static> DragAndDrop<V> {
         })
     }
 
+    pub fn any_currently_dragged(&self, window: AnyWindowHandle) -> bool {
+        self.currently_dragged
+            .as_ref()
+            .map(|state| {
+                if let State::Dragging {
+                    window: window_dragged_from,
+                    ..
+                } = state
+                {
+                    if &window != window_dragged_from {
+                        return false;
+                    }
+
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false)
+    }
+
     pub fn drag_started(event: MouseDown, cx: &mut WindowContext) {
         cx.update_global(|this: &mut Self, _| {
             this.currently_dragged = Some(State::Down {
@@ -124,7 +148,7 @@ impl<V: 'static> DragAndDrop<V> {
         event: MouseDrag,
         payload: Rc<T>,
         cx: &mut WindowContext,
-        render: Rc<impl 'static + Fn(&T, &mut ViewContext<V>) -> AnyElement<V>>,
+        render: Rc<impl 'static + Fn(&Modifiers, &T, &mut ViewContext<V>) -> AnyElement<V>>,
     ) {
         let window = cx.window();
         cx.update_global(|this: &mut Self, cx| {
@@ -141,13 +165,14 @@ impl<V: 'static> DragAndDrop<V> {
                 }) => {
                     if (event.position - (region.origin() + region_offset)).length() > DEAD_ZONE {
                         this.currently_dragged = Some(State::Dragging {
+                            modifiers: event.modifiers,
                             window,
                             region_offset,
                             region,
                             position: event.position,
                             payload,
-                            render: Rc::new(move |payload, cx| {
-                                render(payload.downcast_ref::<T>().unwrap(), cx)
+                            render: Rc::new(move |modifiers, payload, cx| {
+                                render(modifiers, payload.downcast_ref::<T>().unwrap(), cx)
                             }),
                         });
                     } else {
@@ -160,22 +185,43 @@ impl<V: 'static> DragAndDrop<V> {
                 Some(&State::Dragging {
                     region_offset,
                     region,
+                    modifiers,
                     ..
                 }) => {
                     this.currently_dragged = Some(State::Dragging {
+                        modifiers,
                         window,
                         region_offset,
                         region,
                         position: event.position,
                         payload,
-                        render: Rc::new(move |payload, cx| {
-                            render(payload.downcast_ref::<T>().unwrap(), cx)
+                        render: Rc::new(move |modifiers, payload, cx| {
+                            render(modifiers, payload.downcast_ref::<T>().unwrap(), cx)
                         }),
                     });
                 }
                 _ => {}
             }
         });
+    }
+
+    pub fn update_modifiers(new_modifiers: Modifiers, cx: &mut ViewContext<V>) -> bool {
+        let result = cx.update_global(|this: &mut Self, _| match &mut this.currently_dragged {
+            Some(state) => match state {
+                State::Dragging { modifiers, .. } => {
+                    *modifiers = new_modifiers;
+                    true
+                }
+                _ => false,
+            },
+            None => false,
+        });
+
+        if result {
+            cx.notify();
+        }
+
+        result
     }
 
     pub fn render(cx: &mut ViewContext<V>) -> Option<AnyElement<V>> {
@@ -188,6 +234,7 @@ impl<V: 'static> DragAndDrop<V> {
                     State::Down { .. } => None,
                     State::DeadZone { .. } => None,
                     State::Dragging {
+                        modifiers,
                         window,
                         region_offset,
                         position,
@@ -205,7 +252,7 @@ impl<V: 'static> DragAndDrop<V> {
                                 MouseEventHandler::new::<DraggedElementHandler, _>(
                                     0,
                                     cx,
-                                    |_, cx| render(payload, cx),
+                                    |_, cx| render(&modifiers, payload, cx),
                                 )
                                 .with_cursor_style(CursorStyle::Arrow)
                                 .on_up(MouseButton::Left, |_, _, cx| {
@@ -295,7 +342,7 @@ pub trait Draggable<V> {
     fn as_draggable<D: View, P: Any>(
         self,
         payload: P,
-        render: impl 'static + Fn(&P, &mut ViewContext<D>) -> AnyElement<D>,
+        render: impl 'static + Fn(&Modifiers, &P, &mut ViewContext<D>) -> AnyElement<D>,
     ) -> Self
     where
         Self: Sized;
@@ -305,7 +352,7 @@ impl<V: 'static> Draggable<V> for MouseEventHandler<V> {
     fn as_draggable<D: View, P: Any>(
         self,
         payload: P,
-        render: impl 'static + Fn(&P, &mut ViewContext<D>) -> AnyElement<D>,
+        render: impl 'static + Fn(&Modifiers, &P, &mut ViewContext<D>) -> AnyElement<D>,
     ) -> Self
     where
         Self: Sized,
@@ -317,9 +364,15 @@ impl<V: 'static> Draggable<V> for MouseEventHandler<V> {
             DragAndDrop::<D>::drag_started(e, cx);
         })
         .on_drag(MouseButton::Left, move |e, _, cx| {
-            let payload = payload.clone();
-            let render = render.clone();
-            DragAndDrop::<D>::dragging(e, payload, cx, render)
+            if e.end {
+                cx.update_global::<DragAndDrop<D>, _, _>(|drag_and_drop, cx| {
+                    drag_and_drop.finish_dragging(cx)
+                })
+            } else {
+                let payload = payload.clone();
+                let render = render.clone();
+                DragAndDrop::<D>::dragging(e, payload, cx, render)
+            }
         })
     }
 }

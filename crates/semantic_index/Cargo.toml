@@ -51,6 +51,10 @@ project = { path = "../project", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"]}
+rust-embed = { version = "8.0", features = ["include-exclude"] }
+client = { path = "../client" }
+zed = { path = "../zed"}
+node_runtime = { path = "../node_runtime"}
 
 pretty_assertions.workspace = true
 rand.workspace = true
@@ -68,3 +72,6 @@ tree-sitter-elixir.workspace = true
 tree-sitter-lua.workspace = true
 tree-sitter-ruby.workspace = true
 tree-sitter-php.workspace = true
+
+[[example]]
+name = "eval"

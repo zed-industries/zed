@@ -455,6 +455,7 @@
       "shift-d": "vim::VisualDelete",
       "shift-x": "vim::VisualDelete",
       "y": "vim::VisualYank",
+      "shift-y": "vim::VisualYank",
       "p": "vim::Paste",
       "shift-p": [
         "vim::Paste",
@@ -530,7 +531,7 @@
     }
   },
   {
-    "context": "BufferSearchBar > VimEnabled",
+    "context": "BufferSearchBar && !in_replace > VimEnabled",
     "bindings": {
       "enter": "vim::SearchSubmit",
       "escape": "buffer_search::Dismiss"

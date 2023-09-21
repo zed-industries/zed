@@ -1,3 +1,4 @@
+use crate::prelude::{ButtonVariant, InteractionState};
 use crate::theme::theme;
 use gpui2::elements::svg;
 use gpui2::style::{StyleHelpers, Styleable};
@@ -5,24 +6,41 @@ use gpui2::{elements::div, IntoElement};
 use gpui2::{Element, ParentElement, ViewContext};
 
 #[derive(Element)]
-pub(crate) struct IconButton {
+pub struct IconButton {
     path: &'static str,
     variant: ButtonVariant,
+    state: InteractionState,
 }
 
-#[derive(PartialEq)]
-pub enum ButtonVariant {
-    Ghost,
-    Filled,
-}
-
-pub fn icon_button<V: 'static>(path: &'static str, variant: ButtonVariant) -> impl Element<V> {
-    IconButton { path, variant }
+pub fn icon_button(path: &'static str) -> IconButton {
+    IconButton {
+        path,
+        variant: ButtonVariant::default(),
+        state: InteractionState::default(),
+    }
 }
 
 impl IconButton {
+    pub fn variant(mut self, variant: ButtonVariant) -> Self {
+        self.variant = variant;
+        self
+    }
+
+    pub fn state(mut self, state: InteractionState) -> Self {
+        self.state = state;
+        self
+    }
+
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
+
+        let icon_color;
+
+        if self.state == InteractionState::Disabled {
+            icon_color = theme.highest.base.disabled.foreground;
+        } else {
+            icon_color = theme.highest.base.default.foreground;
+        }
 
         let mut div = div();
         if self.variant == ButtonVariant::Filled {
@@ -39,12 +57,6 @@ impl IconButton {
             .fill(theme.highest.base.hovered.background)
             .active()
             .fill(theme.highest.base.pressed.background)
-            .child(
-                svg()
-                    .path(self.path)
-                    .w_4()
-                    .h_4()
-                    .fill(theme.highest.variant.default.foreground),
-            )
+            .child(svg().path(self.path).w_4().h_4().fill(icon_color))
     }
 }

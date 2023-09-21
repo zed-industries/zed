@@ -774,8 +774,7 @@ impl BufferSearchBar {
                         Vec::new(),
                         Vec::new(),
                     ) {
-                        Ok(query) => query
-                            .with_replacement(Some(self.replacement(cx)).filter(|s| !s.is_empty())),
+                        Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {
                             self.query_contains_error = true;
                             cx.notify();
@@ -783,14 +782,20 @@ impl BufferSearchBar {
                         }
                     }
                 } else {
-                    SearchQuery::text(
+                    match SearchQuery::text(
                         query,
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                         Vec::new(),
                         Vec::new(),
-                    )
-                    .with_replacement(Some(self.replacement(cx)).filter(|s| !s.is_empty()))
+                    ) {
+                        Ok(query) => query.with_replacement(self.replacement(cx)),
+                        Err(_) => {
+                            self.query_contains_error = true;
+                            cx.notify();
+                            return done_rx;
+                        }
+                    }
                 }
                 .into();
                 self.active_search = Some(query.clone());
@@ -900,6 +905,9 @@ impl BufferSearchBar {
                 if let Some(_) = &bar.active_searchable_item {
                     should_propagate = false;
                     bar.replace_enabled = !bar.replace_enabled;
+                    if bar.dismissed {
+                        bar.show(cx);
+                    }
                     if !bar.replace_enabled {
                         cx.focus(&bar.query_editor);
                     }
@@ -921,10 +929,12 @@ impl BufferSearchBar {
                         .get(&searchable_item.downgrade())
                     {
                         if let Some(active_index) = self.active_match_index {
-                            let query = query.as_ref().clone().with_replacement(
-                                Some(self.replacement(cx)).filter(|rep| !rep.is_empty()),
-                            );
+                            let query = query
+                                .as_ref()
+                                .clone()
+                                .with_replacement(self.replacement(cx));
                             searchable_item.replace(&matches[active_index], &query, cx);
+                            self.select_next_match(&SelectNextMatch, cx);
                         }
                         should_propagate = false;
                         self.focus_editor(&FocusEditor, cx);
@@ -944,14 +954,13 @@ impl BufferSearchBar {
                         .searchable_items_with_matches
                         .get(&searchable_item.downgrade())
                     {
-                        let query = query.as_ref().clone().with_replacement(
-                            Some(self.replacement(cx)).filter(|rep| !rep.is_empty()),
-                        );
+                        let query = query
+                            .as_ref()
+                            .clone()
+                            .with_replacement(self.replacement(cx));
                         for m in matches {
                             searchable_item.replace(m, &query, cx);
                         }
-
-                        self.focus_editor(&FocusEditor, cx);
                     }
                 }
             }

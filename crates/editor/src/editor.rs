@@ -129,6 +129,12 @@ pub struct SelectPrevious {
     pub replace_newest: bool,
 }
 
+#[derive(Clone, Deserialize, PartialEq, Default)]
+pub struct SelectAllMatches {
+    #[serde(default)]
+    pub replace_newest: bool,
+}
+
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct SelectToBeginningOfLine {
     #[serde(default)]
@@ -325,6 +331,7 @@ impl_actions!(
     [
         SelectNext,
         SelectPrevious,
+        SelectAllMatches,
         SelectToBeginningOfLine,
         SelectToEndOfLine,
         ToggleCodeActions,
@@ -427,6 +434,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(Editor::select_to_beginning);
     cx.add_action(Editor::select_to_end);
     cx.add_action(Editor::select_all);
+    cx.add_action(Editor::select_all_matches);
     cx.add_action(Editor::select_line);
     cx.add_action(Editor::split_selection_into_lines);
     cx.add_action(Editor::add_selection_above);
@@ -724,11 +732,20 @@ struct AddSelectionsState {
     stack: Vec<usize>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct SelectNextState {
     query: AhoCorasick,
     wordwise: bool,
     done: bool,
+}
+
+impl std::fmt::Debug for SelectNextState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct(std::any::type_name::<Self>())
+            .field("wordwise", &self.wordwise)
+            .field("done", &self.done)
+            .finish()
+    }
 }
 
 #[derive(Debug)]
@@ -5936,9 +5953,29 @@ impl Editor {
         }
     }
 
-    pub fn select_next(&mut self, action: &SelectNext, cx: &mut ViewContext<Self>) {
-        self.push_to_selection_history();
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+    pub fn select_next_match_internal(
+        &mut self,
+        display_map: &DisplaySnapshot,
+        replace_newest: bool,
+        autoscroll: Option<Autoscroll>,
+        cx: &mut ViewContext<Self>,
+    ) -> Result<()> {
+        fn select_next_match_ranges(
+            this: &mut Editor,
+            range: Range<usize>,
+            replace_newest: bool,
+            auto_scroll: Option<Autoscroll>,
+            cx: &mut ViewContext<Editor>,
+        ) {
+            this.unfold_ranges([range.clone()], false, true, cx);
+            this.change_selections(auto_scroll, cx, |s| {
+                if replace_newest {
+                    s.delete(s.newest_anchor().id);
+                }
+                s.insert_range(range.clone());
+            });
+        }
+
         let buffer = &display_map.buffer_snapshot;
         let mut selections = self.selections.all::<usize>(cx);
         if let Some(mut select_next_state) = self.select_next_state.take() {
@@ -5959,6 +5996,7 @@ impl Editor {
                             .stream_find_iter(bytes_before_first_selection)
                             .map(|result| (0, result)),
                     );
+
                 for (start_offset, query_match) in query_matches {
                     let query_match = query_match.unwrap(); // can only fail due to I/O
                     let offset_range =
@@ -5970,19 +6008,25 @@ impl Editor {
                         || (!movement::is_inside_word(&display_map, display_range.start)
                             && !movement::is_inside_word(&display_map, display_range.end))
                     {
-                        next_selected_range = Some(offset_range);
-                        break;
+                        if selections
+                            .iter()
+                            .find(|selection| selection.equals(&offset_range))
+                            .is_none()
+                        {
+                            next_selected_range = Some(offset_range);
+                            break;
+                        }
                     }
                 }
 
                 if let Some(next_selected_range) = next_selected_range {
-                    self.unfold_ranges([next_selected_range.clone()], false, true, cx);
-                    self.change_selections(Some(Autoscroll::newest()), cx, |s| {
-                        if action.replace_newest {
-                            s.delete(s.newest_anchor().id);
-                        }
-                        s.insert_range(next_selected_range);
-                    });
+                    select_next_match_ranges(
+                        self,
+                        next_selected_range,
+                        replace_newest,
+                        autoscroll,
+                        cx,
+                    );
                 } else {
                     select_next_state.done = true;
                 }
@@ -6004,31 +6048,77 @@ impl Editor {
                 let query = buffer
                     .text_for_range(selection.start..selection.end)
                     .collect::<String>();
+
+                let is_empty = query.is_empty();
                 let select_state = SelectNextState {
-                    query: AhoCorasick::new_auto_configured(&[query]),
+                    query: AhoCorasick::new(&[query])?,
                     wordwise: true,
-                    done: false,
+                    done: is_empty,
                 };
-                self.unfold_ranges([selection.start..selection.end], false, true, cx);
-                self.change_selections(Some(Autoscroll::newest()), cx, |s| {
-                    s.select(selections);
-                });
+                select_next_match_ranges(
+                    self,
+                    selection.start..selection.end,
+                    replace_newest,
+                    autoscroll,
+                    cx,
+                );
                 self.select_next_state = Some(select_state);
             } else {
                 let query = buffer
                     .text_for_range(selection.start..selection.end)
                     .collect::<String>();
                 self.select_next_state = Some(SelectNextState {
-                    query: AhoCorasick::new_auto_configured(&[query]),
+                    query: AhoCorasick::new(&[query])?,
                     wordwise: false,
                     done: false,
                 });
-                self.select_next(action, cx);
+                self.select_next_match_internal(display_map, replace_newest, autoscroll, cx)?;
             }
         }
+        Ok(())
     }
 
-    pub fn select_previous(&mut self, action: &SelectPrevious, cx: &mut ViewContext<Self>) {
+    pub fn select_all_matches(
+        &mut self,
+        action: &SelectAllMatches,
+        cx: &mut ViewContext<Self>,
+    ) -> Result<()> {
+        self.push_to_selection_history();
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+
+        loop {
+            self.select_next_match_internal(&display_map, action.replace_newest, None, cx)?;
+
+            if self
+                .select_next_state
+                .as_ref()
+                .map(|selection_state| selection_state.done)
+                .unwrap_or(true)
+            {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn select_next(&mut self, action: &SelectNext, cx: &mut ViewContext<Self>) -> Result<()> {
+        self.push_to_selection_history();
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        self.select_next_match_internal(
+            &display_map,
+            action.replace_newest,
+            Some(Autoscroll::newest()),
+            cx,
+        )?;
+        Ok(())
+    }
+
+    pub fn select_previous(
+        &mut self,
+        action: &SelectPrevious,
+        cx: &mut ViewContext<Self>,
+    ) -> Result<()> {
         self.push_to_selection_history();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
@@ -6099,7 +6189,7 @@ impl Editor {
                     .collect::<String>();
                 let query = query.chars().rev().collect::<String>();
                 let select_state = SelectNextState {
-                    query: AhoCorasick::new_auto_configured(&[query]),
+                    query: AhoCorasick::new(&[query])?,
                     wordwise: true,
                     done: false,
                 };
@@ -6114,13 +6204,14 @@ impl Editor {
                     .collect::<String>();
                 let query = query.chars().rev().collect::<String>();
                 self.select_prev_state = Some(SelectNextState {
-                    query: AhoCorasick::new_auto_configured(&[query]),
+                    query: AhoCorasick::new(&[query])?,
                     wordwise: false,
                     done: false,
                 });
-                self.select_previous(action, cx);
+                self.select_previous(action, cx)?;
             }
         }
+        Ok(())
     }
 
     pub fn toggle_comments(&mut self, action: &ToggleComments, cx: &mut ViewContext<Self>) {

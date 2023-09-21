@@ -35,7 +35,7 @@ impl SearchInputs {
 #[derive(Clone, Debug)]
 pub enum SearchQuery {
     Text {
-        search: Arc<AhoCorasick<usize>>,
+        search: Arc<AhoCorasick>,
         replacement: Option<String>,
         whole_word: bool,
         case_sensitive: bool,
@@ -84,24 +84,23 @@ impl SearchQuery {
         case_sensitive: bool,
         files_to_include: Vec<PathMatcher>,
         files_to_exclude: Vec<PathMatcher>,
-    ) -> Self {
+    ) -> Result<Self> {
         let query = query.to_string();
         let search = AhoCorasickBuilder::new()
-            .auto_configure(&[&query])
             .ascii_case_insensitive(!case_sensitive)
-            .build(&[&query]);
+            .build(&[&query])?;
         let inner = SearchInputs {
             query: query.into(),
             files_to_exclude,
             files_to_include,
         };
-        Self::Text {
+        Ok(Self::Text {
             search: Arc::new(search),
             replacement: None,
             whole_word,
             case_sensitive,
             inner,
-        }
+        })
     }
 
     pub fn regex(
@@ -151,16 +150,16 @@ impl SearchQuery {
                 deserialize_path_matches(&message.files_to_exclude)?,
             )
         } else {
-            Ok(Self::text(
+            Self::text(
                 message.query,
                 message.whole_word,
                 message.case_sensitive,
                 deserialize_path_matches(&message.files_to_include)?,
                 deserialize_path_matches(&message.files_to_exclude)?,
-            ))
+            )
         }
     }
-    pub fn with_replacement(mut self, new_replacement: Option<String>) -> Self {
+    pub fn with_replacement(mut self, new_replacement: String) -> Self {
         match self {
             Self::Text {
                 ref mut replacement,
@@ -170,7 +169,7 @@ impl SearchQuery {
                 ref mut replacement,
                 ..
             } => {
-                *replacement = new_replacement;
+                *replacement = Some(new_replacement);
                 self
             }
         }

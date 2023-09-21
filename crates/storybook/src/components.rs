@@ -4,12 +4,6 @@ use gpui2::{
 };
 use std::{marker::PhantomData, rc::Rc};
 
-mod icon_button;
-mod tab;
-
-pub(crate) use icon_button::{icon_button, ButtonVariant};
-pub(crate) use tab::tab;
-
 struct ButtonHandlers<V, D> {
     click: Option<Rc<dyn Fn(&mut V, &D, &mut EventContext<V>)>>,
 }

@@ -2,9 +2,9 @@ use crate::{
     history::SearchHistory,
     mode::{SearchMode, Side},
     search_bar::{render_nav_button, render_option_button_icon, render_search_mode_button},
-    ActivateRegexMode, CycleMode, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext,
-    SearchOptions, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleReplace,
-    ToggleWholeWord,
+    ActivateRegexMode, ActivateSemanticMode, ActivateTextMode, CycleMode, NextHistoryQuery,
+    PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions, SelectNextMatch, SelectPrevMatch,
+    ToggleCaseSensitive, ToggleReplace, ToggleWholeWord,
 };
 use anyhow::{Context, Result};
 use collections::HashMap;
@@ -52,8 +52,12 @@ actions!(
 #[derive(Default)]
 struct ActiveSearches(HashMap<WeakModelHandle<Project>, WeakViewHandle<ProjectSearchView>>);
 
+#[derive(Default)]
+struct ActiveSettings(HashMap<WeakModelHandle<Project>, ProjectSearchSettings>);
+
 pub fn init(cx: &mut AppContext) {
     cx.set_global(ActiveSearches::default());
+    cx.set_global(ActiveSettings::default());
     cx.add_action(ProjectSearchView::deploy);
     cx.add_action(ProjectSearchView::move_focus_to_results);
     cx.add_action(ProjectSearchBar::search);
@@ -68,6 +72,13 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(ProjectSearchBar::activate_regex_mode);
     cx.add_action(ProjectSearchBar::toggle_replace);
     cx.add_action(ProjectSearchBar::toggle_replace_on_a_pane);
+    cx.add_action(ProjectSearchBar::activate_text_mode);
+
+    // This action should only be registered if the semantic index is enabled
+    // We are registering it all the time, as I dont want to introduce a dependency
+    // for Semantic Index Settings globally whenever search is tested.
+    cx.add_action(ProjectSearchBar::activate_semantic_mode);
+
     cx.capture_action(ProjectSearchBar::tab);
     cx.capture_action(ProjectSearchBar::tab_previous);
     cx.capture_action(ProjectSearchView::replace_all);
@@ -142,6 +153,13 @@ struct SemanticState {
     index_status: SemanticIndexStatus,
     maintain_rate_limit: Option<Task<()>>,
     _subscription: Subscription,
+}
+
+#[derive(Debug, Clone)]
+struct ProjectSearchSettings {
+    search_options: SearchOptions,
+    filters_enabled: bool,
+    current_mode: SearchMode,
 }
 
 pub struct ProjectSearchBar {
@@ -469,6 +487,13 @@ impl View for ProjectSearchView {
                 .insert(self.model.read(cx).project.downgrade(), handle)
         });
 
+        cx.update_global(|state: &mut ActiveSettings, cx| {
+            state.0.insert(
+                self.model.read(cx).project.downgrade(),
+                self.current_settings(),
+            );
+        });
+
         if cx.is_self_focused() {
             if self.query_editor_was_focused {
                 cx.focus(&self.query_editor);
@@ -492,6 +517,7 @@ impl Item for ProjectSearchView {
     fn should_close_item_on_event(event: &Self::Event) -> bool {
         event == &Self::Event::Dismiss
     }
+
     fn act_as_type<'a>(
         &'a self,
         type_id: TypeId,
@@ -602,7 +628,7 @@ impl Item for ProjectSearchView {
         Self: Sized,
     {
         let model = self.model.update(cx, |model, cx| model.clone(cx));
-        Some(Self::new(model, cx))
+        Some(Self::new(model, cx, None))
     }
 
     fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
@@ -660,8 +686,31 @@ impl Item for ProjectSearchView {
 }
 
 impl ProjectSearchView {
-    fn toggle_search_option(&mut self, option: SearchOptions) {
+    fn toggle_filters(&mut self, cx: &mut ViewContext<Self>) {
+        self.filters_enabled = !self.filters_enabled;
+        cx.update_global(|state: &mut ActiveSettings, cx| {
+            state.0.insert(
+                self.model.read(cx).project.downgrade(),
+                self.current_settings(),
+            );
+        });
+    }
+
+    fn current_settings(&self) -> ProjectSearchSettings {
+        ProjectSearchSettings {
+            search_options: self.search_options,
+            filters_enabled: self.filters_enabled,
+            current_mode: self.current_mode,
+        }
+    }
+    fn toggle_search_option(&mut self, option: SearchOptions, cx: &mut ViewContext<Self>) {
         self.search_options.toggle(option);
+        cx.update_global(|state: &mut ActiveSettings, cx| {
+            state.0.insert(
+                self.model.read(cx).project.downgrade(),
+                self.current_settings(),
+            );
+        });
     }
 
     fn index_project(&mut self, cx: &mut ViewContext<Self>) {
@@ -794,6 +843,13 @@ impl ProjectSearchView {
             }
         }
 
+        cx.update_global(|state: &mut ActiveSettings, cx| {
+            state.0.insert(
+                self.model.read(cx).project.downgrade(),
+                self.current_settings(),
+            );
+        });
+
         cx.notify();
     }
     fn replace_next(&mut self, _: &ReplaceNext, cx: &mut ViewContext<Self>) {
@@ -803,9 +859,7 @@ impl ProjectSearchView {
                 return;
             }
             if let Some(active_index) = self.active_match_index {
-                let query = query
-                    .clone()
-                    .with_replacement(Some(self.replacement(cx)).filter(|rep| !rep.is_empty()));
+                let query = query.clone().with_replacement(self.replacement(cx));
                 self.results_editor.replace(
                     &(Box::new(model.match_ranges[active_index].clone()) as _),
                     &query,
@@ -825,9 +879,7 @@ impl ProjectSearchView {
                 return;
             }
             if self.active_match_index.is_some() {
-                let query = query
-                    .clone()
-                    .with_replacement(Some(self.replacement(cx)).filter(|rep| !rep.is_empty()));
+                let query = query.clone().with_replacement(self.replacement(cx));
                 let matches = model
                     .match_ranges
                     .iter()
@@ -839,12 +891,27 @@ impl ProjectSearchView {
             }
         }
     }
-    fn new(model: ModelHandle<ProjectSearch>, cx: &mut ViewContext<Self>) -> Self {
+
+    fn new(
+        model: ModelHandle<ProjectSearch>,
+        cx: &mut ViewContext<Self>,
+        settings: Option<ProjectSearchSettings>,
+    ) -> Self {
         let project;
         let excerpts;
-        let mut query_text = String::new();
         let mut replacement_text = None;
-        let mut options = SearchOptions::NONE;
+        let mut query_text = String::new();
+
+        // Read in settings if available
+        let (mut options, current_mode, filters_enabled) = if let Some(settings) = settings {
+            (
+                settings.search_options,
+                settings.current_mode,
+                settings.filters_enabled,
+            )
+        } else {
+            (SearchOptions::NONE, Default::default(), false)
+        };
 
         {
             let model = model.read(cx);
@@ -934,7 +1001,6 @@ impl ProjectSearchView {
             cx.emit(ViewEvent::EditorEvent(event.clone()))
         })
         .detach();
-        let filters_enabled = false;
 
         // Check if Worktrees have all been previously indexed
         let mut this = ProjectSearchView {
@@ -952,7 +1018,7 @@ impl ProjectSearchView {
             included_files_editor,
             excluded_files_editor,
             filters_enabled,
-            current_mode: Default::default(),
+            current_mode,
             replace_enabled: false,
         };
         this.model_changed(cx);
@@ -984,7 +1050,7 @@ impl ProjectSearchView {
         };
 
         let model = cx.add_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
-        let search = cx.add_view(|cx| ProjectSearchView::new(model, cx));
+        let search = cx.add_view(|cx| ProjectSearchView::new(model, cx, None));
         workspace.add_item(Box::new(search.clone()), cx);
         search.update(cx, |search, cx| {
             search
@@ -1034,8 +1100,20 @@ impl ProjectSearchView {
             workspace.activate_item(&existing, cx);
             existing
         } else {
+            let settings = cx
+                .global::<ActiveSettings>()
+                .0
+                .get(&workspace.project().downgrade());
+
+            let settings = if let Some(settings) = settings {
+                Some(settings.clone())
+            } else {
+                None
+            };
+
             let model = cx.add_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
-            let view = cx.add_view(|cx| ProjectSearchView::new(model, cx));
+            let view = cx.add_view(|cx| ProjectSearchView::new(model, cx, settings));
+
             workspace.add_item(Box::new(view.clone()), cx);
             view
         };
@@ -1115,13 +1193,23 @@ impl ProjectSearchView {
                     }
                 }
             }
-            _ => Some(SearchQuery::text(
+            _ => match SearchQuery::text(
                 text,
                 self.search_options.contains(SearchOptions::WHOLE_WORD),
                 self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                 included_files,
                 excluded_files,
-            )),
+            ) {
+                Ok(query) => {
+                    self.panels_with_errors.remove(&InputPanel::Query);
+                    Some(query)
+                }
+                Err(_e) => {
+                    self.panels_with_errors.insert(InputPanel::Query);
+                    cx.notify();
+                    None
+                }
+            },
         }
     }
 
@@ -1301,7 +1389,7 @@ impl ProjectSearchBar {
                     model
                 });
                 workspace.add_item(
-                    Box::new(cx.add_view(|cx| ProjectSearchView::new(model, cx))),
+                    Box::new(cx.add_view(|cx| ProjectSearchView::new(model, cx, None))),
                     cx,
                 );
             }
@@ -1404,9 +1492,10 @@ impl ProjectSearchBar {
     fn toggle_search_option(&mut self, option: SearchOptions, cx: &mut ViewContext<Self>) -> bool {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
-                search_view.toggle_search_option(option);
+                search_view.toggle_search_option(option, cx);
                 search_view.search(cx);
             });
+
             cx.notify();
             true
         } else {
@@ -1443,6 +1532,19 @@ impl ProjectSearchBar {
             cx.propagate_action();
         }
     }
+    fn activate_text_mode(pane: &mut Pane, _: &ActivateTextMode, cx: &mut ViewContext<Pane>) {
+        if let Some(search_view) = pane
+            .active_item()
+            .and_then(|item| item.downcast::<ProjectSearchView>())
+        {
+            search_view.update(cx, |view, cx| {
+                view.activate_search_mode(SearchMode::Text, cx)
+            });
+        } else {
+            cx.propagate_action();
+        }
+    }
+
     fn activate_regex_mode(pane: &mut Pane, _: &ActivateRegexMode, cx: &mut ViewContext<Pane>) {
         if let Some(search_view) = pane
             .active_item()
@@ -1456,10 +1558,29 @@ impl ProjectSearchBar {
         }
     }
 
+    fn activate_semantic_mode(
+        pane: &mut Pane,
+        _: &ActivateSemanticMode,
+        cx: &mut ViewContext<Pane>,
+    ) {
+        if SemanticIndex::enabled(cx) {
+            if let Some(search_view) = pane
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+            {
+                search_view.update(cx, |view, cx| {
+                    view.activate_search_mode(SearchMode::Semantic, cx)
+                });
+            } else {
+                cx.propagate_action();
+            }
+        }
+    }
+
     fn toggle_filters(&mut self, cx: &mut ViewContext<Self>) -> bool {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
-                search_view.filters_enabled = !search_view.filters_enabled;
+                search_view.toggle_filters(cx);
                 search_view
                     .included_files_editor
                     .update(cx, |_, cx| cx.notify());
@@ -1873,7 +1994,7 @@ pub mod tests {
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let search = cx.add_model(|cx| ProjectSearch::new(project, cx));
         let search_view = cx
-            .add_window(|cx| ProjectSearchView::new(search.clone(), cx))
+            .add_window(|cx| ProjectSearchView::new(search.clone(), cx, None))
             .root(cx);
 
         search_view.update(cx, |search_view, cx| {

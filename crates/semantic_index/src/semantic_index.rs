@@ -1,5 +1,5 @@
 mod db;
-mod embedding;
+pub mod embedding;
 mod embedding_queue;
 mod parsing;
 pub mod semantic_index_settings;
@@ -31,12 +31,7 @@ use std::{
     sync::{Arc, Weak},
     time::{Duration, Instant, SystemTime},
 };
-use util::{
-    channel::{ReleaseChannel, RELEASE_CHANNEL, RELEASE_CHANNEL_NAME},
-    http::HttpClient,
-    paths::EMBEDDINGS_DIR,
-    ResultExt,
-};
+use util::{channel::RELEASE_CHANNEL_NAME, http::HttpClient, paths::EMBEDDINGS_DIR, ResultExt};
 use workspace::WorkspaceCreated;
 
 const SEMANTIC_INDEX_VERSION: usize = 11;
@@ -54,11 +49,6 @@ pub fn init(
     let db_file_path = EMBEDDINGS_DIR
         .join(Path::new(RELEASE_CHANNEL_NAME.as_str()))
         .join("embeddings_db");
-
-    // This needs to be removed at some point before stable.
-    if *RELEASE_CHANNEL == ReleaseChannel::Stable {
-        return;
-    }
 
     cx.subscribe_global::<WorkspaceCreated, _>({
         move |event, cx| {
@@ -282,7 +272,6 @@ impl SemanticIndex {
 
     pub fn enabled(cx: &AppContext) -> bool {
         settings::get::<SemanticIndexSettings>(cx).enabled
-            && *RELEASE_CHANNEL != ReleaseChannel::Stable
     }
 
     pub fn status(&self, project: &ModelHandle<Project>) -> SemanticIndexStatus {
@@ -305,7 +294,7 @@ impl SemanticIndex {
         }
     }
 
-    async fn new(
+    pub async fn new(
         fs: Arc<dyn Fs>,
         database_path: PathBuf,
         embedding_provider: Arc<dyn EmbeddingProvider>,
@@ -977,8 +966,6 @@ impl SemanticIndex {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         if !self.projects.contains_key(&project.downgrade()) {
-            log::trace!("Registering Project for Semantic Index");
-
             let subscription = cx.subscribe(&project, |this, project, event, cx| match event {
                 project::Event::WorktreeAdded | project::Event::WorktreeRemoved(_) => {
                     this.project_worktrees_changed(project.clone(), cx);

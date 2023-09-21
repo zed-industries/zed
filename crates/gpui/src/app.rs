@@ -684,23 +684,41 @@ impl AppContext {
                 );
             },
         );
+        fn inner(
+            this: &mut AppContext,
+            name: &'static str,
+            deserializer: fn(serde_json::Value) -> anyhow::Result<Box<dyn Action>>,
+            action_id: TypeId,
+            view_id: TypeId,
+            handler: Box<ActionCallback>,
+            capture: bool,
+        ) {
+            this.action_deserializers
+                .entry(name)
+                .or_insert((action_id.clone(), deserializer));
 
-        self.action_deserializers
-            .entry(A::qualified_name())
-            .or_insert((TypeId::of::<A>(), A::from_json_str));
+            let actions = if capture {
+                &mut this.capture_actions
+            } else {
+                &mut this.actions
+            };
 
-        let actions = if capture {
-            &mut self.capture_actions
-        } else {
-            &mut self.actions
-        };
-
-        actions
-            .entry(TypeId::of::<V>())
-            .or_default()
-            .entry(TypeId::of::<A>())
-            .or_default()
-            .push(handler);
+            actions
+                .entry(view_id)
+                .or_default()
+                .entry(action_id)
+                .or_default()
+                .push(handler);
+        }
+        inner(
+            self,
+            A::qualified_name(),
+            A::from_json_str,
+            TypeId::of::<A>(),
+            TypeId::of::<V>(),
+            handler,
+            capture,
+        );
     }
 
     pub fn add_async_action<A, V, F>(&mut self, mut handler: F)

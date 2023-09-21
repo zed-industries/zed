@@ -533,11 +533,15 @@ fn down(
 
     let new_row = cmp::min(
         start.row() + times as u32,
-        map.buffer_snapshot.max_point().row,
+        map.fold_snapshot.max_point().row(),
     );
     let new_col = cmp::min(goal_column, map.fold_snapshot.line_len(new_row));
-    let point = map.fold_point_to_display_point(FoldPoint::new(new_row, new_col));
+    let point = map.fold_point_to_display_point(
+        map.fold_snapshot
+            .clip_point(FoldPoint::new(new_row, new_col), Bias::Left),
+    );
 
+    // clip twice to "clip at end of line"
     (map.clip_point(point, Bias::Left), goal)
 }
 
@@ -573,7 +577,10 @@ pub(crate) fn up(
 
     let new_row = start.row().saturating_sub(times as u32);
     let new_col = cmp::min(goal_column, map.fold_snapshot.line_len(new_row));
-    let point = map.fold_point_to_display_point(FoldPoint::new(new_row, new_col));
+    let point = map.fold_point_to_display_point(
+        map.fold_snapshot
+            .clip_point(FoldPoint::new(new_row, new_col), Bias::Left),
+    );
 
     (map.clip_point(point, Bias::Left), goal)
 }

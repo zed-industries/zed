@@ -39,7 +39,7 @@ actions!(
         ActivateSemanticMode,
         ActivateRegexMode,
         ReplaceAll,
-        ReplaceNext
+        ReplaceNext,
     ]
 );
 

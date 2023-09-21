@@ -1,2 +1,6 @@
 [alias]
 xtask = "run --package xtask --"
+
+[build]
+# v0 mangling scheme provides more detailed backtraces around closures
+rustflags = ["-C", "symbol-mangling-version=v0"]
