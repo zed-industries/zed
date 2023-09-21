@@ -1,3 +1,5 @@
+#![allow(dead_code, unused_variables)]
+
 mod components;
 mod element_ext;
 mod elements;
