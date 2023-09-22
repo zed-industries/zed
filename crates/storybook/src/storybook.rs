@@ -3,13 +3,11 @@
 mod collab_panel;
 mod stories;
 mod story;
+mod story_selector;
 mod workspace;
 
-use std::str::FromStr;
-use std::sync::OnceLock;
-
 use ::theme as legacy_theme;
-use clap::{builder::PossibleValue, Parser, ValueEnum};
+use clap::Parser;
 use gpui2::{serde_json, vec2f, view, Element, IntoElement, RectF, ViewContext, WindowBounds};
 use legacy_theme::ThemeSettings;
 use log::LevelFilter;
@@ -20,81 +18,13 @@ use stories::components::facepile::FacepileStory;
 use stories::components::toolbar::ToolbarStory;
 use stories::components::traffic_lights::TrafficLightsStory;
 use stories::elements::avatar::AvatarStory;
-use strum::{EnumIter, EnumString, IntoEnumIterator};
 use ui::{ElementExt, Theme};
+
+use crate::story_selector::{ComponentStory, ElementStory, StorySelector};
 
 gpui2::actions! {
     storybook,
     [ToggleInspector]
-}
-
-#[derive(Debug, Clone, Copy)]
-enum StorySelector {
-    Element(ElementStory),
-    Component(ComponentStory),
-}
-
-impl FromStr for StorySelector {
-    type Err = anyhow::Error;
-
-    fn from_str(raw_story_name: &str) -> std::result::Result<Self, Self::Err> {
-        let story = raw_story_name.to_ascii_lowercase();
-
-        if let Some((_, story)) = story.split_once("elements/") {
-            let element_story = ElementStory::from_str(story)
-                .with_context(|| format!("story not found for element '{story}'"))?;
-
-            return Ok(Self::Element(element_story));
-        }
-
-        if let Some((_, story)) = story.split_once("components/") {
-            let component_story = ComponentStory::from_str(story)
-                .with_context(|| format!("story not found for component '{story}'"))?;
-
-            return Ok(Self::Component(component_story));
-        }
-
-        Err(anyhow!("story not found for '{raw_story_name}'"))
-    }
-}
-
-static ALL_STORIES: OnceLock<Vec<StorySelector>> = OnceLock::new();
-
-impl ValueEnum for StorySelector {
-    fn value_variants<'a>() -> &'a [Self] {
-        let stories = ALL_STORIES.get_or_init(|| {
-            let element_stories = ElementStory::iter().map(Self::Element);
-            let component_stories = ComponentStory::iter().map(Self::Component);
-
-            element_stories.chain(component_stories).collect::<Vec<_>>()
-        });
-
-        stories
-    }
-
-    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
-        let value = match self {
-            Self::Element(story) => format!("elements/{story}"),
-            Self::Component(story) => format!("components/{story}"),
-        };
-
-        Some(PossibleValue::new(value))
-    }
-}
-
-#[derive(Debug, Clone, Copy, strum::Display, EnumString, EnumIter)]
-#[strum(serialize_all = "snake_case")]
-enum ElementStory {
-    Avatar,
-}
-
-#[derive(Debug, Clone, Copy, strum::Display, EnumString, EnumIter)]
-#[strum(serialize_all = "snake_case")]
-enum ComponentStory {
-    Breadcrumb,
-    Facepile,
-    Toolbar,
-    TrafficLights,
 }
 
 #[derive(Parser)]
@@ -173,7 +103,7 @@ fn current_theme<V: 'static>(cx: &mut ViewContext<V>) -> Theme {
         .clone()
 }
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use gpui2::AssetSource;
 use rust_embed::RustEmbed;
 use workspace::WorkspaceElement;
