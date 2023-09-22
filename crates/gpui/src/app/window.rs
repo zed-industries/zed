@@ -1351,12 +1351,10 @@ impl<'a> WindowContext<'a> {
     }
 
     pub fn push_theme<T: 'static + Send + Sync>(&mut self, theme: T) {
-        dbg!(std::any::type_name::<T>());
         self.window.theme_stack.push(Arc::new(theme));
     }
 
     pub fn pop_theme(&mut self) {
-        dbg!("Pop");
         self.window.theme_stack.pop();
     }
 }
