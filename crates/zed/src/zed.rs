@@ -5,9 +5,9 @@ pub mod only_instance;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
-use ai::AssistantPanel;
 use anyhow::Context;
 use assets::Assets;
+use assistant::AssistantPanel;
 use breadcrumbs::Breadcrumbs;
 pub use client;
 use collab_ui::CollabTitlebarItem; // TODO: Add back toggle collab ui shortcut
@@ -2418,7 +2418,7 @@ mod tests {
             pane::init(cx);
             project_panel::init((), cx);
             terminal_view::init(cx);
-            ai::init(cx);
+            assistant::init(cx);
             app_state
         })
     }

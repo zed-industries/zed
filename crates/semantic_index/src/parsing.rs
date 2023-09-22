@@ -1,4 +1,4 @@
-use crate::embedding::{Embedding, EmbeddingProvider};
+use ai::embedding::{Embedding, EmbeddingProvider};
 use anyhow::{anyhow, Result};
 use language::{Grammar, Language};
 use rusqlite::{

@@ -1,10 +1,10 @@
 use crate::{
-    embedding::{DummyEmbeddings, Embedding, EmbeddingProvider},
     embedding_queue::EmbeddingQueue,
     parsing::{subtract_ranges, CodeContextRetriever, Span, SpanDigest},
     semantic_index_settings::SemanticIndexSettings,
     FileToEmbed, JobHandle, SearchResult, SemanticIndex, EMBEDDING_QUEUE_FLUSH_TIMEOUT,
 };
+use ai::embedding::{DummyEmbeddings, Embedding, EmbeddingProvider};
 use anyhow::Result;
 use async_trait::async_trait;
 use gpui::{executor::Deterministic, Task, TestAppContext};
