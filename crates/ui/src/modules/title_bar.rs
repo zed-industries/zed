@@ -5,7 +5,7 @@ use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
 use crate::prelude::Shape;
-use crate::{avatar, follow_group, icon_button, text_button, theme, tool_divider};
+use crate::{avatar, follow_group, icon_button, text_button, theme, tool_divider, traffic_lights};
 
 #[derive(Element)]
 pub struct TitleBar<V: 'static> {
@@ -40,34 +40,7 @@ impl<V: 'static> TitleBar<V> {
                     .h_full()
                     .gap_4()
                     .px_2()
-                    // === Traffic Lights === //
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .w_3()
-                                    .h_3()
-                                    .rounded_full()
-                                    .fill(theme.lowest.positive.default.foreground),
-                            )
-                            .child(
-                                div()
-                                    .w_3()
-                                    .h_3()
-                                    .rounded_full()
-                                    .fill(theme.lowest.warning.default.foreground),
-                            )
-                            .child(
-                                div()
-                                    .w_3()
-                                    .h_3()
-                                    .rounded_full()
-                                    .fill(theme.lowest.negative.default.foreground),
-                            ),
-                    )
+                    .child(traffic_lights())
                     // === Project Info === //
                     .child(
                         div()
