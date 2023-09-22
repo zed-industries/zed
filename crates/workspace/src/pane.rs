@@ -42,6 +42,7 @@ use std::{
     },
 };
 use theme::{Theme, ThemeSettings};
+use util::truncate_and_remove_front;
 
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -1003,7 +1004,6 @@ impl Pane {
     ) -> Result<bool> {
         const CONFLICT_MESSAGE: &str =
             "This file has changed on disk since you started editing it. Do you want to overwrite it?";
-        const DIRTY_MESSAGE: &str = "This file contains unsaved edits. Do you want to save it?";
 
         if save_behavior == SaveBehavior::DontSave {
             return Ok(true);
@@ -1046,9 +1046,10 @@ impl Pane {
             let should_save = if save_behavior == SaveBehavior::PromptOnWrite && !will_autosave {
                 let mut answer = pane.update(cx, |pane, cx| {
                     pane.activate_item(item_ix, true, true, cx);
+                    let prompt = dirty_message_for(item.project_path(cx));
                     cx.prompt(
                         PromptLevel::Warning,
-                        DIRTY_MESSAGE,
+                        &prompt,
                         &["Save", "Don't Save", "Cancel"],
                     )
                 })?;
@@ -2133,6 +2134,15 @@ impl<V: 'static> Element<V> for PaneBackdrop<V> {
             "child": self.child.debug(view, cx),
         })
     }
+}
+
+fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
+    let path = buffer_path
+        .as_ref()
+        .and_then(|p| p.path.to_str())
+        .unwrap_or(&"Untitled buffer");
+    let path = truncate_and_remove_front(path, 80);
+    format!("{path} contains unsaved edits. Do you want to save it?")
 }
 
 #[cfg(test)]
