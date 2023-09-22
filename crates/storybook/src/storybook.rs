@@ -14,6 +14,7 @@ use log::LevelFilter;
 use settings::{default_settings, SettingsStore};
 use simplelog::SimpleLogger;
 use stories::components::facepile::FacepileStory;
+use stories::components::traffic_lights::TrafficLightsStory;
 use stories::elements::avatar::AvatarStory;
 use ui::{ElementExt, Theme};
 
@@ -35,6 +36,7 @@ impl FromStr for Story {
         match s.to_ascii_lowercase().as_str() {
             "elements/avatar" => Ok(Self::Element(ElementStory::Avatar)),
             "components/facepile" => Ok(Self::Component(ComponentStory::Facepile)),
+            "components/traffic_lights" => Ok(Self::Component(ComponentStory::TrafficLights)),
             _ => Err(anyhow!("story not found for '{s}'")),
         }
     }
@@ -48,6 +50,7 @@ enum ElementStory {
 #[derive(Debug, Clone, Copy)]
 enum ComponentStory {
     Facepile,
+    TrafficLights,
 }
 
 #[derive(Parser)]
@@ -82,6 +85,9 @@ fn main() {
                 Some(Story::Component(ComponentStory::Facepile)) => {
                     view(|cx| render_story(&mut ViewContext::new(cx), FacepileStory::default()))
                 }
+                Some(Story::Component(ComponentStory::TrafficLights)) => view(|cx| {
+                    render_story(&mut ViewContext::new(cx), TrafficLightsStory::default())
+                }),
                 None => {
                     view(|cx| render_story(&mut ViewContext::new(cx), WorkspaceElement::default()))
                 }

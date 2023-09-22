@@ -4,6 +4,7 @@ mod list_item;
 mod list_section_header;
 mod palette_item;
 mod tab;
+mod traffic_lights;
 
 pub use facepile::*;
 pub use follow_group::*;
@@ -11,6 +12,7 @@ pub use list_item::*;
 pub use list_section_header::*;
 pub use palette_item::*;
 pub use tab::*;
+pub use traffic_lights::*;
 
 use std::marker::PhantomData;
 use std::rc::Rc;
