@@ -149,19 +149,12 @@ impl<T: 'static + ?Sized> MainThreadOnly<T> {
     where
         R: Send + 'static,
     {
-        let (tx, rx) = oneshot::channel();
-        if self.dispatcher.is_main_thread() {
-            let _ = tx.send(f(&self.value));
-        } else {
-            let this = self.clone();
-            let _ = crate::spawn_on_main(self.dispatcher.clone(), async move {
-                // Required so we move `this` instead of this.value. Only `this` is `Send`.
-                let this = this;
-                let _ = tx.send(f(&this.value));
-            });
-        }
-
-        async move { rx.await.unwrap() }
+        let this = self.clone();
+        crate::spawn_on_main(self.dispatcher.clone(), async move {
+            // Required so we move `this` instead of this.value. Only `this` is `Send`.
+            let this = this;
+            f(&this.value)
+        })
     }
 }
 

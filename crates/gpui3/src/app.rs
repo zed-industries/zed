@@ -47,9 +47,10 @@ impl App {
     where
         F: 'static + FnOnce(&mut AppContext),
     {
+        let this = self.clone();
         let platform = self.0.lock().platform.clone();
         platform.borrow_on_main_thread().run(Box::new(move || {
-            let cx = &mut *self.0.lock();
+            let cx = &mut *this.0.lock();
             on_finish_launching(cx);
         }));
     }
