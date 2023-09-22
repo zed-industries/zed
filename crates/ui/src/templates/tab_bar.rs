@@ -1,12 +1,13 @@
 use std::marker::PhantomData;
 
-use crate::prelude::InteractionState;
-use crate::theme::theme;
-use crate::{icon_button, tab};
 use gpui2::elements::div::ScrollState;
 use gpui2::style::StyleHelpers;
 use gpui2::{elements::div, IntoElement};
 use gpui2::{Element, ParentElement, ViewContext};
+
+use crate::prelude::InteractionState;
+use crate::theme::theme;
+use crate::{icon_button, tab, IconAsset};
 
 #[derive(Element)]
 pub struct TabBar<V: 'static> {
@@ -43,11 +44,12 @@ impl<V: 'static> TabBar<V> {
                             .items_center()
                             .gap_px()
                             .child(
-                                icon_button("icons/arrow_left.svg")
+                                icon_button()
+                                    .icon(IconAsset::ArrowLeft)
                                     .state(InteractionState::Enabled.if_enabled(can_navigate_back)),
                             )
                             .child(
-                                icon_button("icons/arrow_right.svg").state(
+                                icon_button().icon(IconAsset::ArrowRight).state(
                                     InteractionState::Enabled.if_enabled(can_navigate_forward),
                                 ),
                             ),
@@ -83,8 +85,8 @@ impl<V: 'static> TabBar<V> {
                             .flex()
                             .items_center()
                             .gap_px()
-                            .child(icon_button("icons/plus.svg"))
-                            .child(icon_button("icons/split.svg")),
+                            .child(icon_button().icon(IconAsset::Plus))
+                            .child(icon_button().icon(IconAsset::Split)),
                     ),
             )
     }
