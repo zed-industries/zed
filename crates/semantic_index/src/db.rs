@@ -1,8 +1,8 @@
 use crate::{
-    embedding::Embedding,
     parsing::{Span, SpanDigest},
     SEMANTIC_INDEX_VERSION,
 };
+use ai::embedding::Embedding;
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 use futures::channel::oneshot;

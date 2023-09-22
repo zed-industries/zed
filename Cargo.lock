@@ -91,13 +91,25 @@ name = "ai"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ctor",
+ "async-trait",
+ "bincode",
  "futures 0.3.28",
  "gpui",
  "isahc",
+ "lazy_static",
+ "log",
+ "matrixmultiply",
+ "ordered-float",
+ "parking_lot 0.11.2",
+ "parse_duration",
+ "postage",
+ "rand 0.8.5",
  "regex",
+ "rusqlite",
  "serde",
  "serde_json",
+ "tiktoken-rs 0.5.4",
+ "util",
 ]
 
 [[package]]
@@ -6725,9 +6737,9 @@ dependencies = [
 name = "semantic_index"
 version = "0.1.0"
 dependencies = [
+ "ai",
  "anyhow",
  "async-trait",
- "bincode",
  "client",
  "collections",
  "ctor",
@@ -6736,15 +6748,12 @@ dependencies = [
  "futures 0.3.28",
  "globset",
  "gpui",
- "isahc",
  "language",
  "lazy_static",
  "log",
- "matrixmultiply",
  "node_runtime",
  "ordered-float",
  "parking_lot 0.11.2",
- "parse_duration",
  "picker",
  "postage",
  "pretty_assertions",

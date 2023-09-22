@@ -1,4 +1,5 @@
-use crate::{embedding::EmbeddingProvider, parsing::Span, JobHandle};
+use crate::{parsing::Span, JobHandle};
+use ai::embedding::EmbeddingProvider;
 use gpui::executor::Background;
 use parking_lot::Mutex;
 use smol::channel;
