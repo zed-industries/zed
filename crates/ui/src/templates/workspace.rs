@@ -36,7 +36,7 @@ impl WorkspaceElement {
             .fill(theme.lowest.base.default.background)
             .relative()
             // Elevation Level 1
-            .child(title_bar())
+            .child(title_bar(cx))
             .child(
                 div()
                     .flex_1()

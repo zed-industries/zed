@@ -14,7 +14,7 @@ pub struct WorkspaceElement {
 
 impl WorkspaceElement {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
-        let theme = theme(cx);
+        let theme = theme(cx).clone();
 
         div()
             .size_full()
@@ -26,7 +26,7 @@ impl WorkspaceElement {
             .items_start()
             .text_color(theme.lowest.base.default.foreground)
             .fill(theme.lowest.base.default.background)
-            .child(title_bar())
+            .child(title_bar(cx))
             .child(
                 div()
                     .flex_1()

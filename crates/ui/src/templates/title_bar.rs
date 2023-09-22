@@ -1,4 +1,6 @@
 use std::marker::PhantomData;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use gpui2::elements::div;
 use gpui2::style::StyleHelpers;
@@ -10,21 +12,36 @@ use crate::{avatar, follow_group, icon_button, text_button, theme, tool_divider,
 #[derive(Element)]
 pub struct TitleBar<V: 'static> {
     view_type: PhantomData<V>,
+    is_active: Arc<AtomicBool>,
 }
 
-pub fn title_bar<V: 'static>() -> TitleBar<V> {
+pub fn title_bar<V: 'static>(cx: &mut ViewContext<V>) -> TitleBar<V> {
+    let is_active = Arc::new(AtomicBool::new(true));
+    let active = is_active.clone();
+    cx.observe_window_activation(move |_, is_active, cx| {
+        active.store(is_active, std::sync::atomic::Ordering::SeqCst);
+        cx.notify();
+    })
+    .detach();
     TitleBar {
         view_type: PhantomData,
+        is_active,
     }
 }
 
 impl<V: 'static> TitleBar<V> {
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
+        let has_focus = cx.window_is_active();
+
         let player_list = vec![
             avatar("https://avatars.githubusercontent.com/u/1714999?v=4"),
-            avatar("https://avatars.githubusercontent.com/u/1714999?v=4"),
+            avatar("https://avatars.githubusercontent.com/u/482957?v=4"),
+            avatar("https://avatars.githubusercontent.com/u/326587?v=4"),
+            avatar("https://avatars.githubusercontent.com/u/1789?v=4"),
         ];
+
+        dbg!(has_focus);
 
         div()
             .flex()
@@ -41,12 +58,8 @@ impl<V: 'static> TitleBar<V> {
                     .gap_4()
                     .px_2()
                     .child(
-                        // %%% Pass window focus state to traffic lights when available %%%
-                        traffic_lights().window_has_focus(true),
-                    )
-                    .child(
-                        // %%% Pass window focus state to traffic lights when available %%%
-                        traffic_lights().window_has_focus(false),
+                        // %%% Pass window focus state to traffic lights when available
+                        traffic_lights().window_has_focus(has_focus),
                     )
                     // === Project Info === //
                     .child(

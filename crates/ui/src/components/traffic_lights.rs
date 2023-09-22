@@ -2,7 +2,7 @@ use gpui2::elements::div;
 use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
-use crate::{icon, theme, token, IconAsset};
+use crate::{theme, token};
 
 #[derive(Clone, Copy)]
 enum TrafficLightColor {
@@ -33,7 +33,7 @@ impl TrafficLight {
             (true, TrafficLightColor::Red) => token.mac_os_traffic_light_red,
             (true, TrafficLightColor::Yellow) => token.mac_os_traffic_light_yellow,
             (true, TrafficLightColor::Green) => token.mac_os_traffic_light_green,
-            (false, _) => theme.middle.base.default.background,
+            (false, _) => theme.lowest.base.active.background,
         };
 
         // let i = match self.color {
