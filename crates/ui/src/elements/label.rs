@@ -14,6 +14,7 @@ pub enum LabelColor {
     Deleted,
     Hidden,
     Placeholder,
+    Accent,
 }
 
 #[derive(Default, PartialEq, Copy, Clone)]
@@ -60,6 +61,7 @@ impl Label {
             LabelColor::Deleted => theme.lowest.negative.default.foreground,
             LabelColor::Hidden => theme.lowest.variant.default.foreground,
             LabelColor::Placeholder => theme.lowest.base.disabled.foreground,
+            LabelColor::Accent => theme.lowest.accent.default.foreground,
         };
 
         let mut div = div();

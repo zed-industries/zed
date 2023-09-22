@@ -1,4 +1,36 @@
 #[derive(Default, PartialEq)]
+pub enum FileSystemStatus {
+    #[default]
+    None,
+    Conflict,
+    Deleted,
+}
+#[derive(Default, PartialEq)]
+pub enum GitStatus {
+    #[default]
+    None,
+    Created,
+    Modified,
+    Deleted,
+    Conflict,
+    Renamed,
+}
+#[derive(Default, PartialEq)]
+pub enum DiagnosticStatus {
+    #[default]
+    None,
+    Error,
+    Warning,
+    Info,
+}
+#[derive(Default, PartialEq)]
+pub enum IconSide {
+    #[default]
+    Left,
+    Right,
+}
+
+#[derive(Default, PartialEq)]
 pub enum OrderMethod {
     #[default]
     Ascending,

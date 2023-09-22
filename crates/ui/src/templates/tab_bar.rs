@@ -1,12 +1,12 @@
 use std::marker::PhantomData;
 
-use crate::prelude::InteractionState;
-use crate::theme::theme;
-use crate::{icon_button, tab};
+use gpui2::elements::div;
 use gpui2::elements::div::ScrollState;
 use gpui2::style::StyleHelpers;
-use gpui2::{elements::div, IntoElement};
-use gpui2::{Element, ParentElement, ViewContext};
+use gpui2::{Element, IntoElement, ParentElement, ViewContext};
+
+use crate::prelude::{GitStatus, InteractionState};
+use crate::{icon_button, tab, theme};
 
 #[derive(Element)]
 pub struct TabBar<V: 'static> {
@@ -29,6 +29,7 @@ impl<V: 'static> TabBar<V> {
         div()
             .w_full()
             .flex()
+            .fill(theme.middle.base.default.background)
             // Left Side
             .child(
                 div()
@@ -57,17 +58,36 @@ impl<V: 'static> TabBar<V> {
                 div().w_0().flex_1().h_full().child(
                     div()
                         .flex()
-                        .gap_1()
                         .overflow_x_scroll(self.scroll_state.clone())
-                        .child(tab("Cargo.toml", false))
-                        .child(tab("Channels Panel", true))
-                        .child(tab("channels_panel.rs", false))
-                        .child(tab("workspace.rs", false))
-                        .child(tab("icon_button.rs", false))
-                        .child(tab("storybook.rs", false))
-                        .child(tab("theme.rs", false))
-                        .child(tab("theme_registry.rs", false))
-                        .child(tab("styleable_helpers.rs", false)),
+                        .child(
+                            tab()
+                                .title("Cargo.toml")
+                                .current(false)
+                                .git_status(GitStatus::Modified),
+                        )
+                        .child(tab().title("Channels Panel").current(false))
+                        .child(
+                            tab()
+                                .title("channels_panel.rs")
+                                .current(true)
+                                .git_status(GitStatus::Modified),
+                        )
+                        .child(
+                            tab()
+                                .title("workspace.rs")
+                                .current(false)
+                                .git_status(GitStatus::Modified),
+                        )
+                        .child(tab().title("icon_button.rs").current(false))
+                        .child(
+                            tab()
+                                .title("storybook.rs")
+                                .current(false)
+                                .git_status(GitStatus::Created),
+                        )
+                        .child(tab().title("theme.rs").current(false))
+                        .child(tab().title("theme_registry.rs").current(false))
+                        .child(tab().title("styleable_helpers.rs").current(false)),
                 ),
             )
             // Right Side
