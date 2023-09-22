@@ -11,4 +11,4 @@ pub use components::*;
 pub use element_ext::*;
 pub use elements::*;
 pub use modules::*;
-pub use theme::*;
+pub use crate::theme::*;
