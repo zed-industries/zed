@@ -1,11 +1,12 @@
 use std::marker::PhantomData;
 
-use crate::icon_button;
-use crate::theme::theme;
 use gpui2::elements::div::ScrollState;
 use gpui2::style::StyleHelpers;
 use gpui2::{elements::div, IntoElement};
 use gpui2::{Element, ParentElement, ViewContext};
+
+use crate::theme::theme;
+use crate::{icon_button, IconAsset};
 
 #[derive(Element)]
 pub struct ChatPanel<V: 'static> {
@@ -57,8 +58,8 @@ impl<V: 'static> ChatPanel<V> {
                             .flex()
                             .items_center()
                             .gap_px()
-                            .child(icon_button("icons/plus.svg"))
-                            .child(icon_button("icons/split.svg")),
+                            .child(icon_button().icon(IconAsset::Plus))
+                            .child(icon_button().icon(IconAsset::Split)),
                     ),
             )
     }
