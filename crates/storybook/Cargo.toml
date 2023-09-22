@@ -9,14 +9,16 @@ name = "storybook"
 path = "src/storybook.rs"
 
 [dependencies]
-gpui2 = { path = "../gpui2" }
 anyhow.workspace = true
+clap = { version = "3.1", features = ["derive"] }
+gpui2 = { path = "../gpui2" }
 log.workspace = true
 rust-embed.workspace = true
 serde.workspace = true
 settings = { path = "../settings" }
 simplelog = "0.9"
 theme = { path = "../theme" }
+ui = { path = "../ui" }
 util = { path = "../util" }
 
 [dev-dependencies]

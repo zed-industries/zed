@@ -70,6 +70,7 @@ members = [
     "crates/text",
     "crates/theme",
     "crates/theme_selector",
+    "crates/ui",
     "crates/util",
     "crates/semantic_index",
     "crates/vim",

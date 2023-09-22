@@ -181,6 +181,13 @@ impl LogStore {
         });
 
         let server = project.read(cx).language_server_for_id(id);
+        if let Some(server) = server.as_deref() {
+            if server.has_notification_handler::<lsp::notification::LogMessage>() {
+                // Another event wants to re-add the server that was already added and subscribed to, avoid doing it again.
+                return Some(server_state.log_buffer.clone());
+            }
+        }
+
         let weak_project = project.downgrade();
         let io_tx = self.io_tx.clone();
         server_state._io_logs_subscription = server.as_ref().map(|server| {
