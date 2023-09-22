@@ -22,11 +22,11 @@ pub use color::*;
 pub use element::*;
 pub use elements::*;
 pub use executor::*;
-use futures::channel::oneshot;
 pub use geometry::*;
 pub use gpui3_macros::*;
 pub use platform::*;
 pub use refineable::*;
+use renderer::*;
 pub use scene::*;
 pub use serde;
 pub use serde_json;
@@ -142,18 +142,20 @@ impl<T: 'static + ?Sized> MainThreadOnly<T> {
         &self.value
     }
 
-    pub(crate) fn read<R>(
+    pub(crate) fn read<R, F>(
         &self,
-        f: impl FnOnce(&T) -> R + Send + 'static,
+        f: impl FnOnce(&T) -> F + Send + 'static,
     ) -> impl Future<Output = R>
     where
+        F: Future<Output = R> + 'static,
         R: Send + 'static,
     {
         let this = self.clone();
-        crate::spawn_on_main(self.dispatcher.clone(), async move {
+        crate::spawn_on_main(self.dispatcher.clone(), || async move {
             // Required so we move `this` instead of this.value. Only `this` is `Send`.
             let this = this;
-            f(&this.value)
+            let result = f(&this.value);
+            result.await
         })
     }
 }

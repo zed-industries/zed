@@ -72,10 +72,14 @@ impl AppContext {
         &self.text_system
     }
 
-    pub fn with_platform<R: Send + 'static>(
+    pub fn spawn_on_main<F, R>(
         &mut self,
-        f: impl FnOnce(&dyn Platform, &mut Self) -> R + Send + 'static,
-    ) -> impl Future<Output = R> {
+        f: impl FnOnce(&dyn Platform, &mut Self) -> F + Send + 'static,
+    ) -> impl Future<Output = R>
+    where
+        F: Future<Output = R> + Send + 'static,
+        R: Send + 'static,
+    {
         let this = self.this.upgrade().unwrap();
         self.platform.read(move |platform| {
             let cx = &mut *this.lock();
@@ -88,17 +92,21 @@ impl AppContext {
         options: crate::WindowOptions,
         build_root_view: impl FnOnce(&mut WindowContext) -> RootView<S> + Send + 'static,
     ) -> impl Future<Output = WindowHandle<S>> {
-        self.with_platform(move |platform, cx| {
-            let id = cx.windows.insert(None);
-            let handle = WindowHandle::new(id);
+        let id = self.windows.insert(None);
+        let handle = WindowHandle::new(id);
+        let window =
+            self.spawn_on_main(move |platform, _cx| Window::new(handle.into(), options, platform));
 
-            let mut window = Window::new(handle.into(), options, platform);
+        let this = self.this.upgrade().unwrap();
+        async move {
+            let mut window = window.await;
+            let cx = &mut *this.lock();
             let root_view = build_root_view(&mut WindowContext::mutable(cx, &mut window));
             window.root_view.replace(Box::new(root_view));
 
             cx.windows.get_mut(id).unwrap().replace(window);
             handle
-        })
+        }
     }
 
     pub(crate) fn update_window<R>(

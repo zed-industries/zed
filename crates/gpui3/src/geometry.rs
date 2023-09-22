@@ -235,9 +235,25 @@ impl Edges<Pixels> {
 #[repr(transparent)]
 pub struct Pixels(pub(crate) f32);
 
+#[derive(
+    Clone, Copy, Debug, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd,
+)]
+#[repr(transparent)]
+pub struct DevicePixels(pub(crate) u32);
+
+impl From<DevicePixels> for u32 {
+    fn from(device_pixels: DevicePixels) -> Self {
+        device_pixels.0
+    }
+}
+
 impl Pixels {
     pub fn round(&self) -> Self {
         Self(self.0.round())
+    }
+
+    pub fn to_device_pixels(&self, scale: f32) -> DevicePixels {
+        DevicePixels((self.0 * scale).ceil() as u32)
     }
 }
 

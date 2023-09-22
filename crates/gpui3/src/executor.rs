@@ -19,18 +19,25 @@ use std::{
 
 /// Enqueues the given closure to be run on the application's event loop. Can be
 /// called on any thread.
-pub(crate) fn spawn_on_main<R>(
+pub(crate) fn spawn_on_main<F, R>(
     dispatcher: Arc<dyn PlatformDispatcher>,
-    future: impl Future<Output = R> + Send + 'static,
+    func: impl FnOnce() -> F + Send + 'static,
 ) -> impl Future<Output = R>
 where
+    F: Future<Output = R> + 'static,
     R: Send + 'static,
 {
     let (tx, rx) = oneshot::channel();
     let (runnable, task) = async_task::spawn(
-        async move {
-            let result = future.await;
-            let _ = tx.send(result);
+        {
+            let dispatcher = dispatcher.clone();
+            async move {
+                let future = func();
+                let _ = spawn_on_main_local(dispatcher, async move {
+                    let result = future.await;
+                    let _ = tx.send(result);
+                });
+            }
         },
         move |runnable| dispatcher.run_on_main_thread(runnable),
     );

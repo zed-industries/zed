@@ -1,9 +1,9 @@
 use crate::{
-    point, px, size, AnyWindowHandle, Bounds, Event, InputHandler, KeyDownEvent, Keystroke,
-    MacScreen, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMovedEvent,
-    MouseUpEvent, NSRectExt, Pixels, Platform, PlatformDispatcher, PlatformScreen, PlatformWindow,
-    Point, Size, Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions,
-    WindowPromptLevel,
+    point, px, size, AnyWindowHandle, Bounds, DevicePixels, Event, InputHandler, KeyDownEvent,
+    Keystroke, MacScreen, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMovedEvent, MouseUpEvent, NSRectExt, Pixels, Platform, PlatformDispatcher, PlatformScreen,
+    PlatformWindow, Point, RenderTarget, Size, Timer, WindowAppearance, WindowBounds, WindowKind,
+    WindowOptions, WindowPromptLevel,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -617,7 +617,7 @@ impl Drop for MacWindow {
     fn drop(&mut self) {
         let this = self.0.clone();
         let dispatcher = self.0.lock().dispatcher.clone();
-        let _ = crate::spawn_on_main(dispatcher, async move {
+        let _ = crate::spawn_on_main(dispatcher, || async move {
             unsafe {
                 this.lock().native_window.close();
             }
@@ -625,7 +625,7 @@ impl Drop for MacWindow {
     }
 }
 
-unsafe impl HasRawWindowHandle for MacWindow {
+impl PlatformWindow for MacWindow {
     fn raw_window_handle(&self) -> RawWindowHandle {
         let ns_window = self.0.lock().native_window;
         let ns_view = unsafe { ns_window.contentView() };
@@ -634,15 +634,11 @@ unsafe impl HasRawWindowHandle for MacWindow {
         handle.ns_view = ns_view as *mut c_void;
         handle.into()
     }
-}
 
-unsafe impl HasRawDisplayHandle for MacWindow {
     fn raw_display_handle(&self) -> RawDisplayHandle {
         AppKitDisplayHandle::empty().into()
     }
-}
 
-impl PlatformWindow for MacWindow {
     fn bounds(&self) -> WindowBounds {
         self.0.as_ref().lock().bounds()
     }

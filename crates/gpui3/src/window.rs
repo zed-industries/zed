@@ -1,6 +1,6 @@
 use crate::{
-    AvailableSpace, MainThreadOnly, Platform, PlatformWindow, Point, Size, Style, TextStyle,
-    TextStyleRefinement, WindowOptions,
+    renderer::Renderer, AvailableSpace, MainThreadOnly, Platform, PlatformWindow, Point, Size,
+    Style, TextStyle, TextStyleRefinement, WindowOptions,
 };
 
 use super::{
@@ -12,6 +12,7 @@ use derive_more::{Deref, DerefMut};
 use refineable::Refineable;
 use std::{
     any::{Any, TypeId},
+    future::Future,
     marker::PhantomData,
     sync::Arc,
 };
@@ -21,6 +22,7 @@ pub struct AnyWindow {}
 pub struct Window {
     handle: AnyWindowHandle,
     platform_window: MainThreadOnly<Box<dyn PlatformWindow>>,
+    renderer: Renderer,
     rem_size: Pixels,
     layout_engine: TaffyLayoutEngine,
     text_style_stack: Vec<TextStyleRefinement>,
@@ -29,17 +31,28 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn new(handle: AnyWindowHandle, options: WindowOptions, platform: &dyn Platform) -> Window {
-        let platform_window = Arc::new(platform.open_window(handle, options));
+    pub fn new(
+        handle: AnyWindowHandle,
+        options: WindowOptions,
+        platform: &dyn Platform,
+    ) -> impl Future<Output = Window> + 'static {
+        let platform_window = platform.open_window(handle, options);
+        let renderer = Renderer::new(&platform_window.as_ref());
         let mouse_position = platform_window.mouse_position();
-        Window {
-            handle,
-            platform_window: MainThreadOnly::new(platform_window, platform.dispatcher()),
-            rem_size: px(16.),
-            layout_engine: TaffyLayoutEngine::new(),
-            text_style_stack: Vec::new(),
-            root_view: None,
-            mouse_position,
+        let platform_window = MainThreadOnly::new(Arc::new(platform_window), platform.dispatcher());
+
+        async move {
+            let renderer = renderer.await;
+            Window {
+                handle,
+                platform_window,
+                renderer,
+                rem_size: px(16.),
+                layout_engine: TaffyLayoutEngine::new(),
+                text_style_stack: Vec::new(),
+                root_view: None,
+                mouse_position,
+            }
         }
     }
 }
