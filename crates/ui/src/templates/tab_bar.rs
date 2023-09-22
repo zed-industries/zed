@@ -1,12 +1,12 @@
 use std::marker::PhantomData;
 
-use gpui2::elements::div;
+use crate::prelude::InteractionState;
+use crate::theme::theme;
+use crate::{icon_button, tab};
 use gpui2::elements::div::ScrollState;
 use gpui2::style::StyleHelpers;
-use gpui2::{Element, IntoElement, ParentElement, ViewContext};
-
-use crate::prelude::InteractionState;
-use crate::{icon_button, tab, theme};
+use gpui2::{elements::div, IntoElement};
+use gpui2::{Element, ParentElement, ViewContext};
 
 #[derive(Element)]
 pub struct TabBar<V: 'static> {

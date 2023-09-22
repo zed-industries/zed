@@ -1,29 +1,30 @@
+use crate::theme::theme;
 use gpui2::elements::svg;
 use gpui2::style::StyleHelpers;
-use gpui2::{Element, IntoElement, ViewContext};
-
-use crate::theme;
-
-// Icon::Hash
-// icon(IconAsset::Hash).color(IconColor::Warning)
-// Icon::new(IconAsset::Hash).color(IconColor::Warning)
+use gpui2::IntoElement;
+use gpui2::{Element, ViewContext};
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum IconAsset {
     Ai,
     ArrowLeft,
     ArrowRight,
-    #[default]
     ArrowUpRight,
     Bolt,
-    Hash,
-    File,
-    Folder,
-    FolderOpen,
     ChevronDown,
-    ChevronUp,
     ChevronLeft,
     ChevronRight,
+    ChevronUp,
+    #[default]
+    File,
+    FileDoc,
+    FileGit,
+    FileLock,
+    FileRust,
+    FileToml,
+    Folder,
+    FolderOpen,
+    Hash,
 }
 
 impl IconAsset {
@@ -34,14 +35,19 @@ impl IconAsset {
             IconAsset::ArrowRight => "icons/arrow_right.svg",
             IconAsset::ArrowUpRight => "icons/arrow_up_right.svg",
             IconAsset::Bolt => "icons/bolt.svg",
-            IconAsset::Hash => "icons/hash.svg",
             IconAsset::ChevronDown => "icons/chevron_down.svg",
-            IconAsset::ChevronUp => "icons/chevron_up.svg",
             IconAsset::ChevronLeft => "icons/chevron_left.svg",
             IconAsset::ChevronRight => "icons/chevron_right.svg",
+            IconAsset::ChevronUp => "icons/chevron_up.svg",
             IconAsset::File => "icons/file_icons/file.svg",
+            IconAsset::FileDoc => "icons/file_icons/book.svg",
+            IconAsset::FileGit => "icons/file_icons/git.svg",
+            IconAsset::FileLock => "icons/file_icons/lock.svg",
+            IconAsset::FileRust => "icons/file_icons/rust.svg",
+            IconAsset::FileToml => "icons/file_icons/toml.svg",
             IconAsset::Folder => "icons/file_icons/folder.svg",
             IconAsset::FolderOpen => "icons/file_icons/folder_open.svg",
+            IconAsset::Hash => "icons/hash.svg",
         }
     }
 }
@@ -55,19 +61,14 @@ pub fn icon(asset: IconAsset) -> Icon {
     Icon { asset }
 }
 
-// impl Icon {
-//     pub fn new(asset: IconAsset) -> Icon {
-//         Icon { asset }
-//     }
-// }
-
 impl Icon {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
 
         svg()
+            .flex_none()
             .path(self.asset.path())
             .size_4()
-            .fill(theme.lowest.base.default.foreground)
+            .fill(theme.lowest.variant.default.foreground)
     }
 }

@@ -1,11 +1,11 @@
 use std::marker::PhantomData;
 
-use gpui2::elements::div;
+use crate::icon_button;
+use crate::theme::theme;
 use gpui2::elements::div::ScrollState;
 use gpui2::style::StyleHelpers;
-use gpui2::{Element, IntoElement, ParentElement, ViewContext};
-
-use crate::{icon_button, theme};
+use gpui2::{elements::div, IntoElement};
+use gpui2::{Element, ParentElement, ViewContext};
 
 #[derive(Element)]
 pub struct ChatPanel<V: 'static> {
