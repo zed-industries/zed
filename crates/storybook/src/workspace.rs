@@ -6,7 +6,7 @@ use gpui2::{
 use ui::{chat_panel, project_panel, status_bar, tab_bar, theme, title_bar};
 
 #[derive(Element, Default)]
-struct WorkspaceElement {
+pub struct WorkspaceElement {
     left_scroll_state: ScrollState,
     right_scroll_state: ScrollState,
     tab_bar_scroll_state: ScrollState,
