@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::theme::{theme, Theme};
-use crate::{icon_button, text_button, tool_divider};
+use crate::{icon_button, text_button, tool_divider, IconAsset};
 use gpui2::style::StyleHelpers;
 use gpui2::{elements::div, IntoElement};
 use gpui2::{Element, ParentElement, ViewContext};
@@ -105,10 +105,10 @@ impl<V: 'static> StatusBar<V> {
             .flex()
             .items_center()
             .gap_1()
-            .child(icon_button("icons/project.svg"))
-            .child(icon_button("icons/hash.svg"))
+            .child(icon_button().icon(IconAsset::FileTree))
+            .child(icon_button().icon(IconAsset::Hash))
             .child(tool_divider())
-            .child(icon_button("icons/error.svg"))
+            .child(icon_button().icon(IconAsset::XCircle))
     }
     fn right_tools(&self, theme: &Theme) -> impl Element<V> {
         div()
@@ -129,8 +129,8 @@ impl<V: 'static> StatusBar<V> {
                     .flex()
                     .items_center()
                     .gap_1()
-                    .child(icon_button("icons/copilot.svg"))
-                    .child(icon_button("icons/feedback.svg")),
+                    .child(icon_button().icon(IconAsset::Copilot))
+                    .child(icon_button().icon(IconAsset::Envelope)),
             )
             .child(tool_divider())
             .child(
@@ -138,9 +138,9 @@ impl<V: 'static> StatusBar<V> {
                     .flex()
                     .items_center()
                     .gap_1()
-                    .child(icon_button("icons/terminal.svg"))
-                    .child(icon_button("icons/conversations.svg"))
-                    .child(icon_button("icons/ai.svg")),
+                    .child(icon_button().icon(IconAsset::Terminal))
+                    .child(icon_button().icon(IconAsset::MessageBubbles))
+                    .child(icon_button().icon(IconAsset::Ai)),
             )
     }
 }

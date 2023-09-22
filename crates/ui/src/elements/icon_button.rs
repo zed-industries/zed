@@ -1,26 +1,38 @@
-use gpui2::elements::{div, svg};
+use gpui2::elements::div;
 use gpui2::style::{StyleHelpers, Styleable};
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
-use crate::prelude::*;
-use crate::theme;
+use crate::{icon, theme, IconColor};
+use crate::{prelude::*, IconAsset};
 
 #[derive(Element)]
 pub struct IconButton {
-    path: &'static str,
+    icon: IconAsset,
+    color: IconColor,
     variant: ButtonVariant,
     state: InteractionState,
 }
 
-pub fn icon_button(path: &'static str) -> IconButton {
+pub fn icon_button() -> IconButton {
     IconButton {
-        path,
+        icon: IconAsset::default(),
+        color: IconColor::default(),
         variant: ButtonVariant::default(),
         state: InteractionState::default(),
     }
 }
 
 impl IconButton {
+    pub fn icon(mut self, icon: IconAsset) -> Self {
+        self.icon = icon;
+        self
+    }
+
+    pub fn color(mut self, color: IconColor) -> Self {
+        self.color = color;
+        self
+    }
+
     pub fn variant(mut self, variant: ButtonVariant) -> Self {
         self.variant = variant;
         self
@@ -34,13 +46,10 @@ impl IconButton {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
 
-        let icon_color;
-
-        if self.state == InteractionState::Disabled {
-            icon_color = theme.highest.base.disabled.foreground;
-        } else {
-            icon_color = theme.highest.base.default.foreground;
-        }
+        let icon_color = match (self.state, self.color) {
+            (InteractionState::Disabled, _) => IconColor::Disabled,
+            _ => self.color,
+        };
 
         let mut div = div();
         if self.variant == ButtonVariant::Filled {
@@ -57,6 +66,6 @@ impl IconButton {
             .fill(theme.highest.base.hovered.background)
             .active()
             .fill(theme.highest.base.pressed.background)
-            .child(svg().path(self.path).w_4().h_4().fill(icon_color))
+            .child(icon(self.icon).color(icon_color))
     }
 }

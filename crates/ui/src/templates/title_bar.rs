@@ -7,7 +7,10 @@ use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
 use crate::prelude::Shape;
-use crate::{avatar, follow_group, icon_button, text_button, theme, tool_divider, traffic_lights};
+use crate::{
+    avatar, follow_group, icon_button, text_button, theme, tool_divider, traffic_lights, IconAsset,
+    IconColor,
+};
 
 #[derive(Element)]
 pub struct TitleBar<V: 'static> {
@@ -83,8 +86,8 @@ impl<V: 'static> TitleBar<V> {
                             .flex()
                             .items_center()
                             .gap_1()
-                            .child(icon_button("icons/stop_sharing.svg"))
-                            .child(icon_button("icons/exit.svg")),
+                            .child(icon_button().icon(IconAsset::FolderX))
+                            .child(icon_button().icon(IconAsset::Close)),
                     )
                     .child(tool_divider())
                     .child(
@@ -93,9 +96,13 @@ impl<V: 'static> TitleBar<V> {
                             .flex()
                             .items_center()
                             .gap_1()
-                            .child(icon_button("icons/mic.svg"))
-                            .child(icon_button("icons/speaker-loud.svg"))
-                            .child(icon_button("icons/desktop.svg")),
+                            .child(icon_button().icon(IconAsset::Mic))
+                            .child(icon_button().icon(IconAsset::AudioOn))
+                            .child(
+                                icon_button()
+                                    .icon(IconAsset::Screen)
+                                    .color(IconColor::Accent),
+                            ),
                     )
                     .child(
                         div().px_2().flex().items_center().child(
