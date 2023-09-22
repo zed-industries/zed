@@ -911,7 +911,7 @@ impl Project {
                 .detach();
         }
 
-        // TODO kb restart all formatters if settings change
+        // TODO kb restart all default formatters if Zed prettier settings change
         for (worktree, language, settings) in language_formatters_to_check {
             self.maybe_start_default_formatters(worktree, &language, &settings, cx);
         }
@@ -5987,6 +5987,7 @@ impl Project {
                     this.update_local_worktree_buffers(&worktree, changes, cx);
                     this.update_local_worktree_language_servers(&worktree, changes, cx);
                     this.update_local_worktree_settings(&worktree, changes, cx);
+                    this.update_prettier_settings(&worktree, changes, cx);
                     cx.emit(Event::WorktreeUpdatedEntries(
                         worktree.read(cx).id(),
                         changes.clone(),
@@ -6364,6 +6365,27 @@ impl Project {
             });
         })
         .detach();
+    }
+
+    fn update_prettier_settings(
+        &self,
+        worktree: &ModelHandle<Worktree>,
+        changes: &[(Arc<Path>, ProjectEntryId, PathChange)],
+        cx: &mut ModelContext<'_, Project>,
+    ) {
+        let prettier_config_files = Prettier::CONFIG_FILE_NAMES
+            .iter()
+            .map(Path::new)
+            .collect::<HashSet<_>>();
+        let prettier_config_changes = changes
+            .iter()
+            .filter(|(path, _, _)| prettier_config_files.contains(path.as_ref()))
+            .collect::<Vec<_>>();
+        dbg!(prettier_config_changes);
+        dbg!(changes.len());
+        // TODO kb: reset caches for all worktree-related prettiers (including the default one) on prettier config file _changes_
+        // prepare node + prettier + plugins + prettier_server on files with Languages that have prettier formatter. Do not start it yet.
+        // !! Ignore **/node_modules/** files in both checks above.
     }
 
     pub fn set_active_path(&mut self, entry: Option<ProjectPath>, cx: &mut ModelContext<Self>) {

@@ -222,6 +222,7 @@ impl Prettier {
                 text: buffer.text(),
                 options: FormatOptions {
                     parser,
+                    // TODO kb is not absolute now
                     path,
                     tab_width,
                 },

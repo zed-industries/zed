@@ -21,18 +21,27 @@ fs.stat(prettierContainerPath, (err, stats) => {
 });
 const prettierPath = path.join(prettierContainerPath, 'node_modules/prettier');
 
+class Prettier {
+    constructor(path, prettier, config) {
+        this.path = path;
+        this.prettier = prettier;
+        this.config = config;
+    }
+}
 
 (async () => {
     let prettier;
+    let config;
     try {
         prettier = await loadPrettier(prettierPath);
+        config = await prettier.resolveConfig(prettierPath) || {};
     } catch (e) {
         process.stderr.write(`Failed to load prettier: ${e}\n`);
         process.exit(1);
     }
-    process.stderr.write("Prettier loadded successfully\n");
+    process.stderr.write(`Prettier at path '${prettierPath}' loaded successfully, config: ${config}\n`);
     process.stdin.resume();
-    handleBuffer(prettier);
+    handleBuffer(new Prettier(prettierPath, prettier, config));
 })()
 
 async function handleBuffer(prettier) {
@@ -121,7 +130,7 @@ async function* readStdin() {
     }
 }
 
-// ?
+// TODO kb, more methods?
 // shutdown
 // error
 async function handleMessage(message, prettier) {
@@ -140,10 +149,11 @@ async function handleMessage(message, prettier) {
         if (params.options === undefined) {
             throw new Error(`Message params.options is undefined: ${JSON.stringify(message)}`);
         }
-        const formattedText = await prettier.format(params.text, params.options);
+        const formattedText = await prettier.prettier.format(params.text, { ...prettier.config, ...params.options });
         sendResponse({ id, result: { text: formattedText } });
     } else if (method === 'prettier/clear_cache') {
-        prettier.clearConfigCache();
+        prettier.prettier.clearConfigCache();
+        prettier.config = await prettier.prettier.resolveConfig(prettier.path) || {};
         sendResponse({ id, result: null });
     } else if (method === 'initialize') {
         sendResponse({
