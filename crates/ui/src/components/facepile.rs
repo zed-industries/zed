@@ -9,8 +9,10 @@ pub struct Facepile {
     players: Vec<Avatar>,
 }
 
-pub fn facepile(players: Vec<Avatar>) -> Facepile {
-    Facepile { players }
+pub fn facepile<P: Iterator<Item = Avatar>>(players: P) -> Facepile {
+    Facepile {
+        players: players.collect(),
+    }
 }
 
 impl Facepile {

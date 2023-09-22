@@ -46,7 +46,7 @@ impl FollowGroup {
                     .px_1()
                     .rounded_lg()
                     .fill(player_bg)
-                    .child(facepile(self.players.clone())),
+                    .child(facepile(self.players.clone().into_iter())),
             )
     }
 }
