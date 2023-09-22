@@ -3,13 +3,12 @@ use crate::{
     WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
-use async_task::Runnable;
-use futures::Future;
 use parking_lot::RwLock;
 use slotmap::SlotMap;
 use std::{
     any::Any,
     marker::PhantomData,
+    mem,
     sync::{Arc, Weak},
 };
 
@@ -19,17 +18,43 @@ pub struct App(Arc<RwLock<AppContext<()>>>);
 pub struct MainThread;
 
 impl App {
-    pub fn new() -> Self {
-        Self(Arc::new(RwLock::new(AppContext::new(current_platform()))))
+    pub fn production() -> Self {
+        Self::new(current_platform())
+    }
+
+    #[cfg(any(test, feature = "test"))]
+    pub fn test() -> Self {
+        Self::new(Arc::new(super::TestPlatform::new()))
+    }
+
+    fn new(platform: Arc<dyn Platform>) -> Self {
+        let text_system = Arc::new(TextSystem::new(platform.text_system()));
+        let mut entities = SlotMap::with_key();
+        let unit_entity_id = entities.insert(Some(Box::new(()) as Box<dyn Any>));
+        Self(Arc::new_cyclic(|this| {
+            RwLock::new(AppContext {
+                this: this.clone(),
+                thread: PhantomData,
+                platform,
+                text_system,
+                unit_entity_id,
+                entities,
+                windows: SlotMap::with_key(),
+                layout_id_buffer: Default::default(),
+            })
+        }))
     }
 
     pub fn run<F>(self, on_finish_launching: F)
     where
         F: 'static + FnOnce(&mut AppContext<MainThread>),
     {
+        let platform = self.0.read().platform.clone();
         platform.run(Box::new(move || {
             let mut cx = self.0.write();
-            on_finish_launching(&mut *cx);
+            let cx: &mut AppContext<()> = &mut cx;
+            let cx: &mut AppContext<MainThread> = unsafe { mem::transmute(cx) };
+            on_finish_launching(cx);
         }));
     }
 }
@@ -37,7 +62,7 @@ impl App {
 pub struct AppContext<Thread = ()> {
     this: Weak<RwLock<AppContext>>,
     thread: PhantomData<Thread>,
-    platform: Box<dyn Platform>,
+    platform: Arc<dyn Platform>,
     text_system: Arc<TextSystem>,
     pub(crate) unit_entity_id: EntityId,
     pub(crate) entities: SlotMap<EntityId, Option<Box<dyn Any>>>,
@@ -47,53 +72,33 @@ pub struct AppContext<Thread = ()> {
 }
 
 impl AppContext<()> {
-    pub fn run_on_main<F: 'static, T: 'static>(
-        &self,
-        to_call: F,
-    ) -> Result<T, impl Future<Output = T>>
-    where
-        F: Fn(&mut AppContext<MainThread>) -> T + Send + Sync,
-    {
-        let dispatcher = self.platform().dispatcher();
-        if dispatcher.is_main_thread() {
-        } else {
-            let future = async move {
-                // let cx = unsafe {  };
-            };
-            let schedule = move |runnable: Runnable| dispatcher.run_on_main_thread(runnable);
+    // pub fn run_on_main<F: 'static, T: 'static>(
+    //     &self,
+    //     to_call: F,
+    // ) -> Result<T, impl Future<Output = T>>
+    // where
+    //     F: Fn(&mut AppContext<MainThread>) -> T + Send + Sync,
+    // {
+    //     todo!();
 
-            let (runnable, task) = async_task::spawn_local();
-            runnable.schedule();
-        }
+    //     // let dispatcher = self.platform().dispatcher();
+    //     // if dispatcher.is_main_thread() {
+    //     // } else {
+    //     //     let future = async move {
+    //     //         // let cx = unsafe {  };
+    //     //     };
+    //     //     let schedule = move |runnable: Runnable| dispatcher.run_on_main_thread(runnable);
+    //     //     // let (runnable, task) = async_task::spawn_local();
+    //     //     // runnable.schedule();
+    //     // }
 
-        let (runnable, task) = async_task::spawn_local(future, schedule);
-        runnable.schedule();
-        task
-    }
+    //     // let (runnable, task) = async_task::spawn_local(future, schedule);
+    //     // runnable.schedule();
+    //     // task
+    // }
 }
 
 impl<Thread> AppContext<Thread> {
-    pub fn new(platform: Arc<dyn Platform>) -> Self {
-        let text_system = Arc::new(TextSystem::new(platform.text_system()));
-        let mut entities = SlotMap::with_key();
-        let unit_entity_id = entities.insert(Some(Box::new(()) as Box<dyn Any>));
-
-        AppContext {
-            thread: PhantomData,
-            platform,
-            text_system,
-            unit_entity_id,
-            entities,
-            windows: SlotMap::with_key(),
-            layout_id_buffer: Default::default(),
-        }
-    }
-
-    #[cfg(any(test, feature = "test"))]
-    pub fn test() -> Self {
-        Self::new(Arc::new(super::TestPlatform::new()))
-    }
-
     pub fn text_system(&self) -> &Arc<TextSystem> {
         &self.text_system
     }
@@ -101,7 +106,7 @@ impl<Thread> AppContext<Thread> {
     pub fn open_window<S: 'static>(
         &mut self,
         options: crate::WindowOptions,
-        build_root_view: impl FnOnce(&mut WindowContext) -> RootView<S>,
+        build_root_view: impl FnOnce(&mut WindowContext<Thread>) -> RootView<S>,
     ) -> WindowHandle<S> {
         let id = self.windows.insert(None);
         let handle = WindowHandle::new(id);
@@ -118,7 +123,7 @@ impl<Thread> AppContext<Thread> {
     pub(crate) fn update_window<R>(
         &mut self,
         window_id: WindowId,
-        update: impl FnOnce(&mut WindowContext) -> R,
+        update: impl FnOnce(&mut WindowContext<Thread>) -> R,
     ) -> Result<R> {
         let mut window = self
             .windows

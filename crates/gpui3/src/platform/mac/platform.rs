@@ -1,8 +1,8 @@
 use super::BoolExt;
 use crate::{
-    AnyWindowHandle, ClipboardItem, CursorStyle, Event, ForegroundExecutor, MacDispatcher,
-    MacScreen, MacTextSystem, MacWindow, PathPromptOptions, Platform, PlatformScreen,
-    PlatformTextSystem, PlatformWindow, Result, SemanticVersion, WindowOptions,
+    AnyWindowHandle, ClipboardItem, CursorStyle, Event, MacDispatcher, MacScreen, MacTextSystem,
+    MacWindow, PathPromptOptions, Platform, PlatformScreen, PlatformTextSystem, PlatformWindow,
+    Result, SemanticVersion, WindowOptions,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -33,9 +33,10 @@ use objc::{
     runtime::{Class, Object, Sel},
     sel, sel_impl,
 };
+use parking_lot::Mutex;
 use ptr::null_mut;
 use std::{
-    cell::{Cell, RefCell},
+    cell::Cell,
     convert::TryInto,
     ffi::{c_void, CStr, OsStr},
     os::{raw::c_char, unix::ffi::OsStrExt},
@@ -138,10 +139,10 @@ unsafe fn build_classes() {
     }
 }
 
-pub struct MacPlatform(RefCell<MacPlatformState>);
+pub struct MacPlatform(Mutex<MacPlatformState>);
 
 pub struct MacPlatformState {
-    executor: Rc<ForegroundExecutor>,
+    dispatcher: Arc<MacDispatcher>,
     text_system: Arc<MacTextSystem>,
     pasteboard: id,
     text_hash_pasteboard_type: id,
@@ -161,8 +162,8 @@ pub struct MacPlatformState {
 
 impl MacPlatform {
     pub fn new() -> Self {
-        Self(RefCell::new(MacPlatformState {
-            executor: Rc::new(ForegroundExecutor::new(Arc::new(MacDispatcher)).unwrap()),
+        Self(Mutex::new(MacPlatformState {
+            dispatcher: Arc::new(MacDispatcher),
             text_system: Arc::new(MacTextSystem::new()),
             pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },
             text_hash_pasteboard_type: unsafe { ns_string("zed-text-hash") },
@@ -182,7 +183,7 @@ impl MacPlatform {
     }
 
     unsafe fn read_from_pasteboard(&self, kind: id) -> Option<&[u8]> {
-        let pasteboard = self.0.borrow().pasteboard;
+        let pasteboard = self.0.lock().pasteboard;
         let data = pasteboard.dataForType(kind);
         if data == nil {
             None
@@ -342,16 +343,16 @@ impl MacPlatform {
 }
 
 impl Platform for MacPlatform {
-    fn executor(&self) -> Rc<ForegroundExecutor> {
-        self.0.borrow().executor.clone()
+    fn dispatcher(&self) -> Arc<dyn crate::PlatformDispatcher> {
+        Arc::new(MacDispatcher)
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
-        self.0.borrow().text_system.clone()
+        self.0.lock().text_system.clone()
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
-        self.0.borrow_mut().finish_launching = Some(on_finish_launching);
+        self.0.lock().finish_launching = Some(on_finish_launching);
 
         unsafe {
             let app: id = msg_send![APP_CLASS, sharedApplication];
@@ -465,25 +466,21 @@ impl Platform for MacPlatform {
         MacScreen::find_by_id(id).map(|screen| Rc::new(screen) as Rc<_>)
     }
 
-    fn main_window(&self) -> Option<AnyWindowHandle> {
-        MacWindow::main_window()
-    }
-
     // fn add_status_item(&self, _handle: AnyWindowHandle) -> Box<dyn platform::Window> {
     //     Box::new(StatusItem::add(self.fonts()))
     // }
+
+    fn main_window(&self) -> Option<AnyWindowHandle> {
+        MacWindow::main_window()
+    }
 
     fn open_window(
         &self,
         handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow> {
-        Box::new(MacWindow::open(
-            handle,
-            options,
-            self.executor(),
-            self.text_system(),
-        ))
+        let dispatcher = self.0.lock().dispatcher.clone();
+        Box::new(MacWindow::open(handle, options, dispatcher))
     }
 
     fn open_url(&self, url: &str) {
@@ -497,7 +494,7 @@ impl Platform for MacPlatform {
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
-        self.0.borrow_mut().open_urls = Some(callback);
+        self.0.lock().open_urls = Some(callback);
     }
 
     fn prompt_for_paths(
@@ -570,41 +567,38 @@ impl Platform for MacPlatform {
     fn reveal_path(&self, path: &Path) {
         unsafe {
             let path = path.to_path_buf();
-            self.0
-                .borrow()
-                .executor
-                .spawn(async move {
-                    let full_path = ns_string(path.to_str().unwrap_or(""));
-                    let root_full_path = ns_string("");
-                    let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
-                    let _: BOOL = msg_send![
-                        workspace,
-                        selectFile: full_path
-                        inFileViewerRootedAtPath: root_full_path
-                    ];
-                })
-                .detach();
+            let dispatcher = self.0.lock().dispatcher.clone();
+            let _ = crate::spawn_on_main_local(dispatcher, async move {
+                let full_path = ns_string(path.to_str().unwrap_or(""));
+                let root_full_path = ns_string("");
+                let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+                let _: BOOL = msg_send![
+                    workspace,
+                    selectFile: full_path
+                    inFileViewerRootedAtPath: root_full_path
+                ];
+            });
         }
     }
 
     fn on_become_active(&self, callback: Box<dyn FnMut()>) {
-        self.0.borrow_mut().become_active = Some(callback);
+        self.0.lock().become_active = Some(callback);
     }
 
     fn on_resign_active(&self, callback: Box<dyn FnMut()>) {
-        self.0.borrow_mut().resign_active = Some(callback);
+        self.0.lock().resign_active = Some(callback);
     }
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
-        self.0.borrow_mut().quit = Some(callback);
+        self.0.lock().quit = Some(callback);
     }
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
-        self.0.borrow_mut().reopen = Some(callback);
+        self.0.lock().reopen = Some(callback);
     }
 
     fn on_event(&self, callback: Box<dyn FnMut(Event) -> bool>) {
-        self.0.borrow_mut().event = Some(callback);
+        self.0.lock().event = Some(callback);
     }
 
     fn os_name(&self) -> &'static str {
@@ -704,7 +698,7 @@ impl Platform for MacPlatform {
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
-        let state = self.0.borrow();
+        let state = self.0.lock();
         unsafe {
             state.pasteboard.clearContents();
 
@@ -741,7 +735,7 @@ impl Platform for MacPlatform {
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        let state = self.0.borrow();
+        let state = self.0.lock();
         unsafe {
             if let Some(text_bytes) = self.read_from_pasteboard(NSPasteboardTypeString) {
                 let text = String::from_utf8_lossy(text_bytes).to_string();
@@ -776,6 +770,32 @@ impl Platform for MacPlatform {
             }
         }
     }
+
+    // fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn Action)>) {
+    //     self.0.lock().menu_command = Some(callback);
+    // }
+
+    // fn on_will_open_menu(&self, callback: Box<dyn FnMut()>) {
+    //     self.0.lock().will_open_menu = Some(callback);
+    // }
+
+    // fn on_validate_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
+    //     self.0.lock().validate_menu_command = Some(callback);
+    // }
+
+    // fn set_menus(&self, menus: Vec<Menu>, keystroke_matcher: &KeymapMatcher) {
+    //     unsafe {
+    //         let app: id = msg_send![APP_CLASS, sharedApplication];
+    //         let mut state = self.0.lock();
+    //         let actions = &mut state.menu_actions;
+    //         app.setMainMenu_(self.create_menu_bar(
+    //             menus,
+    //             app.delegate(),
+    //             actions,
+    //             keystroke_matcher,
+    //         ));
+    //     }
+    // }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Result<()> {
         let url = CFString::from(url);
@@ -815,32 +835,6 @@ impl Platform for MacPlatform {
         }
         Ok(())
     }
-
-    // fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn Action)>) {
-    //     self.0.borrow_mut().menu_command = Some(callback);
-    // }
-
-    // fn on_will_open_menu(&self, callback: Box<dyn FnMut()>) {
-    //     self.0.borrow_mut().will_open_menu = Some(callback);
-    // }
-
-    // fn on_validate_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
-    //     self.0.borrow_mut().validate_menu_command = Some(callback);
-    // }
-
-    // fn set_menus(&self, menus: Vec<Menu>, keystroke_matcher: &KeymapMatcher) {
-    //     unsafe {
-    //         let app: id = msg_send![APP_CLASS, sharedApplication];
-    //         let mut state = self.0.borrow_mut();
-    //         let actions = &mut state.menu_actions;
-    //         app.setMainMenu_(self.create_menu_bar(
-    //             menus,
-    //             app.delegate(),
-    //             actions,
-    //             keystroke_matcher,
-    //         ));
-    //     }
-    // }
 
     fn read_credentials(&self, url: &str) -> Result<Option<(String, Vec<u8>)>> {
         let url = CFString::from(url);
@@ -921,7 +915,7 @@ extern "C" fn send_event(this: &mut Object, _sel: Sel, native_event: id) {
     unsafe {
         if let Some(event) = Event::from_native(native_event, None) {
             let platform = get_foreground_platform(this);
-            if let Some(callback) = platform.0.borrow_mut().event.as_mut() {
+            if let Some(callback) = platform.0.lock().event.as_mut() {
                 if callback(event) {
                     return;
                 }
@@ -937,7 +931,7 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
         app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
 
         let platform = get_foreground_platform(this);
-        let callback = platform.0.borrow_mut().finish_launching.take();
+        let callback = platform.0.lock().finish_launching.take();
         if let Some(callback) = callback {
             callback();
         }
@@ -947,7 +941,7 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
 extern "C" fn should_handle_reopen(this: &mut Object, _: Sel, _: id, has_open_windows: bool) {
     if !has_open_windows {
         let platform = unsafe { get_foreground_platform(this) };
-        if let Some(callback) = platform.0.borrow_mut().reopen.as_mut() {
+        if let Some(callback) = platform.0.lock().reopen.as_mut() {
             callback();
         }
     }
@@ -955,21 +949,21 @@ extern "C" fn should_handle_reopen(this: &mut Object, _: Sel, _: id, has_open_wi
 
 extern "C" fn did_become_active(this: &mut Object, _: Sel, _: id) {
     let platform = unsafe { get_foreground_platform(this) };
-    if let Some(callback) = platform.0.borrow_mut().become_active.as_mut() {
+    if let Some(callback) = platform.0.lock().become_active.as_mut() {
         callback();
     }
 }
 
 extern "C" fn did_resign_active(this: &mut Object, _: Sel, _: id) {
     let platform = unsafe { get_foreground_platform(this) };
-    if let Some(callback) = platform.0.borrow_mut().resign_active.as_mut() {
+    if let Some(callback) = platform.0.lock().resign_active.as_mut() {
         callback();
     }
 }
 
 extern "C" fn will_terminate(this: &mut Object, _: Sel, _: id) {
     let platform = unsafe { get_foreground_platform(this) };
-    if let Some(callback) = platform.0.borrow_mut().quit.as_mut() {
+    if let Some(callback) = platform.0.lock().quit.as_mut() {
         callback();
     }
 }
@@ -991,7 +985,7 @@ extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
             .collect::<Vec<_>>()
     };
     let platform = unsafe { get_foreground_platform(this) };
-    if let Some(callback) = platform.0.borrow_mut().open_urls.as_mut() {
+    if let Some(callback) = platform.0.lock().open_urls.as_mut() {
         callback(urls);
     }
 }
@@ -1000,7 +994,7 @@ extern "C" fn handle_menu_item(__this: &mut Object, _: Sel, __item: id) {
     todo!()
     // unsafe {
     //     let platform = get_foreground_platform(this);
-    //     let mut platform = platform.0.borrow_mut();
+    //     let mut platform = platform.0.lock();
     //     if let Some(mut callback) = platform.menu_command.take() {
     //         let tag: NSInteger = msg_send![item, tag];
     //         let index = tag as usize;
@@ -1017,7 +1011,7 @@ extern "C" fn validate_menu_item(__this: &mut Object, _: Sel, __item: id) -> boo
     // unsafe {
     //     let mut result = false;
     //     let platform = get_foreground_platform(this);
-    //     let mut platform = platform.0.borrow_mut();
+    //     let mut platform = platform.0.lock();
     //     if let Some(mut callback) = platform.validate_menu_command.take() {
     //         let tag: NSInteger = msg_send![item, tag];
     //         let index = tag as usize;
@@ -1033,7 +1027,7 @@ extern "C" fn validate_menu_item(__this: &mut Object, _: Sel, __item: id) -> boo
 extern "C" fn menu_will_open(this: &mut Object, _: Sel, _: id) {
     unsafe {
         let platform = get_foreground_platform(this);
-        let mut platform = platform.0.borrow_mut();
+        let mut platform = platform.0.lock();
         if let Some(mut callback) = platform.will_open_menu.take() {
             callback();
             platform.will_open_menu = Some(callback);
@@ -1112,7 +1106,7 @@ mod tests {
             );
             platform
                 .0
-                .borrow_mut()
+                .lock()
                 .pasteboard
                 .setData_forType(bytes, NSPasteboardTypeString);
         }
@@ -1124,7 +1118,7 @@ mod tests {
 
     fn build_platform() -> MacPlatform {
         let platform = MacPlatform::new();
-        platform.0.borrow_mut().pasteboard = unsafe { NSPasteboard::pasteboardWithUniqueName(nil) };
+        platform.0.lock().pasteboard = unsafe { NSPasteboard::pasteboardWithUniqueName(nil) };
         platform
     }
 }

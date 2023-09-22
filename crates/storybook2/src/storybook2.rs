@@ -21,7 +21,7 @@ mod workspace;
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
-    gpui3::App::new().run(|cx| {
+    gpui3::App::production().run(|cx| {
         let window: gpui3::WindowHandle<()> = cx.open_window(Default::default(), |cx| todo!());
     });
 

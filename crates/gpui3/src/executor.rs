@@ -1,7 +1,8 @@
 use crate::util;
+use crate::PlatformDispatcher;
 use anyhow::{anyhow, Result};
 use async_task::Runnable;
-use futures::channel::mpsc;
+use futures::channel::{mpsc, oneshot};
 use smol::{channel, prelude::*, Executor};
 use std::{
     any::Any,
@@ -16,7 +17,51 @@ use std::{
     time::Duration,
 };
 
-use crate::PlatformDispatcher;
+/// Enqueues the given closure to be run on the application's event loop. Can be
+/// called on any thread.
+pub(crate) fn spawn_on_main<R>(
+    dispatcher: Arc<dyn PlatformDispatcher>,
+    future: impl Future<Output = R> + Send + 'static,
+) -> impl Future<Output = R>
+where
+    R: Send + 'static,
+{
+    let (tx, rx) = oneshot::channel();
+    let (runnable, task) = async_task::spawn(
+        async move {
+            let result = future.await;
+            let _ = tx.send(result);
+        },
+        move |runnable| dispatcher.run_on_main_thread(runnable),
+    );
+    runnable.schedule();
+    task.detach();
+    async move { rx.await.unwrap() }
+}
+
+/// Enqueues the given closure to be run on the application's event loop. Must
+/// be called on the main thread.
+pub(crate) fn spawn_on_main_local<R>(
+    dispatcher: Arc<dyn PlatformDispatcher>,
+    future: impl Future<Output = R> + 'static,
+) -> impl Future<Output = R>
+where
+    R: 'static,
+{
+    assert!(dispatcher.is_main_thread(), "must be called on main thread");
+
+    let (tx, rx) = oneshot::channel();
+    let (runnable, task) = async_task::spawn_local(
+        async move {
+            let result = future.await;
+            let _ = tx.send(result);
+        },
+        move |runnable| dispatcher.run_on_main_thread(runnable),
+    );
+    runnable.schedule();
+    task.detach();
+    async move { rx.await.unwrap() }
+}
 
 pub enum ForegroundExecutor {
     Platform {

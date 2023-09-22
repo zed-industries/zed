@@ -9,7 +9,7 @@ impl TestPlatform {
 }
 
 impl Platform for TestPlatform {
-    fn executor(&self) -> std::rc::Rc<crate::ForegroundExecutor> {
+    fn dispatcher(&self) -> std::sync::Arc<dyn crate::PlatformDispatcher> {
         todo!()
     }
 

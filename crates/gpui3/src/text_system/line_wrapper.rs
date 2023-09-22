@@ -215,133 +215,134 @@ impl Boundary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AppContext, FontWeight};
+    use crate::{App, AppContext, FontWeight};
 
     #[test]
     fn test_wrap_line() {
-        let cx = AppContext::test();
+        App::test().run(|cx| {
+            let text_system = cx.text_system().clone();
+            let family = text_system
+                .load_font_family(&["Courier"], &Default::default())
+                .unwrap();
+            let font_id = text_system
+                .select_font(family, Default::default(), Default::default())
+                .unwrap();
 
-        let text_system = cx.text_system().clone();
-        let family = text_system
-            .load_font_family(&["Courier"], &Default::default())
-            .unwrap();
-        let font_id = text_system
-            .select_font(family, Default::default(), Default::default())
-            .unwrap();
-
-        let mut wrapper =
-            LineWrapper::new(font_id, px(16.), text_system.platform_text_system.clone());
-        assert_eq!(
-            wrapper
-                .wrap_line("aa bbb cccc ddddd eeee", px(72.))
-                .collect::<Vec<_>>(),
-            &[
-                Boundary::new(7, 0),
-                Boundary::new(12, 0),
-                Boundary::new(18, 0)
-            ],
-        );
-        assert_eq!(
-            wrapper
-                .wrap_line("aaa aaaaaaaaaaaaaaaaaa", px(72.0))
-                .collect::<Vec<_>>(),
-            &[
-                Boundary::new(4, 0),
-                Boundary::new(11, 0),
-                Boundary::new(18, 0)
-            ],
-        );
-        assert_eq!(
-            wrapper
-                .wrap_line("     aaaaaaa", px(72.))
-                .collect::<Vec<_>>(),
-            &[
-                Boundary::new(7, 5),
-                Boundary::new(9, 5),
-                Boundary::new(11, 5),
-            ]
-        );
-        assert_eq!(
-            wrapper
-                .wrap_line("                            ", px(72.))
-                .collect::<Vec<_>>(),
-            &[
-                Boundary::new(7, 0),
-                Boundary::new(14, 0),
-                Boundary::new(21, 0)
-            ]
-        );
-        assert_eq!(
-            wrapper
-                .wrap_line("          aaaaaaaaaaaaaa", px(72.))
-                .collect::<Vec<_>>(),
-            &[
-                Boundary::new(7, 0),
-                Boundary::new(14, 3),
-                Boundary::new(18, 3),
-                Boundary::new(22, 3),
-            ]
-        );
+            let mut wrapper =
+                LineWrapper::new(font_id, px(16.), text_system.platform_text_system.clone());
+            assert_eq!(
+                wrapper
+                    .wrap_line("aa bbb cccc ddddd eeee", px(72.))
+                    .collect::<Vec<_>>(),
+                &[
+                    Boundary::new(7, 0),
+                    Boundary::new(12, 0),
+                    Boundary::new(18, 0)
+                ],
+            );
+            assert_eq!(
+                wrapper
+                    .wrap_line("aaa aaaaaaaaaaaaaaaaaa", px(72.0))
+                    .collect::<Vec<_>>(),
+                &[
+                    Boundary::new(4, 0),
+                    Boundary::new(11, 0),
+                    Boundary::new(18, 0)
+                ],
+            );
+            assert_eq!(
+                wrapper
+                    .wrap_line("     aaaaaaa", px(72.))
+                    .collect::<Vec<_>>(),
+                &[
+                    Boundary::new(7, 5),
+                    Boundary::new(9, 5),
+                    Boundary::new(11, 5),
+                ]
+            );
+            assert_eq!(
+                wrapper
+                    .wrap_line("                            ", px(72.))
+                    .collect::<Vec<_>>(),
+                &[
+                    Boundary::new(7, 0),
+                    Boundary::new(14, 0),
+                    Boundary::new(21, 0)
+                ]
+            );
+            assert_eq!(
+                wrapper
+                    .wrap_line("          aaaaaaaaaaaaaa", px(72.))
+                    .collect::<Vec<_>>(),
+                &[
+                    Boundary::new(7, 0),
+                    Boundary::new(14, 3),
+                    Boundary::new(18, 3),
+                    Boundary::new(22, 3),
+                ]
+            );
+        });
     }
 
     // todo! repeat this test
     #[test]
     fn test_wrap_shaped_line() {
-        let cx = AppContext::test();
-        let text_system = cx.text_system().clone();
+        App::test().run(|cx| {
+            let text_system = cx.text_system().clone();
 
-        let family = text_system
-            .load_font_family(&["Helvetica"], &Default::default())
-            .unwrap();
-        let font_id = text_system
-            .select_font(family, Default::default(), Default::default())
-            .unwrap();
-        let normal = RunStyle {
-            font_id,
-            color: Default::default(),
-            underline: Default::default(),
-        };
-        let bold = RunStyle {
-            font_id: text_system
-                .select_font(family, FontWeight::BOLD, Default::default())
-                .unwrap(),
-            color: Default::default(),
-            underline: Default::default(),
-        };
+            let family = text_system
+                .load_font_family(&["Helvetica"], &Default::default())
+                .unwrap();
+            let font_id = text_system
+                .select_font(family, Default::default(), Default::default())
+                .unwrap();
+            let normal = RunStyle {
+                font_id,
+                color: Default::default(),
+                underline: Default::default(),
+            };
+            let bold = RunStyle {
+                font_id: text_system
+                    .select_font(family, FontWeight::BOLD, Default::default())
+                    .unwrap(),
+                color: Default::default(),
+                underline: Default::default(),
+            };
 
-        let text = "aa bbb cccc ddddd eeee";
-        let line = text_system.layout_str(
-            text,
-            px(16.),
-            &[
-                (4, normal.clone()),
-                (5, bold.clone()),
-                (6, normal.clone()),
-                (1, bold),
-                (7, normal),
-            ],
-        );
+            let text = "aa bbb cccc ddddd eeee";
+            let line = text_system.layout_str(
+                text,
+                px(16.),
+                &[
+                    (4, normal.clone()),
+                    (5, bold.clone()),
+                    (6, normal.clone()),
+                    (1, bold),
+                    (7, normal),
+                ],
+            );
 
-        let mut wrapper =
-            LineWrapper::new(font_id, px(16.), text_system.platform_text_system.clone());
-        assert_eq!(
-            wrapper
-                .wrap_shaped_line(text, &line, px(72.))
-                .collect::<Vec<_>>(),
-            &[
-                ShapedBoundary {
-                    run_ix: 1,
-                    glyph_ix: 3
-                },
-                ShapedBoundary {
-                    run_ix: 2,
-                    glyph_ix: 3
-                },
-                ShapedBoundary {
-                    run_ix: 4,
-                    glyph_ix: 2
-                }
-            ],
-        );
+            let mut wrapper =
+                LineWrapper::new(font_id, px(16.), text_system.platform_text_system.clone());
+            assert_eq!(
+                wrapper
+                    .wrap_shaped_line(text, &line, px(72.))
+                    .collect::<Vec<_>>(),
+                &[
+                    ShapedBoundary {
+                        run_ix: 1,
+                        glyph_ix: 3
+                    },
+                    ShapedBoundary {
+                        run_ix: 2,
+                        glyph_ix: 3
+                    },
+                    ShapedBoundary {
+                        run_ix: 4,
+                        glyph_ix: 2
+                    }
+                ],
+            );
+        });
     }
 }

@@ -1,6 +1,4 @@
-use crate::{
-    AvailableSpace, Bg, PlatformWindow, Point, Size, Style, TextStyle, TextStyleRefinement,
-};
+use crate::{AvailableSpace, PlatformWindow, Point, Size, Style, TextStyle, TextStyleRefinement};
 
 use super::{
     px, taffy::LayoutId, AppContext, Bounds, Context, EntityId, Handle, Pixels, Reference,
@@ -39,22 +37,22 @@ impl Window {
 }
 
 #[derive(Deref, DerefMut)]
-pub struct WindowContext<'a, 'b> {
+pub struct WindowContext<'a, 'b, Thread = ()> {
     #[deref]
     #[deref_mut]
-    app: Reference<'a, AppContext>,
+    app: Reference<'a, AppContext<Thread>>,
     window: Reference<'b, Window>,
 }
 
-impl<'a, 'w> WindowContext<'a, 'w> {
-    pub(crate) fn mutable(app: &'a mut AppContext<Bg>, window: &'w mut Window) -> Self {
+impl<'a, 'w, Thread> WindowContext<'a, 'w, Thread> {
+    pub(crate) fn mutable(app: &'a mut AppContext<Thread>, window: &'w mut Window) -> Self {
         Self {
             app: Reference::Mutable(app),
             window: Reference::Mutable(window),
         }
     }
 
-    pub(crate) fn immutable(app: &'a AppContext, window: &'w Window) -> Self {
+    pub(crate) fn immutable(app: &'a AppContext<Thread>, window: &'w Window) -> Self {
         Self {
             app: Reference::Immutable(app),
             window: Reference::Immutable(window),
@@ -123,7 +121,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     fn update_window<R>(
         &mut self,
         window_id: WindowId,
-        update: impl FnOnce(&mut WindowContext) -> R,
+        update: impl FnOnce(&mut WindowContext<Thread>) -> R,
     ) -> Result<R> {
         if window_id == self.window.id {
             Ok(update(self))

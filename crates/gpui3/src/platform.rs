@@ -6,8 +6,8 @@ mod mac;
 mod test;
 
 use crate::{
-    AnyWindowHandle, Bounds, FontFeatures, FontId, FontMetrics, FontStyle, FontWeight,
-    ForegroundExecutor, GlyphId, LineLayout, Pixels, Point, Result, RunStyle, SharedString, Size,
+    AnyWindowHandle, Bounds, FontFeatures, FontId, FontMetrics, FontStyle, FontWeight, GlyphId,
+    LineLayout, Pixels, Point, Result, RunStyle, SharedString, Size,
 };
 use anyhow::anyhow;
 use async_task::Runnable;
@@ -37,14 +37,14 @@ pub use test::*;
 
 #[cfg(target_os = "macos")]
 pub(crate) fn current_platform() -> Arc<dyn Platform> {
-    Rc::new(MacPlatform::new())
+    Arc::new(MacPlatform::new())
 }
 
 pub trait Platform {
     fn dispatcher(&self) -> Arc<dyn PlatformDispatcher>;
     fn text_system(&self) -> Arc<dyn PlatformTextSystem>;
 
-    fn run(&self, on_finish_launching: Box<dyn FnOnce()>);
+    fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>);
     fn quit(&self);
     fn restart(&self);
     fn activate(&self, ignoring_other_apps: bool);
