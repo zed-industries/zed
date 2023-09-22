@@ -1,5 +1,4 @@
 mod db;
-// pub mod embedding;
 mod embedding_queue;
 mod parsing;
 pub mod semantic_index_settings;
@@ -8,10 +7,10 @@ pub mod semantic_index_settings;
 mod semantic_index_tests;
 
 use crate::semantic_index_settings::SemanticIndexSettings;
+use ai::embedding::{Embedding, EmbeddingProvider, OpenAIEmbeddings};
 use anyhow::{anyhow, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use db::VectorDatabase;
-use ai::embedding::{Embedding, EmbeddingProvider, OpenAIEmbeddings};
 use embedding_queue::{EmbeddingQueue, FileToEmbed};
 use futures::{future, FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
