@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use gpui2::color::Hsla;
 use gpui2::element::Element;
@@ -190,6 +191,6 @@ fn preferred_theme<V: 'static>(cx: &AppContext) -> Theme {
         .clone()
 }
 
-pub fn theme<'a>(cx: &'a WindowContext) -> &'a Theme {
+pub fn theme(cx: &WindowContext) -> Arc<Theme> {
     cx.theme::<Theme>()
 }

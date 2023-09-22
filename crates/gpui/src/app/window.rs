@@ -33,6 +33,7 @@ use std::{
     any::{type_name, Any, TypeId},
     mem,
     ops::{Deref, DerefMut, Range, Sub},
+    sync::Arc,
 };
 use taffy::{
     tree::{Measurable, MeasureFunc},
@@ -56,7 +57,7 @@ pub struct Window {
     pub(crate) rendered_views: HashMap<usize, Box<dyn AnyRootElement>>,
     scene: SceneBuilder,
     pub(crate) text_style_stack: Vec<TextStyle>,
-    pub(crate) theme_stack: Vec<Box<dyn Any>>,
+    pub(crate) theme_stack: Vec<Arc<dyn Any + Send + Sync>>,
     pub(crate) new_parents: HashMap<usize, usize>,
     pub(crate) views_to_notify_if_ancestors_change: HashMap<usize, SmallVec<[usize; 2]>>,
     titlebar_height: f32,
@@ -1336,18 +1337,21 @@ impl<'a> WindowContext<'a> {
         self.window.text_style_stack.pop();
     }
 
-    pub fn theme<T: 'static>(&self) -> &T {
+    pub fn theme<T: 'static + Send + Sync>(&self) -> Arc<T> {
         self.window
             .theme_stack
             .iter()
             .rev()
-            .find_map(|theme| theme.downcast_ref())
+            .find_map(|theme| {
+                let entry = Arc::clone(theme);
+                entry.downcast::<T>().ok()
+            })
             .ok_or_else(|| anyhow!("no theme provided of type {}", type_name::<T>()))
             .unwrap()
     }
 
-    pub fn push_theme<T: 'static>(&mut self, theme: T) {
-        self.window.theme_stack.push(Box::new(theme));
+    pub fn push_theme<T: 'static + Send + Sync>(&mut self, theme: T) {
+        self.window.theme_stack.push(Arc::new(theme));
     }
 
     pub fn pop_theme(&mut self) {
