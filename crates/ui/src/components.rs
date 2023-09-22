@@ -1,3 +1,4 @@
+mod breadcrumb;
 mod facepile;
 mod follow_group;
 mod list_item;
@@ -7,6 +8,7 @@ mod tab;
 mod toolbar;
 mod traffic_lights;
 
+pub use breadcrumb::*;
 pub use facepile::*;
 pub use follow_group::*;
 pub use list_item::*;

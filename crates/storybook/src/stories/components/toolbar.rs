@@ -1,7 +1,5 @@
-use gpui2::elements::div;
-use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
-use ui::{prelude::*, toolbar};
+use ui::toolbar;
 
 use crate::story::Story;
 
@@ -12,6 +10,7 @@ impl ToolbarStory {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         Story::container()
             .child(Story::title_for::<_, ui::Toolbar>())
+            .child(Story::label("Default"))
             .child(toolbar())
     }
 }
