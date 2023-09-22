@@ -4,6 +4,8 @@ use gpui2::{rgb, Element, Hsla, IntoElement, ParentElement, ViewContext};
 use ui::prelude::*;
 use ui::{avatar, theme};
 
+use crate::story::Story;
+
 #[derive(Element, Default)]
 pub struct AvatarStory {}
 
@@ -19,12 +21,7 @@ impl AvatarStory {
             .px_4()
             .font("Zed Mono Extended")
             .fill(rgb::<Hsla>(0x282c34))
-            .child(
-                div()
-                    .text_2xl()
-                    .text_color(rgb::<Hsla>(0xffffff))
-                    .child(std::any::type_name::<ui::Avatar>()),
-            )
+            .child(Story::title(std::any::type_name::<ui::Avatar>()))
             .child(
                 div()
                     .flex()

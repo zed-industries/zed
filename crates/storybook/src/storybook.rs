@@ -2,6 +2,7 @@
 
 mod collab_panel;
 mod stories;
+mod story;
 mod workspace;
 
 use std::str::FromStr;
