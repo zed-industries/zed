@@ -17,6 +17,7 @@ use simplelog::SimpleLogger;
 use stories::components::facepile::FacepileStory;
 use stories::components::traffic_lights::TrafficLightsStory;
 use stories::elements::avatar::AvatarStory;
+use strum::EnumString;
 use ui::{ElementExt, Theme};
 
 gpui2::actions! {
@@ -33,22 +34,35 @@ enum StorySelector {
 impl FromStr for StorySelector {
     type Err = anyhow::Error;
 
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "elements/avatar" => Ok(Self::Element(ElementStory::Avatar)),
-            "components/facepile" => Ok(Self::Component(ComponentStory::Facepile)),
-            "components/traffic_lights" => Ok(Self::Component(ComponentStory::TrafficLights)),
-            _ => Err(anyhow!("story not found for '{s}'")),
+    fn from_str(raw_story_name: &str) -> std::result::Result<Self, Self::Err> {
+        let story = raw_story_name.to_ascii_lowercase();
+
+        if let Some((_, story)) = story.split_once("elements/") {
+            let element_story = ElementStory::from_str(story)
+                .with_context(|| format!("story not found for element '{story}'"))?;
+
+            return Ok(Self::Element(element_story));
         }
+
+        if let Some((_, story)) = story.split_once("components/") {
+            let component_story = ComponentStory::from_str(story)
+                .with_context(|| format!("story not found for component '{story}'"))?;
+
+            return Ok(Self::Component(component_story));
+        }
+
+        Err(anyhow!("story not found for '{raw_story_name}'"))
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, EnumString)]
+#[strum(serialize_all = "snake_case")]
 enum ElementStory {
     Avatar,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, EnumString)]
+#[strum(serialize_all = "snake_case")]
 enum ComponentStory {
     Facepile,
     TrafficLights,
@@ -122,7 +136,7 @@ fn current_theme<V: 'static>(cx: &mut ViewContext<V>) -> Theme {
         .clone()
 }
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use gpui2::AssetSource;
 use rust_embed::RustEmbed;
 use workspace::WorkspaceElement;
