@@ -1,8 +1,7 @@
 use gpui2::elements::div;
 use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
-use ui::prelude::*;
-use ui::{avatar, facepile, theme};
+use ui::{prelude::*, toolbar};
 
 use crate::story::Story;
 
@@ -11,6 +10,8 @@ pub struct ToolbarStory {}
 
 impl ToolbarStory {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
-        Story::container().child(Story::title_for::<_, ui::Toolbar>())
+        Story::container()
+            .child(Story::title_for::<_, ui::Toolbar>())
+            .child(toolbar())
     }
 }
