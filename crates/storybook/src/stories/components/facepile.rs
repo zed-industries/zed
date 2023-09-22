@@ -15,6 +15,7 @@ impl FacepileStory {
 
         Story::container()
             .child(Story::title(std::any::type_name::<ui::Facepile>()))
+            .child(Story::label("Default"))
             .child(
                 div()
                     .flex()
@@ -32,6 +33,7 @@ impl FacepileStory {
                         avatar("https://avatars.githubusercontent.com/u/1714999?v=4"),
                     ])),
             )
+            .child(Story::label("Rounded rectangle avatars"))
             .child(
                 div()
                     .flex()
