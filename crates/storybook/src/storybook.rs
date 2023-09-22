@@ -13,6 +13,7 @@ use legacy_theme::ThemeSettings;
 use log::LevelFilter;
 use settings::{default_settings, SettingsStore};
 use simplelog::SimpleLogger;
+use stories::components::facepile::FacepileStory;
 use stories::elements::avatar::AvatarStory;
 use ui::{ElementExt, Theme};
 
@@ -24,6 +25,7 @@ gpui2::actions! {
 #[derive(Debug, Clone, Copy)]
 enum Story {
     Element(ElementStory),
+    Component(ComponentStory),
 }
 
 impl FromStr for Story {
@@ -32,6 +34,7 @@ impl FromStr for Story {
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.to_ascii_lowercase().as_str() {
             "elements/avatar" => Ok(Self::Element(ElementStory::Avatar)),
+            "components/facepile" => Ok(Self::Component(ComponentStory::Facepile)),
             _ => Err(anyhow!("story not found for '{s}'")),
         }
     }
@@ -40,6 +43,11 @@ impl FromStr for Story {
 #[derive(Debug, Clone, Copy)]
 enum ElementStory {
     Avatar,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ComponentStory {
+    Facepile,
 }
 
 #[derive(Parser)]
@@ -70,6 +78,9 @@ fn main() {
             |cx| match args.story {
                 Some(Story::Element(ElementStory::Avatar)) => {
                     view(|cx| render_story(&mut ViewContext::new(cx), AvatarStory::default()))
+                }
+                Some(Story::Component(ComponentStory::Facepile)) => {
+                    view(|cx| render_story(&mut ViewContext::new(cx), FacepileStory::default()))
                 }
                 None => {
                     view(|cx| render_story(&mut ViewContext::new(cx), WorkspaceElement::default()))
@@ -107,7 +118,7 @@ fn current_theme<V: 'static>(cx: &mut ViewContext<V>) -> Theme {
 use anyhow::{anyhow, Result};
 use gpui2::AssetSource;
 use rust_embed::RustEmbed;
-use workspace::{workspace, WorkspaceElement};
+use workspace::WorkspaceElement;
 
 #[derive(RustEmbed)]
 #[folder = "../../assets"]

@@ -12,10 +12,6 @@ pub struct WorkspaceElement {
     tab_bar_scroll_state: ScrollState,
 }
 
-pub fn workspace<V: 'static>() -> impl Element<V> {
-    WorkspaceElement::default()
-}
-
 impl WorkspaceElement {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);

@@ -17,6 +17,8 @@ impl AvatarStory {
             .flex_col()
             .pt_2()
             .px_4()
+            .font("Zed Mono Extended")
+            .fill(rgb::<Hsla>(0x282c34))
             .child(
                 div()
                     .text_2xl()
