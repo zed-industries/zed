@@ -155,13 +155,13 @@ pub trait PlatformWindow {
 
 unsafe impl<'a> HasRawWindowHandle for &'a dyn PlatformWindow {
     fn raw_window_handle(&self) -> raw_window_handle::RawWindowHandle {
-        self.raw_window_handle()
+        (*self).raw_window_handle()
     }
 }
 
 unsafe impl<'a> HasRawDisplayHandle for &'a dyn PlatformWindow {
     fn raw_display_handle(&self) -> raw_window_handle::RawDisplayHandle {
-        self.raw_display_handle()
+        (*self).raw_display_handle()
     }
 }
 

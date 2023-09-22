@@ -1,6 +1,7 @@
 use crate::{DevicePixels, Scene, Size};
 use futures::{future::BoxFuture, FutureExt};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
+use wgpu::Backends;
 
 pub struct Renderer {
     device: wgpu::Device,
@@ -21,7 +22,10 @@ impl Renderer {
     where
         W: RenderTarget,
     {
-        let instance = wgpu::Instance::new(Default::default());
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: Backends::METAL,
+            ..Default::default()
+        });
         let surface = unsafe { instance.create_surface(window).unwrap() };
         let width = window.content_device_size().width;
         let height = window.content_device_size().height;

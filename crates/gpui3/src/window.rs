@@ -1,11 +1,7 @@
 use crate::{
-    renderer::Renderer, AvailableSpace, MainThreadOnly, Platform, PlatformWindow, Point, Size,
-    Style, TextStyle, TextStyleRefinement, WindowOptions,
-};
-
-use super::{
-    px, taffy::LayoutId, AppContext, Bounds, Context, EntityId, Handle, Pixels, Reference,
-    TaffyLayoutEngine,
+    px, renderer::Renderer, taffy::LayoutId, AppContext, AvailableSpace, Bounds, Context, EntityId,
+    Handle, MainThreadOnly, Pixels, Platform, PlatformWindow, Point, Reference, Size, Style,
+    TaffyLayoutEngine, TextStyle, TextStyleRefinement, WindowOptions,
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
