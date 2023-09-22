@@ -14,7 +14,9 @@ use legacy_theme::ThemeSettings;
 use log::LevelFilter;
 use settings::{default_settings, SettingsStore};
 use simplelog::SimpleLogger;
+use stories::components::breadcrumb::BreadcrumbStory;
 use stories::components::facepile::FacepileStory;
+use stories::components::toolbar::ToolbarStory;
 use stories::components::traffic_lights::TrafficLightsStory;
 use stories::elements::avatar::AvatarStory;
 use strum::EnumString;
@@ -64,7 +66,9 @@ enum ElementStory {
 #[derive(Debug, Clone, Copy, EnumString)]
 #[strum(serialize_all = "snake_case")]
 enum ComponentStory {
+    Breadcrumb,
     Facepile,
+    Toolbar,
     TrafficLights,
 }
 
@@ -97,8 +101,14 @@ fn main() {
                 Some(StorySelector::Element(ElementStory::Avatar)) => {
                     view(|cx| render_story(&mut ViewContext::new(cx), AvatarStory::default()))
                 }
+                Some(StorySelector::Component(ComponentStory::Breadcrumb)) => {
+                    view(|cx| render_story(&mut ViewContext::new(cx), BreadcrumbStory::default()))
+                }
                 Some(StorySelector::Component(ComponentStory::Facepile)) => {
                     view(|cx| render_story(&mut ViewContext::new(cx), FacepileStory::default()))
+                }
+                Some(StorySelector::Component(ComponentStory::Toolbar)) => {
+                    view(|cx| render_story(&mut ViewContext::new(cx), ToolbarStory::default()))
                 }
                 Some(StorySelector::Component(ComponentStory::TrafficLights)) => view(|cx| {
                     render_story(&mut ViewContext::new(cx), TrafficLightsStory::default())
