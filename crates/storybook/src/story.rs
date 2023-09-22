@@ -5,6 +5,17 @@ use gpui2::{rgb, Element, Hsla, ParentElement};
 pub struct Story {}
 
 impl Story {
+    pub fn container<V: 'static>() -> div::Div<V> {
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .pt_2()
+            .px_4()
+            .font("Zed Mono Extended")
+            .fill(rgb::<Hsla>(0x282c34))
+    }
+
     pub fn title<V: 'static>(title: &str) -> impl Element<V> {
         div()
             .text_2xl()
