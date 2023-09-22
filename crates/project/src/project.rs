@@ -6377,15 +6377,58 @@ impl Project {
             .iter()
             .map(Path::new)
             .collect::<HashSet<_>>();
-        let prettier_config_changes = changes
+
+        let prettier_config_file_changed = changes
             .iter()
-            .filter(|(path, _, _)| prettier_config_files.contains(path.as_ref()))
+            .filter(|(_, _, change)| !matches!(change, PathChange::Loaded))
+            .filter(|(path, _, _)| {
+                !path
+                    .components()
+                    .any(|component| component.as_os_str().to_str() == Some("node_modules"))
+            })
+            .find(|(path, _, _)| prettier_config_files.contains(path.as_ref()));
+        let current_worktree_id = worktree.read(cx).id();
+        if let Some((config_path, _, _)) = prettier_config_file_changed {
+            log::info!(
+                "Prettier config file {config_path:?} changed, reloading prettier instances for worktree {current_worktree_id}"
+            );
+        }
+
+        let prettiers_to_reload = self
+            .prettier_instances
+            .iter()
+            .filter_map(|((worktree_id, prettier_path), prettier_task)| {
+                if worktree_id.is_none() || worktree_id == &Some(current_worktree_id) {
+                    Some((*worktree_id, prettier_path.clone(), prettier_task.clone()))
+                } else {
+                    None
+                }
+            })
             .collect::<Vec<_>>();
-        dbg!(prettier_config_changes);
-        dbg!(changes.len());
-        // TODO kb: reset caches for all worktree-related prettiers (including the default one) on prettier config file _changes_
-        // prepare node + prettier + plugins + prettier_server on files with Languages that have prettier formatter. Do not start it yet.
-        // !! Ignore **/node_modules/** files in both checks above.
+
+        cx.background()
+            .spawn(async move {
+                for task_result in future::join_all(prettiers_to_reload.into_iter().map(|(worktree_id, prettier_path, prettier_task)| {
+                    async move {
+                        prettier_task.await?
+                            .clear_cache()
+                            .await
+                            .with_context(|| {
+                                format!(
+                                    "clearing prettier {prettier_path:?} cache for worktree {worktree_id:?}"
+                                )
+                            })
+                            .map_err(Arc::new)
+                    }
+                }))
+                .await
+                {
+                    if let Err(e) = task_result {
+                        log::error!("Failed to clear cache for prettier: {e:#}");
+                    }
+                }
+            })
+            .detach();
     }
 
     pub fn set_active_path(&mut self, entry: Option<ProjectPath>, cx: &mut ModelContext<Self>) {
@@ -8305,6 +8348,7 @@ impl Project {
                 return existing_prettier;
             }
 
+            log::info!("Found prettier at {prettier_dir:?}, starting.");
             let task_prettier_dir = prettier_dir.clone();
             let weak_project = this.downgrade();
             let new_server_id =
@@ -8321,6 +8365,8 @@ impl Project {
                     .await
                     .context("prettier start")
                     .map_err(Arc::new)?;
+                    log::info!("Had started prettier in {:?}", prettier.prettier_dir());
+
                     if let Some(project) = weak_project.upgrade(&mut cx) {
                         project.update(&mut cx, |project, cx| {
                             let name = if prettier.is_default() {
