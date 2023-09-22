@@ -1,6 +1,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
+use crate::{Language, LanguageRegistry};
 use futures::FutureExt;
 use gpui::{
     elements::Text,
@@ -8,10 +9,50 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     CursorRegion, MouseRegion, ViewContext,
 };
-use language::{Language, LanguageRegistry};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 
-use crate::{Editor, EditorStyle};
+#[derive(Debug, Clone)]
+pub struct RenderedMarkdown {
+    text: String,
+    highlights: Vec<(Range<usize>, HighlightStyle)>,
+    region_ranges: Vec<Range<usize>>,
+    regions: Vec<RenderedRegion>,
+}
+
+// impl RenderedMarkdown {
+//     pub fn render(&self, style: &theme::Editor, cx: &mut ViewContext<Editor>) -> Text {
+//         let code_span_background_color = style.document_highlight_read_background;
+//         let view_id = cx.view_id();
+//         let mut region_id = 0;
+//         Text::new(text, style.text.clone())
+//             .with_highlights(highlights)
+//             .with_custom_runs(region_ranges, move |ix, bounds, scene, _| {
+//                 region_id += 1;
+//                 let region = regions[ix].clone();
+//                 if let Some(url) = region.link_url {
+//                     scene.push_cursor_region(CursorRegion {
+//                         bounds,
+//                         style: CursorStyle::PointingHand,
+//                     });
+//                     scene.push_mouse_region(
+//                         MouseRegion::new::<Editor>(view_id, region_id, bounds)
+//                             .on_click::<Editor, _>(MouseButton::Left, move |_, _, cx| {
+//                                 cx.platform().open_url(&url)
+//                             }),
+//                     );
+//                 }
+//                 if region.code {
+//                     scene.push_quad(gpui::Quad {
+//                         bounds,
+//                         background: Some(code_span_background_color),
+//                         border: Default::default(),
+//                         corner_radii: (2.0).into(),
+//                     });
+//                 }
+//             })
+//             .with_soft_wrap(true)
+//     }
+// }
 
 #[derive(Debug, Clone)]
 pub struct RenderedRegion {
@@ -23,9 +64,8 @@ pub fn render_markdown(
     markdown: &str,
     language_registry: &Arc<LanguageRegistry>,
     language: &Option<Arc<Language>>,
-    style: &EditorStyle,
-    cx: &mut ViewContext<Editor>,
-) -> Text {
+    style: &theme::Editor,
+) -> RenderedMarkdown {
     let mut text = String::new();
     let mut highlights = Vec::new();
     let mut region_ranges = Vec::new();
@@ -42,43 +82,19 @@ pub fn render_markdown(
         &mut regions,
     );
 
-    let code_span_background_color = style.document_highlight_read_background;
-    let view_id = cx.view_id();
-    let mut region_id = 0;
-    Text::new(text, style.text.clone())
-        .with_highlights(highlights)
-        .with_custom_runs(region_ranges, move |ix, bounds, scene, _| {
-            region_id += 1;
-            let region = regions[ix].clone();
-            if let Some(url) = region.link_url {
-                scene.push_cursor_region(CursorRegion {
-                    bounds,
-                    style: CursorStyle::PointingHand,
-                });
-                scene.push_mouse_region(
-                    MouseRegion::new::<Editor>(view_id, region_id, bounds)
-                        .on_click::<Editor, _>(MouseButton::Left, move |_, _, cx| {
-                            cx.platform().open_url(&url)
-                        }),
-                );
-            }
-            if region.code {
-                scene.push_quad(gpui::Quad {
-                    bounds,
-                    background: Some(code_span_background_color),
-                    border: Default::default(),
-                    corner_radii: (2.0).into(),
-                });
-            }
-        })
-        .with_soft_wrap(true)
+    RenderedMarkdown {
+        text,
+        highlights,
+        region_ranges,
+        regions,
+    }
 }
 
 pub fn render_markdown_block(
     markdown: &str,
     language_registry: &Arc<LanguageRegistry>,
     language: &Option<Arc<Language>>,
-    style: &EditorStyle,
+    style: &theme::Editor,
     text: &mut String,
     highlights: &mut Vec<(Range<usize>, HighlightStyle)>,
     region_ranges: &mut Vec<Range<usize>>,
@@ -231,7 +247,7 @@ pub fn render_code(
     highlights: &mut Vec<(Range<usize>, HighlightStyle)>,
     content: &str,
     language: &Arc<Language>,
-    style: &EditorStyle,
+    style: &theme::Editor,
 ) {
     let prev_len = text.len();
     text.push_str(content);

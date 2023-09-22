@@ -1,7 +1,6 @@
 use crate::{
     display_map::{InlayOffset, ToDisplayPoint},
     link_go_to_definition::{DocumentRange, InlayRange},
-    markdown::{self, RenderedRegion},
     Anchor, AnchorRangeExt, DisplayPoint, Editor, EditorSettings, EditorSnapshot, EditorStyle,
     ExcerptId, RangeToAnchorExt,
 };
@@ -13,7 +12,10 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     AnyElement, AppContext, CursorRegion, Element, ModelHandle, MouseRegion, Task, ViewContext,
 };
-use language::{Bias, DiagnosticEntry, DiagnosticSeverity, Language, LanguageRegistry};
+use language::{
+    markdown::{self, RenderedRegion},
+    Bias, DiagnosticEntry, DiagnosticSeverity, Language, LanguageRegistry,
+};
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart, Project};
 use std::{ops::Range, sync::Arc, time::Duration};
 use util::TryFutureExt;

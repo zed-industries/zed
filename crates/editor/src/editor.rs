@@ -9,7 +9,6 @@ mod highlight_matching_bracket;
 mod hover_popover;
 pub mod items;
 mod link_go_to_definition;
-mod markdown;
 mod mouse_context_menu;
 pub mod movement;
 pub mod multi_buffer;
@@ -78,6 +77,7 @@ pub use multi_buffer::{
     ToPoint,
 };
 use ordered_float::OrderedFloat;
+use parking_lot::RwLock;
 use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
 use rand::{seq::SliceRandom, thread_rng};
 use rpc::proto::PeerId;
@@ -788,10 +788,14 @@ enum ContextMenu {
 }
 
 impl ContextMenu {
-    fn select_first(&mut self, cx: &mut ViewContext<Editor>) -> bool {
+    fn select_first(
+        &mut self,
+        project: Option<&ModelHandle<Project>>,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
         if self.visible() {
             match self {
-                ContextMenu::Completions(menu) => menu.select_first(cx),
+                ContextMenu::Completions(menu) => menu.select_first(project, cx),
                 ContextMenu::CodeActions(menu) => menu.select_first(cx),
             }
             true
@@ -800,10 +804,14 @@ impl ContextMenu {
         }
     }
 
-    fn select_prev(&mut self, cx: &mut ViewContext<Editor>) -> bool {
+    fn select_prev(
+        &mut self,
+        project: Option<&ModelHandle<Project>>,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
         if self.visible() {
             match self {
-                ContextMenu::Completions(menu) => menu.select_prev(cx),
+                ContextMenu::Completions(menu) => menu.select_prev(project, cx),
                 ContextMenu::CodeActions(menu) => menu.select_prev(cx),
             }
             true
@@ -812,10 +820,14 @@ impl ContextMenu {
         }
     }
 
-    fn select_next(&mut self, cx: &mut ViewContext<Editor>) -> bool {
+    fn select_next(
+        &mut self,
+        project: Option<&ModelHandle<Project>>,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
         if self.visible() {
             match self {
-                ContextMenu::Completions(menu) => menu.select_next(cx),
+                ContextMenu::Completions(menu) => menu.select_next(project, cx),
                 ContextMenu::CodeActions(menu) => menu.select_next(cx),
             }
             true
@@ -824,10 +836,14 @@ impl ContextMenu {
         }
     }
 
-    fn select_last(&mut self, cx: &mut ViewContext<Editor>) -> bool {
+    fn select_last(
+        &mut self,
+        project: Option<&ModelHandle<Project>>,
+        cx: &mut ViewContext<Editor>,
+    ) -> bool {
         if self.visible() {
             match self {
-                ContextMenu::Completions(menu) => menu.select_last(cx),
+                ContextMenu::Completions(menu) => menu.select_last(project, cx),
                 ContextMenu::CodeActions(menu) => menu.select_last(cx),
             }
             true
@@ -861,7 +877,7 @@ struct CompletionsMenu {
     id: CompletionId,
     initial_position: Anchor,
     buffer: ModelHandle<Buffer>,
-    completions: Arc<[Completion]>,
+    completions: Arc<RwLock<Box<[Completion]>>>,
     match_candidates: Vec<StringMatchCandidate>,
     matches: Arc<[StringMatch]>,
     selected_item: usize,
@@ -869,32 +885,113 @@ struct CompletionsMenu {
 }
 
 impl CompletionsMenu {
-    fn select_first(&mut self, cx: &mut ViewContext<Editor>) {
+    fn select_first(
+        &mut self,
+        project: Option<&ModelHandle<Project>>,
+        cx: &mut ViewContext<Editor>,
+    ) {
         self.selected_item = 0;
         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        self.attempt_resolve_selected_completion(project, cx);
         cx.notify();
     }
 
-    fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
+    fn select_prev(
+        &mut self,
+        project: Option<&ModelHandle<Project>>,
+        cx: &mut ViewContext<Editor>,
+    ) {
         if self.selected_item > 0 {
             self.selected_item -= 1;
             self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         }
+        self.attempt_resolve_selected_completion(project, cx);
         cx.notify();
     }
 
-    fn select_next(&mut self, cx: &mut ViewContext<Editor>) {
+    fn select_next(
+        &mut self,
+        project: Option<&ModelHandle<Project>>,
+        cx: &mut ViewContext<Editor>,
+    ) {
         if self.selected_item + 1 < self.matches.len() {
             self.selected_item += 1;
             self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         }
+        self.attempt_resolve_selected_completion(project, cx);
         cx.notify();
     }
 
-    fn select_last(&mut self, cx: &mut ViewContext<Editor>) {
+    fn select_last(
+        &mut self,
+        project: Option<&ModelHandle<Project>>,
+        cx: &mut ViewContext<Editor>,
+    ) {
         self.selected_item = self.matches.len() - 1;
         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        self.attempt_resolve_selected_completion(project, cx);
         cx.notify();
+    }
+
+    fn attempt_resolve_selected_completion(
+        &mut self,
+        project: Option<&ModelHandle<Project>>,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        println!("attempt_resolve_selected_completion");
+        let index = self.matches[dbg!(self.selected_item)].candidate_id;
+        dbg!(index);
+        let Some(project) = project else {
+            println!("no project");
+            return;
+        };
+
+        let completions = self.completions.clone();
+        let completions_guard = completions.read();
+        let completion = &completions_guard[index];
+        if completion.lsp_completion.documentation.is_some() {
+            println!("has existing documentation");
+            return;
+        }
+
+        let server_id = completion.server_id;
+        let completion = completion.lsp_completion.clone();
+        drop(completions_guard);
+
+        let Some(server) = project.read(cx).language_server_for_id(server_id) else {
+            println!("no server");
+            return;
+        };
+
+        let can_resolve = server
+            .capabilities()
+            .completion_provider
+            .as_ref()
+            .and_then(|options| options.resolve_provider)
+            .unwrap_or(false);
+        if !dbg!(can_resolve) {
+            return;
+        }
+
+        cx.spawn(|this, mut cx| async move {
+            println!("in spawn");
+            let request = server.request::<lsp::request::ResolveCompletionItem>(completion);
+            let Some(completion_item) = request.await.log_err() else {
+                println!("errored");
+                return;
+            };
+
+            if completion_item.documentation.is_some() {
+                println!("got new documentation");
+                let mut completions = completions.write();
+                completions[index].lsp_completion.documentation = completion_item.documentation;
+                println!("notifying");
+                _ = this.update(&mut cx, |_, cx| cx.notify());
+            } else {
+                println!("did not get anything");
+            }
+        })
+        .detach();
     }
 
     fn visible(&self) -> bool {
@@ -914,7 +1011,8 @@ impl CompletionsMenu {
             .iter()
             .enumerate()
             .max_by_key(|(_, mat)| {
-                let completion = &self.completions[mat.candidate_id];
+                let completions = self.completions.read();
+                let completion = &completions[mat.candidate_id];
                 let documentation = &completion.lsp_completion.documentation;
 
                 let mut len = completion.label.text.chars().count();
@@ -938,6 +1036,7 @@ impl CompletionsMenu {
             let style = style.clone();
             move |_, range, items, cx| {
                 let start_ix = range.start;
+                let completions = completions.read();
                 for (ix, mat) in matches[range].iter().enumerate() {
                     let completion = &completions[mat.candidate_id];
                     let documentation = &completion.lsp_completion.documentation;
@@ -1052,7 +1151,8 @@ impl CompletionsMenu {
             .with_child(list)
             .with_children({
                 let mat = &self.matches[selected_item];
-                let completion = &self.completions[mat.candidate_id];
+                let completions = self.completions.read();
+                let completion = &completions[mat.candidate_id];
                 let documentation = &completion.lsp_completion.documentation;
 
                 if let Some(lsp::Documentation::MarkupContent(content)) = documentation {
@@ -1069,13 +1169,12 @@ impl CompletionsMenu {
                     Some(
                         Flex::column()
                             .scrollable::<CompletionDocsMarkdown>(0, None, cx)
-                            .with_child(crate::markdown::render_markdown(
-                                &content.value,
-                                &registry,
-                                &language,
-                                &style,
-                                cx,
-                            ))
+                            // .with_child(language::markdown::render_markdown(
+                            //     &content.value,
+                            //     &registry,
+                            //     &language,
+                            //     &style,
+                            // ))
                             .constrained()
                             .with_width(alongside_docs_width)
                             .contained()
@@ -1130,17 +1229,20 @@ impl CompletionsMenu {
             }
         }
 
+        let completions = self.completions.read();
         matches.sort_unstable_by_key(|mat| {
-            let completion = &self.completions[mat.candidate_id];
+            let completion = &completions[mat.candidate_id];
             (
                 completion.lsp_completion.sort_text.as_ref(),
                 Reverse(OrderedFloat(mat.score)),
                 completion.sort_key(),
             )
         });
+        drop(completions);
 
         for mat in &mut matches {
-            let filter_start = self.completions[mat.candidate_id].label.filter_range.start;
+            let completions = self.completions.read();
+            let filter_start = completions[mat.candidate_id].label.filter_range.start;
             for position in &mut mat.positions {
                 *position += filter_start;
             }
@@ -3187,7 +3289,7 @@ impl Editor {
                             })
                             .collect(),
                         buffer,
-                        completions: completions.into(),
+                        completions: Arc::new(RwLock::new(completions.into())),
                         matches: Vec::new().into(),
                         selected_item: 0,
                         list: Default::default(),
@@ -3196,6 +3298,9 @@ impl Editor {
                     if menu.matches.is_empty() {
                         None
                     } else {
+                        _ = this.update(&mut cx, |editor, cx| {
+                            menu.attempt_resolve_selected_completion(editor.project.as_ref(), cx);
+                        });
                         Some(menu)
                     }
                 } else {
@@ -3252,7 +3357,8 @@ impl Editor {
             .matches
             .get(action.item_ix.unwrap_or(completions_menu.selected_item))?;
         let buffer_handle = completions_menu.buffer;
-        let completion = completions_menu.completions.get(mat.candidate_id)?;
+        let completions = completions_menu.completions.read();
+        let completion = completions.get(mat.candidate_id)?;
 
         let snippet;
         let text;
@@ -5372,7 +5478,7 @@ impl Editor {
         if self
             .context_menu
             .as_mut()
-            .map(|menu| menu.select_last(cx))
+            .map(|menu| menu.select_last(self.project.as_ref(), cx))
             .unwrap_or(false)
         {
             return;
@@ -5416,25 +5522,25 @@ impl Editor {
 
     pub fn context_menu_first(&mut self, _: &ContextMenuFirst, cx: &mut ViewContext<Self>) {
         if let Some(context_menu) = self.context_menu.as_mut() {
-            context_menu.select_first(cx);
+            context_menu.select_first(self.project.as_ref(), cx);
         }
     }
 
     pub fn context_menu_prev(&mut self, _: &ContextMenuPrev, cx: &mut ViewContext<Self>) {
         if let Some(context_menu) = self.context_menu.as_mut() {
-            context_menu.select_prev(cx);
+            context_menu.select_prev(self.project.as_ref(), cx);
         }
     }
 
     pub fn context_menu_next(&mut self, _: &ContextMenuNext, cx: &mut ViewContext<Self>) {
         if let Some(context_menu) = self.context_menu.as_mut() {
-            context_menu.select_next(cx);
+            context_menu.select_next(self.project.as_ref(), cx);
         }
     }
 
     pub fn context_menu_last(&mut self, _: &ContextMenuLast, cx: &mut ViewContext<Self>) {
         if let Some(context_menu) = self.context_menu.as_mut() {
-            context_menu.select_last(cx);
+            context_menu.select_last(self.project.as_ref(), cx);
         }
     }
 

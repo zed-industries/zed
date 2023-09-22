@@ -1,6 +1,7 @@
 pub use crate::{
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
+    markdown::RenderedMarkdown,
     proto, BracketPair, Grammar, Language, LanguageConfig, LanguageRegistry, PLAIN_TEXT,
 };
 use crate::{
@@ -148,6 +149,7 @@ pub struct Completion {
     pub old_range: Range<Anchor>,
     pub new_text: String,
     pub label: CodeLabel,
+    pub alongside_documentation: Option<RenderedMarkdown>,
     pub server_id: LanguageServerId,
     pub lsp_completion: lsp::CompletionItem,
 }

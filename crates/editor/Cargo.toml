@@ -57,7 +57,6 @@ log.workspace = true
 ordered-float.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
-pulldown-cmark = { version = "0.9.2", default-features = false }
 rand.workspace = true
 schemars.workspace = true
 serde.workspace = true

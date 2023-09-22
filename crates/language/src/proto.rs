@@ -482,6 +482,7 @@ pub async fn deserialize_completion(
                 lsp_completion.filter_text.as_deref(),
             )
         }),
+        alongside_documentation: None,
         server_id: LanguageServerId(completion.server_id as usize),
         lsp_completion,
     })
