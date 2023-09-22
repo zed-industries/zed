@@ -1,6 +1,6 @@
 use gpui2::elements::div;
 use gpui2::style::StyleHelpers;
-use gpui2::{Element, IntoElement, ParentElement, ViewContext};
+use gpui2::{Element, Hsla, IntoElement, ParentElement, ViewContext};
 
 use crate::theme;
 
@@ -19,26 +19,12 @@ impl TrafficLights {
             .flex()
             .items_center()
             .gap_2()
-            .child(
-                div()
-                    .w_3()
-                    .h_3()
-                    .rounded_full()
-                    .fill(theme.lowest.positive.default.foreground),
-            )
-            .child(
-                div()
-                    .w_3()
-                    .h_3()
-                    .rounded_full()
-                    .fill(theme.lowest.warning.default.foreground),
-            )
-            .child(
-                div()
-                    .w_3()
-                    .h_3()
-                    .rounded_full()
-                    .fill(theme.lowest.negative.default.foreground),
-            )
+            .child(traffic_light(theme.lowest.positive.default.foreground))
+            .child(traffic_light(theme.lowest.warning.default.foreground))
+            .child(traffic_light(theme.lowest.negative.default.foreground))
     }
+}
+
+fn traffic_light<V: 'static, C: Into<Hsla>>(fill: C) -> div::Div<V> {
+    div().w_3().h_3().rounded_full().fill(fill.into())
 }
