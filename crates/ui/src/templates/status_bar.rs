@@ -96,8 +96,8 @@ impl<V: 'static> StatusBar<V> {
             .justify_between()
             .w_full()
             .fill(theme.lowest.base.default.background)
-            .child(self.left_tools(theme))
-            .child(self.right_tools(theme))
+            .child(self.left_tools(&theme))
+            .child(self.right_tools(&theme))
     }
 
     fn left_tools(&self, theme: &Theme) -> impl Element<V> {
