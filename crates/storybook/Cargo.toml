@@ -10,7 +10,7 @@ path = "src/storybook.rs"
 
 [dependencies]
 anyhow.workspace = true
-clap = { version = "3.1", features = ["derive"] }
+clap = { version = "4.4", features = ["derive", "string"] }
 gpui2 = { path = "../gpui2" }
 log.workspace = true
 rust-embed.workspace = true

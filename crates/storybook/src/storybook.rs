@@ -6,9 +6,10 @@ mod story;
 mod workspace;
 
 use std::str::FromStr;
+use std::sync::OnceLock;
 
 use ::theme as legacy_theme;
-use clap::Parser;
+use clap::{builder::PossibleValue, Parser, ValueEnum};
 use gpui2::{serde_json, vec2f, view, Element, IntoElement, RectF, ViewContext, WindowBounds};
 use legacy_theme::ThemeSettings;
 use log::LevelFilter;
@@ -19,7 +20,7 @@ use stories::components::facepile::FacepileStory;
 use stories::components::toolbar::ToolbarStory;
 use stories::components::traffic_lights::TrafficLightsStory;
 use stories::elements::avatar::AvatarStory;
-use strum::EnumString;
+use strum::{EnumIter, EnumString, IntoEnumIterator};
 use ui::{ElementExt, Theme};
 
 gpui2::actions! {
@@ -57,13 +58,37 @@ impl FromStr for StorySelector {
     }
 }
 
-#[derive(Debug, Clone, Copy, EnumString)]
+static ALL_STORIES: OnceLock<Vec<StorySelector>> = OnceLock::new();
+
+impl ValueEnum for StorySelector {
+    fn value_variants<'a>() -> &'a [Self] {
+        let stories = ALL_STORIES.get_or_init(|| {
+            let element_stories = ElementStory::iter().map(Self::Element);
+            let component_stories = ComponentStory::iter().map(Self::Component);
+
+            element_stories.chain(component_stories).collect::<Vec<_>>()
+        });
+
+        stories
+    }
+
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        let value = match self {
+            Self::Element(story) => format!("elements/{story}"),
+            Self::Component(story) => format!("components/{story}"),
+        };
+
+        Some(PossibleValue::new(value))
+    }
+}
+
+#[derive(Debug, Clone, Copy, strum::Display, EnumString, EnumIter)]
 #[strum(serialize_all = "snake_case")]
 enum ElementStory {
     Avatar,
 }
 
-#[derive(Debug, Clone, Copy, EnumString)]
+#[derive(Debug, Clone, Copy, strum::Display, EnumString, EnumIter)]
 #[strum(serialize_all = "snake_case")]
 enum ComponentStory {
     Breadcrumb,
@@ -73,7 +98,9 @@ enum ComponentStory {
 }
 
 #[derive(Parser)]
+#[command(author, version, about, long_about = None)]
 struct Args {
+    #[arg(value_enum)]
     story: Option<StorySelector>,
 }
 
