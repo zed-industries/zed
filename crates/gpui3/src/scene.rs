@@ -1,6 +1,5 @@
-use crate::{FontId, GlyphId};
-
 use super::{Bounds, Hsla, Pixels, Point};
+use crate::{Corners, Edges, FontId, GlyphId};
 use bytemuck::{Pod, Zeroable};
 use plane_split::BspSplitter;
 
@@ -69,13 +68,12 @@ pub struct PrimitiveBatch {
 pub struct Quad {
     pub order: f32,
     pub bounds: Bounds<Pixels>,
+    pub clip_bounds: Bounds<Pixels>,
+    pub clip_corner_radii: Corners<Pixels>,
     pub background: Hsla,
     pub border_color: Hsla,
-    pub corner_radius: Pixels,
-    pub border_left: Pixels,
-    pub border_right: Pixels,
-    pub border_top: Pixels,
-    pub border_bottom: Pixels,
+    pub corner_radii: Corners<Pixels>,
+    pub border_widths: Edges<Pixels>,
 }
 
 impl Quad {

@@ -1,7 +1,7 @@
-use super::{
-    rems, AbsoluteLength, Bounds, DefiniteLength, Edges, EdgesRefinement, FontStyle, FontWeight,
-    Hsla, Length, Pixels, Point, PointRefinement, Rems, Result, RunStyle, SharedString, Size,
-    SizeRefinement, ViewContext, WindowContext,
+use crate::{
+    rems, AbsoluteLength, Bounds, Corners, CornersRefinement, DefiniteLength, Edges,
+    EdgesRefinement, FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rems,
+    Result, RunStyle, SharedString, Size, SizeRefinement, ViewContext, WindowContext,
 };
 use refineable::Refineable;
 pub use taffy::style::{
@@ -86,7 +86,7 @@ pub struct Style {
 
     /// The radius of the corners of this element
     #[refineable]
-    pub corner_radii: CornerRadii,
+    pub corner_radii: Corners<AbsoluteLength>,
 
     /// The color of text within this element. Cascades to children unless overridden.
     pub text_color: Option<Hsla>,
@@ -243,7 +243,7 @@ impl Default for Style {
             flex_basis: Length::Auto,
             fill: None,
             border_color: None,
-            corner_radii: CornerRadii::default(),
+            corner_radii: Corners::default(),
             text_color: None,
             font_size: Some(rems(1.)),
             font_family: None,

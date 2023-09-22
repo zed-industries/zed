@@ -8,9 +8,10 @@ pub struct Renderer {
     queue: wgpu::Queue,
     surface: wgpu::Surface,
     surface_config: wgpu::SurfaceConfiguration,
-    pipeline: wgpu::RenderPipeline,
+    quad_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     vertex_count: u32,
+    uniforms_buffer: wgpu::Buffer,
 }
 
 pub(crate) trait RenderTarget: HasRawWindowHandle + HasRawDisplayHandle {
@@ -52,12 +53,9 @@ impl Renderer {
                 // quality takes priority over input latency.
                 present_mode: wgpu::PresentMode::Fifo,
 
-                // Use the Premultiplied alpha mode. With premultiplication, the color components
-                // are multiplied by the alpha value before storage or blending, meaning calculations
-                // with colors already factor in the influence of alpha. This typically results
-                // in better performance and avoids a separate multiplication operation during blending.
-                alpha_mode: wgpu::CompositeAlphaMode::PreMultiplied,
-
+                // When blending, assume the RGB have not yet been multiplied by the alpha channel.
+                alpha_mode: wgpu::CompositeAlphaMode::PostMultiplied,
+PostMultiplied
                 // Specify the color formats for the views the surface can have.
                 // In this case, the format is BGRA (blue, green, red, alpha) with unsigned
                 // normalised integers in the 8-bit range and the color space is sRGB (standard RGB).
@@ -78,6 +76,13 @@ impl Renderer {
                 source: wgpu::ShaderSource::Wgsl(include_str!("shader.frag.wgsl").into()),
             });
 
+            let uniforms_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Uniforms Buffer"),
+                size: std::mem::size_of::<QuadUniforms>() as wgpu::BufferAddress,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
                 bind_group_layouts: &[],
@@ -91,17 +96,17 @@ impl Renderer {
                 mapped_at_creation: false,
             });
 
-            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            let quad_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("Render Pipeline"),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &vs_module,
-                    entry_point: "main",
+                    entry_point: "quad",
                     buffers: &[],
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &fs_module,
-                    entry_point: "main",
+                    entry_point: "quad",
                     targets: &[Some(wgpu::ColorTargetState {
                         format: surface_config.format,
                         blend: Some(wgpu::BlendState::REPLACE),
@@ -122,9 +127,10 @@ impl Renderer {
                 queue,
                 surface,
                 surface_config,
-                pipeline,
+                quad_pipeline,
                 vertex_buffer,
                 vertex_count: 0,
+                uniforms_buffer,
             }
         }
         .boxed()
@@ -163,8 +169,9 @@ impl Renderer {
                 depth_stencil_attachment: None,
             });
 
-            render_pass.set_pipeline(&self.pipeline);
+            render_pass.set_pipeline(&self.quad_pipeline);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_bind_group(0, &self.uniforms_buffer, &[]);
             render_pass.draw(0..self.vertex_count, 0..1);
         }
 

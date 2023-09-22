@@ -138,6 +138,9 @@ pub struct Bounds<T: Clone + Debug> {
     pub size: Size<T>,
 }
 
+unsafe impl<T: Clone + Debug + Zeroable + Pod> Zeroable for Bounds<T> {}
+unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Bounds<T> {}
+
 impl<T: Clone + Debug + Copy + Add<T, Output = T>> Bounds<T> {
     pub fn upper_right(&self) -> Point<T> {
         Point {
@@ -173,6 +176,12 @@ pub struct Edges<T: Clone + Debug> {
     pub bottom: T,
     pub left: T,
 }
+
+impl<T: Clone + Debug + Copy> Copy for Edges<T> {}
+
+unsafe impl<T: Clone + Debug + Zeroable + Pod> Zeroable for Edges<T> {}
+
+unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Edges<T> {}
 
 impl Edges<Length> {
     pub fn auto() -> Self {
@@ -230,6 +239,21 @@ impl Edges<Pixels> {
         self.top == px(0.) && self.right == px(0.) && self.bottom == px(0.) && self.left == px(0.)
     }
 }
+
+#[derive(Refineable, Clone, Default, Debug)]
+#[refineable(debug)]
+pub struct Corners<T: Clone + Debug> {
+    pub top_left: T,
+    pub top_right: T,
+    pub bottom_right: T,
+    pub bottom_left: T,
+}
+
+impl<T: Clone + Debug + Copy> Copy for Corners<T> {}
+
+unsafe impl<T: Clone + Debug + Zeroable + Pod> Zeroable for Corners<T> {}
+
+unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Corners<T> {}
 
 #[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd)]
 #[repr(transparent)]
