@@ -72,22 +72,20 @@ pub fn init(
         ],
     );
 
-    match settings::get::<ElixirSettings>(cx).next {
+    match &settings::get::<ElixirSettings>(cx).next {
         elixir_next::ElixirNextSetting::Off => language(
             "elixir",
             tree_sitter_elixir::language(),
             vec![Arc::new(elixir::ElixirLspAdapter)],
         ),
-        elixir_next::ElixirNextSetting::On => language(
+        elixir_next::ElixirNextSetting::On => todo!(),
+        elixir_next::ElixirNextSetting::Local { path } => language(
             "elixir",
             tree_sitter_elixir::language(),
-            vec![Arc::new(elixir_next::BundledNextLspAdapter)],
+            vec![Arc::new(elixir_next::LocalNextLspAdapter {
+                path: path.clone(),
+            })],
         ),
-        elixir_next::ElixirNextSetting::Local { port } => unimplemented!(), /*language(
-                                                                            "elixir",
-                                                                            tree_sitter_elixir::language(),
-                                                                            vec![Arc::new(elixir_next::LocalNextLspAdapter { port })],
-                                                                            )*/
     }
 
     language(
