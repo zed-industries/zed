@@ -1358,7 +1358,7 @@ impl LspCommand for GetCompletions {
                 }
             }
         } else {
-            Default::default()
+            Vec::new()
         };
 
         let completions = buffer.read_with(&cx, |buffer, _| {
@@ -1370,6 +1370,14 @@ impl LspCommand for GetCompletions {
             completions
                 .into_iter()
                 .filter_map(move |mut lsp_completion| {
+                    if let Some(response_list) = &response_list {
+                        if let Some(item_defaults) = &response_list.item_defaults {
+                            if let Some(data) = &item_defaults.data {
+                                lsp_completion.data = Some(data.clone());
+                            }
+                        }
+                    }
+
                     let (old_range, mut new_text) = match lsp_completion.text_edit.as_ref() {
                         // If the language server provides a range to overwrite, then
                         // check that the range is valid.
