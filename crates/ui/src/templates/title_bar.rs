@@ -41,8 +41,6 @@ impl<V: 'static> TitleBar<V> {
             avatar("https://avatars.githubusercontent.com/u/1789?v=4"),
         ];
 
-        dbg!(has_focus);
-
         div()
             .flex()
             .items_center()
