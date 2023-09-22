@@ -852,6 +852,7 @@ impl Project {
                         }
                     }
                     let worktree = buffer_file
+                        // TODO kb wrong usage (+ look around for another one like this)
                         .map(|f| f.worktree_id())
                         .map(WorktreeId::from_usize);
                     language_formatters_to_check.push((
@@ -912,7 +913,7 @@ impl Project {
         }
 
         for (worktree, language, settings) in language_formatters_to_check {
-            self.maybe_start_default_formatters(worktree, &language, &settings, cx);
+            self.install_default_formatters(worktree, &language, &settings, cx);
         }
 
         // Start all the newly-enabled language servers.
@@ -2669,7 +2670,7 @@ impl Project {
             .map(|f| f.worktree_id())
             .map(WorktreeId::from_usize);
         let settings = language_settings(Some(&new_language), buffer_file.as_ref(), cx).clone();
-        self.maybe_start_default_formatters(worktree, &new_language, &settings, cx);
+        self.install_default_formatters(worktree, &new_language, &settings, cx);
 
         if let Some(file) = File::from_dyn(buffer_file.as_ref()) {
             let worktree = file.worktree.clone();
@@ -6395,7 +6396,7 @@ impl Project {
                 .prettier_instances
                 .iter()
                 .filter_map(|((worktree_id, prettier_path), prettier_task)| {
-                    if worktree_id == &Some(current_worktree_id) {
+                    if worktree_id.is_none() || worktree_id == &Some(current_worktree_id) {
                         Some((*worktree_id, prettier_path.clone(), prettier_task.clone()))
                     } else {
                         None
@@ -6412,7 +6413,7 @@ impl Project {
                                 .await
                                 .with_context(|| {
                                     format!(
-                                        "clearing prettier {prettier_path:?} cache for worktree {worktree_id:?}"
+                                        "clearing prettier {prettier_path:?} cache for worktree {worktree_id:?} on prettier settings update"
                                     )
                                 })
                                 .map_err(Arc::new)
@@ -8410,6 +8411,7 @@ impl Project {
                                 .supplementary_language_servers
                                 .insert(new_server_id, (name, Arc::clone(prettier.server())));
                             // TODO kb could there be a race with multiple default prettier instances added?
+                            // also, clean up prettiers for dropped workspaces (e.g. external files that got closed)
                             cx.emit(Event::LanguageServerAdded(new_server_id));
                         });
                     }
@@ -8426,7 +8428,7 @@ impl Project {
         Some(task)
     }
 
-    fn maybe_start_default_formatters(
+    fn install_default_formatters(
         &self,
         worktree: Option<WorktreeId>,
         new_language: &Language,
@@ -8458,14 +8460,10 @@ impl Project {
         };
 
         let default_prettier_dir = DEFAULT_PRETTIER_DIR.as_path();
-        if let Some(_already_running) = self
+        let already_running_prettier = self
             .prettier_instances
             .get(&(worktree, default_prettier_dir.to_path_buf()))
-        {
-            // TODO kb need to compare plugins, install missing and restart prettier
-            // TODO kb move the entire prettier init logic into prettier.rs
-            return;
-        }
+            .cloned();
 
         let fs = Arc::clone(&self.fs);
         cx.background()
@@ -8478,8 +8476,7 @@ impl Project {
                 let packages_to_versions = future::try_join_all(
                     prettier_plugins
                         .iter()
-                        .map(|s| s.as_str())
-                        .chain(Some("prettier"))
+                        .chain(Some(&"prettier"))
                         .map(|package_name| async {
                             let returned_package_name = package_name.to_string();
                             let latest_version = node.npm_package_latest_version(package_name)
@@ -8497,6 +8494,13 @@ impl Project {
                     (package.as_str(), version.as_str())
                 }).collect::<Vec<_>>();
                 node.npm_install_packages(default_prettier_dir, &borrowed_packages).await.context("fetching formatter packages")?;
+
+                if !prettier_plugins.is_empty() {
+                    if let Some(prettier) = already_running_prettier {
+                        prettier.await.map_err(|e| anyhow::anyhow!("Default prettier startup await failure: {e:#}"))?.clear_cache().await.context("clearing default prettier cache after plugins install")?;
+                    }
+                }
+
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);

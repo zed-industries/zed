@@ -153,6 +153,7 @@ async function handleMessage(message, prettier) {
         const options = {
             ...(params.options.prettierOptions || prettier.config),
             parser: params.options.parser,
+            plugins: params.options.plugins,
             path: params.options.path
         };
         // TODO kb always resolve prettier config for each file.

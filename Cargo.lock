@@ -5528,6 +5528,7 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "language",
+ "log",
  "lsp",
  "node_runtime",
  "serde",

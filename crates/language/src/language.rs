@@ -338,10 +338,6 @@ pub trait LspAdapter: 'static + Send + Sync {
         Default::default()
     }
 
-    // TODO kb enable this for
-    // markdown somehow?
-    // tailwind (needs a css plugin, there are 2 of them)
-    // svelte (needs a plugin)
     fn enabled_formatters(&self) -> Vec<BundledFormatter> {
         Vec::new()
     }
@@ -350,15 +346,15 @@ pub trait LspAdapter: 'static + Send + Sync {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BundledFormatter {
     Prettier {
-        parser_name: &'static str,
-        plugin_names: Vec<String>,
+        parser_name: Option<&'static str>,
+        plugin_names: Vec<&'static str>,
     },
 }
 
 impl BundledFormatter {
     pub fn prettier(parser_name: &'static str) -> Self {
         Self::Prettier {
-            parser_name,
+            parser_name: Some(parser_name),
             plugin_names: Vec::new(),
         }
     }

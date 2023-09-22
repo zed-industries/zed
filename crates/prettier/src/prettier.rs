@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use fs::Fs;
 use gpui::{AsyncAppContext, ModelHandle};
 use language::language_settings::language_settings;
@@ -29,6 +29,7 @@ pub struct LocateStart {
 pub const PRETTIER_SERVER_FILE: &str = "prettier_server.js";
 pub const PRETTIER_SERVER_JS: &str = include_str!("./prettier_server.js");
 const PRETTIER_PACKAGE_NAME: &str = "prettier";
+const TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME: &str = "prettier-plugin-tailwindcss";
 
 impl Prettier {
     // This was taken from the prettier-vscode extension.
@@ -206,17 +207,64 @@ impl Prettier {
             let path = buffer_file
                 .map(|file| file.full_path(cx))
                 .map(|path| path.to_path_buf());
-            let parser = buffer_language.and_then(|language| {
-                language
-                    .lsp_adapters()
-                    .iter()
-                    .flat_map(|adapter| adapter.enabled_formatters())
-                    .find_map(|formatter| match formatter {
-                        BundledFormatter::Prettier { parser_name, .. } => {
-                            Some(parser_name.to_string())
+            let parsers_with_plugins = buffer_language
+                .into_iter()
+                .flat_map(|language| {
+                    language
+                        .lsp_adapters()
+                        .iter()
+                        .flat_map(|adapter| adapter.enabled_formatters())
+                        .filter_map(|formatter| match formatter {
+                            BundledFormatter::Prettier {
+                                parser_name,
+                                plugin_names,
+                            } => Some((parser_name, plugin_names)),
+                        })
+                })
+                .fold(
+                    HashMap::default(),
+                    |mut parsers_with_plugins, (parser_name, plugins)| {
+                        match parser_name {
+                            Some(parser_name) => parsers_with_plugins
+                                .entry(parser_name)
+                                .or_insert_with(HashSet::default)
+                                .extend(plugins),
+                            None => parsers_with_plugins.values_mut().for_each(|existing_plugins| {
+                                existing_plugins.extend(plugins.iter());
+                            }),
                         }
-                    })
-            });
+                        parsers_with_plugins
+                    },
+                );
+
+            let selected_parser_with_plugins = parsers_with_plugins.iter().max_by_key(|(_, plugins)| plugins.len());
+            if parsers_with_plugins.len() > 1 {
+                log::warn!("Found multiple parsers with plugins {parsers_with_plugins:?}, will select only one: {selected_parser_with_plugins:?}");
+            }
+
+            // TODO kb move the entire prettier server js file into *.mjs one instead?
+            let plugin_name_into_path = |plugin_name: &str| self.prettier_dir.join("node_modules").join(plugin_name).join("dist").join("index.mjs");
+            let (parser, plugins) = match selected_parser_with_plugins {
+                Some((parser, plugins)) => {
+                    // Tailwind plugin requires being added last
+                    // https://github.com/tailwindlabs/prettier-plugin-tailwindcss#compatibility-with-other-prettier-plugins
+                    let mut add_tailwind_back = false;
+
+                    let mut plugins = plugins.into_iter().filter(|&&plugin_name| {
+                        if plugin_name == TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME {
+                            add_tailwind_back = true;
+                            false
+                        } else {
+                            true
+                        }
+                    }).map(|plugin_name| plugin_name_into_path(plugin_name)).collect::<Vec<_>>();
+                    if add_tailwind_back {
+                        plugins.push(plugin_name_into_path(TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME));
+                    }
+                    (Some(parser.to_string()), plugins)
+                },
+                None => (None, Vec::new()),
+            };
 
             let prettier_options = if self.default {
                 let language_settings = language_settings(buffer_language, buffer_file, cx);
@@ -246,6 +294,7 @@ impl Prettier {
                 text: buffer.text(),
                 options: FormatOptions {
                     parser,
+                    plugins,
                     // TODO kb is not absolute now
                     path,
                     prettier_options,
@@ -345,6 +394,7 @@ struct FormatParams {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct FormatOptions {
+    plugins: Vec<PathBuf>,
     parser: Option<String>,
     #[serde(rename = "filepath")]
     path: Option<PathBuf>,
