@@ -57,7 +57,7 @@ pub struct Window {
     pub(crate) rendered_views: HashMap<usize, Box<dyn AnyRootElement>>,
     scene: SceneBuilder,
     pub(crate) text_style_stack: Vec<TextStyle>,
-    pub(crate) theme_stack: Vec<Arc<dyn Any>>,
+    pub(crate) theme_stack: Vec<Arc<dyn Any + Send + Sync>>,
     pub(crate) new_parents: HashMap<usize, usize>,
     pub(crate) views_to_notify_if_ancestors_change: HashMap<usize, SmallVec<[usize; 2]>>,
     titlebar_height: f32,
@@ -1337,19 +1337,20 @@ impl<'a> WindowContext<'a> {
         self.window.text_style_stack.pop();
     }
 
-    pub fn theme<T: 'static>(&self) -> Arc<T> {
-        //dbg!(self.window.theme_stack.iter().next());
+    pub fn theme<T: 'static + Send + Sync>(&self) -> Arc<T> {
         self.window
             .theme_stack
             .iter()
             .rev()
-            .find_map(|theme| theme.downcast_ref())
-            .cloned()
+            .find_map(|theme| {
+                let entry = Arc::clone(theme);
+                entry.downcast::<T>().ok()
+            })
             .ok_or_else(|| anyhow!("no theme provided of type {}", type_name::<T>()))
             .unwrap()
     }
 
-    pub fn push_theme<T: 'static>(&mut self, theme: T) {
+    pub fn push_theme<T: 'static + Send + Sync>(&mut self, theme: T) {
         dbg!(std::any::type_name::<T>());
         self.window.theme_stack.push(Arc::new(theme));
     }
