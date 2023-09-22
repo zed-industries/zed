@@ -7,8 +7,8 @@ mod modules;
 pub mod prelude;
 mod theme;
 
+pub use crate::theme::*;
 pub use components::*;
 pub use element_ext::*;
 pub use elements::*;
 pub use modules::*;
-pub use theme::*;
