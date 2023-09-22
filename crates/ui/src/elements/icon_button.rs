@@ -23,6 +23,15 @@ pub fn icon_button() -> IconButton {
 }
 
 impl IconButton {
+    pub fn new(icon: IconAsset) -> Self {
+        Self {
+            icon,
+            color: IconColor::default(),
+            variant: ButtonVariant::default(),
+            state: InteractionState::default(),
+        }
+    }
+
     pub fn icon(mut self, icon: IconAsset) -> Self {
         self.icon = icon;
         self

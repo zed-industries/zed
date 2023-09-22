@@ -2,7 +2,7 @@ use gpui2::elements::div;
 use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
-use crate::{breadcrumb, icon_button, theme, IconAsset};
+use crate::{breadcrumb, theme, IconAsset, IconButton};
 
 pub struct ToolbarItem {}
 
@@ -27,9 +27,9 @@ impl Toolbar {
             .child(
                 div()
                     .flex()
-                    .child(icon_button().icon(IconAsset::InlayHint))
-                    .child(icon_button().icon(IconAsset::MagnifyingGlass))
-                    .child(icon_button().icon(IconAsset::MagicWand)),
+                    .child(IconButton::new(IconAsset::InlayHint))
+                    .child(IconButton::new(IconAsset::MagnifyingGlass))
+                    .child(IconButton::new(IconAsset::MagicWand)),
             )
     }
 }
