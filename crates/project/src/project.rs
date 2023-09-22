@@ -841,22 +841,18 @@ impl Project {
         for buffer in self.opened_buffers.values() {
             if let Some(buffer) = buffer.upgrade(cx) {
                 let buffer = buffer.read(cx);
-                let buffer_file = buffer.file();
+                let buffer_file = File::from_dyn(buffer.file());
                 let buffer_language = buffer.language();
-                let settings = language_settings(buffer_language, buffer_file, cx);
+                let settings = language_settings(buffer_language, buffer.file(), cx);
                 if let Some(language) = buffer_language {
                     if settings.enable_language_server {
-                        if let Some(file) = File::from_dyn(buffer_file) {
+                        if let Some(file) = buffer_file {
                             language_servers_to_start
                                 .push((file.worktree.clone(), Arc::clone(language)));
                         }
                     }
-                    let worktree = buffer_file
-                        // TODO kb wrong usage (+ look around for another one like this)
-                        .map(|f| f.worktree_id())
-                        .map(WorktreeId::from_usize);
                     language_formatters_to_check.push((
-                        worktree,
+                        buffer_file.map(|f| f.worktree_id(cx)),
                         Arc::clone(language),
                         settings.clone(),
                     ));
@@ -2665,14 +2661,12 @@ impl Project {
         });
 
         let buffer_file = buffer.read(cx).file().cloned();
-        let worktree = buffer_file
-            .as_ref()
-            .map(|f| f.worktree_id())
-            .map(WorktreeId::from_usize);
         let settings = language_settings(Some(&new_language), buffer_file.as_ref(), cx).clone();
+        let buffer_file = File::from_dyn(buffer_file.as_ref());
+        let worktree = buffer_file.as_ref().map(|f| f.worktree_id(cx));
         self.install_default_formatters(worktree, &new_language, &settings, cx);
 
-        if let Some(file) = File::from_dyn(buffer_file.as_ref()) {
+        if let Some(file) = buffer_file {
             let worktree = file.worktree.clone();
             if let Some(tree) = worktree.read(cx).as_local() {
                 self.start_language_servers(&worktree, tree.abs_path().clone(), new_language, cx);
