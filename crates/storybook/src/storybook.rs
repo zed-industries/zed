@@ -15,6 +15,7 @@ use log::LevelFilter;
 use settings::{default_settings, SettingsStore};
 use simplelog::SimpleLogger;
 use stories::components::facepile::FacepileStory;
+use stories::components::toolbar::ToolbarStory;
 use stories::components::traffic_lights::TrafficLightsStory;
 use stories::elements::avatar::AvatarStory;
 use strum::EnumString;
@@ -65,6 +66,7 @@ enum ElementStory {
 #[strum(serialize_all = "snake_case")]
 enum ComponentStory {
     Facepile,
+    Toolbar,
     TrafficLights,
 }
 
@@ -99,6 +101,9 @@ fn main() {
                 }
                 Some(StorySelector::Component(ComponentStory::Facepile)) => {
                     view(|cx| render_story(&mut ViewContext::new(cx), FacepileStory::default()))
+                }
+                Some(StorySelector::Component(ComponentStory::Toolbar)) => {
+                    view(|cx| render_story(&mut ViewContext::new(cx), ToolbarStory::default()))
                 }
                 Some(StorySelector::Component(ComponentStory::TrafficLights)) => view(|cx| {
                     render_story(&mut ViewContext::new(cx), TrafficLightsStory::default())
