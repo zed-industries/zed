@@ -18,8 +18,17 @@ impl Story {
 
     pub fn title<V: 'static>(title: &str) -> impl Element<V> {
         div()
-            .text_2xl()
+            .text_xl()
             .text_color(rgb::<Hsla>(0xffffff))
             .child(title.to_owned())
+    }
+
+    pub fn label<V: 'static>(label: &str) -> impl Element<V> {
+        div()
+            .mt_4()
+            .mb_2()
+            .text_xs()
+            .text_color(rgb::<Hsla>(0xffffff))
+            .child(label.to_owned())
     }
 }

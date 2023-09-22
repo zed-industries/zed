@@ -12,6 +12,9 @@ impl TrafficLightsStory {
 
         Story::container()
             .child(Story::title(std::any::type_name::<ui::TrafficLights>()))
+            .child(Story::label("Default"))
             .child(traffic_lights())
+            .child(Story::label("Unfocused"))
+            .child(traffic_lights().window_has_focus(false))
     }
 }
