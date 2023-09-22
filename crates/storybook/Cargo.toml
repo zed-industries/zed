@@ -9,8 +9,9 @@ name = "storybook"
 path = "src/storybook.rs"
 
 [dependencies]
-gpui2 = { path = "../gpui2" }
 anyhow.workspace = true
+clap = { version = "3.1", features = ["derive"] }
+gpui2 = { path = "../gpui2" }
 log.workspace = true
 rust-embed.workspace = true
 serde.workspace = true

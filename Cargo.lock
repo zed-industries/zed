@@ -7390,6 +7390,7 @@ name = "storybook"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clap 3.2.25",
  "gpui2",
  "log",
  "rust-embed",
