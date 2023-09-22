@@ -1,4 +1,12 @@
 #[derive(Default, PartialEq)]
+pub enum OrderMethod {
+    #[default]
+    Ascending,
+    Descending,
+    MostRecent,
+}
+
+#[derive(Default, PartialEq)]
 pub enum ButtonVariant {
     #[default]
     Ghost,
@@ -17,6 +25,13 @@ pub enum Shape {
     #[default]
     Circle,
     RoundedRectangle,
+}
+
+#[derive(Default, PartialEq, Clone, Copy)]
+pub enum DisclosureControlVisibility {
+    #[default]
+    OnHover,
+    Always,
 }
 
 #[derive(Default, PartialEq, Clone, Copy)]
