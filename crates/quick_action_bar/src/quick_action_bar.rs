@@ -1,4 +1,4 @@
-use ai::{assistant::InlineAssist, AssistantPanel};
+use assistant::{assistant_panel::InlineAssist, AssistantPanel};
 use editor::Editor;
 use gpui::{
     elements::{Empty, Flex, MouseEventHandler, ParentElement, Svg},

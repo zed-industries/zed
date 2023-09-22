@@ -161,7 +161,7 @@ fn main() {
         vim::init(cx);
         terminal_view::init(cx);
         copilot::init(copilot_language_server_id, http.clone(), node_runtime, cx);
-        ai::init(cx);
+        assistant::init(cx);
         component_test::init(cx);
 
         cx.spawn(|cx| watch_themes(fs.clone(), cx)).detach();

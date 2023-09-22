@@ -1,8 +1,11 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, OpenAIModel},
-    codegen::{self, Codegen, CodegenKind, OpenAICompletionProvider},
-    stream_completion, MessageId, MessageMetadata, MessageStatus, OpenAIRequest, RequestMessage,
-    Role, SavedConversation, SavedConversationMetadata, SavedMessage, OPENAI_API_URL,
+    codegen::{self, Codegen, CodegenKind},
+    MessageId, MessageMetadata, MessageStatus, Role, SavedConversation, SavedConversationMetadata,
+    SavedMessage,
+};
+use ai::completion::{
+    stream_completion, OpenAICompletionProvider, OpenAIRequest, RequestMessage, OPENAI_API_URL,
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};

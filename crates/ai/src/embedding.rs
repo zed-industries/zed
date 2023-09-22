@@ -27,8 +27,30 @@ lazy_static! {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct Embedding(Vec<f32>);
+pub struct Embedding(pub Vec<f32>);
 
+// This is needed for semantic index functionality
+// Unfortunately it has to live wherever the "Embedding" struct is created.
+// Keeping this in here though, introduces a 'rusqlite' dependency into AI
+// which is less than ideal
+impl FromSql for Embedding {
+    fn column_result(value: ValueRef) -> FromSqlResult<Self> {
+        let bytes = value.as_blob()?;
+        let embedding: Result<Vec<f32>, Box<bincode::ErrorKind>> = bincode::deserialize(bytes);
+        if embedding.is_err() {
+            return Err(rusqlite::types::FromSqlError::Other(embedding.unwrap_err()));
+        }
+        Ok(Embedding(embedding.unwrap()))
+    }
+}
+
+impl ToSql for Embedding {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput> {
+        let bytes = bincode::serialize(&self.0)
+            .map_err(|err| rusqlite::Error::ToSqlConversionFailure(Box::new(err)))?;
+        Ok(ToSqlOutput::Owned(rusqlite::types::Value::Blob(bytes)))
+    }
+}
 impl From<Vec<f32>> for Embedding {
     fn from(value: Vec<f32>) -> Self {
         Embedding(value)
@@ -63,24 +85,24 @@ impl Embedding {
     }
 }
 
-impl FromSql for Embedding {
-    fn column_result(value: ValueRef) -> FromSqlResult<Self> {
-        let bytes = value.as_blob()?;
-        let embedding: Result<Vec<f32>, Box<bincode::ErrorKind>> = bincode::deserialize(bytes);
-        if embedding.is_err() {
-            return Err(rusqlite::types::FromSqlError::Other(embedding.unwrap_err()));
-        }
-        Ok(Embedding(embedding.unwrap()))
-    }
-}
+// impl FromSql for Embedding {
+//     fn column_result(value: ValueRef) -> FromSqlResult<Self> {
+//         let bytes = value.as_blob()?;
+//         let embedding: Result<Vec<f32>, Box<bincode::ErrorKind>> = bincode::deserialize(bytes);
+//         if embedding.is_err() {
+//             return Err(rusqlite::types::FromSqlError::Other(embedding.unwrap_err()));
+//         }
+//         Ok(Embedding(embedding.unwrap()))
+//     }
+// }
 
-impl ToSql for Embedding {
-    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput> {
-        let bytes = bincode::serialize(&self.0)
-            .map_err(|err| rusqlite::Error::ToSqlConversionFailure(Box::new(err)))?;
-        Ok(ToSqlOutput::Owned(rusqlite::types::Value::Blob(bytes)))
-    }
-}
+// impl ToSql for Embedding {
+//     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput> {
+//         let bytes = bincode::serialize(&self.0)
+//             .map_err(|err| rusqlite::Error::ToSqlConversionFailure(Box::new(err)))?;
+//         Ok(ToSqlOutput::Owned(rusqlite::types::Value::Blob(bytes)))
+//     }
+// }
 
 #[derive(Clone)]
 pub struct OpenAIEmbeddings {
