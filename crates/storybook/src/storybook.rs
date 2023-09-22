@@ -24,12 +24,12 @@ gpui2::actions! {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum Story {
+enum StorySelector {
     Element(ElementStory),
     Component(ComponentStory),
 }
 
-impl FromStr for Story {
+impl FromStr for StorySelector {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
@@ -55,7 +55,7 @@ enum ComponentStory {
 
 #[derive(Parser)]
 struct Args {
-    story: Option<Story>,
+    story: Option<StorySelector>,
 }
 
 fn main() {
@@ -79,13 +79,13 @@ fn main() {
                 ..Default::default()
             },
             |cx| match args.story {
-                Some(Story::Element(ElementStory::Avatar)) => {
+                Some(StorySelector::Element(ElementStory::Avatar)) => {
                     view(|cx| render_story(&mut ViewContext::new(cx), AvatarStory::default()))
                 }
-                Some(Story::Component(ComponentStory::Facepile)) => {
+                Some(StorySelector::Component(ComponentStory::Facepile)) => {
                     view(|cx| render_story(&mut ViewContext::new(cx), FacepileStory::default()))
                 }
-                Some(Story::Component(ComponentStory::TrafficLights)) => view(|cx| {
+                Some(StorySelector::Component(ComponentStory::TrafficLights)) => view(|cx| {
                     render_story(&mut ViewContext::new(cx), TrafficLightsStory::default())
                 }),
                 None => {
