@@ -19,9 +19,9 @@ impl TrafficLights {
             .flex()
             .items_center()
             .gap_2()
-            .child(traffic_light(theme.lowest.positive.default.foreground))
-            .child(traffic_light(theme.lowest.warning.default.foreground))
             .child(traffic_light(theme.lowest.negative.default.foreground))
+            .child(traffic_light(theme.lowest.warning.default.foreground))
+            .child(traffic_light(theme.lowest.positive.default.foreground))
     }
 }
 
