@@ -150,15 +150,19 @@ async function handleMessage(message, prettier) {
             throw new Error(`Message params.options is undefined: ${JSON.stringify(message)}`);
         }
 
+        let resolvedConfig = {};
+        if (params.options.filepath !== undefined) {
+            resolvedConfig = await prettier.prettier.resolveConfig(params.options.filepath) || {};
+        }
+
         const options = {
             ...(params.options.prettierOptions || prettier.config),
+            ...resolvedConfig,
             parser: params.options.parser,
             plugins: params.options.plugins,
-            path: params.options.path
+            path: params.options.filepath
         };
-        // TODO kb always resolve prettier config for each file.
-        // need to understand if default prettier can be affected by other configs in the project
-        // (restart default prettiers on config changes too then)
+        process.stderr.write(`Resolved config: ${JSON.stringify(resolvedConfig)}, will format file '${params.options.filepath || ''}' with options: ${JSON.stringify(options)}\n`);
         const formattedText = await prettier.prettier.format(params.text, options);
         sendResponse({ id, result: { text: formattedText } });
     } else if (method === 'prettier/clear_cache') {

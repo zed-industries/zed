@@ -199,14 +199,11 @@ impl Prettier {
     pub async fn format(
         &self,
         buffer: &ModelHandle<Buffer>,
+        buffer_path: Option<PathBuf>,
         cx: &AsyncAppContext,
     ) -> anyhow::Result<Diff> {
         let params = buffer.read_with(cx, |buffer, cx| {
-            let buffer_file = buffer.file();
             let buffer_language = buffer.language();
-            let path = buffer_file
-                .map(|file| file.full_path(cx))
-                .map(|path| path.to_path_buf());
             let parsers_with_plugins = buffer_language
                 .into_iter()
                 .flat_map(|language| {
@@ -242,7 +239,6 @@ impl Prettier {
                 log::warn!("Found multiple parsers with plugins {parsers_with_plugins:?}, will select only one: {selected_parser_with_plugins:?}");
             }
 
-            // TODO kb move the entire prettier server js file into *.mjs one instead?
             let plugin_name_into_path = |plugin_name: &str| self.prettier_dir.join("node_modules").join(plugin_name).join("dist").join("index.mjs");
             let (parser, plugins) = match selected_parser_with_plugins {
                 Some((parser, plugins)) => {
@@ -267,7 +263,7 @@ impl Prettier {
             };
 
             let prettier_options = if self.default {
-                let language_settings = language_settings(buffer_language, buffer_file, cx);
+                let language_settings = language_settings(buffer_language, buffer.file(), cx);
                 let mut options = language_settings.prettier.clone();
                 if !options.contains_key("tabWidth") {
                     options.insert(
@@ -295,8 +291,7 @@ impl Prettier {
                 options: FormatOptions {
                     parser,
                     plugins,
-                    // TODO kb is not absolute now
-                    path,
+                    path: buffer_path,
                     prettier_options,
                 },
             }

@@ -4130,9 +4130,12 @@ impl Project {
                                         .await
                                     {
                                         Ok(prettier) => {
+                                            let buffer_path = buffer.read_with(&cx, |buffer, cx| {
+                                                File::from_dyn(buffer.file()).map(|file| file.abs_path(cx))
+                                            });
                                             format_operation = Some(FormatOperation::Prettier(
                                                 prettier
-                                                    .format(buffer, &cx)
+                                                    .format(buffer, buffer_path, &cx)
                                                     .await
                                                     .context("formatting via prettier")?,
                                             ));
@@ -4168,9 +4171,12 @@ impl Project {
                                         .await
                                     {
                                         Ok(prettier) => {
+                                            let buffer_path = buffer.read_with(&cx, |buffer, cx| {
+                                                File::from_dyn(buffer.file()).map(|file| file.abs_path(cx))
+                                            });
                                             format_operation = Some(FormatOperation::Prettier(
                                                 prettier
-                                                    .format(buffer, &cx)
+                                                    .format(buffer, buffer_path, &cx)
                                                     .await
                                                     .context("formatting via prettier")?,
                                             ));
@@ -8309,7 +8315,6 @@ impl Project {
 
         let task = cx.spawn(|this, mut cx| async move {
             let fs = this.update(&mut cx, |project, _| Arc::clone(&project.fs));
-            // TODO kb can we have a cache for this instead?
             let prettier_dir = match cx
                 .background()
                 .spawn(Prettier::locate(
