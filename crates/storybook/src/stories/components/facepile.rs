@@ -25,37 +25,34 @@ impl FacepileStory {
                     )]))
                     .child(facepile(vec![
                         avatar("https://avatars.githubusercontent.com/u/1714999?v=4"),
-                        avatar("https://avatars.githubusercontent.com/u/1714999?v=4"),
+                        avatar("https://avatars.githubusercontent.com/u/482957?v=4"),
                     ]))
                     .child(facepile(vec![
                         avatar("https://avatars.githubusercontent.com/u/1714999?v=4"),
-                        avatar("https://avatars.githubusercontent.com/u/1714999?v=4"),
-                        avatar("https://avatars.githubusercontent.com/u/1714999?v=4"),
+                        avatar("https://avatars.githubusercontent.com/u/482957?v=4"),
+                        avatar("https://avatars.githubusercontent.com/u/1789?v=4"),
                     ])),
             )
             .child(Story::label("Rounded rectangle avatars"))
-            .child(
+            .child({
+                let shape = Shape::RoundedRectangle;
+
                 div()
                     .flex()
                     .gap_3()
                     .child(facepile(vec![avatar(
                         "https://avatars.githubusercontent.com/u/1714999?v=4",
                     )
-                    .shape(Shape::RoundedRectangle)]))
+                    .shape(shape)]))
                     .child(facepile(vec![
-                        avatar("https://avatars.githubusercontent.com/u/1714999?v=4")
-                            .shape(Shape::RoundedRectangle),
-                        avatar("https://avatars.githubusercontent.com/u/1714999?v=4")
-                            .shape(Shape::RoundedRectangle),
+                        avatar("https://avatars.githubusercontent.com/u/1714999?v=4").shape(shape),
+                        avatar("https://avatars.githubusercontent.com/u/482957?v=4").shape(shape),
                     ]))
                     .child(facepile(vec![
-                        avatar("https://avatars.githubusercontent.com/u/1714999?v=4")
-                            .shape(Shape::RoundedRectangle),
-                        avatar("https://avatars.githubusercontent.com/u/1714999?v=4")
-                            .shape(Shape::RoundedRectangle),
-                        avatar("https://avatars.githubusercontent.com/u/1714999?v=4")
-                            .shape(Shape::RoundedRectangle),
-                    ])),
-            )
+                        avatar("https://avatars.githubusercontent.com/u/1714999?v=4").shape(shape),
+                        avatar("https://avatars.githubusercontent.com/u/482957?v=4").shape(shape),
+                        avatar("https://avatars.githubusercontent.com/u/1789?v=4").shape(shape),
+                    ]))
+            })
     }
 }
