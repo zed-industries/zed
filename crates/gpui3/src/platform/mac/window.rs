@@ -1,8 +1,8 @@
 use crate::{
     point, px, size, AnyWindowHandle, Bounds, Event, InputHandler, KeyDownEvent, Keystroke,
-    MacDispatcher, MacScreen, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMovedEvent, MouseUpEvent, NSRectExt, Pixels, PlatformDispatcher, PlatformScreen,
-    PlatformWindow, Point, Size, Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions,
+    MacScreen, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMovedEvent,
+    MouseUpEvent, NSRectExt, Pixels, Platform, PlatformDispatcher, PlatformScreen, PlatformWindow,
+    Point, Size, Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions,
     WindowPromptLevel,
 };
 use block::ConcreteBlock;
@@ -38,8 +38,8 @@ use std::{
     ops::Range,
     os::raw::c_char,
     ptr,
-    rc::{Rc, Weak},
-    sync::Arc,
+    rc::Rc,
+    sync::{Arc, Weak},
     time::Duration,
 };
 
@@ -417,11 +417,7 @@ unsafe impl Send for WindowState {}
 pub struct MacWindow(Arc<Mutex<WindowState>>);
 
 impl MacWindow {
-    pub fn open(
-        handle: AnyWindowHandle,
-        options: WindowOptions,
-        dispatcher: Arc<MacDispatcher>,
-    ) -> Self {
+    pub fn open(handle: AnyWindowHandle, options: WindowOptions, platform: &dyn Platform) -> Self {
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
 
@@ -454,9 +450,7 @@ impl MacWindow {
                 NO,
                 options
                     .screen
-                    .and_then(|screen| {
-                        Some(screen.as_any().downcast_ref::<MacScreen>()?.native_screen)
-                    })
+                    .map(|screen| MacScreen::from_handle(screen).native_screen)
                     .unwrap_or(nil),
             );
             assert!(!native_window.is_null());
@@ -487,7 +481,7 @@ impl MacWindow {
 
             let window = Self(Arc::new(Mutex::new(WindowState {
                 handle,
-                dispatcher,
+                dispatcher: platform.dispatcher(),
                 native_window,
                 kind: options.kind,
                 event_callback: None,
@@ -610,7 +604,7 @@ impl MacWindow {
             let app = NSApplication::sharedApplication(nil);
             let main_window: id = msg_send![app, mainWindow];
             if msg_send![main_window, isKindOfClass: WINDOW_CLASS] {
-                let handle = get_window_state(&*main_window).borrow().handle;
+                let handle = get_window_state(&*main_window).lock().handle;
                 Some(handle)
             } else {
                 None
@@ -892,7 +886,7 @@ impl PlatformWindow for MacWindow {
             let is_panel: BOOL = msg_send![top_most_window, isKindOfClass: PANEL_CLASS];
             let is_window: BOOL = msg_send![top_most_window, isKindOfClass: WINDOW_CLASS];
             if is_panel == YES || is_window == YES {
-                let topmost_window = get_window_state(&*top_most_window).borrow().handle;
+                let topmost_window = get_window_state(&*top_most_window).lock().handle;
                 topmost_window == self_handle
             } else {
                 // Someone else's window is on top
@@ -909,9 +903,9 @@ fn get_scale_factor(native_window: id) -> f32 {
     }
 }
 
-unsafe fn get_window_state(object: &Object) -> Rc<RefCell<WindowState>> {
+unsafe fn get_window_state(object: &Object) -> Arc<Mutex<WindowState>> {
     let raw: *mut c_void = *object.get_ivar(WINDOW_STATE_IVAR);
-    let rc1 = Rc::from_raw(raw as *mut RefCell<WindowState>);
+    let rc1 = Arc::from_raw(raw as *mut Mutex<WindowState>);
     let rc2 = rc1.clone();
     mem::forget(rc1);
     rc2
@@ -950,7 +944,7 @@ extern "C" fn handle_key_down(this: &Object, _: Sel, native_event: id) {
 
 extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: bool) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
-    let mut window_state_borrow = window_state.as_ref().borrow_mut();
+    let mut window_state_borrow = window_state.as_ref().lock();
 
     let window_height = window_state_borrow.content_size().height;
     let event = unsafe { Event::from_native(native_event, Some(window_height)) };
@@ -990,7 +984,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         }
 
         let mut handled = false;
-        let mut window_state_borrow = window_state.borrow_mut();
+        let mut window_state_borrow = window_state.lock();
         let ime_text = window_state_borrow.ime_text.clone();
         if let Some((event, insert_text)) = window_state_borrow.pending_key_down.take() {
             let is_held = event.is_held;
@@ -1056,7 +1050,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                     }
                 }
 
-                window_state.borrow_mut().event_callback = Some(callback);
+                window_state.lock().event_callback = Some(callback);
             }
         } else {
             handled = true;
@@ -1070,8 +1064,8 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
 extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let window_state = unsafe { get_window_state(this) };
-    let weak_window_state = Rc::downgrade(&window_state);
-    let mut window_state_borrow = window_state.as_ref().borrow_mut();
+    let weak_window_state = Arc::downgrade(&window_state);
+    let mut window_state_borrow = window_state.as_ref().lock();
     let is_active = unsafe { window_state_borrow.native_window.isKeyWindow() == YES };
 
     let window_height = window_state_borrow.content_size().height;
@@ -1172,7 +1166,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
             if let Some(event) = synthesized_second_event {
                 callback(event);
             }
-            window_state.borrow_mut().event_callback = Some(callback);
+            window_state.lock().event_callback = Some(callback);
         }
     }
 }
@@ -1181,7 +1175,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
 // https://bugs.eclipse.org/bugs/show_bug.cgi?id=300620#c6
 extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
     let window_state = unsafe { get_window_state(this) };
-    let mut window_state_borrow = window_state.as_ref().borrow_mut();
+    let mut window_state_borrow = window_state.as_ref().lock();
 
     let keystroke = Keystroke {
         modifiers: Default::default(),
@@ -1196,13 +1190,13 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
     if let Some(mut callback) = window_state_borrow.event_callback.take() {
         drop(window_state_borrow);
         callback(event);
-        window_state.borrow_mut().event_callback = Some(callback);
+        window_state.lock().event_callback = Some(callback);
     }
 }
 
 extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    window_state.as_ref().borrow().move_traffic_light();
+    window_state.as_ref().lock().move_traffic_light();
 }
 
 extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
@@ -1215,27 +1209,27 @@ extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
 
 fn window_fullscreen_changed(this: &Object, is_fullscreen: bool) {
     let window_state = unsafe { get_window_state(this) };
-    let mut window_state_borrow = window_state.as_ref().borrow_mut();
+    let mut window_state_borrow = window_state.as_ref().lock();
     if let Some(mut callback) = window_state_borrow.fullscreen_callback.take() {
         drop(window_state_borrow);
         callback(is_fullscreen);
-        window_state.borrow_mut().fullscreen_callback = Some(callback);
+        window_state.lock().fullscreen_callback = Some(callback);
     }
 }
 
 extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let mut window_state_borrow = window_state.as_ref().borrow_mut();
+    let mut window_state_borrow = window_state.as_ref().lock();
     if let Some(mut callback) = window_state_borrow.moved_callback.take() {
         drop(window_state_borrow);
         callback();
-        window_state.borrow_mut().moved_callback = Some(callback);
+        window_state.lock().moved_callback = Some(callback);
     }
 }
 
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let window_state_borrow = window_state.borrow();
+    let window_state_borrow = window_state.lock();
     let is_active = unsafe { window_state_borrow.native_window.isKeyWindow() == YES };
 
     // When opening a pop-up while the application isn't active, Cocoa sends a spurious
@@ -1259,22 +1253,22 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
     let dispatcher = window_state_borrow.dispatcher.clone();
     drop(window_state_borrow);
     let _ = crate::spawn_on_main_local(dispatcher, async move {
-        let mut window_state_borrow = window_state.as_ref().borrow_mut();
+        let mut window_state_borrow = window_state.as_ref().lock();
         if let Some(mut callback) = window_state_borrow.activate_callback.take() {
             drop(window_state_borrow);
             callback(is_active);
-            window_state.borrow_mut().activate_callback = Some(callback);
+            window_state.lock().activate_callback = Some(callback);
         };
     });
 }
 
 extern "C" fn window_should_close(this: &Object, _: Sel, _: id) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
-    let mut window_state_borrow = window_state.as_ref().borrow_mut();
+    let mut window_state_borrow = window_state.as_ref().lock();
     if let Some(mut callback) = window_state_borrow.should_close_callback.take() {
         drop(window_state_borrow);
         let should_close = callback();
-        window_state.borrow_mut().should_close_callback = Some(callback);
+        window_state.lock().should_close_callback = Some(callback);
         should_close as BOOL
     } else {
         YES
@@ -1287,8 +1281,7 @@ extern "C" fn close_window(this: &Object, _: Sel) {
             let window_state = get_window_state(this);
             window_state
                 .as_ref()
-                .try_borrow_mut()
-                .ok()
+                .try_lock()
                 .and_then(|mut window_state| window_state.close_callback.take())
         };
 
@@ -1302,13 +1295,13 @@ extern "C" fn close_window(this: &Object, _: Sel) {
 
 // extern "C" fn make_backing_layer(this: &Object, _: Sel) -> id {
 //     let window_state = unsafe { get_window_state(this) };
-//     let window_state = window_state.as_ref().borrow();
+//     let window_state = window_state.as_ref().lock();
 //     window_state.renderer.layer().as_ptr() as id
 // }
 
 extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
     let window_state = unsafe { get_window_state(this) };
-    let mut window_state_borrow = window_state.as_ref().borrow_mut();
+    let mut window_state_borrow = window_state.as_ref().lock();
 
     // unsafe {
     //     let scale_factor = window_state_borrow.scale_factor() as f64;
@@ -1331,13 +1324,13 @@ extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
     if let Some(mut callback) = window_state_borrow.resize_callback.take() {
         drop(window_state_borrow);
         callback();
-        window_state.as_ref().borrow_mut().resize_callback = Some(callback);
+        window_state.as_ref().lock().resize_callback = Some(callback);
     };
 }
 
 extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
     let window_state = unsafe { get_window_state(this) };
-    let window_state_borrow = window_state.as_ref().borrow();
+    let window_state_borrow = window_state.as_ref().lock();
 
     if window_state_borrow.content_size() == size.into() {
         return;
@@ -1361,18 +1354,18 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
     // }
 
     drop(window_state_borrow);
-    let mut window_state_borrow = window_state.borrow_mut();
+    let mut window_state_borrow = window_state.lock();
     if let Some(mut callback) = window_state_borrow.resize_callback.take() {
         drop(window_state_borrow);
         callback();
-        window_state.borrow_mut().resize_callback = Some(callback);
+        window_state.lock().resize_callback = Some(callback);
     };
 }
 
 extern "C" fn display_layer(_this: &Object, _: Sel, _: id) {
     // unsafe {
     // let window_state = get_window_state(this);
-    // let mut window_state = window_state.as_ref().borrow_mut();
+    // let mut window_state = window_state.as_ref().lock();
     // if let Some(scene) = window_state.scene_to_render.take() {
     //     window_state.renderer.render(&scene);
     // };
@@ -1408,7 +1401,7 @@ extern "C" fn first_rect_for_character_range(
     _: id,
 ) -> NSRect {
     let frame = unsafe {
-        let window = get_window_state(this).borrow().native_window;
+        let window = get_window_state(this).lock().native_window;
         NSView::frame(window)
     };
     with_input_handler(this, |input_handler| {
@@ -1432,7 +1425,7 @@ extern "C" fn first_rect_for_character_range(
 extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NSRange) {
     unsafe {
         let window_state = get_window_state(this);
-        let mut window_state_borrow = window_state.borrow_mut();
+        let mut window_state_borrow = window_state.lock();
         let pending_key_down = window_state_borrow.pending_key_down.take();
         drop(window_state_borrow);
 
@@ -1448,8 +1441,8 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
             .unwrap();
         let replacement_range = replacement_range.to_range();
 
-        window_state.borrow_mut().ime_text = Some(text.to_string());
-        window_state.borrow_mut().ime_state = ImeState::Acted;
+        window_state.lock().ime_text = Some(text.to_string());
+        window_state.lock().ime_state = ImeState::Acted;
 
         let is_composing =
             with_input_handler(this, |input_handler| input_handler.marked_text_range())
@@ -1466,7 +1459,7 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
                 replacement_range,
                 text: text.to_string(),
             });
-            window_state.borrow_mut().pending_key_down = Some(pending_key_down);
+            window_state.lock().pending_key_down = Some(pending_key_down);
         }
     }
 }
@@ -1480,7 +1473,7 @@ extern "C" fn set_marked_text(
 ) {
     unsafe {
         let window_state = get_window_state(this);
-        window_state.borrow_mut().pending_key_down.take();
+        window_state.lock().pending_key_down.take();
 
         let is_attributed_string: BOOL =
             msg_send![text, isKindOfClass: [class!(NSAttributedString)]];
@@ -1495,8 +1488,8 @@ extern "C" fn set_marked_text(
             .to_str()
             .unwrap();
 
-        window_state.borrow_mut().ime_state = ImeState::Acted;
-        window_state.borrow_mut().ime_text = Some(text.to_string());
+        window_state.lock().ime_state = ImeState::Acted;
+        window_state.lock().ime_text = Some(text.to_string());
 
         with_input_handler(this, |input_handler| {
             input_handler.replace_and_mark_text_in_range(replacement_range, text, selected_range);
@@ -1507,7 +1500,7 @@ extern "C" fn set_marked_text(
 extern "C" fn unmark_text(this: &Object, _: Sel) {
     unsafe {
         let state = get_window_state(this);
-        let mut borrow = state.borrow_mut();
+        let mut borrow = state.lock();
         borrow.ime_state = ImeState::Acted;
         borrow.ime_text.take();
     }
@@ -1541,7 +1534,7 @@ extern "C" fn attributed_substring_for_proposed_range(
 extern "C" fn do_command_by_selector(this: &Object, _: Sel, _: Sel) {
     unsafe {
         let state = get_window_state(this);
-        let mut borrow = state.borrow_mut();
+        let mut borrow = state.lock();
         borrow.ime_state = ImeState::Continue;
         borrow.ime_text.take();
     }
@@ -1550,11 +1543,11 @@ extern "C" fn do_command_by_selector(this: &Object, _: Sel, _: Sel) {
 extern "C" fn view_did_change_effective_appearance(this: &Object, _: Sel) {
     unsafe {
         let state = get_window_state(this);
-        let mut state_borrow = state.as_ref().borrow_mut();
+        let mut state_borrow = state.as_ref().lock();
         if let Some(mut callback) = state_borrow.appearance_changed_callback.take() {
             drop(state_borrow);
             callback();
-            state.borrow_mut().appearance_changed_callback = Some(callback);
+            state.lock().appearance_changed_callback = Some(callback);
         }
     }
 }
@@ -1562,7 +1555,7 @@ extern "C" fn view_did_change_effective_appearance(this: &Object, _: Sel) {
 extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
     unsafe {
         let state = get_window_state(this);
-        let state_borrow = state.as_ref().borrow();
+        let state_borrow = state.as_ref().lock();
         return if state_borrow.kind == WindowKind::PopUp {
             YES
         } else {
@@ -1572,19 +1565,19 @@ extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
 }
 
 async fn synthetic_drag(
-    window_state: Weak<RefCell<WindowState>>,
+    window_state: Weak<Mutex<WindowState>>,
     drag_id: usize,
     event: MouseMovedEvent,
 ) {
     loop {
         Timer::after(Duration::from_millis(16)).await;
         if let Some(window_state) = window_state.upgrade() {
-            let mut window_state_borrow = window_state.borrow_mut();
+            let mut window_state_borrow = window_state.lock();
             if window_state_borrow.synthetic_drag_counter == drag_id {
                 if let Some(mut callback) = window_state_borrow.event_callback.take() {
                     drop(window_state_borrow);
                     callback(Event::MouseMoved(event.clone()));
-                    window_state.borrow_mut().event_callback = Some(callback);
+                    window_state.lock().event_callback = Some(callback);
                 }
             } else {
                 break;
@@ -1598,11 +1591,11 @@ where
     F: FnOnce(&mut dyn InputHandler) -> R,
 {
     let window_state = unsafe { get_window_state(window) };
-    let mut window_state_borrow = window_state.as_ref().borrow_mut();
+    let mut window_state_borrow = window_state.as_ref().lock();
     if let Some(mut input_handler) = window_state_borrow.input_handler.take() {
         drop(window_state_borrow);
         let result = f(input_handler.as_mut());
-        window_state.borrow_mut().input_handler = Some(input_handler);
+        window_state.lock().input_handler = Some(input_handler);
         Some(result)
     } else {
         None

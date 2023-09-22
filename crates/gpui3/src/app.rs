@@ -1,21 +1,19 @@
 use crate::{
-    current_platform, Context, LayoutId, Platform, Reference, RootView, TextSystem, Window,
-    WindowContext, WindowHandle, WindowId,
+    current_platform, Context, LayoutId, MainThreadOnly, Platform, Reference, RootView, TextSystem,
+    Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
-use parking_lot::RwLock;
+use futures::Future;
+use parking_lot::Mutex;
 use slotmap::SlotMap;
 use std::{
     any::Any,
     marker::PhantomData,
-    mem,
     sync::{Arc, Weak},
 };
 
 #[derive(Clone)]
-pub struct App(Arc<RwLock<AppContext<()>>>);
-
-pub struct MainThread;
+pub struct App(Arc<Mutex<AppContext>>);
 
 impl App {
     pub fn production() -> Self {
@@ -28,14 +26,14 @@ impl App {
     }
 
     fn new(platform: Arc<dyn Platform>) -> Self {
+        let dispatcher = platform.dispatcher();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
         let mut entities = SlotMap::with_key();
-        let unit_entity_id = entities.insert(Some(Box::new(()) as Box<dyn Any>));
+        let unit_entity_id = entities.insert(Some(Box::new(()) as Box<dyn Any + Send>));
         Self(Arc::new_cyclic(|this| {
-            RwLock::new(AppContext {
+            Mutex::new(AppContext {
                 this: this.clone(),
-                thread: PhantomData,
-                platform,
+                platform: MainThreadOnly::new(platform, dispatcher),
                 text_system,
                 unit_entity_id,
                 entities,
@@ -47,83 +45,65 @@ impl App {
 
     pub fn run<F>(self, on_finish_launching: F)
     where
-        F: 'static + FnOnce(&mut AppContext<MainThread>),
+        F: 'static + FnOnce(&mut AppContext),
     {
-        let platform = self.0.read().platform.clone();
-        platform.run(Box::new(move || {
-            let mut cx = self.0.write();
-            let cx: &mut AppContext<()> = &mut cx;
-            let cx: &mut AppContext<MainThread> = unsafe { mem::transmute(cx) };
+        let platform = self.0.lock().platform.clone();
+        platform.borrow_on_main_thread().run(Box::new(move || {
+            let cx = &mut *self.0.lock();
             on_finish_launching(cx);
         }));
     }
 }
 
-pub struct AppContext<Thread = ()> {
-    this: Weak<RwLock<AppContext>>,
-    thread: PhantomData<Thread>,
-    platform: Arc<dyn Platform>,
+pub struct AppContext {
+    this: Weak<Mutex<AppContext>>,
+    platform: MainThreadOnly<dyn Platform>,
     text_system: Arc<TextSystem>,
     pub(crate) unit_entity_id: EntityId,
-    pub(crate) entities: SlotMap<EntityId, Option<Box<dyn Any>>>,
+    pub(crate) entities: SlotMap<EntityId, Option<Box<dyn Any + Send>>>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     // We recycle this memory across layout requests.
     pub(crate) layout_id_buffer: Vec<LayoutId>,
 }
 
-impl AppContext<()> {
-    // pub fn run_on_main<F: 'static, T: 'static>(
-    //     &self,
-    //     to_call: F,
-    // ) -> Result<T, impl Future<Output = T>>
-    // where
-    //     F: Fn(&mut AppContext<MainThread>) -> T + Send + Sync,
-    // {
-    //     todo!();
-
-    //     // let dispatcher = self.platform().dispatcher();
-    //     // if dispatcher.is_main_thread() {
-    //     // } else {
-    //     //     let future = async move {
-    //     //         // let cx = unsafe {  };
-    //     //     };
-    //     //     let schedule = move |runnable: Runnable| dispatcher.run_on_main_thread(runnable);
-    //     //     // let (runnable, task) = async_task::spawn_local();
-    //     //     // runnable.schedule();
-    //     // }
-
-    //     // let (runnable, task) = async_task::spawn_local(future, schedule);
-    //     // runnable.schedule();
-    //     // task
-    // }
-}
-
-impl<Thread> AppContext<Thread> {
+impl AppContext {
     pub fn text_system(&self) -> &Arc<TextSystem> {
         &self.text_system
     }
 
-    pub fn open_window<S: 'static>(
+    pub fn with_platform<R: Send + 'static>(
+        &mut self,
+        f: impl FnOnce(&dyn Platform, &mut Self) -> R + Send + 'static,
+    ) -> impl Future<Output = R> {
+        let this = self.this.upgrade().unwrap();
+        self.platform.read(move |platform| {
+            let cx = &mut *this.lock();
+            f(platform, cx)
+        })
+    }
+
+    pub fn open_window<S: 'static + Send>(
         &mut self,
         options: crate::WindowOptions,
-        build_root_view: impl FnOnce(&mut WindowContext<Thread>) -> RootView<S>,
-    ) -> WindowHandle<S> {
-        let id = self.windows.insert(None);
-        let handle = WindowHandle::new(id);
-        let platform_window = self.platform.open_window(handle.into(), options);
+        build_root_view: impl FnOnce(&mut WindowContext) -> RootView<S> + Send + 'static,
+    ) -> impl Future<Output = WindowHandle<S>> {
+        self.with_platform(move |platform, cx| {
+            let id = cx.windows.insert(None);
+            let handle = WindowHandle::new(id);
 
-        let mut window = Window::new(id, platform_window);
-        let root_view = build_root_view(&mut WindowContext::mutable(self, &mut window));
-        window.root_view.replace(Box::new(root_view));
+            let mut window = Window::new(handle.into(), options, platform);
+            let root_view = build_root_view(&mut WindowContext::mutable(cx, &mut window));
+            window.root_view.replace(Box::new(root_view));
 
-        self.windows.get_mut(id).unwrap().replace(window);
-        handle
+            cx.windows.get_mut(id).unwrap().replace(window);
+            handle
+        })
     }
 
     pub(crate) fn update_window<R>(
         &mut self,
         window_id: WindowId,
-        update: impl FnOnce(&mut WindowContext<Thread>) -> R,
+        update: impl FnOnce(&mut WindowContext) -> R,
     ) -> Result<R> {
         let mut window = self
             .windows
@@ -143,16 +123,10 @@ impl<Thread> AppContext<Thread> {
     }
 }
 
-impl AppContext<MainThread> {
-    pub fn platform(&self) -> &dyn Platform {
-        self.platform.as_ref()
-    }
-}
+impl Context for AppContext {
+    type EntityContext<'a, 'w, T: Send + 'static> = ModelContext<'a, T>;
 
-impl<Thread: 'static> Context for AppContext<Thread> {
-    type EntityContext<'a, 'w, T: 'static> = ModelContext<'a, Thread, T>;
-
-    fn entity<T: 'static>(
+    fn entity<T: Send + 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
     ) -> Handle<T> {
@@ -163,7 +137,7 @@ impl<Thread: 'static> Context for AppContext<Thread> {
         Handle::new(id)
     }
 
-    fn update_entity<T: 'static, R>(
+    fn update_entity<T: Send + 'static, R>(
         &mut self,
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
@@ -183,14 +157,14 @@ impl<Thread: 'static> Context for AppContext<Thread> {
     }
 }
 
-pub struct ModelContext<'a, Thread: 'static, T> {
-    app: Reference<'a, AppContext<Thread>>,
+pub struct ModelContext<'a, T> {
+    app: Reference<'a, AppContext>,
     entity_type: PhantomData<T>,
     entity_id: EntityId,
 }
 
-impl<'a, Thread, T: 'static> ModelContext<'a, Thread, T> {
-    pub(crate) fn mutable(app: &'a mut AppContext<Thread>, entity_id: EntityId) -> Self {
+impl<'a, T: 'static> ModelContext<'a, T> {
+    pub(crate) fn mutable(app: &'a mut AppContext, entity_id: EntityId) -> Self {
         Self {
             app: Reference::Mutable(app),
             entity_type: PhantomData,
@@ -198,7 +172,7 @@ impl<'a, Thread, T: 'static> ModelContext<'a, Thread, T> {
         }
     }
 
-    fn immutable(app: &'a AppContext<Thread>, entity_id: EntityId) -> Self {
+    fn immutable(app: &'a AppContext, entity_id: EntityId) -> Self {
         Self {
             app: Reference::Immutable(app),
             entity_type: PhantomData,
@@ -224,16 +198,17 @@ impl<'a, Thread, T: 'static> ModelContext<'a, Thread, T> {
     }
 }
 
-impl<'a, Thread, T: 'static> Context for ModelContext<'a, Thread, T> {
-    type EntityContext<'b, 'c, U: 'static> = ModelContext<'b, Thread, U>;
-    fn entity<U: 'static>(
+impl<'a, T: 'static> Context for ModelContext<'a, T> {
+    type EntityContext<'b, 'c, U: Send + 'static> = ModelContext<'b, U>;
+
+    fn entity<U: Send + 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, U>) -> U,
     ) -> Handle<U> {
         self.app.entity(build_entity)
     }
 
-    fn update_entity<U: 'static, R>(
+    fn update_entity<U: Send + 'static, R>(
         &mut self,
         handle: &Handle<U>,
         update: impl FnOnce(&mut U, &mut Self::EntityContext<'_, '_, U>) -> R,
@@ -249,7 +224,7 @@ pub struct Handle<T> {
 
 slotmap::new_key_type! { pub struct EntityId; }
 
-impl<T: 'static> Handle<T> {
+impl<T: Send + 'static> Handle<T> {
     fn new(id: EntityId) -> Self {
         Self {
             id,
@@ -277,5 +252,17 @@ impl<T> Clone for Handle<T> {
             id: self.id,
             entity_type: PhantomData,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppContext;
+
+    #[test]
+    fn test_app_context_send_sync() {
+        // This will not compile if `AppContext` does not implement `Send`
+        fn assert_send<T: Send>() {}
+        assert_send::<AppContext>();
     }
 }

@@ -22,6 +22,7 @@ pub use color::*;
 pub use element::*;
 pub use elements::*;
 pub use executor::*;
+use futures::channel::oneshot;
 pub use geometry::*;
 pub use gpui3_macros::*;
 pub use platform::*;
@@ -31,7 +32,11 @@ pub use serde;
 pub use serde_json;
 pub use smallvec;
 pub use smol::Timer;
-use std::ops::{Deref, DerefMut};
+use std::{
+    future::Future,
+    ops::{Deref, DerefMut},
+    sync::Arc,
+};
 pub use style::*;
 pub use style_helpers::*;
 pub use styled::*;
@@ -43,14 +48,14 @@ pub use view::*;
 pub use window::*;
 
 pub trait Context {
-    type EntityContext<'a, 'w, T: 'static>;
+    type EntityContext<'a, 'w, T: Send + 'static>;
 
-    fn entity<T: 'static>(
+    fn entity<T: 'static + Send>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
     ) -> Handle<T>;
 
-    fn update_entity<T: 'static, R>(
+    fn update_entity<T: 'static + Send, R>(
         &mut self,
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
@@ -110,3 +115,54 @@ impl<'a, T> DerefMut for Reference<'a, T> {
         }
     }
 }
+
+pub(crate) struct MainThreadOnly<T: ?Sized> {
+    dispatcher: Arc<dyn PlatformDispatcher>,
+    value: Arc<T>,
+}
+
+impl<T: ?Sized> Clone for MainThreadOnly<T> {
+    fn clone(&self) -> Self {
+        Self {
+            dispatcher: self.dispatcher.clone(),
+            value: self.value.clone(),
+        }
+    }
+}
+
+/// Allows a value to be accessed only on the main thread, allowing a non-`Send` type
+/// to become `Send`.
+impl<T: 'static + ?Sized> MainThreadOnly<T> {
+    pub(crate) fn new(value: Arc<T>, dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
+        Self { dispatcher, value }
+    }
+
+    pub(crate) fn borrow_on_main_thread(&self) -> &T {
+        assert!(self.dispatcher.is_main_thread());
+        &self.value
+    }
+
+    pub(crate) fn read<R>(
+        &self,
+        f: impl FnOnce(&T) -> R + Send + 'static,
+    ) -> impl Future<Output = R>
+    where
+        R: Send + 'static,
+    {
+        let (tx, rx) = oneshot::channel();
+        if self.dispatcher.is_main_thread() {
+            let _ = tx.send(f(&self.value));
+        } else {
+            let this = self.clone();
+            let _ = crate::spawn_on_main(self.dispatcher.clone(), async move {
+                // Required so we move `this` instead of this.value. Only `this` is `Send`.
+                let this = this;
+                let _ = tx.send(f(&this.value));
+            });
+        }
+
+        async move { rx.await.unwrap() }
+    }
+}
+
+unsafe impl<T: ?Sized> Send for MainThreadOnly<T> {}

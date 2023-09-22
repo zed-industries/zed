@@ -15,6 +15,7 @@ use futures::channel::oneshot;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
+use std::ffi::c_void;
 use std::hash::{Hash, Hasher};
 use std::{
     any::Any,
@@ -40,7 +41,7 @@ pub(crate) fn current_platform() -> Arc<dyn Platform> {
     Arc::new(MacPlatform::new())
 }
 
-pub trait Platform {
+pub trait Platform: 'static {
     fn dispatcher(&self) -> Arc<dyn PlatformDispatcher>;
     fn text_system(&self) -> Arc<dyn PlatformTextSystem>;
 
@@ -53,7 +54,7 @@ pub trait Platform {
     fn unhide_other_apps(&self);
 
     fn screens(&self) -> Vec<Rc<dyn PlatformScreen>>;
-    fn screen_by_id(&self, id: uuid::Uuid) -> Option<Rc<dyn PlatformScreen>>;
+    fn screen_by_id(&self, id: ScreenId) -> Option<Rc<dyn PlatformScreen>>;
     fn main_window(&self) -> Option<AnyWindowHandle>;
     fn open_window(
         &self,
@@ -96,11 +97,22 @@ pub trait Platform {
 }
 
 pub trait PlatformScreen: Debug {
+    fn id(&self) -> Option<ScreenId>;
+    fn handle(&self) -> PlatformScreenHandle;
     fn as_any(&self) -> &dyn Any;
     fn bounds(&self) -> Bounds<Pixels>;
     fn content_bounds(&self) -> Bounds<Pixels>;
-    fn display_uuid(&self) -> Option<Uuid>;
 }
+
+pub struct PlatformScreenHandle(pub *mut c_void);
+
+impl Debug for PlatformScreenHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "PlatformScreenHandle({:p})", self.0)
+    }
+}
+
+unsafe impl Send for PlatformScreenHandle {}
 
 pub trait PlatformWindow: HasRawWindowHandle + HasRawDisplayHandle {
     fn bounds(&self) -> WindowBounds;
@@ -190,6 +202,9 @@ pub trait InputHandler {
     fn bounds_for_range(&self, range_utf16: Range<usize>) -> Option<Bounds<f32>>;
 }
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ScreenId(pub(crate) Uuid);
+
 #[derive(Copy, Clone, Debug)]
 pub enum RasterizationOptions {
     Alpha,
@@ -205,7 +220,7 @@ pub struct WindowOptions {
     pub show: bool,
     pub kind: WindowKind,
     pub is_movable: bool,
-    pub screen: Option<Rc<dyn PlatformScreen>>,
+    pub screen: Option<PlatformScreenHandle>,
 }
 
 impl Default for WindowOptions {

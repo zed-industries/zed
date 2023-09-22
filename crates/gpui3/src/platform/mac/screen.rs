@@ -1,5 +1,8 @@
 use super::ns_string;
-use crate::{platform, point, px, size, Bounds, Pixels, PlatformScreen};
+use crate::{
+    platform, point, px, size, Bounds, MainThreadOnly, Pixels, PlatformScreen,
+    PlatformScreenHandle, ScreenId,
+};
 use cocoa::{
     appkit::NSScreen,
     base::{id, nil},
@@ -10,6 +13,7 @@ use core_foundation::{
     uuid::{CFUUIDGetUUIDBytes, CFUUIDRef},
 };
 use core_graphics::display::CGDirectDisplayID;
+use objc::runtime::Object;
 use std::{any::Any, ffi::c_void};
 use uuid::Uuid;
 
@@ -23,10 +27,18 @@ pub struct MacScreen {
     pub(crate) native_screen: id,
 }
 
+unsafe impl Send for MacScreen {}
+
 impl MacScreen {
+    pub(crate) fn from_handle(handle: PlatformScreenHandle) -> Self {
+        Self {
+            native_screen: handle.0 as *mut Object,
+        }
+    }
+
     /// Get the screen with the given UUID.
-    pub fn find_by_id(uuid: Uuid) -> Option<Self> {
-        Self::all().find(|screen| platform::MacScreen::display_uuid(screen) == Some(uuid))
+    pub fn find_by_id(id: ScreenId) -> Option<Self> {
+        Self::all().find(|screen| screen.id() == Some(id))
     }
 
     /// Get the primary screen - the one with the menu bar, and whose bottom left
@@ -82,14 +94,8 @@ impl MacScreen {
 }
 
 impl PlatformScreen for MacScreen {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn display_uuid(&self) -> Option<uuid::Uuid> {
+    fn id(&self) -> Option<ScreenId> {
         unsafe {
-            // Screen ids are not stable. Further, the default device id is also unstable across restarts.
-            // CGDisplayCreateUUIDFromDisplayID is stable but not exposed in the bindings we use.
             // This approach is similar to that which winit takes
             // https://github.com/rust-windowing/winit/blob/402cbd55f932e95dbfb4e8b5e8551c49e56ff9ac/src/platform_impl/macos/monitor.rs#L99
             let device_description = self.native_screen.deviceDescription();
@@ -114,7 +120,7 @@ impl PlatformScreen for MacScreen {
             }
 
             let bytes = CFUUIDGetUUIDBytes(cfuuid);
-            Some(Uuid::from_bytes([
+            Some(ScreenId(Uuid::from_bytes([
                 bytes.byte0,
                 bytes.byte1,
                 bytes.byte2,
@@ -131,8 +137,16 @@ impl PlatformScreen for MacScreen {
                 bytes.byte13,
                 bytes.byte14,
                 bytes.byte15,
-            ]))
+            ])))
         }
+    }
+
+    fn handle(&self) -> PlatformScreenHandle {
+        PlatformScreenHandle(self.native_screen as *mut c_void)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 
     fn bounds(&self) -> Bounds<Pixels> {

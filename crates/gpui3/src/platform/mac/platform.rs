@@ -2,7 +2,7 @@ use super::BoolExt;
 use crate::{
     AnyWindowHandle, ClipboardItem, CursorStyle, Event, MacDispatcher, MacScreen, MacTextSystem,
     MacWindow, PathPromptOptions, Platform, PlatformScreen, PlatformTextSystem, PlatformWindow,
-    Result, SemanticVersion, WindowOptions,
+    Result, ScreenId, SemanticVersion, WindowOptions,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -462,7 +462,7 @@ impl Platform for MacPlatform {
             .collect()
     }
 
-    fn screen_by_id(&self, id: uuid::Uuid) -> Option<Rc<dyn PlatformScreen>> {
+    fn screen_by_id(&self, id: ScreenId) -> Option<Rc<dyn PlatformScreen>> {
         MacScreen::find_by_id(id).map(|screen| Rc::new(screen) as Rc<_>)
     }
 
@@ -479,8 +479,7 @@ impl Platform for MacPlatform {
         handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow> {
-        let dispatcher = self.0.lock().dispatcher.clone();
-        Box::new(MacWindow::open(handle, options, dispatcher))
+        Box::new(MacWindow::open(handle, options, self))
     }
 
     fn open_url(&self, url: &str) {

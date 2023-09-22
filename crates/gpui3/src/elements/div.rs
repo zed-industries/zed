@@ -2,8 +2,9 @@ use crate::{
     AnyElement, Bounds, Element, Layout, LayoutId, Overflow, ParentElement, Pixels, Point,
     Refineable, RefinementCascade, Result, Style, StyleHelpers, Styled, ViewContext,
 };
+use parking_lot::Mutex;
 use smallvec::SmallVec;
-use std::{cell::Cell, rc::Rc};
+use std::sync::Arc;
 use util::ResultExt;
 
 pub struct Div<S: 'static> {
@@ -271,26 +272,22 @@ impl<V: 'static> ParentElement<V> for Div<V> {
 }
 
 #[derive(Default, Clone)]
-pub struct ScrollState(Rc<Cell<Point<Pixels>>>);
+pub struct ScrollState(Arc<Mutex<Point<Pixels>>>);
 
 impl ScrollState {
     pub fn x(&self) -> Pixels {
-        self.0.get().x
+        self.0.lock().x
     }
 
     pub fn set_x(&self, value: Pixels) {
-        let mut current_value = self.0.get();
-        current_value.x = value;
-        self.0.set(current_value);
+        self.0.lock().x = value;
     }
 
     pub fn y(&self) -> Pixels {
-        self.0.get().y
+        self.0.lock().y
     }
 
     pub fn set_y(&self, value: Pixels) {
-        let mut current_value = self.0.get();
-        current_value.y = value;
-        self.0.set(current_value);
+        self.0.lock().y = value;
     }
 }

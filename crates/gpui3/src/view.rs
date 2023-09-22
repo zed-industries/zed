@@ -2,11 +2,11 @@ use crate::{
     AnyElement, Element, Handle, IntoAnyElement, Layout, LayoutId, Result, ViewContext,
     WindowContext,
 };
-use std::{any::Any, cell::RefCell, marker::PhantomData, rc::Rc};
+use std::{any::Any, cell::RefCell, marker::PhantomData, rc::Rc, sync::Arc};
 
 pub struct View<S, P> {
     state: Handle<S>,
-    render: Rc<dyn Fn(&mut S, &mut ViewContext<S>) -> AnyElement<S>>,
+    render: Arc<dyn Fn(&mut S, &mut ViewContext<S>) -> AnyElement<S> + Send + Sync + 'static>,
     parent_state_type: PhantomData<P>,
 }
 
@@ -24,16 +24,16 @@ pub type RootView<S> = View<S, ()>;
 
 pub fn view<S: 'static, P: 'static, E: Element<State = S>>(
     state: Handle<S>,
-    render: impl 'static + Fn(&mut S, &mut ViewContext<S>) -> E,
+    render: impl Fn(&mut S, &mut ViewContext<S>) -> E + Send + Sync + 'static,
 ) -> View<S, P> {
     View {
         state,
-        render: Rc::new(move |state, cx| render(state, cx).into_any()),
+        render: Arc::new(move |state, cx| render(state, cx).into_any()),
         parent_state_type: PhantomData,
     }
 }
 
-impl<S: 'static, P: 'static> View<S, P> {
+impl<S: Send + 'static, P: 'static> View<S, P> {
     pub fn into_any<ParentState>(self) -> AnyView<ParentState> {
         AnyView {
             view: Rc::new(RefCell::new(self)),
@@ -42,7 +42,7 @@ impl<S: 'static, P: 'static> View<S, P> {
     }
 }
 
-impl<S: 'static, P: 'static> Element for View<S, P> {
+impl<S: Send + 'static, P: Send + 'static> Element for View<S, P> {
     type State = P;
     type FrameState = AnyElement<S>;
 
@@ -80,7 +80,7 @@ trait ViewObject {
     ) -> Result<()>;
 }
 
-impl<S: 'static, P> ViewObject for View<S, P> {
+impl<S: Send + 'static, P> ViewObject for View<S, P> {
     fn layout(&mut self, cx: &mut WindowContext) -> Result<(LayoutId, Box<dyn Any>)> {
         self.state.update(cx, |state, cx| {
             let mut element = (self.render)(state, cx);

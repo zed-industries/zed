@@ -1,4 +1,7 @@
-use crate::{AvailableSpace, PlatformWindow, Point, Size, Style, TextStyle, TextStyleRefinement};
+use crate::{
+    AvailableSpace, MainThreadOnly, Platform, PlatformWindow, Point, Size, Style, TextStyle,
+    TextStyleRefinement, WindowOptions,
+};
 
 use super::{
     px, taffy::LayoutId, AppContext, Bounds, Context, EntityId, Handle, Pixels, Reference,
@@ -10,49 +13,54 @@ use refineable::Refineable;
 use std::{
     any::{Any, TypeId},
     marker::PhantomData,
+    sync::Arc,
 };
 
 pub struct AnyWindow {}
 
 pub struct Window {
-    id: WindowId,
-    platform_window: Box<dyn PlatformWindow>,
+    handle: AnyWindowHandle,
+    platform_window: MainThreadOnly<Box<dyn PlatformWindow>>,
     rem_size: Pixels,
     layout_engine: TaffyLayoutEngine,
     text_style_stack: Vec<TextStyleRefinement>,
-    pub(crate) root_view: Option<Box<dyn Any>>,
+    pub(crate) root_view: Option<Box<dyn Any + Send>>,
+    mouse_position: Point<Pixels>,
 }
 
 impl Window {
-    pub fn new(id: WindowId, platform_window: Box<dyn PlatformWindow>) -> Window {
+    pub fn new(handle: AnyWindowHandle, options: WindowOptions, platform: &dyn Platform) -> Window {
+        let platform_window = Arc::new(platform.open_window(handle, options));
+        let mouse_position = platform_window.mouse_position();
         Window {
-            id,
-            platform_window,
+            handle,
+            platform_window: MainThreadOnly::new(platform_window, platform.dispatcher()),
             rem_size: px(16.),
             layout_engine: TaffyLayoutEngine::new(),
             text_style_stack: Vec::new(),
             root_view: None,
+            mouse_position,
         }
     }
 }
 
 #[derive(Deref, DerefMut)]
-pub struct WindowContext<'a, 'b, Thread = ()> {
+pub struct WindowContext<'a, 'b> {
     #[deref]
     #[deref_mut]
-    app: Reference<'a, AppContext<Thread>>,
+    app: Reference<'a, AppContext>,
     window: Reference<'b, Window>,
 }
 
-impl<'a, 'w, Thread> WindowContext<'a, 'w, Thread> {
-    pub(crate) fn mutable(app: &'a mut AppContext<Thread>, window: &'w mut Window) -> Self {
+impl<'a, 'w> WindowContext<'a, 'w> {
+    pub(crate) fn mutable(app: &'a mut AppContext, window: &'w mut Window) -> Self {
         Self {
             app: Reference::Mutable(app),
             window: Reference::Mutable(window),
         }
     }
 
-    pub(crate) fn immutable(app: &'a AppContext<Thread>, window: &'w Window) -> Self {
+    pub(crate) fn immutable(app: &'a AppContext, window: &'w Window) -> Self {
         Self {
             app: Reference::Immutable(app),
             window: Reference::Immutable(window),
@@ -115,15 +123,15 @@ impl<'a, 'w, Thread> WindowContext<'a, 'w, Thread> {
     }
 
     pub fn mouse_position(&self) -> Point<Pixels> {
-        self.window.platform_window.mouse_position()
+        self.window.mouse_position
     }
 
     fn update_window<R>(
         &mut self,
         window_id: WindowId,
-        update: impl FnOnce(&mut WindowContext<Thread>) -> R,
+        update: impl FnOnce(&mut WindowContext) -> R,
     ) -> Result<R> {
-        if window_id == self.window.id {
+        if window_id == self.window.handle.id {
             Ok(update(self))
         } else {
             self.app.update_window(window_id, update)
@@ -132,9 +140,9 @@ impl<'a, 'w, Thread> WindowContext<'a, 'w, Thread> {
 }
 
 impl Context for WindowContext<'_, '_> {
-    type EntityContext<'a, 'w, T: 'static> = ViewContext<'a, 'w, T>;
+    type EntityContext<'a, 'w, T: Send + 'static> = ViewContext<'a, 'w, T>;
 
-    fn entity<T: 'static>(
+    fn entity<T: Send + 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
     ) -> Handle<T> {
@@ -152,7 +160,7 @@ impl Context for WindowContext<'_, '_> {
         }
     }
 
-    fn update_entity<T: 'static, R>(
+    fn update_entity<T: Send + 'static, R>(
         &mut self,
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
@@ -233,16 +241,16 @@ impl<'a, 'w, T: 'static> ViewContext<'a, 'w, T> {
 }
 
 impl<'a, 'w, T: 'static> Context for ViewContext<'a, 'w, T> {
-    type EntityContext<'b, 'c, U: 'static> = ViewContext<'b, 'c, U>;
+    type EntityContext<'b, 'c, U: Send + 'static> = ViewContext<'b, 'c, U>;
 
-    fn entity<T2: 'static>(
+    fn entity<T2: Send + 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T2>) -> T2,
     ) -> Handle<T2> {
         self.window_cx.entity(build_entity)
     }
 
-    fn update_entity<U: 'static, R>(
+    fn update_entity<U: Send + 'static, R>(
         &mut self,
         handle: &Handle<U>,
         update: impl FnOnce(&mut U, &mut Self::EntityContext<'_, '_, U>) -> R,

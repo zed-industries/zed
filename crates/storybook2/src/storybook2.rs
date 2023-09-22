@@ -22,7 +22,7 @@ fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
     gpui3::App::production().run(|cx| {
-        let window: gpui3::WindowHandle<()> = cx.open_window(Default::default(), |cx| todo!());
+        let window = cx.open_window(Default::default(), |cx| workspace(cx));
     });
 
     // gpui3::App::new(Assets).unwrap().run(|cx| {

@@ -215,7 +215,7 @@ impl Boundary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{App, AppContext, FontWeight};
+    use crate::{App, FontWeight};
 
     #[test]
     fn test_wrap_line() {

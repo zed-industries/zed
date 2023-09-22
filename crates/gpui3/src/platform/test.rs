@@ -1,4 +1,5 @@
 use super::Platform;
+use crate::ScreenId;
 
 pub struct TestPlatform;
 
@@ -49,7 +50,7 @@ impl Platform for TestPlatform {
         todo!()
     }
 
-    fn screen_by_id(&self, _id: uuid::Uuid) -> Option<std::rc::Rc<dyn crate::PlatformScreen>> {
+    fn screen_by_id(&self, _id: ScreenId) -> Option<std::rc::Rc<dyn crate::PlatformScreen>> {
         todo!()
     }
 
