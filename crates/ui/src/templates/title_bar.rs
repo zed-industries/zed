@@ -40,7 +40,14 @@ impl<V: 'static> TitleBar<V> {
                     .h_full()
                     .gap_4()
                     .px_2()
-                    .child(traffic_lights())
+                    .child(
+                        // %%% Pass window focus state to traffic lights when available %%%
+                        traffic_lights().window_has_focus(true),
+                    )
+                    .child(
+                        // %%% Pass window focus state to traffic lights when available %%%
+                        traffic_lights().window_has_focus(false),
+                    )
                     // === Project Info === //
                     .child(
                         div()

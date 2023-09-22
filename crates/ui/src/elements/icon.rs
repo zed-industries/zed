@@ -25,6 +25,7 @@ pub enum IconAsset {
     Folder,
     FolderOpen,
     Hash,
+    Close,
 }
 
 impl IconAsset {
@@ -48,6 +49,7 @@ impl IconAsset {
             IconAsset::Folder => "icons/file_icons/folder.svg",
             IconAsset::FolderOpen => "icons/file_icons/folder_open.svg",
             IconAsset::Hash => "icons/hash.svg",
+            IconAsset::Close => "icons/x.svg",
         }
     }
 }
