@@ -19,12 +19,17 @@ impl Toolbar {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
 
-        div().flex().justify_between().child(breadcrumb()).child(
-            div()
-                .flex()
-                .child(icon_button("icons/inlay_hint.svg"))
-                .child(icon_button("icons/magnifying_glass.svg"))
-                .child(icon_button("icons/magic-wand.svg")),
-        )
+        div()
+            .p_2()
+            .flex()
+            .justify_between()
+            .child(breadcrumb())
+            .child(
+                div()
+                    .flex()
+                    .child(icon_button("icons/inlay_hint.svg"))
+                    .child(icon_button("icons/magnifying_glass.svg"))
+                    .child(icon_button("icons/magic-wand.svg")),
+            )
     }
 }
