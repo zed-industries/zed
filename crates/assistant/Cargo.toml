@@ -9,6 +9,7 @@ path = "src/assistant.rs"
 doctest = false
 
 [dependencies]
+ai = { path = "../ai" }
 client = { path = "../client" }
 collections = { path = "../collections"}
 editor = { path = "../editor" }

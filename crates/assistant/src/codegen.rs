@@ -1,58 +1,13 @@
-use crate::{
-    stream_completion,
-    streaming_diff::{Hunk, StreamingDiff},
-    OpenAIRequest,
-};
+use crate::streaming_diff::{Hunk, StreamingDiff};
+use ai::completion::{CompletionProvider, OpenAIRequest};
 use anyhow::Result;
 use editor::{
     multi_buffer, Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
 };
-use futures::{
-    channel::mpsc, future::BoxFuture, stream::BoxStream, FutureExt, SinkExt, Stream, StreamExt,
-};
-use gpui::{executor::Background, Entity, ModelContext, ModelHandle, Task};
+use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
+use gpui::{Entity, ModelContext, ModelHandle, Task};
 use language::{Rope, TransactionId};
 use std::{cmp, future, ops::Range, sync::Arc};
-
-pub trait CompletionProvider {
-    fn complete(
-        &self,
-        prompt: OpenAIRequest,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>;
-}
-
-pub struct OpenAICompletionProvider {
-    api_key: String,
-    executor: Arc<Background>,
-}
-
-impl OpenAICompletionProvider {
-    pub fn new(api_key: String, executor: Arc<Background>) -> Self {
-        Self { api_key, executor }
-    }
-}
-
-impl CompletionProvider for OpenAICompletionProvider {
-    fn complete(
-        &self,
-        prompt: OpenAIRequest,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        let request = stream_completion(self.api_key.clone(), self.executor.clone(), prompt);
-        async move {
-            let response = request.await?;
-            let stream = response
-                .filter_map(|response| async move {
-                    match response {
-                        Ok(mut response) => Some(Ok(response.choices.pop()?.delta.content?)),
-                        Err(error) => Some(Err(error)),
-                    }
-                })
-                .boxed();
-            Ok(stream)
-        }
-        .boxed()
-    }
-}
 
 pub enum Event {
     Finished,
@@ -397,13 +352,17 @@ fn strip_markdown_codeblock(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::stream;
+    use futures::{
+        future::BoxFuture,
+        stream::{self, BoxStream},
+    };
     use gpui::{executor::Deterministic, TestAppContext};
     use indoc::indoc;
     use language::{language_settings, tree_sitter_rust, Buffer, Language, LanguageConfig, Point};
     use parking_lot::Mutex;
     use rand::prelude::*;
     use settings::SettingsStore;
+    use smol::future::FutureExt;
 
     #[gpui::test(iterations = 10)]
     async fn test_transform_autoindent(

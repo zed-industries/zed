@@ -1,0 +1,21 @@
+[package]
+name = "ai"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/ai.rs"
+doctest = false
+
+[dependencies]
+gpui = { path = "../gpui" }
+anyhow.workspace = true
+futures.workspace = true
+isahc.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+ctor.workspace = true

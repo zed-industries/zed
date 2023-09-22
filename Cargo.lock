@@ -87,6 +87,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ai"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ctor",
+ "futures 0.3.28",
+ "gpui",
+ "isahc",
+ "regex",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "alacritty_config"
 version = "0.1.2-dev"
 source = "git+https://github.com/zed-industries/alacritty?rev=33306142195b354ef3485ca2b1d8a85dfc6605ca#33306142195b354ef3485ca2b1d8a85dfc6605ca"
@@ -272,6 +286,7 @@ checksum = "d92bec98840b8f03a5ff5413de5293bfcd8bf96467cf5452609f939ec6f5de16"
 name = "assistant"
 version = "0.1.0"
 dependencies = [
+ "ai",
  "anyhow",
  "chrono",
  "client",
