@@ -911,7 +911,6 @@ impl Project {
                 .detach();
         }
 
-        // TODO kb restart all default formatters if Zed prettier settings change
         for (worktree, language, settings) in language_formatters_to_check {
             self.maybe_start_default_formatters(worktree, &language, &settings, cx);
         }
@@ -8428,7 +8427,7 @@ impl Project {
     }
 
     fn maybe_start_default_formatters(
-        &mut self,
+        &self,
         worktree: Option<WorktreeId>,
         new_language: &Language,
         language_settings: &LanguageSettings,

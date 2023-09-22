@@ -1,8 +1,9 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
+use collections::HashMap;
 use fs::Fs;
 use gpui::{AsyncAppContext, ModelHandle};
 use language::language_settings::language_settings;
@@ -202,7 +203,6 @@ impl Prettier {
         let params = buffer.read_with(cx, |buffer, cx| {
             let buffer_file = buffer.file();
             let buffer_language = buffer.language();
-            let language_settings = language_settings(buffer_language, buffer_file, cx);
             let path = buffer_file
                 .map(|file| file.full_path(cx))
                 .map(|path| path.to_path_buf());
@@ -217,14 +217,38 @@ impl Prettier {
                         }
                     })
             });
-            let tab_width = Some(language_settings.tab_size.get());
+
+            let prettier_options = if self.default {
+                let language_settings = language_settings(buffer_language, buffer_file, cx);
+                let mut options = language_settings.prettier.clone();
+                if !options.contains_key("tabWidth") {
+                    options.insert(
+                        "tabWidth".to_string(),
+                        serde_json::Value::Number(serde_json::Number::from(
+                            language_settings.tab_size.get(),
+                        )),
+                    );
+                }
+                if !options.contains_key("printWidth") {
+                    options.insert(
+                        "printWidth".to_string(),
+                        serde_json::Value::Number(serde_json::Number::from(
+                            language_settings.preferred_line_length,
+                        )),
+                    );
+                }
+                Some(options)
+            } else {
+                None
+            };
+
             FormatParams {
                 text: buffer.text(),
                 options: FormatOptions {
                     parser,
                     // TODO kb is not absolute now
                     path,
-                    tab_width,
+                    prettier_options,
                 },
             }
         });
@@ -318,13 +342,13 @@ struct FormatParams {
     options: FormatOptions,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct FormatOptions {
     parser: Option<String>,
     #[serde(rename = "filepath")]
     path: Option<PathBuf>,
-    tab_width: Option<u32>,
+    prettier_options: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
