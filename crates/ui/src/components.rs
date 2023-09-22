@@ -1,17 +1,21 @@
+mod breadcrumb;
 mod facepile;
 mod follow_group;
 mod list_item;
 mod list_section_header;
 mod palette_item;
 mod tab;
+mod toolbar;
 mod traffic_lights;
 
+pub use breadcrumb::*;
 pub use facepile::*;
 pub use follow_group::*;
 pub use list_item::*;
 pub use list_section_header::*;
 pub use palette_item::*;
 pub use tab::*;
+pub use toolbar::*;
 pub use traffic_lights::*;
 
 use std::marker::PhantomData;
