@@ -1,10 +1,10 @@
-pub mod assistant;
+pub mod assistant_panel;
 mod assistant_settings;
 mod codegen;
 mod streaming_diff;
 
 use anyhow::{anyhow, Result};
-pub use assistant::AssistantPanel;
+pub use assistant_panel::AssistantPanel;
 use assistant_settings::OpenAIModel;
 use chrono::{DateTime, Local};
 use collections::HashMap;
@@ -196,7 +196,7 @@ struct OpenAIChoice {
 }
 
 pub fn init(cx: &mut AppContext) {
-    assistant::init(cx);
+    assistant_panel::init(cx);
 }
 
 pub async fn stream_completion(

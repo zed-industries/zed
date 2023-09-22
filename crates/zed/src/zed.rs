@@ -5,7 +5,7 @@ pub mod only_instance;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
-use ai::AssistantPanel;
+use assistant::AssistantPanel;
 use anyhow::Context;
 use assets::Assets;
 use breadcrumbs::Breadcrumbs;
