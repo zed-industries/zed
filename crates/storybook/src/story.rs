@@ -23,6 +23,10 @@ impl Story {
             .child(title.to_owned())
     }
 
+    pub fn title_for<V: 'static, T>() -> impl Element<V> {
+        Self::title(std::any::type_name::<T>())
+    }
+
     pub fn label<V: 'static>(label: &str) -> impl Element<V> {
         div()
             .mt_4()

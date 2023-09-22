@@ -12,7 +12,7 @@ impl AvatarStory {
         let theme = theme(cx);
 
         Story::container()
-            .child(Story::title(std::any::type_name::<ui::Avatar>()))
+            .child(Story::title_for::<_, ui::Avatar>())
             .child(Story::label("Default"))
             .child(avatar(
                 "https://avatars.githubusercontent.com/u/1714999?v=4",

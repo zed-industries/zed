@@ -11,7 +11,7 @@ impl TrafficLightsStory {
         let theme = theme(cx);
 
         Story::container()
-            .child(Story::title(std::any::type_name::<ui::TrafficLights>()))
+            .child(Story::title_for::<_, ui::TrafficLights>())
             .child(Story::label("Default"))
             .child(traffic_lights())
             .child(Story::label("Unfocused"))

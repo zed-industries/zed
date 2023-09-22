@@ -20,7 +20,7 @@ impl FacepileStory {
         ];
 
         Story::container()
-            .child(Story::title(std::any::type_name::<ui::Facepile>()))
+            .child(Story::title_for::<_, ui::Facepile>())
             .child(Story::label("Default"))
             .child(
                 div()
