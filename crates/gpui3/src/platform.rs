@@ -36,12 +36,12 @@ pub use mac::*;
 pub use test::*;
 
 #[cfg(target_os = "macos")]
-pub(crate) fn current_platform() -> Rc<dyn Platform> {
+pub(crate) fn current_platform() -> Arc<dyn Platform> {
     Rc::new(MacPlatform::new())
 }
 
 pub trait Platform {
-    fn executor(&self) -> Rc<ForegroundExecutor>;
+    fn dispatcher(&self) -> Arc<dyn PlatformDispatcher>;
     fn text_system(&self) -> Arc<dyn PlatformTextSystem>;
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>);

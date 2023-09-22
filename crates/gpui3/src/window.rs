@@ -1,4 +1,6 @@
-use crate::{AvailableSpace, PlatformWindow, Point, Size, Style, TextStyle, TextStyleRefinement};
+use crate::{
+    AvailableSpace, Bg, PlatformWindow, Point, Size, Style, TextStyle, TextStyleRefinement,
+};
 
 use super::{
     px, taffy::LayoutId, AppContext, Bounds, Context, EntityId, Handle, Pixels, Reference,
@@ -45,7 +47,7 @@ pub struct WindowContext<'a, 'b> {
 }
 
 impl<'a, 'w> WindowContext<'a, 'w> {
-    pub(crate) fn mutable(app: &'a mut AppContext, window: &'w mut Window) -> Self {
+    pub(crate) fn mutable(app: &'a mut AppContext<Bg>, window: &'w mut Window) -> Self {
         Self {
             app: Reference::Mutable(app),
             window: Reference::Mutable(window),
