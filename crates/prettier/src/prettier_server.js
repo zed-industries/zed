@@ -155,6 +155,9 @@ async function handleMessage(message, prettier) {
             parser: params.options.parser,
             path: params.options.path
         };
+        // TODO kb always resolve prettier config for each file.
+        // need to understand if default prettier can be affected by other configs in the project
+        // (restart default prettiers on config changes too then)
         const formattedText = await prettier.prettier.format(params.text, options);
         sendResponse({ id, result: { text: formattedText } });
     } else if (method === 'prettier/clear_cache') {

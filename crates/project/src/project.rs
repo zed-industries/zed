@@ -6391,43 +6391,42 @@ impl Project {
             log::info!(
                 "Prettier config file {config_path:?} changed, reloading prettier instances for worktree {current_worktree_id}"
             );
+            let prettiers_to_reload = self
+                .prettier_instances
+                .iter()
+                .filter_map(|((worktree_id, prettier_path), prettier_task)| {
+                    if worktree_id == &Some(current_worktree_id) {
+                        Some((*worktree_id, prettier_path.clone(), prettier_task.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            cx.background()
+                .spawn(async move {
+                    for task_result in future::join_all(prettiers_to_reload.into_iter().map(|(worktree_id, prettier_path, prettier_task)| {
+                        async move {
+                            prettier_task.await?
+                                .clear_cache()
+                                .await
+                                .with_context(|| {
+                                    format!(
+                                        "clearing prettier {prettier_path:?} cache for worktree {worktree_id:?}"
+                                    )
+                                })
+                                .map_err(Arc::new)
+                        }
+                    }))
+                    .await
+                    {
+                        if let Err(e) = task_result {
+                            log::error!("Failed to clear cache for prettier: {e:#}");
+                        }
+                    }
+                })
+                .detach();
         }
-
-        let prettiers_to_reload = self
-            .prettier_instances
-            .iter()
-            .filter_map(|((worktree_id, prettier_path), prettier_task)| {
-                if worktree_id.is_none() || worktree_id == &Some(current_worktree_id) {
-                    Some((*worktree_id, prettier_path.clone(), prettier_task.clone()))
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-
-        cx.background()
-            .spawn(async move {
-                for task_result in future::join_all(prettiers_to_reload.into_iter().map(|(worktree_id, prettier_path, prettier_task)| {
-                    async move {
-                        prettier_task.await?
-                            .clear_cache()
-                            .await
-                            .with_context(|| {
-                                format!(
-                                    "clearing prettier {prettier_path:?} cache for worktree {worktree_id:?}"
-                                )
-                            })
-                            .map_err(Arc::new)
-                    }
-                }))
-                .await
-                {
-                    if let Err(e) = task_result {
-                        log::error!("Failed to clear cache for prettier: {e:#}");
-                    }
-                }
-            })
-            .detach();
     }
 
     pub fn set_active_path(&mut self, entry: Option<ProjectPath>, cx: &mut ModelContext<Self>) {
@@ -8410,6 +8409,7 @@ impl Project {
                             project
                                 .supplementary_language_servers
                                 .insert(new_server_id, (name, Arc::clone(prettier.server())));
+                            // TODO kb could there be a race with multiple default prettier instances added?
                             cx.emit(Event::LanguageServerAdded(new_server_id));
                         });
                     }
