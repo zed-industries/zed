@@ -5,7 +5,7 @@ use serde::de::{self, Deserialize, Deserializer, Visitor};
 use std::fmt;
 use std::num::ParseIntError;
 
-pub fn rgb<C: From<Rgba>>(hex: u32) -> C {
+pub fn rgb(hex: u32) -> Rgba {
     let r = ((hex >> 16) & 0xFF) as f32 / 255.0;
     let g = ((hex >> 8) & 0xFF) as f32 / 255.0;
     let b = (hex & 0xFF) as f32 / 255.0;

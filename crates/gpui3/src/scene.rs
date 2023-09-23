@@ -25,19 +25,13 @@ impl Scene {
         }
     }
 
-    pub fn insert(&mut self, primitive: impl Into<Primitive>, is_transparent: bool) {
+    pub fn insert(&mut self, primitive: impl Into<Primitive>) {
         let primitive = primitive.into();
         self.max_order = cmp::max(self.max_order, primitive.order());
-        if is_transparent {
-            self.transparent_primitives.insert(primitive);
-        } else {
-            match primitive {
-                Primitive::Quad(quad) => self.opaque_primitives.quads.push(quad),
-                Primitive::Glyph(glyph) => self.opaque_primitives.glyphs.push(glyph),
-                Primitive::Underline(underline) => {
-                    self.opaque_primitives.underlines.push(underline)
-                }
-            }
+        match primitive {
+            Primitive::Quad(quad) => self.opaque_primitives.quads.push(quad),
+            Primitive::Glyph(glyph) => self.opaque_primitives.glyphs.push(glyph),
+            Primitive::Underline(underline) => self.opaque_primitives.underlines.push(underline),
         }
     }
 

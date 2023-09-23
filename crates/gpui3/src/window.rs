@@ -26,25 +26,18 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn new(
-        handle: AnyWindowHandle,
-        options: WindowOptions,
-        platform: &dyn Platform,
-    ) -> impl Future<Output = Window> + 'static {
+    pub fn new(handle: AnyWindowHandle, options: WindowOptions, platform: &dyn Platform) -> Self {
         let platform_window = platform.open_window(handle, options);
         let mouse_position = platform_window.mouse_position();
         let platform_window = MainThreadOnly::new(Arc::new(platform_window), platform.dispatcher());
-
-        async move {
-            Window {
-                handle,
-                platform_window,
-                rem_size: px(16.),
-                layout_engine: TaffyLayoutEngine::new(),
-                text_style_stack: Vec::new(),
-                root_view: None,
-                mouse_position,
-            }
+        Window {
+            handle,
+            platform_window,
+            rem_size: px(16.),
+            layout_engine: TaffyLayoutEngine::new(),
+            text_style_stack: Vec::new(),
+            root_view: None,
+            mouse_position,
         }
     }
 }

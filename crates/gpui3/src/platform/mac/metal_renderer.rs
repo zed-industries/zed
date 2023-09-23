@@ -12,7 +12,7 @@ use std::{ffi::c_void, mem, ptr};
 const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
 const INSTANCE_BUFFER_SIZE: usize = 8192 * 1024; // This is an arbitrary decision. There's probably a more optimal value.
 
-pub struct Renderer {
+pub struct MetalRenderer {
     layer: metal::MetalLayer,
     command_queue: CommandQueue,
     quad_pipeline_state: metal::RenderPipelineState,
@@ -20,7 +20,7 @@ pub struct Renderer {
     instances: metal::Buffer,
 }
 
-impl Renderer {
+impl MetalRenderer {
     pub fn new(is_opaque: bool) -> Self {
         const PIXEL_FORMAT: MTLPixelFormat = MTLPixelFormat::BGRA8Unorm;
 
@@ -50,10 +50,26 @@ impl Renderer {
             .new_library_with_data(SHADERS_METALLIB)
             .expect("error building metal library");
 
-        let unit_vertices = [point(1., 1.), point(1., 0.), point(0., 0.), point(0., 1.)];
+        fn to_float2_bits(point: crate::PointF) -> u64 {
+            unsafe {
+                let mut output = mem::transmute::<_, u32>(point.y.to_bits()) as u64;
+                output <<= 32;
+                output |= mem::transmute::<_, u32>(point.x.to_bits()) as u64;
+                output
+            }
+        }
+
+        let unit_vertices = [
+            to_float2_bits(point(0., 0.)),
+            to_float2_bits(point(1., 0.)),
+            to_float2_bits(point(0., 1.)),
+            to_float2_bits(point(0., 1.)),
+            to_float2_bits(point(1., 0.)),
+            to_float2_bits(point(1., 1.)),
+        ];
         let unit_vertices = device.new_buffer_with_data(
             unit_vertices.as_ptr() as *const c_void,
-            (unit_vertices.len() * mem::size_of::<PointF>()) as u64,
+            (unit_vertices.len() * mem::size_of::<u64>()) as u64,
             MTLResourceOptions::StorageModeManaged,
         );
         let instances = device.new_buffer(
@@ -77,6 +93,10 @@ impl Renderer {
             unit_vertices,
             instances,
         }
+    }
+
+    pub fn layer(&self) -> &metal::MetalLayerRef {
+        &*self.layer
     }
 
     pub fn draw(&mut self, scene: &Scene, scale_factor: f32) {
@@ -125,11 +145,13 @@ impl Renderer {
             scene.max_order(),
             command_encoder,
         );
+        command_encoder.end_encoding();
 
         self.instances.did_modify_range(NSRange {
             location: 0,
             length: buffer_offset as NSUInteger,
         });
+
         command_buffer.commit();
         command_buffer.wait_until_completed();
         drawable.present();
@@ -165,6 +187,7 @@ impl Renderer {
             scale_factor,
             max_order,
         };
+
         let quad_uniform_bytes = bytemuck::bytes_of(&quad_uniforms);
         command_encoder.set_vertex_bytes(
             QuadInputIndex::Uniforms as u64,
@@ -184,10 +207,11 @@ impl Renderer {
             "instance buffer exhausted"
         );
 
+        dbg!(quads.len());
         command_encoder.draw_primitives_instanced(
-            metal::MTLPrimitiveType::TriangleStrip,
+            metal::MTLPrimitiveType::Triangle,
             0,
-            4,
+            6,
             quads.len() as u64,
         );
         *offset = next_offset;
@@ -235,9 +259,9 @@ fn align_offset(offset: &mut usize) {
 
 #[repr(C)]
 enum QuadInputIndex {
-    Vertices,
-    Quads,
-    Uniforms,
+    Vertices = 0,
+    Quads = 1,
+    Uniforms = 2,
 }
 
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]

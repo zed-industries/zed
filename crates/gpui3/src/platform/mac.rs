@@ -16,6 +16,7 @@ use cocoa::{
     base::{id, nil},
     foundation::{NSAutoreleasePool, NSNotFound, NSRect, NSSize, NSString, NSUInteger, NSURL},
 };
+use metal_renderer::*;
 use objc::{
     msg_send,
     runtime::{BOOL, NO, YES},

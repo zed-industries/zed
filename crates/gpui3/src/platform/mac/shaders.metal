@@ -8,6 +8,8 @@ float4 to_device_position(float2 pixel_position, uint order, uint max_order, flo
 
 struct QuadVertexOutput {
     float4 position [[position]];
+    float4 background_color;
+    float4 border_color;
     uint quad_id;
 };
 
@@ -23,7 +25,14 @@ vertex QuadVertexOutput quad_vertex(
     float2 position_2d = unit_vertex * float2(quad.bounds.size.width, quad.bounds.size.height) + float2(quad.bounds.origin.x, quad.bounds.origin.y);
     float2 viewport_size = float2(uniforms->viewport_size.width, uniforms->viewport_size.height);
     float4 device_position = to_device_position(position_2d, quad.order, uniforms->max_order, viewport_size);
-    return QuadVertexOutput { device_position, quad_id };
+    float4 background_color = hsla_to_rgba(quad.background);
+    float4 border_color = hsla_to_rgba(quad.border_color);
+    return QuadVertexOutput {
+        device_position,
+        background_color,
+        border_color,
+        quad_id
+    };
 }
 
 fragment float4 quad_fragment(QuadVertexOutput input [[stage_in]], constant Quad *quads [[buffer(QuadInputIndex_Quads)]]) {
@@ -64,26 +73,26 @@ fragment float4 quad_fragment(QuadVertexOutput input [[stage_in]], constant Quad
 
     float4 color;
     if (border_width == 0.) {
-        color = float4(quad.background.h, quad.background.s, quad.background.l, quad.background.a);
+        color = input.background_color;
     } else {
         float inset_distance = distance + border_width;
 
         // Decrease border's opacity as we move inside the background.
-        quad.border_color.a *= 1. - saturate(0.5 - inset_distance);
+        input.border_color.a *= 1. - saturate(0.5 - inset_distance);
 
         // Alpha-blend the border and the background.
         float output_alpha = quad.border_color.a + quad.background.a * (1. - quad.border_color.a);
-        float3 premultiplied_border_rgb = float3(quad.border_color.h, quad.border_color.s, quad.border_color.l) * quad.border_color.a;
-        float3 premultiplied_background_rgb = float3(quad.background.h, quad.background.s, quad.background.l) * quad.background.a;
-        float3 premultiplied_output_rgb = premultiplied_border_rgb + premultiplied_background_rgb * (1. - quad.border_color.a);
-        color = float4(premultiplied_output_rgb.x, premultiplied_output_rgb.y, premultiplied_output_rgb.z, output_alpha);
+        float3 premultiplied_border_rgb = input.border_color.rgb * quad.border_color.a;
+        float3 premultiplied_background_rgb = input.background_color.rgb * input.background_color.a;
+        float3 premultiplied_output_rgb = premultiplied_border_rgb + premultiplied_background_rgb * (1. - input.border_color.a);
+        color = float4(premultiplied_output_rgb, output_alpha);
     }
 
     return color;
 }
 
 float4 hsla_to_rgba(Hsla hsla) {
-    float h = hsla.h;
+    float h = hsla.h * 6.0; // Now, it's an angle but scaled in [0, 6) range
     float s = hsla.s;
     float l = hsla.l;
     float a = hsla.a;

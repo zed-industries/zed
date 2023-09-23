@@ -1,3 +1,4 @@
+use super::{ns_string, MetalRenderer, NSRange};
 use crate::{
     point, px, size, AnyWindowHandle, Bounds, Event, InputHandler, KeyDownEvent, Keystroke,
     MacScreen, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMovedEvent,
@@ -17,6 +18,7 @@ use cocoa::{
 };
 use core_graphics::display::CGRect;
 use ctor::ctor;
+use foreign_types::{ForeignType, ForeignTypeRef};
 use futures::channel::oneshot;
 use objc::{
     class,
@@ -38,8 +40,6 @@ use std::{
     sync::{Arc, Weak},
     time::Duration,
 };
-
-use super::{ns_string, NSRange};
 
 const WINDOW_STATE_IVAR: &str = "windowState";
 
@@ -134,10 +134,10 @@ unsafe fn build_classes() {
             cancel_operation as extern "C" fn(&Object, Sel, id),
         );
 
-        // decl.add_method(
-        //     sel!(makeBackingLayer),
-        //     make_backing_layer as extern "C" fn(&Object, Sel) -> id,
-        // );
+        decl.add_method(
+            sel!(makeBackingLayer),
+            make_backing_layer as extern "C" fn(&Object, Sel) -> id,
+        );
 
         decl.add_protocol(Protocol::get("CALayerDelegate").unwrap());
         decl.add_method(
@@ -277,10 +277,11 @@ struct InsertText {
     text: String,
 }
 
-struct WindowState {
+struct MacWindowState {
     handle: AnyWindowHandle,
     dispatcher: Arc<dyn PlatformDispatcher>,
     native_window: id,
+    renderer: MetalRenderer,
     kind: WindowKind,
     event_callback: Option<Box<dyn FnMut(Event) -> bool>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
@@ -303,7 +304,7 @@ struct WindowState {
     ime_text: Option<String>,
 }
 
-impl WindowState {
+impl MacWindowState {
     fn move_traffic_light(&self) {
         if let Some(traffic_light_position) = self.traffic_light_position {
             let titlebar_height = self.titlebar_height();
@@ -408,9 +409,9 @@ impl WindowState {
     }
 }
 
-unsafe impl Send for WindowState {}
+unsafe impl Send for MacWindowState {}
 
-pub struct MacWindow(Arc<Mutex<WindowState>>);
+pub struct MacWindow(Arc<Mutex<MacWindowState>>);
 
 impl MacWindow {
     pub fn open(handle: AnyWindowHandle, options: WindowOptions, platform: &dyn Platform) -> Self {
@@ -475,18 +476,19 @@ impl MacWindow {
 
             assert!(!native_view.is_null());
 
-            let window = Self(Arc::new(Mutex::new(WindowState {
+            let window = Self(Arc::new(Mutex::new(MacWindowState {
                 handle,
                 dispatcher: platform.dispatcher(),
                 native_window,
+                renderer: MetalRenderer::new(true),
                 kind: options.kind,
                 event_callback: None,
-                resize_callback: None,
-                should_close_callback: None,
-                close_callback: None,
                 activate_callback: None,
+                resize_callback: None,
                 fullscreen_callback: None,
                 moved_callback: None,
+                should_close_callback: None,
+                close_callback: None,
                 appearance_changed_callback: None,
                 input_handler: None,
                 pending_key_down: None,
@@ -882,9 +884,9 @@ fn get_scale_factor(native_window: id) -> f32 {
     }
 }
 
-unsafe fn get_window_state(object: &Object) -> Arc<Mutex<WindowState>> {
+unsafe fn get_window_state(object: &Object) -> Arc<Mutex<MacWindowState>> {
     let raw: *mut c_void = *object.get_ivar(WINDOW_STATE_IVAR);
-    let rc1 = Arc::from_raw(raw as *mut Mutex<WindowState>);
+    let rc1 = Arc::from_raw(raw as *mut Mutex<MacWindowState>);
     let rc2 = rc1.clone();
     mem::forget(rc1);
     rc2
@@ -892,7 +894,7 @@ unsafe fn get_window_state(object: &Object) -> Arc<Mutex<WindowState>> {
 
 unsafe fn drop_window_state(object: &Object) {
     let raw: *mut c_void = *object.get_ivar(WINDOW_STATE_IVAR);
-    Rc::from_raw(raw as *mut RefCell<WindowState>);
+    Rc::from_raw(raw as *mut RefCell<MacWindowState>);
 }
 
 extern "C" fn yes(_: &Object, _: Sel) -> BOOL {
@@ -1272,33 +1274,33 @@ extern "C" fn close_window(this: &Object, _: Sel) {
     }
 }
 
-// extern "C" fn make_backing_layer(this: &Object, _: Sel) -> id {
-//     let window_state = unsafe { get_window_state(this) };
-//     let window_state = window_state.as_ref().lock();
-//     window_state.renderer.layer().as_ptr() as id
-// }
+extern "C" fn make_backing_layer(this: &Object, _: Sel) -> id {
+    let window_state = unsafe { get_window_state(this) };
+    let window_state = window_state.as_ref().lock();
+    window_state.renderer.layer().as_ptr() as id
+}
 
 extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
     let window_state = unsafe { get_window_state(this) };
     let mut window_state_borrow = window_state.as_ref().lock();
 
-    // unsafe {
-    //     let scale_factor = window_state_borrow.scale_factor() as f64;
-    //     let size = window_state_borrow.content_size();
-    //     let drawable_size: NSSize = NSSize {
-    //         width: f64::from(size.width) * scale_factor,
-    //         height: f64::from(size.height) * scale_factor,
-    //     };
+    unsafe {
+        let scale_factor = window_state_borrow.scale_factor() as f64;
+        let size = window_state_borrow.content_size();
+        let drawable_size: NSSize = NSSize {
+            width: f64::from(size.width) * scale_factor,
+            height: f64::from(size.height) * scale_factor,
+        };
 
-    //     // let _: () = msg_send![
-    //     //     window_state_borrow.renderer.layer(),
-    //     //     setContentsScale: scale_factor
-    //     // ];
-    //     // let _: () = msg_send![
-    //     //     window_state_borrow.renderer.layer(),
-    //     //     setDrawableSize: drawable_size
-    //     // ];
-    // }
+        let _: () = msg_send![
+            window_state_borrow.renderer.layer(),
+            setContentsScale: scale_factor
+        ];
+        let _: () = msg_send![
+            window_state_borrow.renderer.layer(),
+            setDrawableSize: drawable_size
+        ];
+    }
 
     if let Some(mut callback) = window_state_borrow.resize_callback.take() {
         drop(window_state_borrow);
@@ -1319,18 +1321,18 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
         let _: () = msg_send![super(this, class!(NSView)), setFrameSize: size];
     }
 
-    // let scale_factor = window_state_borrow.scale_factor() as f64;
-    // let drawable_size: NSSize = NSSize {
-    //     width: size.width * scale_factor,
-    //     height: size.height * scale_factor,
-    // };
-    //
-    // unsafe {
-    //     let _: () = msg_send![
-    //         window_state_borrow.renderer.layer(),
-    //         setDrawableSize: drawable_size
-    //     ];
-    // }
+    let scale_factor = window_state_borrow.scale_factor() as f64;
+    let drawable_size: NSSize = NSSize {
+        width: size.width * scale_factor,
+        height: size.height * scale_factor,
+    };
+
+    unsafe {
+        let _: () = msg_send![
+            window_state_borrow.renderer.layer(),
+            setDrawableSize: drawable_size
+        ];
+    }
 
     drop(window_state_borrow);
     let mut window_state_borrow = window_state.lock();
@@ -1341,14 +1343,32 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
     };
 }
 
-extern "C" fn display_layer(_this: &Object, _: Sel, _: id) {
-    // unsafe {
-    // let window_state = get_window_state(this);
-    // let mut window_state = window_state.as_ref().lock();
-    // if let Some(scene) = window_state.scene_to_render.take() {
-    //     window_state.renderer.render(&scene);
-    // };
-    // }
+extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
+    unsafe {
+        let window_state = get_window_state(this);
+        let mut window_state = window_state.as_ref().lock();
+
+        let mut scene = crate::Scene::new();
+        scene.insert(crate::Quad {
+            order: 0,
+            bounds: Bounds {
+                origin: point(10., 10.).map(px),
+                size: size(100., 100.).map(px),
+            },
+            clip_bounds: Bounds {
+                origin: point(10., 10.).map(px),
+                size: size(100., 100.).map(px),
+            },
+            clip_corner_radii: Default::default(),
+            background: crate::rgb(0x00ff00).into(),
+            border_color: Default::default(),
+            corner_radii: Default::default(),
+            border_widths: Default::default(),
+        });
+        dbg!("!!!!!!!!!");
+        let scale_factor = window_state.scale_factor();
+        window_state.renderer.draw(&scene, scale_factor);
+    }
 }
 
 extern "C" fn valid_attributes_for_marked_text(_: &Object, _: Sel) -> id {
@@ -1544,7 +1564,7 @@ extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
 }
 
 async fn synthetic_drag(
-    window_state: Weak<Mutex<WindowState>>,
+    window_state: Weak<Mutex<MacWindowState>>,
     drag_id: usize,
     event: MouseMovedEvent,
 ) {

@@ -3,7 +3,7 @@ use crate::{
     Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
-use futures::Future;
+use futures::{future, Future};
 use parking_lot::Mutex;
 use slotmap::SlotMap;
 use std::{
@@ -77,7 +77,7 @@ impl AppContext {
         f: impl FnOnce(&dyn Platform, &mut Self) -> F + Send + 'static,
     ) -> impl Future<Output = R>
     where
-        F: Future<Output = R> + Send + 'static,
+        F: Future<Output = R> + 'static,
         R: Send + 'static,
     {
         let this = self.this.upgrade().unwrap();
@@ -94,19 +94,13 @@ impl AppContext {
     ) -> impl Future<Output = WindowHandle<S>> {
         let id = self.windows.insert(None);
         let handle = WindowHandle::new(id);
-        let window =
-            self.spawn_on_main(move |platform, _cx| Window::new(handle.into(), options, platform));
-
-        let this = self.this.upgrade().unwrap();
-        async move {
-            let mut window = window.await;
-            let cx = &mut *this.lock();
+        self.spawn_on_main(move |platform, cx| {
+            let mut window = Window::new(handle.into(), options, platform);
             let root_view = build_root_view(&mut WindowContext::mutable(cx, &mut window));
             window.root_view.replace(Box::new(root_view));
-
             cx.windows.get_mut(id).unwrap().replace(window);
-            handle
-        }
+            future::ready(handle)
+        })
     }
 
     pub(crate) fn update_window<R>(
