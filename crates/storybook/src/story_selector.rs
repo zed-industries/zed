@@ -17,6 +17,7 @@ pub enum ElementStory {
 pub enum ComponentStory {
     Breadcrumb,
     Facepile,
+    Palette,
     Toolbar,
     TrafficLights,
 }

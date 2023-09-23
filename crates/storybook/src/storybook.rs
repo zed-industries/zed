@@ -74,6 +74,12 @@ fn main() {
                         stories::components::facepile::FacepileStory::default(),
                     )
                 }),
+                Some(StorySelector::Component(ComponentStory::Palette)) => view(|cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        stories::components::palette::PaletteStory::default(),
+                    )
+                }),
                 Some(StorySelector::Component(ComponentStory::Toolbar)) => view(|cx| {
                     render_story(
                         &mut ViewContext::new(cx),
