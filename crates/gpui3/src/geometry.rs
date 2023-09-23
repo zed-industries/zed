@@ -2,7 +2,7 @@ use bytemuck::{Pod, Zeroable};
 use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, Mul, Sub, SubAssign};
 use refineable::Refineable;
-use std::ops::{Add, AddAssign, Mul, Sub, SubAssign};
+use std::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 
 #[derive(
     Refineable, Default, Add, AddAssign, Sub, SubAssign, Mul, Div, Copy, Debug, PartialEq, Eq, Hash,
@@ -28,6 +28,13 @@ impl<T: Clone + Debug> Point<T> {
             x: f(self.x.clone()),
             y: f(self.y.clone()),
         }
+    }
+}
+
+impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Point<T> {
+    fn mul_assign(&mut self, rhs: S) {
+        self.x = self.x.clone() * rhs.clone();
+        self.y = self.y.clone() * rhs;
     }
 }
 
@@ -98,6 +105,13 @@ impl<T: Clone + Debug> Size<T> {
     }
 }
 
+impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Size<T> {
+    fn mul_assign(&mut self, rhs: S) {
+        self.width = self.width.clone() * rhs.clone();
+        self.height = self.height.clone() * rhs;
+    }
+}
+
 impl From<Size<Option<Pixels>>> for Size<Option<f32>> {
     fn from(val: Size<Option<Pixels>>) -> Self {
         Size {
@@ -145,28 +159,28 @@ pub struct Bounds<T: Clone + Debug> {
 unsafe impl<T: Clone + Debug + Zeroable + Pod> Zeroable for Bounds<T> {}
 unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Bounds<T> {}
 
-impl<T: Clone + Debug + Copy + Add<T, Output = T>> Bounds<T> {
+impl<T: Clone + Debug + Add<T, Output = T>> Bounds<T> {
     pub fn upper_right(&self) -> Point<T> {
         Point {
-            x: self.origin.x + self.size.width,
-            y: self.origin.y,
+            x: self.origin.x.clone() + self.size.width.clone(),
+            y: self.origin.y.clone(),
         }
     }
 
     pub fn lower_right(&self) -> Point<T> {
         Point {
-            x: self.origin.x + self.size.width,
-            y: self.origin.y + self.size.height,
+            x: self.origin.x.clone() + self.size.width.clone(),
+            y: self.origin.y.clone() + self.size.height.clone(),
         }
     }
 }
 
-impl<T: Clone + Debug + Copy + PartialOrd + Add<T, Output = T>> Bounds<T> {
+impl<T: Clone + Debug + PartialOrd + Add<T, Output = T>> Bounds<T> {
     pub fn contains_point(&self, point: Point<T>) -> bool {
         point.x >= self.origin.x
-            && point.x <= self.origin.x + self.size.width
+            && point.x <= self.origin.x.clone() + self.size.width.clone()
             && point.y >= self.origin.y
-            && point.y <= self.origin.y + self.size.height
+            && point.y <= self.origin.y.clone() + self.size.height.clone()
     }
 }
 
@@ -180,6 +194,15 @@ pub struct Edges<T: Clone + Debug> {
     pub right: T,
     pub bottom: T,
     pub left: T,
+}
+
+impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Edges<T> {
+    fn mul_assign(&mut self, rhs: S) {
+        self.top = self.top.clone() * rhs.clone();
+        self.right = self.right.clone() * rhs.clone();
+        self.bottom = self.bottom.clone() * rhs.clone();
+        self.left = self.left.clone() * rhs.clone();
+    }
 }
 
 impl<T: Clone + Debug + Copy> Copy for Edges<T> {}
@@ -255,6 +278,15 @@ pub struct Corners<T: Clone + Debug> {
     pub bottom_left: T,
 }
 
+impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Corners<T> {
+    fn mul_assign(&mut self, rhs: S) {
+        self.top_left = self.top_left.clone() * rhs.clone();
+        self.top_right = self.top_right.clone() * rhs.clone();
+        self.bottom_right = self.bottom_right.clone() * rhs.clone();
+        self.bottom_left = self.bottom_left.clone() * rhs;
+    }
+}
+
 impl<T: Clone + Debug + Copy> Copy for Corners<T> {}
 
 unsafe impl<T: Clone + Debug + Zeroable + Pod> Zeroable for Corners<T> {}
@@ -264,6 +296,14 @@ unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Corners<T> {}
 #[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd)]
 #[repr(transparent)]
 pub struct Pixels(pub(crate) f32);
+
+impl Mul<f32> for Pixels {
+    type Output = Pixels;
+
+    fn mul(self, other: f32) -> Pixels {
+        Pixels(self.0 * other)
+    }
+}
 
 #[derive(
     Clone, Copy, Debug, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd,
@@ -284,14 +324,6 @@ impl Pixels {
 
     pub fn to_device_pixels(&self, scale: f32) -> DevicePixels {
         DevicePixels((self.0 * scale).ceil() as u32)
-    }
-}
-
-impl Mul<f32> for Pixels {
-    type Output = Pixels;
-
-    fn mul(self, other: f32) -> Pixels {
-        Pixels(self.0 * other)
     }
 }
 

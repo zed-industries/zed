@@ -13,25 +13,26 @@ pub struct Scene {
     transparent_primitives: slotmap::SlotMap<slotmap::DefaultKey, Primitive>,
     splitter: BspSplitter<slotmap::DefaultKey>,
     max_order: u32,
+    scale_factor: f32,
 }
 
 impl Scene {
-    pub fn new() -> Scene {
+    pub fn new(scale_factor: f32) -> Scene {
         Scene {
             opaque_primitives: PrimitiveBatch::default(),
             transparent_primitives: slotmap::SlotMap::new(),
             splitter: BspSplitter::new(),
             max_order: 0,
+            scale_factor,
         }
     }
 
     pub fn insert(&mut self, primitive: impl Into<Primitive>) {
-        let primitive = primitive.into();
+        let mut primitive = primitive.into();
+        primitive.scale(self.scale_factor);
         self.max_order = cmp::max(self.max_order, primitive.order());
         match primitive {
             Primitive::Quad(quad) => self.opaque_primitives.quads.push(quad),
-            Primitive::Glyph(glyph) => self.opaque_primitives.glyphs.push(glyph),
-            Primitive::Underline(underline) => self.opaque_primitives.underlines.push(underline),
         }
     }
 
@@ -47,16 +48,12 @@ impl Scene {
 #[derive(Clone, Debug)]
 pub enum Primitive {
     Quad(Quad),
-    Glyph(RenderedGlyph),
-    Underline(Underline),
 }
 
 impl Primitive {
     pub fn order(&self) -> u32 {
         match self {
             Primitive::Quad(quad) => quad.order,
-            Primitive::Glyph(glyph) => glyph.order,
-            Primitive::Underline(underline) => underline.order,
         }
     }
 
@@ -65,8 +62,14 @@ impl Primitive {
             Primitive::Quad(quad) => {
                 quad.background.is_transparent() && quad.border_color.is_transparent()
             }
-            Primitive::Glyph(glyph) => glyph.color.is_transparent(),
-            Primitive::Underline(underline) => underline.color.is_transparent(),
+        }
+    }
+
+    pub fn scale(&mut self, factor: f32) {
+        match self {
+            Primitive::Quad(quad) => {
+                quad.scale(factor);
+            }
         }
     }
 }
@@ -74,8 +77,6 @@ impl Primitive {
 #[derive(Default)]
 pub struct PrimitiveBatch {
     pub quads: Vec<Quad>,
-    pub glyphs: Vec<RenderedGlyph>,
-    pub underlines: Vec<Underline>,
 }
 
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
@@ -107,53 +108,19 @@ impl Quad {
     }
 }
 
+impl Quad {
+    pub fn scale(&mut self, factor: f32) {
+        self.bounds.origin *= factor;
+        self.bounds.size *= factor;
+        self.clip_bounds.origin *= factor;
+        self.clip_corner_radii *= factor;
+        self.corner_radii *= factor;
+        self.border_widths *= factor;
+    }
+}
+
 impl From<Quad> for Primitive {
     fn from(quad: Quad) -> Self {
         Primitive::Quad(quad)
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-#[repr(C)]
-pub struct RenderedGlyph {
-    pub order: u32,
-    pub font_id: FontId,
-    pub font_size: f32,
-    pub id: GlyphId,
-    pub origin: Point<Pixels>,
-    pub color: Hsla,
-}
-
-impl From<RenderedGlyph> for Primitive {
-    fn from(glyph: RenderedGlyph) -> Self {
-        Primitive::Glyph(glyph)
-    }
-}
-
-#[derive(Copy, Clone, Default, Debug, Zeroable, Pod)]
-#[repr(C)]
-pub struct Underline {
-    pub order: u32,
-    pub origin: Point<Pixels>,
-    pub width: Pixels,
-    pub thickness: Pixels,
-    pub color: Hsla,
-    pub style: LineStyle,
-}
-
-#[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
-#[repr(C)]
-pub enum LineStyle {
-    #[default]
-    Solid = 0,
-    Squiggly = 1,
-}
-
-unsafe impl Zeroable for LineStyle {}
-unsafe impl Pod for LineStyle {}
-
-impl From<Underline> for Primitive {
-    fn from(underline: Underline) -> Self {
-        Primitive::Underline(underline)
     }
 }

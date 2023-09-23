@@ -1348,7 +1348,8 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
         let window_state = get_window_state(this);
         let mut window_state = window_state.as_ref().lock();
 
-        let mut scene = crate::Scene::new();
+        let scale_factor = window_state.scale_factor();
+        let mut scene = crate::Scene::new(scale_factor);
         scene.insert(crate::Quad {
             order: 0,
             bounds: Bounds {
@@ -1366,8 +1367,7 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
             border_widths: Default::default(),
         });
         dbg!("!!!!!!!!!");
-        let scale_factor = window_state.scale_factor();
-        window_state.renderer.draw(&scene, scale_factor);
+        window_state.renderer.draw(&scene);
     }
 }
 

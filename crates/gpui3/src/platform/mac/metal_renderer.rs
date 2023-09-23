@@ -99,7 +99,7 @@ impl MetalRenderer {
         &*self.layer
     }
 
-    pub fn draw(&mut self, scene: &Scene, scale_factor: f32) {
+    pub fn draw(&mut self, scene: &Scene) {
         let layer = self.layer.clone();
         let viewport_size = layer.drawable_size();
         let viewport_size: Size<Pixels> =
@@ -140,7 +140,6 @@ impl MetalRenderer {
         self.draw_quads(
             &scene.opaque_primitives().quads,
             &mut buffer_offset,
-            scale_factor,
             viewport_size,
             scene.max_order(),
             command_encoder,
@@ -161,7 +160,6 @@ impl MetalRenderer {
         &mut self,
         quads: &[Quad],
         offset: &mut usize,
-        scale_factor: f32,
         viewport_size: Size<Pixels>,
         max_order: u32,
         command_encoder: &metal::RenderCommandEncoderRef,
@@ -184,7 +182,6 @@ impl MetalRenderer {
         );
         let quad_uniforms = QuadUniforms {
             viewport_size,
-            scale_factor,
             max_order,
         };
 
@@ -268,6 +265,5 @@ enum QuadInputIndex {
 #[repr(C)]
 pub(crate) struct QuadUniforms {
     viewport_size: Size<Pixels>,
-    scale_factor: f32,
     max_order: u32,
 }

@@ -35,9 +35,13 @@ vertex QuadVertexOutput quad_vertex(
     };
 }
 
-fragment float4 quad_fragment(QuadVertexOutput input [[stage_in]], constant Quad *quads [[buffer(QuadInputIndex_Quads)]]) {
+fragment float4 quad_fragment(
+    QuadVertexOutput input [[stage_in]],
+    constant Quad *quads [[buffer(QuadInputIndex_Quads)]],
+    constant QuadUniforms *uniforms [[buffer(QuadInputIndex_Uniforms)]]
+) {
     Quad quad = quads[input.quad_id];
-    float2 half_size = float2( quad.bounds.size.width, quad.bounds.size.height ) / 2.;
+    float2 half_size = float2(quad.bounds.size.width, quad.bounds.size.height) / 2.;
     float2 center = float2( quad.bounds.origin.x, quad.bounds.origin.y ) + half_size;
     float2 center_to_point = input.position.xy - center;
     float corner_radius;
@@ -142,58 +146,3 @@ float4 hsla_to_rgba(Hsla hsla) {
 float4 to_device_position(float2 pixel_position, uint order, uint max_order, float2 viewport_size) {
     return float4(pixel_position / viewport_size * float2(2., -2.) + float2(-1., 1.), (1. - order / max_order), 1.);
 }
-
-// fragment float4 quad_fragment(QuadVertexOutput input [[stage_in]]) {
-//     float2 half_size = input.size / 2.;
-//     float2 center = input.origin + half_size;
-//     float2 center_to_point = input.position.xy - center;
-//     float corner_radius;
-//     if (center_to_point.x < 0.) {
-//         if (center_to_point.y < 0.) {
-//             corner_radius = input.corner_radius_top_left;
-//         } else {
-//             corner_radius = input.corner_radius_bottom_left;
-//         }
-//     } else {
-//         if (center_to_point.y < 0.) {
-//             corner_radius = input.corner_radius_top_right;
-//         } else {
-//             corner_radius = input.corner_radius_bottom_right;
-//         }
-//     }
-
-//     float2 rounded_edge_to_point = fabs(center_to_point) - half_size + corner_radius;
-//     float distance = length(max(0., rounded_edge_to_point)) + min(0., max(rounded_edge_to_point.x, rounded_edge_to_point.y)) - corner_radius;
-
-//     float vertical_border = center_to_point.x <= 0. ? input.border_left : input.border_right;
-//     float horizontal_border = center_to_point.y <= 0. ? input.border_top : input.border_bottom;
-//     float2 inset_size = half_size - corner_radius - float2(vertical_border, horizontal_border);
-//     float2 point_to_inset_corner = fabs(center_to_point) - inset_size;
-//     float border_width;
-//     if (point_to_inset_corner.x < 0. && point_to_inset_corner.y < 0.) {
-//         border_width = 0.;
-//     } else if (point_to_inset_corner.y > point_to_inset_corner.x) {
-//         border_width = horizontal_border;
-//     } else {
-//         border_width = vertical_border;
-//     }
-
-//     float4 color;
-//     if (border_width == 0.) {
-//         color = input.background_color;
-//     } else {
-//         float inset_distance = distance + border_width;
-
-//         // Decrease border's opacity as we move inside the background.
-//         input.border_color.a *= 1. - saturate(0.5 - inset_distance);
-
-//         // Alpha-blend the border and the background.
-//         float output_alpha = input.border_color.a + input.background_color.a * (1. - input.border_color.a);
-//         float3 premultiplied_border_rgb = input.border_color.rgb * input.border_color.a;
-//         float3 premultiplied_background_rgb = input.background_color.rgb * input.background_color.a;
-//         float3 premultiplied_output_rgb = premultiplied_border_rgb + premultiplied_background_rgb * (1. - input.border_color.a);
-//         color = float4(premultiplied_output_rgb / output_alpha, output_alpha);
-//     }
-
-//     return color * float4(1., 1., 1., saturate(0.5 - distance));
-// }
