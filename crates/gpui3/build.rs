@@ -4,6 +4,8 @@ use std::{
     process::{self, Command},
 };
 
+use cbindgen::Config;
+
 fn main() {
     generate_dispatch_bindings();
     let header_path = generate_shader_bindings();
@@ -32,21 +34,29 @@ fn generate_dispatch_bindings() {
 fn generate_shader_bindings() -> PathBuf {
     let output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("scene.h");
     let crate_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let mut config = Config::default();
+    config.include_guard = Some("SCENE_H".into());
+    config.language = cbindgen::Language::C;
+    config.export.include.extend([
+        "Bounds".into(),
+        "Corners".into(),
+        "Edges".into(),
+        "Size".into(),
+        "Pixels".into(),
+        "PointF".into(),
+        "Hsla".into(),
+        "Quad".into(),
+        "QuadInputIndex".into(),
+        "QuadUniforms".into(),
+    ]);
+    config.no_includes = true;
+    config.enumeration.prefix_with_name = true;
     cbindgen::Builder::new()
-        .with_language(cbindgen::Language::C)
-        .with_include_guard("SCENE_H")
         .with_src(crate_dir.join("src/scene.rs"))
         .with_src(crate_dir.join("src/geometry.rs"))
         .with_src(crate_dir.join("src/color.rs"))
-        .with_no_includes()
-        .include_item("Quad")
-        .include_item("Bounds")
-        .include_item("Corners")
-        .include_item("Edges")
-        .include_item("Size")
-        .include_item("Pixels")
-        .include_item("Point")
-        .include_item("Hsla")
+        .with_src(crate_dir.join("src/platform/mac/metal_renderer.rs"))
+        .with_config(config)
         .generate()
         .expect("Unable to generate bindings")
         .write_to_file(&output_path);

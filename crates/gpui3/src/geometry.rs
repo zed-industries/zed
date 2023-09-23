@@ -72,7 +72,6 @@ impl<T: Clone + Debug> Clone for Point<T> {
 }
 
 unsafe impl<T: Clone + Debug + Zeroable + Pod> Zeroable for Point<T> {}
-
 unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Point<T> {}
 
 #[derive(Refineable, Default, Clone, Copy, Debug, PartialEq)]
@@ -82,6 +81,9 @@ pub struct Size<T: Clone + Debug> {
     pub width: T,
     pub height: T,
 }
+
+unsafe impl<T: Clone + Debug + Zeroable + Pod> Zeroable for Size<T> {}
+unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Size<T> {}
 
 pub fn size<T: Clone + Debug>(width: T, height: T) -> Size<T> {
     Size { width, height }

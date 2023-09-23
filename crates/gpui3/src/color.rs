@@ -118,7 +118,7 @@ impl TryFrom<&'_ str> for Rgba {
     }
 }
 
-#[derive(Default, Copy, Clone, Debug, PartialEq)]
+#[derive(Default, Copy, Clone, Debug, PartialEq, Zeroable, Pod)]
 #[repr(C)]
 pub struct Hsla {
     pub h: f32,
@@ -128,8 +128,6 @@ pub struct Hsla {
 }
 
 impl Eq for Hsla {}
-unsafe impl Zeroable for Hsla {}
-unsafe impl Pod for Hsla {}
 
 pub fn hsla(h: f32, s: f32, l: f32, a: f32) -> Hsla {
     Hsla {
