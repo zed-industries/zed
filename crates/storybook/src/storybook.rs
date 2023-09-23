@@ -13,11 +13,6 @@ use legacy_theme::ThemeSettings;
 use log::LevelFilter;
 use settings::{default_settings, SettingsStore};
 use simplelog::SimpleLogger;
-use stories::components::breadcrumb::BreadcrumbStory;
-use stories::components::facepile::FacepileStory;
-use stories::components::toolbar::ToolbarStory;
-use stories::components::traffic_lights::TrafficLightsStory;
-use stories::elements::avatar::AvatarStory;
 use ui::{ElementExt, Theme};
 
 use crate::story_selector::{ComponentStory, ElementStory, StorySelector};
@@ -55,20 +50,41 @@ fn main() {
                 ..Default::default()
             },
             |cx| match args.story {
-                Some(StorySelector::Element(ElementStory::Avatar)) => {
-                    view(|cx| render_story(&mut ViewContext::new(cx), AvatarStory::default()))
-                }
-                Some(StorySelector::Component(ComponentStory::Breadcrumb)) => {
-                    view(|cx| render_story(&mut ViewContext::new(cx), BreadcrumbStory::default()))
-                }
-                Some(StorySelector::Component(ComponentStory::Facepile)) => {
-                    view(|cx| render_story(&mut ViewContext::new(cx), FacepileStory::default()))
-                }
-                Some(StorySelector::Component(ComponentStory::Toolbar)) => {
-                    view(|cx| render_story(&mut ViewContext::new(cx), ToolbarStory::default()))
-                }
+                Some(StorySelector::Element(ElementStory::Avatar)) => view(|cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        stories::elements::avatar::AvatarStory::default(),
+                    )
+                }),
+                Some(StorySelector::Element(ElementStory::TextButton)) => view(|cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        stories::elements::text_button::TextButtonStory::default(),
+                    )
+                }),
+                Some(StorySelector::Component(ComponentStory::Breadcrumb)) => view(|cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        stories::components::breadcrumb::BreadcrumbStory::default(),
+                    )
+                }),
+                Some(StorySelector::Component(ComponentStory::Facepile)) => view(|cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        stories::components::facepile::FacepileStory::default(),
+                    )
+                }),
+                Some(StorySelector::Component(ComponentStory::Toolbar)) => view(|cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        stories::components::toolbar::ToolbarStory::default(),
+                    )
+                }),
                 Some(StorySelector::Component(ComponentStory::TrafficLights)) => view(|cx| {
-                    render_story(&mut ViewContext::new(cx), TrafficLightsStory::default())
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        stories::components::traffic_lights::TrafficLightsStory::default(),
+                    )
                 }),
                 None => {
                     view(|cx| render_story(&mut ViewContext::new(cx), WorkspaceElement::default()))
