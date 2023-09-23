@@ -1,6 +1,7 @@
 mod breadcrumb;
 mod facepile;
 mod follow_group;
+mod icon_button;
 mod list_item;
 mod list_section_header;
 mod palette_item;
@@ -11,6 +12,7 @@ mod traffic_lights;
 pub use breadcrumb::*;
 pub use facepile::*;
 pub use follow_group::*;
+pub use icon_button::*;
 pub use list_item::*;
 pub use list_section_header::*;
 pub use palette_item::*;
