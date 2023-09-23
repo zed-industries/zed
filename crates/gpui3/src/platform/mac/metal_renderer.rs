@@ -132,12 +132,14 @@ impl MetalRenderer {
         depth_texture_desc.set_pixel_format(metal::MTLPixelFormat::Depth32Float);
         depth_texture_desc.set_storage_mode(metal::MTLStorageMode::Private);
         depth_texture_desc.set_usage(metal::MTLTextureUsage::RenderTarget);
+        depth_texture_desc.set_width(f32::from(viewport_size.width).ceil() as u64);
+        depth_texture_desc.set_height(f32::from(viewport_size.height).ceil() as u64);
         let depth_texture = self.device.new_texture(&depth_texture_desc);
         let depth_attachment = render_pass_descriptor.depth_attachment().unwrap();
 
-        // depth_attachment.set_texture(Some(&depth_texture));
-        // depth_attachment.set_clear_depth(1.);
-        // depth_attachment.set_store_action(metal::MTLStoreAction::Store);
+        depth_attachment.set_texture(Some(&depth_texture));
+        depth_attachment.set_clear_depth(1.);
+        depth_attachment.set_store_action(metal::MTLStoreAction::Store);
 
         let color_attachment = render_pass_descriptor
             .color_attachments()
