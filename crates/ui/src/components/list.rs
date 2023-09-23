@@ -1,8 +1,8 @@
 use crate::theme::theme;
 use crate::tokens::token;
-use crate::{icon, label, prelude::*, IconAsset, LabelColor, ListItem, ListSectionHeader};
+use crate::{icon, label, prelude::*, v_stack, IconAsset, LabelColor, ListItem, ListSectionHeader};
 use gpui2::style::StyleHelpers;
-use gpui2::{elements::div, IntoElement};
+use gpui2::IntoElement;
 use gpui2::{Element, ParentElement, ViewContext};
 
 #[derive(Element)]
@@ -49,10 +49,8 @@ impl List {
             None => None,
         };
 
-        div()
+        v_stack()
             .py_1()
-            .flex()
-            .flex_col()
             .children(self.header.map(|h| h))
             .children(
                 self.items

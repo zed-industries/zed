@@ -1,4 +1,8 @@
-use crate::theme::{theme, Theme};
+use crate::{
+    h_stack,
+    theme::{theme, Theme},
+    v_stack,
+};
 use gpui2::{
     elements::{div, div::ScrollState, img, svg},
     style::{StyleHelpers, Styleable},
@@ -26,21 +30,17 @@ impl<V: 'static> CollabPanelElement<V> {
         let theme = theme(cx);
 
         // Panel
-        div()
+        h_stack()
             .w_64()
             .h_full()
-            .flex()
-            .flex_col()
             .font("Zed Sans Extended")
             .text_color(theme.middle.base.default.foreground)
             .border_color(theme.middle.base.default.border)
             .border()
             .fill(theme.middle.base.default.background)
             .child(
-                div()
+                v_stack()
                     .w_full()
-                    .flex()
-                    .flex_col()
                     .overflow_y_scroll(self.scroll_state.clone())
                     // List Container
                     .child(
@@ -61,17 +61,13 @@ impl<V: 'static> CollabPanelElement<V> {
                             )),
                     )
                     .child(
-                        div()
+                        v_stack()
                             .py_2()
-                            .flex()
-                            .flex_col()
                             .child(self.list_section_header("CHANNELS", true, &theme)),
                     )
                     .child(
-                        div()
+                        v_stack()
                             .py_2()
-                            .flex()
-                            .flex_col()
                             .child(self.list_section_header("CONTACTS", true, &theme))
                             .children(
                                 std::iter::repeat_with(|| {
