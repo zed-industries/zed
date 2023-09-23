@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use crate::prelude::OrderMethod;
 use crate::theme::theme;
-use crate::{label, palette_item, LabelColor, PaletteItem};
+use crate::{h_stack, label, palette_item, v_stack, LabelColor, PaletteItem};
 use gpui2::elements::div::ScrollState;
 use gpui2::style::{StyleHelpers, Styleable};
 use gpui2::{elements::div, IntoElement};
@@ -55,21 +55,17 @@ impl<V: 'static> Palette<V> {
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
 
-        div()
+        v_stack()
             .w_96()
             .rounded_lg()
             .fill(theme.lowest.base.default.background)
             .border()
             .border_color(theme.lowest.base.default.border)
-            .flex()
-            .flex_col()
             .child(
-                div()
-                    .flex()
-                    .flex_col()
+                v_stack()
                     .gap_px()
                     .child(
-                        div().py_0p5().px_1().flex().flex_col().child(
+                        v_stack().py_0p5().px_1().child(
                             div().px_2().py_0p5().child(
                                 label(self.input_placeholder).color(LabelColor::Placeholder),
                             ),
@@ -77,26 +73,18 @@ impl<V: 'static> Palette<V> {
                     )
                     .child(div().h_px().w_full().fill(theme.lowest.base.default.border))
                     .child(
-                        div()
+                        v_stack()
                             .py_0p5()
                             .px_1()
-                            .flex()
-                            .flex_col()
                             .grow()
                             .max_h_96()
                             .overflow_y_scroll(self.scroll_state.clone())
                             .children(
                                 vec![if self.items.is_empty() {
                                     Some(
-                                        div()
-                                            .flex()
-                                            .flex_row()
-                                            .justify_between()
-                                            .px_2()
-                                            .py_1()
-                                            .child(
-                                                label(self.empty_string).color(LabelColor::Muted),
-                                            ),
+                                        h_stack().justify_between().px_2().py_1().child(
+                                            label(self.empty_string).color(LabelColor::Muted),
+                                        ),
                                     )
                                 } else {
                                     None
@@ -105,9 +93,7 @@ impl<V: 'static> Palette<V> {
                                 .flatten(),
                             )
                             .children(self.items.iter().map(|item| {
-                                div()
-                                    .flex()
-                                    .flex_row()
+                                h_stack()
                                     .justify_between()
                                     .px_2()
                                     .py_0p5()
