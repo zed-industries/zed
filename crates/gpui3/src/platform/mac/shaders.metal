@@ -143,5 +143,6 @@ float4 hsla_to_rgba(Hsla hsla) {
 }
 
 float4 to_device_position(float2 pixel_position, uint order, uint max_order, float2 viewport_size) {
-    return float4(pixel_position / viewport_size * float2(2., -2.) + float2(-1., 1.), (1. - order / max_order), 1.);
+    float z = 1. - ((float)order / ((float)max_order + 1.));
+    return float4(pixel_position / viewport_size * float2(2., -2.) + float2(-1., 1.), z, 1.);
 }

@@ -1,11 +1,11 @@
-use crate::{point, size, Pixels, PointF, Quad, Scene, Size};
+use crate::{point, size, Pixels, Quad, Scene, Size};
 use bytemuck::{Pod, Zeroable};
 use cocoa::{
     base::{NO, YES},
     foundation::NSUInteger,
     quartzcore::AutoresizingMask,
 };
-use metal::{CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
+use metal::{CommandQueue, DepthStencilDescriptor, MTLPixelFormat, MTLResourceOptions, NSRange};
 use objc::{self, msg_send, sel, sel_impl};
 use std::{ffi::c_void, mem, ptr};
 
@@ -13,9 +13,11 @@ const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shader
 const INSTANCE_BUFFER_SIZE: usize = 8192 * 1024; // This is an arbitrary decision. There's probably a more optimal value.
 
 pub struct MetalRenderer {
+    device: metal::Device,
     layer: metal::MetalLayer,
     command_queue: CommandQueue,
     quad_pipeline_state: metal::RenderPipelineState,
+    depth_state: metal::DepthStencilState,
     unit_vertices: metal::Buffer,
     instances: metal::Buffer,
 }
@@ -86,10 +88,18 @@ impl MetalRenderer {
             PIXEL_FORMAT,
         );
 
+        let depth_stencil_descriptor = DepthStencilDescriptor::new();
+        depth_stencil_descriptor.set_depth_compare_function(metal::MTLCompareFunction::LessEqual);
+        depth_stencil_descriptor.set_depth_write_enabled(true);
+        let depth_state = device.new_depth_stencil_state(&depth_stencil_descriptor);
+
+        let command_queue = device.new_command_queue();
         Self {
+            device,
             layer,
-            command_queue: device.new_command_queue(),
+            command_queue,
             quad_pipeline_state,
+            depth_state,
             unit_vertices,
             instances,
         }
@@ -115,17 +125,32 @@ impl MetalRenderer {
         };
         let command_queue = self.command_queue.clone();
         let command_buffer = command_queue.new_command_buffer();
+
         let render_pass_descriptor = metal::RenderPassDescriptor::new();
+
+        let depth_texture_desc = metal::TextureDescriptor::new();
+        depth_texture_desc.set_pixel_format(metal::MTLPixelFormat::Depth32Float);
+        depth_texture_desc.set_storage_mode(metal::MTLStorageMode::Private);
+        depth_texture_desc.set_usage(metal::MTLTextureUsage::RenderTarget);
+        let depth_texture = self.device.new_texture(&depth_texture_desc);
+        let depth_attachment = render_pass_descriptor.depth_attachment().unwrap();
+
+        // depth_attachment.set_texture(Some(&depth_texture));
+        // depth_attachment.set_clear_depth(1.);
+        // depth_attachment.set_store_action(metal::MTLStoreAction::Store);
+
         let color_attachment = render_pass_descriptor
             .color_attachments()
             .object_at(0)
             .unwrap();
+
         color_attachment.set_texture(Some(drawable.texture()));
         color_attachment.set_load_action(metal::MTLLoadAction::Clear);
         color_attachment.set_store_action(metal::MTLStoreAction::Store);
         let alpha = if self.layer.is_opaque() { 1. } else { 0. };
         color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., alpha));
         let command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
+        command_encoder.set_depth_stencil_state(&self.depth_state);
 
         command_encoder.set_viewport(metal::MTLViewport {
             originX: 0.0,
@@ -248,6 +273,7 @@ fn build_pipeline_state(
     color_attachment.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
     color_attachment.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
     color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::One);
+    // descriptor.set_depth_attachment_pixel_format(MTLPixelFormat::Depth32Float);
 
     device
         .new_render_pipeline_state(&descriptor)

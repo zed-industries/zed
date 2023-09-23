@@ -18,7 +18,7 @@ use cocoa::{
 };
 use core_graphics::display::CGRect;
 use ctor::ctor;
-use foreign_types::{ForeignType, ForeignTypeRef};
+use foreign_types::ForeignTypeRef;
 use futures::channel::oneshot;
 use objc::{
     class,
@@ -1351,7 +1351,7 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
         let scale_factor = window_state.scale_factor();
         let mut scene = crate::Scene::new(scale_factor);
         scene.insert(crate::Quad {
-            order: 0,
+            order: 2,
             bounds: Bounds {
                 origin: point(10., 10.).map(px),
                 size: size(100., 100.).map(px),
@@ -1362,6 +1362,22 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
             },
             clip_corner_radii: Default::default(),
             background: crate::rgb(0x00ff00).into(),
+            border_color: Default::default(),
+            corner_radii: Default::default(),
+            border_widths: Default::default(),
+        });
+        scene.insert(crate::Quad {
+            order: 1,
+            bounds: Bounds {
+                origin: point(50., 10.).map(px),
+                size: size(100., 100.).map(px),
+            },
+            clip_bounds: Bounds {
+                origin: point(10., 10.).map(px),
+                size: size(100., 100.).map(px),
+            },
+            clip_corner_radii: Default::default(),
+            background: crate::rgb(0xff0000).into(),
             border_color: Default::default(),
             corner_radii: Default::default(),
             border_widths: Default::default(),
