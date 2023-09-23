@@ -305,18 +305,6 @@ impl Mul<f32> for Pixels {
     }
 }
 
-#[derive(
-    Clone, Copy, Debug, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd,
-)]
-#[repr(transparent)]
-pub struct DevicePixels(pub(crate) u32);
-
-impl From<DevicePixels> for u32 {
-    fn from(device_pixels: DevicePixels) -> Self {
-        device_pixels.0
-    }
-}
-
 impl Pixels {
     pub fn round(&self) -> Self {
         Self(self.0.round())
@@ -385,6 +373,27 @@ impl From<&Pixels> for f32 {
 impl From<Pixels> for f64 {
     fn from(pixels: Pixels) -> Self {
         pixels.0 as f64
+    }
+}
+
+#[derive(
+    Clone, Copy, Debug, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd,
+)]
+#[repr(transparent)]
+pub struct DevicePixels(pub(crate) u32);
+
+unsafe impl bytemuck::Pod for DevicePixels {}
+unsafe impl bytemuck::Zeroable for DevicePixels {}
+
+impl From<DevicePixels> for u32 {
+    fn from(device_pixels: DevicePixels) -> Self {
+        device_pixels.0
+    }
+}
+
+impl From<u32> for DevicePixels {
+    fn from(val: u32) -> Self {
+        DevicePixels(val)
     }
 }
 

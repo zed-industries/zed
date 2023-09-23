@@ -1,4 +1,4 @@
-use crate::{point, size, Pixels, Quad, Scene, Size};
+use crate::{point, size, DevicePixels, Quad, Scene, Size};
 use bytemuck::{Pod, Zeroable};
 use cocoa::{
     base::{NO, YES},
@@ -112,8 +112,10 @@ impl MetalRenderer {
     pub fn draw(&mut self, scene: &Scene) {
         let layer = self.layer.clone();
         let viewport_size = layer.drawable_size();
-        let viewport_size: Size<Pixels> =
-            size(viewport_size.width.into(), viewport_size.height.into());
+        let viewport_size: Size<DevicePixels> = size(
+            (viewport_size.width.ceil() as u32).into(),
+            (viewport_size.height.ceil() as u32).into(),
+        );
         let drawable = if let Some(drawable) = layer.next_drawable() {
             drawable
         } else {
@@ -132,8 +134,8 @@ impl MetalRenderer {
         depth_texture_desc.set_pixel_format(metal::MTLPixelFormat::Depth32Float);
         depth_texture_desc.set_storage_mode(metal::MTLStorageMode::Private);
         depth_texture_desc.set_usage(metal::MTLTextureUsage::RenderTarget);
-        depth_texture_desc.set_width(f32::from(viewport_size.width).ceil() as u64);
-        depth_texture_desc.set_height(f32::from(viewport_size.height).ceil() as u64);
+        depth_texture_desc.set_width(u32::from(viewport_size.width) as u64);
+        depth_texture_desc.set_height(u32::from(viewport_size.height) as u64);
         let depth_texture = self.device.new_texture(&depth_texture_desc);
         let depth_attachment = render_pass_descriptor.depth_attachment().unwrap();
 
@@ -157,8 +159,8 @@ impl MetalRenderer {
         command_encoder.set_viewport(metal::MTLViewport {
             originX: 0.0,
             originY: 0.0,
-            width: viewport_size.width.into(),
-            height: viewport_size.height.into(),
+            width: u32::from(viewport_size.width) as f64,
+            height: u32::from(viewport_size.height) as f64,
             znear: 0.0,
             zfar: 1.0,
         });
@@ -187,7 +189,7 @@ impl MetalRenderer {
         &mut self,
         quads: &[Quad],
         offset: &mut usize,
-        viewport_size: Size<Pixels>,
+        viewport_size: Size<DevicePixels>,
         max_order: u32,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) {
@@ -297,6 +299,6 @@ enum QuadInputIndex {
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 #[repr(C)]
 pub(crate) struct QuadUniforms {
-    viewport_size: Size<Pixels>,
+    viewport_size: Size<DevicePixels>,
     max_order: u32,
 }

@@ -23,7 +23,7 @@ vertex QuadVertexOutput quad_vertex(
     float2 unit_vertex = unit_vertices[unit_vertex_id];
     Quad quad = quads[quad_id];
     float2 position_2d = unit_vertex * float2(quad.bounds.size.width, quad.bounds.size.height) + float2(quad.bounds.origin.x, quad.bounds.origin.y);
-    float2 viewport_size = float2(uniforms->viewport_size.width, uniforms->viewport_size.height);
+    float2 viewport_size = float2((float)uniforms->viewport_size.width, (float)uniforms->viewport_size.height);
     float4 device_position = to_device_position(position_2d, quad.order, uniforms->max_order, viewport_size);
     float4 background_color = hsla_to_rgba(quad.background);
     float4 border_color = hsla_to_rgba(quad.border_color);
