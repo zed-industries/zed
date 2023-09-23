@@ -91,7 +91,7 @@ fragment float4 quad_fragment(
         color = float4(premultiplied_output_rgb, output_alpha);
     }
 
-    return color;
+    return color * float4(1., 1., 1., saturate(0.5 - distance));
 }
 
 float4 hsla_to_rgba(Hsla hsla) {

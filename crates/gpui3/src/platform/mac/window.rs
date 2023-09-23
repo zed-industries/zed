@@ -1363,7 +1363,12 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
             clip_corner_radii: Default::default(),
             background: crate::rgb(0x00ff00).into(),
             border_color: Default::default(),
-            corner_radii: Default::default(),
+            corner_radii: crate::Corners {
+                top_left: px(9.),
+                top_right: px(3.),
+                bottom_right: px(20.),
+                bottom_left: px(50.),
+            },
             border_widths: Default::default(),
         });
         scene.insert(crate::Quad {
