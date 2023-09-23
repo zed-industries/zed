@@ -9,4 +9,5 @@ anyhow.workspace = true
 gpui2 = { path = "../gpui2" }
 serde.workspace = true
 settings = { path = "../settings" }
+strum = { version = "0.25.0", features = ["derive"] }
 theme = { path = "../theme" }

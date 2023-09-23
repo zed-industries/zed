@@ -8610,6 +8610,7 @@ dependencies = [
  "gpui2",
  "serde",
  "settings",
+ "strum",
  "theme",
 ]
 

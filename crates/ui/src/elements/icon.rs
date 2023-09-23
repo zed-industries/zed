@@ -1,11 +1,13 @@
 use std::sync::Arc;
 
-use crate::theme::theme;
-use crate::Theme;
 use gpui2::elements::svg;
 use gpui2::style::StyleHelpers;
 use gpui2::{Element, ViewContext};
 use gpui2::{Hsla, IntoElement};
+use strum::EnumIter;
+
+use crate::theme::theme;
+use crate::Theme;
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum IconColor {
@@ -37,7 +39,7 @@ impl IconColor {
     }
 }
 
-#[derive(Default, PartialEq, Copy, Clone)]
+#[derive(Default, PartialEq, Copy, Clone, EnumIter)]
 pub enum IconAsset {
     Ai,
     ArrowLeft,
