@@ -180,6 +180,11 @@ impl MetalRenderer {
             Some(&self.instances),
             *offset as u64,
         );
+        command_encoder.set_fragment_buffer(
+            QuadInputIndex::Quads as u64,
+            Some(&self.instances),
+            *offset as u64,
+        );
         let quad_uniforms = QuadUniforms {
             viewport_size,
             max_order,

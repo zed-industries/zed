@@ -37,8 +37,7 @@ vertex QuadVertexOutput quad_vertex(
 
 fragment float4 quad_fragment(
     QuadVertexOutput input [[stage_in]],
-    constant Quad *quads [[buffer(QuadInputIndex_Quads)]],
-    constant QuadUniforms *uniforms [[buffer(QuadInputIndex_Uniforms)]]
+    constant Quad *quads [[buffer(QuadInputIndex_Quads)]]
 ) {
     Quad quad = quads[input.quad_id];
     float2 half_size = float2(quad.bounds.size.width, quad.bounds.size.height) / 2.;
