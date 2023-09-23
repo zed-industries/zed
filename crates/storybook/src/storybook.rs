@@ -56,6 +56,12 @@ fn main() {
                         stories::elements::avatar::AvatarStory::default(),
                     )
                 }),
+                Some(StorySelector::Element(ElementStory::Input)) => view(|cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        stories::elements::input::InputStory::default(),
+                    )
+                }),
                 Some(StorySelector::Element(ElementStory::TextButton)) => view(|cx| {
                     render_story(
                         &mut ViewContext::new(cx),
