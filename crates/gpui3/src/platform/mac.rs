@@ -2,6 +2,7 @@
 ///! an origin at the bottom left of the main display.
 mod dispatcher;
 mod events;
+mod metal_renderer;
 mod open_type;
 mod platform;
 mod screen;

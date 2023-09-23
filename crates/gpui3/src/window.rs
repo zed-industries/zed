@@ -1,7 +1,7 @@
 use crate::{
-    px, renderer::Renderer, taffy::LayoutId, AppContext, AvailableSpace, Bounds, Context, EntityId,
-    Handle, MainThreadOnly, Pixels, Platform, PlatformWindow, Point, Reference, Size, Style,
-    TaffyLayoutEngine, TextStyle, TextStyleRefinement, WindowOptions,
+    px, AppContext, AvailableSpace, Bounds, Context, EntityId, Handle, LayoutId, MainThreadOnly,
+    Pixels, Platform, PlatformWindow, Point, Reference, Size, Style, TaffyLayoutEngine, TextStyle,
+    TextStyleRefinement, WindowOptions,
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
@@ -18,7 +18,6 @@ pub struct AnyWindow {}
 pub struct Window {
     handle: AnyWindowHandle,
     platform_window: MainThreadOnly<Box<dyn PlatformWindow>>,
-    renderer: Renderer,
     rem_size: Pixels,
     layout_engine: TaffyLayoutEngine,
     text_style_stack: Vec<TextStyleRefinement>,
@@ -33,16 +32,13 @@ impl Window {
         platform: &dyn Platform,
     ) -> impl Future<Output = Window> + 'static {
         let platform_window = platform.open_window(handle, options);
-        let renderer = Renderer::new(&platform_window.as_ref());
         let mouse_position = platform_window.mouse_position();
         let platform_window = MainThreadOnly::new(Arc::new(platform_window), platform.dispatcher());
 
         async move {
-            let renderer = renderer.await;
             Window {
                 handle,
                 platform_window,
-                renderer,
                 rem_size: px(16.),
                 layout_engine: TaffyLayoutEngine::new(),
                 text_style_stack: Vec::new(),

@@ -104,6 +104,16 @@ impl From<Quad> for Primitive {
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
+pub(crate) struct QuadUniforms {
+    viewport_size: [f32; 2],
+}
+
+unsafe impl Zeroable for QuadUniforms {}
+
+unsafe impl Pod for QuadUniforms {}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
 pub struct RenderedGlyph {
     pub font_id: FontId,
     pub font_size: f32,

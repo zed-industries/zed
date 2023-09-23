@@ -1,9 +1,9 @@
 use crate::{
-    point, px, size, AnyWindowHandle, Bounds, DevicePixels, Event, InputHandler, KeyDownEvent,
-    Keystroke, MacScreen, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMovedEvent, MouseUpEvent, NSRectExt, Pixels, Platform, PlatformDispatcher, PlatformScreen,
-    PlatformWindow, Point, RenderTarget, Size, Timer, WindowAppearance, WindowBounds, WindowKind,
-    WindowOptions, WindowPromptLevel,
+    point, px, size, AnyWindowHandle, Bounds, Event, InputHandler, KeyDownEvent, Keystroke,
+    MacScreen, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMovedEvent,
+    MouseUpEvent, NSRectExt, Pixels, Platform, PlatformDispatcher, PlatformScreen, PlatformWindow,
+    Point, Size, Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions,
+    WindowPromptLevel,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -26,10 +26,6 @@ use objc::{
     sel, sel_impl,
 };
 use parking_lot::Mutex;
-use raw_window_handle::{
-    AppKitDisplayHandle, AppKitWindowHandle, HasRawDisplayHandle, HasRawWindowHandle,
-    RawDisplayHandle, RawWindowHandle,
-};
 use std::{
     any::Any,
     cell::{Cell, RefCell},
@@ -626,19 +622,6 @@ impl Drop for MacWindow {
 }
 
 impl PlatformWindow for MacWindow {
-    fn raw_window_handle(&self) -> RawWindowHandle {
-        let ns_window = self.0.lock().native_window;
-        let ns_view = unsafe { ns_window.contentView() };
-        let mut handle = AppKitWindowHandle::empty();
-        handle.ns_window = ns_window as *mut c_void;
-        handle.ns_view = ns_view as *mut c_void;
-        handle.into()
-    }
-
-    fn raw_display_handle(&self) -> RawDisplayHandle {
-        AppKitDisplayHandle::empty().into()
-    }
-
     fn bounds(&self) -> WindowBounds {
         self.0.as_ref().lock().bounds()
     }

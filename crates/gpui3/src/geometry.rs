@@ -77,6 +77,7 @@ unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Point<T> {}
 
 #[derive(Refineable, Default, Clone, Copy, Debug, PartialEq)]
 #[refineable(debug)]
+#[repr(C)]
 pub struct Size<T: Clone + Debug> {
     pub width: T,
     pub height: T,
@@ -133,6 +134,7 @@ impl Size<Length> {
 
 #[derive(Refineable, Clone, Default, Debug, PartialEq)]
 #[refineable(debug)]
+#[repr(C)]
 pub struct Bounds<T: Clone + Debug> {
     pub origin: Point<T>,
     pub size: Size<T>,
@@ -170,6 +172,7 @@ impl<T: Clone + Debug + Copy> Copy for Bounds<T> {}
 
 #[derive(Refineable, Clone, Default, Debug)]
 #[refineable(debug)]
+#[repr(C)]
 pub struct Edges<T: Clone + Debug> {
     pub top: T,
     pub right: T,
@@ -242,6 +245,7 @@ impl Edges<Pixels> {
 
 #[derive(Refineable, Clone, Default, Debug)]
 #[refineable(debug)]
+#[repr(C)]
 pub struct Corners<T: Clone + Debug> {
     pub top_left: T,
     pub top_right: T,

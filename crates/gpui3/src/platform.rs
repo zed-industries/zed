@@ -7,14 +7,11 @@ mod test;
 
 use crate::{
     AnyWindowHandle, Bounds, FontFeatures, FontId, FontMetrics, FontStyle, FontWeight, GlyphId,
-    LineLayout, Pixels, Point, RenderTarget, Result, RunStyle, SharedString, Size,
+    LineLayout, Pixels, Point, Result, RunStyle, SharedString, Size,
 };
 use anyhow::anyhow;
 use async_task::Runnable;
 use futures::channel::oneshot;
-use raw_window_handle::{
-    HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle,
-};
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use std::ffi::c_void;
@@ -117,9 +114,6 @@ impl Debug for PlatformScreenHandle {
 unsafe impl Send for PlatformScreenHandle {}
 
 pub trait PlatformWindow {
-    fn raw_window_handle(&self) -> RawWindowHandle;
-    fn raw_display_handle(&self) -> RawDisplayHandle;
-
     fn bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
     fn scale_factor(&self) -> f32;
@@ -151,25 +145,6 @@ pub trait PlatformWindow {
     fn on_close(&mut self, callback: Box<dyn FnOnce()>);
     fn on_appearance_changed(&mut self, callback: Box<dyn FnMut()>);
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
-}
-
-unsafe impl<'a> HasRawWindowHandle for &'a dyn PlatformWindow {
-    fn raw_window_handle(&self) -> raw_window_handle::RawWindowHandle {
-        (*self).raw_window_handle()
-    }
-}
-
-unsafe impl<'a> HasRawDisplayHandle for &'a dyn PlatformWindow {
-    fn raw_display_handle(&self) -> raw_window_handle::RawDisplayHandle {
-        (*self).raw_display_handle()
-    }
-}
-
-impl<'a> RenderTarget for &'a dyn PlatformWindow {
-    fn content_device_size(&self) -> Size<crate::DevicePixels> {
-        self.content_size()
-            .map(|d| d.to_device_pixels(self.scale_factor()))
-    }
 }
 
 pub trait PlatformDispatcher: Send + Sync {
