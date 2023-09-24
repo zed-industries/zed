@@ -79,11 +79,12 @@ pub fn init(
             vec![Arc::new(elixir::ElixirLspAdapter)],
         ),
         elixir_next::ElixirNextSetting::On => todo!(),
-        elixir_next::ElixirNextSetting::Local { path } => language(
+        elixir_next::ElixirNextSetting::Local { path, arguments } => language(
             "elixir",
             tree_sitter_elixir::language(),
             vec![Arc::new(elixir_next::LocalNextLspAdapter {
                 path: path.clone(),
+                arguments: arguments.clone(),
             })],
         ),
     }

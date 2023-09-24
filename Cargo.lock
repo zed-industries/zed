@@ -9868,6 +9868,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
+ "shellexpand",
  "simplelog",
  "smallvec",
  "smol",

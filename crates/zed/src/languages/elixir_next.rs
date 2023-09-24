@@ -5,7 +5,7 @@ use lsp::{CompletionItemKind, LanguageServerBinary, SymbolKind};
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use settings::Setting;
-use std::{any::Any, path::PathBuf, sync::Arc};
+use std::{any::Any, ops::Deref, path::PathBuf, sync::Arc};
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ElixirSettings {
@@ -17,7 +17,10 @@ pub struct ElixirSettings {
 pub enum ElixirNextSetting {
     Off,
     On,
-    Local { path: String },
+    Local {
+        path: String,
+        arguments: Vec<String>,
+    },
 }
 
 #[derive(Clone, Serialize, Default, Deserialize, JsonSchema)]
@@ -44,6 +47,7 @@ impl Setting for ElixirSettings {
 
 pub struct LocalNextLspAdapter {
     pub path: String,
+    pub arguments: Vec<String>,
 }
 
 #[async_trait]
@@ -69,9 +73,10 @@ impl LspAdapter for LocalNextLspAdapter {
         _: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
+        let path = shellexpand::full(&self.path)?;
         Ok(LanguageServerBinary {
-            path: self.path.clone().into(),
-            arguments: vec!["--stdio".into()],
+            path: PathBuf::from(path.deref()),
+            arguments: self.arguments.iter().map(|arg| arg.into()).collect(),
         })
     }
 
@@ -80,19 +85,22 @@ impl LspAdapter for LocalNextLspAdapter {
         _: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
+        let path = shellexpand::full(&self.path).ok()?;
         Some(LanguageServerBinary {
-            path: self.path.clone().into(),
-            arguments: vec!["--stdio".into()],
+            path: PathBuf::from(path.deref()),
+            arguments: self.arguments.iter().map(|arg| arg.into()).collect(),
         })
     }
 
     async fn installation_test_binary(&self, _: PathBuf) -> Option<LanguageServerBinary> {
+        let path = shellexpand::full(&self.path).ok()?;
         Some(LanguageServerBinary {
-            path: self.path.clone().into(),
-            arguments: vec!["--stdio".into()],
+            path: PathBuf::from(path.deref()),
+            arguments: self.arguments.iter().map(|arg| arg.into()).collect(),
         })
     }
 
+    // TODO:
     async fn label_for_completion(
         &self,
         completion: &lsp::CompletionItem,
@@ -147,6 +155,7 @@ impl LspAdapter for LocalNextLspAdapter {
         None
     }
 
+    // TODO:
     async fn label_for_symbol(
         &self,
         name: &str,

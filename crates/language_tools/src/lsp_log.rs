@@ -8,8 +8,8 @@ use gpui::{
         ParentElement, Stack,
     },
     platform::{CursorStyle, MouseButton},
-    AnyElement, AppContext, Element, Entity, ModelContext, ModelHandle, View, ViewContext,
-    ViewHandle, WeakModelHandle,
+    AnyElement, AppContext, Element, Entity, ModelContext, ModelHandle, Subscription, View,
+    ViewContext, ViewHandle, WeakModelHandle,
 };
 use language::{Buffer, LanguageServerId, LanguageServerName};
 use lsp::IoKind;
@@ -52,10 +52,12 @@ pub struct LspLogView {
     current_server_id: Option<LanguageServerId>,
     is_showing_rpc_trace: bool,
     project: ModelHandle<Project>,
+    _log_store_subscription: Subscription,
 }
 
 pub struct LspLogToolbarItemView {
     log_view: Option<ViewHandle<LspLogView>>,
+    _log_view_subscription: Option<Subscription>,
     menu_open: bool,
 }
 
@@ -346,12 +348,49 @@ impl LspLogView {
             .get(&project.downgrade())
             .and_then(|project| project.servers.keys().copied().next());
         let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, ""));
+        let _log_store_subscription = cx.observe(&log_store, |this, store, cx| {
+            (|| -> Option<()> {
+                let project_state = store.read(cx).projects.get(&this.project.downgrade())?;
+                if let Some(current_lsp) = this.current_server_id {
+                    if !project_state.servers.contains_key(&current_lsp) {
+                        if let Some(server) = project_state.servers.iter().next() {
+                            if this.is_showing_rpc_trace {
+                                this.show_rpc_trace_for_server(*server.0, cx)
+                            } else {
+                                this.show_logs_for_server(*server.0, cx)
+                            }
+                        } else {
+                            this.current_server_id = None;
+                            this.editor.update(cx, |editor, cx| {
+                                editor.set_read_only(false);
+                                editor.clear(cx);
+                                editor.set_read_only(true);
+                            });
+                            cx.notify();
+                        }
+                    }
+                } else {
+                    if let Some(server) = project_state.servers.iter().next() {
+                        if this.is_showing_rpc_trace {
+                            this.show_rpc_trace_for_server(*server.0, cx)
+                        } else {
+                            this.show_logs_for_server(*server.0, cx)
+                        }
+                    }
+                }
+
+                Some(())
+            })();
+
+            cx.notify();
+        });
         let mut this = Self {
             editor: Self::editor_for_buffer(project.clone(), buffer, cx),
             project,
             log_store,
             current_server_id: None,
             is_showing_rpc_trace: false,
+            _log_store_subscription,
         };
         if let Some(server_id) = server_id {
             this.show_logs_for_server(server_id, cx);
@@ -556,18 +595,22 @@ impl ToolbarItemView for LspLogToolbarItemView {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        _: &mut ViewContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> workspace::ToolbarItemLocation {
         self.menu_open = false;
         if let Some(item) = active_pane_item {
             if let Some(log_view) = item.downcast::<LspLogView>() {
                 self.log_view = Some(log_view.clone());
+                self._log_view_subscription = Some(cx.observe(&log_view, |_, _, cx| {
+                    cx.notify();
+                }));
                 return ToolbarItemLocation::PrimaryLeft {
                     flex: Some((1., false)),
                 };
             }
         }
         self.log_view = None;
+        self._log_view_subscription = None;
         ToolbarItemLocation::Hidden
     }
 }
@@ -697,6 +740,7 @@ impl LspLogToolbarItemView {
         Self {
             menu_open: false,
             log_view: None,
+            _log_view_subscription: None,
         }
     }
 
