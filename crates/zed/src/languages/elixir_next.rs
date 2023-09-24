@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 pub use language::*;
-use lsp::{CompletionItemKind, LanguageServerBinary, SymbolKind};
+use lsp::{LanguageServerBinary, SymbolKind};
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use settings::Setting;
@@ -100,88 +100,16 @@ impl LspAdapter for LocalNextLspAdapter {
         })
     }
 
-    // TODO:
-    async fn label_for_completion(
-        &self,
-        completion: &lsp::CompletionItem,
-        language: &Arc<Language>,
-    ) -> Option<CodeLabel> {
-        match completion.kind.zip(completion.detail.as_ref()) {
-            Some((_, detail)) if detail.starts_with("(function)") => {
-                let text = detail.strip_prefix("(function) ")?;
-                let filter_range = 0..text.find('(').unwrap_or(text.len());
-                let source = Rope::from(format!("def {text}").as_str());
-                let runs = language.highlight_text(&source, 4..4 + text.len());
-                return Some(CodeLabel {
-                    text: text.to_string(),
-                    runs,
-                    filter_range,
-                });
-            }
-            Some((_, detail)) if detail.starts_with("(macro)") => {
-                let text = detail.strip_prefix("(macro) ")?;
-                let filter_range = 0..text.find('(').unwrap_or(text.len());
-                let source = Rope::from(format!("defmacro {text}").as_str());
-                let runs = language.highlight_text(&source, 9..9 + text.len());
-                return Some(CodeLabel {
-                    text: text.to_string(),
-                    runs,
-                    filter_range,
-                });
-            }
-            Some((
-                CompletionItemKind::CLASS
-                | CompletionItemKind::MODULE
-                | CompletionItemKind::INTERFACE
-                | CompletionItemKind::STRUCT,
-                _,
-            )) => {
-                let filter_range = 0..completion
-                    .label
-                    .find(" (")
-                    .unwrap_or(completion.label.len());
-                let text = &completion.label[filter_range.clone()];
-                let source = Rope::from(format!("defmodule {text}").as_str());
-                let runs = language.highlight_text(&source, 10..10 + text.len());
-                return Some(CodeLabel {
-                    text: completion.label.clone(),
-                    runs,
-                    filter_range,
-                });
-            }
-            _ => {}
-        }
-
-        None
-    }
-
-    // TODO:
     async fn label_for_symbol(
         &self,
         name: &str,
-        kind: SymbolKind,
+        _: SymbolKind,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
-        let (text, filter_range, display_range) = match kind {
-            SymbolKind::METHOD | SymbolKind::FUNCTION => {
-                let text = format!("def {}", name);
-                let filter_range = 4..4 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            SymbolKind::CLASS | SymbolKind::MODULE | SymbolKind::INTERFACE | SymbolKind::STRUCT => {
-                let text = format!("defmodule {}", name);
-                let filter_range = 10..10 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            _ => return None,
-        };
-
         Some(CodeLabel {
-            runs: language.highlight_text(&text.as_str().into(), display_range.clone()),
-            text: text[display_range].to_string(),
-            filter_range,
+            runs: language.highlight_text(&name.into(), 0..name.len()),
+            text: name.to_string(),
+            filter_range: 0..name.len(),
         })
     }
 }
