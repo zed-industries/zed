@@ -96,9 +96,8 @@ impl Quad {
     }
 
     pub fn scale(&mut self, factor: f32) {
-        self.bounds.origin *= factor;
-        self.bounds.size *= factor;
-        self.clip_bounds.origin *= factor;
+        self.bounds *= factor;
+        self.clip_bounds *= factor;
         self.clip_corner_radii *= factor;
         self.corner_radii *= factor;
         self.border_widths *= factor;

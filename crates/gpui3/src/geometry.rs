@@ -159,6 +159,13 @@ pub struct Bounds<T: Clone + Debug> {
 unsafe impl<T: Clone + Debug + Zeroable + Pod> Zeroable for Bounds<T> {}
 unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Bounds<T> {}
 
+impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Bounds<T> {
+    fn mul_assign(&mut self, rhs: S) {
+        self.origin *= rhs.clone();
+        self.size *= rhs;
+    }
+}
+
 impl<T: Clone + Debug + Add<T, Output = T>> Bounds<T> {
     pub fn upper_right(&self) -> Point<T> {
         Point {

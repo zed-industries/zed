@@ -1357,10 +1357,13 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
                 size: size(100., 100.).map(px),
             },
             clip_bounds: Bounds {
-                origin: point(10., 10.).map(px),
+                origin: point(20., 20.).map(px),
                 size: size(100., 100.).map(px),
             },
-            clip_corner_radii: Default::default(),
+            clip_corner_radii: crate::Corners {
+                top_left: px(10.),
+                ..Default::default()
+            },
             background: crate::rgb(0x00ff00).into(),
             border_color: Default::default(),
             corner_radii: crate::Corners {

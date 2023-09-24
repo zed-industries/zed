@@ -23,6 +23,11 @@ vertex QuadVertexOutput quad_vertex(
     float2 unit_vertex = unit_vertices[unit_vertex_id];
     Quad quad = quads[quad_id];
     float2 position_2d = unit_vertex * float2(quad.bounds.size.width, quad.bounds.size.height) + float2(quad.bounds.origin.x, quad.bounds.origin.y);
+    position_2d.x = max(quad.clip_bounds.origin.x, position_2d.x);
+    position_2d.x = min(quad.clip_bounds.origin.x + quad.clip_bounds.size.width, position_2d.x);
+    position_2d.y = max(quad.clip_bounds.origin.y, position_2d.y);
+    position_2d.y = min(quad.clip_bounds.origin.y + quad.clip_bounds.size.height, position_2d.y);
+
     float2 viewport_size = float2((float)uniforms->viewport_size.width, (float)uniforms->viewport_size.height);
     float4 device_position = to_device_position(position_2d, viewport_size);
     float4 background_color = hsla_to_rgba(quad.background);
@@ -35,13 +40,40 @@ vertex QuadVertexOutput quad_vertex(
     };
 }
 
+float quad_sdf(float2 point, Bounds_Pixels bounds, Corners_Pixels corner_radii) {
+    float2 half_size = float2(bounds.size.width, bounds.size.height) / 2.;
+    float2 center = float2(bounds.origin.x, bounds.origin.y) + half_size;
+    float2 center_to_point = point - center;
+    float corner_radius;
+    if (center_to_point.x < 0.) {
+        if (center_to_point.y < 0.) {
+            corner_radius = corner_radii.top_left;
+        } else {
+            corner_radius = corner_radii.bottom_left;
+        }
+    } else {
+        if (center_to_point.y < 0.) {
+            corner_radius = corner_radii.top_right;
+        } else {
+            corner_radius = corner_radii.bottom_right;
+        }
+    }
+
+    float2 rounded_edge_to_point = abs(center_to_point) - half_size + corner_radius;
+    float distance = length(max(0., rounded_edge_to_point))
+                     + min(0., max(rounded_edge_to_point.x, rounded_edge_to_point.y))
+                     - corner_radius;
+
+    return distance;
+}
+
 fragment float4 quad_fragment(
     QuadVertexOutput input [[stage_in]],
     constant Quad *quads [[buffer(QuadInputIndex_Quads)]]
 ) {
     Quad quad = quads[input.quad_id];
     float2 half_size = float2(quad.bounds.size.width, quad.bounds.size.height) / 2.;
-    float2 center = float2( quad.bounds.origin.x, quad.bounds.origin.y ) + half_size;
+    float2 center = float2(quad.bounds.origin.x, quad.bounds.origin.y) + half_size;
     float2 center_to_point = input.position.xy - center;
     float corner_radius;
     if (center_to_point.x < 0.) {
@@ -91,7 +123,8 @@ fragment float4 quad_fragment(
         color = float4(premultiplied_output_rgb, output_alpha);
     }
 
-    return color * float4(1., 1., 1., saturate(0.5 - distance));
+    float clip_distance = quad_sdf(input.position.xy, quad.clip_bounds, quad.clip_corner_radii);
+    return color * float4(1., 1., 1., saturate(0.5 - distance) * saturate(0.5 - clip_distance));
 }
 
 float4 hsla_to_rgba(Hsla hsla) {
