@@ -8,7 +8,6 @@ use derive_more::{Deref, DerefMut};
 use refineable::Refineable;
 use std::{
     any::{Any, TypeId},
-    future::Future,
     marker::PhantomData,
     sync::Arc,
 };

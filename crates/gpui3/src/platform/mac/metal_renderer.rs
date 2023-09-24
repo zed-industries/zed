@@ -5,7 +5,7 @@ use cocoa::{
     foundation::NSUInteger,
     quartzcore::AutoresizingMask,
 };
-use metal::{CommandQueue, DepthStencilDescriptor, MTLPixelFormat, MTLResourceOptions, NSRange};
+use metal::{CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
 use objc::{self, msg_send, sel, sel_impl};
 use std::{ffi::c_void, mem, ptr};
 
@@ -17,7 +17,6 @@ pub struct MetalRenderer {
     layer: metal::MetalLayer,
     command_queue: CommandQueue,
     quad_pipeline_state: metal::RenderPipelineState,
-    depth_state: metal::DepthStencilState,
     unit_vertices: metal::Buffer,
     instances: metal::Buffer,
 }
@@ -88,18 +87,12 @@ impl MetalRenderer {
             PIXEL_FORMAT,
         );
 
-        let depth_stencil_descriptor = DepthStencilDescriptor::new();
-        depth_stencil_descriptor.set_depth_compare_function(metal::MTLCompareFunction::LessEqual);
-        depth_stencil_descriptor.set_depth_write_enabled(true);
-        let depth_state = device.new_depth_stencil_state(&depth_stencil_descriptor);
-
         let command_queue = device.new_command_queue();
         Self {
             device,
             layer,
             command_queue,
             quad_pipeline_state,
-            depth_state,
             unit_vertices,
             instances,
         }
@@ -154,7 +147,6 @@ impl MetalRenderer {
         let alpha = if self.layer.is_opaque() { 1. } else { 0. };
         color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., alpha));
         let command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
-        command_encoder.set_depth_stencil_state(&self.depth_state);
 
         command_encoder.set_viewport(metal::MTLViewport {
             originX: 0.0,
@@ -166,13 +158,15 @@ impl MetalRenderer {
         });
 
         let mut buffer_offset = 0;
-        self.draw_quads(
-            &scene.opaque_primitives().quads,
-            &mut buffer_offset,
-            viewport_size,
-            scene.max_order(),
-            command_encoder,
-        );
+        for layer in scene.layers() {
+            self.draw_quads(
+                &layer.quads,
+                &mut buffer_offset,
+                viewport_size,
+                command_encoder,
+            );
+        }
+
         command_encoder.end_encoding();
 
         self.instances.did_modify_range(NSRange {
@@ -190,7 +184,6 @@ impl MetalRenderer {
         quads: &[Quad],
         offset: &mut usize,
         viewport_size: Size<DevicePixels>,
-        max_order: u32,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) {
         if quads.is_empty() {
@@ -214,10 +207,7 @@ impl MetalRenderer {
             Some(&self.instances),
             *offset as u64,
         );
-        let quad_uniforms = QuadUniforms {
-            viewport_size,
-            max_order,
-        };
+        let quad_uniforms = QuadUniforms { viewport_size };
 
         let quad_uniform_bytes = bytemuck::bytes_of(&quad_uniforms);
         command_encoder.set_vertex_bytes(
@@ -300,5 +290,4 @@ enum QuadInputIndex {
 #[repr(C)]
 pub(crate) struct QuadUniforms {
     viewport_size: Size<DevicePixels>,
-    max_order: u32,
 }

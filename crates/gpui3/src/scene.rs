@@ -1,28 +1,25 @@
-use std::cmp;
-
 use super::{Bounds, Hsla, Pixels, Point};
-use crate::{Corners, Edges, FontId, GlyphId};
+use crate::{Corners, Edges};
 use bytemuck::{Pod, Zeroable};
-use plane_split::BspSplitter;
+use collections::BTreeMap;
 
 // Exported to metal
 pub type PointF = Point<f32>;
 
 pub struct Scene {
-    opaque_primitives: PrimitiveBatch,
-    transparent_primitives: slotmap::SlotMap<slotmap::DefaultKey, Primitive>,
-    splitter: BspSplitter<slotmap::DefaultKey>,
-    max_order: u32,
+    layers: BTreeMap<u32, SceneLayer>,
     scale_factor: f32,
+}
+
+#[derive(Default)]
+pub struct SceneLayer {
+    pub quads: Vec<Quad>,
 }
 
 impl Scene {
     pub fn new(scale_factor: f32) -> Scene {
         Scene {
-            opaque_primitives: PrimitiveBatch::default(),
-            transparent_primitives: slotmap::SlotMap::new(),
-            splitter: BspSplitter::new(),
-            max_order: 0,
+            layers: Default::default(),
             scale_factor,
         }
     }
@@ -30,18 +27,14 @@ impl Scene {
     pub fn insert(&mut self, primitive: impl Into<Primitive>) {
         let mut primitive = primitive.into();
         primitive.scale(self.scale_factor);
-        self.max_order = cmp::max(self.max_order, primitive.order());
+        let layer = self.layers.entry(primitive.order()).or_default();
         match primitive {
-            Primitive::Quad(quad) => self.opaque_primitives.quads.push(quad),
+            Primitive::Quad(quad) => layer.quads.push(quad),
         }
     }
 
-    pub fn opaque_primitives(&self) -> &PrimitiveBatch {
-        &self.opaque_primitives
-    }
-
-    pub fn max_order(&self) -> u32 {
-        self.max_order
+    pub fn layers(&self) -> impl Iterator<Item = &SceneLayer> {
+        self.layers.values()
     }
 }
 
@@ -74,11 +67,6 @@ impl Primitive {
     }
 }
 
-#[derive(Default)]
-pub struct PrimitiveBatch {
-    pub quads: Vec<Quad>,
-}
-
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 #[repr(C)]
 pub struct Quad {
@@ -106,9 +94,7 @@ impl Quad {
         ]
         .into_iter()
     }
-}
 
-impl Quad {
     pub fn scale(&mut self, factor: f32) {
         self.bounds.origin *= factor;
         self.bounds.size *= factor;
