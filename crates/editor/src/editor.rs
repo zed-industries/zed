@@ -1206,7 +1206,9 @@ impl CodeActionsMenu {
                                     workspace.update(cx, |workspace, cx| {
                                         if let Some(task) = Editor::confirm_code_action(
                                             workspace,
-                                            &Default::default(),
+                                            &ConfirmCodeAction {
+                                                item_ix: Some(item_ix),
+                                            },
                                             cx,
                                         ) {
                                             task.detach_and_log_err(cx);
