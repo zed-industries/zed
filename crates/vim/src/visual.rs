@@ -1,3 +1,4 @@
+use anyhow::Result;
 use std::{cmp, sync::Arc};
 
 use collections::HashMap;
@@ -28,6 +29,8 @@ actions!(
         VisualDelete,
         VisualYank,
         OtherEnd,
+        SelectNext,
+        SelectPrevious,
     ]
 );
 
@@ -46,6 +49,9 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(other_end);
     cx.add_action(delete);
     cx.add_action(yank);
+
+    cx.add_action(select_next);
+    cx.add_action(select_previous);
 }
 
 pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
@@ -382,6 +388,50 @@ pub(crate) fn visual_replace(text: Arc<str>, cx: &mut WindowContext) {
         });
         vim.switch_mode(Mode::Normal, false, cx);
     });
+}
+
+pub fn select_next(
+    _: &mut Workspace,
+    _: &SelectNext,
+    cx: &mut ViewContext<Workspace>,
+) -> Result<()> {
+    Vim::update(cx, |vim, cx| {
+        let count =
+            vim.take_count(cx)
+                .unwrap_or_else(|| if vim.state().mode.is_visual() { 1 } else { 2 });
+        vim.update_active_editor(cx, |editor, cx| {
+            for _ in 0..count {
+                match editor.select_next(&Default::default(), cx) {
+                    Err(a) => return Err(a),
+                    _ => {}
+                }
+            }
+            Ok(())
+        })
+    })
+    .unwrap_or(Ok(()))
+}
+
+pub fn select_previous(
+    _: &mut Workspace,
+    _: &SelectPrevious,
+    cx: &mut ViewContext<Workspace>,
+) -> Result<()> {
+    Vim::update(cx, |vim, cx| {
+        let count =
+            vim.take_count(cx)
+                .unwrap_or_else(|| if vim.state().mode.is_visual() { 1 } else { 2 });
+        vim.update_active_editor(cx, |editor, cx| {
+            for _ in 0..count {
+                match editor.select_previous(&Default::default(), cx) {
+                    Err(a) => return Err(a),
+                    _ => {}
+                }
+            }
+            Ok(())
+        })
+    })
+    .unwrap_or(Ok(()))
 }
 
 #[cfg(test)]
