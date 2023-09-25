@@ -1,3 +1,5 @@
+extern crate blas_src;
+
 use crate::{
     parsing::{Span, SpanDigest},
     SEMANTIC_INDEX_VERSION,
@@ -7,6 +9,7 @@ use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 use futures::channel::oneshot;
 use gpui::executor;
+use ndarray::{Array1, Array2};
 use ordered_float::OrderedFloat;
 use project::{search::PathMatcher, Fs};
 use rpc::proto::Timestamp;
@@ -19,9 +22,15 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
-    time::SystemTime,
+    time::{Instant, SystemTime},
 };
 use util::TryFutureExt;
+
+pub fn argsort<T: Ord>(data: &[T]) -> Vec<usize> {
+    let mut indices = (0..data.len()).collect::<Vec<_>>();
+    indices.sort_by_key(|&i| &data[i]);
+    indices
+}
 
 #[derive(Debug)]
 pub struct FileRecord {
@@ -409,23 +418,82 @@ impl VectorDatabase {
         limit: usize,
         file_ids: &[i64],
     ) -> impl Future<Output = Result<Vec<(i64, OrderedFloat<f32>)>>> {
-        let query_embedding = query_embedding.clone();
         let file_ids = file_ids.to_vec();
+        let query = query_embedding.clone().0;
+        let query = Array1::from_vec(query);
         self.transact(move |db| {
-            let mut results = Vec::<(i64, OrderedFloat<f32>)>::with_capacity(limit + 1);
-            Self::for_each_span(db, &file_ids, |id, embedding| {
-                let similarity = embedding.similarity(&query_embedding);
-                let ix = match results
-                    .binary_search_by_key(&Reverse(similarity), |(_, s)| Reverse(*s))
-                {
-                    Ok(ix) => ix,
-                    Err(ix) => ix,
-                };
-                results.insert(ix, (id, similarity));
-                results.truncate(limit);
-            })?;
+            let mut query_statement = db.prepare(
+                "
+                    SELECT
+                        id, embedding
+                    FROM
+                        spans
+                    WHERE
+                        file_id IN rarray(?)
+                    ",
+            )?;
 
-            anyhow::Ok(results)
+            let deserialized_rows = query_statement
+                .query_map(params![ids_to_sql(&file_ids)], |row| {
+                    Ok((row.get::<_, usize>(0)?, row.get::<_, Embedding>(1)?))
+                })?
+                .filter_map(|row| row.ok())
+                .collect::<Vec<(usize, Embedding)>>();
+
+            let batch_n = 250;
+            let mut batches = Vec::new();
+            let mut batch_ids = Vec::new();
+            let mut batch_embeddings: Vec<f32> = Vec::new();
+            deserialized_rows.iter().for_each(|(id, embedding)| {
+                batch_ids.push(id);
+                batch_embeddings.extend(&embedding.0);
+                if batch_ids.len() == batch_n {
+                    let array =
+                        Array2::from_shape_vec((batch_ids.len(), 1536), batch_embeddings.clone());
+                    match array {
+                        Ok(array) => {
+                            batches.push((batch_ids.clone(), array));
+                        }
+                        Err(err) => log::error!("Failed to deserialize to ndarray: {:?}", err),
+                    }
+
+                    batch_ids = Vec::new();
+                    batch_embeddings = Vec::new();
+                }
+            });
+
+            if batch_ids.len() > 0 {
+                let array =
+                    Array2::from_shape_vec((batch_ids.len(), 1536), batch_embeddings.clone());
+                match array {
+                    Ok(array) => {
+                        batches.push((batch_ids.clone(), array));
+                    }
+                    Err(err) => log::error!("Failed to deserialize to ndarray: {:?}", err),
+                }
+            }
+
+            let mut ids: Vec<usize> = Vec::new();
+            let mut results = Vec::new();
+            for (batch_ids, array) in batches {
+                let scores = array
+                    .dot(&query.t())
+                    .to_vec()
+                    .iter()
+                    .map(|score| OrderedFloat(*score))
+                    .collect::<Vec<OrderedFloat<f32>>>();
+                results.extend(scores);
+                ids.extend(batch_ids);
+            }
+
+            let sorted_idx = argsort(&results);
+            let mut sorted_results = Vec::new();
+            let last_idx = limit.min(sorted_idx.len());
+            for idx in &sorted_idx[0..last_idx] {
+                sorted_results.push((ids[*idx] as i64, results[*idx]))
+            }
+
+            Ok(sorted_results)
         })
     }
 
@@ -466,31 +534,6 @@ impl VectorDatabase {
 
             anyhow::Ok(file_ids)
         })
-    }
-
-    fn for_each_span(
-        db: &rusqlite::Connection,
-        file_ids: &[i64],
-        mut f: impl FnMut(i64, Embedding),
-    ) -> Result<()> {
-        let mut query_statement = db.prepare(
-            "
-            SELECT
-                id, embedding
-            FROM
-                spans
-            WHERE
-                file_id IN rarray(?)
-            ",
-        )?;
-
-        query_statement
-            .query_map(params![ids_to_sql(&file_ids)], |row| {
-                Ok((row.get(0)?, row.get::<_, Embedding>(1)?))
-            })?
-            .filter_map(|row| row.ok())
-            .for_each(|(id, embedding)| f(id, embedding));
-        Ok(())
     }
 
     pub fn spans_for_ids(
