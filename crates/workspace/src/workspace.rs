@@ -1372,13 +1372,12 @@ impl Workspace {
 
     fn save_all_internal(
         &mut self,
-        save_intent: SaveIntent,
+        mut save_intent: SaveIntent,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
         if self.project.read(cx).is_read_only() {
             return Task::ready(Ok(true));
         }
-
         let dirty_items = self
             .panes
             .iter()
@@ -1394,7 +1393,27 @@ impl Workspace {
             .collect::<Vec<_>>();
 
         let project = self.project.clone();
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(|workspace, mut cx| async move {
+            // Override save mode and display "Save all files" prompt
+            if save_intent == SaveIntent::Close && dirty_items.len() > 1 {
+                let mut answer = workspace.update(&mut cx, |_, cx| {
+                    let prompt = Pane::file_names_for_prompt(
+                        &mut dirty_items.iter().map(|(_, handle)| handle),
+                        dirty_items.len(),
+                        cx,
+                    );
+                    cx.prompt(
+                        PromptLevel::Warning,
+                        &prompt,
+                        &["Save all", "Discard all", "Cancel"],
+                    )
+                })?;
+                match answer.next().await {
+                    Some(0) => save_intent = SaveIntent::Save,
+                    Some(1) => save_intent = SaveIntent::Skip,
+                    _ => {}
+                }
+            }
             for (pane, item) in dirty_items {
                 let (singleton, project_entry_ids) =
                     cx.read(|cx| (item.is_singleton(cx), item.project_entry_ids(cx)));
@@ -4361,7 +4380,9 @@ mod tests {
         });
         let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
         cx.foreground().run_until_parked();
-        window.simulate_prompt_answer(2, cx); // cancel
+        window.simulate_prompt_answer(2, cx); // cancel save all
+        cx.foreground().run_until_parked();
+        window.simulate_prompt_answer(2, cx); // cancel save all
         cx.foreground().run_until_parked();
         assert!(!window.has_pending_prompt(cx));
         assert!(!task.await.unwrap());
@@ -4419,13 +4440,15 @@ mod tests {
         });
         cx.foreground().run_until_parked();
 
+        assert!(window.has_pending_prompt(cx));
+        // Ignore "Save all" prompt
+        window.simulate_prompt_answer(2, cx);
+        cx.foreground().run_until_parked();
         // There's a prompt to save item 1.
         pane.read_with(cx, |pane, _| {
             assert_eq!(pane.items_len(), 4);
             assert_eq!(pane.active_item().unwrap().id(), item1.id());
         });
-        assert!(window.has_pending_prompt(cx));
-
         // Confirm saving item 1.
         window.simulate_prompt_answer(0, cx);
         cx.foreground().run_until_parked();
@@ -4553,6 +4576,10 @@ mod tests {
         let close = left_pane.update(cx, |pane, cx| {
             pane.close_items(cx, SaveIntent::Close, move |_| true)
         });
+        cx.foreground().run_until_parked();
+        // Discard "Save all" prompt
+        window.simulate_prompt_answer(2, cx);
+
         cx.foreground().run_until_parked();
         left_pane.read_with(cx, |pane, cx| {
             assert_eq!(

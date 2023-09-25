@@ -541,10 +541,10 @@ impl BufferSearchBar {
 
     pub fn set_replacement(&mut self, replacement: Option<&str>, cx: &mut ViewContext<Self>) {
         if replacement.is_none() {
-            self.replace_is_active = false;
+            self.replace_enabled = false;
             return;
         }
-        self.replace_is_active = true;
+        self.replace_enabled = true;
         self.replacement_editor
             .update(cx, |replacement_editor, cx| {
                 replacement_editor
