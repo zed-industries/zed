@@ -8,7 +8,7 @@ pub struct BreadcrumbStory {}
 
 impl BreadcrumbStory {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
-        Story::container()
+        Story::container(cx)
             .child(Story::title_for::<_, Breadcrumb>())
             .child(Story::label("Default"))
             .child(Breadcrumb::new())

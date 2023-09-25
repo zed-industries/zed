@@ -1,6 +1,6 @@
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
+use ui::avatar;
 use ui::prelude::*;
-use ui::{avatar, theme};
 
 use crate::story::Story;
 
@@ -9,9 +9,7 @@ pub struct AvatarStory {}
 
 impl AvatarStory {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
-        let theme = theme(cx);
-
-        Story::container()
+        Story::container(cx)
             .child(Story::title_for::<_, ui::Avatar>())
             .child(Story::label("Default"))
             .child(avatar(

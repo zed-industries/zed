@@ -1,11 +1,14 @@
 use gpui2::elements::div;
 use gpui2::style::StyleHelpers;
-use gpui2::{rgb, Element, Hsla, ParentElement};
+use gpui2::{rgb, Element, Hsla, ParentElement, ViewContext};
+use ui::theme;
 
 pub struct Story {}
 
 impl Story {
-    pub fn container<V: 'static>() -> div::Div<V> {
+    pub fn container<V: 'static>(cx: &mut ViewContext<V>) -> div::Div<V> {
+        let theme = theme(cx);
+
         div()
             .size_full()
             .flex()
@@ -13,7 +16,7 @@ impl Story {
             .pt_2()
             .px_4()
             .font("Zed Mono Extended")
-            .fill(rgb::<Hsla>(0x282c34))
+            .fill(theme.lowest.base.default.background)
     }
 
     pub fn title<V: 'static>(title: &str) -> impl Element<V> {

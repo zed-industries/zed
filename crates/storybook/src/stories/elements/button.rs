@@ -4,7 +4,7 @@ use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 use strum::IntoEnumIterator;
 use ui::{h_stack, label, prelude::*, v_stack};
-use ui::{theme, Button, IconAsset, IconPosition};
+use ui::{Button, IconAsset, IconPosition};
 
 use crate::story::Story;
 
@@ -13,11 +13,9 @@ pub struct ButtonStory {}
 
 impl ButtonStory {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
-        let theme = theme(cx);
-
         let states = InteractionState::iter();
 
-        Story::container()
+        Story::container(cx)
             .child(Story::title_for::<_, Button>())
             .child(
                 div()

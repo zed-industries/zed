@@ -8,7 +8,7 @@ pub struct PaletteStory {}
 
 impl PaletteStory {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
-        Story::container()
+        Story::container(cx)
             .child(Story::title_for::<_, Palette<V>>())
             .child(Story::label("Default"))
             .child(Palette::new(ScrollState::default()))

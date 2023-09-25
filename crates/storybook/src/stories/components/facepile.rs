@@ -2,7 +2,7 @@ use gpui2::elements::div;
 use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 use ui::prelude::*;
-use ui::{avatar, facepile, theme};
+use ui::{avatar, facepile};
 
 use crate::story::Story;
 
@@ -11,15 +11,13 @@ pub struct FacepileStory {}
 
 impl FacepileStory {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
-        let theme = theme(cx);
-
         let avatars = vec![
             avatar("https://avatars.githubusercontent.com/u/1714999?v=4"),
             avatar("https://avatars.githubusercontent.com/u/482957?v=4"),
             avatar("https://avatars.githubusercontent.com/u/1789?v=4"),
         ];
 
-        Story::container()
+        Story::container(cx)
             .child(Story::title_for::<_, ui::Facepile>())
             .child(Story::label("Default"))
             .child(
