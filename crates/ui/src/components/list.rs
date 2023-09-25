@@ -6,7 +6,7 @@ use gpui2::{
 
 use crate::{
     h_stack, theme, token, v_stack, Avatar, DisclosureControlVisibility, Icon, IconAsset,
-    InteractionState, Label, LabelColor, LabelSize, SystemColor, ToggleState,
+    IconColor, IconSize, InteractionState, Label, LabelColor, LabelSize, SystemColor, ToggleState,
 };
 
 #[derive(Element, Clone, Copy)]
@@ -42,16 +42,20 @@ impl ListSectionHeader {
         self
     }
 
+    fn disclosure_control(&self) -> Icon {
+        Icon::new(if let Some(ToggleState::Toggled) = self.toggle {
+            IconAsset::ChevronDown
+        } else {
+            IconAsset::ChevronRight
+        })
+        .color(IconColor::Muted)
+        .size(IconSize::Small)
+    }
+
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
         let system_color = SystemColor::new();
         let token = token();
-
-        let disclosure_control = match self.toggle {
-            Some(ToggleState::NotToggled) => Some(div().child(Icon::new(IconAsset::ChevronRight))),
-            Some(ToggleState::Toggled) => Some(div().child(Icon::new(IconAsset::ChevronDown))),
-            None => Some(div()),
-        };
 
         h_stack()
             .flex_1()
@@ -78,14 +82,16 @@ impl ListSectionHeader {
                             .flex()
                             .gap_1()
                             .items_center()
-                            .children(self.left_icon.map(Icon::new))
+                            .children(self.left_icon.map(|i| {
+                                Icon::new(i).color(IconColor::Muted).size(IconSize::Small)
+                            }))
                             .child(
                                 Label::new(self.label.clone())
                                     .color(LabelColor::Muted)
                                     .size(LabelSize::Small),
                             ),
                     )
-                    .children(disclosure_control),
+                    .children(self.toggle.map(|_| self.disclosure_control())),
             )
     }
 }
@@ -181,7 +187,9 @@ impl ListItem {
             IconAsset::ChevronDown
         } else {
             IconAsset::ChevronRight
-        });
+        })
+        .color(IconColor::Muted)
+        .size(IconSize::Small);
 
         match (self.toggle, self.disclosure_control_style) {
             (Some(_), DisclosureControlVisibility::OnHover) => {
@@ -200,14 +208,14 @@ impl ListItem {
         let system_color = SystemColor::new();
 
         let left_content = match self.left_content {
-            Some(LeftContent::Icon(i)) => Some(div().child(Icon::new(i))),
-            Some(LeftContent::Avatar(src)) => Some(div().child(Avatar::new(src))),
+            Some(LeftContent::Icon(i)) => Some(h_stack().child(Icon::new(i).size(IconSize::Small))),
+            Some(LeftContent::Avatar(src)) => Some(h_stack().child(Avatar::new(src))),
             None => None,
         };
 
         let sized_item = match self.size {
             ListItemSize::Small => div().h_6(),
-            ListItemSize::Medium => div().h_8(),
+            ListItemSize::Medium => div().h_7(),
         };
 
         div()
@@ -228,13 +236,9 @@ impl ListItem {
                             .h_full()
                             .flex()
                             .justify_center()
-                            .child(
-                                div()
-                                    .ml_px()
-                                    .w_px()
-                                    .h_full()
-                                    .fill(theme.middle.base.default.border),
-                            )
+                            .child(h_stack().child(div().w_px().h_full()).child(
+                                div().w_px().h_full().fill(theme.middle.base.default.border),
+                            ))
                     }))
                     .flex()
                     .gap_1()
@@ -291,6 +295,12 @@ impl List {
             None => None,
         };
 
+        let list_items = if self.toggle == Some(ToggleState::Toggled) {
+            div().children(self.items.iter().cloned())
+        } else {
+            div()
+        };
+
         v_stack()
             .py_1()
             .children(self.header)
@@ -299,6 +309,6 @@ impl List {
                     .is_empty()
                     .then(|| Label::new(self.empty_message).color(LabelColor::Muted)),
             )
-            .children(self.items.iter().cloned())
+            .child(list_items)
     }
 }

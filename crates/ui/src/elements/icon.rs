@@ -10,6 +10,13 @@ use crate::theme::theme;
 use crate::Theme;
 
 #[derive(Default, PartialEq, Copy, Clone)]
+pub enum IconSize {
+    Small,
+    #[default]
+    Large,
+}
+
+#[derive(Default, PartialEq, Copy, Clone)]
 pub enum IconColor {
     #[default]
     Default,
@@ -129,6 +136,7 @@ impl IconAsset {
 pub struct Icon {
     asset: IconAsset,
     color: IconColor,
+    size: IconSize,
 }
 
 impl Icon {
@@ -136,6 +144,7 @@ impl Icon {
         Self {
             asset,
             color: IconColor::default(),
+            size: IconSize::default(),
         }
     }
 
@@ -144,14 +153,20 @@ impl Icon {
         self
     }
 
+    pub fn size(mut self, size: IconSize) -> Self {
+        self.size = size;
+        self
+    }
+
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
         let fill = self.color.color(theme);
 
-        svg()
-            .flex_none()
-            .path(self.asset.path())
-            .size_4()
-            .fill(fill)
+        let sized_svg = match self.size {
+            IconSize::Small => svg().size_3p5(),
+            IconSize::Large => svg().size_4(),
+        };
+
+        sized_svg.flex_none().path(self.asset.path()).fill(fill)
     }
 }

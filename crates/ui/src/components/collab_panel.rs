@@ -1,8 +1,7 @@
 use crate::{
-    h_stack, list, list_section_header, static_collab_panel_channels,
-    static_collab_panel_current_call, static_project_panel_single_items,
+    list, list_section_header, static_collab_panel_channels, static_collab_panel_current_call,
     theme::{theme, Theme},
-    v_stack, ToggleState,
+    v_stack, IconAsset, ToggleState,
 };
 use gpui2::{
     elements::{div, div::ScrollState, img, svg},
@@ -45,14 +44,15 @@ impl<V: 'static> CollabPanelElement<V> {
                             .child(
                                 list(static_collab_panel_current_call())
                                     .header(
-                                        list_section_header("CURRENT CALL")
+                                        list_section_header("CRDB")
+                                            .left_icon(IconAsset::Hash.into())
                                             .set_toggle(ToggleState::Toggled),
                                     )
                                     .set_toggle(ToggleState::Toggled),
                             ),
                     )
                     .child(
-                        v_stack().py_2().child(
+                        v_stack().py_1().child(
                             list(static_collab_panel_channels())
                                 .header(
                                     list_section_header("CHANNELS")
@@ -63,32 +63,24 @@ impl<V: 'static> CollabPanelElement<V> {
                         ),
                     )
                     .child(
-                        v_stack()
-                            .py_2()
-                            .child(self.list_section_header("CONTACTS", true, &theme))
-                            .children(
-                                std::iter::repeat_with(|| {
-                                    vec![
-                                        self.list_item(
-                                            "http://github.com/as-cii.png?s=50",
-                                            "as-cii",
-                                            &theme,
-                                        ),
-                                        self.list_item(
-                                            "http://github.com/nathansobo.png?s=50",
-                                            "nathansobo",
-                                            &theme,
-                                        ),
-                                        self.list_item(
-                                            "http://github.com/maxbrunsfeld.png?s=50",
-                                            "maxbrunsfeld",
-                                            &theme,
-                                        ),
-                                    ]
-                                })
-                                .take(3)
-                                .flatten(),
-                            ),
+                        v_stack().py_1().child(
+                            list(static_collab_panel_current_call())
+                                .header(
+                                    list_section_header("CONTACTS – ONLINE")
+                                        .set_toggle(ToggleState::Toggled),
+                                )
+                                .set_toggle(ToggleState::Toggled),
+                        ),
+                    )
+                    .child(
+                        v_stack().py_1().child(
+                            list(static_collab_panel_current_call())
+                                .header(
+                                    list_section_header("CONTACTS – OFFLINE")
+                                        .set_toggle(ToggleState::NotToggled),
+                                )
+                                .set_toggle(ToggleState::NotToggled),
+                        ),
                     ),
             )
             .child(
