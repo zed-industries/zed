@@ -164,9 +164,7 @@ fn current_theme<V: 'static>(
     let legacy_theme =
         theme_override.unwrap_or_else(|| settings::get::<ThemeSettings>(cx).theme.clone());
 
-    let new_theme: Theme =
-        serde_json::from_value(settings::get::<ThemeSettings>(cx).theme.base_theme.clone())
-            .unwrap();
+    let new_theme: Theme = serde_json::from_value(legacy_theme.base_theme.clone()).unwrap();
 
     add_base_theme_to_legacy_theme(&legacy_theme, new_theme)
 }
