@@ -11,7 +11,7 @@ pub enum ElementStory {
     Avatar,
     Icon,
     Input,
-    TextButton,
+    Button,
 }
 
 #[derive(Debug, Clone, Copy, strum::Display, EnumString, EnumIter)]

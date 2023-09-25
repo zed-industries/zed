@@ -6,21 +6,21 @@ use crate::{label, prelude::*, LabelColor};
 use crate::{theme, LabelSize};
 
 #[derive(Element)]
-pub struct TextButton {
+pub struct Button {
     label: &'static str,
     variant: ButtonVariant,
     state: InteractionState,
 }
 
-pub fn text_button(label: &'static str) -> TextButton {
-    TextButton {
+pub fn button(label: &'static str) -> Button {
+    Button {
         label,
         variant: ButtonVariant::default(),
         state: InteractionState::default(),
     }
 }
 
-impl TextButton {
+impl Button {
     pub fn variant(mut self, variant: ButtonVariant) -> Self {
         self.variant = variant;
         self

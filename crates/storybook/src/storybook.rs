@@ -68,10 +68,10 @@ fn main() {
                         stories::elements::input::InputStory::default(),
                     )
                 }),
-                Some(StorySelector::Element(ElementStory::TextButton)) => view(|cx| {
+                Some(StorySelector::Element(ElementStory::Button)) => view(|cx| {
                     render_story(
                         &mut ViewContext::new(cx),
-                        stories::elements::text_button::TextButtonStory::default(),
+                        stories::elements::button::ButtonStory::default(),
                     )
                 }),
                 Some(StorySelector::Component(ComponentStory::Breadcrumb)) => view(|cx| {
