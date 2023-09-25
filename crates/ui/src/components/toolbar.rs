@@ -11,11 +11,11 @@ pub struct Toolbar {
     items: Vec<ToolbarItem>,
 }
 
-pub fn toolbar() -> Toolbar {
-    Toolbar { items: Vec::new() }
-}
-
 impl Toolbar {
+    pub fn new() -> Self {
+        Self { items: Vec::new() }
+    }
+
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
 
