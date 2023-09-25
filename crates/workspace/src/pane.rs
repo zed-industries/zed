@@ -921,7 +921,7 @@ impl Pane {
                     )
                 })?;
                 match answer.next().await {
-                    Some(0) => save_intent = SaveIntent::Save,
+                    Some(0) => save_intent = SaveIntent::SaveAll,
                     Some(1) => save_intent = SaveIntent::Skip,
                     _ => {}
                 }
