@@ -6,11 +6,11 @@ use crate::{h_stack, theme};
 #[derive(Element)]
 pub struct Breadcrumb {}
 
-pub fn breadcrumb() -> Breadcrumb {
-    Breadcrumb {}
-}
-
 impl Breadcrumb {
+    pub fn new() -> Self {
+        Self {}
+    }
+
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
 

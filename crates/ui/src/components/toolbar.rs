@@ -2,7 +2,7 @@ use gpui2::elements::div;
 use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
-use crate::{breadcrumb, theme, IconAsset, IconButton};
+use crate::{theme, Breadcrumb, IconAsset, IconButton};
 
 pub struct ToolbarItem {}
 
@@ -23,7 +23,7 @@ impl Toolbar {
             .p_2()
             .flex()
             .justify_between()
-            .child(breadcrumb())
+            .child(Breadcrumb::new())
             .child(
                 div()
                     .flex()
