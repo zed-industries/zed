@@ -1,5 +1,5 @@
-use crate::{h_stack, label, prelude::*, Icon, IconAsset, IconColor, Label, LabelColor};
-use crate::{theme, LabelSize};
+use crate::prelude::*;
+use crate::{h_stack, theme, Icon, IconAsset, IconColor, Label, LabelColor, LabelSize};
 use gpui2::geometry::DefiniteLength;
 use gpui2::style::StyleHelpers;
 use gpui2::{Element, Hsla, IntoElement, ParentElement, ViewContext};
@@ -104,7 +104,7 @@ impl Button {
     }
 
     fn render_label(&self) -> Label {
-        label(self.label.clone())
+        Label::new(self.label.clone())
             .size(LabelSize::Small)
             .color(self.label_color())
     }

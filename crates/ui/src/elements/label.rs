@@ -32,18 +32,18 @@ pub struct Label {
     size: LabelSize,
 }
 
-pub fn label<L>(label: L) -> Label
-where
-    L: Into<String>,
-{
-    Label {
-        label: label.into(),
-        color: LabelColor::Default,
-        size: LabelSize::Default,
-    }
-}
-
 impl Label {
+    pub fn new<L>(label: L) -> Self
+    where
+        L: Into<String>,
+    {
+        Self {
+            label: label.into(),
+            color: LabelColor::Default,
+            size: LabelSize::Default,
+        }
+    }
+
     pub fn color(mut self, color: LabelColor) -> Self {
         self.color = color;
         self

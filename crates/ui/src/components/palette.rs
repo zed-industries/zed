@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
-use crate::prelude::OrderMethod;
+use crate::prelude::*;
 use crate::theme::theme;
-use crate::{h_stack, label, palette_item, v_stack, LabelColor, PaletteItem};
+use crate::{h_stack, palette_item, v_stack, Label, LabelColor, PaletteItem};
 use gpui2::elements::div::ScrollState;
 use gpui2::style::{StyleHelpers, Styleable};
 use gpui2::{elements::div, IntoElement};
@@ -64,13 +64,11 @@ impl<V: 'static> Palette<V> {
             .child(
                 v_stack()
                     .gap_px()
-                    .child(
-                        v_stack().py_0p5().px_1().child(
-                            div().px_2().py_0p5().child(
-                                label(self.input_placeholder).color(LabelColor::Placeholder),
-                            ),
+                    .child(v_stack().py_0p5().px_1().child(
+                        div().px_2().py_0p5().child(
+                            Label::new(self.input_placeholder).color(LabelColor::Placeholder),
                         ),
-                    )
+                    ))
                     .child(div().h_px().w_full().fill(theme.lowest.base.default.border))
                     .child(
                         v_stack()
@@ -81,11 +79,9 @@ impl<V: 'static> Palette<V> {
                             .overflow_y_scroll(self.scroll_state.clone())
                             .children(
                                 vec![if self.items.is_empty() {
-                                    Some(
-                                        h_stack().justify_between().px_2().py_1().child(
-                                            label(self.empty_string).color(LabelColor::Muted),
-                                        ),
-                                    )
+                                    Some(h_stack().justify_between().px_2().py_1().child(
+                                        Label::new(self.empty_string).color(LabelColor::Muted),
+                                    ))
                                 } else {
                                     None
                                 }]

@@ -3,7 +3,7 @@ use gpui2::style::{StyleHelpers, Styleable};
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
 use crate::prelude::*;
-use crate::{label, theme, Icon, IconAsset, LabelColor};
+use crate::{theme, Icon, IconAsset, Label, LabelColor};
 
 #[derive(Element)]
 pub struct Tab {
@@ -70,12 +70,12 @@ impl Tab {
         let theme = theme(cx);
 
         let label = match self.git_status {
-            GitStatus::None => label(self.title),
-            GitStatus::Created => label(self.title).color(LabelColor::Created),
-            GitStatus::Modified => label(self.title).color(LabelColor::Modified),
-            GitStatus::Deleted => label(self.title).color(LabelColor::Deleted),
-            GitStatus::Renamed => label(self.title).color(LabelColor::Accent),
-            GitStatus::Conflict => label(self.title),
+            GitStatus::None => Label::new(self.title),
+            GitStatus::Created => Label::new(self.title).color(LabelColor::Created),
+            GitStatus::Modified => Label::new(self.title).color(LabelColor::Modified),
+            GitStatus::Deleted => Label::new(self.title).color(LabelColor::Deleted),
+            GitStatus::Renamed => Label::new(self.title).color(LabelColor::Accent),
+            GitStatus::Conflict => Label::new(self.title),
         };
 
         div()

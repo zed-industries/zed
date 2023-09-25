@@ -5,8 +5,8 @@ use gpui2::{
 };
 
 use crate::{
-    h_stack, label, theme, token, v_stack, DisclosureControlVisibility, Icon, IconAsset,
-    InteractionState, Label, LabelColor, LabelSize, ToggleState,
+    h_stack, theme, token, v_stack, DisclosureControlVisibility, Icon, IconAsset, InteractionState,
+    Label, LabelColor, LabelSize, ToggleState,
 };
 
 #[derive(Element, Clone, Copy)]
@@ -79,7 +79,7 @@ impl ListSectionHeader {
                             .items_center()
                             .children(self.left_icon.map(Icon::new))
                             .child(
-                                label(self.label.clone())
+                                Label::new(self.label.clone())
                                     .color(LabelColor::Muted)
                                     .size(LabelSize::Small),
                             ),
@@ -244,7 +244,7 @@ impl List {
             .children(
                 self.items
                     .is_empty()
-                    .then(|| label(self.empty_message).color(LabelColor::Muted)),
+                    .then(|| Label::new(self.empty_message).color(LabelColor::Muted)),
             )
             .children(self.items.iter().cloned())
     }

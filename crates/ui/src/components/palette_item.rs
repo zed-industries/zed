@@ -1,5 +1,5 @@
 use crate::theme::theme;
-use crate::{label, LabelColor, LabelSize};
+use crate::{Label, LabelColor, LabelSize};
 use gpui2::elements::div;
 use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement};
@@ -30,10 +30,10 @@ impl PaletteItem {
         let theme = theme(cx);
 
         let keybinding_label = match self.keybinding {
-            Some(keybind) => label(keybind)
+            Some(keybind) => Label::new(keybind)
                 .color(LabelColor::Muted)
                 .size(LabelSize::Small),
-            None => label(""),
+            None => Label::new(""),
         };
 
         div()
@@ -41,7 +41,7 @@ impl PaletteItem {
             .flex_row()
             .grow()
             .justify_between()
-            .child(label(self.label))
+            .child(Label::new(self.label))
             .child(
                 self.keybinding
                     .map(|_| {
