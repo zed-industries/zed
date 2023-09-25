@@ -18,6 +18,7 @@
           }
         }
       ],
+      ":": "command_palette::Toggle",
       "h": "vim::Left",
       "left": "vim::Left",
       "backspace": "vim::Backspace",
@@ -205,13 +206,13 @@
       "shift-z shift-q": [
         "pane::CloseActiveItem",
         {
-          "saveBehavior": "dontSave"
+          "saveIntent": "skip"
         }
       ],
       "shift-z shift-z": [
         "pane::CloseActiveItem",
         {
-          "saveBehavior": "promptOnConflict"
+          "saveIntent": "saveAll"
         }
       ],
       // Count support
@@ -318,7 +319,17 @@
       "ctrl-w c": "pane::CloseAllItems",
       "ctrl-w ctrl-c": "pane::CloseAllItems",
       "ctrl-w q": "pane::CloseAllItems",
-      "ctrl-w ctrl-q": "pane::CloseAllItems"
+      "ctrl-w ctrl-q": "pane::CloseAllItems",
+      "ctrl-w o": "workspace::CloseInactiveTabsAndPanes",
+      "ctrl-w ctrl-o": "workspace::CloseInactiveTabsAndPanes",
+      "ctrl-w n": [
+        "workspace::NewFileInDirection",
+        "Up"
+      ],
+      "ctrl-w ctrl-n": [
+        "workspace::NewFileInDirection",
+        "Up"
+      ]
     }
   },
   {

@@ -25,7 +25,8 @@ pub struct Picker<D: PickerDelegate> {
     max_size: Vector2F,
     theme: Arc<Mutex<Box<dyn Fn(&theme::Theme) -> theme::Picker>>>,
     confirmed: bool,
-    pending_update_matches: Task<Option<()>>,
+    pending_update_matches: Option<Task<Option<()>>>,
+    confirm_on_update: Option<bool>,
     has_focus: bool,
 }
 
@@ -208,7 +209,8 @@ impl<D: PickerDelegate> Picker<D> {
             max_size: vec2f(540., 420.),
             theme,
             confirmed: false,
-            pending_update_matches: Task::ready(None),
+            pending_update_matches: None,
+            confirm_on_update: None,
             has_focus: false,
         };
         this.update_matches(String::new(), cx);
@@ -263,11 +265,13 @@ impl<D: PickerDelegate> Picker<D> {
     pub fn update_matches(&mut self, query: String, cx: &mut ViewContext<Self>) {
         let update = self.delegate.update_matches(query, cx);
         self.matches_updated(cx);
-        self.pending_update_matches = cx.spawn(|this, mut cx| async move {
+        self.pending_update_matches = Some(cx.spawn(|this, mut cx| async move {
             update.await;
-            this.update(&mut cx, |this, cx| this.matches_updated(cx))
-                .log_err()
-        });
+            this.update(&mut cx, |this, cx| {
+                this.matches_updated(cx);
+            })
+            .log_err()
+        }));
     }
 
     fn matches_updated(&mut self, cx: &mut ViewContext<Self>) {
@@ -278,6 +282,11 @@ impl<D: PickerDelegate> Picker<D> {
             ScrollTarget::Show(index)
         };
         self.list_state.scroll_to(target);
+        self.pending_update_matches = None;
+        if let Some(secondary) = self.confirm_on_update.take() {
+            self.confirmed = true;
+            self.delegate.confirm(secondary, cx)
+        }
         cx.notify();
     }
 
@@ -331,13 +340,21 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
-        self.confirmed = true;
-        self.delegate.confirm(false, cx);
+        if self.pending_update_matches.is_some() {
+            self.confirm_on_update = Some(false)
+        } else {
+            self.confirmed = true;
+            self.delegate.confirm(false, cx);
+        }
     }
 
     pub fn secondary_confirm(&mut self, _: &SecondaryConfirm, cx: &mut ViewContext<Self>) {
-        self.confirmed = true;
-        self.delegate.confirm(true, cx);
+        if self.pending_update_matches.is_some() {
+            self.confirm_on_update = Some(true)
+        } else {
+            self.confirmed = true;
+            self.delegate.confirm(true, cx);
+        }
     }
 
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
