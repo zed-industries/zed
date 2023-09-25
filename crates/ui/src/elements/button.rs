@@ -21,21 +21,21 @@ pub struct Button {
     width: Option<DefiniteLength>,
 }
 
-pub fn button<L>(label: L) -> Button
-where
-    L: Into<String>,
-{
-    Button {
-        label: label.into(),
-        variant: Default::default(),
-        state: Default::default(),
-        icon: None,
-        icon_position: None,
-        width: Default::default(),
-    }
-}
-
 impl Button {
+    pub fn new<L>(label: L) -> Self
+    where
+        L: Into<String>,
+    {
+        Self {
+            label: label.into(),
+            variant: Default::default(),
+            state: Default::default(),
+            icon: None,
+            icon_position: None,
+            width: Default::default(),
+        }
+    }
+
     pub fn variant(mut self, variant: ButtonVariant) -> Self {
         self.variant = variant;
         self

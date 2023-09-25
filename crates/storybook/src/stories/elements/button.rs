@@ -3,8 +3,8 @@ use gpui2::geometry::rems;
 use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 use strum::IntoEnumIterator;
-use ui::{button, theme, IconAsset, IconPosition};
 use ui::{h_stack, label, prelude::*, v_stack};
+use ui::{theme, Button, IconAsset, IconPosition};
 
 use crate::story::Story;
 
@@ -35,7 +35,9 @@ impl ButtonStory {
                                             .size(ui::LabelSize::Small),
                                     )
                                     .child(
-                                        button("Label").variant(ButtonVariant::Ghost).state(state),
+                                        Button::new("Label")
+                                            .variant(ButtonVariant::Ghost)
+                                            .state(state),
                                     )
                             })))
                             .child(Story::label("Ghost – Left Icon"))
@@ -48,7 +50,7 @@ impl ButtonStory {
                                             .size(ui::LabelSize::Small),
                                     )
                                     .child(
-                                        button("Label")
+                                        Button::new("Label")
                                             .variant(ButtonVariant::Ghost)
                                             .icon(IconAsset::Plus)
                                             .icon_position(IconPosition::Left)
@@ -65,7 +67,7 @@ impl ButtonStory {
                                             .size(ui::LabelSize::Small),
                                     )
                                     .child(
-                                        button("Label")
+                                        Button::new("Label")
                                             .variant(ButtonVariant::Ghost)
                                             .icon(IconAsset::Plus)
                                             .icon_position(IconPosition::Right)
@@ -85,7 +87,9 @@ impl ButtonStory {
                                             .size(ui::LabelSize::Small),
                                     )
                                     .child(
-                                        button("Label").variant(ButtonVariant::Filled).state(state),
+                                        Button::new("Label")
+                                            .variant(ButtonVariant::Filled)
+                                            .state(state),
                                     )
                             })))
                             .child(Story::label("Filled – Left Button"))
@@ -98,7 +102,7 @@ impl ButtonStory {
                                             .size(ui::LabelSize::Small),
                                     )
                                     .child(
-                                        button("Label")
+                                        Button::new("Label")
                                             .variant(ButtonVariant::Filled)
                                             .icon(IconAsset::Plus)
                                             .icon_position(IconPosition::Left)
@@ -115,7 +119,7 @@ impl ButtonStory {
                                             .size(ui::LabelSize::Small),
                                     )
                                     .child(
-                                        button("Label")
+                                        Button::new("Label")
                                             .variant(ButtonVariant::Filled)
                                             .icon(IconAsset::Plus)
                                             .icon_position(IconPosition::Right)
@@ -135,7 +139,7 @@ impl ButtonStory {
                                             .size(ui::LabelSize::Small),
                                     )
                                     .child(
-                                        button("Label")
+                                        Button::new("Label")
                                             .variant(ButtonVariant::Filled)
                                             .state(state)
                                             .width(Some(rems(6.).into())),
@@ -151,7 +155,7 @@ impl ButtonStory {
                                             .size(ui::LabelSize::Small),
                                     )
                                     .child(
-                                        button("Label")
+                                        Button::new("Label")
                                             .variant(ButtonVariant::Filled)
                                             .state(state)
                                             .icon(IconAsset::Plus)
@@ -169,7 +173,7 @@ impl ButtonStory {
                                             .size(ui::LabelSize::Small),
                                     )
                                     .child(
-                                        button("Label")
+                                        Button::new("Label")
                                             .variant(ButtonVariant::Filled)
                                             .state(state)
                                             .icon(IconAsset::Plus)

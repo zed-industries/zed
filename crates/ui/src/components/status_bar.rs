@@ -5,7 +5,7 @@ use gpui2::{elements::div, IntoElement};
 use gpui2::{Element, ParentElement, ViewContext};
 
 use crate::theme::{theme, Theme};
-use crate::{button, icon_button, tool_divider, IconAsset};
+use crate::{icon_button, tool_divider, Button, IconAsset};
 
 #[derive(Default, PartialEq)]
 pub enum Tool {
@@ -121,8 +121,8 @@ impl<V: 'static> StatusBar<V> {
                     .flex()
                     .items_center()
                     .gap_1()
-                    .child(button("116:25"))
-                    .child(button("Rust")),
+                    .child(Button::new("116:25"))
+                    .child(Button::new("Rust")),
             )
             .child(tool_divider())
             .child(

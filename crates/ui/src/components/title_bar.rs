@@ -8,7 +8,7 @@ use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
 use crate::prelude::Shape;
 use crate::{
-    avatar, button, follow_group, icon_button, theme, tool_divider, traffic_lights, IconAsset,
+    avatar, follow_group, icon_button, theme, tool_divider, traffic_lights, Button, IconAsset,
     IconColor,
 };
 
@@ -68,9 +68,9 @@ impl<V: 'static> TitleBar<V> {
                             .flex()
                             .items_center()
                             .gap_1()
-                            .child(button("maxbrunsfeld"))
-                            .child(button("zed"))
-                            .child(button("nate/gpui2-ui-components")),
+                            .child(Button::new("maxbrunsfeld"))
+                            .child(Button::new("zed"))
+                            .child(Button::new("nate/gpui2-ui-components")),
                     )
                     .child(follow_group(player_list.clone()).player(0))
                     .child(follow_group(player_list.clone()).player(1))
