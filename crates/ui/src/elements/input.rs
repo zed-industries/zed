@@ -13,24 +13,26 @@ pub struct Input {
     variant: InputVariant,
 }
 
-pub fn input(placeholder: &'static str) -> Input {
-    Input {
-        placeholder,
-        value: "".to_string(),
-        state: InteractionState::default(),
-        variant: InputVariant::default(),
-    }
-}
-
 impl Input {
+    pub fn new(placeholder: &'static str) -> Self {
+        Self {
+            placeholder,
+            value: "".to_string(),
+            state: InteractionState::default(),
+            variant: InputVariant::default(),
+        }
+    }
+
     pub fn value(mut self, value: String) -> Self {
         self.value = value;
         self
     }
+
     pub fn state(mut self, state: InteractionState) -> Self {
         self.state = state;
         self
     }
+
     pub fn variant(mut self, variant: InputVariant) -> Self {
         self.variant = variant;
         self

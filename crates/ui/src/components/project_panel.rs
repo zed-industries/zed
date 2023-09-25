@@ -1,6 +1,7 @@
+use crate::prelude::*;
 use crate::{
-    input, list, list_section_header, prelude::*, static_project_panel_project_items,
-    static_project_panel_single_items, theme,
+    list, list_section_header, static_project_panel_project_items,
+    static_project_panel_single_items, theme, Input,
 };
 
 use gpui2::{
@@ -54,7 +55,7 @@ impl<V: 'static> ProjectPanel<V> {
                     ),
             )
             .child(
-                input("Find something...")
+                Input::new("Find something...")
                     .value("buffe".to_string())
                     .state(InteractionState::Focused),
             )
