@@ -3,10 +3,11 @@ use gpui2::{
     style::StyleHelpers,
     Element, IntoElement, ParentElement, ViewContext,
 };
-use ui::{project_panel, status_bar, tab_bar, theme, title_bar, ChatPanel, Toolbar};
+use ui::{collab_panel, project_panel, status_bar, tab_bar, theme, title_bar, ChatPanel, Toolbar};
 
 #[derive(Element, Default)]
 pub struct WorkspaceElement {
+    collab_scroll_state: ScrollState,
     left_scroll_state: ScrollState,
     right_scroll_state: ScrollState,
     tab_bar_scroll_state: ScrollState,
@@ -35,6 +36,7 @@ impl WorkspaceElement {
                     .flex_row()
                     .overflow_hidden()
                     .child(project_panel(self.left_scroll_state.clone()))
+                    .child(collab_panel(self.collab_scroll_state.clone()))
                     .child(
                         div()
                             .h_full()

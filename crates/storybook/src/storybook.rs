@@ -10,9 +10,7 @@ use std::sync::Arc;
 
 use ::theme as legacy_theme;
 use clap::Parser;
-use gpui2::{
-    serde_json, vec2f, view, AppContext, Element, IntoElement, RectF, ViewContext, WindowBounds,
-};
+use gpui2::{serde_json, vec2f, view, Element, IntoElement, RectF, ViewContext, WindowBounds};
 use legacy_theme::{ThemeRegistry, ThemeSettings};
 use log::LevelFilter;
 use settings::{default_settings, SettingsStore};
