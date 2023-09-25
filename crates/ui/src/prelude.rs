@@ -1,3 +1,22 @@
+use gpui2::{hsla, Hsla};
+use strum::EnumIter;
+
+#[derive(Default)]
+pub struct SystemColor {
+    pub transparent: Hsla,
+}
+
+impl SystemColor {
+    pub fn new() -> SystemColor {
+        SystemColor {
+            transparent: hsla(0.0, 0.0, 0.0, 0.0),
+        }
+    }
+    pub fn color(&self) -> Hsla {
+        self.transparent
+    }
+}
+
 #[derive(Default, PartialEq)]
 pub enum FileSystemStatus {
     #[default]
@@ -38,7 +57,7 @@ pub enum OrderMethod {
     MostRecent,
 }
 
-#[derive(Default, PartialEq)]
+#[derive(Default, Copy, Clone, PartialEq)]
 pub enum ButtonVariant {
     #[default]
     Ghost,
@@ -66,14 +85,13 @@ pub enum DisclosureControlVisibility {
     Always,
 }
 
-#[derive(Default, PartialEq, Clone, Copy)]
+#[derive(Default, PartialEq, Copy, Clone, EnumIter)]
 pub enum InteractionState {
     #[default]
     Enabled,
     Hovered,
     Active,
     Focused,
-    Dragged,
     Disabled,
 }
 
@@ -83,6 +101,16 @@ impl InteractionState {
             *self
         } else {
             InteractionState::Disabled
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            InteractionState::Enabled => "Enabled",
+            InteractionState::Hovered => "Hovered",
+            InteractionState::Active => "Active",
+            InteractionState::Focused => "Focused",
+            InteractionState::Disabled => "Disabled",
         }
     }
 }

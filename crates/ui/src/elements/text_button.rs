@@ -1,9 +1,9 @@
 use gpui2::elements::div;
-use gpui2::style::{StyleHelpers, Styleable};
-use gpui2::{Element, IntoElement, ParentElement, ViewContext};
+use gpui2::style::StyleHelpers;
+use gpui2::{Element, Hsla, IntoElement, ParentElement, ViewContext};
 
-use crate::prelude::*;
-use crate::theme;
+use crate::{label, prelude::*, LabelColor};
+use crate::{theme, LabelSize};
 
 #[derive(Element)]
 pub struct TextButton {
@@ -33,50 +33,62 @@ impl TextButton {
 
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
+        let system_color = SystemColor::new();
 
-        let text_color_default;
-        let text_color_hover;
-        let text_color_active;
+        let mut label = label(self.label.clone()).size(LabelSize::Small);
+        let background_color: Hsla;
 
-        let background_color_default;
-        let background_color_hover;
-        let background_color_active;
-
-        let div = div();
-
-        match self.variant {
-            ButtonVariant::Ghost => {
-                text_color_default = theme.lowest.base.default.foreground;
-                text_color_hover = theme.lowest.base.hovered.foreground;
-                text_color_active = theme.lowest.base.pressed.foreground;
-                background_color_default = theme.lowest.base.default.background;
-                background_color_hover = theme.lowest.base.hovered.background;
-                background_color_active = theme.lowest.base.pressed.background;
+        match (self.variant, self.state) {
+            (ButtonVariant::Ghost, InteractionState::Enabled) => {
+                label = label.color(LabelColor::default());
+                background_color = system_color.transparent;
             }
-            ButtonVariant::Filled => {
-                text_color_default = theme.lowest.base.default.foreground;
-                text_color_hover = theme.lowest.base.hovered.foreground;
-                text_color_active = theme.lowest.base.pressed.foreground;
-                background_color_default = theme.lowest.on.default.background;
-                background_color_hover = theme.lowest.on.hovered.background;
-                background_color_active = theme.lowest.on.pressed.background;
+            (ButtonVariant::Ghost, InteractionState::Hovered) => {
+                label = label.color(LabelColor::default());
+                background_color = theme.lowest.base.hovered.background;
             }
-        };
-        div.h_6()
+            (ButtonVariant::Ghost, InteractionState::Active) => {
+                label = label.color(LabelColor::default());
+                background_color = theme.lowest.base.pressed.background;
+            }
+            (ButtonVariant::Ghost, InteractionState::Disabled) => {
+                label = label.color(LabelColor::Disabled);
+                background_color = system_color.transparent;
+            }
+            (ButtonVariant::Ghost, InteractionState::Focused) => {
+                label = label.color(LabelColor::default());
+                background_color = theme.lowest.accent.default.background;
+            }
+            (ButtonVariant::Filled, InteractionState::Enabled) => {
+                label = label.color(LabelColor::default());
+                background_color = theme.lowest.on.default.background;
+            }
+            (ButtonVariant::Filled, InteractionState::Hovered) => {
+                label = label.color(LabelColor::default());
+                background_color = theme.lowest.on.hovered.background;
+            }
+            (ButtonVariant::Filled, InteractionState::Active) => {
+                label = label.color(LabelColor::default());
+                background_color = theme.lowest.on.pressed.background;
+            }
+            (ButtonVariant::Filled, InteractionState::Disabled) => {
+                label = label.color(LabelColor::Disabled);
+                background_color = theme.lowest.on.default.background;
+            }
+            (ButtonVariant::Filled, InteractionState::Focused) => {
+                label = label.color(LabelColor::default());
+                background_color = theme.lowest.accent.default.background;
+            }
+        }
+
+        div()
+            .h_6()
             .px_1()
             .flex()
             .items_center()
             .justify_center()
             .rounded_md()
-            .text_xs()
-            .text_color(text_color_default)
-            .fill(background_color_default)
-            .hover()
-            .text_color(text_color_hover)
-            .fill(background_color_hover)
-            .active()
-            .text_color(text_color_active)
-            .fill(background_color_active)
-            .child(self.label.clone())
+            .fill(background_color)
+            .child(label)
     }
 }
