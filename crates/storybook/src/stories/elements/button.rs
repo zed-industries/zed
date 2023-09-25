@@ -40,7 +40,7 @@ impl ButtonStory {
                                         button("Label").variant(ButtonVariant::Ghost).state(state),
                                     )
                             })))
-                            .child(Story::label("Ghost With Left Icon"))
+                            .child(Story::label("Ghost – Left Icon"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
                                 let state_name = state.as_str().clone();
 
@@ -59,7 +59,7 @@ impl ButtonStory {
                                             .state(state),
                                     )
                             })))
-                            .child(Story::label("Ghost With Right Icon"))
+                            .child(Story::label("Ghost – Right Icon"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
                                 let state_name = state.as_str().clone();
 
