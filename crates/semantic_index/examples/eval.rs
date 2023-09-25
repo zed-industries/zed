@@ -456,7 +456,7 @@ fn main() {
         let languages = Arc::new(languages);
 
         let node_runtime = RealNodeRuntime::new(http.clone());
-        languages::init(languages.clone(), node_runtime.clone());
+        languages::init(languages.clone(), node_runtime.clone(), cx);
         language::init(cx);
 
         project::Project::init(&client, cx);

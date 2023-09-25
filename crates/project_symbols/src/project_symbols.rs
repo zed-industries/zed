@@ -69,7 +69,7 @@ impl ProjectSymbolsDelegate {
             &self.external_match_candidates,
             query,
             false,
-            MAX_MATCHES - visible_matches.len(),
+            MAX_MATCHES - visible_matches.len().min(MAX_MATCHES),
             &Default::default(),
             cx.background().clone(),
         ));
