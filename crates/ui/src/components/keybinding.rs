@@ -1,4 +1,8 @@
-use gpui2::{elements::div, style::StyleHelpers, Element, IntoElement, ParentElement, ViewContext};
+use std::collections::HashSet;
+
+use gpui2::elements::div;
+use gpui2::style::StyleHelpers;
+use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
 use crate::theme;
 
@@ -22,35 +26,33 @@ impl ModifierKey {
     }
 }
 
-#[derive(Element)]
+#[derive(Element, Clone)]
 pub struct Keybinding {
-    key: String,
-    modifiers: Vec<ModifierKey>,
+    keybind: Vec<(String, HashSet<ModifierKey>)>,
 }
 
 impl Keybinding {
-    pub fn new(key: String) -> Self {
+    pub fn new(key: String, modifiers: HashSet<ModifierKey>) -> Self {
         Self {
-            key,
-            modifiers: Vec::new(),
+            keybind: vec![(key, modifiers)],
         }
     }
 
-    pub fn modifiers(mut self, modifiers: Vec<ModifierKey>) -> Self {
-        self.modifiers = modifiers;
-        self
+    pub fn new_chord(chord: Vec<(String, HashSet<ModifierKey>)>) -> Self {
+        Self { keybind: chord }
     }
 
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         div()
             .flex()
-            .gap_1()
-            .children(
-                self.modifiers
-                    .iter()
-                    .map(|modifier| Key::new(modifier.glyph())),
-            )
-            .child(Key::new(self.key.clone()))
+            .gap_2()
+            .children(self.keybind.iter().map(|(key, modifiers)| {
+                div()
+                    .flex()
+                    .gap_1()
+                    .children(modifiers.iter().map(|modifier| Key::new(modifier.glyph())))
+                    .child(Key::new(key.clone()))
+            }))
     }
 }
 

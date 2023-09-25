@@ -1,6 +1,8 @@
+use std::collections::HashSet;
+
 use gpui2::elements::div::ScrollState;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
-use ui::{ModifierKey, Palette, PaletteItem};
+use ui::{Keybinding, ModifierKey, Palette, PaletteItem};
 
 use crate::story::Story;
 
@@ -18,27 +20,46 @@ impl PaletteStory {
                 Palette::new(ScrollState::default())
                     .placeholder("Execute a command...")
                     .items(vec![
-                        PaletteItem::new("theme selector: toggle"),
-                        // TODO: Add support for chords.
-                        // .keybinding(Some("Cmd-k, Cmd-t")),
-                        PaletteItem::new("assistant: inline assist")
-                            .keybinding(Some(("enter".to_string(), vec![ModifierKey::Command]))),
-                        PaletteItem::new("assistant: quote selection")
-                            .keybinding(Some((">".to_string(), vec![ModifierKey::Command]))),
-                        PaletteItem::new("assistant: toggle focus")
-                            .keybinding(Some(("?".to_string(), vec![ModifierKey::Command]))),
+                        PaletteItem::new("theme selector: toggle").keybinding(Some(
+                            Keybinding::new_chord(vec![
+                                ("k".to_string(), HashSet::from_iter([ModifierKey::Command])),
+                                ("t".to_string(), HashSet::from_iter([ModifierKey::Command])),
+                            ]),
+                        )),
+                        PaletteItem::new("assistant: inline assist").keybinding(Some(
+                            Keybinding::new(
+                                "enter".to_string(),
+                                HashSet::from_iter([ModifierKey::Command]),
+                            ),
+                        )),
+                        PaletteItem::new("assistant: quote selection").keybinding(Some(
+                            Keybinding::new(
+                                ">".to_string(),
+                                HashSet::from_iter([ModifierKey::Command]),
+                            ),
+                        )),
+                        PaletteItem::new("assistant: toggle focus").keybinding(Some(
+                            Keybinding::new(
+                                "?".to_string(),
+                                HashSet::from_iter([ModifierKey::Command]),
+                            ),
+                        )),
                         PaletteItem::new("auto update: check"),
                         PaletteItem::new("auto update: view release notes"),
-                        PaletteItem::new("branches: open recent").keybinding(Some((
-                            "b".to_string(),
-                            vec![ModifierKey::Command, ModifierKey::Alt],
-                        ))),
+                        PaletteItem::new("branches: open recent").keybinding(Some(
+                            Keybinding::new(
+                                "b".to_string(),
+                                HashSet::from_iter([ModifierKey::Command, ModifierKey::Alt]),
+                            ),
+                        )),
                         PaletteItem::new("chat panel: toggle focus"),
                         PaletteItem::new("cli: install"),
                         PaletteItem::new("client: sign in"),
                         PaletteItem::new("client: sign out"),
-                        PaletteItem::new("editor: cancel")
-                            .keybinding(Some(("escape".to_string(), Vec::new()))),
+                        PaletteItem::new("editor: cancel").keybinding(Some(Keybinding::new(
+                            "escape".to_string(),
+                            HashSet::new(),
+                        ))),
                     ]),
             )
     }

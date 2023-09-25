@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::marker::PhantomData;
 
 use crate::prelude::*;
@@ -110,7 +111,7 @@ impl<V: 'static> Palette<V> {
 #[derive(Element)]
 pub struct PaletteItem {
     pub label: &'static str,
-    pub keybinding: Option<(String, Vec<ModifierKey>)>,
+    pub keybinding: Option<Keybinding>,
 }
 
 impl PaletteItem {
@@ -126,7 +127,7 @@ impl PaletteItem {
         self
     }
 
-    pub fn keybinding(mut self, keybinding: Option<(String, Vec<ModifierKey>)>) -> Self {
+    pub fn keybinding(mut self, keybinding: Option<Keybinding>) -> Self {
         self.keybinding = keybinding;
         self
     }
@@ -134,17 +135,12 @@ impl PaletteItem {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
 
-        let keybinding = self
-            .keybinding
-            .clone()
-            .map(|(key, modifiers)| Keybinding::new(key).modifiers(modifiers));
-
         div()
             .flex()
             .flex_row()
             .grow()
             .justify_between()
             .child(Label::new(self.label))
-            .children(keybinding)
+            .children(self.keybinding.clone())
     }
 }
