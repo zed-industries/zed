@@ -37,6 +37,8 @@ impl PaletteStory {
                         PaletteItem::new("cli: install"),
                         PaletteItem::new("client: sign in"),
                         PaletteItem::new("client: sign out"),
+                        PaletteItem::new("editor: cancel")
+                            .keybinding(Some(("escape".to_string(), Vec::new()))),
                     ]),
             )
     }
