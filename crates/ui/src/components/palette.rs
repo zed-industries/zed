@@ -126,8 +126,11 @@ impl PaletteItem {
         self
     }
 
-    pub fn keybinding(mut self, keybinding: Option<Keybinding>) -> Self {
-        self.keybinding = keybinding;
+    pub fn keybinding<K>(mut self, keybinding: K) -> Self
+    where
+        K: Into<Option<Keybinding>>,
+    {
+        self.keybinding = keybinding.into();
         self
     }
 

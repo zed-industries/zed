@@ -1,8 +1,6 @@
-use std::collections::HashSet;
-
 use gpui2::elements::div::ScrollState;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
-use ui::{Keybinding, ModifierKey, Palette, PaletteItem};
+use ui::{Keybinding, ModifierKeys, Palette, PaletteItem};
 
 use crate::story::Story;
 
@@ -20,46 +18,36 @@ impl PaletteStory {
                 Palette::new(ScrollState::default())
                     .placeholder("Execute a command...")
                     .items(vec![
-                        PaletteItem::new("theme selector: toggle").keybinding(Some(
+                        PaletteItem::new("theme selector: toggle").keybinding(
                             Keybinding::new_chord(vec![
-                                ("k".to_string(), HashSet::from_iter([ModifierKey::Command])),
-                                ("t".to_string(), HashSet::from_iter([ModifierKey::Command])),
+                                ("k".to_string(), ModifierKeys::new().command(true)),
+                                ("t".to_string(), ModifierKeys::new().command(true)),
                             ]),
+                        ),
+                        PaletteItem::new("assistant: inline assist").keybinding(Keybinding::new(
+                            "enter".to_string(),
+                            ModifierKeys::new().command(true),
                         )),
-                        PaletteItem::new("assistant: inline assist").keybinding(Some(
-                            Keybinding::new(
-                                "enter".to_string(),
-                                HashSet::from_iter([ModifierKey::Command]),
-                            ),
+                        PaletteItem::new("assistant: quote selection").keybinding(Keybinding::new(
+                            ">".to_string(),
+                            ModifierKeys::new().command(true),
                         )),
-                        PaletteItem::new("assistant: quote selection").keybinding(Some(
-                            Keybinding::new(
-                                ">".to_string(),
-                                HashSet::from_iter([ModifierKey::Command]),
-                            ),
-                        )),
-                        PaletteItem::new("assistant: toggle focus").keybinding(Some(
-                            Keybinding::new(
-                                "?".to_string(),
-                                HashSet::from_iter([ModifierKey::Command]),
-                            ),
+                        PaletteItem::new("assistant: toggle focus").keybinding(Keybinding::new(
+                            "?".to_string(),
+                            ModifierKeys::new().command(true),
                         )),
                         PaletteItem::new("auto update: check"),
                         PaletteItem::new("auto update: view release notes"),
-                        PaletteItem::new("branches: open recent").keybinding(Some(
-                            Keybinding::new(
-                                "b".to_string(),
-                                HashSet::from_iter([ModifierKey::Command, ModifierKey::Alt]),
-                            ),
+                        PaletteItem::new("branches: open recent").keybinding(Keybinding::new(
+                            "b".to_string(),
+                            ModifierKeys::new().command(true).alt(true),
                         )),
                         PaletteItem::new("chat panel: toggle focus"),
                         PaletteItem::new("cli: install"),
                         PaletteItem::new("client: sign in"),
                         PaletteItem::new("client: sign out"),
-                        PaletteItem::new("editor: cancel").keybinding(Some(Keybinding::new(
-                            "escape".to_string(),
-                            HashSet::new(),
-                        ))),
+                        PaletteItem::new("editor: cancel")
+                            .keybinding(Keybinding::new("escape".to_string(), ModifierKeys::new())),
                     ]),
             )
     }

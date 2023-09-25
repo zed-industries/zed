@@ -1,7 +1,5 @@
-use std::collections::HashSet;
-
 use crate::{
-    list_item, IconAsset, Keybinding, Label, LabelColor, ListItem, ListItemSize, ModifierKey,
+    list_item, IconAsset, Keybinding, Label, LabelColor, ListItem, ListItemSize, ModifierKeys,
     PaletteItem, ToggleState,
 };
 
@@ -215,46 +213,46 @@ pub fn static_collab_panel_channels() -> Vec<ListItem> {
 
 pub fn example_editor_actions() -> Vec<PaletteItem> {
     vec![
-        PaletteItem::new("New File").keybinding(Some(Keybinding::new(
+        PaletteItem::new("New File").keybinding(Keybinding::new(
             "N".to_string(),
-            HashSet::from_iter([ModifierKey::Control]),
-        ))),
-        PaletteItem::new("Open File").keybinding(Some(Keybinding::new(
+            ModifierKeys::new().control(true),
+        )),
+        PaletteItem::new("Open File").keybinding(Keybinding::new(
             "O".to_string(),
-            HashSet::from_iter([ModifierKey::Control]),
-        ))),
-        PaletteItem::new("Save File").keybinding(Some(Keybinding::new(
+            ModifierKeys::new().control(true),
+        )),
+        PaletteItem::new("Save File").keybinding(Keybinding::new(
             "S".to_string(),
-            HashSet::from_iter([ModifierKey::Control]),
-        ))),
-        PaletteItem::new("Cut").keybinding(Some(Keybinding::new(
+            ModifierKeys::new().control(true),
+        )),
+        PaletteItem::new("Cut").keybinding(Keybinding::new(
             "X".to_string(),
-            HashSet::from_iter([ModifierKey::Control]),
-        ))),
-        PaletteItem::new("Copy").keybinding(Some(Keybinding::new(
+            ModifierKeys::new().control(true),
+        )),
+        PaletteItem::new("Copy").keybinding(Keybinding::new(
             "C".to_string(),
-            HashSet::from_iter([ModifierKey::Control]),
-        ))),
-        PaletteItem::new("Paste").keybinding(Some(Keybinding::new(
+            ModifierKeys::new().control(true),
+        )),
+        PaletteItem::new("Paste").keybinding(Keybinding::new(
             "V".to_string(),
-            HashSet::from_iter([ModifierKey::Control]),
-        ))),
-        PaletteItem::new("Undo").keybinding(Some(Keybinding::new(
+            ModifierKeys::new().control(true),
+        )),
+        PaletteItem::new("Undo").keybinding(Keybinding::new(
             "Z".to_string(),
-            HashSet::from_iter([ModifierKey::Control]),
-        ))),
-        PaletteItem::new("Redo").keybinding(Some(Keybinding::new(
+            ModifierKeys::new().control(true),
+        )),
+        PaletteItem::new("Redo").keybinding(Keybinding::new(
             "Z".to_string(),
-            HashSet::from_iter([ModifierKey::Control, ModifierKey::Shift]),
-        ))),
-        PaletteItem::new("Find").keybinding(Some(Keybinding::new(
+            ModifierKeys::new().control(true).shift(true),
+        )),
+        PaletteItem::new("Find").keybinding(Keybinding::new(
             "F".to_string(),
-            HashSet::from_iter([ModifierKey::Control]),
-        ))),
-        PaletteItem::new("Replace").keybinding(Some(Keybinding::new(
+            ModifierKeys::new().control(true),
+        )),
+        PaletteItem::new("Replace").keybinding(Keybinding::new(
             "R".to_string(),
-            HashSet::from_iter([ModifierKey::Control]),
-        ))),
+            ModifierKeys::new().control(true),
+        )),
         PaletteItem::new("Jump to Line"),
         PaletteItem::new("Select All"),
         PaletteItem::new("Deselect All"),
