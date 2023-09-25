@@ -1,5 +1,6 @@
 use crate::{
-    list_item, palette_item, IconAsset, Label, LabelColor, ListItem, PaletteItem, ToggleState,
+    list_item, palette_item, IconAsset, Label, LabelColor, ListItem, ListItemSize, PaletteItem,
+    ToggleState,
 };
 
 pub fn static_project_panel_project_items() -> Vec<ListItem> {
@@ -137,6 +138,76 @@ pub fn static_project_panel_single_items() -> Vec<ListItem> {
         list_item(Label::new("config.json"))
             .left_icon(IconAsset::File.into())
             .indent_level(0),
+    ]
+}
+
+pub fn static_collab_panel_current_call() -> Vec<ListItem> {
+    vec![
+        list_item(Label::new("as-cii")).left_avatar("http://github.com/as-cii.png?s=50"),
+        list_item(Label::new("nathansobo")).left_avatar("http://github.com/nathansobo.png?s=50"),
+        list_item(Label::new("maxbrunsfeld"))
+            .left_avatar("http://github.com/maxbrunsfeld.png?s=50"),
+    ]
+}
+
+pub fn static_collab_panel_channels() -> Vec<ListItem> {
+    vec![
+        list_item(Label::new("zed"))
+            .left_icon(IconAsset::Hash.into())
+            .size(ListItemSize::Medium)
+            .indent_level(0),
+        list_item(Label::new("community"))
+            .left_icon(IconAsset::Hash.into())
+            .size(ListItemSize::Medium)
+            .indent_level(1),
+        list_item(Label::new("dashboards"))
+            .left_icon(IconAsset::Hash.into())
+            .size(ListItemSize::Medium)
+            .indent_level(2),
+        list_item(Label::new("feedback"))
+            .left_icon(IconAsset::Hash.into())
+            .size(ListItemSize::Medium)
+            .indent_level(2),
+        list_item(Label::new("teams-in-channels-alpha"))
+            .left_icon(IconAsset::Hash.into())
+            .size(ListItemSize::Medium)
+            .indent_level(2),
+        list_item(Label::new("current-projects"))
+            .left_icon(IconAsset::Hash.into())
+            .size(ListItemSize::Medium)
+            .indent_level(1),
+        list_item(Label::new("codegen"))
+            .left_icon(IconAsset::Hash.into())
+            .size(ListItemSize::Medium)
+            .indent_level(2),
+        list_item(Label::new("gpui2"))
+            .left_icon(IconAsset::Hash.into())
+            .size(ListItemSize::Medium)
+            .indent_level(2),
+        list_item(Label::new("livestreaming"))
+            .left_icon(IconAsset::Hash.into())
+            .size(ListItemSize::Medium)
+            .indent_level(2),
+        list_item(Label::new("open-source"))
+            .left_icon(IconAsset::Hash.into())
+            .size(ListItemSize::Medium)
+            .indent_level(2),
+        list_item(Label::new("replace"))
+            .left_icon(IconAsset::Hash.into())
+            .size(ListItemSize::Medium)
+            .indent_level(2),
+        list_item(Label::new("semantic-index"))
+            .left_icon(IconAsset::Hash.into())
+            .size(ListItemSize::Medium)
+            .indent_level(2),
+        list_item(Label::new("vim"))
+            .left_icon(IconAsset::Hash.into())
+            .size(ListItemSize::Medium)
+            .indent_level(2),
+        list_item(Label::new("web-tech"))
+            .left_icon(IconAsset::Hash.into())
+            .size(ListItemSize::Medium)
+            .indent_level(2),
     ]
 }
 

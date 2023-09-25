@@ -6,7 +6,7 @@ use gpui2::{
 
 use crate::{
     h_stack, theme, token, v_stack, Avatar, DisclosureControlVisibility, Icon, IconAsset,
-    InteractionState, Label, LabelColor, LabelSize, ToggleState,
+    InteractionState, Label, LabelColor, LabelSize, SystemColor, ToggleState,
 };
 
 #[derive(Element, Clone, Copy)]
@@ -44,6 +44,7 @@ impl ListSectionHeader {
 
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
+        let system_color = SystemColor::new();
         let token = token();
 
         let disclosure_control = match self.toggle {
@@ -55,11 +56,11 @@ impl ListSectionHeader {
         h_stack()
             .flex_1()
             .w_full()
-            .fill(theme.middle.base.default.background)
+            .fill(system_color.transparent)
             .hover()
-            .fill(theme.middle.base.hovered.background)
+            .fill(token.state_hover_background)
             .active()
-            .fill(theme.middle.base.pressed.background)
+            .fill(token.state_active_background)
             .relative()
             .py_1()
             .child(
@@ -95,22 +96,31 @@ pub enum LeftContent {
     Avatar(&'static str),
 }
 
+#[derive(Default, PartialEq, Copy, Clone)]
+pub enum ListItemSize {
+    #[default]
+    Small,
+    Medium,
+}
+
 #[derive(Element, Clone)]
 pub struct ListItem {
+    disclosure_control_style: DisclosureControlVisibility,
+    indent_level: u32,
     label: Label,
     left_content: Option<LeftContent>,
-    indent_level: u32,
+    size: ListItemSize,
     state: InteractionState,
-    disclosure_control_style: DisclosureControlVisibility,
     toggle: Option<ToggleState>,
 }
 
 pub fn list_item(label: Label) -> ListItem {
     ListItem {
-        label,
-        indent_level: 0,
-        left_content: None,
         disclosure_control_style: DisclosureControlVisibility::default(),
+        indent_level: 0,
+        label,
+        left_content: None,
+        size: ListItemSize::default(),
         state: InteractionState::default(),
         toggle: None,
     }
@@ -144,6 +154,11 @@ impl ListItem {
 
     pub fn state(mut self, state: InteractionState) -> Self {
         self.state = state;
+        self
+    }
+
+    pub fn size(mut self, size: ListItemSize) -> Self {
+        self.size = size;
         self
     }
 
@@ -182,6 +197,7 @@ impl ListItem {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
         let token = token();
+        let system_color = SystemColor::new();
 
         let left_content = match self.left_content {
             Some(LeftContent::Icon(i)) => Some(div().child(Icon::new(i))),
@@ -189,17 +205,21 @@ impl ListItem {
             None => None,
         };
 
+        let sized_item = match self.size {
+            ListItemSize::Small => div().h_6(),
+            ListItemSize::Medium => div().h_8(),
+        };
+
         div()
-            .fill(theme.middle.base.default.background)
+            .fill(system_color.transparent)
             .hover()
-            .fill(theme.middle.base.hovered.background)
+            .fill(token.state_hover_background)
             .active()
-            .fill(theme.middle.base.pressed.background)
+            .fill(token.state_active_background)
             .relative()
             .py_1()
             .child(
-                div()
-                    .h_6()
+                sized_item
                     .px_2()
                     // .ml(rems(0.75 * self.indent_level as f32))
                     .children((0..self.indent_level).map(|_| {

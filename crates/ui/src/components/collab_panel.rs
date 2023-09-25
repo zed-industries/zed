@@ -1,7 +1,8 @@
 use crate::{
-    h_stack,
+    h_stack, list, list_section_header, static_collab_panel_channels,
+    static_collab_panel_current_call, static_project_panel_single_items,
     theme::{theme, Theme},
-    v_stack,
+    v_stack, ToggleState,
 };
 use gpui2::{
     elements::{div, div::ScrollState, img, svg},
@@ -16,8 +17,6 @@ pub struct CollabPanelElement<V: 'static> {
     scroll_state: ScrollState,
 }
 
-// When I improve child view rendering, I'd like to have V implement a trait  that
-// provides the scroll state, among other things.
 pub fn collab_panel<V: 'static>(scroll_state: ScrollState) -> CollabPanelElement<V> {
     CollabPanelElement {
         view_type: PhantomData,
@@ -29,41 +28,39 @@ impl<V: 'static> CollabPanelElement<V> {
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
 
-        // Panel
-        h_stack()
+        v_stack()
             .w_64()
             .h_full()
-            .font("Zed Sans Extended")
-            .text_color(theme.middle.base.default.foreground)
-            .border_color(theme.middle.base.default.border)
-            .border()
             .fill(theme.middle.base.default.background)
             .child(
                 v_stack()
                     .w_full()
                     .overflow_y_scroll(self.scroll_state.clone())
-                    // List Container
                     .child(
                         div()
                             .fill(theme.lowest.base.default.background)
                             .pb_1()
                             .border_color(theme.lowest.base.default.border)
                             .border_b()
-                            //:: https://tailwindcss.com/docs/hover-focus-and-other-states#styling-based-on-parent-state
-                            // .group()
-                            // List Section Header
-                            .child(self.list_section_header("#CRDB", true, &theme))
-                            // List Item Large
-                            .child(self.list_item(
-                                "http://github.com/maxbrunsfeld.png?s=50",
-                                "maxbrunsfeld",
-                                &theme,
-                            )),
+                            .child(
+                                list(static_collab_panel_current_call())
+                                    .header(
+                                        list_section_header("CURRENT CALL")
+                                            .set_toggle(ToggleState::Toggled),
+                                    )
+                                    .set_toggle(ToggleState::Toggled),
+                            ),
                     )
                     .child(
-                        v_stack()
-                            .py_2()
-                            .child(self.list_section_header("CHANNELS", true, &theme)),
+                        v_stack().py_2().child(
+                            list(static_collab_panel_channels())
+                                .header(
+                                    list_section_header("CHANNELS")
+                                        .set_toggle(ToggleState::Toggled),
+                                )
+                                .empty_message("No channels yet. Add a channel to get started.")
+                                .set_toggle(ToggleState::Toggled),
+                        ),
                     )
                     .child(
                         v_stack()
