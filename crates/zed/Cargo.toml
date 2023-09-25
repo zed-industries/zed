@@ -62,6 +62,7 @@ rpc = { path = "../rpc" }
 settings = { path = "../settings" }
 feature_flags = { path = "../feature_flags" }
 sum_tree = { path = "../sum_tree" }
+shellexpand = "2.1.0"
 text = { path = "../text" }
 terminal_view = { path = "../terminal_view" }
 theme = { path = "../theme" }
@@ -99,6 +100,7 @@ rust-embed.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
+schemars.workspace = true
 simplelog = "0.9"
 smallvec.workspace = true
 smol.workspace = true

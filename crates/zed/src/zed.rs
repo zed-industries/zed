@@ -2388,11 +2388,12 @@ mod tests {
 
     #[gpui::test]
     fn test_bundled_languages(cx: &mut AppContext) {
+        cx.set_global(SettingsStore::test(cx));
         let mut languages = LanguageRegistry::test();
         languages.set_executor(cx.background().clone());
         let languages = Arc::new(languages);
         let node_runtime = node_runtime::FakeNodeRuntime::new();
-        languages::init(languages.clone(), node_runtime);
+        languages::init(languages.clone(), node_runtime, cx);
         for name in languages.language_names() {
             languages.language_for_name(&name);
         }

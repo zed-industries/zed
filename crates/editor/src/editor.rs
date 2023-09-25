@@ -1131,12 +1131,14 @@ struct CodeActionsMenu {
 impl CodeActionsMenu {
     fn select_first(&mut self, cx: &mut ViewContext<Editor>) {
         self.selected_item = 0;
+        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         cx.notify()
     }
 
     fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
         if self.selected_item > 0 {
             self.selected_item -= 1;
+            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
             cx.notify()
         }
     }
@@ -1144,12 +1146,14 @@ impl CodeActionsMenu {
     fn select_next(&mut self, cx: &mut ViewContext<Editor>) {
         if self.selected_item + 1 < self.actions.len() {
             self.selected_item += 1;
+            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
             cx.notify()
         }
     }
 
     fn select_last(&mut self, cx: &mut ViewContext<Editor>) {
         self.selected_item = self.actions.len() - 1;
+        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         cx.notify()
     }
 
@@ -1202,7 +1206,9 @@ impl CodeActionsMenu {
                                     workspace.update(cx, |workspace, cx| {
                                         if let Some(task) = Editor::confirm_code_action(
                                             workspace,
-                                            &Default::default(),
+                                            &ConfirmCodeAction {
+                                                item_ix: Some(item_ix),
+                                            },
                                             cx,
                                         ) {
                                             task.detach_and_log_err(cx);
