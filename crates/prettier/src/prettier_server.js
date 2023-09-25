@@ -130,9 +130,6 @@ async function* readStdin() {
     }
 }
 
-// TODO kb, more methods?
-// shutdown
-// error
 async function handleMessage(message, prettier) {
     const { method, id, params } = message;
     if (method === undefined) {

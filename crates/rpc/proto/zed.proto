@@ -170,7 +170,12 @@ message Envelope {
 
         LinkChannel link_channel = 140;
         UnlinkChannel unlink_channel = 141;
-        MoveChannel move_channel = 142; // current max: 144
+        MoveChannel move_channel = 142;
+
+        PrettierInstanceForBuffer prettier_instance_for_buffer = 145;
+        PrettierInstanceForBufferResponse prettier_instance_for_buffer_response = 146;
+        InvokePrettierForBuffer invoke_prettier_for_buffer = 147;
+        InvokePrettierForBufferResponse invoke_prettier_for_buffer_response = 148;  // Current max: 148
     }
 }
 
@@ -1556,4 +1561,26 @@ message UpdateDiffBase {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
     optional string diff_base = 3;
+}
+
+message PrettierInstanceForBuffer {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+}
+
+message PrettierInstanceForBufferResponse {
+    optional string prettier_path = 1;
+}
+
+message InvokePrettierForBuffer {
+    uint64 project_id = 1;
+    string buffer_path = 2;
+    uint64 buffer_id = 3;
+    optional uint64 worktree_id = 4;
+    string method = 5;
+    optional string command_parameters = 6;
+}
+
+message InvokePrettierForBufferResponse {
+    optional string diff = 1;
 }

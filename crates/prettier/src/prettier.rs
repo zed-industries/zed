@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
+use client::Client;
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use gpui::{AsyncAppContext, ModelHandle};
@@ -13,11 +14,22 @@ use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
 use util::paths::DEFAULT_PRETTIER_DIR;
 
-pub struct Prettier {
+pub enum Prettier {
+    Local(Local),
+    Remote(Remote),
+}
+
+pub struct Local {
     worktree_id: Option<usize>,
     default: bool,
     prettier_dir: PathBuf,
     server: Arc<LanguageServer>,
+}
+
+pub struct Remote {
+    worktree_id: Option<usize>,
+    prettier_dir: PathBuf,
+    client: Arc<Client>,
 }
 
 #[derive(Debug)]
@@ -47,6 +59,14 @@ impl Prettier {
         "prettier.config.cjs",
         ".editorconfig",
     ];
+
+    pub fn remote(worktree_id: Option<usize>, prettier_dir: PathBuf, client: Arc<Client>) -> Self {
+        Self::Remote(Remote {
+            worktree_id,
+            prettier_dir,
+            client,
+        })
+    }
 
     pub async fn locate(
         starting_path: Option<LocateStart>,
@@ -188,12 +208,12 @@ impl Prettier {
             .spawn(server.initialize(None))
             .await
             .context("prettier server initialization")?;
-        Ok(Self {
+        Ok(Self::Local(Local {
             worktree_id,
             server,
             default: prettier_dir == DEFAULT_PRETTIER_DIR.as_path(),
             prettier_dir,
-        })
+        }))
     }
 
     pub async fn format(
@@ -239,7 +259,7 @@ impl Prettier {
                 log::warn!("Found multiple parsers with plugins {parsers_with_plugins:?}, will select only one: {selected_parser_with_plugins:?}");
             }
 
-            let prettier_node_modules = self.prettier_dir.join("node_modules");
+            let prettier_node_modules = self.prettier_dir().join("node_modules");
             anyhow::ensure!(prettier_node_modules.is_dir(), "Prettier node_modules dir does not exist: {prettier_node_modules:?}");
             let plugin_name_into_path = |plugin_name: &str| {
                 let prettier_plugin_dir = prettier_node_modules.join(plugin_name);
@@ -278,7 +298,7 @@ impl Prettier {
                 None => (None, Vec::new()),
             };
 
-            let prettier_options = if self.default {
+            let prettier_options = if self.is_default() {
                 let language_settings = language_settings(buffer_language, buffer.file(), cx);
                 let mut options = language_settings.prettier.clone();
                 if !options.contains_key("tabWidth") {
@@ -323,7 +343,8 @@ impl Prettier {
             })
         }).context("prettier params calculation")?;
         let response = self
-            .server
+            .server()
+            .expect("TODO kb split into local and remote")
             .request::<Format>(params)
             .await
             .context("prettier format request")?;
@@ -332,26 +353,39 @@ impl Prettier {
     }
 
     pub async fn clear_cache(&self) -> anyhow::Result<()> {
-        self.server
+        self.server()
+            .expect("TODO kb split into local and remote")
             .request::<ClearCache>(())
             .await
             .context("prettier clear cache")
     }
 
-    pub fn server(&self) -> &Arc<LanguageServer> {
-        &self.server
+    pub fn server(&self) -> Option<&Arc<LanguageServer>> {
+        match self {
+            Prettier::Local(local) => Some(&local.server),
+            Prettier::Remote(_) => None,
+        }
     }
 
     pub fn is_default(&self) -> bool {
-        self.default
+        match self {
+            Prettier::Local(local) => local.default,
+            Prettier::Remote(_) => false,
+        }
     }
 
     pub fn prettier_dir(&self) -> &Path {
-        &self.prettier_dir
+        match self {
+            Prettier::Local(local) => &local.prettier_dir,
+            Prettier::Remote(remote) => &remote.prettier_dir,
+        }
     }
 
     pub fn worktree_id(&self) -> Option<usize> {
-        self.worktree_id
+        match self {
+            Prettier::Local(local) => local.worktree_id,
+            Prettier::Remote(remote) => remote.worktree_id,
+        }
     }
 }
 
