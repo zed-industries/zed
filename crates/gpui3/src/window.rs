@@ -133,7 +133,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         if window_handle == self.window.handle {
             Ok(update(self))
         } else {
-            self.app.update_window(window_handle, update)
+            self.app.update_window(window_handle.id, update)
         }
     }
 }
@@ -258,7 +258,7 @@ impl<'a, 'w, T: Send + Sync + 'static> ViewContext<'a, 'w, T> {
             .entry(handle.id)
             .or_default()
             .push(Arc::new(move |cx| {
-                cx.update_window(window_handle, |cx| {
+                cx.update_window(window_handle.id, |cx| {
                     if let Some(handle) = handle.upgrade(cx) {
                         this.update(cx, |this, cx| on_notify(this, handle, cx))
                             .is_ok()

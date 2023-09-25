@@ -115,12 +115,12 @@ impl AppContext {
 
     pub(crate) fn update_window<R>(
         &mut self,
-        handle: AnyWindowHandle,
+        id: WindowId,
         update: impl FnOnce(&mut WindowContext) -> R,
     ) -> Result<R> {
         let mut window = self
             .windows
-            .get_mut(handle.id)
+            .get_mut(id)
             .ok_or_else(|| anyhow!("window not found"))?
             .take()
             .unwrap();
@@ -129,7 +129,7 @@ impl AppContext {
         window.dirty = true;
 
         self.windows
-            .get_mut(handle.id)
+            .get_mut(id)
             .ok_or_else(|| anyhow!("window not found"))?
             .replace(window);
 
@@ -151,6 +151,23 @@ impl AppContext {
             match effect {
                 Effect::Notify(entity_id) => self.apply_notify_effect(entity_id),
             }
+        }
+
+        let dirty_window_ids = self
+            .windows
+            .iter()
+            .filter_map(|(window_id, window)| {
+                let window = window.as_ref().unwrap();
+                if window.dirty {
+                    Some(window_id)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        for dirty_window_id in dirty_window_ids {
+            self.update_window(dirty_window_id, |cx| cx.draw());
         }
     }
 
