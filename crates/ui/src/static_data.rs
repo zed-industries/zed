@@ -1,6 +1,4 @@
-use crate::{
-    list_item, palette_item, IconAsset, Label, LabelColor, ListItem, PaletteItem, ToggleState,
-};
+use crate::{list_item, IconAsset, Label, LabelColor, ListItem, PaletteItem, ToggleState};
 
 pub fn static_project_panel_project_items() -> Vec<ListItem> {
     vec![
@@ -142,25 +140,25 @@ pub fn static_project_panel_single_items() -> Vec<ListItem> {
 
 pub fn example_editor_actions() -> Vec<PaletteItem> {
     vec![
-        palette_item("New File", Some("Ctrl+N")),
-        palette_item("Open File", Some("Ctrl+O")),
-        palette_item("Save File", Some("Ctrl+S")),
-        palette_item("Cut", Some("Ctrl+X")),
-        palette_item("Copy", Some("Ctrl+C")),
-        palette_item("Paste", Some("Ctrl+V")),
-        palette_item("Undo", Some("Ctrl+Z")),
-        palette_item("Redo", Some("Ctrl+Shift+Z")),
-        palette_item("Find", Some("Ctrl+F")),
-        palette_item("Replace", Some("Ctrl+R")),
-        palette_item("Jump to Line", None),
-        palette_item("Select All", None),
-        palette_item("Deselect All", None),
-        palette_item("Switch Document", None),
-        palette_item("Insert Line Below", None),
-        palette_item("Insert Line Above", None),
-        palette_item("Move Line Up", None),
-        palette_item("Move Line Down", None),
-        palette_item("Toggle Comment", None),
-        palette_item("Delete Line", None),
+        PaletteItem::new("New File", Some("Ctrl+N")),
+        PaletteItem::new("Open File", Some("Ctrl+O")),
+        PaletteItem::new("Save File", Some("Ctrl+S")),
+        PaletteItem::new("Cut", Some("Ctrl+X")),
+        PaletteItem::new("Copy", Some("Ctrl+C")),
+        PaletteItem::new("Paste", Some("Ctrl+V")),
+        PaletteItem::new("Undo", Some("Ctrl+Z")),
+        PaletteItem::new("Redo", Some("Ctrl+Shift+Z")),
+        PaletteItem::new("Find", Some("Ctrl+F")),
+        PaletteItem::new("Replace", Some("Ctrl+R")),
+        PaletteItem::new("Jump to Line", None),
+        PaletteItem::new("Select All", None),
+        PaletteItem::new("Deselect All", None),
+        PaletteItem::new("Switch Document", None),
+        PaletteItem::new("Insert Line Below", None),
+        PaletteItem::new("Insert Line Above", None),
+        PaletteItem::new("Move Line Up", None),
+        PaletteItem::new("Move Line Down", None),
+        PaletteItem::new("Toggle Comment", None),
+        PaletteItem::new("Delete Line", None),
     ]
 }

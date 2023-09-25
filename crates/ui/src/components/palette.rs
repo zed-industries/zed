@@ -98,7 +98,7 @@ impl<V: 'static> Palette<V> {
                                     .fill(theme.lowest.base.hovered.background)
                                     .active()
                                     .fill(theme.lowest.base.pressed.background)
-                                    .child(palette_item(item.label, item.keybinding))
+                                    .child(PaletteItem::new(item.label, item.keybinding))
                             })),
                     ),
             )
@@ -111,11 +111,11 @@ pub struct PaletteItem {
     pub keybinding: Option<&'static str>,
 }
 
-pub fn palette_item(label: &'static str, keybinding: Option<&'static str>) -> PaletteItem {
-    PaletteItem { label, keybinding }
-}
-
 impl PaletteItem {
+    pub fn new(label: &'static str, keybinding: Option<&'static str>) -> Self {
+        Self { label, keybinding }
+    }
+
     pub fn label(mut self, label: &'static str) -> Self {
         self.label = label;
         self
