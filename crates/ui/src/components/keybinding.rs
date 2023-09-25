@@ -37,6 +37,15 @@ impl ModifierKeys {
         Self(HashSet::new())
     }
 
+    pub fn all() -> Self {
+        Self(HashSet::from_iter(ModifierKey::iter()))
+    }
+
+    pub fn add(mut self, modifier: ModifierKey) -> Self {
+        self.0.insert(modifier);
+        self
+    }
+
     pub fn control(mut self, control: bool) -> Self {
         if control {
             self.0.insert(ModifierKey::Control);

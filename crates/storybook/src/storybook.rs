@@ -111,6 +111,13 @@ fn main() {
                         stories::components::facepile::FacepileStory::default(),
                     )
                 }),
+                Some(StorySelector::Component(ComponentStory::Keybinding)) => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        stories::components::keybinding::KeybindingStory::default(),
+                    )
+                }),
                 Some(StorySelector::Component(ComponentStory::Palette)) => view(move |cx| {
                     render_story(
                         &mut ViewContext::new(cx),

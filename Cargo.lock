@@ -7376,6 +7376,7 @@ dependencies = [
  "anyhow",
  "clap 4.4.4",
  "gpui2",
+ "itertools 0.11.0",
  "log",
  "rust-embed",
  "serde",
