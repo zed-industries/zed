@@ -2,8 +2,8 @@ use gpui2::elements::div;
 use gpui2::style::{StyleHelpers, Styleable};
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
-use crate::prelude::{DiagnosticStatus, FileSystemStatus, GitStatus, IconSide};
-use crate::{icon, label, theme, IconAsset, LabelColor};
+use crate::prelude::*;
+use crate::{label, theme, Icon, IconAsset, LabelColor};
 
 #[derive(Element)]
 pub struct Tab {
@@ -107,8 +107,8 @@ impl Tab {
                     .flex()
                     .items_center()
                     .gap_1()
-                    .children(self.icon.map(|i| icon(i)))
-                    .child(icon(IconAsset::Close))
+                    .children(self.icon.map(Icon::new))
+                    .child(Icon::new(IconAsset::Close))
                     .child(label),
             )
     }

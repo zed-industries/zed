@@ -2,7 +2,7 @@ use gpui2::elements::div;
 use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 use strum::IntoEnumIterator;
-use ui::{icon, IconAsset};
+use ui::{Icon, IconAsset};
 
 use crate::story::Story;
 
@@ -16,6 +16,6 @@ impl IconStory {
         Story::container(cx)
             .child(Story::title_for::<_, ui::Icon>(cx))
             .child(Story::label(cx, "All Icons"))
-            .child(div().flex().gap_3().children(icons.map(icon)))
+            .child(div().flex().gap_3().children(icons.map(Icon::new)))
     }
 }

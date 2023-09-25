@@ -131,14 +131,14 @@ pub struct Icon {
     color: IconColor,
 }
 
-pub fn icon(asset: IconAsset) -> Icon {
-    Icon {
-        asset,
-        color: IconColor::default(),
-    }
-}
-
 impl Icon {
+    pub fn new(asset: IconAsset) -> Self {
+        Self {
+            asset,
+            color: IconColor::default(),
+        }
+    }
+
     pub fn color(mut self, color: IconColor) -> Self {
         self.color = color;
         self

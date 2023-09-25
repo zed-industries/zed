@@ -2,8 +2,8 @@ use gpui2::elements::div;
 use gpui2::style::{StyleHelpers, Styleable};
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
-use crate::{icon, theme, IconColor};
-use crate::{prelude::*, IconAsset};
+use crate::prelude::*;
+use crate::{theme, Icon, IconAsset, IconColor};
 
 #[derive(Element)]
 pub struct IconButton {
@@ -75,6 +75,6 @@ impl IconButton {
             .fill(theme.highest.base.hovered.background)
             .active()
             .fill(theme.highest.base.pressed.background)
-            .child(icon(self.icon).color(icon_color))
+            .child(Icon::new(self.icon).color(icon_color))
     }
 }

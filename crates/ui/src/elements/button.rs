@@ -1,4 +1,4 @@
-use crate::{h_stack, icon, label, prelude::*, Icon, IconAsset, IconColor, Label, LabelColor};
+use crate::{h_stack, label, prelude::*, Icon, IconAsset, IconColor, Label, LabelColor};
 use crate::{theme, LabelSize};
 use gpui2::geometry::DefiniteLength;
 use gpui2::style::StyleHelpers;
@@ -110,7 +110,7 @@ impl Button {
     }
 
     fn render_icon(&self, icon_color: IconColor) -> Option<Icon> {
-        self.icon.map(|i| icon(i).color(icon_color))
+        self.icon.map(|i| Icon::new(i).color(icon_color))
     }
 
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {

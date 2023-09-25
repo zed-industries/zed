@@ -5,7 +5,7 @@ use gpui2::{
 };
 
 use crate::{
-    h_stack, icon, label, theme, token, v_stack, DisclosureControlVisibility, IconAsset,
+    h_stack, label, theme, token, v_stack, DisclosureControlVisibility, Icon, IconAsset,
     InteractionState, Label, LabelColor, LabelSize, ToggleState,
 };
 
@@ -47,8 +47,8 @@ impl ListSectionHeader {
         let token = token();
 
         let disclosure_control = match self.toggle {
-            Some(ToggleState::NotToggled) => Some(div().child(icon(IconAsset::ChevronRight))),
-            Some(ToggleState::Toggled) => Some(div().child(icon(IconAsset::ChevronDown))),
+            Some(ToggleState::NotToggled) => Some(div().child(Icon::new(IconAsset::ChevronRight))),
+            Some(ToggleState::Toggled) => Some(div().child(Icon::new(IconAsset::ChevronDown))),
             None => Some(div()),
         };
 
@@ -77,7 +77,7 @@ impl ListSectionHeader {
                             .flex()
                             .gap_1()
                             .items_center()
-                            .children(self.left_icon.map(|i| icon(i)))
+                            .children(self.left_icon.map(Icon::new))
                             .child(
                                 label(self.label.clone())
                                     .color(LabelColor::Muted)
@@ -143,8 +143,8 @@ impl ListItem {
         let theme = theme(cx);
         let token = token();
         let mut disclosure_control = match self.toggle {
-            Some(ToggleState::NotToggled) => Some(div().child(icon(IconAsset::ChevronRight))),
-            Some(ToggleState::Toggled) => Some(div().child(icon(IconAsset::ChevronDown))),
+            Some(ToggleState::NotToggled) => Some(div().child(Icon::new(IconAsset::ChevronRight))),
+            Some(ToggleState::Toggled) => Some(div().child(Icon::new(IconAsset::ChevronDown))),
             None => Some(div()),
         };
 
@@ -188,7 +188,7 @@ impl ListItem {
                     .items_center()
                     .relative()
                     .children(disclosure_control)
-                    .children(self.left_icon.map(|i| icon(i)))
+                    .children(self.left_icon.map(Icon::new))
                     .child(self.label.clone()),
             )
     }
@@ -233,14 +233,14 @@ impl List {
         let token = token();
 
         let disclosure_control = match self.toggle {
-            Some(ToggleState::NotToggled) => Some(icon(IconAsset::ChevronRight)),
-            Some(ToggleState::Toggled) => Some(icon(IconAsset::ChevronDown)),
+            Some(ToggleState::NotToggled) => Some(Icon::new(IconAsset::ChevronRight)),
+            Some(ToggleState::Toggled) => Some(Icon::new(IconAsset::ChevronDown)),
             None => None,
         };
 
         v_stack()
             .py_1()
-            .children(self.header.map(|h| h))
+            .children(self.header)
             .children(
                 self.items
                     .is_empty()
