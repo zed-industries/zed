@@ -24,6 +24,7 @@ pub enum FileSystemStatus {
     Conflict,
     Deleted,
 }
+
 #[derive(Default, PartialEq)]
 pub enum GitStatus {
     #[default]
@@ -34,6 +35,7 @@ pub enum GitStatus {
     Conflict,
     Renamed,
 }
+
 #[derive(Default, PartialEq)]
 pub enum DiagnosticStatus {
     #[default]
@@ -42,6 +44,7 @@ pub enum DiagnosticStatus {
     Warning,
     Info,
 }
+
 #[derive(Default, PartialEq)]
 pub enum IconSide {
     #[default]
