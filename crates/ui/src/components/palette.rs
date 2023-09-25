@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
-use crate::prelude::*;
 use crate::theme::theme;
-use crate::{h_stack, palette_item, v_stack, Label, LabelColor, PaletteItem};
+use crate::{h_stack, v_stack, Label, LabelColor};
+use crate::{prelude::*, LabelSize};
 use gpui2::elements::div::ScrollState;
 use gpui2::style::{StyleHelpers, Styleable};
 use gpui2::{elements::div, IntoElement};
@@ -101,6 +101,63 @@ impl<V: 'static> Palette<V> {
                                     .child(palette_item(item.label, item.keybinding))
                             })),
                     ),
+            )
+    }
+}
+
+#[derive(Element)]
+pub struct PaletteItem {
+    pub label: &'static str,
+    pub keybinding: Option<&'static str>,
+}
+
+pub fn palette_item(label: &'static str, keybinding: Option<&'static str>) -> PaletteItem {
+    PaletteItem { label, keybinding }
+}
+
+impl PaletteItem {
+    pub fn label(mut self, label: &'static str) -> Self {
+        self.label = label;
+        self
+    }
+
+    pub fn keybinding(mut self, keybinding: Option<&'static str>) -> Self {
+        self.keybinding = keybinding;
+        self
+    }
+
+    fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
+        let theme = theme(cx);
+
+        let keybinding_label = match self.keybinding {
+            Some(keybind) => Label::new(keybind)
+                .color(LabelColor::Muted)
+                .size(LabelSize::Small),
+            None => Label::new(""),
+        };
+
+        div()
+            .flex()
+            .flex_row()
+            .grow()
+            .justify_between()
+            .child(Label::new(self.label))
+            .child(
+                self.keybinding
+                    .map(|_| {
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .px_1()
+                            .py_0()
+                            .my_0p5()
+                            .rounded_md()
+                            .text_sm()
+                            .fill(theme.lowest.on.default.background)
+                            .child(keybinding_label)
+                    })
+                    .unwrap_or_else(|| div()),
             )
     }
 }
