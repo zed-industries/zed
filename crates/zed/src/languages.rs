@@ -78,7 +78,11 @@ pub fn init(
             tree_sitter_elixir::language(),
             vec![Arc::new(elixir::ElixirLspAdapter)],
         ),
-        elixir_next::ElixirNextSetting::On => todo!(),
+        elixir_next::ElixirNextSetting::On => language(
+            "elixir",
+            tree_sitter_elixir::language(),
+            vec![Arc::new(elixir_next::NextLspAdapter)],
+        ),
         elixir_next::ElixirNextSetting::Local { path, arguments } => language(
             "elixir",
             tree_sitter_elixir::language(),

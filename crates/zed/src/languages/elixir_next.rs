@@ -1,11 +1,19 @@
-use anyhow::Result;
+use anyhow::{anyhow, bail, Result};
+use async_compression::futures::bufread::GzipDecoder;
+use async_tar::Archive;
 use async_trait::async_trait;
 pub use language::*;
 use lsp::{LanguageServerBinary, SymbolKind};
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use settings::Setting;
-use std::{any::Any, ops::Deref, path::PathBuf, sync::Arc};
+use smol::{fs, io::BufReader, stream::StreamExt};
+use std::{any::Any, env::consts, ops::Deref, path::PathBuf, sync::Arc};
+use util::{
+    async_iife,
+    github::{latest_github_release, GitHubLspBinaryVersion},
+    ResultExt,
+};
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ElixirSettings {
@@ -45,6 +53,146 @@ impl Setting for ElixirSettings {
     }
 }
 
+pub struct NextLspAdapter;
+
+#[async_trait]
+impl LspAdapter for NextLspAdapter {
+    async fn name(&self) -> LanguageServerName {
+        LanguageServerName("next-ls".into())
+    }
+
+    fn short_name(&self) -> &'static str {
+        "next-ls"
+    }
+
+    async fn fetch_latest_server_version(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Result<Box<dyn 'static + Send + Any>> {
+        let release =
+            latest_github_release("elixir-tools/next-ls", false, delegate.http_client()).await?;
+        let version = release.name.clone();
+        let platform = match consts::ARCH {
+            "x86_64" => "darwin_arm64",
+            "aarch64" => "darwin_amd64",
+            other => bail!("Running on unsupported platform: {other}"),
+        };
+        let asset_name = format!("next_ls_{}", platform);
+        let asset = release
+            .assets
+            .iter()
+            .find(|asset| asset.name == asset_name)
+            .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
+        let version = GitHubLspBinaryVersion {
+            name: version,
+            url: asset.browser_download_url.clone(),
+        };
+        Ok(Box::new(version) as Box<_>)
+    }
+
+    async fn fetch_server_binary(
+        &self,
+        version: Box<dyn 'static + Send + Any>,
+        container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Result<LanguageServerBinary> {
+        let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
+
+        let binary_path = container_dir.join("next-ls");
+
+        if fs::metadata(&binary_path).await.is_err() {
+            let mut response = delegate
+                .http_client()
+                .get(&version.url, Default::default(), true)
+                .await
+                .map_err(|err| anyhow!("error downloading release: {}", err))?;
+
+            let mut file = smol::fs::File::create(&binary_path).await?;
+            if !response.status().is_success() {
+                Err(anyhow!(
+                    "download failed with status {}",
+                    response.status().to_string()
+                ))?;
+            }
+            futures::io::copy(response.body_mut(), &mut file).await?;
+
+            fs::set_permissions(
+                &binary_path,
+                <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
+            )
+            .await?;
+        }
+
+        Ok(LanguageServerBinary {
+            path: binary_path,
+            arguments: vec!["--stdio".into()],
+        })
+    }
+
+    async fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        get_cached_server_binary(container_dir)
+            .await
+            .map(|mut binary| {
+                binary.arguments = vec!["--stdio".into()];
+                binary
+            })
+    }
+
+    async fn installation_test_binary(
+        &self,
+        container_dir: PathBuf,
+    ) -> Option<LanguageServerBinary> {
+        get_cached_server_binary(container_dir)
+            .await
+            .map(|mut binary| {
+                binary.arguments = vec!["--help".into()];
+                binary
+            })
+    }
+
+    async fn label_for_symbol(
+        &self,
+        name: &str,
+        symbol_kind: SymbolKind,
+        language: &Arc<Language>,
+    ) -> Option<CodeLabel> {
+        label_for_symbol_next(name, symbol_kind, language)
+    }
+}
+
+async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
+    async_iife!({
+        let mut last_binary_path = None;
+        let mut entries = fs::read_dir(&container_dir).await?;
+        while let Some(entry) = entries.next().await {
+            let entry = entry?;
+            if entry.file_type().await?.is_file()
+                && entry
+                    .file_name()
+                    .to_str()
+                    .map_or(false, |name| name == "next-ls")
+            {
+                last_binary_path = Some(entry.path());
+            }
+        }
+
+        if let Some(path) = last_binary_path {
+            Ok(LanguageServerBinary {
+                path,
+                arguments: Vec::new(),
+            })
+        } else {
+            Err(anyhow!("no cached binary"))
+        }
+    })
+    .await
+    .log_err()
+}
+
 pub struct LocalNextLspAdapter {
     pub path: String,
     pub arguments: Vec<String>,
@@ -53,7 +201,7 @@ pub struct LocalNextLspAdapter {
 #[async_trait]
 impl LspAdapter for LocalNextLspAdapter {
     async fn name(&self) -> LanguageServerName {
-        LanguageServerName("elixir-next-ls".into())
+        LanguageServerName("local-next-ls".into())
     }
 
     fn short_name(&self) -> &'static str {
@@ -103,13 +251,17 @@ impl LspAdapter for LocalNextLspAdapter {
     async fn label_for_symbol(
         &self,
         name: &str,
-        _: SymbolKind,
+        symbol: SymbolKind,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
-        Some(CodeLabel {
-            runs: language.highlight_text(&name.into(), 0..name.len()),
-            text: name.to_string(),
-            filter_range: 0..name.len(),
-        })
+        label_for_symbol_next(name, symbol, language)
     }
+}
+
+fn label_for_symbol_next(name: &str, _: SymbolKind, language: &Arc<Language>) -> Option<CodeLabel> {
+    Some(CodeLabel {
+        runs: language.highlight_text(&name.into(), 0..name.len()),
+        text: name.to_string(),
+        filter_range: 0..name.len(),
+    })
 }
