@@ -30,8 +30,7 @@ impl<V: 'static> Palette<V> {
         }
     }
 
-    pub fn items(mut self, mut items: Vec<PaletteItem>) -> Self {
-        items.sort_by_key(|item| item.label);
+    pub fn items(mut self, items: Vec<PaletteItem>) -> Self {
         self.items = items;
         self
     }
@@ -98,7 +97,7 @@ impl<V: 'static> Palette<V> {
                                     .fill(theme.lowest.base.hovered.background)
                                     .active()
                                     .fill(theme.lowest.base.pressed.background)
-                                    .child(PaletteItem::new(item.label, item.keybinding))
+                                    .child(PaletteItem::new(item.label).keybinding(item.keybinding))
                             })),
                     ),
             )
@@ -112,8 +111,11 @@ pub struct PaletteItem {
 }
 
 impl PaletteItem {
-    pub fn new(label: &'static str, keybinding: Option<&'static str>) -> Self {
-        Self { label, keybinding }
+    pub fn new(label: &'static str) -> Self {
+        Self {
+            label,
+            keybinding: None,
+        }
     }
 
     pub fn label(mut self, label: &'static str) -> Self {
