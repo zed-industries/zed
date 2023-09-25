@@ -18,7 +18,7 @@ impl ButtonStory {
         let states = InteractionState::iter();
 
         Story::container()
-            .child(Story::title_for::<_, ui::Button>())
+            .child(Story::title_for::<_, Button>())
             .child(
                 div()
                     .flex()
