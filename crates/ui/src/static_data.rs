@@ -1,5 +1,5 @@
 use crate::{
-    list_item, palette_item, IconAsset, Label, LabelColor, ListItem, ListItemSize, PaletteItem,
+    list_item, IconAsset, Label, LabelColor, ListItem, ListItemSize, ModifierKey, PaletteItem,
     ToggleState,
 };
 
