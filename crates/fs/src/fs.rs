@@ -507,7 +507,7 @@ impl FakeFs {
         state.emit_event(&[path]);
     }
 
-    fn write_file_internal(&self, path: impl AsRef<Path>, content: String) -> Result<()> {
+    pub fn write_file_internal(&self, path: impl AsRef<Path>, content: String) -> Result<()> {
         let mut state = self.state.lock();
         let path = path.as_ref();
         let inode = state.next_inode;

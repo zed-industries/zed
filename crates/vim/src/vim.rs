@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod test;
 
+mod command;
 mod editor_events;
 mod insert;
 mod mode_indicator;
@@ -13,6 +14,7 @@ mod visual;
 
 use anyhow::Result;
 use collections::{CommandPaletteFilter, HashMap};
+use command_palette::CommandPaletteInterceptor;
 use editor::{movement, Editor, EditorMode, Event};
 use gpui::{
     actions, impl_actions, keymap_matcher::KeymapContext, keymap_matcher::MatchResult, Action,
@@ -63,6 +65,7 @@ pub fn init(cx: &mut AppContext) {
     insert::init(cx);
     object::init(cx);
     motion::init(cx);
+    command::init(cx);
 
     // Vim Actions
     cx.add_action(|_: &mut Workspace, &SwitchMode(mode): &SwitchMode, cx| {
@@ -468,6 +471,12 @@ impl Vim {
                     filter.filtered_namespaces.insert("vim");
                 }
             });
+
+            if self.enabled {
+                cx.set_global::<CommandPaletteInterceptor>(Box::new(command::command_interceptor));
+            } else if cx.has_global::<CommandPaletteInterceptor>() {
+                let _ = cx.remove_global::<CommandPaletteInterceptor>();
+            }
 
             cx.update_active_window(|cx| {
                 if self.enabled {

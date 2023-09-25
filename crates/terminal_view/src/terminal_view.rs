@@ -284,12 +284,7 @@ impl TerminalView {
     pub fn deploy_context_menu(&mut self, position: Vector2F, cx: &mut ViewContext<Self>) {
         let menu_entries = vec![
             ContextMenuItem::action("Clear", Clear),
-            ContextMenuItem::action(
-                "Close",
-                pane::CloseActiveItem {
-                    save_behavior: None,
-                },
-            ),
+            ContextMenuItem::action("Close", pane::CloseActiveItem { save_intent: None }),
         ];
 
         self.context_menu.update(cx, |menu, cx| {

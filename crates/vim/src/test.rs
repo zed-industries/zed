@@ -186,9 +186,6 @@ async fn test_selection_on_search(cx: &mut gpui::TestAppContext) {
         assert_eq!(bar.query(cx), "cc");
     });
 
-    // wait for the query editor change event to fire.
-    search_bar.next_notification(&cx).await;
-
     cx.update_editor(|editor, cx| {
         let highlights = editor.all_text_background_highlights(cx);
         assert_eq!(3, highlights.len());
