@@ -8489,6 +8489,7 @@ impl Project {
                 .await
                 .context("fetching latest npm versions")?;
 
+                log::info!("Fetching default prettier and plugins: {packages_to_versions:?}");
                 let borrowed_packages = packages_to_versions.iter().map(|(package, version)| {
                     (package.as_str(), version.as_str())
                 }).collect::<Vec<_>>();

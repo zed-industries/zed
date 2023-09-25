@@ -285,6 +285,7 @@ impl Prettier {
             } else {
                 None
             };
+            log::debug!("Formatting file {:?} with prettier, plugins :{plugins:?}, options: {prettier_options:?}", buffer.file().map(|f| f.full_path(cx)));
 
             FormatParams {
                 text: buffer.text(),
