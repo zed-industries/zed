@@ -4536,6 +4536,10 @@ mod tests {
             pane.close_items(cx, SaveBehavior::PromptOnWrite, move |_| true)
         });
         cx.foreground().run_until_parked();
+        // Discard "Save all" prompt
+        window.simulate_prompt_answer(2, cx);
+
+        cx.foreground().run_until_parked();
         left_pane.read_with(cx, |pane, cx| {
             assert_eq!(
                 pane.active_item().unwrap().project_entry_ids(cx).as_slice(),
