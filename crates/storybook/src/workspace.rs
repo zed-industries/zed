@@ -3,7 +3,7 @@ use gpui2::{
     style::StyleHelpers,
     Element, IntoElement, ParentElement, ViewContext,
 };
-use ui::{chat_panel, project_panel, status_bar, tab_bar, theme, title_bar, toolbar};
+use ui::{project_panel, status_bar, tab_bar, theme, title_bar, toolbar, ChatPanel};
 
 #[derive(Element, Default)]
 pub struct WorkspaceElement {
@@ -49,7 +49,7 @@ impl WorkspaceElement {
                                     .child(toolbar()),
                             ),
                     )
-                    .child(chat_panel(self.right_scroll_state.clone())),
+                    .child(ChatPanel::new(self.right_scroll_state.clone())),
             )
             .child(status_bar())
     }

@@ -14,14 +14,14 @@ pub struct ChatPanel<V: 'static> {
     scroll_state: ScrollState,
 }
 
-pub fn chat_panel<V: 'static>(scroll_state: ScrollState) -> ChatPanel<V> {
-    ChatPanel {
-        view_type: PhantomData,
-        scroll_state,
-    }
-}
-
 impl<V: 'static> ChatPanel<V> {
+    pub fn new(scroll_state: ScrollState) -> Self {
+        Self {
+            view_type: PhantomData,
+            scroll_state,
+        }
+    }
+
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
 

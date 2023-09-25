@@ -1,4 +1,4 @@
-use crate::{chat_panel, collab_panel, project_panel, status_bar, tab_bar, theme, title_bar};
+use crate::{collab_panel, project_panel, status_bar, tab_bar, theme, title_bar, ChatPanel};
 
 use gpui2::{
     elements::{div, div::ScrollState},
@@ -59,7 +59,7 @@ impl WorkspaceElement {
                                     .child(tab_bar(self.tab_bar_scroll_state.clone())),
                             ),
                     )
-                    .child(chat_panel(self.right_scroll_state.clone())),
+                    .child(ChatPanel::new(self.right_scroll_state.clone())),
             )
             .child(status_bar())
         // Elevation Level 3
