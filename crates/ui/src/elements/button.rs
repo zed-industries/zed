@@ -13,7 +13,7 @@ pub enum IconPosition {
 
 #[derive(Element)]
 pub struct Button {
-    label: &'static str,
+    label: String,
     variant: ButtonVariant,
     state: InteractionState,
     icon: Option<IconAsset>,
@@ -21,9 +21,12 @@ pub struct Button {
     width: Option<DefiniteLength>,
 }
 
-pub fn button(label: &'static str) -> Button {
+pub fn button<L>(label: L) -> Button
+where
+    L: Into<String>,
+{
     Button {
-        label,
+        label: label.into(),
         variant: Default::default(),
         state: Default::default(),
         icon: None,

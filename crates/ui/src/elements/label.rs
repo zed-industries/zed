@@ -27,14 +27,17 @@ pub enum LabelSize {
 
 #[derive(Element, Clone)]
 pub struct Label {
-    label: &'static str,
+    label: String,
     color: LabelColor,
     size: LabelSize,
 }
 
-pub fn label(label: &'static str) -> Label {
+pub fn label<L>(label: L) -> Label
+where
+    L: Into<String>,
+{
     Label {
-        label,
+        label: label.into(),
         color: LabelColor::Default,
         size: LabelSize::Default,
     }

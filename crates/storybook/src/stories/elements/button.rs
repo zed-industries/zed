@@ -27,12 +27,10 @@ impl ButtonStory {
                         div()
                             .child(Story::label("Ghost (Default)"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
-                                let state_name = state.as_str().clone();
-
                                 v_stack()
                                     .gap_1()
                                     .child(
-                                        label(&state_name)
+                                        label(state.to_string())
                                             .color(ui::LabelColor::Muted)
                                             .size(ui::LabelSize::Small),
                                     )
@@ -42,12 +40,10 @@ impl ButtonStory {
                             })))
                             .child(Story::label("Ghost – Left Icon"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
-                                let state_name = state.as_str().clone();
-
                                 v_stack()
                                     .gap_1()
                                     .child(
-                                        label(&state_name)
+                                        label(state.to_string())
                                             .color(ui::LabelColor::Muted)
                                             .size(ui::LabelSize::Small),
                                     )
@@ -61,12 +57,10 @@ impl ButtonStory {
                             })))
                             .child(Story::label("Ghost – Right Icon"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
-                                let state_name = state.as_str().clone();
-
                                 v_stack()
                                     .gap_1()
                                     .child(
-                                        label(&state_name)
+                                        label(state.to_string())
                                             .color(ui::LabelColor::Muted)
                                             .size(ui::LabelSize::Small),
                                     )
@@ -83,12 +77,10 @@ impl ButtonStory {
                         div()
                             .child(Story::label("Filled"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
-                                let state_name = state.as_str().clone();
-
                                 v_stack()
                                     .gap_1()
                                     .child(
-                                        label(&state_name)
+                                        label(state.to_string())
                                             .color(ui::LabelColor::Muted)
                                             .size(ui::LabelSize::Small),
                                     )
@@ -98,12 +90,10 @@ impl ButtonStory {
                             })))
                             .child(Story::label("Filled – Left Button"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
-                                let state_name = state.as_str().clone();
-
                                 v_stack()
                                     .gap_1()
                                     .child(
-                                        label(&state_name)
+                                        label(state.to_string())
                                             .color(ui::LabelColor::Muted)
                                             .size(ui::LabelSize::Small),
                                     )
@@ -117,12 +107,10 @@ impl ButtonStory {
                             })))
                             .child(Story::label("Filled – Right Button"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
-                                let state_name = state.as_str().clone();
-
                                 v_stack()
                                     .gap_1()
                                     .child(
-                                        label(&state_name)
+                                        label(state.to_string())
                                             .color(ui::LabelColor::Muted)
                                             .size(ui::LabelSize::Small),
                                     )
@@ -139,12 +127,10 @@ impl ButtonStory {
                         div()
                             .child(Story::label("Fixed With"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
-                                let state_name = state.as_str().clone();
-
                                 v_stack()
                                     .gap_1()
                                     .child(
-                                        label(&state_name)
+                                        label(state.to_string())
                                             .color(ui::LabelColor::Muted)
                                             .size(ui::LabelSize::Small),
                                     )
@@ -157,12 +143,10 @@ impl ButtonStory {
                             })))
                             .child(Story::label("Fixed With – Left Icon"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
-                                let state_name = state.as_str().clone();
-
                                 v_stack()
                                     .gap_1()
                                     .child(
-                                        label(&state_name)
+                                        label(state.to_string())
                                             .color(ui::LabelColor::Muted)
                                             .size(ui::LabelSize::Small),
                                     )
@@ -177,12 +161,10 @@ impl ButtonStory {
                             })))
                             .child(Story::label("Fixed With – Right Icon"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
-                                let state_name = state.as_str().clone();
-
                                 v_stack()
                                     .gap_1()
                                     .child(
-                                        label(&state_name)
+                                        label(state.to_string())
                                             .color(ui::LabelColor::Muted)
                                             .size(ui::LabelSize::Small),
                                     )

@@ -85,7 +85,7 @@ pub enum DisclosureControlVisibility {
     Always,
 }
 
-#[derive(Default, PartialEq, Copy, Clone, EnumIter)]
+#[derive(Default, PartialEq, Copy, Clone, EnumIter, strum::Display)]
 pub enum InteractionState {
     #[default]
     Enabled,
@@ -101,16 +101,6 @@ impl InteractionState {
             *self
         } else {
             InteractionState::Disabled
-        }
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            InteractionState::Enabled => "Enabled",
-            InteractionState::Hovered => "Hovered",
-            InteractionState::Active => "Active",
-            InteractionState::Focused => "Focused",
-            InteractionState::Disabled => "Disabled",
         }
     }
 }
