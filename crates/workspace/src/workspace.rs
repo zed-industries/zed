@@ -1333,13 +1333,12 @@ impl Workspace {
 
     fn save_all_internal(
         &mut self,
-        save_behaviour: SaveBehavior,
+        mut save_behaviour: SaveBehavior,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
         if self.project.read(cx).is_read_only() {
             return Task::ready(Ok(true));
         }
-
         let dirty_items = self
             .panes
             .iter()
@@ -1355,7 +1354,27 @@ impl Workspace {
             .collect::<Vec<_>>();
 
         let project = self.project.clone();
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(|workspace, mut cx| async move {
+            // Override save mode and display "Save all files" prompt
+            if save_behaviour == SaveBehavior::PromptOnWrite && dirty_items.len() > 1 {
+                let mut answer = workspace.update(&mut cx, |_, cx| {
+                    let prompt = Pane::file_names_for_prompt(
+                        &mut dirty_items.iter().map(|(_, handle)| handle),
+                        dirty_items.len(),
+                        cx,
+                    );
+                    cx.prompt(
+                        PromptLevel::Warning,
+                        &prompt,
+                        &["Save all", "Discard all", "Cancel"],
+                    )
+                })?;
+                match answer.next().await {
+                    Some(0) => save_behaviour = SaveBehavior::PromptOnConflict,
+                    Some(1) => save_behaviour = SaveBehavior::DontSave,
+                    _ => {}
+                }
+            }
             for (pane, item) in dirty_items {
                 let (singleton, project_entry_ids) =
                     cx.read(|cx| (item.is_singleton(cx), item.project_entry_ids(cx)));

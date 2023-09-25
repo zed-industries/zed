@@ -840,10 +840,45 @@ impl Pane {
         Some(self.close_items(cx, SaveBehavior::PromptOnWrite, |_| true))
     }
 
+    pub(super) fn file_names_for_prompt(
+        items: &mut dyn Iterator<Item = &Box<dyn ItemHandle>>,
+        all_dirty_items: usize,
+        cx: &AppContext,
+    ) -> String {
+        /// Quantity of item paths displayed in prompt prior to cutoff..
+        const FILE_NAMES_CUTOFF_POINT: usize = 10;
+        let mut file_names: Vec<_> = items
+            .filter_map(|item| {
+                item.project_path(cx).and_then(|project_path| {
+                    project_path
+                        .path
+                        .file_name()
+                        .and_then(|name| name.to_str().map(ToOwned::to_owned))
+                })
+            })
+            .take(FILE_NAMES_CUTOFF_POINT)
+            .collect();
+        let should_display_followup_text =
+            all_dirty_items > FILE_NAMES_CUTOFF_POINT || file_names.len() != all_dirty_items;
+        if should_display_followup_text {
+            let not_shown_files = all_dirty_items - file_names.len();
+            if not_shown_files == 1 {
+                file_names.push(".. 1 file not shown".into());
+            } else {
+                file_names.push(format!(".. {} files not shown", not_shown_files).into());
+            }
+        }
+        let file_names = file_names.join("\n");
+        format!(
+            "Do you want to save changes to the following {} files?\n{file_names}",
+            all_dirty_items
+        )
+    }
+
     pub fn close_items(
         &mut self,
         cx: &mut ViewContext<Pane>,
-        save_behavior: SaveBehavior,
+        mut save_behavior: SaveBehavior,
         should_close: impl 'static + Fn(usize) -> bool,
     ) -> Task<Result<()>> {
         // Find the items to close.
@@ -862,6 +897,25 @@ impl Pane {
 
         let workspace = self.workspace.clone();
         cx.spawn(|pane, mut cx| async move {
+            if save_behavior == SaveBehavior::PromptOnWrite && items_to_close.len() > 1 {
+                let mut answer = pane.update(&mut cx, |_, cx| {
+                    let prompt = Self::file_names_for_prompt(
+                        &mut items_to_close.iter(),
+                        items_to_close.len(),
+                        cx,
+                    );
+                    cx.prompt(
+                        PromptLevel::Warning,
+                        &prompt,
+                        &["Save all", "Discard all", "Cancel"],
+                    )
+                })?;
+                match answer.next().await {
+                    Some(0) => save_behavior = SaveBehavior::PromptOnConflict,
+                    Some(1) => save_behavior = SaveBehavior::DontSave,
+                    _ => {}
+                }
+            }
             let mut saved_project_items_ids = HashSet::default();
             for item in items_to_close.clone() {
                 // Find the item's current index and its set of project item models. Avoid
