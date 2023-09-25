@@ -1,9 +1,8 @@
-use std::collections::HashSet;
 use std::marker::PhantomData;
 
 use crate::prelude::*;
 use crate::theme::theme;
-use crate::{h_stack, v_stack, Keybinding, Label, LabelColor, ModifierKey};
+use crate::{h_stack, v_stack, Keybinding, Label, LabelColor};
 use gpui2::elements::div::ScrollState;
 use gpui2::style::{StyleHelpers, Styleable};
 use gpui2::{elements::div, IntoElement};
