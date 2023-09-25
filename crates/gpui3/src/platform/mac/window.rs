@@ -3,7 +3,7 @@ use crate::{
     point, px, size, AnyWindowHandle, Bounds, Event, InputHandler, KeyDownEvent, Keystroke,
     MacScreen, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMovedEvent,
     MouseUpEvent, NSRectExt, Pixels, Platform, PlatformDispatcher, PlatformScreen, PlatformWindow,
-    Point, Size, Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions,
+    Point, Scene, Size, Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions,
     WindowPromptLevel,
 };
 use block::ConcreteBlock;
@@ -282,6 +282,7 @@ struct MacWindowState {
     dispatcher: Arc<dyn PlatformDispatcher>,
     native_window: id,
     renderer: MetalRenderer,
+    scene_to_render: Option<Scene>,
     kind: WindowKind,
     event_callback: Option<Box<dyn FnMut(Event) -> bool>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
@@ -481,6 +482,7 @@ impl MacWindow {
                 dispatcher: platform.dispatcher(),
                 native_window,
                 renderer: MetalRenderer::new(true),
+                scene_to_render: None,
                 kind: options.kind,
                 event_callback: None,
                 activate_callback: None,
@@ -873,6 +875,14 @@ impl PlatformWindow for MacWindow {
                 // Someone else's window is on top
                 false
             }
+        }
+    }
+
+    fn draw(&self, scene: crate::Scene) {
+        let mut this = self.0.lock();
+        this.scene_to_render = Some(scene);
+        unsafe {
+            let _: () = msg_send![this.native_window.contentView(), setNeedsDisplay: YES];
         }
     }
 }
@@ -1347,51 +1357,9 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
     unsafe {
         let window_state = get_window_state(this);
         let mut window_state = window_state.as_ref().lock();
-
-        let scale_factor = window_state.scale_factor();
-        let mut scene = crate::Scene::new(scale_factor);
-        scene.insert(crate::Quad {
-            order: 2,
-            bounds: Bounds {
-                origin: point(10., 10.).map(px),
-                size: size(100., 100.).map(px),
-            },
-            clip_bounds: Bounds {
-                origin: point(20., 20.).map(px),
-                size: size(100., 100.).map(px),
-            },
-            clip_corner_radii: crate::Corners {
-                top_left: px(10.),
-                ..Default::default()
-            },
-            background: crate::rgb(0x00ff00).into(),
-            border_color: Default::default(),
-            corner_radii: crate::Corners {
-                top_left: px(9.),
-                top_right: px(3.),
-                bottom_right: px(20.),
-                bottom_left: px(50.),
-            },
-            border_widths: Default::default(),
-        });
-        scene.insert(crate::Quad {
-            order: 1,
-            bounds: Bounds {
-                origin: point(50., 10.).map(px),
-                size: size(100., 100.).map(px),
-            },
-            clip_bounds: Bounds {
-                origin: point(10., 10.).map(px),
-                size: size(100., 100.).map(px),
-            },
-            clip_corner_radii: Default::default(),
-            background: crate::rgb(0xff0000).into(),
-            border_color: Default::default(),
-            corner_radii: Default::default(),
-            border_widths: Default::default(),
-        });
-        dbg!("!!!!!!!!!");
-        window_state.renderer.draw(&scene);
+        if let Some(scene) = window_state.scene_to_render.take() {
+            window_state.renderer.draw(&scene);
+        }
     }
 }
 

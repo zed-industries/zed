@@ -1,7 +1,7 @@
 use crate::{
-    px, AppContext, AvailableSpace, Bounds, Context, EntityId, Handle, LayoutId, MainThreadOnly,
-    Pixels, Platform, PlatformWindow, Point, Reference, Size, Style, TaffyLayoutEngine, TextStyle,
-    TextStyleRefinement, WindowOptions,
+    px, AppContext, AvailableSpace, Bounds, Context, Effect, EntityId, Handle, LayoutId,
+    MainThreadOnly, Pixels, Platform, PlatformWindow, Point, Reference, Size, Style,
+    TaffyLayoutEngine, TextStyle, TextStyleRefinement, WeakHandle, WindowOptions,
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
@@ -22,6 +22,7 @@ pub struct Window {
     text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) root_view: Option<Box<dyn Any + Send>>,
     mouse_position: Point<Pixels>,
+    pub(crate) dirty: bool,
 }
 
 impl Window {
@@ -37,6 +38,7 @@ impl Window {
             text_style_stack: Vec::new(),
             root_view: None,
             mouse_position,
+            dirty: true,
         }
     }
 }
@@ -125,21 +127,21 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     fn update_window<R>(
         &mut self,
-        window_id: WindowId,
+        window_handle: AnyWindowHandle,
         update: impl FnOnce(&mut WindowContext) -> R,
     ) -> Result<R> {
-        if window_id == self.window.handle.id {
+        if window_handle == self.window.handle {
             Ok(update(self))
         } else {
-            self.app.update_window(window_id, update)
+            self.app.update_window(window_handle, update)
         }
     }
 }
 
 impl Context for WindowContext<'_, '_> {
-    type EntityContext<'a, 'w, T: Send + 'static> = ViewContext<'a, 'w, T>;
+    type EntityContext<'a, 'w, T: Send + Sync + 'static> = ViewContext<'a, 'w, T>;
 
-    fn entity<T: Send + 'static>(
+    fn entity<T: Send + Sync + 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
     ) -> Handle<T> {
@@ -157,7 +159,7 @@ impl Context for WindowContext<'_, '_> {
         }
     }
 
-    fn update_entity<T: Send + 'static, R>(
+    fn update_entity<T: Send + Sync + 'static, R>(
         &mut self,
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
@@ -196,7 +198,7 @@ pub struct ViewContext<'a, 'w, T> {
     entity_id: EntityId,
 }
 
-impl<'a, 'w, T: 'static> ViewContext<'a, 'w, T> {
+impl<'a, 'w, T: Send + Sync + 'static> ViewContext<'a, 'w, T> {
     // fn update<R>(&mut self, update: impl FnOnce(&mut T, &mut Self) -> R) -> R {
 
     //     self.window_cx.update_entity(handle, update)
@@ -235,19 +237,59 @@ impl<'a, 'w, T: 'static> ViewContext<'a, 'w, T> {
         );
         f(&mut cx)
     }
+
+    pub fn handle(&self) -> WeakHandle<T> {
+        WeakHandle {
+            id: self.entity_id,
+            entity_type: PhantomData,
+        }
+    }
+
+    pub fn observe<E: Send + Sync + 'static>(
+        &mut self,
+        handle: &Handle<E>,
+        on_notify: impl Fn(&mut T, Handle<E>, &mut ViewContext<'_, '_, T>) + Send + Sync + 'static,
+    ) {
+        let this = self.handle();
+        let handle = handle.downgrade();
+        let window_handle = self.window.handle;
+        self.app
+            .observers
+            .entry(handle.id)
+            .or_default()
+            .push(Arc::new(move |cx| {
+                cx.update_window(window_handle, |cx| {
+                    if let Some(handle) = handle.upgrade(cx) {
+                        this.update(cx, |this, cx| on_notify(this, handle, cx))
+                            .is_ok()
+                    } else {
+                        false
+                    }
+                })
+                .unwrap_or(false)
+            }));
+    }
+
+    pub fn notify(&mut self) {
+        let entity_id = self.entity_id;
+        self.app
+            .pending_effects
+            .push_back(Effect::Notify(entity_id));
+        self.window.dirty = true;
+    }
 }
 
 impl<'a, 'w, T: 'static> Context for ViewContext<'a, 'w, T> {
-    type EntityContext<'b, 'c, U: Send + 'static> = ViewContext<'b, 'c, U>;
+    type EntityContext<'b, 'c, U: Send + Sync + 'static> = ViewContext<'b, 'c, U>;
 
-    fn entity<T2: Send + 'static>(
+    fn entity<T2: Send + Sync + 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T2>) -> T2,
     ) -> Handle<T2> {
         self.window_cx.entity(build_entity)
     }
 
-    fn update_entity<U: Send + 'static, R>(
+    fn update_entity<U: Send + Sync + 'static, R>(
         &mut self,
         handle: &Handle<U>,
         update: impl FnOnce(&mut U, &mut Self::EntityContext<'_, '_, U>) -> R,
@@ -296,7 +338,7 @@ impl<S: 'static> Into<AnyWindowHandle> for WindowHandle<S> {
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct AnyWindowHandle {
-    id: WindowId,
+    pub(crate) id: WindowId,
     state_type: TypeId,
 }
 

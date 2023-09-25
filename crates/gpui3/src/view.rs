@@ -33,7 +33,7 @@ pub fn view<S: 'static, P: 'static, E: Element<State = S>>(
     }
 }
 
-impl<S: Send + 'static, P: 'static> View<S, P> {
+impl<S: Send + Sync + 'static, P: 'static> View<S, P> {
     pub fn into_any<ParentState>(self) -> AnyView<ParentState> {
         AnyView {
             view: Rc::new(RefCell::new(self)),
@@ -42,7 +42,7 @@ impl<S: Send + 'static, P: 'static> View<S, P> {
     }
 }
 
-impl<S: Send + 'static, P: Send + 'static> Element for View<S, P> {
+impl<S: Send + Sync + 'static, P: Send + 'static> Element for View<S, P> {
     type State = P;
     type FrameState = AnyElement<S>;
 
@@ -80,7 +80,7 @@ trait ViewObject {
     ) -> Result<()>;
 }
 
-impl<S: Send + 'static, P> ViewObject for View<S, P> {
+impl<S: Send + Sync + 'static, P> ViewObject for View<S, P> {
     fn layout(&mut self, cx: &mut WindowContext) -> Result<(LayoutId, Box<dyn Any>)> {
         self.state.update(cx, |state, cx| {
             let mut element = (self.render)(state, cx);

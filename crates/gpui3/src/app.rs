@@ -1,11 +1,13 @@
 use crate::{
-    current_platform, Context, LayoutId, MainThreadOnly, Platform, Reference, RootView, TextSystem,
-    Window, WindowContext, WindowHandle, WindowId,
+    current_platform, AnyWindowHandle, Context, LayoutId, MainThreadOnly, Platform, Reference,
+    RootView, TextSystem, Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
+use collections::{HashMap, VecDeque};
 use futures::{future, Future};
 use parking_lot::Mutex;
 use slotmap::SlotMap;
+use smallvec::SmallVec;
 use std::{
     any::Any,
     marker::PhantomData,
@@ -38,6 +40,9 @@ impl App {
                 unit_entity_id,
                 entities,
                 windows: SlotMap::with_key(),
+                pending_updates: 0,
+                pending_effects: Default::default(),
+                observers: Default::default(),
                 layout_id_buffer: Default::default(),
             })
         }))
@@ -56,6 +61,8 @@ impl App {
     }
 }
 
+type Handlers = SmallVec<[Arc<dyn Fn(&mut AppContext) -> bool + Send + Sync + 'static>; 2]>;
+
 pub struct AppContext {
     this: Weak<Mutex<AppContext>>,
     platform: MainThreadOnly<dyn Platform>,
@@ -63,6 +70,9 @@ pub struct AppContext {
     pub(crate) unit_entity_id: EntityId,
     pub(crate) entities: SlotMap<EntityId, Option<Box<dyn Any + Send>>>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
+    pending_updates: usize,
+    pub(crate) pending_effects: VecDeque<Effect>,
+    pub(crate) observers: HashMap<EntityId, Handlers>,
     // We recycle this memory across layout requests.
     pub(crate) layout_id_buffer: Vec<LayoutId>,
 }
@@ -105,31 +115,60 @@ impl AppContext {
 
     pub(crate) fn update_window<R>(
         &mut self,
-        window_id: WindowId,
+        handle: AnyWindowHandle,
         update: impl FnOnce(&mut WindowContext) -> R,
     ) -> Result<R> {
         let mut window = self
             .windows
-            .get_mut(window_id)
+            .get_mut(handle.id)
             .ok_or_else(|| anyhow!("window not found"))?
             .take()
             .unwrap();
 
         let result = update(&mut WindowContext::mutable(self, &mut window));
+        window.dirty = true;
 
         self.windows
-            .get_mut(window_id)
+            .get_mut(handle.id)
             .ok_or_else(|| anyhow!("window not found"))?
             .replace(window);
 
         Ok(result)
     }
+
+    fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
+        self.pending_updates += 1;
+        let result = update(self);
+        self.pending_updates -= 1;
+        if self.pending_updates == 0 {
+            self.flush_effects();
+        }
+        result
+    }
+
+    fn flush_effects(&mut self) {
+        while let Some(effect) = self.pending_effects.pop_front() {
+            match effect {
+                Effect::Notify(entity_id) => self.apply_notify_effect(entity_id),
+            }
+        }
+    }
+
+    fn apply_notify_effect(&mut self, updated_entity: EntityId) {
+        if let Some(mut handlers) = self.observers.remove(&updated_entity) {
+            handlers.retain(|handler| handler(self));
+            if let Some(new_handlers) = self.observers.remove(&updated_entity) {
+                handlers.extend(new_handlers);
+            }
+            self.observers.insert(updated_entity, handlers);
+        }
+    }
 }
 
 impl Context for AppContext {
-    type EntityContext<'a, 'w, T: Send + 'static> = ModelContext<'a, T>;
+    type EntityContext<'a, 'w, T: Send + Sync + 'static> = ModelContext<'a, T>;
 
-    fn entity<T: Send + 'static>(
+    fn entity<T: Send + Sync + 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
     ) -> Handle<T> {
@@ -140,7 +179,7 @@ impl Context for AppContext {
         Handle::new(id)
     }
 
-    fn update_entity<T: Send + 'static, R>(
+    fn update_entity<T: Send + Sync + 'static, R>(
         &mut self,
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
@@ -166,7 +205,7 @@ pub struct ModelContext<'a, T> {
     entity_id: EntityId,
 }
 
-impl<'a, T: 'static> ModelContext<'a, T> {
+impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
     pub(crate) fn mutable(app: &'a mut AppContext, entity_id: EntityId) -> Self {
         Self {
             app: Reference::Mutable(app),
@@ -199,19 +238,53 @@ impl<'a, T: 'static> ModelContext<'a, T> {
             .replace(entity);
         result
     }
+
+    pub fn handle(&self) -> WeakHandle<T> {
+        WeakHandle {
+            id: self.entity_id,
+            entity_type: PhantomData,
+        }
+    }
+
+    pub fn observe<E: Send + Sync + 'static>(
+        &mut self,
+        handle: &Handle<E>,
+        on_notify: impl Fn(&mut T, Handle<E>, &mut ModelContext<'_, T>) + Send + Sync + 'static,
+    ) {
+        let this = self.handle();
+        let handle = handle.downgrade();
+        self.app
+            .observers
+            .entry(handle.id)
+            .or_default()
+            .push(Arc::new(move |cx| {
+                if let Some((this, handle)) = this.upgrade(cx).zip(handle.upgrade(cx)) {
+                    this.update(cx, |this, cx| on_notify(this, handle, cx));
+                    true
+                } else {
+                    false
+                }
+            }));
+    }
+
+    pub fn notify(&mut self) {
+        self.app
+            .pending_effects
+            .push_back(Effect::Notify(self.entity_id));
+    }
 }
 
 impl<'a, T: 'static> Context for ModelContext<'a, T> {
-    type EntityContext<'b, 'c, U: Send + 'static> = ModelContext<'b, U>;
+    type EntityContext<'b, 'c, U: Send + Sync + 'static> = ModelContext<'b, U>;
 
-    fn entity<U: Send + 'static>(
+    fn entity<U: Send + Sync + 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, U>) -> U,
     ) -> Handle<U> {
         self.app.entity(build_entity)
     }
 
-    fn update_entity<U: Send + 'static, R>(
+    fn update_entity<U: Send + Sync + 'static, R>(
         &mut self,
         handle: &Handle<U>,
         update: impl FnOnce(&mut U, &mut Self::EntityContext<'_, '_, U>) -> R,
@@ -220,18 +293,25 @@ impl<'a, T: 'static> Context for ModelContext<'a, T> {
     }
 }
 
+slotmap::new_key_type! { pub struct EntityId; }
+
 pub struct Handle<T> {
     pub(crate) id: EntityId,
     pub(crate) entity_type: PhantomData<T>,
 }
 
-slotmap::new_key_type! { pub struct EntityId; }
-
-impl<T: Send + 'static> Handle<T> {
+impl<T: Send + Sync + 'static> Handle<T> {
     fn new(id: EntityId) -> Self {
         Self {
             id,
             entity_type: PhantomData,
+        }
+    }
+
+    pub fn downgrade(&self) -> WeakHandle<T> {
+        WeakHandle {
+            id: self.id,
+            entity_type: self.entity_type,
         }
     }
 
@@ -256,6 +336,44 @@ impl<T> Clone for Handle<T> {
             entity_type: PhantomData,
         }
     }
+}
+
+pub struct WeakHandle<T> {
+    pub(crate) id: EntityId,
+    pub(crate) entity_type: PhantomData<T>,
+}
+
+impl<T: Send + Sync + 'static> WeakHandle<T> {
+    pub fn upgrade(&self, cx: &impl Context) -> Option<Handle<T>> {
+        // todo!("Actually upgrade")
+        Some(Handle {
+            id: self.id,
+            entity_type: self.entity_type,
+        })
+    }
+
+    /// Update the entity referenced by this handle with the given function if
+    /// the referenced entity still exists. Returns an error if the entity has
+    /// been released.
+    ///
+    /// The update function receives a context appropriate for its environment.
+    /// When updating in an `AppContext`, it receives a `ModelContext`.
+    /// When updating an a `WindowContext`, it receives a `ViewContext`.
+    pub fn update<C: Context, R>(
+        &self,
+        cx: &mut C,
+        update: impl FnOnce(&mut T, &mut C::EntityContext<'_, '_, T>) -> R,
+    ) -> Result<R> {
+        if let Some(this) = self.upgrade(cx) {
+            Ok(cx.update_entity(&this, update))
+        } else {
+            Err(anyhow!("entity released"))
+        }
+    }
+}
+
+pub(crate) enum Effect {
+    Notify(EntityId),
 }
 
 #[cfg(test)]

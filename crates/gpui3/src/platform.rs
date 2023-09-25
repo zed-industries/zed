@@ -7,7 +7,7 @@ mod test;
 
 use crate::{
     AnyWindowHandle, Bounds, FontFeatures, FontId, FontMetrics, FontStyle, FontWeight, GlyphId,
-    LineLayout, Pixels, Point, Result, RunStyle, SharedString, Size,
+    LineLayout, Pixels, Point, Result, RunStyle, Scene, SharedString, Size,
 };
 use anyhow::anyhow;
 use async_task::Runnable;
@@ -145,6 +145,7 @@ pub trait PlatformWindow {
     fn on_close(&mut self, callback: Box<dyn FnOnce()>);
     fn on_appearance_changed(&mut self, callback: Box<dyn FnMut()>);
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
+    fn draw(&self, scene: Scene);
 }
 
 pub trait PlatformDispatcher: Send + Sync {

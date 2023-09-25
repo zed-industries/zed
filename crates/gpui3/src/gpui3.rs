@@ -46,14 +46,14 @@ pub use view::*;
 pub use window::*;
 
 pub trait Context {
-    type EntityContext<'a, 'w, T: Send + 'static>;
+    type EntityContext<'a, 'w, T: Send + Sync + 'static>;
 
-    fn entity<T: 'static + Send>(
+    fn entity<T: Send + Sync + 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
     ) -> Handle<T>;
 
-    fn update_entity<T: 'static + Send, R>(
+    fn update_entity<T: Send + Sync + 'static, R>(
         &mut self,
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,

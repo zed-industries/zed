@@ -7,7 +7,7 @@ pub struct Stateless<E: Element<State = ()>, S> {
     parent_state_type: PhantomData<S>,
 }
 
-impl<E: Element<State = ()>, S: 'static> Element for Stateless<E, S> {
+impl<E: Element<State = ()>, S: Send + Sync + 'static> Element for Stateless<E, S> {
     type State = S;
     type FrameState = E::FrameState;
 
