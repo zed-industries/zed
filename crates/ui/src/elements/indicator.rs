@@ -9,11 +9,11 @@ pub struct Indicator {
     player: usize,
 }
 
-pub fn indicator() -> Indicator {
-    Indicator { player: 0 }
-}
-
 impl Indicator {
+    pub fn new() -> Self {
+        Self { player: 0 }
+    }
+
     pub fn player(mut self, player: usize) -> Self {
         self.player = player;
         self
