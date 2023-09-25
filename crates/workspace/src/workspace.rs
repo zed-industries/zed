@@ -4339,7 +4339,9 @@ mod tests {
         });
         let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
         cx.foreground().run_until_parked();
-        window.simulate_prompt_answer(2, cx); // cancel
+        window.simulate_prompt_answer(2, cx); // cancel save all
+        cx.foreground().run_until_parked();
+        window.simulate_prompt_answer(2, cx); // cancel save all
         cx.foreground().run_until_parked();
         assert!(!window.has_pending_prompt(cx));
         assert!(!task.await.unwrap());
@@ -4397,13 +4399,15 @@ mod tests {
         });
         cx.foreground().run_until_parked();
 
+        assert!(window.has_pending_prompt(cx));
+        // Ignore "Save all" prompt
+        window.simulate_prompt_answer(2, cx);
+        cx.foreground().run_until_parked();
         // There's a prompt to save item 1.
         pane.read_with(cx, |pane, _| {
             assert_eq!(pane.items_len(), 4);
             assert_eq!(pane.active_item().unwrap().id(), item1.id());
         });
-        assert!(window.has_pending_prompt(cx));
-
         // Confirm saving item 1.
         window.simulate_prompt_answer(0, cx);
         cx.foreground().run_until_parked();
