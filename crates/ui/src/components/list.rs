@@ -5,8 +5,8 @@ use gpui2::{
 };
 
 use crate::{
-    h_stack, theme, token, v_stack, DisclosureControlVisibility, Icon, IconAsset, InteractionState,
-    Label, LabelColor, LabelSize, ToggleState,
+    h_stack, theme, token, v_stack, Avatar, DisclosureControlVisibility, Icon, IconAsset,
+    InteractionState, Label, LabelColor, LabelSize, ToggleState,
 };
 
 #[derive(Element, Clone, Copy)]
@@ -89,10 +89,16 @@ impl ListSectionHeader {
     }
 }
 
+#[derive(Clone)]
+pub enum LeftContent {
+    Icon(IconAsset),
+    Avatar(&'static str),
+}
+
 #[derive(Element, Clone)]
 pub struct ListItem {
     label: Label,
-    left_icon: Option<IconAsset>,
+    left_content: Option<LeftContent>,
     indent_level: u32,
     state: InteractionState,
     disclosure_control_style: DisclosureControlVisibility,
@@ -103,7 +109,7 @@ pub fn list_item(label: Label) -> ListItem {
     ListItem {
         label,
         indent_level: 0,
-        left_icon: None,
+        left_content: None,
         disclosure_control_style: DisclosureControlVisibility::default(),
         state: InteractionState::default(),
         toggle: None,
@@ -121,8 +127,18 @@ impl ListItem {
         self
     }
 
-    pub fn left_icon(mut self, left_icon: Option<IconAsset>) -> Self {
-        self.left_icon = left_icon;
+    pub fn left_content(mut self, left_content: LeftContent) -> Self {
+        self.left_content = Some(left_content);
+        self
+    }
+
+    pub fn left_icon(mut self, left_icon: IconAsset) -> Self {
+        self.left_content = Some(LeftContent::Icon(left_icon));
+        self
+    }
+
+    pub fn left_avatar(mut self, left_avatar: &'static str) -> Self {
+        self.left_content = Some(LeftContent::Avatar(left_avatar));
         self
     }
 
@@ -139,22 +155,39 @@ impl ListItem {
         self
     }
 
+    fn disclosure_control<V: 'static>(
+        &mut self,
+        cx: &mut ViewContext<V>,
+    ) -> Option<impl IntoElement<V>> {
+        let theme = theme(cx);
+        let token = token();
+
+        let disclosure_control_icon = Icon::new(if let Some(ToggleState::Toggled) = self.toggle {
+            IconAsset::ChevronDown
+        } else {
+            IconAsset::ChevronRight
+        });
+
+        match (self.toggle, self.disclosure_control_style) {
+            (Some(_), DisclosureControlVisibility::OnHover) => {
+                Some(div().absolute().neg_left_5().child(disclosure_control_icon))
+            }
+            (Some(_), DisclosureControlVisibility::Always) => {
+                Some(div().child(disclosure_control_icon))
+            }
+            (None, _) => None,
+        }
+    }
+
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
         let token = token();
-        let mut disclosure_control = match self.toggle {
-            Some(ToggleState::NotToggled) => Some(div().child(Icon::new(IconAsset::ChevronRight))),
-            Some(ToggleState::Toggled) => Some(div().child(Icon::new(IconAsset::ChevronDown))),
-            None => Some(div()),
-        };
 
-        match self.disclosure_control_style {
-            DisclosureControlVisibility::OnHover => {
-                disclosure_control =
-                    disclosure_control.map(|c| div().absolute().neg_left_5().child(c));
-            }
-            DisclosureControlVisibility::Always => {}
-        }
+        let left_content = match self.left_content {
+            Some(LeftContent::Icon(i)) => Some(div().child(Icon::new(i))),
+            Some(LeftContent::Avatar(src)) => Some(div().child(Avatar::new(src))),
+            None => None,
+        };
 
         div()
             .fill(theme.middle.base.default.background)
@@ -187,8 +220,8 @@ impl ListItem {
                     .gap_1()
                     .items_center()
                     .relative()
-                    .children(disclosure_control)
-                    .children(self.left_icon.map(Icon::new))
+                    .children(self.disclosure_control(cx))
+                    .children(left_content)
                     .child(self.label.clone()),
             )
     }
