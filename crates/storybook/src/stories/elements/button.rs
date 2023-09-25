@@ -1,3 +1,5 @@
+use gpui2::elements::div;
+use gpui2::geometry::rems;
 use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 use strum::IntoEnumIterator;
@@ -17,107 +19,183 @@ impl ButtonStory {
 
         Story::container()
             .child(Story::title_for::<_, ui::Button>())
-            .child(Story::label("Ghost (Default)"))
-            .child(h_stack().gap_2().children(states.clone().map(|state| {
-                let state_name = state.as_str().clone();
+            .child(
+                div()
+                    .flex()
+                    .gap_8()
+                    .child(
+                        div()
+                            .child(Story::label("Ghost (Default)"))
+                            .child(h_stack().gap_2().children(states.clone().map(|state| {
+                                let state_name = state.as_str().clone();
 
-                v_stack()
-                    .gap_1()
-                    .child(
-                        label(&state_name)
-                            .color(ui::LabelColor::Muted)
-                            .size(ui::LabelSize::Small),
-                    )
-                    .child(button("Label").variant(ButtonVariant::Ghost).state(state))
-            })))
-            .child(Story::label("Ghost With Left Icon"))
-            .child(h_stack().gap_2().children(states.clone().map(|state| {
-                let state_name = state.as_str().clone();
+                                v_stack()
+                                    .gap_1()
+                                    .child(
+                                        label(&state_name)
+                                            .color(ui::LabelColor::Muted)
+                                            .size(ui::LabelSize::Small),
+                                    )
+                                    .child(
+                                        button("Label").variant(ButtonVariant::Ghost).state(state),
+                                    )
+                            })))
+                            .child(Story::label("Ghost With Left Icon"))
+                            .child(h_stack().gap_2().children(states.clone().map(|state| {
+                                let state_name = state.as_str().clone();
 
-                v_stack()
-                    .gap_1()
-                    .child(
-                        label(&state_name)
-                            .color(ui::LabelColor::Muted)
-                            .size(ui::LabelSize::Small),
-                    )
-                    .child(
-                        button("Label")
-                            .variant(ButtonVariant::Ghost)
-                            .icon(IconAsset::Plus)
-                            .icon_position(IconPosition::Left)
-                            .state(state),
-                    )
-            })))
-            .child(Story::label("Ghost With Right Icon"))
-            .child(h_stack().gap_2().children(states.clone().map(|state| {
-                let state_name = state.as_str().clone();
+                                v_stack()
+                                    .gap_1()
+                                    .child(
+                                        label(&state_name)
+                                            .color(ui::LabelColor::Muted)
+                                            .size(ui::LabelSize::Small),
+                                    )
+                                    .child(
+                                        button("Label")
+                                            .variant(ButtonVariant::Ghost)
+                                            .icon(IconAsset::Plus)
+                                            .icon_position(IconPosition::Left)
+                                            .state(state),
+                                    )
+                            })))
+                            .child(Story::label("Ghost With Right Icon"))
+                            .child(h_stack().gap_2().children(states.clone().map(|state| {
+                                let state_name = state.as_str().clone();
 
-                v_stack()
-                    .gap_1()
-                    .child(
-                        label(&state_name)
-                            .color(ui::LabelColor::Muted)
-                            .size(ui::LabelSize::Small),
+                                v_stack()
+                                    .gap_1()
+                                    .child(
+                                        label(&state_name)
+                                            .color(ui::LabelColor::Muted)
+                                            .size(ui::LabelSize::Small),
+                                    )
+                                    .child(
+                                        button("Label")
+                                            .variant(ButtonVariant::Ghost)
+                                            .icon(IconAsset::Plus)
+                                            .icon_position(IconPosition::Right)
+                                            .state(state),
+                                    )
+                            }))),
                     )
                     .child(
-                        button("Label")
-                            .variant(ButtonVariant::Ghost)
-                            .icon(IconAsset::Plus)
-                            .icon_position(IconPosition::Right)
-                            .state(state),
-                    )
-            })))
-            .child(Story::label("Filled"))
-            .child(h_stack().gap_2().children(states.clone().map(|state| {
-                let state_name = state.as_str().clone();
+                        div()
+                            .child(Story::label("Filled"))
+                            .child(h_stack().gap_2().children(states.clone().map(|state| {
+                                let state_name = state.as_str().clone();
 
-                v_stack()
-                    .gap_1()
-                    .child(
-                        label(&state_name)
-                            .color(ui::LabelColor::Muted)
-                            .size(ui::LabelSize::Small),
-                    )
-                    .child(button("Label").variant(ButtonVariant::Filled).state(state))
-            })))
-            .child(Story::label("Filled – Left Button"))
-            .child(h_stack().gap_2().children(states.clone().map(|state| {
-                let state_name = state.as_str().clone();
+                                v_stack()
+                                    .gap_1()
+                                    .child(
+                                        label(&state_name)
+                                            .color(ui::LabelColor::Muted)
+                                            .size(ui::LabelSize::Small),
+                                    )
+                                    .child(
+                                        button("Label").variant(ButtonVariant::Filled).state(state),
+                                    )
+                            })))
+                            .child(Story::label("Filled – Left Button"))
+                            .child(h_stack().gap_2().children(states.clone().map(|state| {
+                                let state_name = state.as_str().clone();
 
-                v_stack()
-                    .gap_1()
-                    .child(
-                        label(&state_name)
-                            .color(ui::LabelColor::Muted)
-                            .size(ui::LabelSize::Small),
-                    )
-                    .child(
-                        button("Label")
-                            .variant(ButtonVariant::Filled)
-                            .icon(IconAsset::Plus)
-                            .icon_position(IconPosition::Left)
-                            .state(state),
-                    )
-            })))
-            .child(Story::label("Filled – Right Button"))
-            .child(h_stack().gap_2().children(states.clone().map(|state| {
-                let state_name = state.as_str().clone();
+                                v_stack()
+                                    .gap_1()
+                                    .child(
+                                        label(&state_name)
+                                            .color(ui::LabelColor::Muted)
+                                            .size(ui::LabelSize::Small),
+                                    )
+                                    .child(
+                                        button("Label")
+                                            .variant(ButtonVariant::Filled)
+                                            .icon(IconAsset::Plus)
+                                            .icon_position(IconPosition::Left)
+                                            .state(state),
+                                    )
+                            })))
+                            .child(Story::label("Filled – Right Button"))
+                            .child(h_stack().gap_2().children(states.clone().map(|state| {
+                                let state_name = state.as_str().clone();
 
-                v_stack()
-                    .gap_1()
-                    .child(
-                        label(&state_name)
-                            .color(ui::LabelColor::Muted)
-                            .size(ui::LabelSize::Small),
+                                v_stack()
+                                    .gap_1()
+                                    .child(
+                                        label(&state_name)
+                                            .color(ui::LabelColor::Muted)
+                                            .size(ui::LabelSize::Small),
+                                    )
+                                    .child(
+                                        button("Label")
+                                            .variant(ButtonVariant::Filled)
+                                            .icon(IconAsset::Plus)
+                                            .icon_position(IconPosition::Right)
+                                            .state(state),
+                                    )
+                            }))),
                     )
                     .child(
-                        button("Label")
-                            .variant(ButtonVariant::Filled)
-                            .icon(IconAsset::Plus)
-                            .icon_position(IconPosition::Right)
-                            .state(state),
-                    )
-            })))
+                        div()
+                            .child(Story::label("Fixed With"))
+                            .child(h_stack().gap_2().children(states.clone().map(|state| {
+                                let state_name = state.as_str().clone();
+
+                                v_stack()
+                                    .gap_1()
+                                    .child(
+                                        label(&state_name)
+                                            .color(ui::LabelColor::Muted)
+                                            .size(ui::LabelSize::Small),
+                                    )
+                                    .child(
+                                        button("Label")
+                                            .variant(ButtonVariant::Filled)
+                                            .state(state)
+                                            .width(Some(rems(6.).into())),
+                                    )
+                            })))
+                            .child(Story::label("Fixed With – Left Icon"))
+                            .child(h_stack().gap_2().children(states.clone().map(|state| {
+                                let state_name = state.as_str().clone();
+
+                                v_stack()
+                                    .gap_1()
+                                    .child(
+                                        label(&state_name)
+                                            .color(ui::LabelColor::Muted)
+                                            .size(ui::LabelSize::Small),
+                                    )
+                                    .child(
+                                        button("Label")
+                                            .variant(ButtonVariant::Filled)
+                                            .state(state)
+                                            .icon(IconAsset::Plus)
+                                            .icon_position(IconPosition::Left)
+                                            .width(Some(rems(6.).into())),
+                                    )
+                            })))
+                            .child(Story::label("Fixed With – Right Icon"))
+                            .child(h_stack().gap_2().children(states.clone().map(|state| {
+                                let state_name = state.as_str().clone();
+
+                                v_stack()
+                                    .gap_1()
+                                    .child(
+                                        label(&state_name)
+                                            .color(ui::LabelColor::Muted)
+                                            .size(ui::LabelSize::Small),
+                                    )
+                                    .child(
+                                        button("Label")
+                                            .variant(ButtonVariant::Filled)
+                                            .state(state)
+                                            .icon(IconAsset::Plus)
+                                            .icon_position(IconPosition::Right)
+                                            .width(Some(rems(6.).into())),
+                                    )
+                            }))),
+                    ),
+            )
     }
 }

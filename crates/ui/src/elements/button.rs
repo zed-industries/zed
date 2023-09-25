@@ -1,5 +1,6 @@
 use crate::{h_stack, icon, label, prelude::*, Icon, IconAsset, IconColor, Label, LabelColor};
 use crate::{theme, LabelSize};
+use gpui2::geometry::DefiniteLength;
 use gpui2::style::StyleHelpers;
 use gpui2::{Element, Hsla, IntoElement, ParentElement, ViewContext};
 
@@ -17,6 +18,7 @@ pub struct Button {
     state: InteractionState,
     icon: Option<IconAsset>,
     icon_position: Option<IconPosition>,
+    width: Option<DefiniteLength>,
 }
 
 pub fn button(label: &'static str) -> Button {
@@ -26,6 +28,7 @@ pub fn button(label: &'static str) -> Button {
         state: Default::default(),
         icon: None,
         icon_position: None,
+        width: Default::default(),
     }
 }
 
@@ -50,6 +53,11 @@ impl Button {
             panic!("An icon must be present if an icon_position is provided.");
         }
         self.icon_position = Some(icon_position);
+        self
+    }
+
+    pub fn width(mut self, width: Option<DefiniteLength>) -> Self {
+        self.width = width;
         self
     }
 
@@ -127,6 +135,10 @@ impl Button {
                     .child(self.render_label())
             }
             (_, _) => el = el.child(self.render_label()),
+        }
+
+        if let Some(width) = self.width {
+            el = el.w(width).justify_center();
         }
 
         el
