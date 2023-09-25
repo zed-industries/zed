@@ -1,13 +1,12 @@
 use anyhow::{anyhow, bail, Result};
-use async_compression::futures::bufread::GzipDecoder;
-use async_tar::Archive;
+
 use async_trait::async_trait;
 pub use language::*;
 use lsp::{LanguageServerBinary, SymbolKind};
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use settings::Setting;
-use smol::{fs, io::BufReader, stream::StreamExt};
+use smol::{fs, stream::StreamExt};
 use std::{any::Any, env::consts, ops::Deref, path::PathBuf, sync::Arc};
 use util::{
     async_iife,

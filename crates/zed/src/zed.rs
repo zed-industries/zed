@@ -2388,6 +2388,7 @@ mod tests {
 
     #[gpui::test]
     fn test_bundled_languages(cx: &mut AppContext) {
+        cx.set_global(SettingsStore::test(cx));
         let mut languages = LanguageRegistry::test();
         languages.set_executor(cx.background().clone());
         let languages = Arc::new(languages);
