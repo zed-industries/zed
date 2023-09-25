@@ -239,8 +239,24 @@ impl Prettier {
                 log::warn!("Found multiple parsers with plugins {parsers_with_plugins:?}, will select only one: {selected_parser_with_plugins:?}");
             }
 
-            let plugin_name_into_path = |plugin_name: &str| self.prettier_dir.join("node_modules").join(plugin_name).join("dist").join("index.mjs");
-            let (parser, plugins) = match selected_parser_with_plugins {
+            let prettier_node_modules = self.prettier_dir.join("node_modules");
+            anyhow::ensure!(prettier_node_modules.is_dir(), "Prettier node_modules dir does not exist: {prettier_node_modules:?}");
+            let plugin_name_into_path = |plugin_name: &str| {
+                let prettier_plugin_dir = prettier_node_modules.join(plugin_name);
+                for possible_plugin_path in [
+                    prettier_plugin_dir.join("dist").join("index.mjs"),
+                    prettier_plugin_dir.join("index.mjs"),
+                    prettier_plugin_dir.join("plugin.js"),
+                    prettier_plugin_dir.join("index.js"),
+                    prettier_plugin_dir,
+                ] {
+                    if possible_plugin_path.is_file() {
+                        return Some(possible_plugin_path);
+                    }
+                }
+                None
+            };
+            let (parser, located_plugins) = match selected_parser_with_plugins {
                 Some((parser, plugins)) => {
                     // Tailwind plugin requires being added last
                     // https://github.com/tailwindlabs/prettier-plugin-tailwindcss#compatibility-with-other-prettier-plugins
@@ -253,9 +269,9 @@ impl Prettier {
                         } else {
                             true
                         }
-                    }).map(|plugin_name| plugin_name_into_path(plugin_name)).collect::<Vec<_>>();
+                    }).map(|plugin_name| (plugin_name, plugin_name_into_path(plugin_name))).collect::<Vec<_>>();
                     if add_tailwind_back {
-                        plugins.push(plugin_name_into_path(TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME));
+                        plugins.push((&TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME, plugin_name_into_path(TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME)));
                     }
                     (Some(parser.to_string()), plugins)
                 },
@@ -285,9 +301,18 @@ impl Prettier {
             } else {
                 None
             };
+
+            let plugins = located_plugins.into_iter().filter_map(|(plugin_name, located_plugin_path)| {
+                match located_plugin_path {
+                    Some(path) => Some(path),
+                    None => {
+                        log::error!("Have not found plugin path for {plugin_name:?} inside {prettier_node_modules:?}");
+                        None},
+                }
+            }).collect();
             log::debug!("Formatting file {:?} with prettier, plugins :{plugins:?}, options: {prettier_options:?}", buffer.file().map(|f| f.full_path(cx)));
 
-            FormatParams {
+            anyhow::Ok(FormatParams {
                 text: buffer.text(),
                 options: FormatOptions {
                     parser,
@@ -295,8 +320,8 @@ impl Prettier {
                     path: buffer_path,
                     prettier_options,
                 },
-            }
-        });
+            })
+        }).context("prettier params calculation")?;
         let response = self
             .server
             .request::<Format>(params)
