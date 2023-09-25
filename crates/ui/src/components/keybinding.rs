@@ -3,10 +3,13 @@ use std::collections::HashSet;
 use gpui2::elements::div;
 use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
+use strum::{EnumIter, IntoEnumIterator};
 
 use crate::theme;
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+// NOTE: The order the modifier keys appear in this enum impacts the order in
+// which they are rendered in the UI.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
 pub enum ModifierKey {
     Control,
     Alt,
@@ -103,12 +106,13 @@ impl Keybinding {
                 div()
                     .flex()
                     .gap_1()
-                    .children(
-                        modifiers
-                            .0
-                            .iter()
-                            .map(|modifier| Key::new(modifier.glyph())),
-                    )
+                    .children(ModifierKey::iter().filter_map(|modifier| {
+                        if modifiers.0.contains(&modifier) {
+                            Some(Key::new(modifier.glyph()))
+                        } else {
+                            None
+                        }
+                    }))
                     .child(Key::new(key.clone()))
             }))
     }
