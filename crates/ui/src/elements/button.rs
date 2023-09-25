@@ -69,7 +69,6 @@ impl Button {
         let system_color = SystemColor::new();
 
         match (self.variant, self.state) {
-            (_, InteractionState::Focused) => theme.lowest.accent.default.background,
             (ButtonVariant::Ghost, InteractionState::Hovered) => {
                 theme.lowest.base.hovered.background
             }
@@ -115,13 +114,27 @@ impl Button {
     }
 
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
+        let theme = theme(cx);
         let icon_color = self.icon_color();
+        let system_color = SystemColor::new();
+        let border_color: Hsla;
+
+        match self.state {
+            InteractionState::Focused => {
+                border_color = theme.lowest.accent.default.border;
+            }
+            _ => {
+                border_color = system_color.transparent;
+            }
+        }
 
         let mut el = h_stack()
             .h_6()
             .px_1()
             .items_center()
             .rounded_md()
+            .border()
+            .border_color(border_color)
             .fill(self.background_color(cx));
 
         match (self.icon, self.icon_position) {
