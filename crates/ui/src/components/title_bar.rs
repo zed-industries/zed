@@ -8,8 +8,8 @@ use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
 use crate::prelude::Shape;
 use crate::{
-    follow_group, icon_button, theme, tool_divider, traffic_lights, Avatar, Button, IconAsset,
-    IconColor,
+    follow_group, icon_button, theme, traffic_lights, Avatar, Button, IconAsset, IconColor,
+    ToolDivider,
 };
 
 #[derive(Element)]
@@ -89,7 +89,7 @@ impl<V: 'static> TitleBar<V> {
                             .child(icon_button().icon(IconAsset::FolderX))
                             .child(icon_button().icon(IconAsset::Close)),
                     )
-                    .child(tool_divider())
+                    .child(ToolDivider::new())
                     .child(
                         div()
                             .px_2()

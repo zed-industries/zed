@@ -5,7 +5,7 @@ use gpui2::{elements::div, IntoElement};
 use gpui2::{Element, ParentElement, ViewContext};
 
 use crate::theme::{theme, Theme};
-use crate::{icon_button, tool_divider, Button, IconAsset};
+use crate::{icon_button, Button, IconAsset, ToolDivider};
 
 #[derive(Default, PartialEq)]
 pub enum Tool {
@@ -108,7 +108,7 @@ impl<V: 'static> StatusBar<V> {
             .gap_1()
             .child(icon_button().icon(IconAsset::FileTree))
             .child(icon_button().icon(IconAsset::Hash))
-            .child(tool_divider())
+            .child(ToolDivider::new())
             .child(icon_button().icon(IconAsset::XCircle))
     }
     fn right_tools(&self, theme: &Theme) -> impl Element<V> {
@@ -124,7 +124,7 @@ impl<V: 'static> StatusBar<V> {
                     .child(Button::new("116:25"))
                     .child(Button::new("Rust")),
             )
-            .child(tool_divider())
+            .child(ToolDivider::new())
             .child(
                 div()
                     .flex()
@@ -133,7 +133,7 @@ impl<V: 'static> StatusBar<V> {
                     .child(icon_button().icon(IconAsset::Copilot))
                     .child(icon_button().icon(IconAsset::Envelope)),
             )
-            .child(tool_divider())
+            .child(ToolDivider::new())
             .child(
                 div()
                     .flex()
