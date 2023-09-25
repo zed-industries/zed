@@ -18,18 +18,18 @@ pub struct Palette<V: 'static> {
     default_order: OrderMethod,
 }
 
-pub fn palette<V: 'static>(scroll_state: ScrollState) -> Palette<V> {
-    Palette {
-        view_type: PhantomData,
-        scroll_state,
-        input_placeholder: "Find something...",
-        empty_string: "No items found.",
-        items: vec![],
-        default_order: OrderMethod::default(),
-    }
-}
-
 impl<V: 'static> Palette<V> {
+    pub fn new(scroll_state: ScrollState) -> Self {
+        Self {
+            view_type: PhantomData,
+            scroll_state,
+            input_placeholder: "Find something...",
+            empty_string: "No items found.",
+            items: vec![],
+            default_order: OrderMethod::default(),
+        }
+    }
+
     pub fn items(mut self, mut items: Vec<PaletteItem>) -> Self {
         items.sort_by_key(|item| item.label);
         self.items = items;
