@@ -589,14 +589,20 @@
     }
   },
   {
-    "context": "CollabPanel",
+    "context": "CollabPanel && not_editing",
     "bindings": {
       "ctrl-backspace": "collab_panel::Remove",
       "space": "menu::Confirm"
     }
   },
   {
-    "context": "CollabPanel > Editor",
+    "context": "(CollabPanel && editing) > Editor",
+    "bindings": {
+      "space": "collab_panel::InsertSpace"
+    }
+  },
+  {
+    "context": "(CollabPanel && not_editing) > Editor",
     "bindings": {
       "cmd-c": "collab_panel::StartLinkChannel",
       "cmd-x": "collab_panel::StartMoveChannel",
