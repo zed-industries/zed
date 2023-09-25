@@ -19,23 +19,27 @@ impl Story {
             .fill(theme.lowest.base.default.background)
     }
 
-    pub fn title<V: 'static>(title: &str) -> impl Element<V> {
+    pub fn title<V: 'static>(cx: &mut ViewContext<V>, title: &str) -> impl Element<V> {
+        let theme = theme(cx);
+
         div()
             .text_xl()
-            .text_color(rgb::<Hsla>(0xffffff))
+            .text_color(theme.lowest.base.default.foreground)
             .child(title.to_owned())
     }
 
-    pub fn title_for<V: 'static, T>() -> impl Element<V> {
-        Self::title(std::any::type_name::<T>())
+    pub fn title_for<V: 'static, T>(cx: &mut ViewContext<V>) -> impl Element<V> {
+        Self::title(cx, std::any::type_name::<T>())
     }
 
-    pub fn label<V: 'static>(label: &str) -> impl Element<V> {
+    pub fn label<V: 'static>(cx: &mut ViewContext<V>, label: &str) -> impl Element<V> {
+        let theme = theme(cx);
+
         div()
             .mt_4()
             .mb_2()
             .text_xs()
-            .text_color(rgb::<Hsla>(0xffffff))
+            .text_color(theme.lowest.base.default.foreground)
             .child(label.to_owned())
     }
 }

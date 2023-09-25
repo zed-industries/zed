@@ -16,14 +16,14 @@ impl ButtonStory {
         let states = InteractionState::iter();
 
         Story::container(cx)
-            .child(Story::title_for::<_, Button>())
+            .child(Story::title_for::<_, Button>(cx))
             .child(
                 div()
                     .flex()
                     .gap_8()
                     .child(
                         div()
-                            .child(Story::label("Ghost (Default)"))
+                            .child(Story::label(cx, "Ghost (Default)"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
                                 v_stack()
                                     .gap_1()
@@ -38,7 +38,7 @@ impl ButtonStory {
                                             .state(state),
                                     )
                             })))
-                            .child(Story::label("Ghost – Left Icon"))
+                            .child(Story::label(cx, "Ghost – Left Icon"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
                                 v_stack()
                                     .gap_1()
@@ -55,7 +55,7 @@ impl ButtonStory {
                                             .state(state),
                                     )
                             })))
-                            .child(Story::label("Ghost – Right Icon"))
+                            .child(Story::label(cx, "Ghost – Right Icon"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
                                 v_stack()
                                     .gap_1()
@@ -75,7 +75,7 @@ impl ButtonStory {
                     )
                     .child(
                         div()
-                            .child(Story::label("Filled"))
+                            .child(Story::label(cx, "Filled"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
                                 v_stack()
                                     .gap_1()
@@ -90,7 +90,7 @@ impl ButtonStory {
                                             .state(state),
                                     )
                             })))
-                            .child(Story::label("Filled – Left Button"))
+                            .child(Story::label(cx, "Filled – Left Button"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
                                 v_stack()
                                     .gap_1()
@@ -107,7 +107,7 @@ impl ButtonStory {
                                             .state(state),
                                     )
                             })))
-                            .child(Story::label("Filled – Right Button"))
+                            .child(Story::label(cx, "Filled – Right Button"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
                                 v_stack()
                                     .gap_1()
@@ -127,7 +127,7 @@ impl ButtonStory {
                     )
                     .child(
                         div()
-                            .child(Story::label("Fixed With"))
+                            .child(Story::label(cx, "Fixed With"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
                                 v_stack()
                                     .gap_1()
@@ -143,7 +143,7 @@ impl ButtonStory {
                                             .width(Some(rems(6.).into())),
                                     )
                             })))
-                            .child(Story::label("Fixed With – Left Icon"))
+                            .child(Story::label(cx, "Fixed With – Left Icon"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
                                 v_stack()
                                     .gap_1()
@@ -161,7 +161,7 @@ impl ButtonStory {
                                             .width(Some(rems(6.).into())),
                                     )
                             })))
-                            .child(Story::label("Fixed With – Right Icon"))
+                            .child(Story::label(cx, "Fixed With – Right Icon"))
                             .child(h_stack().gap_2().children(states.clone().map(|state| {
                                 v_stack()
                                     .gap_1()

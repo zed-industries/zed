@@ -9,10 +9,10 @@ pub struct TrafficLightsStory {}
 impl TrafficLightsStory {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         Story::container(cx)
-            .child(Story::title_for::<_, ui::TrafficLights>())
-            .child(Story::label("Default"))
+            .child(Story::title_for::<_, ui::TrafficLights>(cx))
+            .child(Story::label(cx, "Default"))
             .child(traffic_lights())
-            .child(Story::label("Unfocused"))
+            .child(Story::label(cx, "Unfocused"))
             .child(traffic_lights().window_has_focus(false))
     }
 }

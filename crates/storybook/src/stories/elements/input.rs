@@ -11,8 +11,8 @@ pub struct InputStory {}
 impl InputStory {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         Story::container(cx)
-            .child(Story::title_for::<_, ui::Input>())
-            .child(Story::label("Default"))
+            .child(Story::title_for::<_, ui::Input>(cx))
+            .child(Story::label(cx, "Default"))
             .child(div().flex().child(input("Search")))
     }
 }

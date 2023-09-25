@@ -14,8 +14,8 @@ impl IconStory {
         let icons = IconAsset::iter();
 
         Story::container(cx)
-            .child(Story::title_for::<_, ui::Icon>())
-            .child(Story::label("All Icons"))
+            .child(Story::title_for::<_, ui::Icon>(cx))
+            .child(Story::label(cx, "All Icons"))
             .child(div().flex().gap_3().children(icons.map(icon)))
     }
 }

@@ -18,8 +18,8 @@ impl FacepileStory {
         ];
 
         Story::container(cx)
-            .child(Story::title_for::<_, ui::Facepile>())
-            .child(Story::label("Default"))
+            .child(Story::title_for::<_, ui::Facepile>(cx))
+            .child(Story::label(cx, "Default"))
             .child(
                 div()
                     .flex()
@@ -28,7 +28,7 @@ impl FacepileStory {
                     .child(facepile(avatars.clone().into_iter().take(2)))
                     .child(facepile(avatars.clone().into_iter().take(3))),
             )
-            .child(Story::label("Rounded rectangle avatars"))
+            .child(Story::label(cx, "Rounded rectangle avatars"))
             .child({
                 let shape = Shape::RoundedRectangle;
 
