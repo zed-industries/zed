@@ -1,6 +1,6 @@
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
-use ui::avatar;
 use ui::prelude::*;
+use ui::Avatar;
 
 use crate::story::Story;
 
@@ -12,12 +12,12 @@ impl AvatarStory {
         Story::container(cx)
             .child(Story::title_for::<_, ui::Avatar>(cx))
             .child(Story::label(cx, "Default"))
-            .child(avatar(
+            .child(Avatar::new(
                 "https://avatars.githubusercontent.com/u/1714999?v=4",
             ))
             .child(Story::label(cx, "Rounded rectangle"))
             .child(
-                avatar("https://avatars.githubusercontent.com/u/1714999?v=4")
+                Avatar::new("https://avatars.githubusercontent.com/u/1714999?v=4")
                     .shape(Shape::RoundedRectangle),
             )
     }

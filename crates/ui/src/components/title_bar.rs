@@ -8,7 +8,7 @@ use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
 use crate::prelude::Shape;
 use crate::{
-    avatar, follow_group, icon_button, theme, tool_divider, traffic_lights, Button, IconAsset,
+    follow_group, icon_button, theme, tool_divider, traffic_lights, Avatar, Button, IconAsset,
     IconColor,
 };
 
@@ -38,10 +38,10 @@ impl<V: 'static> TitleBar<V> {
         let has_focus = cx.window_is_active();
 
         let player_list = vec![
-            avatar("https://avatars.githubusercontent.com/u/1714999?v=4"),
-            avatar("https://avatars.githubusercontent.com/u/482957?v=4"),
-            avatar("https://avatars.githubusercontent.com/u/326587?v=4"),
-            avatar("https://avatars.githubusercontent.com/u/1789?v=4"),
+            Avatar::new("https://avatars.githubusercontent.com/u/1714999?v=4"),
+            Avatar::new("https://avatars.githubusercontent.com/u/482957?v=4"),
+            Avatar::new("https://avatars.githubusercontent.com/u/326587?v=4"),
+            Avatar::new("https://avatars.githubusercontent.com/u/1789?v=4"),
         ];
 
         div()
@@ -106,7 +106,7 @@ impl<V: 'static> TitleBar<V> {
                     )
                     .child(
                         div().px_2().flex().items_center().child(
-                            avatar("https://avatars.githubusercontent.com/u/1714999?v=4")
+                            Avatar::new("https://avatars.githubusercontent.com/u/1714999?v=4")
                                 .shape(Shape::RoundedRectangle),
                         ),
                     ),

@@ -11,14 +11,14 @@ pub struct Avatar {
     shape: Shape,
 }
 
-pub fn avatar(src: impl Into<ArcCow<'static, str>>) -> Avatar {
-    Avatar {
-        src: src.into(),
-        shape: Shape::Circle,
-    }
-}
-
 impl Avatar {
+    pub fn new(src: impl Into<ArcCow<'static, str>>) -> Self {
+        Self {
+            src: src.into(),
+            shape: Shape::Circle,
+        }
+    }
+
     pub fn shape(mut self, shape: Shape) -> Self {
         self.shape = shape;
         self
