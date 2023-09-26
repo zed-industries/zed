@@ -1,7 +1,7 @@
 use gpui2::elements::div::{div, Div};
 use gpui2::style::StyleHelpers;
 
-pub trait Stack: Sized + StyleHelpers {
+pub trait Stack: StyleHelpers {
     /// Horizontally stacks elements.
     fn h_stack(self) -> Self {
         self.flex().flex_row().items_center()
