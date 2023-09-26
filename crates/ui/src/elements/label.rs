@@ -76,8 +76,7 @@ impl Label {
             LabelColor::Accent => theme.lowest.accent.default.foreground,
         };
 
-        // TODO(Marshall): Ask Nate what color from the theme we should be using for the highlights.
-        let highlight_color = gpui2::rgb::<Hsla>(0xff00ff);
+        let highlight_color = theme.lowest.accent.default.foreground;
 
         let mut highlight_indices = self.highlight_indices.iter().copied().peekable();
 
