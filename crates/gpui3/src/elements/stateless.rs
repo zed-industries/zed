@@ -1,6 +1,5 @@
-use std::marker::PhantomData;
-
 use crate::Element;
+use std::marker::PhantomData;
 
 pub struct Stateless<E: Element<State = ()>, S> {
     element: E,

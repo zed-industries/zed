@@ -31,13 +31,13 @@ impl App {
         let dispatcher = platform.dispatcher();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
         let mut entities = SlotMap::with_key();
-        let unit_entity_id = entities.insert(Some(Box::new(()) as Box<dyn Any + Send>));
+        let unit_entity = Handle::new(entities.insert(Some(Box::new(()) as Box<dyn Any + Send>)));
         Self(Arc::new_cyclic(|this| {
             Mutex::new(AppContext {
                 this: this.clone(),
                 platform: MainThreadOnly::new(platform, dispatcher),
                 text_system,
-                unit_entity_id,
+                unit_entity,
                 entities,
                 windows: SlotMap::with_key(),
                 pending_updates: 0,
@@ -67,7 +67,7 @@ pub struct AppContext {
     this: Weak<Mutex<AppContext>>,
     platform: MainThreadOnly<dyn Platform>,
     text_system: Arc<TextSystem>,
-    pub(crate) unit_entity_id: EntityId,
+    pub(crate) unit_entity: Handle<()>,
     pub(crate) entities: SlotMap<EntityId, Option<Box<dyn Any + Send>>>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pending_updates: usize,
@@ -82,8 +82,12 @@ impl AppContext {
         &self.text_system
     }
 
+    pub fn to_async(&self) -> AsyncContext {
+        AsyncContext(self.this.clone())
+    }
+
     pub fn spawn_on_main<F, R>(
-        &mut self,
+        &self,
         f: impl FnOnce(&dyn Platform, &mut Self) -> F + Send + 'static,
     ) -> impl Future<Output = R>
     where
@@ -97,7 +101,7 @@ impl AppContext {
         })
     }
 
-    pub fn open_window<S: 'static + Send>(
+    pub fn open_window<S: 'static + Send + Sync>(
         &mut self,
         options: crate::WindowOptions,
         build_root_view: impl FnOnce(&mut WindowContext) -> RootView<S> + Send + 'static,
@@ -105,9 +109,9 @@ impl AppContext {
         let id = self.windows.insert(None);
         let handle = WindowHandle::new(id);
         self.spawn_on_main(move |platform, cx| {
-            let mut window = Window::new(handle.into(), options, platform);
+            let mut window = Window::new(handle.into(), options, platform, cx);
             let root_view = build_root_view(&mut WindowContext::mutable(cx, &mut window));
-            window.root_view.replace(Box::new(root_view));
+            window.root_view.replace(root_view.into_any());
             cx.windows.get_mut(id).unwrap().replace(window);
             future::ready(handle)
         })
@@ -184,6 +188,7 @@ impl AppContext {
 
 impl Context for AppContext {
     type EntityContext<'a, 'w, T: Send + Sync + 'static> = ModelContext<'a, T>;
+    type Result<T> = T;
 
     fn entity<T: Send + Sync + 'static>(
         &mut self,
@@ -213,6 +218,54 @@ impl Context for AppContext {
         let result = update(&mut *entity, &mut ModelContext::mutable(self, handle.id));
         self.entities.get_mut(handle.id).unwrap().replace(entity);
         result
+    }
+}
+
+#[derive(Clone)]
+pub struct AsyncContext(Weak<Mutex<AppContext>>);
+
+impl Context for AsyncContext {
+    type EntityContext<'a, 'b, T: Send + Sync + 'static> = ModelContext<'a, T>;
+    type Result<T> = Result<T>;
+
+    fn entity<T: Send + Sync + 'static>(
+        &mut self,
+        build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
+    ) -> Result<Handle<T>> {
+        let app = self
+            .0
+            .upgrade()
+            .ok_or_else(|| anyhow!("app was released"))?;
+        let mut lock = app.lock();
+        Ok(lock.entity(build_entity))
+    }
+
+    fn update_entity<T: Send + Sync + 'static, R>(
+        &mut self,
+        handle: &Handle<T>,
+        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
+    ) -> Result<R> {
+        let app = self
+            .0
+            .upgrade()
+            .ok_or_else(|| anyhow!("app was released"))?;
+        let mut lock = app.lock();
+        Ok(lock.update_entity(handle, update))
+    }
+}
+
+impl AsyncContext {
+    pub fn update_window<T>(
+        &self,
+        handle: AnyWindowHandle,
+        update: impl FnOnce(&mut WindowContext) -> T + Send + Sync,
+    ) -> Result<T> {
+        let app = self
+            .0
+            .upgrade()
+            .ok_or_else(|| anyhow!("app was released"))?;
+        let mut app_context = app.lock();
+        app_context.update_window(handle.id, update)
     }
 }
 
@@ -293,6 +346,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
 
 impl<'a, T: 'static> Context for ModelContext<'a, T> {
     type EntityContext<'b, 'c, U: Send + Sync + 'static> = ModelContext<'b, U>;
+    type Result<U> = U;
 
     fn entity<U: Send + Sync + 'static>(
         &mut self,
@@ -341,7 +395,7 @@ impl<T: Send + Sync + 'static> Handle<T> {
         &self,
         cx: &mut C,
         update: impl FnOnce(&mut T, &mut C::EntityContext<'_, '_, T>) -> R,
-    ) -> R {
+    ) -> C::Result<R> {
         cx.update_entity(self, update)
     }
 }
@@ -380,12 +434,15 @@ impl<T: Send + Sync + 'static> WeakHandle<T> {
         &self,
         cx: &mut C,
         update: impl FnOnce(&mut T, &mut C::EntityContext<'_, '_, T>) -> R,
-    ) -> Result<R> {
-        if let Some(this) = self.upgrade(cx) {
-            Ok(cx.update_entity(&this, update))
-        } else {
-            Err(anyhow!("entity released"))
-        }
+    ) -> Result<R>
+    where
+        Result<C::Result<R>>: crate::Flatten<R>,
+    {
+        crate::Flatten::flatten(
+            self.upgrade(cx)
+                .ok_or_else(|| anyhow!("entity release"))
+                .map(|this| cx.update_entity(&this, update)),
+        )
     }
 }
 

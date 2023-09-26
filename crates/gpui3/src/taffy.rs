@@ -66,6 +66,16 @@ impl TaffyLayoutEngine {
             .into())
     }
 
+    pub fn compute_layout(
+        &mut self,
+        id: LayoutId,
+        available_space: Size<AvailableSpace>,
+    ) -> Result<()> {
+        self.taffy
+            .compute_layout(id.into(), available_space.into())?;
+        Ok(())
+    }
+
     pub fn layout(&mut self, id: LayoutId) -> Result<Layout> {
         if let Some(layout) = self.absolute_layouts.get(&id).cloned() {
             return Ok(layout);
@@ -102,16 +112,6 @@ impl From<LayoutId> for NodeId {
     fn from(layout_id: LayoutId) -> NodeId {
         layout_id.0
     }
-}
-
-#[derive(Copy, Clone, Debug)]
-pub enum AvailableSpace {
-    /// The amount of space available is the specified number of pixels
-    Definite(Pixels),
-    /// The amount of space available is indefinite and the node should be laid out under a min-content constraint
-    MinContent,
-    /// The amount of space available is indefinite and the node should be laid out under a max-content constraint
-    MaxContent,
 }
 
 struct Measureable<F>(F);
@@ -334,22 +334,39 @@ impl<T: Into<U> + Clone + Debug, U> From<Size<T>> for taffy::geometry::Size<U> {
 //     }
 // }
 
-// impl From<TaffySize<TaffyAvailableSpace>> for Size<AvailableSpace> {
-//     fn from(taffy_size: TaffySize<TaffyAvailableSpace>) -> Self {
-//         Size {
-//             width: From::from(taffy_size.width),
-//             height: From::from(taffy_size.height),
-//         }
-//     }
-// }
+#[derive(Copy, Clone, Debug)]
+pub enum AvailableSpace {
+    /// The amount of space available is the specified number of pixels
+    Definite(Pixels),
+    /// The amount of space available is indefinite and the node should be laid out under a min-content constraint
+    MinContent,
+    /// The amount of space available is indefinite and the node should be laid out under a max-content constraint
+    MaxContent,
+}
+
+impl From<AvailableSpace> for TaffyAvailableSpace {
+    fn from(space: AvailableSpace) -> TaffyAvailableSpace {
+        match space {
+            AvailableSpace::Definite(Pixels(value)) => TaffyAvailableSpace::Definite(value),
+            AvailableSpace::MinContent => TaffyAvailableSpace::MinContent,
+            AvailableSpace::MaxContent => TaffyAvailableSpace::MaxContent,
+        }
+    }
+}
 
 impl From<TaffyAvailableSpace> for AvailableSpace {
-    fn from(space: TaffyAvailableSpace) -> Self {
+    fn from(space: TaffyAvailableSpace) -> AvailableSpace {
         match space {
             TaffyAvailableSpace::Definite(value) => AvailableSpace::Definite(Pixels(value)),
             TaffyAvailableSpace::MinContent => AvailableSpace::MinContent,
             TaffyAvailableSpace::MaxContent => AvailableSpace::MaxContent,
         }
+    }
+}
+
+impl From<Pixels> for AvailableSpace {
+    fn from(pixels: Pixels) -> Self {
+        AvailableSpace::Definite(pixels)
     }
 }
 

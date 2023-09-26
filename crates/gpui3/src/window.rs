@@ -1,16 +1,13 @@
 use crate::{
-    px, AppContext, AvailableSpace, Bounds, Context, Effect, EntityId, Handle, LayoutId,
-    MainThreadOnly, Pixels, Platform, PlatformWindow, Point, Reference, Size, Style,
-    TaffyLayoutEngine, TextStyle, TextStyleRefinement, WeakHandle, WindowOptions,
+    px, AnyView, AppContext, AvailableSpace, Bounds, Context, Effect, Element, EntityId, Handle,
+    LayoutId, MainThreadOnly, Pixels, Platform, PlatformWindow, Point, Reference, Scene, Size,
+    Style, TaffyLayoutEngine, TextStyle, TextStyleRefinement, WeakHandle, WindowOptions,
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use refineable::Refineable;
-use std::{
-    any::{Any, TypeId},
-    marker::PhantomData,
-    sync::Arc,
-};
+use std::{any::TypeId, future, marker::PhantomData, sync::Arc};
+use util::ResultExt;
 
 pub struct AnyWindow {}
 
@@ -18,26 +15,51 @@ pub struct Window {
     handle: AnyWindowHandle,
     platform_window: MainThreadOnly<Box<dyn PlatformWindow>>,
     rem_size: Pixels,
+    content_size: Size<Pixels>,
     layout_engine: TaffyLayoutEngine,
     text_style_stack: Vec<TextStyleRefinement>,
-    pub(crate) root_view: Option<Box<dyn Any + Send>>,
+    pub(crate) root_view: Option<AnyView<()>>,
     mouse_position: Point<Pixels>,
+    pub(crate) scene: Scene,
     pub(crate) dirty: bool,
 }
 
 impl Window {
-    pub fn new(handle: AnyWindowHandle, options: WindowOptions, platform: &dyn Platform) -> Self {
+    pub fn new(
+        handle: AnyWindowHandle,
+        options: WindowOptions,
+        platform: &dyn Platform,
+        cx: &mut AppContext,
+    ) -> Self {
         let platform_window = platform.open_window(handle, options);
         let mouse_position = platform_window.mouse_position();
+        let content_size = platform_window.content_size();
+        let scale_factor = platform_window.scale_factor();
+        platform_window.on_resize(Box::new({
+            let handle = handle;
+            let cx = cx.to_async();
+            move |content_size, scale_factor| {
+                cx.update_window(handle, |cx| {
+                    cx.window.scene = Scene::new(scale_factor);
+                    cx.window.content_size = content_size;
+                    cx.window.dirty = true;
+                })
+                .log_err();
+            }
+        }));
+
         let platform_window = MainThreadOnly::new(Arc::new(platform_window), platform.dispatcher());
+
         Window {
             handle,
             platform_window,
             rem_size: px(16.),
+            content_size,
             layout_engine: TaffyLayoutEngine::new(),
             text_style_stack: Vec::new(),
             root_view: None,
             mouse_position,
+            scene: Scene::new(scale_factor),
             dirty: true,
         }
     }
@@ -64,6 +86,28 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             app: Reference::Immutable(app),
             window: Reference::Immutable(window),
         }
+    }
+
+    pub(crate) fn draw(&mut self) -> Result<()> {
+        let unit_entity = self.unit_entity.clone();
+        self.update_entity(&unit_entity, |_, cx| {
+            let mut root_view = cx.window.root_view.take().unwrap();
+            let (root_layout_id, mut frame_state) = root_view.layout(&mut (), cx)?;
+            let available_space = cx.window.content_size.map(Into::into);
+            cx.window
+                .layout_engine
+                .compute_layout(root_layout_id, available_space)?;
+            let layout = cx.window.layout_engine.layout(root_layout_id)?;
+            root_view.paint(layout, &mut (), &mut frame_state, cx)?;
+            cx.window.root_view = Some(root_view);
+            let scene = cx.window.scene.take();
+            let _ = cx.window.platform_window.read(|platform_window| {
+                platform_window.draw(scene);
+                future::ready(())
+            });
+
+            Ok(())
+        })
     }
 
     pub fn request_layout(
@@ -140,6 +184,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
 impl Context for WindowContext<'_, '_> {
     type EntityContext<'a, 'w, T: Send + Sync + 'static> = ViewContext<'a, 'w, T>;
+    type Result<T> = T;
 
     fn entity<T: Send + Sync + 'static>(
         &mut self,
@@ -229,11 +274,11 @@ impl<'a, 'w, T: Send + Sync + 'static> ViewContext<'a, 'w, T> {
     }
 
     pub fn erase_state<R>(&mut self, f: impl FnOnce(&mut ViewContext<()>) -> R) -> R {
-        let unit_entity_id = self.unit_entity_id;
+        let entity_id = self.unit_entity.id;
         let mut cx = ViewContext::mutable(
             &mut *self.window_cx.app,
             &mut *self.window_cx.window,
-            unit_entity_id,
+            entity_id,
         );
         f(&mut cx)
     }
@@ -281,6 +326,7 @@ impl<'a, 'w, T: Send + Sync + 'static> ViewContext<'a, 'w, T> {
 
 impl<'a, 'w, T: 'static> Context for ViewContext<'a, 'w, T> {
     type EntityContext<'b, 'c, U: Send + Sync + 'static> = ViewContext<'b, 'c, U>;
+    type Result<U> = U;
 
     fn entity<T2: Send + Sync + 'static>(
         &mut self,

@@ -1,3 +1,5 @@
+use std::mem;
+
 use super::{Bounds, Hsla, Pixels, Point};
 use crate::{Corners, Edges};
 use bytemuck::{Pod, Zeroable};
@@ -8,7 +10,7 @@ pub type PointF = Point<f32>;
 
 pub struct Scene {
     layers: BTreeMap<u32, SceneLayer>,
-    scale_factor: f32,
+    pub(crate) scale_factor: f32,
 }
 
 #[derive(Default)]
@@ -21,6 +23,13 @@ impl Scene {
         Scene {
             layers: Default::default(),
             scale_factor,
+        }
+    }
+
+    pub fn take(&mut self) -> Scene {
+        Scene {
+            layers: mem::take(&mut self.layers),
+            scale_factor: self.scale_factor,
         }
     }
 

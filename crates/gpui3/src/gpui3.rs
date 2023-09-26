@@ -47,17 +47,34 @@ pub use window::*;
 
 pub trait Context {
     type EntityContext<'a, 'w, T: Send + Sync + 'static>;
+    type Result<T>;
 
     fn entity<T: Send + Sync + 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
-    ) -> Handle<T>;
+    ) -> Self::Result<Handle<T>>;
 
     fn update_entity<T: Send + Sync + 'static, R>(
         &mut self,
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
-    ) -> R;
+    ) -> Self::Result<R>;
+}
+
+pub trait Flatten<T> {
+    fn flatten(self) -> Result<T>;
+}
+
+impl<T> Flatten<T> for Result<Result<T>> {
+    fn flatten(self) -> Result<T> {
+        self?
+    }
+}
+
+impl<T> Flatten<T> for Result<T> {
+    fn flatten(self) -> Result<T> {
+        self
+    }
 }
 
 #[derive(Clone, Eq, PartialEq)]

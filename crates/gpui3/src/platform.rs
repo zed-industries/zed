@@ -136,14 +136,14 @@ pub trait PlatformWindow {
     fn minimize(&self);
     fn zoom(&self);
     fn toggle_full_screen(&self);
-    fn on_event(&mut self, callback: Box<dyn FnMut(Event) -> bool>);
-    fn on_active_status_change(&mut self, callback: Box<dyn FnMut(bool)>);
-    fn on_resize(&mut self, callback: Box<dyn FnMut()>);
-    fn on_fullscreen(&mut self, callback: Box<dyn FnMut(bool)>);
-    fn on_moved(&mut self, callback: Box<dyn FnMut()>);
-    fn on_should_close(&mut self, callback: Box<dyn FnMut() -> bool>);
-    fn on_close(&mut self, callback: Box<dyn FnOnce()>);
-    fn on_appearance_changed(&mut self, callback: Box<dyn FnMut()>);
+    fn on_event(&self, callback: Box<dyn FnMut(Event) -> bool>);
+    fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
+    fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
+    fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>);
+    fn on_moved(&self, callback: Box<dyn FnMut()>);
+    fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>);
+    fn on_close(&self, callback: Box<dyn FnOnce()>);
+    fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
     fn draw(&self, scene: Scene);
 }

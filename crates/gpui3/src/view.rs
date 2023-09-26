@@ -1,13 +1,24 @@
+use parking_lot::Mutex;
+
 use crate::{
     AnyElement, Element, Handle, IntoAnyElement, Layout, LayoutId, Result, ViewContext,
     WindowContext,
 };
-use std::{any::Any, cell::RefCell, marker::PhantomData, rc::Rc, sync::Arc};
+use std::{any::Any, marker::PhantomData, sync::Arc};
 
 pub struct View<S, P> {
     state: Handle<S>,
     render: Arc<dyn Fn(&mut S, &mut ViewContext<S>) -> AnyElement<S> + Send + Sync + 'static>,
     parent_state_type: PhantomData<P>,
+}
+
+impl<S: 'static + Send + Sync, P: 'static + Send> View<S, P> {
+    pub fn into_any(self) -> AnyView<P> {
+        AnyView {
+            view: Arc::new(Mutex::new(self)),
+            parent_state_type: PhantomData,
+        }
+    }
 }
 
 impl<S, P> Clone for View<S, P> {
@@ -30,15 +41,6 @@ pub fn view<S: 'static, P: 'static, E: Element<State = S>>(
         state,
         render: Arc::new(move |state, cx| render(state, cx).into_any()),
         parent_state_type: PhantomData,
-    }
-}
-
-impl<S: Send + Sync + 'static, P: 'static> View<S, P> {
-    pub fn into_any<ParentState>(self) -> AnyView<ParentState> {
-        AnyView {
-            view: Rc::new(RefCell::new(self)),
-            parent_state_type: PhantomData,
-        }
     }
 }
 
@@ -70,7 +72,7 @@ impl<S: Send + Sync + 'static, P: Send + 'static> Element for View<S, P> {
     }
 }
 
-trait ViewObject {
+trait ViewObject: Send + 'static {
     fn layout(&mut self, cx: &mut WindowContext) -> Result<(LayoutId, Box<dyn Any>)>;
     fn paint(
         &mut self,
@@ -80,7 +82,7 @@ trait ViewObject {
     ) -> Result<()>;
 }
 
-impl<S: Send + Sync + 'static, P> ViewObject for View<S, P> {
+impl<S: Send + Sync + 'static, P: Send + 'static> ViewObject for View<S, P> {
     fn layout(&mut self, cx: &mut WindowContext) -> Result<(LayoutId, Box<dyn Any>)> {
         self.state.update(cx, |state, cx| {
             let mut element = (self.render)(state, cx);
@@ -106,12 +108,12 @@ impl<S: Send + Sync + 'static, P> ViewObject for View<S, P> {
 }
 
 pub struct AnyView<S> {
-    view: Rc<RefCell<dyn ViewObject>>,
+    view: Arc<Mutex<dyn ViewObject>>,
     parent_state_type: PhantomData<S>,
 }
 
 impl<S: 'static> Element for AnyView<S> {
-    type State = S;
+    type State = ();
     type FrameState = Box<dyn Any>;
 
     fn layout(
@@ -119,7 +121,7 @@ impl<S: 'static> Element for AnyView<S> {
         _: &mut Self::State,
         cx: &mut ViewContext<Self::State>,
     ) -> Result<(LayoutId, Self::FrameState)> {
-        self.view.borrow_mut().layout(cx)
+        self.view.lock().layout(cx)
     }
 
     fn paint(
@@ -129,7 +131,7 @@ impl<S: 'static> Element for AnyView<S> {
         element: &mut Self::FrameState,
         cx: &mut ViewContext<Self::State>,
     ) -> Result<()> {
-        self.view.borrow_mut().paint(layout, element, cx)
+        self.view.lock().paint(layout, element, cx)
     }
 }
 
