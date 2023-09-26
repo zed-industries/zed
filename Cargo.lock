@@ -6834,6 +6834,7 @@ dependencies = [
  "log",
  "ndarray",
  "node_runtime",
+ "openblas-src",
  "ordered-float",
  "parking_lot 0.11.2",
  "picker",
