@@ -1277,7 +1277,6 @@ impl ProjectSearchView {
     }
 
     fn model_changed(&mut self, cx: &mut ViewContext<Self>) {
-        dbg!("Rescanning!");
         let match_ranges = self.model.read(cx).match_ranges.clone();
         if match_ranges.is_empty() {
             self.active_match_index = None;
@@ -1418,7 +1417,6 @@ impl ProjectSearchBar {
     }
 
     fn select_next_match(pane: &mut Pane, _: &SelectNextMatch, cx: &mut ViewContext<Pane>) {
-        dbg!("select next");
         if let Some(search_view) = pane
             .active_item()
             .and_then(|item| item.downcast::<ProjectSearchView>())
