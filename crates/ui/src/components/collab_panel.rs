@@ -11,19 +11,19 @@ use gpui2::{
 use std::marker::PhantomData;
 
 #[derive(Element)]
-pub struct CollabPanelElement<V: 'static> {
+pub struct CollabPanel<V: 'static> {
     view_type: PhantomData<V>,
     scroll_state: ScrollState,
 }
 
-pub fn collab_panel<V: 'static>(scroll_state: ScrollState) -> CollabPanelElement<V> {
-    CollabPanelElement {
-        view_type: PhantomData,
-        scroll_state,
+impl<V: 'static> CollabPanel<V> {
+    pub fn new(scroll_state: ScrollState) -> Self {
+        Self {
+            view_type: PhantomData,
+            scroll_state,
+        }
     }
-}
 
-impl<V: 'static> CollabPanelElement<V> {
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
 

@@ -3,7 +3,7 @@ use gpui2::{
     style::StyleHelpers,
     Element, IntoElement, ParentElement, ViewContext,
 };
-use ui::{collab_panel, status_bar, tab_bar, theme, title_bar, ChatPanel, Toolbar};
+use ui::{status_bar, tab_bar, theme, title_bar, ChatPanel, CollabPanel, Toolbar};
 
 #[derive(Element, Default)]
 pub struct WorkspaceElement {
@@ -34,7 +34,7 @@ impl WorkspaceElement {
                     .flex()
                     .flex_row()
                     .overflow_hidden()
-                    .child(collab_panel(self.left_scroll_state.clone()))
+                    .child(CollabPanel::new(self.left_scroll_state.clone()))
                     .child(
                         div()
                             .h_full()
