@@ -263,6 +263,13 @@
     }
   },
   {
+    "context": "ProjectSearchBar && in_replace",
+    "bindings": {
+      "enter": "search::ReplaceNext",
+      "cmd-enter": "search::ReplaceAll"
+    }
+  },
+  {
     "context": "ProjectSearchView",
     "bindings": {
       "escape": "project_search::ToggleFocus",
@@ -563,7 +570,7 @@
     }
   },
   {
-    "context": "ProjectSearchBar",
+    "context": "ProjectSearchBar && !in_replace",
     "bindings": {
       "cmd-enter": "project_search::SearchInNew"
     }

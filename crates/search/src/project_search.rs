@@ -60,7 +60,7 @@ pub fn init(cx: &mut AppContext) {
     cx.set_global(ActiveSettings::default());
     cx.add_action(ProjectSearchView::deploy);
     cx.add_action(ProjectSearchView::move_focus_to_results);
-    cx.add_action(ProjectSearchBar::search);
+    cx.add_action(ProjectSearchBar::confirm);
     cx.add_action(ProjectSearchBar::search_in_new);
     cx.add_action(ProjectSearchBar::select_next_match);
     cx.add_action(ProjectSearchBar::select_prev_match);
@@ -1371,9 +1371,18 @@ impl ProjectSearchBar {
             })
         }
     }
-    fn search(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
+        let mut should_propagate = true;
         if let Some(search_view) = self.active_project_search.as_ref() {
-            search_view.update(cx, |search_view, cx| search_view.search(cx));
+            search_view.update(cx, |search_view, cx| {
+                if !search_view.replacement_editor.is_focused(cx) {
+                    should_propagate = false;
+                    search_view.search(cx);
+                }
+            });
+        }
+        if should_propagate {
+            cx.propagate_action();
         }
     }
 
@@ -1676,6 +1685,28 @@ impl Entity for ProjectSearchBar {
 impl View for ProjectSearchBar {
     fn ui_name() -> &'static str {
         "ProjectSearchBar"
+    }
+
+    fn update_keymap_context(
+        &self,
+        keymap: &mut gpui::keymap_matcher::KeymapContext,
+        cx: &AppContext,
+    ) {
+        Self::reset_to_default_keymap_context(keymap);
+        let in_replace = self
+            .active_project_search
+            .as_ref()
+            .map(|search| {
+                search
+                    .read(cx)
+                    .replacement_editor
+                    .read_with(cx, |_, cx| cx.is_self_focused())
+            })
+            .flatten()
+            .unwrap_or(false);
+        if in_replace {
+            keymap.add_identifier("in_replace");
+        }
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
