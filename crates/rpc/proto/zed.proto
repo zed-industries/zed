@@ -1578,9 +1578,14 @@ message InvokePrettierForBuffer {
     uint64 buffer_id = 3;
     optional uint64 worktree_id = 4;
     string method = 5;
-    optional string command_parameters = 6;
 }
 
 message InvokePrettierForBufferResponse {
-    optional string diff = 1;
+    optional Diff diff = 1;
+}
+
+message Diff {
+    VectorClockEntry version = 1;
+    string line_ending = 2;
+    string edits = 3;
 }

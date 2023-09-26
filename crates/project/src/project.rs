@@ -8353,10 +8353,13 @@ impl Project {
         });
 
         let diff = prettier
-            .format(&buffer, buffer_path, &cx)
+            .invoke(&buffer, buffer_path, &envelope.payload.method, &cx)
             .await
-            .context("handle buffer formatting")?;
-        todo!("TODO kb serialize diff")
+            .with_context(|| format!("prettier invoke method {}", &envelope.payload.method))?;
+
+        Ok(proto::InvokePrettierForBufferResponse {
+            diff: todo!("TODO kb serialize diff"),
+        })
     }
 
     fn prettier_instance_for_buffer(
