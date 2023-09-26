@@ -10,11 +10,11 @@ pub struct FollowGroup {
     players: Vec<Avatar>,
 }
 
-pub fn follow_group(players: Vec<Avatar>) -> FollowGroup {
-    FollowGroup { player: 0, players }
-}
-
 impl FollowGroup {
+    pub fn new(players: Vec<Avatar>) -> Self {
+        Self { player: 0, players }
+    }
+
     pub fn player(mut self, player: usize) -> Self {
         self.player = player;
         self
