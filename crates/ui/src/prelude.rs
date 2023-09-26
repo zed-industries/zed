@@ -1,15 +1,21 @@
-use gpui2::{hsla, Hsla};
+use gpui2::{hsla, rgb, Hsla};
 use strum::EnumIter;
 
 #[derive(Default)]
 pub struct SystemColor {
     pub transparent: Hsla,
+    pub mac_os_traffic_light_red: Hsla,
+    pub mac_os_traffic_light_yellow: Hsla,
+    pub mac_os_traffic_light_green: Hsla,
 }
 
 impl SystemColor {
     pub fn new() -> SystemColor {
         SystemColor {
             transparent: hsla(0.0, 0.0, 0.0, 0.0),
+            mac_os_traffic_light_red: rgb::<Hsla>(0xEC695E),
+            mac_os_traffic_light_yellow: rgb::<Hsla>(0xF4BF4F),
+            mac_os_traffic_light_green: rgb::<Hsla>(0x62C554),
         }
     }
     pub fn color(&self) -> Hsla {

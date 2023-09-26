@@ -2,7 +2,7 @@ use gpui2::elements::div;
 use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
-use crate::{theme, token};
+use crate::{theme, token, SystemColor};
 
 #[derive(Clone, Copy)]
 enum TrafficLightColor {
@@ -27,20 +27,14 @@ impl TrafficLight {
 
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
-        let token = token();
+        let system_color = SystemColor::new();
 
         let fill = match (self.window_has_focus, self.color) {
-            (true, TrafficLightColor::Red) => token.mac_os_traffic_light_red,
-            (true, TrafficLightColor::Yellow) => token.mac_os_traffic_light_yellow,
-            (true, TrafficLightColor::Green) => token.mac_os_traffic_light_green,
+            (true, TrafficLightColor::Red) => system_color.mac_os_traffic_light_red,
+            (true, TrafficLightColor::Yellow) => system_color.mac_os_traffic_light_yellow,
+            (true, TrafficLightColor::Green) => system_color.mac_os_traffic_light_green,
             (false, _) => theme.lowest.base.active.background,
         };
-
-        // let i = match self.color {
-        //     TrafficLightColor::Red => IconAsset::Hash,
-        //     TrafficLightColor::Yellow => IconAsset::Hash,
-        //     TrafficLightColor::Green => IconAsset::Hash,
-        // };
 
         div().w_3().h_3().rounded_full().fill(fill)
     }
