@@ -18,14 +18,14 @@ pub struct ProjectPanel<V: 'static> {
     scroll_state: ScrollState,
 }
 
-pub fn project_panel<V: 'static>(scroll_state: ScrollState) -> ProjectPanel<V> {
-    ProjectPanel {
-        view_type: PhantomData,
-        scroll_state,
-    }
-}
-
 impl<V: 'static> ProjectPanel<V> {
+    pub fn new(scroll_state: ScrollState) -> Self {
+        Self {
+            view_type: PhantomData,
+            scroll_state,
+        }
+    }
+
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
 
