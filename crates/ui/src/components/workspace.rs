@@ -1,5 +1,4 @@
-use crate::{theme, ChatPanel, CollabPanel, StatusBar, TabBar, TitleBar};
-
+use crate::{theme, ChatPanel, CollabPanel, StatusBar, TabBar, TitleBar, Toolbar};
 use gpui2::{
     elements::{div, div::ScrollState},
     style::StyleHelpers,
@@ -7,23 +6,17 @@ use gpui2::{
 };
 
 #[derive(Element, Default)]
-struct WorkspaceElement {
-    collab_panel_scroll_state: ScrollState,
+pub struct WorkspaceElement {
+    left_scroll_state: ScrollState,
     right_scroll_state: ScrollState,
     tab_bar_scroll_state: ScrollState,
-    palette_scroll_state: ScrollState,
-}
-
-pub fn workspace<V: 'static>() -> impl Element<V> {
-    WorkspaceElement::default()
 }
 
 impl WorkspaceElement {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
-        let theme = theme(cx);
+        let theme = theme(cx).clone();
 
         div()
-            // Elevation Level 0
             .size_full()
             .flex()
             .flex_col()
@@ -33,8 +26,6 @@ impl WorkspaceElement {
             .items_start()
             .text_color(theme.lowest.base.default.foreground)
             .fill(theme.lowest.base.default.background)
-            .relative()
-            // Elevation Level 1
             .child(TitleBar::new(cx))
             .child(
                 div()
@@ -43,7 +34,7 @@ impl WorkspaceElement {
                     .flex()
                     .flex_row()
                     .overflow_hidden()
-                    .child(CollabPanel::new(self.collab_panel_scroll_state.clone()))
+                    .child(CollabPanel::new(self.left_scroll_state.clone()))
                     .child(
                         div()
                             .h_full()
@@ -54,25 +45,12 @@ impl WorkspaceElement {
                                     .flex()
                                     .flex_col()
                                     .flex_1()
-                                    .child(TabBar::new(self.tab_bar_scroll_state.clone())),
+                                    .child(TabBar::new(self.tab_bar_scroll_state.clone()))
+                                    .child(Toolbar::new()),
                             ),
                     )
                     .child(ChatPanel::new(self.right_scroll_state.clone())),
             )
             .child(StatusBar::new())
-        // Elevation Level 3
-        // .child(
-        //     div()
-        //         .absolute()
-        //         .top_0()
-        //         .left_0()
-        //         .size_full()
-        //         .flex()
-        //         .justify_center()
-        //         .items_center()
-        //         // .fill(theme.lowest.base.default.background)
-        //         // Elevation Level 4
-        //         .child(command_palette(self.palette_scroll_state.clone())),
-        // )
     }
 }

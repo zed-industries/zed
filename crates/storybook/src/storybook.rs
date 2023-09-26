@@ -4,7 +4,6 @@ mod collab_panel;
 mod stories;
 mod story;
 mod story_selector;
-mod workspace;
 
 use std::sync::Arc;
 
@@ -15,7 +14,7 @@ use legacy_theme::{ThemeRegistry, ThemeSettings};
 use log::LevelFilter;
 use settings::{default_settings, SettingsStore};
 use simplelog::SimpleLogger;
-use ui::{ElementExt, Theme};
+use ui::{ElementExt, Theme, WorkspaceElement};
 
 use crate::story_selector::{ComponentStory, ElementStory, StorySelector};
 
@@ -64,7 +63,7 @@ fn main() {
 
         cx.add_window(
             gpui2::WindowOptions {
-                bounds: WindowBounds::Fixed(RectF::new(vec2f(0., 0.), vec2f(1600., 900.))),
+                bounds: WindowBounds::Fixed(RectF::new(vec2f(0., 0.), vec2f(1700., 980.))),
                 center: true,
                 ..Default::default()
             },
@@ -195,7 +194,6 @@ fn add_base_theme_to_legacy_theme(legacy_theme: &legacy_theme::Theme, new_theme:
 use anyhow::{anyhow, Result};
 use gpui2::AssetSource;
 use rust_embed::RustEmbed;
-use workspace::WorkspaceElement;
 
 #[derive(RustEmbed)]
 #[folder = "../../assets"]
