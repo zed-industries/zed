@@ -11,14 +11,14 @@ pub struct CommandPalette<V: 'static> {
     scroll_state: ScrollState,
 }
 
-pub fn command_palette<V: 'static>(scroll_state: ScrollState) -> CommandPalette<V> {
-    CommandPalette {
-        view_type: PhantomData,
-        scroll_state,
-    }
-}
-
 impl<V: 'static> CommandPalette<V> {
+    pub fn new(scroll_state: ScrollState) -> Self {
+        Self {
+            view_type: PhantomData,
+            scroll_state,
+        }
+    }
+
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         div().child(
             Palette::new(self.scroll_state.clone())
