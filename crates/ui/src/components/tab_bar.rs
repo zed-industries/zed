@@ -1,7 +1,6 @@
 use std::marker::PhantomData;
 
-use gpui2::elements::div::div;
-use gpui2::elements::div::ScrollState;
+use gpui2::elements::div::{div, ScrollState};
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
 use crate::prelude::*;

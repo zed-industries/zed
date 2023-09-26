@@ -1,4 +1,6 @@
-use gpui2::{elements::div, style::Styleable, Element, IntoElement, ParentElement, ViewContext};
+use gpui2::elements::div;
+use gpui2::style::Styleable;
+use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
 use crate::prelude::*;
 use crate::{

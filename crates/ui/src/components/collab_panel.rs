@@ -1,14 +1,15 @@
-use crate::{
-    static_collab_panel_channels, static_collab_panel_current_call,
-    theme::{theme, Theme},
-    v_stack, IconAsset, List, ListSectionHeader, ToggleState,
-};
-use gpui2::{
-    elements::{div, div::ScrollState, img, svg},
-    style::{StyleHelpers, Styleable},
-    ArcCow, Element, IntoElement, ParentElement, ViewContext,
-};
 use std::marker::PhantomData;
+
+use gpui2::elements::div::ScrollState;
+use gpui2::elements::{div, img, svg};
+use gpui2::style::{StyleHelpers, Styleable};
+use gpui2::{ArcCow, Element, IntoElement, ParentElement, ViewContext};
+
+use crate::theme::{theme, Theme};
+use crate::{
+    static_collab_panel_channels, static_collab_panel_current_call, v_stack, IconAsset, List,
+    ListSectionHeader, ToggleState,
+};
 
 #[derive(Element)]
 pub struct CollabPanel<V: 'static> {
