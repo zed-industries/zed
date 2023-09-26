@@ -1,8 +1,11 @@
+use std::rc::Rc;
+
 use crate::prelude::*;
 use crate::{h_stack, theme, Icon, IconAsset, IconColor, Label, LabelColor, LabelSize};
 use gpui2::geometry::DefiniteLength;
+use gpui2::platform::MouseButton;
 use gpui2::style::StyleHelpers;
-use gpui2::{Element, Hsla, IntoElement, ParentElement, ViewContext};
+use gpui2::{Element, EventContext, Hsla, Interactive, IntoElement, ParentElement, ViewContext};
 
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum IconPosition {
@@ -11,17 +14,28 @@ pub enum IconPosition {
     Right,
 }
 
+struct ButtonHandlers<V> {
+    click: Option<Rc<dyn Fn(&mut V, &mut EventContext<V>)>>,
+}
+
+impl<V> Default for ButtonHandlers<V> {
+    fn default() -> Self {
+        Self { click: None }
+    }
+}
+
 #[derive(Element)]
-pub struct Button {
+pub struct Button<V: 'static> {
     label: String,
     variant: ButtonVariant,
     state: InteractionState,
     icon: Option<IconAsset>,
     icon_position: Option<IconPosition>,
     width: Option<DefiniteLength>,
+    handlers: ButtonHandlers<V>,
 }
 
-impl Button {
+impl<V: 'static> Button<V> {
     pub fn new<L>(label: L) -> Self
     where
         L: Into<String>,
@@ -33,6 +47,7 @@ impl Button {
             icon: None,
             icon_position: None,
             width: Default::default(),
+            handlers: ButtonHandlers::default(),
         }
     }
 
@@ -64,7 +79,12 @@ impl Button {
         self
     }
 
-    fn background_color<V>(&self, cx: &mut ViewContext<V>) -> Hsla {
+    pub fn on_click(mut self, handler: impl Fn(&mut V, &mut EventContext<V>) + 'static) -> Self {
+        self.handlers.click = Some(Rc::new(handler));
+        self
+    }
+
+    fn background_color(&self, cx: &mut ViewContext<V>) -> Hsla {
         let theme = theme(cx);
         let system_color = SystemColor::new();
 
@@ -113,7 +133,7 @@ impl Button {
         self.icon.map(|i| Icon::new(i).color(icon_color))
     }
 
-    fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
+    fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
         let icon_color = self.icon_color();
         let system_color = SystemColor::new();
@@ -155,6 +175,12 @@ impl Button {
 
         if let Some(width) = self.width {
             el = el.w(width).justify_center();
+        }
+
+        if let Some(click_handler) = self.handlers.click.clone() {
+            el = el.on_mouse_down(MouseButton::Left, move |view, event, cx| {
+                click_handler(view, cx);
+            });
         }
 
         el

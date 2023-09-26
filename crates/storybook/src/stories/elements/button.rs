@@ -16,7 +16,7 @@ impl ButtonStory {
         let states = InteractionState::iter();
 
         Story::container(cx)
-            .child(Story::title_for::<_, Button>(cx))
+            .child(Story::title_for::<_, Button<V>>(cx))
             .child(
                 div()
                     .flex()
@@ -180,6 +180,14 @@ impl ButtonStory {
                                     )
                             }))),
                     ),
+            )
+            .child(Story::label(cx, "Button with `on_click`"))
+            .child(
+                Button::new("Label")
+                    .variant(ButtonVariant::Ghost)
+                    // NOTE: There currently appears to be a bug in GPUI2 where only the last event handler will fire.
+                    // So adding additional buttons with `on_click`s after this one will cause this `on_click` to not fire.
+                    .on_click(|_view, _cx| println!("Button clicked.")),
             )
     }
 }
