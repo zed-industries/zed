@@ -123,7 +123,7 @@ pub fn generate_content_prompt(
     }
 
     match kind {
-        CodegenKind::Generate { position } => {
+        CodegenKind::Generate { position: _ } => {
             writeln!(
                 prompt,
                 "Assume the cursor is located where the `<|START|` marker is."
@@ -140,7 +140,7 @@ pub fn generate_content_prompt(
             )
             .unwrap();
         }
-        CodegenKind::Transform { range } => {
+        CodegenKind::Transform { range: _ } => {
             writeln!(
                 prompt,
                 "Modify the users code selected text based upon the users prompt: {user_prompt}"
