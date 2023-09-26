@@ -16,19 +16,19 @@ use rpc::proto::Timestamp;
 use rusqlite::params;
 use rusqlite::types::Value;
 use std::{
-    cmp::Reverse,
     future::Future,
     ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
-    time::{Instant, SystemTime},
+    time::SystemTime,
 };
 use util::TryFutureExt;
 
 pub fn argsort<T: Ord>(data: &[T]) -> Vec<usize> {
     let mut indices = (0..data.len()).collect::<Vec<_>>();
     indices.sort_by_key(|&i| &data[i]);
+    indices.reverse();
     indices
 }
 
