@@ -1,6 +1,6 @@
 use gpui2::elements::div;
-use gpui2::style::StyleHelpers;
 use gpui2::{Element, ParentElement, ViewContext};
+use ui::prelude::*;
 use ui::theme;
 
 pub struct Story {}

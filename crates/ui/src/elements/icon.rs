@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use gpui2::elements::svg;
-use gpui2::style::StyleHelpers;
 use gpui2::{Element, ViewContext};
 use gpui2::{Hsla, IntoElement};
 use strum::EnumIter;
 
+use crate::prelude::*;
 use crate::theme::theme;
 use crate::Theme;
 

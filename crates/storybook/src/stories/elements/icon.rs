@@ -1,7 +1,7 @@
 use gpui2::elements::div;
-use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 use strum::IntoEnumIterator;
+use ui::prelude::*;
 use ui::{Icon, IconAsset};
 
 use crate::story::Story;

@@ -50,7 +50,6 @@ pub use workspace::*;
 // use gpui2::elements::div;
 // use gpui2::interactive::Interactive;
 // use gpui2::platform::MouseButton;
-// use gpui2::style::StyleHelpers;
 // use gpui2::{ArcCow, Element, EventContext, IntoElement, ParentElement, ViewContext};
 
 // struct ButtonHandlers<V, D> {

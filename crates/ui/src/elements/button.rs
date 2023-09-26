@@ -1,11 +1,11 @@
 use std::rc::Rc;
 
-use crate::prelude::*;
-use crate::{h_stack, theme, Icon, IconAsset, IconColor, Label, LabelColor, LabelSize};
 use gpui2::geometry::DefiniteLength;
 use gpui2::platform::MouseButton;
-use gpui2::style::StyleHelpers;
 use gpui2::{Element, EventContext, Hsla, Interactive, IntoElement, ParentElement, ViewContext};
+
+use crate::prelude::*;
+use crate::{h_stack, theme, Icon, IconAsset, IconColor, Label, LabelColor, LabelSize};
 
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum IconPosition {

@@ -1,8 +1,10 @@
-use gpui2::geometry::AbsoluteLength;
-use gpui2::{elements::div::ScrollState, style::StyleHelpers, ViewContext};
-use gpui2::{Element, IntoElement};
 use std::marker::PhantomData;
 
+use gpui2::geometry::AbsoluteLength;
+use gpui2::{elements::div::ScrollState, ViewContext};
+use gpui2::{Element, IntoElement};
+
+use crate::prelude::*;
 use crate::{theme, token, v_stack};
 
 #[derive(Default, Debug, PartialEq, Eq, Hash)]

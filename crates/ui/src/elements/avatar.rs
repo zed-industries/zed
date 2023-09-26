@@ -1,5 +1,4 @@
 use gpui2::elements::img;
-use gpui2::style::StyleHelpers;
 use gpui2::{ArcCow, Element, IntoElement, ViewContext};
 
 use crate::prelude::*;

@@ -1,6 +1,7 @@
-use gpui2::style::{StyleHelpers, Styleable};
+use gpui2::style::Styleable;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
+use crate::prelude::*;
 use crate::{h_stack, theme};
 
 #[derive(Element)]

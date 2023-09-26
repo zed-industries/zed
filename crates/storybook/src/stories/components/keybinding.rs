@@ -1,6 +1,7 @@
-use gpui2::{elements::div, style::StyleHelpers, Element, IntoElement, ParentElement, ViewContext};
+use gpui2::{elements::div, Element, IntoElement, ParentElement, ViewContext};
 use itertools::Itertools;
 use strum::IntoEnumIterator;
+use ui::prelude::*;
 use ui::{Keybinding, ModifierKey, ModifierKeys};
 
 use crate::story::Story;

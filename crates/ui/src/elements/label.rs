@@ -1,8 +1,9 @@
-use crate::theme::theme;
 use gpui2::elements::div;
-use gpui2::style::StyleHelpers;
 use gpui2::{Element, Hsla, IntoElement, ParentElement, ViewContext};
 use smallvec::SmallVec;
+
+use crate::prelude::*;
+use crate::theme::theme;
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum LabelColor {

@@ -1,6 +1,5 @@
 use gpui2::elements::div;
 use gpui2::geometry::rems;
-use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 use strum::IntoEnumIterator;
 use ui::{h_stack, prelude::*, v_stack, Label};

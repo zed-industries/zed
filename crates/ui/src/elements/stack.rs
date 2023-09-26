@@ -1,5 +1,6 @@
 use gpui2::elements::div::{div, Div};
-use gpui2::style::StyleHelpers;
+
+use crate::prelude::*;
 
 pub trait Stack: StyleHelpers {
     /// Horizontally stacks elements.

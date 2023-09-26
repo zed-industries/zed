@@ -1,9 +1,9 @@
 use std::marker::PhantomData;
 
-use gpui2::style::StyleHelpers;
 use gpui2::{elements::div, IntoElement};
 use gpui2::{Element, ParentElement, ViewContext};
 
+use crate::prelude::*;
 use crate::theme::{theme, Theme};
 use crate::{Button, IconAsset, IconButton, ToolDivider};
 

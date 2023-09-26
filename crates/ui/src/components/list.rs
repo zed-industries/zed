@@ -1,9 +1,6 @@
-use gpui2::{
-    elements::div,
-    style::{StyleHelpers, Styleable},
-    Element, IntoElement, ParentElement, ViewContext,
-};
+use gpui2::{elements::div, style::Styleable, Element, IntoElement, ParentElement, ViewContext};
 
+use crate::prelude::*;
 use crate::{
     h_stack, theme, token, v_stack, Avatar, DisclosureControlVisibility, Icon, IconAsset,
     IconColor, IconSize, InteractionState, Label, LabelColor, LabelSize, SystemColor, ToggleState,

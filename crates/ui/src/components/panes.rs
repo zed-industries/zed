@@ -3,12 +3,11 @@ use std::marker::PhantomData;
 use gpui2::{
     elements::{div, div::ScrollState},
     geometry::{Length, Size},
-    hsla,
-    style::StyleHelpers,
-    Hsla, ParentElement, ViewContext,
+    hsla, Hsla, ParentElement, ViewContext,
 };
 use gpui2::{Element, IntoElement};
 
+use crate::prelude::*;
 use crate::theme;
 
 #[derive(Default, PartialEq)]

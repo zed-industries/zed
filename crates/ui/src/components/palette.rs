@@ -1,12 +1,13 @@
 use std::marker::PhantomData;
 
+use gpui2::elements::div::ScrollState;
+use gpui2::style::Styleable;
+use gpui2::{elements::div, IntoElement};
+use gpui2::{Element, ParentElement, ViewContext};
+
 use crate::prelude::*;
 use crate::theme::theme;
 use crate::{h_stack, v_stack, Keybinding, Label, LabelColor};
-use gpui2::elements::div::ScrollState;
-use gpui2::style::{StyleHelpers, Styleable};
-use gpui2::{elements::div, IntoElement};
-use gpui2::{Element, ParentElement, ViewContext};
 
 #[derive(Element)]
 pub struct Palette<V: 'static> {

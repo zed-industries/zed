@@ -1,3 +1,5 @@
+pub use gpui2::style::StyleHelpers;
+
 pub use crate::{ButtonVariant, InputVariant};
 
 use gpui2::{hsla, rgb, Hsla};

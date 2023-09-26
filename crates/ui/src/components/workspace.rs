@@ -1,11 +1,11 @@
-use crate::{theme, ChatPanel, CollabPanel, Pane, PaneGroup, SplitDirection, StatusBar, TitleBar};
 use gpui2::{
     elements::{div, div::ScrollState},
     geometry::{relative, rems, Size},
-    hsla,
-    style::StyleHelpers,
-    Element, IntoElement, ParentElement, ViewContext,
+    hsla, Element, IntoElement, ParentElement, ViewContext,
 };
+
+use crate::prelude::*;
+use crate::{theme, ChatPanel, CollabPanel, Pane, PaneGroup, SplitDirection, StatusBar, TitleBar};
 
 #[derive(Element, Default)]
 pub struct WorkspaceElement {
