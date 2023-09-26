@@ -8,8 +8,8 @@ use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
 use crate::prelude::Shape;
 use crate::{
-    icon_button, theme, traffic_lights, Avatar, Button, FollowGroup, IconAsset, IconColor,
-    ToolDivider,
+    icon_button, theme, Avatar, Button, FollowGroup, IconAsset, IconColor, ToolDivider,
+    TrafficLights,
 };
 
 #[derive(Element)]
@@ -60,10 +60,7 @@ impl<V: 'static> TitleBar<V> {
                     .h_full()
                     .gap_4()
                     .px_2()
-                    .child(
-                        // %%% Pass window focus state to traffic lights when available
-                        traffic_lights().window_has_focus(has_focus),
-                    )
+                    .child(TrafficLights::new().window_has_focus(has_focus))
                     // === Project Info === //
                     .child(
                         div()

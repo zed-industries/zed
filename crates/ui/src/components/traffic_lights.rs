@@ -17,14 +17,14 @@ struct TrafficLight {
     window_has_focus: bool,
 }
 
-fn traffic_light(color: TrafficLightColor, window_has_focus: bool) -> TrafficLight {
-    TrafficLight {
-        color,
-        window_has_focus,
-    }
-}
-
 impl TrafficLight {
+    fn new(color: TrafficLightColor, window_has_focus: bool) -> Self {
+        Self {
+            color,
+            window_has_focus,
+        }
+    }
+
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
         let token = token();
@@ -51,13 +51,13 @@ pub struct TrafficLights {
     window_has_focus: bool,
 }
 
-pub fn traffic_lights() -> TrafficLights {
-    TrafficLights {
-        window_has_focus: true,
-    }
-}
-
 impl TrafficLights {
+    pub fn new() -> Self {
+        Self {
+            window_has_focus: true,
+        }
+    }
+
     pub fn window_has_focus(mut self, window_has_focus: bool) -> Self {
         self.window_has_focus = window_has_focus;
         self
@@ -71,12 +71,15 @@ impl TrafficLights {
             .flex()
             .items_center()
             .gap_2()
-            .child(traffic_light(TrafficLightColor::Red, self.window_has_focus))
-            .child(traffic_light(
+            .child(TrafficLight::new(
+                TrafficLightColor::Red,
+                self.window_has_focus,
+            ))
+            .child(TrafficLight::new(
                 TrafficLightColor::Yellow,
                 self.window_has_focus,
             ))
-            .child(traffic_light(
+            .child(TrafficLight::new(
                 TrafficLightColor::Green,
                 self.window_has_focus,
             ))
