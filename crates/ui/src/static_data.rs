@@ -1,127 +1,127 @@
 use crate::{
-    list_item, IconAsset, Keybinding, Label, LabelColor, ListItem, ListItemSize, ModifierKeys,
-    PaletteItem, ToggleState,
+    IconAsset, Keybinding, Label, LabelColor, ListItem, ListItemSize, ModifierKeys, PaletteItem,
+    ToggleState,
 };
 
 pub fn static_project_panel_project_items() -> Vec<ListItem> {
     vec![
-        list_item(Label::new("zed"))
+        ListItem::new(Label::new("zed"))
             .left_icon(IconAsset::FolderOpen.into())
             .indent_level(0)
             .set_toggle(ToggleState::Toggled),
-        list_item(Label::new(".cargo"))
+        ListItem::new(Label::new(".cargo"))
             .left_icon(IconAsset::Folder.into())
             .indent_level(1),
-        list_item(Label::new(".config"))
+        ListItem::new(Label::new(".config"))
             .left_icon(IconAsset::Folder.into())
             .indent_level(1),
-        list_item(Label::new(".git").color(LabelColor::Hidden))
+        ListItem::new(Label::new(".git").color(LabelColor::Hidden))
             .left_icon(IconAsset::Folder.into())
             .indent_level(1),
-        list_item(Label::new(".cargo"))
+        ListItem::new(Label::new(".cargo"))
             .left_icon(IconAsset::Folder.into())
             .indent_level(1),
-        list_item(Label::new(".idea").color(LabelColor::Hidden))
+        ListItem::new(Label::new(".idea").color(LabelColor::Hidden))
             .left_icon(IconAsset::Folder.into())
             .indent_level(1),
-        list_item(Label::new("assets"))
+        ListItem::new(Label::new("assets"))
             .left_icon(IconAsset::Folder.into())
             .indent_level(1)
             .set_toggle(ToggleState::Toggled),
-        list_item(Label::new("cargo-target").color(LabelColor::Hidden))
+        ListItem::new(Label::new("cargo-target").color(LabelColor::Hidden))
             .left_icon(IconAsset::Folder.into())
             .indent_level(1),
-        list_item(Label::new("crates"))
+        ListItem::new(Label::new("crates"))
             .left_icon(IconAsset::FolderOpen.into())
             .indent_level(1)
             .set_toggle(ToggleState::Toggled),
-        list_item(Label::new("activity_indicator"))
+        ListItem::new(Label::new("activity_indicator"))
             .left_icon(IconAsset::Folder.into())
             .indent_level(2),
-        list_item(Label::new("ai"))
+        ListItem::new(Label::new("ai"))
             .left_icon(IconAsset::Folder.into())
             .indent_level(2),
-        list_item(Label::new("audio"))
+        ListItem::new(Label::new("audio"))
             .left_icon(IconAsset::Folder.into())
             .indent_level(2),
-        list_item(Label::new("auto_update"))
+        ListItem::new(Label::new("auto_update"))
             .left_icon(IconAsset::Folder.into())
             .indent_level(2),
-        list_item(Label::new("breadcrumbs"))
+        ListItem::new(Label::new("breadcrumbs"))
             .left_icon(IconAsset::Folder.into())
             .indent_level(2),
-        list_item(Label::new("call"))
+        ListItem::new(Label::new("call"))
             .left_icon(IconAsset::Folder.into())
             .indent_level(2),
-        list_item(Label::new("sqlez").color(LabelColor::Modified))
+        ListItem::new(Label::new("sqlez").color(LabelColor::Modified))
             .left_icon(IconAsset::Folder.into())
             .indent_level(2)
             .set_toggle(ToggleState::NotToggled),
-        list_item(Label::new("gpui2"))
+        ListItem::new(Label::new("gpui2"))
             .left_icon(IconAsset::FolderOpen.into())
             .indent_level(2)
             .set_toggle(ToggleState::Toggled),
-        list_item(Label::new("src"))
+        ListItem::new(Label::new("src"))
             .left_icon(IconAsset::FolderOpen.into())
             .indent_level(3)
             .set_toggle(ToggleState::Toggled),
-        list_item(Label::new("derrive_element.rs"))
+        ListItem::new(Label::new("derrive_element.rs"))
             .left_icon(IconAsset::FileRust.into())
             .indent_level(4),
-        list_item(Label::new("storybook").color(LabelColor::Modified))
+        ListItem::new(Label::new("storybook").color(LabelColor::Modified))
             .left_icon(IconAsset::FolderOpen.into())
             .indent_level(1)
             .set_toggle(ToggleState::Toggled),
-        list_item(Label::new("docs").color(LabelColor::Default))
+        ListItem::new(Label::new("docs").color(LabelColor::Default))
             .left_icon(IconAsset::Folder.into())
             .indent_level(2)
             .set_toggle(ToggleState::Toggled),
-        list_item(Label::new("src").color(LabelColor::Modified))
+        ListItem::new(Label::new("src").color(LabelColor::Modified))
             .left_icon(IconAsset::FolderOpen.into())
             .indent_level(3)
             .set_toggle(ToggleState::Toggled),
-        list_item(Label::new("ui").color(LabelColor::Modified))
+        ListItem::new(Label::new("ui").color(LabelColor::Modified))
             .left_icon(IconAsset::FolderOpen.into())
             .indent_level(4)
             .set_toggle(ToggleState::Toggled),
-        list_item(Label::new("component").color(LabelColor::Created))
+        ListItem::new(Label::new("component").color(LabelColor::Created))
             .left_icon(IconAsset::FolderOpen.into())
             .indent_level(5)
             .set_toggle(ToggleState::Toggled),
-        list_item(Label::new("facepile.rs").color(LabelColor::Default))
+        ListItem::new(Label::new("facepile.rs").color(LabelColor::Default))
             .left_icon(IconAsset::FileRust.into())
             .indent_level(6),
-        list_item(Label::new("follow_group.rs").color(LabelColor::Default))
+        ListItem::new(Label::new("follow_group.rs").color(LabelColor::Default))
             .left_icon(IconAsset::FileRust.into())
             .indent_level(6),
-        list_item(Label::new("list_item.rs").color(LabelColor::Created))
+        ListItem::new(Label::new("list_item.rs").color(LabelColor::Created))
             .left_icon(IconAsset::FileRust.into())
             .indent_level(6),
-        list_item(Label::new("tab.rs").color(LabelColor::Default))
+        ListItem::new(Label::new("tab.rs").color(LabelColor::Default))
             .left_icon(IconAsset::FileRust.into())
             .indent_level(6),
-        list_item(Label::new("target").color(LabelColor::Hidden))
+        ListItem::new(Label::new("target").color(LabelColor::Hidden))
             .left_icon(IconAsset::Folder.into())
             .indent_level(1),
-        list_item(Label::new(".dockerignore"))
+        ListItem::new(Label::new(".dockerignore"))
             .left_icon(IconAsset::File.into())
             .indent_level(1),
-        list_item(Label::new(".DS_Store").color(LabelColor::Hidden))
+        ListItem::new(Label::new(".DS_Store").color(LabelColor::Hidden))
             .left_icon(IconAsset::File.into())
             .indent_level(1),
-        list_item(Label::new("Cargo.lock"))
+        ListItem::new(Label::new("Cargo.lock"))
             .left_icon(IconAsset::FileLock.into())
             .indent_level(1),
-        list_item(Label::new("Cargo.toml"))
+        ListItem::new(Label::new("Cargo.toml"))
             .left_icon(IconAsset::FileToml.into())
             .indent_level(1),
-        list_item(Label::new("Dockerfile"))
+        ListItem::new(Label::new("Dockerfile"))
             .left_icon(IconAsset::File.into())
             .indent_level(1),
-        list_item(Label::new("Procfile"))
+        ListItem::new(Label::new("Procfile"))
             .left_icon(IconAsset::File.into())
             .indent_level(1),
-        list_item(Label::new("README.md"))
+        ListItem::new(Label::new("README.md"))
             .left_icon(IconAsset::FileDoc.into())
             .indent_level(1),
     ]
@@ -129,13 +129,13 @@ pub fn static_project_panel_project_items() -> Vec<ListItem> {
 
 pub fn static_project_panel_single_items() -> Vec<ListItem> {
     vec![
-        list_item(Label::new("todo.md"))
+        ListItem::new(Label::new("todo.md"))
             .left_icon(IconAsset::FileDoc.into())
             .indent_level(0),
-        list_item(Label::new("README.md"))
+        ListItem::new(Label::new("README.md"))
             .left_icon(IconAsset::FileDoc.into())
             .indent_level(0),
-        list_item(Label::new("config.json"))
+        ListItem::new(Label::new("config.json"))
             .left_icon(IconAsset::File.into())
             .indent_level(0),
     ]
@@ -143,68 +143,69 @@ pub fn static_project_panel_single_items() -> Vec<ListItem> {
 
 pub fn static_collab_panel_current_call() -> Vec<ListItem> {
     vec![
-        list_item(Label::new("as-cii")).left_avatar("http://github.com/as-cii.png?s=50"),
-        list_item(Label::new("nathansobo")).left_avatar("http://github.com/nathansobo.png?s=50"),
-        list_item(Label::new("maxbrunsfeld"))
+        ListItem::new(Label::new("as-cii")).left_avatar("http://github.com/as-cii.png?s=50"),
+        ListItem::new(Label::new("nathansobo"))
+            .left_avatar("http://github.com/nathansobo.png?s=50"),
+        ListItem::new(Label::new("maxbrunsfeld"))
             .left_avatar("http://github.com/maxbrunsfeld.png?s=50"),
     ]
 }
 
 pub fn static_collab_panel_channels() -> Vec<ListItem> {
     vec![
-        list_item(Label::new("zed"))
+        ListItem::new(Label::new("zed"))
             .left_icon(IconAsset::Hash.into())
             .size(ListItemSize::Medium)
             .indent_level(0),
-        list_item(Label::new("community"))
+        ListItem::new(Label::new("community"))
             .left_icon(IconAsset::Hash.into())
             .size(ListItemSize::Medium)
             .indent_level(1),
-        list_item(Label::new("dashboards"))
+        ListItem::new(Label::new("dashboards"))
             .left_icon(IconAsset::Hash.into())
             .size(ListItemSize::Medium)
             .indent_level(2),
-        list_item(Label::new("feedback"))
+        ListItem::new(Label::new("feedback"))
             .left_icon(IconAsset::Hash.into())
             .size(ListItemSize::Medium)
             .indent_level(2),
-        list_item(Label::new("teams-in-channels-alpha"))
+        ListItem::new(Label::new("teams-in-channels-alpha"))
             .left_icon(IconAsset::Hash.into())
             .size(ListItemSize::Medium)
             .indent_level(2),
-        list_item(Label::new("current-projects"))
+        ListItem::new(Label::new("current-projects"))
             .left_icon(IconAsset::Hash.into())
             .size(ListItemSize::Medium)
             .indent_level(1),
-        list_item(Label::new("codegen"))
+        ListItem::new(Label::new("codegen"))
             .left_icon(IconAsset::Hash.into())
             .size(ListItemSize::Medium)
             .indent_level(2),
-        list_item(Label::new("gpui2"))
+        ListItem::new(Label::new("gpui2"))
             .left_icon(IconAsset::Hash.into())
             .size(ListItemSize::Medium)
             .indent_level(2),
-        list_item(Label::new("livestreaming"))
+        ListItem::new(Label::new("livestreaming"))
             .left_icon(IconAsset::Hash.into())
             .size(ListItemSize::Medium)
             .indent_level(2),
-        list_item(Label::new("open-source"))
+        ListItem::new(Label::new("open-source"))
             .left_icon(IconAsset::Hash.into())
             .size(ListItemSize::Medium)
             .indent_level(2),
-        list_item(Label::new("replace"))
+        ListItem::new(Label::new("replace"))
             .left_icon(IconAsset::Hash.into())
             .size(ListItemSize::Medium)
             .indent_level(2),
-        list_item(Label::new("semantic-index"))
+        ListItem::new(Label::new("semantic-index"))
             .left_icon(IconAsset::Hash.into())
             .size(ListItemSize::Medium)
             .indent_level(2),
-        list_item(Label::new("vim"))
+        ListItem::new(Label::new("vim"))
             .left_icon(IconAsset::Hash.into())
             .size(ListItemSize::Medium)
             .indent_level(2),
-        list_item(Label::new("web-tech"))
+        ListItem::new(Label::new("web-tech"))
             .left_icon(IconAsset::Hash.into())
             .size(ListItemSize::Medium)
             .indent_level(2),

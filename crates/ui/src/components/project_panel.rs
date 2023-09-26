@@ -1,7 +1,7 @@
 use crate::prelude::*;
 use crate::{
-    list, list_section_header, static_project_panel_project_items,
-    static_project_panel_single_items, theme, Input,
+    static_project_panel_project_items, static_project_panel_single_items, theme, Input, List,
+    ListSectionHeader,
 };
 
 use gpui2::{
@@ -42,14 +42,18 @@ impl<V: 'static> ProjectPanel<V> {
                     .flex_col()
                     .overflow_y_scroll(self.scroll_state.clone())
                     .child(
-                        list(static_project_panel_single_items())
-                            .header(list_section_header("FILES").set_toggle(ToggleState::Toggled))
+                        List::new(static_project_panel_single_items())
+                            .header(
+                                ListSectionHeader::new("FILES").set_toggle(ToggleState::Toggled),
+                            )
                             .empty_message("No files in directory")
                             .set_toggle(ToggleState::Toggled),
                     )
                     .child(
-                        list(static_project_panel_project_items())
-                            .header(list_section_header("PROJECT").set_toggle(ToggleState::Toggled))
+                        List::new(static_project_panel_project_items())
+                            .header(
+                                ListSectionHeader::new("PROJECT").set_toggle(ToggleState::Toggled),
+                            )
                             .empty_message("No folders in directory")
                             .set_toggle(ToggleState::Toggled),
                     ),

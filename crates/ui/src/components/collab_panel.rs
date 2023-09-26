@@ -1,7 +1,7 @@
 use crate::{
-    list, list_section_header, static_collab_panel_channels, static_collab_panel_current_call,
+    static_collab_panel_channels, static_collab_panel_current_call,
     theme::{theme, Theme},
-    v_stack, IconAsset, ToggleState,
+    v_stack, IconAsset, List, ListSectionHeader, ToggleState,
 };
 use gpui2::{
     elements::{div, div::ScrollState, img, svg},
@@ -42,9 +42,9 @@ impl<V: 'static> CollabPanel<V> {
                             .border_color(theme.lowest.base.default.border)
                             .border_b()
                             .child(
-                                list(static_collab_panel_current_call())
+                                List::new(static_collab_panel_current_call())
                                     .header(
-                                        list_section_header("CRDB")
+                                        ListSectionHeader::new("CRDB")
                                             .left_icon(IconAsset::Hash.into())
                                             .set_toggle(ToggleState::Toggled),
                                     )
@@ -53,9 +53,9 @@ impl<V: 'static> CollabPanel<V> {
                     )
                     .child(
                         v_stack().py_1().child(
-                            list(static_collab_panel_channels())
+                            List::new(static_collab_panel_channels())
                                 .header(
-                                    list_section_header("CHANNELS")
+                                    ListSectionHeader::new("CHANNELS")
                                         .set_toggle(ToggleState::Toggled),
                                 )
                                 .empty_message("No channels yet. Add a channel to get started.")
@@ -64,9 +64,9 @@ impl<V: 'static> CollabPanel<V> {
                     )
                     .child(
                         v_stack().py_1().child(
-                            list(static_collab_panel_current_call())
+                            List::new(static_collab_panel_current_call())
                                 .header(
-                                    list_section_header("CONTACTS – ONLINE")
+                                    ListSectionHeader::new("CONTACTS – ONLINE")
                                         .set_toggle(ToggleState::Toggled),
                                 )
                                 .set_toggle(ToggleState::Toggled),
@@ -74,9 +74,9 @@ impl<V: 'static> CollabPanel<V> {
                     )
                     .child(
                         v_stack().py_1().child(
-                            list(static_collab_panel_current_call())
+                            List::new(static_collab_panel_current_call())
                                 .header(
-                                    list_section_header("CONTACTS – OFFLINE")
+                                    ListSectionHeader::new("CONTACTS – OFFLINE")
                                         .set_toggle(ToggleState::NotToggled),
                                 )
                                 .set_toggle(ToggleState::NotToggled),

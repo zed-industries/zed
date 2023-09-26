@@ -17,16 +17,16 @@ pub struct ListSectionHeader {
     toggle: Option<ToggleState>,
 }
 
-pub fn list_section_header(label: &'static str) -> ListSectionHeader {
-    ListSectionHeader {
-        label,
-        left_icon: None,
-        state: InteractionState::default(),
-        toggle: None,
-    }
-}
-
 impl ListSectionHeader {
+    pub fn new(label: &'static str) -> Self {
+        Self {
+            label,
+            left_icon: None,
+            state: InteractionState::default(),
+            toggle: None,
+        }
+    }
+
     pub fn set_toggle(mut self, toggle: ToggleState) -> Self {
         self.toggle = Some(toggle);
         self
@@ -120,19 +120,19 @@ pub struct ListItem {
     toggle: Option<ToggleState>,
 }
 
-pub fn list_item(label: Label) -> ListItem {
-    ListItem {
-        disclosure_control_style: DisclosureControlVisibility::default(),
-        indent_level: 0,
-        label,
-        left_content: None,
-        size: ListItemSize::default(),
-        state: InteractionState::default(),
-        toggle: None,
-    }
-}
-
 impl ListItem {
+    pub fn new(label: Label) -> Self {
+        Self {
+            disclosure_control_style: DisclosureControlVisibility::default(),
+            indent_level: 0,
+            label,
+            left_content: None,
+            size: ListItemSize::default(),
+            state: InteractionState::default(),
+            toggle: None,
+        }
+    }
+
     pub fn indent_level(mut self, indent_level: u32) -> Self {
         self.indent_level = indent_level;
         self
@@ -260,16 +260,16 @@ pub struct List {
     // footer: Option<ListSectionFooter>,
 }
 
-pub fn list(items: Vec<ListItem>) -> List {
-    List {
-        header: None,
-        items,
-        empty_message: "No items",
-        toggle: None,
-    }
-}
-
 impl List {
+    pub fn new(items: Vec<ListItem>) -> Self {
+        Self {
+            header: None,
+            items,
+            empty_message: "No items",
+            toggle: None,
+        }
+    }
+
     pub fn header(mut self, header: ListSectionHeader) -> Self {
         self.header = Some(header);
         self
