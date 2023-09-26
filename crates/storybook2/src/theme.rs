@@ -144,9 +144,9 @@ impl<E: Element> Element for Themed<E> {
     where
         Self: Sized,
     {
-        // cx.push_theme(self.theme.clone());
+        cx.push_cascading_state(self.theme.clone());
         let result = self.child.layout(state, cx);
-        // cx.pop_theme();
+        cx.pop_cascading_state::<Theme>();
         result
     }
 
@@ -160,10 +160,9 @@ impl<E: Element> Element for Themed<E> {
     where
         Self: Sized,
     {
-        // todo!
-        // cx.push_theme(self.theme.clone());
-        self.child.paint(layout, state, frame_state, cx);
-        // cx.pop_theme();
+        cx.push_cascading_state(self.theme.clone());
+        self.child.paint(layout, state, frame_state, cx)?;
+        cx.pop_cascading_state::<Theme>();
         Ok(())
     }
 }
@@ -185,6 +184,5 @@ impl<E: Element> Element for Themed<E> {
 // }
 
 pub fn theme<'a>(cx: &'a WindowContext) -> &'a Theme {
-    todo!()
-    // cx.theme::<Theme>()
+    cx.cascading_state()
 }

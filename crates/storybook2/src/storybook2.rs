@@ -11,6 +11,7 @@ mod collab_panel;
 // mod components;
 mod element_ext;
 mod theme;
+mod themes;
 mod workspace;
 
 // gpui2::actions! {

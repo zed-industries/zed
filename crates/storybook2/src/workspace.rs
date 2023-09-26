@@ -1,6 +1,8 @@
 use crate::{
     collab_panel::{collab_panel, CollabPanel},
+    element_ext::ElementExt,
     theme::theme,
+    themes::rose_pine_dawn,
 };
 use gpui3::{
     div, img, svg, view, Context, Element, ParentElement, RootView, StyleHelpers, View,
@@ -27,7 +29,7 @@ impl Workspace {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<State = Self> {
-        let theme = theme(cx);
+        let theme = rose_pine_dawn();
 
         div::<Self>()
             .size_full()
@@ -52,6 +54,7 @@ impl Workspace {
                     .child(self.right_panel.clone()),
             )
             .child(statusbar::statusbar(cx))
+            .themed(theme)
     }
 }
 

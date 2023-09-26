@@ -4,9 +4,15 @@ use crate::{
     Style, TaffyLayoutEngine, TextStyle, TextStyleRefinement, WeakHandle, WindowOptions,
 };
 use anyhow::Result;
+use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use refineable::Refineable;
-use std::{any::TypeId, future, marker::PhantomData, sync::Arc};
+use std::{
+    any::{Any, TypeId},
+    future,
+    marker::PhantomData,
+    sync::Arc,
+};
 use util::ResultExt;
 
 pub struct AnyWindow {}
@@ -18,6 +24,7 @@ pub struct Window {
     content_size: Size<Pixels>,
     layout_engine: TaffyLayoutEngine,
     text_style_stack: Vec<TextStyleRefinement>,
+    cascading_states: HashMap<TypeId, Vec<Box<dyn Any + Send + Sync>>>,
     pub(crate) root_view: Option<AnyView<()>>,
     mouse_position: Point<Pixels>,
     pub(crate) scene: Scene,
@@ -39,9 +46,7 @@ impl Window {
             let handle = handle;
             let cx = cx.to_async();
             move |content_size, scale_factor| {
-                dbg!("!!!!!!!!!!!!");
                 cx.update_window(handle, |cx| {
-                    dbg!("!!!!!!!!");
                     cx.window.scene = Scene::new(scale_factor);
                     cx.window.content_size = content_size;
                     cx.window.dirty = true;
@@ -59,6 +64,7 @@ impl Window {
             content_size,
             layout_engine: TaffyLayoutEngine::new(),
             text_style_stack: Vec::new(),
+            cascading_states: HashMap::default(),
             root_view: None,
             mouse_position,
             scene: Scene::new(scale_factor),
@@ -158,6 +164,33 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub fn pop_text_style(&mut self) {
         self.window.text_style_stack.pop();
+    }
+
+    pub fn push_cascading_state<T: Send + Sync + 'static>(&mut self, theme: T) {
+        self.window
+            .cascading_states
+            .entry(TypeId::of::<T>())
+            .or_default()
+            .push(Box::new(theme));
+    }
+
+    pub fn pop_cascading_state<T: Send + Sync + 'static>(&mut self) {
+        self.window
+            .cascading_states
+            .get_mut(&TypeId::of::<T>())
+            .and_then(|stack| stack.pop())
+            .expect("cascading state not found");
+    }
+
+    pub fn cascading_state<T: Send + Sync + 'static>(&self) -> &T {
+        let type_id = TypeId::of::<T>();
+        self.window
+            .cascading_states
+            .get(&type_id)
+            .and_then(|stack| stack.last())
+            .expect("no cascading state of the specified type has been pushed")
+            .downcast_ref::<T>()
+            .unwrap()
     }
 
     pub fn text_style(&self) -> TextStyle {
