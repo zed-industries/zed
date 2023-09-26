@@ -40,16 +40,16 @@ pub struct StatusBar<V: 'static> {
     bottom_tools: Option<ToolGroup>,
 }
 
-pub fn status_bar<V: 'static>() -> StatusBar<V> {
-    StatusBar {
-        view_type: PhantomData,
-        left_tools: None,
-        right_tools: None,
-        bottom_tools: None,
-    }
-}
-
 impl<V: 'static> StatusBar<V> {
+    pub fn new() -> Self {
+        Self {
+            view_type: PhantomData,
+            left_tools: None,
+            right_tools: None,
+            bottom_tools: None,
+        }
+    }
+
     pub fn left_tool(mut self, tool: Tool, active_index: Option<usize>) -> Self {
         self.left_tools = {
             let mut tools = vec![tool];
