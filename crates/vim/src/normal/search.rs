@@ -3,7 +3,7 @@ use search::{buffer_search, BufferSearchBar, SearchMode, SearchOptions};
 use serde_derive::Deserialize;
 use workspace::{searchable::Direction, Pane, Workspace};
 
-use crate::{state::SearchState, Vim};
+use crate::{motion::Motion, normal::move_cursor, state::SearchState, Vim};
 
 #[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -25,7 +25,29 @@ pub(crate) struct Search {
     backwards: bool,
 }
 
-impl_actions!(vim, [MoveToNext, MoveToPrev, Search]);
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct FindCommand {
+    pub query: String,
+    pub backwards: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ReplaceCommand {
+    pub query: String,
+}
+
+#[derive(Debug, Default)]
+struct Replacement {
+    search: String,
+    replacement: String,
+    should_replace_all: bool,
+    is_case_sensitive: bool,
+}
+
+impl_actions!(
+    vim,
+    [MoveToNext, MoveToPrev, Search, FindCommand, ReplaceCommand]
+);
 actions!(vim, [SearchSubmit]);
 
 pub(crate) fn init(cx: &mut AppContext) {
@@ -34,6 +56,9 @@ pub(crate) fn init(cx: &mut AppContext) {
     cx.add_action(search);
     cx.add_action(search_submit);
     cx.add_action(search_deploy);
+
+    cx.add_action(find_command);
+    cx.add_action(replace_command);
 }
 
 fn move_to_next(workspace: &mut Workspace, action: &MoveToNext, cx: &mut ViewContext<Workspace>) {
@@ -65,6 +90,7 @@ fn search(workspace: &mut Workspace, action: &Search, cx: &mut ViewContext<Works
                     cx.focus_self();
 
                     if query.is_empty() {
+                        search_bar.set_replacement(None, cx);
                         search_bar.set_search_options(SearchOptions::CASE_SENSITIVE, cx);
                         search_bar.activate_search_mode(SearchMode::Regex, cx);
                     }
@@ -149,6 +175,174 @@ pub fn move_to_internal(
         });
         vim.clear_operator(cx);
     });
+}
+
+fn find_command(workspace: &mut Workspace, action: &FindCommand, cx: &mut ViewContext<Workspace>) {
+    let pane = workspace.active_pane().clone();
+    pane.update(cx, |pane, cx| {
+        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
+            let search = search_bar.update(cx, |search_bar, cx| {
+                if !search_bar.show(cx) {
+                    return None;
+                }
+                let mut query = action.query.clone();
+                if query == "" {
+                    query = search_bar.query(cx);
+                };
+
+                search_bar.activate_search_mode(SearchMode::Regex, cx);
+                Some(search_bar.search(&query, Some(SearchOptions::CASE_SENSITIVE), cx))
+            });
+            let Some(search) = search else { return };
+            let search_bar = search_bar.downgrade();
+            let direction = if action.backwards {
+                Direction::Prev
+            } else {
+                Direction::Next
+            };
+            cx.spawn(|_, mut cx| async move {
+                search.await?;
+                search_bar.update(&mut cx, |search_bar, cx| {
+                    search_bar.select_match(direction, 1, cx)
+                })?;
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
+    })
+}
+
+fn replace_command(
+    workspace: &mut Workspace,
+    action: &ReplaceCommand,
+    cx: &mut ViewContext<Workspace>,
+) {
+    let replacement = parse_replace_all(&action.query);
+    let pane = workspace.active_pane().clone();
+    pane.update(cx, |pane, cx| {
+        let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() else {
+            return;
+        };
+        let search = search_bar.update(cx, |search_bar, cx| {
+            if !search_bar.show(cx) {
+                return None;
+            }
+
+            let mut options = SearchOptions::default();
+            if replacement.is_case_sensitive {
+                options.set(SearchOptions::CASE_SENSITIVE, true)
+            }
+            let search = if replacement.search == "" {
+                search_bar.query(cx)
+            } else {
+                replacement.search
+            };
+
+            search_bar.set_replacement(Some(&replacement.replacement), cx);
+            search_bar.activate_search_mode(SearchMode::Regex, cx);
+            Some(search_bar.search(&search, Some(options), cx))
+        });
+        let Some(search) = search else { return };
+        let search_bar = search_bar.downgrade();
+        cx.spawn(|_, mut cx| async move {
+            search.await?;
+            search_bar.update(&mut cx, |search_bar, cx| {
+                if replacement.should_replace_all {
+                    search_bar.select_last_match(cx);
+                    search_bar.replace_all(&Default::default(), cx);
+                    Vim::update(cx, |vim, cx| {
+                        move_cursor(
+                            vim,
+                            Motion::StartOfLine {
+                                display_lines: false,
+                            },
+                            None,
+                            cx,
+                        )
+                    })
+                }
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    })
+}
+
+// convert a vim query into something more usable by zed.
+// we don't attempt to fully convert between the two regex syntaxes,
+// but we do flip \( and \) to ( and ) (and vice-versa) in the pattern,
+// and convert \0..\9 to $0..$9 in the replacement so that common idioms work.
+fn parse_replace_all(query: &str) -> Replacement {
+    let mut chars = query.chars();
+    if Some('%') != chars.next() || Some('s') != chars.next() {
+        return Replacement::default();
+    }
+
+    let Some(delimeter) = chars.next() else {
+        return Replacement::default();
+    };
+
+    let mut search = String::new();
+    let mut replacement = String::new();
+    let mut flags = String::new();
+
+    let mut buffer = &mut search;
+
+    let mut escaped = false;
+    // 0 - parsing search
+    // 1 - parsing replacement
+    // 2 - parsing flags
+    let mut phase = 0;
+
+    for c in chars {
+        if escaped {
+            escaped = false;
+            if phase == 1 && c.is_digit(10) {
+                buffer.push('$')
+            // unescape escaped parens
+            } else if phase == 0 && c == '(' || c == ')' {
+            } else if c != delimeter {
+                buffer.push('\\')
+            }
+            buffer.push(c)
+        } else if c == '\\' {
+            escaped = true;
+        } else if c == delimeter {
+            if phase == 0 {
+                buffer = &mut replacement;
+                phase = 1;
+            } else if phase == 1 {
+                buffer = &mut flags;
+                phase = 2;
+            } else {
+                break;
+            }
+        } else {
+            // escape unescaped parens
+            if phase == 0 && c == '(' || c == ')' {
+                buffer.push('\\')
+            }
+            buffer.push(c)
+        }
+    }
+
+    let mut replacement = Replacement {
+        search,
+        replacement,
+        should_replace_all: true,
+        is_case_sensitive: true,
+    };
+
+    for c in flags.chars() {
+        match c {
+            'g' | 'I' => {}
+            'c' | 'n' => replacement.should_replace_all = false,
+            'i' => replacement.is_case_sensitive = false,
+            _ => {}
+        }
+    }
+
+    replacement
 }
 
 #[cfg(test)]

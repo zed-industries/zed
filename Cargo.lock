@@ -8876,6 +8876,7 @@ dependencies = [
  "async-trait",
  "collections",
  "command_palette",
+ "diagnostics",
  "editor",
  "futures 0.3.28",
  "gpui",
@@ -8897,6 +8898,7 @@ dependencies = [
  "tokio",
  "util",
  "workspace",
+ "zed-actions",
 ]
 
 [[package]]
