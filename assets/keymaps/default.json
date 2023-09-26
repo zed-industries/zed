@@ -30,7 +30,6 @@
       "cmd-s": "workspace::Save",
       "cmd-shift-s": "workspace::SaveAs",
       "cmd-=": "zed::IncreaseBufferFontSize",
-      "cmd-+": "zed::IncreaseBufferFontSize",
       "cmd--": "zed::DecreaseBufferFontSize",
       "cmd-0": "zed::ResetBufferFontSize",
       "cmd-,": "zed::OpenSettings",
@@ -260,6 +259,13 @@
     "bindings": {
       "up": "search::PreviousHistoryQuery",
       "down": "search::NextHistoryQuery"
+    }
+  },
+  {
+    "context": "ProjectSearchBar && in_replace",
+    "bindings": {
+      "enter": "search::ReplaceNext",
+      "cmd-enter": "search::ReplaceAll"
     }
   },
   {
@@ -563,7 +569,7 @@
     }
   },
   {
-    "context": "ProjectSearchBar",
+    "context": "ProjectSearchBar && !in_replace",
     "bindings": {
       "cmd-enter": "project_search::SearchInNew"
     }
@@ -589,20 +595,14 @@
     }
   },
   {
-    "context": "CollabPanel && not_editing",
+    "context": "CollabPanel",
     "bindings": {
       "ctrl-backspace": "collab_panel::Remove",
       "space": "menu::Confirm"
     }
   },
   {
-    "context": "(CollabPanel && editing) > Editor",
-    "bindings": {
-      "space": "collab_panel::InsertSpace"
-    }
-  },
-  {
-    "context": "(CollabPanel && not_editing) > Editor",
+    "context": "CollabPanel > Editor",
     "bindings": {
       "cmd-c": "collab_panel::StartLinkChannel",
       "cmd-x": "collab_panel::StartMoveChannel",
