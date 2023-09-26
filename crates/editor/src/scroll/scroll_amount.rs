@@ -15,9 +15,13 @@ impl ScrollAmount {
             Self::Line(count) => *count,
             Self::Page(count) => editor
                 .visible_line_count()
-                // subtract one to leave an anchor line
-                // round towards zero (so page-up and page-down are symmetric)
-                .map(|l| (l * count).trunc() - count.signum())
+                .map(|mut l| {
+                    // for full pages subtract one to leave an anchor line
+                    if count.abs() == 1.0 {
+                        l -= 1.0
+                    }
+                    (l * count).trunc()
+                })
                 .unwrap_or(0.),
         }
     }
