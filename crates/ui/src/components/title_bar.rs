@@ -18,21 +18,23 @@ pub struct TitleBar<V: 'static> {
     is_active: Arc<AtomicBool>,
 }
 
-pub fn title_bar<V: 'static>(cx: &mut ViewContext<V>) -> TitleBar<V> {
-    let is_active = Arc::new(AtomicBool::new(true));
-    let active = is_active.clone();
-    cx.observe_window_activation(move |_, is_active, cx| {
-        active.store(is_active, std::sync::atomic::Ordering::SeqCst);
-        cx.notify();
-    })
-    .detach();
-    TitleBar {
-        view_type: PhantomData,
-        is_active,
-    }
-}
-
 impl<V: 'static> TitleBar<V> {
+    pub fn new(cx: &mut ViewContext<V>) -> Self {
+        let is_active = Arc::new(AtomicBool::new(true));
+        let active = is_active.clone();
+
+        cx.observe_window_activation(move |_, is_active, cx| {
+            active.store(is_active, std::sync::atomic::Ordering::SeqCst);
+            cx.notify();
+        })
+        .detach();
+
+        Self {
+            view_type: PhantomData,
+            is_active,
+        }
+    }
+
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
         let has_focus = cx.window_is_active();

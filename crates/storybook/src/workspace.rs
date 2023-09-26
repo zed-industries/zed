@@ -3,7 +3,7 @@ use gpui2::{
     style::StyleHelpers,
     Element, IntoElement, ParentElement, ViewContext,
 };
-use ui::{theme, title_bar, ChatPanel, CollabPanel, StatusBar, TabBar, Toolbar};
+use ui::{theme, ChatPanel, CollabPanel, StatusBar, TabBar, TitleBar, Toolbar};
 
 #[derive(Element, Default)]
 pub struct WorkspaceElement {
@@ -26,7 +26,7 @@ impl WorkspaceElement {
             .items_start()
             .text_color(theme.lowest.base.default.foreground)
             .fill(theme.lowest.base.default.background)
-            .child(title_bar(cx))
+            .child(TitleBar::new(cx))
             .child(
                 div()
                     .flex_1()

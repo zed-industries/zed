@@ -1,4 +1,4 @@
-use crate::{theme, title_bar, ChatPanel, CollabPanel, StatusBar, TabBar};
+use crate::{theme, ChatPanel, CollabPanel, StatusBar, TabBar, TitleBar};
 
 use gpui2::{
     elements::{div, div::ScrollState},
@@ -35,7 +35,7 @@ impl WorkspaceElement {
             .fill(theme.lowest.base.default.background)
             .relative()
             // Elevation Level 1
-            .child(title_bar(cx))
+            .child(TitleBar::new(cx))
             .child(
                 div()
                     .flex_1()
