@@ -289,3 +289,14 @@ CREATE TABLE "user_features" (
 CREATE UNIQUE INDEX "index_user_features_user_id_and_feature_id" ON "user_features" ("user_id", "feature_id");
 CREATE INDEX "index_user_features_on_user_id" ON "user_features" ("user_id");
 CREATE INDEX "index_user_features_on_feature_id" ON "user_features" ("feature_id");
+
+
+CREATE TABLE "observed_channel_note_edits" (
+    "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    "channel_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE,
+    "epoch" INTEGER NOT NULL,
+    "lamport_timestamp" INTEGER NOT NULL,
+    PRIMARY KEY (user_id, channel_id)
+);
+
+CREATE UNIQUE INDEX "index_observed_notes_user_and_channel_id" ON "observed_channel_note_edits" ("user_id", "channel_id");

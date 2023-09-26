@@ -12,6 +12,7 @@ pub mod contact;
 pub mod feature_flag;
 pub mod follower;
 pub mod language_server;
+pub mod observed_note_edits;
 pub mod project;
 pub mod project_collaborator;
 pub mod room;

@@ -1,5 +1,6 @@
 use super::*;
 use prost::Message;
+use sea_query::Order::Desc;
 use text::{EditOperation, UndoOperation};
 
 pub struct LeftChannelBuffer {
@@ -74,7 +75,62 @@ impl Database {
             .await?;
             collaborators.push(collaborator);
 
-            let (base_text, operations) = self.get_buffer_state(&buffer, &tx).await?;
+            let (base_text, operations, max_operation) =
+                self.get_buffer_state(&buffer, &tx).await?;
+
+            // Save the last observed operation
+            if let Some(max_operation) = max_operation {
+                observed_note_edits::Entity::insert(observed_note_edits::ActiveModel {
+                    user_id: ActiveValue::Set(user_id),
+                    channel_id: ActiveValue::Set(channel_id),
+                    epoch: ActiveValue::Set(max_operation.0),
+                    lamport_timestamp: ActiveValue::Set(max_operation.1),
+                })
+                .on_conflict(
+                    OnConflict::columns([
+                        observed_note_edits::Column::UserId,
+                        observed_note_edits::Column::ChannelId,
+                    ])
+                    .update_columns([
+                        observed_note_edits::Column::Epoch,
+                        observed_note_edits::Column::LamportTimestamp,
+                    ])
+                    .to_owned(),
+                )
+                .exec(&*tx)
+                .await?;
+            } else {
+                let buffer_max = buffer_operation::Entity::find()
+                    .filter(buffer_operation::Column::BufferId.eq(buffer.id))
+                    .filter(buffer_operation::Column::Epoch.eq(buffer.epoch.saturating_sub(1)))
+                    .order_by(buffer_operation::Column::Epoch, Desc)
+                    .order_by(buffer_operation::Column::LamportTimestamp, Desc)
+                    .one(&*tx)
+                    .await?
+                    .map(|model| (model.epoch, model.lamport_timestamp));
+
+                if let Some(buffer_max) = buffer_max {
+                    observed_note_edits::Entity::insert(observed_note_edits::ActiveModel {
+                        user_id: ActiveValue::Set(user_id),
+                        channel_id: ActiveValue::Set(channel_id),
+                        epoch: ActiveValue::Set(buffer_max.0),
+                        lamport_timestamp: ActiveValue::Set(buffer_max.1),
+                    })
+                    .on_conflict(
+                        OnConflict::columns([
+                            observed_note_edits::Column::UserId,
+                            observed_note_edits::Column::ChannelId,
+                        ])
+                        .update_columns([
+                            observed_note_edits::Column::Epoch,
+                            observed_note_edits::Column::LamportTimestamp,
+                        ])
+                        .to_owned(),
+                    )
+                    .exec(&*tx)
+                    .await?;
+                }
+            }
 
             Ok(proto::JoinChannelBufferResponse {
                 buffer_id: buffer.id.to_proto(),
@@ -373,25 +429,33 @@ impl Database {
         channel_id: ChannelId,
     ) -> Result<Vec<UserId>> {
         self.transaction(|tx| async move {
-            #[derive(Debug, Clone, Copy, EnumIter, DeriveColumn)]
-            enum QueryUserIds {
-                UserId,
-            }
-
-            let users: Vec<UserId> = channel_buffer_collaborator::Entity::find()
-                .select_only()
-                .column(channel_buffer_collaborator::Column::UserId)
-                .filter(
-                    Condition::all()
-                        .add(channel_buffer_collaborator::Column::ChannelId.eq(channel_id)),
-                )
-                .into_values::<_, QueryUserIds>()
-                .all(&*tx)
-                .await?;
-
-            Ok(users)
+            self.get_channel_buffer_collaborators_internal(channel_id, &*tx)
+                .await
         })
         .await
+    }
+
+    async fn get_channel_buffer_collaborators_internal(
+        &self,
+        channel_id: ChannelId,
+        tx: &DatabaseTransaction,
+    ) -> Result<Vec<UserId>> {
+        #[derive(Debug, Clone, Copy, EnumIter, DeriveColumn)]
+        enum QueryUserIds {
+            UserId,
+        }
+
+        let users: Vec<UserId> = channel_buffer_collaborator::Entity::find()
+            .select_only()
+            .column(channel_buffer_collaborator::Column::UserId)
+            .filter(
+                Condition::all().add(channel_buffer_collaborator::Column::ChannelId.eq(channel_id)),
+            )
+            .into_values::<_, QueryUserIds>()
+            .all(&*tx)
+            .await?;
+
+        Ok(users)
     }
 
     pub async fn update_channel_buffer(
@@ -418,7 +482,12 @@ impl Database {
                 .iter()
                 .filter_map(|op| operation_to_storage(op, &buffer, serialization_version))
                 .collect::<Vec<_>>();
+
             if !operations.is_empty() {
+                // get current channel participants and save the max operation above
+                self.save_max_operation_for_collaborators(operations.as_slice(), channel_id, &*tx)
+                    .await?;
+
                 buffer_operation::Entity::insert_many(operations)
                     .on_conflict(
                         OnConflict::columns([
@@ -453,6 +522,60 @@ impl Database {
             Ok(connections)
         })
         .await
+    }
+
+    async fn save_max_operation_for_collaborators(
+        &self,
+        operations: &[buffer_operation::ActiveModel],
+        channel_id: ChannelId,
+        tx: &DatabaseTransaction,
+    ) -> Result<()> {
+        let max_operation = operations
+            .iter()
+            .map(|storage_model| {
+                (
+                    storage_model.epoch.clone(),
+                    storage_model.lamport_timestamp.clone(),
+                )
+            })
+            .max_by(
+                |(epoch_a, lamport_timestamp_a), (epoch_b, lamport_timestamp_b)| {
+                    epoch_a.as_ref().cmp(epoch_b.as_ref()).then(
+                        lamport_timestamp_a
+                            .as_ref()
+                            .cmp(lamport_timestamp_b.as_ref()),
+                    )
+                },
+            )
+            .unwrap();
+
+        let users = self
+            .get_channel_buffer_collaborators_internal(channel_id, tx)
+            .await?;
+
+        observed_note_edits::Entity::insert_many(users.iter().map(|id| {
+            observed_note_edits::ActiveModel {
+                user_id: ActiveValue::Set(*id),
+                channel_id: ActiveValue::Set(channel_id),
+                epoch: max_operation.0.clone(),
+                lamport_timestamp: ActiveValue::Set(*max_operation.1.as_ref()),
+            }
+        }))
+        .on_conflict(
+            OnConflict::columns([
+                observed_note_edits::Column::UserId,
+                observed_note_edits::Column::ChannelId,
+            ])
+            .update_columns([
+                observed_note_edits::Column::Epoch,
+                observed_note_edits::Column::LamportTimestamp,
+            ])
+            .to_owned(),
+        )
+        .exec(tx)
+        .await?;
+
+        Ok(())
     }
 
     async fn get_buffer_operation_serialization_version(
@@ -491,7 +614,7 @@ impl Database {
         &self,
         buffer: &buffer::Model,
         tx: &DatabaseTransaction,
-    ) -> Result<(String, Vec<proto::Operation>)> {
+    ) -> Result<(String, Vec<proto::Operation>, Option<(i32, i32)>)> {
         let id = buffer.id;
         let (base_text, version) = if buffer.epoch > 0 {
             let snapshot = buffer_snapshot::Entity::find()
@@ -519,13 +642,21 @@ impl Database {
             .stream(&*tx)
             .await?;
         let mut operations = Vec::new();
+
+        let mut max_epoch: Option<i32> = None;
+        let mut max_timestamp: Option<i32> = None;
         while let Some(row) = rows.next().await {
+            let row = row?;
+
+            max_assign(&mut max_epoch, row.epoch);
+            max_assign(&mut max_timestamp, row.lamport_timestamp);
+
             operations.push(proto::Operation {
-                variant: Some(operation_from_storage(row?, version)?),
+                variant: Some(operation_from_storage(row, version)?),
             })
         }
 
-        Ok((base_text, operations))
+        Ok((base_text, operations, max_epoch.zip(max_timestamp)))
     }
 
     async fn snapshot_channel_buffer(
@@ -534,7 +665,7 @@ impl Database {
         tx: &DatabaseTransaction,
     ) -> Result<()> {
         let buffer = self.get_channel_buffer(channel_id, tx).await?;
-        let (base_text, operations) = self.get_buffer_state(&buffer, tx).await?;
+        let (base_text, operations, _) = self.get_buffer_state(&buffer, tx).await?;
         if operations.is_empty() {
             return Ok(());
         }
@@ -566,6 +697,66 @@ impl Database {
         .await?;
 
         Ok(())
+    }
+
+    pub async fn has_buffer_changed(&self, user_id: UserId, channel_id: ChannelId) -> Result<bool> {
+        self.transaction(|tx| async move {
+            let user_max = observed_note_edits::Entity::find()
+                .filter(observed_note_edits::Column::UserId.eq(user_id))
+                .filter(observed_note_edits::Column::ChannelId.eq(channel_id))
+                .one(&*tx)
+                .await?
+                .map(|model| (model.epoch, model.lamport_timestamp));
+
+            let channel_buffer = channel::Model {
+                id: channel_id,
+                ..Default::default()
+            }
+            .find_related(buffer::Entity)
+            .one(&*tx)
+            .await?;
+
+            let Some(channel_buffer) = channel_buffer else {
+                return Ok(false);
+            };
+
+            let mut channel_max = buffer_operation::Entity::find()
+                .filter(buffer_operation::Column::BufferId.eq(channel_buffer.id))
+                .filter(buffer_operation::Column::Epoch.eq(channel_buffer.epoch))
+                .order_by(buffer_operation::Column::Epoch, Desc)
+                .order_by(buffer_operation::Column::LamportTimestamp, Desc)
+                .one(&*tx)
+                .await?
+                .map(|model| (model.epoch, model.lamport_timestamp));
+
+            // If there are no edits in this epoch
+            if channel_max.is_none() {
+                // check if this user observed the last edit of the previous epoch
+                channel_max = buffer_operation::Entity::find()
+                    .filter(buffer_operation::Column::BufferId.eq(channel_buffer.id))
+                    .filter(
+                        buffer_operation::Column::Epoch.eq(channel_buffer.epoch.saturating_sub(1)),
+                    )
+                    .order_by(buffer_operation::Column::Epoch, Desc)
+                    .order_by(buffer_operation::Column::LamportTimestamp, Desc)
+                    .one(&*tx)
+                    .await?
+                    .map(|model| (model.epoch, model.lamport_timestamp));
+            }
+
+            Ok(user_max != channel_max)
+        })
+        .await
+    }
+}
+
+fn max_assign<T: Ord>(max: &mut Option<T>, val: T) {
+    if let Some(max_val) = max {
+        if val > *max_val {
+            *max = Some(val);
+        }
+    } else {
+        *max = Some(val);
     }
 }
 
