@@ -1372,15 +1372,16 @@ impl ProjectSearchBar {
         }
     }
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
+        let mut should_propagate = true;
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
-                if search_view.replacement_editor.is_focused(cx) {
-                    search_view.replace_next(&ReplaceNext, cx)
-                } else {
-                    search_view.search(cx)
+                if !search_view.replacement_editor.is_focused(cx) {
+                    should_propagate = false;
+                    search_view.search(cx);
                 }
             });
-        } else {
+        }
+        if should_propagate {
             cx.propagate_action();
         }
     }
