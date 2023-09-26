@@ -14,6 +14,13 @@ pub enum IconPosition {
     Right,
 }
 
+#[derive(Default, Copy, Clone, PartialEq)]
+pub enum ButtonVariant {
+    #[default]
+    Ghost,
+    Filled,
+}
+
 struct ButtonHandlers<V> {
     click: Option<Rc<dyn Fn(&mut V, &mut EventContext<V>)>>,
 }

@@ -5,6 +5,13 @@ use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 use crate::prelude::*;
 use crate::theme;
 
+#[derive(Default, PartialEq)]
+pub enum InputVariant {
+    #[default]
+    Ghost,
+    Filled,
+}
+
 #[derive(Element)]
 pub struct Input {
     placeholder: &'static str,

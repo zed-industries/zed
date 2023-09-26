@@ -1,3 +1,5 @@
+pub use crate::{ButtonVariant, InputVariant};
+
 use gpui2::{hsla, rgb, Hsla};
 use strum::EnumIter;
 
@@ -64,20 +66,6 @@ pub enum OrderMethod {
     Ascending,
     Descending,
     MostRecent,
-}
-
-#[derive(Default, Copy, Clone, PartialEq)]
-pub enum ButtonVariant {
-    #[default]
-    Ghost,
-    Filled,
-}
-
-#[derive(Default, PartialEq)]
-pub enum InputVariant {
-    #[default]
-    Ghost,
-    Filled,
 }
 
 #[derive(Default, PartialEq, Clone, Copy)]
