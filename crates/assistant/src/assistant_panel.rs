@@ -544,16 +544,10 @@ impl AssistantPanel {
 
         let multi_buffer = editor.read(cx).buffer().read(cx);
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-        let snapshot = if multi_buffer.all_buffers().len() > 1 {
-            return;
+        let snapshot = if multi_buffer.is_singleton() {
+            multi_buffer.as_singleton().unwrap().read(cx).snapshot()
         } else {
-            multi_buffer
-                .all_buffers()
-                .iter()
-                .next()
-                .unwrap()
-                .read(cx)
-                .snapshot()
+            return;
         };
 
         let range = pending_assist.codegen.read(cx).range();
@@ -587,6 +581,8 @@ impl AssistantPanel {
             cx,
             codegen_kind,
         );
+
+        dbg!(&prompt);
 
         let mut messages = Vec::new();
         let mut model = settings::get::<AssistantSettings>(cx)

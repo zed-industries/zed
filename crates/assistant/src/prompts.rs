@@ -68,9 +68,13 @@ fn outline_for_prompt(
             intersected = false;
             text.extend(iter::repeat(indent.as_str()).take(intersection_indent));
             text.extend(buffer.text_for_range(extended_range.start..range.start));
-            text.push_str("<|");
+            text.push_str("<|START|");
             text.extend(buffer.text_for_range(range.clone()));
-            text.push_str("|>");
+            if range.start != range.end {
+                text.push_str("|END|>");
+            } else {
+                text.push_str(">");
+            }
             text.extend(buffer.text_for_range(range.end..extended_range.end));
             text.push('\n');
         }
@@ -113,16 +117,16 @@ pub fn generate_content_prompt(
 
     // Assume for now that we are just generating
     if range.clone().start == range.end {
-        writeln!(prompt, "In particular, the user's cursor is current on the '<||>' span in the above outline, with no text selected.").unwrap();
+        writeln!(prompt, "In particular, the user's cursor is current on the '<|START|>' span in the above outline, with no text selected.").unwrap();
     } else {
-        writeln!(prompt, "In particular, the user has selected a section of the text between the '<|' and '|>' spans.").unwrap();
+        writeln!(prompt, "In particular, the user has selected a section of the text between the '<|START|' and '|END|>' spans.").unwrap();
     }
 
     match kind {
         CodegenKind::Generate { position } => {
             writeln!(
                 prompt,
-                "Assume the cursor is located where the `<|` marker is."
+                "Assume the cursor is located where the `<|START|` marker is."
             )
             .unwrap();
             writeln!(
@@ -144,7 +148,7 @@ pub fn generate_content_prompt(
             .unwrap();
             writeln!(
                 prompt,
-                "You MUST reply with only the adjusted code, not the entire file."
+                "You MUST reply with only the adjusted code (within the '<|START|' and '|END|>' spans), not the entire file."
             )
             .unwrap();
         }
