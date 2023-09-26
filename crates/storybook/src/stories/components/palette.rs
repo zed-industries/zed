@@ -19,10 +19,10 @@ impl PaletteStory {
                     .placeholder("Execute a command...")
                     .items(vec![
                         PaletteItem::new("theme selector: toggle").keybinding(
-                            Keybinding::new_chord(vec![
+                            Keybinding::new_chord(
                                 ("k".to_string(), ModifierKeys::new().command(true)),
                                 ("t".to_string(), ModifierKeys::new().command(true)),
-                            ]),
+                            ),
                         ),
                         PaletteItem::new("assistant: inline assist").keybinding(Keybinding::new(
                             "enter".to_string(),

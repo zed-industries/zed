@@ -23,8 +23,13 @@ impl Keybinding {
         }
     }
 
-    pub fn new_chord(chord: Vec<(String, ModifierKeys)>) -> Self {
-        Self { keybinding: chord }
+    pub fn new_chord(
+        first_note: (String, ModifierKeys),
+        second_note: (String, ModifierKeys),
+    ) -> Self {
+        Self {
+            keybinding: vec![first_note, second_note],
+        }
     }
 
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {

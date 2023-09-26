@@ -51,14 +51,14 @@ impl KeybindingStory {
             .child(Story::label(cx, "Single Key with All Modifiers"))
             .child(Keybinding::new("Z".to_string(), ModifierKeys::all()))
             .child(Story::label(cx, "Chord"))
-            .child(Keybinding::new_chord(vec![
+            .child(Keybinding::new_chord(
                 ("A".to_string(), ModifierKeys::new()),
                 ("Z".to_string(), ModifierKeys::new()),
-            ]))
+            ))
             .child(Story::label(cx, "Chord with Modifier"))
-            .child(Keybinding::new_chord(vec![
+            .child(Keybinding::new_chord(
                 ("A".to_string(), ModifierKeys::new().control(true)),
                 ("Z".to_string(), ModifierKeys::new().shift(true)),
-            ]))
+            ))
     }
 }
