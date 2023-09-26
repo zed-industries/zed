@@ -14,14 +14,14 @@ pub struct TabBar<V: 'static> {
     scroll_state: ScrollState,
 }
 
-pub fn tab_bar<V: 'static>(scroll_state: ScrollState) -> TabBar<V> {
-    TabBar {
-        view_type: PhantomData,
-        scroll_state,
-    }
-}
-
 impl<V: 'static> TabBar<V> {
+    pub fn new(scroll_state: ScrollState) -> Self {
+        Self {
+            view_type: PhantomData,
+            scroll_state,
+        }
+    }
+
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
         let can_navigate_back = true;
