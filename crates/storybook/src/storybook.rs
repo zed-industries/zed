@@ -1,6 +1,5 @@
 #![allow(dead_code, unused_variables)]
 
-mod collab_panel;
 mod stories;
 mod story;
 mod story_selector;
