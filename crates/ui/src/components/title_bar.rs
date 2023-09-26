@@ -8,7 +8,7 @@ use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
 use crate::prelude::Shape;
 use crate::{
-    icon_button, theme, Avatar, Button, FollowGroup, IconAsset, IconColor, ToolDivider,
+    theme, Avatar, Button, FollowGroup, IconAsset, IconButton, IconColor, ToolDivider,
     TrafficLights,
 };
 
@@ -85,8 +85,8 @@ impl<V: 'static> TitleBar<V> {
                             .flex()
                             .items_center()
                             .gap_1()
-                            .child(icon_button().icon(IconAsset::FolderX))
-                            .child(icon_button().icon(IconAsset::Close)),
+                            .child(IconButton::new(IconAsset::FolderX))
+                            .child(IconButton::new(IconAsset::Close)),
                     )
                     .child(ToolDivider::new())
                     .child(
@@ -95,13 +95,9 @@ impl<V: 'static> TitleBar<V> {
                             .flex()
                             .items_center()
                             .gap_1()
-                            .child(icon_button().icon(IconAsset::Mic))
-                            .child(icon_button().icon(IconAsset::AudioOn))
-                            .child(
-                                icon_button()
-                                    .icon(IconAsset::Screen)
-                                    .color(IconColor::Accent),
-                            ),
+                            .child(IconButton::new(IconAsset::Mic))
+                            .child(IconButton::new(IconAsset::AudioOn))
+                            .child(IconButton::new(IconAsset::Screen).color(IconColor::Accent)),
                     )
                     .child(
                         div().px_2().flex().items_center().child(

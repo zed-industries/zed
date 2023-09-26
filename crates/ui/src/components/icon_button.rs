@@ -13,15 +13,6 @@ pub struct IconButton {
     state: InteractionState,
 }
 
-pub fn icon_button() -> IconButton {
-    IconButton {
-        icon: IconAsset::default(),
-        color: IconColor::default(),
-        variant: ButtonVariant::default(),
-        state: InteractionState::default(),
-    }
-}
-
 impl IconButton {
     pub fn new(icon: IconAsset) -> Self {
         Self {

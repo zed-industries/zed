@@ -6,7 +6,7 @@ use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
 use crate::prelude::*;
-use crate::{icon_button, theme, IconAsset, Tab};
+use crate::{theme, IconAsset, IconButton, Tab};
 
 #[derive(Element)]
 pub struct TabBar<V: 'static> {
@@ -44,12 +44,11 @@ impl<V: 'static> TabBar<V> {
                             .items_center()
                             .gap_px()
                             .child(
-                                icon_button()
-                                    .icon(IconAsset::ArrowLeft)
+                                IconButton::new(IconAsset::ArrowLeft)
                                     .state(InteractionState::Enabled.if_enabled(can_navigate_back)),
                             )
                             .child(
-                                icon_button().icon(IconAsset::ArrowRight).state(
+                                IconButton::new(IconAsset::ArrowRight).state(
                                     InteractionState::Enabled.if_enabled(can_navigate_forward),
                                 ),
                             ),
@@ -104,8 +103,8 @@ impl<V: 'static> TabBar<V> {
                             .flex()
                             .items_center()
                             .gap_px()
-                            .child(icon_button().icon(IconAsset::Plus))
-                            .child(icon_button().icon(IconAsset::Split)),
+                            .child(IconButton::new(IconAsset::Plus))
+                            .child(IconButton::new(IconAsset::Split)),
                     ),
             )
     }

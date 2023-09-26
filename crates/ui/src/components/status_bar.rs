@@ -5,7 +5,7 @@ use gpui2::{elements::div, IntoElement};
 use gpui2::{Element, ParentElement, ViewContext};
 
 use crate::theme::{theme, Theme};
-use crate::{icon_button, Button, IconAsset, ToolDivider};
+use crate::{Button, IconAsset, IconButton, ToolDivider};
 
 #[derive(Default, PartialEq)]
 pub enum Tool {
@@ -106,10 +106,10 @@ impl<V: 'static> StatusBar<V> {
             .flex()
             .items_center()
             .gap_1()
-            .child(icon_button().icon(IconAsset::FileTree))
-            .child(icon_button().icon(IconAsset::Hash))
+            .child(IconButton::new(IconAsset::FileTree))
+            .child(IconButton::new(IconAsset::Hash))
             .child(ToolDivider::new())
-            .child(icon_button().icon(IconAsset::XCircle))
+            .child(IconButton::new(IconAsset::XCircle))
     }
     fn right_tools(&self, theme: &Theme) -> impl Element<V> {
         div()
@@ -130,8 +130,8 @@ impl<V: 'static> StatusBar<V> {
                     .flex()
                     .items_center()
                     .gap_1()
-                    .child(icon_button().icon(IconAsset::Copilot))
-                    .child(icon_button().icon(IconAsset::Envelope)),
+                    .child(IconButton::new(IconAsset::Copilot))
+                    .child(IconButton::new(IconAsset::Envelope)),
             )
             .child(ToolDivider::new())
             .child(
@@ -139,9 +139,9 @@ impl<V: 'static> StatusBar<V> {
                     .flex()
                     .items_center()
                     .gap_1()
-                    .child(icon_button().icon(IconAsset::Terminal))
-                    .child(icon_button().icon(IconAsset::MessageBubbles))
-                    .child(icon_button().icon(IconAsset::Ai)),
+                    .child(IconButton::new(IconAsset::Terminal))
+                    .child(IconButton::new(IconAsset::MessageBubbles))
+                    .child(IconButton::new(IconAsset::Ai)),
             )
     }
 }

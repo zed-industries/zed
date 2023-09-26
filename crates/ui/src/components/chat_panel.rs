@@ -6,7 +6,7 @@ use gpui2::{elements::div, IntoElement};
 use gpui2::{Element, ParentElement, ViewContext};
 
 use crate::theme::theme;
-use crate::{icon_button, IconAsset};
+use crate::{IconAsset, IconButton};
 
 #[derive(Element)]
 pub struct ChatPanel<V: 'static> {
@@ -58,8 +58,8 @@ impl<V: 'static> ChatPanel<V> {
                             .flex()
                             .items_center()
                             .gap_px()
-                            .child(icon_button().icon(IconAsset::Plus))
-                            .child(icon_button().icon(IconAsset::Split)),
+                            .child(IconButton::new(IconAsset::Plus))
+                            .child(IconButton::new(IconAsset::Split)),
                     ),
             )
     }
