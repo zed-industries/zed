@@ -8043,24 +8043,27 @@ fn subscribe_for_copilot_events(
             copilot::Event::CopilotLanguageServerStarted => {
                 match copilot.read(cx).language_server() {
                     Some((name, copilot_server)) => {
-                        let new_server_id = copilot_server.server_id();
-                        let weak_project = cx.weak_handle();
-                        let copilot_log_subscription = copilot_server
-                            .on_notification::<copilot::request::LogMessage, _>(
-                                move |params, mut cx| {
-                                    if let Some(project) = weak_project.upgrade(&mut cx) {
-                                        project.update(&mut cx, |_, cx| {
-                                            cx.emit(Event::LanguageServerLog(
-                                                new_server_id,
-                                                params.message,
-                                            ));
-                                        })
-                                    }
-                                },
-                            );
-                        project.supplementary_language_servers.insert(new_server_id, (name.clone(), Arc::clone(copilot_server)));
-                        project.copilot_log_subscription = Some(copilot_log_subscription);
-                        cx.emit(Event::LanguageServerAdded(new_server_id));
+                        // Another event wants to re-add the server that was already added and subscribed to, avoid doing it again.
+                        if !copilot_server.has_notification_handler::<copilot::request::LogMessage>() {
+                            let new_server_id = copilot_server.server_id();
+                            let weak_project = cx.weak_handle();
+                            let copilot_log_subscription = copilot_server
+                                .on_notification::<copilot::request::LogMessage, _>(
+                                    move |params, mut cx| {
+                                        if let Some(project) = weak_project.upgrade(&mut cx) {
+                                            project.update(&mut cx, |_, cx| {
+                                                cx.emit(Event::LanguageServerLog(
+                                                    new_server_id,
+                                                    params.message,
+                                                ));
+                                            })
+                                        }
+                                    },
+                                );
+                            project.supplementary_language_servers.insert(new_server_id, (name.clone(), Arc::clone(copilot_server)));
+                            project.copilot_log_subscription = Some(copilot_log_subscription);
+                            cx.emit(Event::LanguageServerAdded(new_server_id));
+                        }
                     }
                     None => debug_panic!("Received Copilot language server started event, but no language server is running"),
                 }
