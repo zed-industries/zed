@@ -15,14 +15,12 @@ pub trait Stack: Sized + StyleHelpers {
 
 impl<V> Stack for Div<V> {}
 
-/// Horizontally stacks elements
-#[deprecated = "Use `Stack::h_stack` instead."]
+/// Horizontally stacks elements.
 pub fn h_stack<V: 'static>() -> Div<V> {
-    div().flex().flex_row().items_center()
+    div().h_stack()
 }
 
-/// Vertically stacks elements
-#[deprecated = "Use `Stack::v_stack` instead."]
+/// Vertically stacks elements.
 pub fn v_stack<V: 'static>() -> Div<V> {
-    div().flex().flex_col()
+    div().v_stack()
 }
