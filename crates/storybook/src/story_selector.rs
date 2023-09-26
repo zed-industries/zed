@@ -9,9 +9,10 @@ use strum::{EnumIter, EnumString, IntoEnumIterator};
 #[strum(serialize_all = "snake_case")]
 pub enum ElementStory {
     Avatar,
+    Button,
     Icon,
     Input,
-    Button,
+    Label,
 }
 
 #[derive(Debug, Clone, Copy, strum::Display, EnumString, EnumIter)]

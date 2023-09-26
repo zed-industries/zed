@@ -1,8 +1,8 @@
 use crate::theme::theme;
 use gpui2::elements::div;
 use gpui2::style::StyleHelpers;
-use gpui2::{Element, ViewContext};
-use gpui2::{IntoElement, ParentElement};
+use gpui2::{Element, Hsla, IntoElement, ParentElement, ViewContext};
+use smallvec::SmallVec;
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum LabelColor {
@@ -30,6 +30,7 @@ pub struct Label {
     label: String,
     color: LabelColor,
     size: LabelSize,
+    highlight_indices: Vec<usize>,
 }
 
 impl Label {
@@ -41,6 +42,7 @@ impl Label {
             label: label.into(),
             color: LabelColor::Default,
             size: LabelSize::Default,
+            highlight_indices: Vec::new(),
         }
     }
 
@@ -51,6 +53,11 @@ impl Label {
 
     pub fn size(mut self, size: LabelSize) -> Self {
         self.size = size;
+        self
+    }
+
+    pub fn with_highlights(mut self, indices: Vec<usize>) -> Self {
+        self.highlight_indices = indices;
         self
     }
 
@@ -69,14 +76,60 @@ impl Label {
             LabelColor::Accent => theme.lowest.accent.default.foreground,
         };
 
-        let mut div = div();
+        // TODO(Marshall): Ask Nate what color from the theme we should be using for the highlights.
+        let highlight_color = gpui2::rgb::<Hsla>(0xff00ff);
 
-        if self.size == LabelSize::Small {
-            div = div.text_xs();
-        } else {
-            div = div.text_sm();
+        let mut highlight_indices = self.highlight_indices.iter().copied().peekable();
+
+        let mut runs: SmallVec<[Run; 8]> = SmallVec::new();
+
+        for (char_ix, char) in self.label.char_indices() {
+            let mut color = color;
+
+            if let Some(highlight_ix) = highlight_indices.peek() {
+                if char_ix == *highlight_ix {
+                    color = highlight_color;
+
+                    highlight_indices.next();
+                }
+            }
+
+            let last_run = runs.last_mut();
+            let start_new_run = if let Some(last_run) = last_run {
+                if color == last_run.color {
+                    last_run.text.push(char);
+                    false
+                } else {
+                    true
+                }
+            } else {
+                true
+            };
+
+            if start_new_run {
+                runs.push(Run {
+                    text: char.to_string(),
+                    color,
+                });
+            }
         }
 
-        div.text_color(color).child(self.label.clone())
+        div().flex().children(runs.into_iter().map(|run| {
+            let mut div = div();
+
+            if self.size == LabelSize::Small {
+                div = div.text_xs();
+            } else {
+                div = div.text_sm();
+            }
+
+            div.text_color(run.color).child(run.text)
+        }))
     }
+}
+
+/// A run of text that receives the same style.
+struct Run {
+    pub text: String,
+    pub color: Hsla,
 }

@@ -8611,6 +8611,7 @@ dependencies = [
  "gpui2",
  "serde",
  "settings",
+ "smallvec",
  "strum",
  "theme",
 ]

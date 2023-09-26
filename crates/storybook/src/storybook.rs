@@ -76,6 +76,13 @@ fn main() {
                         stories::elements::avatar::AvatarStory::default(),
                     )
                 }),
+                Some(StorySelector::Element(ElementStory::Button)) => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        stories::elements::button::ButtonStory::default(),
+                    )
+                }),
                 Some(StorySelector::Element(ElementStory::Icon)) => view(move |cx| {
                     render_story(
                         &mut ViewContext::new(cx),
@@ -90,11 +97,11 @@ fn main() {
                         stories::elements::input::InputStory::default(),
                     )
                 }),
-                Some(StorySelector::Element(ElementStory::Button)) => view(move |cx| {
+                Some(StorySelector::Element(ElementStory::Label)) => view(move |cx| {
                     render_story(
                         &mut ViewContext::new(cx),
                         theme_override.clone(),
-                        stories::elements::button::ButtonStory::default(),
+                        stories::elements::label::LabelStory::default(),
                     )
                 }),
                 Some(StorySelector::Component(ComponentStory::Breadcrumb)) => view(move |cx| {
