@@ -17,20 +17,20 @@ pub struct Tab {
     close_side: IconSide,
 }
 
-pub fn tab() -> Tab {
-    Tab {
-        title: "untitled",
-        icon: None,
-        current: false,
-        dirty: false,
-        fs_status: FileSystemStatus::None,
-        git_status: GitStatus::None,
-        diagnostic_status: DiagnosticStatus::None,
-        close_side: IconSide::Left,
-    }
-}
-
 impl Tab {
+    pub fn new() -> Self {
+        Self {
+            title: "untitled",
+            icon: None,
+            current: false,
+            dirty: false,
+            fs_status: FileSystemStatus::None,
+            git_status: GitStatus::None,
+            diagnostic_status: DiagnosticStatus::None,
+            close_side: IconSide::Left,
+        }
+    }
+
     pub fn current(mut self, current: bool) -> Self {
         self.current = current;
         self

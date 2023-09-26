@@ -6,7 +6,7 @@ use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
 use crate::prelude::*;
-use crate::{icon_button, tab, theme, IconAsset};
+use crate::{icon_button, theme, IconAsset, Tab};
 
 #[derive(Element)]
 pub struct TabBar<V: 'static> {
@@ -61,34 +61,34 @@ impl<V: 'static> TabBar<V> {
                         .flex()
                         .overflow_x_scroll(self.scroll_state.clone())
                         .child(
-                            tab()
+                            Tab::new()
                                 .title("Cargo.toml")
                                 .current(false)
                                 .git_status(GitStatus::Modified),
                         )
-                        .child(tab().title("Channels Panel").current(false))
+                        .child(Tab::new().title("Channels Panel").current(false))
                         .child(
-                            tab()
+                            Tab::new()
                                 .title("channels_panel.rs")
                                 .current(true)
                                 .git_status(GitStatus::Modified),
                         )
                         .child(
-                            tab()
+                            Tab::new()
                                 .title("workspace.rs")
                                 .current(false)
                                 .git_status(GitStatus::Modified),
                         )
-                        .child(tab().title("icon_button.rs").current(false))
+                        .child(Tab::new().title("icon_button.rs").current(false))
                         .child(
-                            tab()
+                            Tab::new()
                                 .title("storybook.rs")
                                 .current(false)
                                 .git_status(GitStatus::Created),
                         )
-                        .child(tab().title("theme.rs").current(false))
-                        .child(tab().title("theme_registry.rs").current(false))
-                        .child(tab().title("styleable_helpers.rs").current(false)),
+                        .child(Tab::new().title("theme.rs").current(false))
+                        .child(Tab::new().title("theme_registry.rs").current(false))
+                        .child(Tab::new().title("styleable_helpers.rs").current(false)),
                 ),
             )
             // Right Side
