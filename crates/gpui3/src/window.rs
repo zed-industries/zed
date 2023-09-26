@@ -39,7 +39,9 @@ impl Window {
             let handle = handle;
             let cx = cx.to_async();
             move |content_size, scale_factor| {
+                dbg!("!!!!!!!!!!!!");
                 cx.update_window(handle, |cx| {
+                    dbg!("!!!!!!!!");
                     cx.window.scene = Scene::new(scale_factor);
                     cx.window.content_size = content_size;
                     cx.window.dirty = true;
@@ -101,6 +103,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             root_view.paint(layout, &mut (), &mut frame_state, cx)?;
             cx.window.root_view = Some(root_view);
             let scene = cx.window.scene.take();
+            dbg!(&scene);
             let _ = cx.window.platform_window.read(|platform_window| {
                 platform_window.draw(scene);
                 future::ready(())

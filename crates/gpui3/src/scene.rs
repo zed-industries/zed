@@ -8,12 +8,13 @@ use collections::BTreeMap;
 // Exported to metal
 pub type PointF = Point<f32>;
 
+#[derive(Debug)]
 pub struct Scene {
     layers: BTreeMap<u32, SceneLayer>,
     pub(crate) scale_factor: f32,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct SceneLayer {
     pub quads: Vec<Quad>,
 }

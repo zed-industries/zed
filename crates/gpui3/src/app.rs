@@ -97,7 +97,7 @@ impl AppContext {
         let this = self.this.upgrade().unwrap();
         self.platform.read(move |platform| {
             let cx = &mut *this.lock();
-            f(platform, cx)
+            cx.update(|cx| f(platform, cx))
         })
     }
 
@@ -122,22 +122,24 @@ impl AppContext {
         id: WindowId,
         update: impl FnOnce(&mut WindowContext) -> R,
     ) -> Result<R> {
-        let mut window = self
-            .windows
-            .get_mut(id)
-            .ok_or_else(|| anyhow!("window not found"))?
-            .take()
-            .unwrap();
+        self.update(|cx| {
+            let mut window = cx
+                .windows
+                .get_mut(id)
+                .ok_or_else(|| anyhow!("window not found"))?
+                .take()
+                .unwrap();
 
-        let result = update(&mut WindowContext::mutable(self, &mut window));
-        window.dirty = true;
+            let result = update(&mut WindowContext::mutable(cx, &mut window));
+            window.dirty = true;
 
-        self.windows
-            .get_mut(id)
-            .ok_or_else(|| anyhow!("window not found"))?
-            .replace(window);
+            cx.windows
+                .get_mut(id)
+                .ok_or_else(|| anyhow!("window not found"))?
+                .replace(window);
 
-        Ok(result)
+            Ok(result)
+        })
     }
 
     fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
