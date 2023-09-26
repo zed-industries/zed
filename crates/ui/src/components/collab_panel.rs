@@ -1,10 +1,9 @@
 use std::marker::PhantomData;
 
-use gpui2::elements::div::ScrollState;
-use gpui2::elements::{div, img, svg};
-use gpui2::style::{StyleHelpers, Styleable};
-use gpui2::{ArcCow, Element, IntoElement, ParentElement, ViewContext};
+use gpui2::elements::{img, svg};
+use gpui2::ArcCow;
 
+use crate::prelude::*;
 use crate::theme::{theme, Theme};
 use crate::{
     static_collab_panel_channels, static_collab_panel_current_call, v_stack, IconAsset, List,

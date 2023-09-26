@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use gpui2::elements::svg;
-use gpui2::{Element, Hsla, IntoElement, ViewContext};
+use gpui2::Hsla;
 use strum::EnumIter;
 
 use crate::prelude::*;

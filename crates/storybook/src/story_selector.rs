@@ -1,4 +1,5 @@
-use std::{str::FromStr, sync::OnceLock};
+use std::str::FromStr;
+use std::sync::OnceLock;
 
 use anyhow::{anyhow, Context};
 use clap::builder::PossibleValue;

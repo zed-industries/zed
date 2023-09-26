@@ -1,8 +1,6 @@
 use std::marker::PhantomData;
 
-use gpui2::elements::div::ScrollState;
 use gpui2::geometry::AbsoluteLength;
-use gpui2::{Element, IntoElement, ViewContext};
 
 use crate::prelude::*;
 use crate::{theme, token, v_stack};

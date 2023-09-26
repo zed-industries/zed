@@ -1,12 +1,12 @@
-use gpui2::elements::div;
-use gpui2::{Element, ParentElement, ViewContext};
+use gpui2::elements::div::Div;
+
 use ui::prelude::*;
 use ui::theme;
 
 pub struct Story {}
 
 impl Story {
-    pub fn container<V: 'static>(cx: &mut ViewContext<V>) -> div::Div<V> {
+    pub fn container<V: 'static>(cx: &mut ViewContext<V>) -> Div<V> {
         let theme = theme(cx);
 
         div()

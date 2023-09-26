@@ -1,10 +1,5 @@
 use std::marker::PhantomData;
 
-use gpui2::elements::div;
-use gpui2::elements::div::ScrollState;
-use gpui2::style::Styleable;
-use gpui2::{Element, IntoElement, ParentElement, ViewContext};
-
 use crate::prelude::*;
 use crate::theme::theme;
 use crate::{h_stack, v_stack, Keybinding, Label, LabelColor};

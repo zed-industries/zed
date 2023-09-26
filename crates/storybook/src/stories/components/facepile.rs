@@ -1,5 +1,3 @@
-use gpui2::elements::div;
-use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 use ui::prelude::*;
 use ui::{Avatar, Facepile};
 

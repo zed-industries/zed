@@ -1,7 +1,5 @@
-use gpui2::elements::div;
-use gpui2::elements::div::ScrollState;
 use gpui2::geometry::{relative, rems, Size};
-use gpui2::{hsla, Element, IntoElement, ParentElement, ViewContext};
+use gpui2::hsla;
 
 use crate::prelude::*;
 use crate::{theme, ChatPanel, CollabPanel, Pane, PaneGroup, SplitDirection, StatusBar, TitleBar};

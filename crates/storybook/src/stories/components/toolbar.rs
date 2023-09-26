@@ -1,4 +1,4 @@
-use gpui2::{Element, IntoElement, ParentElement, ViewContext};
+use ui::prelude::*;
 use ui::Toolbar;
 
 use crate::story::Story;

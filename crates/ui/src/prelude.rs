@@ -1,4 +1,6 @@
-pub use gpui2::style::StyleHelpers;
+pub use gpui2::elements::div::{div, ScrollState};
+pub use gpui2::style::{StyleHelpers, Styleable};
+pub use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
 pub use crate::{ButtonVariant, InputVariant};
 

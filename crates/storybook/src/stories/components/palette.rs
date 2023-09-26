@@ -1,5 +1,4 @@
-use gpui2::elements::div::ScrollState;
-use gpui2::{Element, IntoElement, ParentElement, ViewContext};
+use ui::prelude::*;
 use ui::{Keybinding, ModifierKeys, Palette, PaletteItem};
 
 use crate::story::Story;

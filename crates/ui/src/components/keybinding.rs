@@ -1,7 +1,5 @@
 use std::collections::HashSet;
 
-use gpui2::elements::div;
-use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 use strum::{EnumIter, IntoEnumIterator};
 
 use crate::prelude::*;

@@ -1,7 +1,3 @@
-use gpui2::elements::div;
-use gpui2::style::Styleable;
-use gpui2::{Element, IntoElement, ParentElement, ViewContext};
-
 use crate::prelude::*;
 use crate::{
     h_stack, theme, token, v_stack, Avatar, DisclosureControlVisibility, Icon, IconAsset,

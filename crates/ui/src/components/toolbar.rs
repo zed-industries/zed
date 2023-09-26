@@ -1,6 +1,3 @@
-use gpui2::elements::div;
-use gpui2::{Element, IntoElement, ParentElement, ViewContext};
-
 use crate::prelude::*;
 use crate::{theme, Breadcrumb, IconAsset, IconButton};
 

@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use gpui2::geometry::DefiniteLength;
 use gpui2::platform::MouseButton;
-use gpui2::{Element, EventContext, Hsla, Interactive, IntoElement, ParentElement, ViewContext};
+use gpui2::{EventContext, Hsla, Interactive};
 
 use crate::prelude::*;
 use crate::{h_stack, theme, Icon, IconAsset, IconColor, Label, LabelColor, LabelSize};

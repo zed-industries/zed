@@ -1,5 +1,4 @@
-use gpui2::elements::div;
-use gpui2::{Element, Hsla, IntoElement, ParentElement, ViewContext};
+use gpui2::Hsla;
 use smallvec::SmallVec;
 
 use crate::prelude::*;

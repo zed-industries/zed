@@ -1,9 +1,7 @@
 use std::marker::PhantomData;
 
-use gpui2::elements::div;
-use gpui2::elements::div::ScrollState;
 use gpui2::geometry::{Length, Size};
-use gpui2::{hsla, Element, Hsla, IntoElement, ParentElement, ViewContext};
+use gpui2::{hsla, Hsla};
 
 use crate::prelude::*;
 use crate::theme;

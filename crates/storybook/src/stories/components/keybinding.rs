@@ -1,4 +1,3 @@
-use gpui2::{elements::div, Element, IntoElement, ParentElement, ViewContext};
 use itertools::Itertools;
 use strum::IntoEnumIterator;
 use ui::prelude::*;

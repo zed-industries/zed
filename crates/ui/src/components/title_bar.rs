@@ -2,9 +2,6 @@ use std::marker::PhantomData;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use gpui2::elements::div;
-use gpui2::{Element, IntoElement, ParentElement, ViewContext};
-
 use crate::prelude::*;
 use crate::{
     theme, Avatar, Button, FollowGroup, IconAsset, IconButton, IconColor, ToolDivider,

@@ -1,10 +1,5 @@
 use std::marker::PhantomData;
 
-use gpui2::elements::div;
-use gpui2::elements::div::ScrollState;
-use gpui2::style::StyleHelpers;
-use gpui2::{Element, IntoElement, ParentElement, ViewContext};
-
 use crate::prelude::*;
 use crate::{
     static_project_panel_project_items, static_project_panel_single_items, theme, Input, List,

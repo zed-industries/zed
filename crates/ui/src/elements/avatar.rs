@@ -1,5 +1,5 @@
 use gpui2::elements::img;
-use gpui2::{ArcCow, Element, IntoElement, ViewContext};
+use gpui2::ArcCow;
 
 use crate::prelude::*;
 use crate::theme;

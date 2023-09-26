@@ -1,8 +1,6 @@
 use std::marker::PhantomData;
 
-use gpui2::elements::div;
-use gpui2::elements::div::ScrollState;
-use gpui2::{Element, IntoElement, ViewContext};
+use crate::prelude::*;
 
 #[derive(Element)]
 pub struct Buffer<V: 'static> {
