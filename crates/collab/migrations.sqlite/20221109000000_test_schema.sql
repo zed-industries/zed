@@ -158,7 +158,8 @@ CREATE TABLE "room_participants" (
     "initial_project_id" INTEGER,
     "calling_user_id" INTEGER NOT NULL REFERENCES users (id),
     "calling_connection_id" INTEGER NOT NULL,
-    "calling_connection_server_id" INTEGER REFERENCES servers (id) ON DELETE SET NULL
+    "calling_connection_server_id" INTEGER REFERENCES servers (id) ON DELETE SET NULL,
+    "color_index" INTEGER
 );
 CREATE UNIQUE INDEX "index_room_participants_on_user_id" ON "room_participants" ("user_id");
 CREATE INDEX "index_room_participants_on_room_id" ON "room_participants" ("room_id");

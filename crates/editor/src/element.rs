@@ -17,7 +17,6 @@ use crate::{
     },
     mouse_context_menu, EditorSettings, EditorStyle, GutterHover, UnfoldAt,
 };
-use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
 use git::diff::DiffHunkStatus;
 use gpui::{
@@ -55,6 +54,7 @@ use std::{
     sync::Arc,
 };
 use text::Point;
+use theme::SelectionStyle;
 use workspace::item::Item;
 
 enum FoldMarkers {}
@@ -868,14 +868,7 @@ impl EditorElement {
         let corner_radius = 0.15 * layout.position_map.line_height;
         let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
 
-        for (replica_id, selections) in &layout.selections {
-            let replica_id = *replica_id;
-            let selection_style = if let Some(replica_id) = replica_id {
-                style.replica_selection_style(replica_id)
-            } else {
-                &style.absent_selection
-            };
-
+        for (selection_style, selections) in &layout.selections {
             for selection in selections {
                 self.paint_highlighted_range(
                     selection.range.clone(),
@@ -2193,7 +2186,7 @@ impl Element<Editor> for EditorElement {
                 .anchor_before(DisplayPoint::new(end_row, 0).to_offset(&snapshot, Bias::Right))
         };
 
-        let mut selections: Vec<(Option<ReplicaId>, Vec<SelectionLayout>)> = Vec::new();
+        let mut selections: Vec<(SelectionStyle, Vec<SelectionLayout>)> = Vec::new();
         let mut active_rows = BTreeMap::new();
         let mut fold_ranges = Vec::new();
         let is_singleton = editor.is_singleton(cx);
@@ -2218,35 +2211,6 @@ impl Element<Editor> for EditorElement {
                     )
                 }),
         );
-
-        let mut remote_selections = HashMap::default();
-        for (replica_id, line_mode, cursor_shape, selection) in snapshot
-            .buffer_snapshot
-            .remote_selections_in_range(&(start_anchor..end_anchor))
-        {
-            let replica_id = if let Some(mapping) = &editor.replica_id_mapping {
-                mapping.get(&replica_id).copied()
-            } else {
-                Some(replica_id)
-            };
-
-            // The local selections match the leader's selections.
-            if replica_id.is_some() && replica_id == editor.leader_replica_id {
-                continue;
-            }
-            remote_selections
-                .entry(replica_id)
-                .or_insert(Vec::new())
-                .push(SelectionLayout::new(
-                    selection,
-                    line_mode,
-                    cursor_shape,
-                    &snapshot.display_snapshot,
-                    false,
-                    false,
-                ));
-        }
-        selections.extend(remote_selections);
 
         let mut newest_selection_head = None;
 
@@ -2282,19 +2246,45 @@ impl Element<Editor> for EditorElement {
                 layouts.push(layout);
             }
 
-            // Render the local selections in the leader's color when following.
-            let local_replica_id = if let Some(leader_replica_id) = editor.leader_replica_id {
-                leader_replica_id
-            } else {
-                let replica_id = editor.replica_id(cx);
-                if let Some(mapping) = &editor.replica_id_mapping {
-                    mapping.get(&replica_id).copied().unwrap_or(replica_id)
-                } else {
-                    replica_id
-                }
-            };
+            selections.push((style.selection, layouts));
+        }
 
-            selections.push((Some(local_replica_id), layouts));
+        if let Some(collaboration_hub) = &editor.collaboration_hub {
+            let mut remote_selections = HashMap::default();
+            for selection in snapshot.remote_selections_in_range(
+                &(start_anchor..end_anchor),
+                collaboration_hub.as_ref(),
+                cx,
+            ) {
+                let selection_style = if let Some(color_index) = selection.color_index {
+                    style.replica_selection_style(color_index)
+                } else {
+                    style.absent_selection
+                };
+
+                // The local selections match the leader's selections.
+                if Some(selection.peer_id) == editor.leader_peer_id {
+                    if let Some((local_selection_style, _)) = selections.first_mut() {
+                        *local_selection_style = selection_style;
+                    }
+                    continue;
+                }
+
+                remote_selections
+                    .entry(selection.replica_id)
+                    .or_insert((selection_style, Vec::new()))
+                    .1
+                    .push(SelectionLayout::new(
+                        selection.selection,
+                        selection.line_mode,
+                        selection.cursor_shape,
+                        &snapshot.display_snapshot,
+                        false,
+                        false,
+                    ));
+            }
+
+            selections.extend(remote_selections.into_values());
         }
 
         let scrollbar_settings = &settings::get::<EditorSettings>(cx).scrollbar;
@@ -2686,7 +2676,7 @@ pub struct LayoutState {
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
     fold_ranges: Vec<(BufferRow, Range<DisplayPoint>, Color)>,
-    selections: Vec<(Option<ReplicaId>, Vec<SelectionLayout>)>,
+    selections: Vec<(SelectionStyle, Vec<SelectionLayout>)>,
     scrollbar_row_range: Range<f32>,
     show_scrollbars: bool,
     is_singleton: bool,

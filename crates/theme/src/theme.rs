@@ -1064,14 +1064,16 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ColorIndex(pub u32);
+
 impl Editor {
-    pub fn replica_selection_style(&self, replica_id: u16) -> &SelectionStyle {
-        let style_ix = replica_id as usize % (self.guest_selections.len() + 1);
-        if style_ix == 0 {
-            &self.selection
-        } else {
-            &self.guest_selections[style_ix - 1]
+    pub fn replica_selection_style(&self, color_index: ColorIndex) -> SelectionStyle {
+        if self.guest_selections.is_empty() {
+            return SelectionStyle::default();
         }
+        let style_ix = color_index.0 as usize % self.guest_selections.len();
+        self.guest_selections[style_ix]
     }
 }
 

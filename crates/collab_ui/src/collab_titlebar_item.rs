@@ -923,9 +923,15 @@ impl CollabTitlebarItem {
             .background_color
             .unwrap_or_default();
 
-        if let Some(replica_id) = replica_id {
+        let color_index = self
+            .user_store
+            .read(cx)
+            .color_indices()
+            .get(&user_id)
+            .copied();
+        if let Some(color_index) = color_index {
             if followed_by_self {
-                let selection = theme.editor.replica_selection_style(replica_id).selection;
+                let selection = theme.editor.replica_selection_style(color_index).selection;
                 background_color = Color::blend(selection, background_color);
                 background_color.a = 255;
             }
@@ -990,10 +996,10 @@ impl CollabTitlebarItem {
                             .contained()
                             .with_style(theme.titlebar.leader_selection);
 
-                        if let Some(replica_id) = replica_id {
+                        if let Some(color_index) = color_index {
                             if followed_by_self {
                                 let color =
-                                    theme.editor.replica_selection_style(replica_id).selection;
+                                    theme.editor.replica_selection_style(color_index).selection;
                                 container = container.with_background_color(color);
                             }
                         }
@@ -1001,8 +1007,8 @@ impl CollabTitlebarItem {
                         container
                     }))
                     .with_children((|| {
-                        let replica_id = replica_id?;
-                        let color = theme.editor.replica_selection_style(replica_id).cursor;
+                        let color_index = color_index?;
+                        let color = theme.editor.replica_selection_style(color_index).cursor;
                         Some(
                             AvatarRibbon::new(color)
                                 .constrained()

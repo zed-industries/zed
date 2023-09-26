@@ -21,6 +21,7 @@ text = { path = "../text" }
 settings = { path = "../settings" }
 feature_flags = { path = "../feature_flags" }
 sum_tree = { path = "../sum_tree" }
+theme = { path = "../theme" }
 
 anyhow.workspace = true
 async-recursion = "0.3"

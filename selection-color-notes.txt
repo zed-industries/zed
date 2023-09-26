@@ -1,0 +1,14 @@
+Assign selection colors to users. goals:
+    * current user is always main color
+    * every other user has the same color in every context
+    * users don't need to be in a shared project to have a color. they can either be in the call, or in a channel notes.
+    
+Places colors are used:
+    * editor element, driven by the buffer's `remote_selections`
+    * pane border (access to more state)
+    * collab titlebar (access to more state)
+
+Currently, editor holds an optional "replica id map".
+
+Most challenging part is in the editor, because the editor should be fairly self-contained, not depend on e.g. the user store.
+

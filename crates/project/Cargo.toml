@@ -35,6 +35,7 @@ rpc = { path = "../rpc" }
 settings = { path = "../settings" }
 sum_tree = { path = "../sum_tree" }
 terminal = { path = "../terminal" }
+theme = { path = "../theme" }
 util = { path = "../util" }
 
 aho-corasick = "1.1"

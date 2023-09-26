@@ -21,6 +21,7 @@ use live_kit_client::{
 use postage::stream::Stream;
 use project::Project;
 use std::{future::Future, mem, pin::Pin, sync::Arc, time::Duration};
+use theme::ColorIndex;
 use util::{post_inc, ResultExt, TryFutureExt};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -714,6 +715,7 @@ impl Room {
                                 participant.user_id,
                                 RemoteParticipant {
                                     user: user.clone(),
+                                    color_index: ColorIndex(participant.color_index),
                                     peer_id,
                                     projects: participant.projects,
                                     location,
@@ -806,6 +808,15 @@ impl Room {
                     log::info!("room is empty, leaving");
                     let _ = this.leave(cx);
                 }
+
+                this.user_store.update(cx, |user_store, cx| {
+                    let color_indices_by_user_id = this
+                        .remote_participants
+                        .iter()
+                        .map(|(user_id, participant)| (*user_id, participant.color_index))
+                        .collect();
+                    user_store.set_color_indices(color_indices_by_user_id, cx);
+                });
 
                 this.check_invariants();
                 cx.notify();

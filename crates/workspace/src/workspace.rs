@@ -2423,7 +2423,7 @@ impl Workspace {
         if let Some(states_by_pane) = self.follower_states_by_leader.remove(&peer_id) {
             for state in states_by_pane.into_values() {
                 for item in state.items_by_leader_view_id.into_values() {
-                    item.set_leader_replica_id(None, cx);
+                    item.set_leader_peer_id(None, cx);
                 }
             }
         }
@@ -2527,7 +2527,7 @@ impl Workspace {
             let leader_id = *leader_id;
             if let Some(state) = states_by_pane.remove(pane) {
                 for (_, item) in state.items_by_leader_view_id {
-                    item.set_leader_replica_id(None, cx);
+                    item.set_leader_peer_id(None, cx);
                 }
 
                 if states_by_pane.is_empty() {
@@ -2828,16 +2828,6 @@ impl Workspace {
         let this = this
             .upgrade(cx)
             .ok_or_else(|| anyhow!("workspace dropped"))?;
-        let project = this
-            .read_with(cx, |this, _| this.project.clone())
-            .ok_or_else(|| anyhow!("window dropped"))?;
-
-        let replica_id = project.read_with(cx, |project, _| {
-            project
-                .collaborators()
-                .get(&leader_id)
-                .map(|c| c.replica_id)
-        });
 
         let item_builders = cx.update(|cx| {
             cx.default_global::<FollowableItemBuilders>()
@@ -2882,7 +2872,7 @@ impl Workspace {
                     .get_mut(&pane)?;
 
                 for (id, item) in leader_view_ids.into_iter().zip(items) {
-                    item.set_leader_replica_id(replica_id, cx);
+                    item.set_leader_peer_id(Some(leader_id), cx);
                     state.items_by_leader_view_id.insert(id, item);
                 }
 

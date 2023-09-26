@@ -4,7 +4,10 @@ use crate::{
 };
 use crate::{AutosaveSetting, DelayedDebouncedEditAction, WorkspaceSettings};
 use anyhow::Result;
-use client::{proto, Client};
+use client::{
+    proto::{self, PeerId},
+    Client,
+};
 use gpui::geometry::vector::Vector2F;
 use gpui::AnyWindowHandle;
 use gpui::{
@@ -698,13 +701,13 @@ pub trait FollowableItem: Item {
     ) -> Task<Result<()>>;
     fn is_project_item(&self, cx: &AppContext) -> bool;
 
-    fn set_leader_replica_id(&mut self, leader_replica_id: Option<u16>, cx: &mut ViewContext<Self>);
+    fn set_leader_peer_id(&mut self, leader_peer_id: Option<PeerId>, cx: &mut ViewContext<Self>);
     fn should_unfollow_on_event(event: &Self::Event, cx: &AppContext) -> bool;
 }
 
 pub trait FollowableItemHandle: ItemHandle {
     fn remote_id(&self, client: &Arc<Client>, cx: &AppContext) -> Option<ViewId>;
-    fn set_leader_replica_id(&self, leader_replica_id: Option<u16>, cx: &mut WindowContext);
+    fn set_leader_peer_id(&self, leader_peer_id: Option<PeerId>, cx: &mut WindowContext);
     fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant>;
     fn add_event_to_update_proto(
         &self,
@@ -732,10 +735,8 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
         })
     }
 
-    fn set_leader_replica_id(&self, leader_replica_id: Option<u16>, cx: &mut WindowContext) {
-        self.update(cx, |this, cx| {
-            this.set_leader_replica_id(leader_replica_id, cx)
-        })
+    fn set_leader_peer_id(&self, leader_peer_id: Option<PeerId>, cx: &mut WindowContext) {
+        self.update(cx, |this, cx| this.set_leader_peer_id(leader_peer_id, cx))
     }
 
     fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant> {

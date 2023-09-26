@@ -168,7 +168,7 @@ impl Vim {
         self.editor_subscription = Some(cx.subscribe(&editor, |editor, event, cx| match event {
             Event::SelectionsChanged { local: true } => {
                 let editor = editor.read(cx);
-                if editor.leader_replica_id().is_none() {
+                if editor.leader_peer_id().is_none() {
                     let newest = editor.selections.newest::<usize>(cx);
                     local_selections_changed(newest, cx);
                 }

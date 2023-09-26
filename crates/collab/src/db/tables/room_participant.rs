@@ -18,6 +18,7 @@ pub struct Model {
     pub calling_user_id: UserId,
     pub calling_connection_id: i32,
     pub calling_connection_server_id: Option<ServerId>,
+    pub color_index: i32,
 }
 
 impl Model {

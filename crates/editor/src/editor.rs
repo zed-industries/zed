@@ -25,7 +25,7 @@ use ::git::diff::DiffHunk;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context, Result};
 use blink_manager::BlinkManager;
-use client::{ClickhouseEvent, TelemetrySettings};
+use client::{ClickhouseEvent, Collaborator, TelemetrySettings};
 use clock::{Global, ReplicaId};
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
@@ -79,6 +79,7 @@ pub use multi_buffer::{
 use ordered_float::OrderedFloat;
 use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
 use rand::{seq::SliceRandom, thread_rng};
+use rpc::proto::PeerId;
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
 };
@@ -101,7 +102,7 @@ use std::{
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::Rope;
-use theme::{DiagnosticStyle, Theme, ThemeSettings};
+use theme::{ColorIndex, DiagnosticStyle, Theme, ThemeSettings};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, ViewId, Workspace};
 
@@ -580,11 +581,11 @@ pub struct Editor {
     get_field_editor_theme: Option<Arc<GetFieldEditorTheme>>,
     override_text_style: Option<Box<OverrideTextStyle>>,
     project: Option<ModelHandle<Project>>,
+    collaboration_hub: Option<Box<dyn CollaborationHub>>,
     focused: bool,
     blink_manager: ModelHandle<BlinkManager>,
     pub show_local_selections: bool,
     mode: EditorMode,
-    replica_id_mapping: Option<HashMap<ReplicaId, ReplicaId>>,
     show_gutter: bool,
     show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
@@ -608,7 +609,7 @@ pub struct Editor {
     keymap_context_layers: BTreeMap<TypeId, KeymapContext>,
     input_enabled: bool,
     read_only: bool,
-    leader_replica_id: Option<u16>,
+    leader_peer_id: Option<PeerId>,
     remote_id: Option<ViewId>,
     hover_state: HoverState,
     gutter_hovered: bool,
@@ -628,6 +629,15 @@ pub struct EditorSnapshot {
     is_focused: bool,
     scroll_anchor: ScrollAnchor,
     ongoing_scroll: OngoingScroll,
+}
+
+pub struct RemoteSelection {
+    pub replica_id: ReplicaId,
+    pub selection: Selection<Anchor>,
+    pub cursor_shape: CursorShape,
+    pub peer_id: PeerId,
+    pub line_mode: bool,
+    pub color_index: Option<ColorIndex>,
 }
 
 #[derive(Clone, Debug)]
@@ -1532,12 +1542,12 @@ impl Editor {
             active_diagnostics: None,
             soft_wrap_mode_override,
             get_field_editor_theme,
+            collaboration_hub: project.clone().map(|project| Box::new(project) as _),
             project,
             focused: false,
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
             mode,
-            replica_id_mapping: None,
             show_gutter: mode == EditorMode::Full,
             show_wrap_guides: None,
             placeholder_text: None,
@@ -1564,7 +1574,7 @@ impl Editor {
             keymap_context_layers: Default::default(),
             input_enabled: true,
             read_only: false,
-            leader_replica_id: None,
+            leader_peer_id: None,
             remote_id: None,
             hover_state: Default::default(),
             link_go_to_definition_state: Default::default(),
@@ -1631,8 +1641,8 @@ impl Editor {
         self.buffer.read(cx).replica_id()
     }
 
-    pub fn leader_replica_id(&self) -> Option<ReplicaId> {
-        self.leader_replica_id
+    pub fn leader_peer_id(&self) -> Option<PeerId> {
+        self.leader_peer_id
     }
 
     pub fn buffer(&self) -> &ModelHandle<MultiBuffer> {
@@ -1694,6 +1704,14 @@ impl Editor {
 
     pub fn mode(&self) -> EditorMode {
         self.mode
+    }
+
+    pub fn collaboration_hub(&self) -> Option<&dyn CollaborationHub> {
+        self.collaboration_hub.as_deref()
+    }
+
+    pub fn set_collaboration_hub(&mut self, hub: Box<dyn CollaborationHub>) {
+        self.collaboration_hub = Some(hub);
     }
 
     pub fn set_placeholder_text(
@@ -1772,26 +1790,13 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn replica_id_map(&self) -> Option<&HashMap<ReplicaId, ReplicaId>> {
-        self.replica_id_mapping.as_ref()
-    }
-
-    pub fn set_replica_id_map(
-        &mut self,
-        mapping: Option<HashMap<ReplicaId, ReplicaId>>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.replica_id_mapping = mapping;
-        cx.notify();
-    }
-
     fn selections_did_change(
         &mut self,
         local: bool,
         old_cursor_position: &Anchor,
         cx: &mut ViewContext<Self>,
     ) {
-        if self.focused && self.leader_replica_id.is_none() {
+        if self.focused && self.leader_peer_id.is_none() {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.set_active_selections(
                     &self.selections.disjoint_anchors(),
@@ -8563,6 +8568,21 @@ impl Editor {
     }
 }
 
+pub trait CollaborationHub {
+    fn collaborators<'a>(&self, cx: &'a AppContext) -> &'a HashMap<PeerId, Collaborator>;
+    fn user_color_indices<'a>(&self, cx: &'a AppContext) -> &'a HashMap<u64, ColorIndex>;
+}
+
+impl CollaborationHub for ModelHandle<Project> {
+    fn collaborators<'a>(&self, cx: &'a AppContext) -> &'a HashMap<PeerId, Collaborator> {
+        self.read(cx).collaborators()
+    }
+
+    fn user_color_indices<'a>(&self, cx: &'a AppContext) -> &'a HashMap<u64, ColorIndex> {
+        self.read(cx).user_store().read(cx).color_indices()
+    }
+}
+
 fn inlay_hint_settings(
     location: Anchor,
     snapshot: &MultiBufferSnapshot,
@@ -8606,6 +8626,34 @@ fn ending_row(next_selection: &Selection<Point>, display_map: &DisplaySnapshot) 
 }
 
 impl EditorSnapshot {
+    pub fn remote_selections_in_range<'a>(
+        &'a self,
+        range: &'a Range<Anchor>,
+        collaboration_hub: &dyn CollaborationHub,
+        cx: &'a AppContext,
+    ) -> impl 'a + Iterator<Item = RemoteSelection> {
+        let color_indices = collaboration_hub.user_color_indices(cx);
+        let collaborators_by_peer_id = collaboration_hub.collaborators(cx);
+        let collaborators_by_replica_id = collaborators_by_peer_id
+            .iter()
+            .map(|(_, collaborator)| (collaborator.replica_id, collaborator))
+            .collect::<HashMap<_, _>>();
+        self.buffer_snapshot
+            .remote_selections_in_range(range)
+            .filter_map(move |(replica_id, line_mode, cursor_shape, selection)| {
+                let collaborator = collaborators_by_replica_id.get(&replica_id)?;
+                let color_index = color_indices.get(&collaborator.user_id).copied();
+                Some(RemoteSelection {
+                    replica_id,
+                    selection,
+                    cursor_shape,
+                    line_mode,
+                    color_index,
+                    peer_id: collaborator.peer_id,
+                })
+            })
+    }
+
     pub fn language_at<T: ToOffset>(&self, position: T) -> Option<&Arc<Language>> {
         self.display_snapshot.buffer_snapshot.language_at(position)
     }
@@ -8719,7 +8767,7 @@ impl View for Editor {
             self.focused = true;
             self.buffer.update(cx, |buffer, cx| {
                 buffer.finalize_last_transaction(cx);
-                if self.leader_replica_id.is_none() {
+                if self.leader_peer_id.is_none() {
                     buffer.set_active_selections(
                         &self.selections.disjoint_anchors(),
                         self.selections.line_mode,

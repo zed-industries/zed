@@ -538,15 +538,7 @@ impl TestClient {
         root_path: impl AsRef<Path>,
         cx: &mut TestAppContext,
     ) -> (ModelHandle<Project>, WorktreeId) {
-        let project = cx.update(|cx| {
-            Project::local(
-                self.client().clone(),
-                self.app_state.user_store.clone(),
-                self.app_state.languages.clone(),
-                self.app_state.fs.clone(),
-                cx,
-            )
-        });
+        let project = self.build_empty_local_project(cx);
         let (worktree, _) = project
             .update(cx, |p, cx| {
                 p.find_or_create_local_worktree(root_path, true, cx)
@@ -557,6 +549,18 @@ impl TestClient {
             .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
         (project, worktree.read_with(cx, |tree, _| tree.id()))
+    }
+
+    pub fn build_empty_local_project(&self, cx: &mut TestAppContext) -> ModelHandle<Project> {
+        cx.update(|cx| {
+            Project::local(
+                self.client().clone(),
+                self.app_state.user_store.clone(),
+                self.app_state.languages.clone(),
+                self.app_state.fs.clone(),
+                cx,
+            )
+        })
     }
 
     pub async fn build_remote_project(

@@ -7,6 +7,8 @@ use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
 use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
 use std::sync::{Arc, Weak};
+use text::ReplicaId;
+use theme::ColorIndex;
 use util::http::HttpClient;
 use util::TryFutureExt as _;
 
@@ -17,6 +19,13 @@ pub struct User {
     pub id: UserId,
     pub github_login: String,
     pub avatar: Option<Arc<ImageData>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Collaborator {
+    pub peer_id: proto::PeerId,
+    pub replica_id: ReplicaId,
+    pub user_id: UserId,
 }
 
 impl PartialOrd for User {
@@ -56,6 +65,7 @@ pub enum ContactRequestStatus {
 
 pub struct UserStore {
     users: HashMap<u64, Arc<User>>,
+    color_indices: HashMap<u64, ColorIndex>,
     update_contacts_tx: mpsc::UnboundedSender<UpdateContacts>,
     current_user: watch::Receiver<Option<Arc<User>>>,
     contacts: Vec<Arc<Contact>>,
@@ -81,6 +91,7 @@ pub enum Event {
         kind: ContactEventKind,
     },
     ShowContacts,
+    ColorIndicesChanged,
 }
 
 #[derive(Clone, Copy)]
@@ -118,6 +129,7 @@ impl UserStore {
             current_user: current_user_rx,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
+            color_indices: Default::default(),
             outgoing_contact_requests: Default::default(),
             invite_info: None,
             client: Arc::downgrade(&client),
@@ -641,6 +653,21 @@ impl UserStore {
             }
         })
     }
+
+    pub fn set_color_indices(
+        &mut self,
+        color_indices: HashMap<u64, ColorIndex>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if color_indices != self.color_indices {
+            self.color_indices = color_indices;
+            cx.emit(Event::ColorIndicesChanged);
+        }
+    }
+
+    pub fn color_indices(&self) -> &HashMap<u64, ColorIndex> {
+        &self.color_indices
+    }
 }
 
 impl User {
@@ -668,6 +695,16 @@ impl Contact {
             user,
             online: contact.online,
             busy: contact.busy,
+        })
+    }
+}
+
+impl Collaborator {
+    pub fn from_proto(message: proto::Collaborator) -> Result<Self> {
+        Ok(Self {
+            peer_id: message.peer_id.ok_or_else(|| anyhow!("invalid peer id"))?,
+            replica_id: message.replica_id as ReplicaId,
+            user_id: message.user_id as UserId,
         })
     }
 }

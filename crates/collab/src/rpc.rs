@@ -38,8 +38,8 @@ use lazy_static::lazy_static;
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
-        self, Ack, AddChannelBufferCollaborator, AnyTypedEnvelope, ChannelEdge, EntityMessage,
-        EnvelopedMessage, LiveKitConnectionInfo, RequestMessage,
+        self, Ack, AnyTypedEnvelope, ChannelEdge, EntityMessage, EnvelopedMessage,
+        LiveKitConnectionInfo, RequestMessage, UpdateChannelBufferCollaborators,
     },
     Connection, ConnectionId, Peer, Receipt, TypedEnvelope,
 };
@@ -313,9 +313,16 @@ impl Server {
                             .trace_err()
                         {
                             for connection_id in refreshed_channel_buffer.connection_ids {
-                                for message in &refreshed_channel_buffer.removed_collaborators {
-                                    peer.send(connection_id, message.clone()).trace_err();
-                                }
+                                peer.send(
+                                    connection_id,
+                                    proto::UpdateChannelBufferCollaborators {
+                                        channel_id: channel_id.to_proto(),
+                                        collaborators: refreshed_channel_buffer
+                                            .collaborators
+                                            .clone(),
+                                    },
+                                )
+                                .trace_err();
                             }
                         }
                     }
@@ -2654,18 +2661,12 @@ async fn join_channel_buffer(
         .join_channel_buffer(channel_id, session.user_id, session.connection_id)
         .await?;
 
-    let replica_id = open_response.replica_id;
     let collaborators = open_response.collaborators.clone();
-
     response.send(open_response)?;
 
-    let update = AddChannelBufferCollaborator {
+    let update = UpdateChannelBufferCollaborators {
         channel_id: channel_id.to_proto(),
-        collaborator: Some(proto::Collaborator {
-            user_id: session.user_id.to_proto(),
-            peer_id: Some(session.connection_id.into()),
-            replica_id,
-        }),
+        collaborators: collaborators.clone(),
     };
     channel_buffer_updated(
         session.connection_id,
@@ -2712,8 +2713,8 @@ async fn rejoin_channel_buffers(
         .rejoin_channel_buffers(&request.buffers, session.user_id, session.connection_id)
         .await?;
 
-    for buffer in &buffers {
-        let collaborators_to_notify = buffer
+    for rejoined_buffer in &buffers {
+        let collaborators_to_notify = rejoined_buffer
             .buffer
             .collaborators
             .iter()
@@ -2721,10 +2722,9 @@ async fn rejoin_channel_buffers(
         channel_buffer_updated(
             session.connection_id,
             collaborators_to_notify,
-            &proto::UpdateChannelBufferCollaborator {
-                channel_id: buffer.buffer.channel_id,
-                old_peer_id: Some(buffer.old_connection_id.into()),
-                new_peer_id: Some(session.connection_id.into()),
+            &proto::UpdateChannelBufferCollaborators {
+                channel_id: rejoined_buffer.buffer.channel_id,
+                collaborators: rejoined_buffer.buffer.collaborators.clone(),
             },
             &session.peer,
         );
@@ -2745,7 +2745,7 @@ async fn leave_channel_buffer(
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
 
-    let collaborators_to_notify = db
+    let left_buffer = db
         .leave_channel_buffer(channel_id, session.connection_id)
         .await?;
 
@@ -2753,10 +2753,10 @@ async fn leave_channel_buffer(
 
     channel_buffer_updated(
         session.connection_id,
-        collaborators_to_notify,
-        &proto::RemoveChannelBufferCollaborator {
+        left_buffer.connections,
+        &proto::UpdateChannelBufferCollaborators {
             channel_id: channel_id.to_proto(),
-            peer_id: Some(session.connection_id.into()),
+            collaborators: left_buffer.collaborators,
         },
         &session.peer,
     );
@@ -3231,13 +3231,13 @@ async fn leave_channel_buffers_for_session(session: &Session) -> Result<()> {
         .leave_channel_buffers(session.connection_id)
         .await?;
 
-    for (channel_id, connections) in left_channel_buffers {
+    for left_buffer in left_channel_buffers {
         channel_buffer_updated(
             session.connection_id,
-            connections,
-            &proto::RemoveChannelBufferCollaborator {
-                channel_id: channel_id.to_proto(),
-                peer_id: Some(session.connection_id.into()),
+            left_buffer.connections,
+            &proto::UpdateChannelBufferCollaborators {
+                channel_id: left_buffer.channel_id.to_proto(),
+                collaborators: left_buffer.collaborators,
             },
             &session.peer,
         );

@@ -11,7 +11,7 @@ mod project_tests;
 mod worktree_tests;
 
 use anyhow::{anyhow, Context, Result};
-use client::{proto, Client, TypedEnvelope, UserId, UserStore};
+use client::{proto, Client, Collaborator, TypedEnvelope, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use copilot::Copilot;
@@ -76,6 +76,7 @@ use std::{
 };
 use terminals::Terminals;
 use text::Anchor;
+use theme::ColorIndex;
 use util::{
     debug_panic, defer, http::HttpClient, merge_json_value_into,
     paths::LOCAL_SETTINGS_RELATIVE_PATH, post_inc, ResultExt, TryFutureExt as _,
@@ -119,6 +120,7 @@ pub struct Project {
     join_project_response_message_id: u32,
     next_diagnostic_group_id: usize,
     user_store: ModelHandle<UserStore>,
+    user_color_indices: HashMap<ReplicaId, ColorIndex>,
     fs: Arc<dyn Fs>,
     client_state: Option<ProjectClientState>,
     collaborators: HashMap<proto::PeerId, Collaborator>,
@@ -251,13 +253,6 @@ enum ProjectClientState {
         remote_id: u64,
         replica_id: ReplicaId,
     },
-}
-
-#[derive(Clone, Debug)]
-pub struct Collaborator {
-    pub peer_id: proto::PeerId,
-    pub replica_id: ReplicaId,
-    pub user_id: UserId,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -649,6 +644,7 @@ impl Project {
                 languages,
                 client,
                 user_store,
+                user_color_indices: Default::default(),
                 fs,
                 next_entry_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
@@ -721,6 +717,7 @@ impl Project {
                 _maintain_workspace_config: Self::maintain_workspace_config(cx),
                 languages,
                 user_store: user_store.clone(),
+                user_color_indices: Default::default(),
                 fs,
                 next_entry_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
@@ -923,6 +920,10 @@ impl Project {
 
     pub fn user_store(&self) -> ModelHandle<UserStore> {
         self.user_store.clone()
+    }
+
+    pub fn user_color_indices(&self) -> &HashMap<ReplicaId, ColorIndex> {
+        &self.user_color_indices
     }
 
     pub fn opened_buffers(&self, cx: &AppContext) -> Vec<ModelHandle<Buffer>> {
@@ -8208,16 +8209,6 @@ impl Entity for Project {
             }
             .boxed(),
         )
-    }
-}
-
-impl Collaborator {
-    fn from_proto(message: proto::Collaborator) -> Result<Self> {
-        Ok(Self {
-            peer_id: message.peer_id.ok_or_else(|| anyhow!("invalid peer id"))?,
-            replica_id: message.replica_id as ReplicaId,
-            user_id: message.user_id as UserId,
-        })
     }
 }
 

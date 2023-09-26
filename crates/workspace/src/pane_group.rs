@@ -183,25 +183,23 @@ impl Member {
                     })
                     .and_then(|leader_id| {
                         let room = active_call?.read(cx).room()?.read(cx);
-                        let collaborator = project.read(cx).collaborators().get(leader_id)?;
-                        let participant = room.remote_participant_for_peer_id(*leader_id)?;
-                        Some((collaborator.replica_id, participant))
+                        room.remote_participant_for_peer_id(*leader_id)
                     });
 
-                let border = if let Some((replica_id, _)) = leader.as_ref() {
-                    let leader_color = theme.editor.replica_selection_style(*replica_id).cursor;
-                    let mut border = Border::all(theme.workspace.leader_border_width, leader_color);
-                    border
+                let mut leader_border = Border::default();
+                let mut leader_status_box = None;
+                if let Some(leader) = &leader {
+                    let leader_color = theme
+                        .editor
+                        .replica_selection_style(leader.color_index)
+                        .cursor;
+                    leader_border = Border::all(theme.workspace.leader_border_width, leader_color);
+                    leader_border
                         .color
                         .fade_out(1. - theme.workspace.leader_border_opacity);
-                    border.overlay = true;
-                    border
-                } else {
-                    Border::default()
-                };
+                    leader_border.overlay = true;
 
-                let leader_status_box = if let Some((_, leader)) = leader {
-                    match leader.location {
+                    leader_status_box = match leader.location {
                         ParticipantLocation::SharedProject {
                             project_id: leader_project_id,
                         } => {
@@ -279,13 +277,11 @@ impl Member {
                             .right()
                             .into_any(),
                         ),
-                    }
-                } else {
-                    None
-                };
+                    };
+                }
 
                 Stack::new()
-                    .with_child(pane_element.contained().with_border(border))
+                    .with_child(pane_element.contained().with_border(leader_border))
                     .with_children(leader_status_box)
                     .into_any()
             }
