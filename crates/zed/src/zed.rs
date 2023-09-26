@@ -744,7 +744,7 @@ mod tests {
     use theme::{ThemeRegistry, ThemeSettings};
     use workspace::{
         item::{Item, ItemHandle},
-        open_new, open_paths, pane, NewFile, SaveBehavior, SplitDirection, WorkspaceHandle,
+        open_new, open_paths, pane, NewFile, SaveIntent, SplitDirection, WorkspaceHandle,
     };
 
     #[gpui::test]
@@ -945,10 +945,14 @@ mod tests {
 
         editor.update(cx, |editor, cx| {
             assert!(editor.text(cx).is_empty());
+            assert!(!editor.is_dirty(cx));
         });
 
-        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
+        let save_task = workspace.update(cx, |workspace, cx| {
+            workspace.save_active_item(SaveIntent::Save, cx)
+        });
         app_state.fs.create_dir(Path::new("/root")).await.unwrap();
+        cx.foreground().run_until_parked();
         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name")));
         save_task.await.unwrap();
         editor.read_with(cx, |editor, cx| {
@@ -1311,7 +1315,10 @@ mod tests {
             .await;
         cx.read(|cx| assert!(editor.is_dirty(cx)));
 
-        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
+        let save_task = workspace.update(cx, |workspace, cx| {
+            workspace.save_active_item(SaveIntent::Save, cx)
+        });
+        cx.foreground().run_until_parked();
         window.simulate_prompt_answer(0, cx);
         save_task.await.unwrap();
         editor.read_with(cx, |editor, cx| {
@@ -1353,7 +1360,10 @@ mod tests {
         });
 
         // Save the buffer. This prompts for a filename.
-        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
+        let save_task = workspace.update(cx, |workspace, cx| {
+            workspace.save_active_item(SaveIntent::Save, cx)
+        });
+        cx.foreground().run_until_parked();
         cx.simulate_new_path_selection(|parent_dir| {
             assert_eq!(parent_dir, Path::new("/root"));
             Some(parent_dir.join("the-new-name.rs"))
@@ -1377,7 +1387,9 @@ mod tests {
             editor.handle_input(" there", cx);
             assert!(editor.is_dirty(cx));
         });
-        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
+        let save_task = workspace.update(cx, |workspace, cx| {
+            workspace.save_active_item(SaveIntent::Save, cx)
+        });
         save_task.await.unwrap();
         assert!(!cx.did_prompt_for_new_path());
         editor.read_with(cx, |editor, cx| {
@@ -1444,7 +1456,10 @@ mod tests {
         });
 
         // Save the buffer. This prompts for a filename.
-        let save_task = workspace.update(cx, |workspace, cx| workspace.save_active_item(false, cx));
+        let save_task = workspace.update(cx, |workspace, cx| {
+            workspace.save_active_item(SaveIntent::Save, cx)
+        });
+        cx.foreground().run_until_parked();
         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name.rs")));
         save_task.await.unwrap();
         // The buffer is not dirty anymore and the language is assigned based on the path.
@@ -1508,9 +1523,7 @@ mod tests {
         });
         cx.dispatch_action(
             window.into(),
-            workspace::CloseActiveItem {
-                save_behavior: None,
-            },
+            workspace::CloseActiveItem { save_intent: None },
         );
 
         cx.foreground().run_until_parked();
@@ -1521,9 +1534,7 @@ mod tests {
 
         cx.dispatch_action(
             window.into(),
-            workspace::CloseActiveItem {
-                save_behavior: None,
-            },
+            workspace::CloseActiveItem { save_intent: None },
         );
         cx.foreground().run_until_parked();
         window.simulate_prompt_answer(1, cx);
@@ -1682,7 +1693,7 @@ mod tests {
         pane.update(cx, |pane, cx| {
             let editor3_id = editor3.id();
             drop(editor3);
-            pane.close_item_by_id(editor3_id, SaveBehavior::PromptOnWrite, cx)
+            pane.close_item_by_id(editor3_id, SaveIntent::Close, cx)
         })
         .await
         .unwrap();
@@ -1717,7 +1728,7 @@ mod tests {
         pane.update(cx, |pane, cx| {
             let editor2_id = editor2.id();
             drop(editor2);
-            pane.close_item_by_id(editor2_id, SaveBehavior::PromptOnWrite, cx)
+            pane.close_item_by_id(editor2_id, SaveIntent::Close, cx)
         })
         .await
         .unwrap();
@@ -1874,28 +1885,28 @@ mod tests {
 
         // Close all the pane items in some arbitrary order.
         pane.update(cx, |pane, cx| {
-            pane.close_item_by_id(file1_item_id, SaveBehavior::PromptOnWrite, cx)
+            pane.close_item_by_id(file1_item_id, SaveIntent::Close, cx)
         })
         .await
         .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
         pane.update(cx, |pane, cx| {
-            pane.close_item_by_id(file4_item_id, SaveBehavior::PromptOnWrite, cx)
+            pane.close_item_by_id(file4_item_id, SaveIntent::Close, cx)
         })
         .await
         .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
         pane.update(cx, |pane, cx| {
-            pane.close_item_by_id(file2_item_id, SaveBehavior::PromptOnWrite, cx)
+            pane.close_item_by_id(file2_item_id, SaveIntent::Close, cx)
         })
         .await
         .unwrap();
         assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
 
         pane.update(cx, |pane, cx| {
-            pane.close_item_by_id(file3_item_id, SaveBehavior::PromptOnWrite, cx)
+            pane.close_item_by_id(file3_item_id, SaveIntent::Close, cx)
         })
         .await
         .unwrap();
@@ -2388,11 +2399,12 @@ mod tests {
 
     #[gpui::test]
     fn test_bundled_languages(cx: &mut AppContext) {
+        cx.set_global(SettingsStore::test(cx));
         let mut languages = LanguageRegistry::test();
         languages.set_executor(cx.background().clone());
         let languages = Arc::new(languages);
         let node_runtime = node_runtime::FakeNodeRuntime::new();
-        languages::init(languages.clone(), node_runtime);
+        languages::init(languages.clone(), node_runtime, cx);
         for name in languages.language_names() {
             languages.language_for_name(&name);
         }

@@ -820,14 +820,9 @@ impl SemanticIndex {
             let batch_results = futures::future::join_all(batch_results).await;
 
             let mut results = Vec::new();
-            let mut min_similarity = None;
             for batch_result in batch_results {
                 if batch_result.is_ok() {
                     for (id, similarity) in batch_result.unwrap() {
-                        if min_similarity.map_or_else(|| false, |min_sim| min_sim > similarity) {
-                            continue;
-                        }
-
                         let ix = match results
                             .binary_search_by_key(&Reverse(similarity), |(_, s)| Reverse(*s))
                         {
@@ -835,11 +830,8 @@ impl SemanticIndex {
                             Err(ix) => ix,
                         };
 
-                        if ix <= limit {
-                            min_similarity = Some(similarity);
-                            results.insert(ix, (id, similarity));
-                            results.truncate(limit);
-                        }
+                        results.insert(ix, (id, similarity));
+                        results.truncate(limit);
                     }
                 }
             }

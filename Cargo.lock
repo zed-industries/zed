@@ -8982,6 +8982,7 @@ dependencies = [
  "async-trait",
  "collections",
  "command_palette",
+ "diagnostics",
  "editor",
  "futures 0.3.28",
  "gpui",
@@ -9003,6 +9004,7 @@ dependencies = [
  "tokio",
  "util",
  "workspace",
+ "zed-actions",
 ]
 
 [[package]]
@@ -9992,12 +9994,14 @@ dependencies = [
  "rpc",
  "rsa",
  "rust-embed",
+ "schemars",
  "search",
  "semantic_index",
  "serde",
  "serde_derive",
  "serde_json",
  "settings",
+ "shellexpand",
  "simplelog",
  "smallvec",
  "smol",

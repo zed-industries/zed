@@ -103,7 +103,7 @@ use sum_tree::TreeMap;
 use text::Rope;
 use theme::{DiagnosticStyle, Theme, ThemeSettings};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
-use workspace::{ItemNavHistory, ViewId, Workspace};
+use workspace::{ItemNavHistory, SplitDirection, ViewId, Workspace};
 
 use crate::git::diff_hunk_to_display;
 
@@ -363,6 +363,7 @@ pub fn init_settings(cx: &mut AppContext) {
 pub fn init(cx: &mut AppContext) {
     init_settings(cx);
     cx.add_action(Editor::new_file);
+    cx.add_action(Editor::new_file_in_direction);
     cx.add_action(Editor::cancel);
     cx.add_action(Editor::newline);
     cx.add_action(Editor::newline_above);
@@ -1131,12 +1132,14 @@ struct CodeActionsMenu {
 impl CodeActionsMenu {
     fn select_first(&mut self, cx: &mut ViewContext<Editor>) {
         self.selected_item = 0;
+        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         cx.notify()
     }
 
     fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
         if self.selected_item > 0 {
             self.selected_item -= 1;
+            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
             cx.notify()
         }
     }
@@ -1144,12 +1147,14 @@ impl CodeActionsMenu {
     fn select_next(&mut self, cx: &mut ViewContext<Editor>) {
         if self.selected_item + 1 < self.actions.len() {
             self.selected_item += 1;
+            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
             cx.notify()
         }
     }
 
     fn select_last(&mut self, cx: &mut ViewContext<Editor>) {
         self.selected_item = self.actions.len() - 1;
+        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         cx.notify()
     }
 
@@ -1202,7 +1207,9 @@ impl CodeActionsMenu {
                                     workspace.update(cx, |workspace, cx| {
                                         if let Some(task) = Editor::confirm_code_action(
                                             workspace,
-                                            &Default::default(),
+                                            &ConfirmCodeAction {
+                                                item_ix: Some(item_ix),
+                                            },
                                             cx,
                                         ) {
                                             task.detach_and_log_err(cx);
@@ -1621,6 +1628,26 @@ impl Editor {
             .log_err()
         {
             workspace.add_item(
+                Box::new(cx.add_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
+                cx,
+            );
+        }
+    }
+
+    pub fn new_file_in_direction(
+        workspace: &mut Workspace,
+        action: &workspace::NewFileInDirection,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let project = workspace.project().clone();
+        if project.read(cx).is_remote() {
+            cx.propagate_action();
+        } else if let Some(buffer) = project
+            .update(cx, |project, cx| project.create_buffer("", None, cx))
+            .log_err()
+        {
+            workspace.split_item(
+                action.0,
                 Box::new(cx.add_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
                 cx,
             );
@@ -7130,7 +7157,7 @@ impl Editor {
             );
         });
         if split {
-            workspace.split_item(Box::new(editor), cx);
+            workspace.split_item(SplitDirection::Right, Box::new(editor), cx);
         } else {
             workspace.add_item(Box::new(editor), cx);
         }
