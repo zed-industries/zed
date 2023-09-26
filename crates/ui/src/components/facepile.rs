@@ -9,13 +9,13 @@ pub struct Facepile {
     players: Vec<Avatar>,
 }
 
-pub fn facepile<P: Iterator<Item = Avatar>>(players: P) -> Facepile {
-    Facepile {
-        players: players.collect(),
-    }
-}
-
 impl Facepile {
+    pub fn new<P: Iterator<Item = Avatar>>(players: P) -> Self {
+        Self {
+            players: players.collect(),
+        }
+    }
+
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
         let player_count = self.players.len();

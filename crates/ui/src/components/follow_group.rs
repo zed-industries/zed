@@ -2,7 +2,7 @@ use gpui2::elements::div;
 use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
-use crate::{facepile, theme, Avatar, Indicator};
+use crate::{theme, Avatar, Facepile, Indicator};
 
 #[derive(Element)]
 pub struct FollowGroup {
@@ -46,7 +46,7 @@ impl FollowGroup {
                     .px_1()
                     .rounded_lg()
                     .fill(player_bg)
-                    .child(facepile(self.players.clone().into_iter())),
+                    .child(Facepile::new(self.players.clone().into_iter())),
             )
     }
 }

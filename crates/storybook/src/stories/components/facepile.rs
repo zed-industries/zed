@@ -2,7 +2,7 @@ use gpui2::elements::div;
 use gpui2::style::StyleHelpers;
 use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 use ui::prelude::*;
-use ui::{facepile, Avatar};
+use ui::{Avatar, Facepile};
 
 use crate::story::Story;
 
@@ -24,9 +24,9 @@ impl FacepileStory {
                 div()
                     .flex()
                     .gap_3()
-                    .child(facepile(avatars.clone().into_iter().take(1)))
-                    .child(facepile(avatars.clone().into_iter().take(2)))
-                    .child(facepile(avatars.clone().into_iter().take(3))),
+                    .child(Facepile::new(avatars.clone().into_iter().take(1)))
+                    .child(Facepile::new(avatars.clone().into_iter().take(2)))
+                    .child(Facepile::new(avatars.clone().into_iter().take(3))),
             )
             .child(Story::label(cx, "Rounded rectangle avatars"))
             .child({
@@ -40,9 +40,9 @@ impl FacepileStory {
                 div()
                     .flex()
                     .gap_3()
-                    .child(facepile(avatars.clone().take(1)))
-                    .child(facepile(avatars.clone().take(2)))
-                    .child(facepile(avatars.clone().take(3)))
+                    .child(Facepile::new(avatars.clone().take(1)))
+                    .child(Facepile::new(avatars.clone().take(2)))
+                    .child(Facepile::new(avatars.clone().take(3)))
             })
     }
 }
