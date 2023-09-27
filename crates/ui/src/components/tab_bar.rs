@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::prelude::*;
-use crate::{theme, IconAsset, IconButton, Tab};
+use crate::{theme, IconButton, Tab};
 
 #[derive(Element)]
 pub struct TabBar<V: 'static> {
@@ -39,11 +39,11 @@ impl<V: 'static> TabBar<V> {
                             .items_center()
                             .gap_px()
                             .child(
-                                IconButton::new(IconAsset::ArrowLeft)
+                                IconButton::arrow_left()
                                     .state(InteractionState::Enabled.if_enabled(can_navigate_back)),
                             )
                             .child(
-                                IconButton::new(IconAsset::ArrowRight).state(
+                                IconButton::arrow_right().state(
                                     InteractionState::Enabled.if_enabled(can_navigate_forward),
                                 ),
                             ),
@@ -98,8 +98,8 @@ impl<V: 'static> TabBar<V> {
                             .flex()
                             .items_center()
                             .gap_px()
-                            .child(IconButton::new(IconAsset::Plus))
-                            .child(IconButton::new(IconAsset::Split)),
+                            .child(IconButton::plus())
+                            .child(IconButton::split()),
                     ),
             )
     }

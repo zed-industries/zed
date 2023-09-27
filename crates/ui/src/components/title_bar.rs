@@ -4,8 +4,7 @@ use std::sync::Arc;
 
 use crate::prelude::*;
 use crate::{
-    theme, Avatar, Button, IconAsset, IconButton, IconColor, PlayerStack, ToolDivider,
-    TrafficLights,
+    theme, Avatar, Button, IconButton, IconColor, PlayerStack, ToolDivider, TrafficLights,
 };
 
 #[derive(Element)]
@@ -81,8 +80,8 @@ impl<V: 'static> TitleBar<V> {
                             .flex()
                             .items_center()
                             .gap_1()
-                            .child(IconButton::new(IconAsset::FolderX))
-                            .child(IconButton::new(IconAsset::Close)),
+                            .child(IconButton::folder_x())
+                            .child(IconButton::close()),
                     )
                     .child(ToolDivider::new())
                     .child(
@@ -91,9 +90,9 @@ impl<V: 'static> TitleBar<V> {
                             .flex()
                             .items_center()
                             .gap_1()
-                            .child(IconButton::new(IconAsset::Mic))
-                            .child(IconButton::new(IconAsset::AudioOn))
-                            .child(IconButton::new(IconAsset::Screen).color(IconColor::Accent)),
+                            .child(IconButton::mic())
+                            .child(IconButton::audio_on())
+                            .child(IconButton::screen().color(IconColor::Accent)),
                     )
                     .child(
                         div().px_2().flex().items_center().child(
