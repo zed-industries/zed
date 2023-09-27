@@ -1,5 +1,6 @@
+use collections::{HashMap, HashSet};
 use editor::{scroll::autoscroll::Autoscroll, Bias, Editor};
-use fuzzy::PathMatch;
+use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
     actions, elements::*, AppContext, ModelHandle, MouseState, Task, ViewContext, WeakViewHandle,
 };
@@ -36,6 +37,10 @@ pub struct FileFinderDelegate {
 enum Matches {
     History(Vec<FoundPath>),
     Search(Vec<PathMatch>),
+    Mixed {
+        history: Vec<FoundPath>,
+        search: Vec<PathMatch>,
+    },
 }
 
 #[derive(Debug)]
@@ -49,6 +54,7 @@ impl Matches {
         match self {
             Self::History(items) => items.len(),
             Self::Search(items) => items.len(),
+            Self::Mixed { history, search } => history.len() + search.len(),
         }
     }
 
@@ -56,6 +62,103 @@ impl Matches {
         match self {
             Self::History(items) => items.get(index).map(Match::History),
             Self::Search(items) => items.get(index).map(Match::Search),
+            Self::Mixed { history, search } => {
+                if index < history.len() {
+                    history.get(index).map(Match::History)
+                } else {
+                    search.get(index - history.len()).map(Match::Search)
+                }
+            }
+        }
+    }
+
+    fn push_new_matches(
+        &mut self,
+        query: &PathLikeWithPosition<FileSearchQuery>,
+        mut new_search_matches: Vec<PathMatch>,
+        extend_old_matches: bool,
+    ) {
+        match self {
+            Matches::Search(search_matches) => {
+                if extend_old_matches {
+                    util::extend_sorted(
+                        search_matches,
+                        new_search_matches.into_iter(),
+                        100,
+                        |a, b| b.cmp(a),
+                    )
+                } else {
+                    *search_matches = new_search_matches;
+                }
+                return;
+            }
+            Matches::History(history_matches) => {
+                *self = Matches::Mixed {
+                    history: std::mem::take(history_matches),
+                    search: Vec::new(),
+                }
+            }
+            Matches::Mixed { .. } => {}
+        }
+
+        if let Matches::Mixed { history, search } = self {
+            let history_paths = history
+                .iter()
+                .map(|h| &h.project.path)
+                .collect::<HashSet<_>>();
+            new_search_matches.retain(|path_match| !history_paths.contains(&path_match.path));
+
+            if extend_old_matches {
+                util::extend_sorted(search, new_search_matches.into_iter(), 100, |a, b| b.cmp(a))
+            } else {
+                let candidates_by_worktrees = history
+                    .iter()
+                    .map(|found_path| {
+                        let path = &found_path.project.path;
+                        let candidate = PathMatchCandidate {
+                            path,
+                            char_bag: CharBag::from_iter(
+                                path.to_string_lossy().to_lowercase().chars(),
+                            ),
+                        };
+                        (found_path.project.worktree_id, candidate)
+                    })
+                    .fold(
+                        HashMap::default(),
+                        |mut candidates, (worktree_id, new_candidate)| {
+                            candidates
+                                .entry(worktree_id)
+                                .or_insert_with(Vec::new)
+                                .push(new_candidate);
+                            candidates
+                        },
+                    );
+
+                let mut matching_history_paths = HashSet::default();
+                for (worktree, candidates) in candidates_by_worktrees {
+                    let max_results = candidates.len() + 1;
+                    matching_history_paths.extend(
+                        fuzzy::match_fixed_path_set(
+                            candidates,
+                            worktree.to_usize(),
+                            query.path_like.path_query(),
+                            false,
+                            max_results,
+                        )
+                        .into_iter()
+                        .map(|path_match| path_match.path),
+                    );
+                }
+
+                history.retain(|history_path| {
+                    matching_history_paths.contains(&history_path.project.path)
+                });
+                if history.is_empty() {
+                    *self = Matches::Search(new_search_matches);
+                } else {
+                    *search = new_search_matches;
+                }
+            }
         }
     }
 }
@@ -271,24 +374,14 @@ impl FileFinderDelegate {
     ) {
         if search_id >= self.latest_search_id {
             self.latest_search_id = search_id;
-            if self.latest_search_did_cancel
+            let extend_old_matches = self.latest_search_did_cancel
                 && Some(query.path_like.path_query())
                     == self
                         .latest_search_query
                         .as_ref()
-                        .map(|query| query.path_like.path_query())
-            {
-                match &mut self.matches {
-                    Matches::History(_) => self.matches = Matches::Search(matches),
-                    Matches::Search(search_matches) => {
-                        util::extend_sorted(search_matches, matches.into_iter(), 100, |a, b| {
-                            b.cmp(a)
-                        })
-                    }
-                }
-            } else {
-                self.matches = Matches::Search(matches);
-            }
+                        .map(|query| query.path_like.path_query());
+            self.matches
+                .push_new_matches(&query, matches, extend_old_matches);
             self.latest_search_query = Some(query);
             self.latest_search_did_cancel = did_cancel;
             cx.notify();

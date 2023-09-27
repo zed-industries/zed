@@ -90,6 +90,44 @@ impl Ord for PathMatch {
     }
 }
 
+pub fn match_fixed_path_set(
+    candidates: Vec<PathMatchCandidate>,
+    worktree_id: usize,
+    query: &str,
+    smart_case: bool,
+    max_results: usize,
+) -> Vec<PathMatch> {
+    let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
+    let query = query.chars().collect::<Vec<_>>();
+    let query_char_bag = CharBag::from(&lowercase_query[..]);
+
+    let mut matcher = Matcher::new(
+        &query,
+        &lowercase_query,
+        query_char_bag,
+        smart_case,
+        max_results,
+    );
+
+    let mut results = Vec::new();
+    matcher.match_candidates(
+        &[],
+        &[],
+        candidates.into_iter(),
+        &mut results,
+        &AtomicBool::new(false),
+        |candidate, score| PathMatch {
+            score,
+            worktree_id,
+            positions: Vec::new(),
+            path: candidate.path.clone(),
+            path_prefix: Arc::from(""),
+            distance_to_relative_ancestor: usize::MAX,
+        },
+    );
+    results
+}
+
 pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     candidate_sets: &'a [Set],
     query: &str,
