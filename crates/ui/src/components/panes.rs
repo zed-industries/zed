@@ -89,7 +89,7 @@ impl<V: 'static> PaneGroup<V> {
                 .flex_1()
                 .gap_px()
                 .w_full()
-                .h_64()
+                .h_full()
                 .fill(theme.lowest.base.default.background)
                 .children(self.panes.iter_mut().map(|pane| pane.render(view, cx)));
 
@@ -106,7 +106,7 @@ impl<V: 'static> PaneGroup<V> {
                 .flex_1()
                 .gap_px()
                 .w_full()
-                .h_64()
+                .h_full()
                 .fill(theme.lowest.base.default.background)
                 .children(self.groups.iter_mut().map(|group| group.render(view, cx)));
 
