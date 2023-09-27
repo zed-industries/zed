@@ -178,11 +178,11 @@ impl ListItem {
         let theme = theme(cx);
         let token = token();
 
-        let disclosure_control_icon = Icon::new(if let Some(ToggleState::Toggled) = self.toggle {
-            IconAsset::ChevronDown
+        let disclosure_control_icon = if let Some(ToggleState::Toggled) = self.toggle {
+            Icon::chevron_down()
         } else {
-            IconAsset::ChevronRight
-        })
+            Icon::chevron_right()
+        }
         .color(IconColor::Muted)
         .size(IconSize::Small);
 

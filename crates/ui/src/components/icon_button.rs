@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use crate::{theme, Icon, IconAsset, IconColor};
+use crate::{icon_constructor, icon_constructors, theme, Icon, IconAsset, IconColor};
 
 #[derive(Element)]
 pub struct IconButton {
@@ -18,6 +18,8 @@ impl IconButton {
             state: InteractionState::default(),
         }
     }
+
+    icon_constructors!();
 
     pub fn icon(mut self, icon: IconAsset) -> Self {
         self.icon = icon;
