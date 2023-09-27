@@ -62,6 +62,11 @@ impl Tab {
         self
     }
 
+    pub fn close_side(mut self, close_side: IconSide) -> Self {
+        self.close_side = close_side;
+        self
+    }
+
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
 
@@ -73,6 +78,8 @@ impl Tab {
             GitStatus::Renamed => Label::new(self.title).color(LabelColor::Accent),
             GitStatus::Conflict => Label::new(self.title),
         };
+
+        let close_icon = IconElement::new(Icon::Close);
 
         div()
             .px_2()
@@ -104,8 +111,17 @@ impl Tab {
                     .items_center()
                     .gap_1()
                     .children(self.icon.map(IconElement::new))
-                    .child(IconElement::new(Icon::Close))
-                    .child(label),
+                    .children(if self.close_side == IconSide::Left {
+                        Some(close_icon.clone())
+                    } else {
+                        None
+                    })
+                    .child(label)
+                    .children(if self.close_side == IconSide::Right {
+                        Some(close_icon)
+                    } else {
+                        None
+                    }),
             )
     }
 }

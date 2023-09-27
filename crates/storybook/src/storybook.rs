@@ -137,6 +137,13 @@ fn main() {
                         stories::components::tab_bar::TabBarStory::default(),
                     )
                 }),
+                Some(StorySelector::Component(ComponentStory::Terminal)) => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        stories::components::terminal::TerminalStory::default(),
+                    )
+                }),
                 Some(StorySelector::Component(ComponentStory::Toolbar)) => view(move |cx| {
                     render_story(
                         &mut ViewContext::new(cx),

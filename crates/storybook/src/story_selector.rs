@@ -24,6 +24,7 @@ pub enum ComponentStory {
     Keybinding,
     Palette,
     TabBar,
+    Terminal,
     Toolbar,
     TrafficLights,
 }
