@@ -786,13 +786,22 @@ impl SemanticIndex {
                 .retrieve_included_file_ids(&worktree_db_ids, &includes, &excludes)
                 .await?;
 
+            if file_ids.len() == 0 {
+                return Err(anyhow!("vector database is empty!"));
+            }
+
             let batch_n = cx.background().num_cpus();
             let ids_len = file_ids.clone().len();
+
             let batch_size = if ids_len <= batch_n {
                 ids_len
             } else {
                 ids_len / batch_n
             };
+
+            if batch_size == 0 {
+                return Err(anyhow!("vector database is empty!"));
+            }
 
             let mut batch_results = Vec::new();
             for batch in file_ids.chunks(batch_size) {
