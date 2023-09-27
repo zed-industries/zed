@@ -5,22 +5,24 @@ mod tab_map;
 mod wrap_map;
 
 use crate::{
-    link_go_to_definition::InlayHighlight, Anchor, AnchorRangeExt, InlayId, MultiBuffer,
-    MultiBufferSnapshot, ToOffset, ToPoint,
+    link_go_to_definition::InlayHighlight, Anchor, AnchorRangeExt, EditorStyle, InlayId,
+    MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{BTreeMap, HashMap, HashSet};
 use fold_map::FoldMap;
 use gpui::{
     color::Color,
-    fonts::{FontId, HighlightStyle},
-    Entity, ModelContext, ModelHandle,
+    fonts::{FontId, HighlightStyle, Underline},
+    text_layout::{Line, RunStyle},
+    AppContext, Entity, FontCache, ModelContext, ModelHandle, TextLayoutCache,
 };
 use inlay_map::InlayMap;
 use language::{
     language_settings::language_settings, OffsetUtf16, Point, Subscription as BufferSubscription,
 };
-use std::{any::TypeId, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
+use lsp::DiagnosticSeverity;
+use std::{any::TypeId, borrow::Cow, fmt::Debug, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabMap;
 use wrap_map::WrapMap;
@@ -316,6 +318,12 @@ pub struct Highlights<'a> {
     pub suggestion_highlight_style: Option<HighlightStyle>,
 }
 
+pub struct HighlightedChunk<'a> {
+    pub chunk: &'a str,
+    pub style: Option<HighlightStyle>,
+    pub is_tab: bool,
+}
+
 pub struct DisplaySnapshot {
     pub buffer_snapshot: MultiBufferSnapshot,
     pub fold_snapshot: fold_map::FoldSnapshot,
@@ -485,7 +493,7 @@ impl DisplaySnapshot {
         language_aware: bool,
         inlay_highlight_style: Option<HighlightStyle>,
         suggestion_highlight_style: Option<HighlightStyle>,
-    ) -> DisplayChunks<'_> {
+    ) -> DisplayChunks<'a> {
         self.block_snapshot.chunks(
             display_rows,
             language_aware,
@@ -496,6 +504,174 @@ impl DisplaySnapshot {
                 suggestion_highlight_style,
             },
         )
+    }
+
+    pub fn highlighted_chunks<'a>(
+        &'a self,
+        display_rows: Range<u32>,
+        style: &'a EditorStyle,
+    ) -> impl Iterator<Item = HighlightedChunk<'a>> {
+        self.chunks(
+            display_rows,
+            true,
+            Some(style.theme.hint),
+            Some(style.theme.suggestion),
+        )
+        .map(|chunk| {
+            let mut highlight_style = chunk
+                .syntax_highlight_id
+                .and_then(|id| id.style(&style.syntax));
+
+            if let Some(chunk_highlight) = chunk.highlight_style {
+                if let Some(highlight_style) = highlight_style.as_mut() {
+                    highlight_style.highlight(chunk_highlight);
+                } else {
+                    highlight_style = Some(chunk_highlight);
+                }
+            }
+
+            let mut diagnostic_highlight = HighlightStyle::default();
+
+            if chunk.is_unnecessary {
+                diagnostic_highlight.fade_out = Some(style.unnecessary_code_fade);
+            }
+
+            if let Some(severity) = chunk.diagnostic_severity {
+                // Omit underlines for HINT/INFO diagnostics on 'unnecessary' code.
+                if severity <= DiagnosticSeverity::WARNING || !chunk.is_unnecessary {
+                    let diagnostic_style = super::diagnostic_style(severity, true, style);
+                    diagnostic_highlight.underline = Some(Underline {
+                        color: Some(diagnostic_style.message.text.color),
+                        thickness: 1.0.into(),
+                        squiggly: true,
+                    });
+                }
+            }
+
+            if let Some(highlight_style) = highlight_style.as_mut() {
+                highlight_style.highlight(diagnostic_highlight);
+            } else {
+                highlight_style = Some(diagnostic_highlight);
+            }
+
+            HighlightedChunk {
+                chunk: chunk.text,
+                style: highlight_style,
+                is_tab: chunk.is_tab,
+            }
+        })
+    }
+
+    fn layout_line_for_row(
+        &self,
+        display_row: u32,
+        font_cache: &FontCache,
+        text_layout_cache: &TextLayoutCache,
+        editor_style: &EditorStyle,
+    ) -> Line {
+        let mut styles = Vec::new();
+        let mut line = String::new();
+
+        let range = display_row..display_row + 1;
+        for chunk in self.highlighted_chunks(range, editor_style) {
+            dbg!(chunk.chunk);
+            line.push_str(chunk.chunk);
+
+            let text_style = if let Some(style) = chunk.style {
+                editor_style
+                    .text
+                    .clone()
+                    .highlight(style, font_cache)
+                    .map(Cow::Owned)
+                    .unwrap_or_else(|_| Cow::Borrowed(&editor_style.text))
+            } else {
+                Cow::Borrowed(&editor_style.text)
+            };
+
+            styles.push((
+                chunk.chunk.len(),
+                RunStyle {
+                    font_id: text_style.font_id,
+                    color: text_style.color,
+                    underline: text_style.underline,
+                },
+            ));
+        }
+
+        dbg!(&line, &editor_style.text.font_size, &styles);
+        text_layout_cache.layout_str(&line, editor_style.text.font_size, &styles)
+    }
+
+    pub fn x_for_point(
+        &self,
+        display_point: DisplayPoint,
+        font_cache: &FontCache,
+        text_layout_cache: &TextLayoutCache,
+        editor_style: &EditorStyle,
+    ) -> f32 {
+        let layout_line = self.layout_line_for_row(
+            display_point.row(),
+            font_cache,
+            text_layout_cache,
+            editor_style,
+        );
+        layout_line.x_for_index(display_point.column() as usize)
+    }
+
+    pub fn column_for_x(
+        &self,
+        display_row: u32,
+        x_coordinate: f32,
+        font_cache: &FontCache,
+        text_layout_cache: &TextLayoutCache,
+        editor_style: &EditorStyle,
+    ) -> Option<u32> {
+        let layout_line =
+            self.layout_line_for_row(display_row, font_cache, text_layout_cache, editor_style);
+        layout_line.index_for_x(x_coordinate).map(|c| c as u32)
+    }
+
+    // column_for_x(row, x)
+
+    fn point(
+        &self,
+        display_point: DisplayPoint,
+        text_layout_cache: &TextLayoutCache,
+        editor_style: &EditorStyle,
+        cx: &AppContext,
+    ) -> f32 {
+        let mut styles = Vec::new();
+        let mut line = String::new();
+
+        let range = display_point.row()..display_point.row() + 1;
+        for chunk in self.highlighted_chunks(range, editor_style) {
+            dbg!(chunk.chunk);
+            line.push_str(chunk.chunk);
+
+            let text_style = if let Some(style) = chunk.style {
+                editor_style
+                    .text
+                    .clone()
+                    .highlight(style, cx.font_cache())
+                    .map(Cow::Owned)
+                    .unwrap_or_else(|_| Cow::Borrowed(&editor_style.text))
+            } else {
+                Cow::Borrowed(&editor_style.text)
+            };
+
+            styles.push((
+                chunk.chunk.len(),
+                RunStyle {
+                    font_id: text_style.font_id,
+                    color: text_style.color,
+                    underline: text_style.underline,
+                },
+            ));
+        }
+
+        dbg!(&line, &editor_style.text.font_size, &styles);
+        let layout_line = text_layout_cache.layout_str(&line, editor_style.text.font_size, &styles);
+        layout_line.x_for_index(display_point.column() as usize)
     }
 
     pub fn chars_at(
@@ -869,17 +1045,21 @@ pub fn next_rows(display_row: u32, display_map: &DisplaySnapshot) -> impl Iterat
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::{movement, test::marked_display_snapshot};
+    use crate::{
+        movement,
+        test::{editor_test_context::EditorTestContext, marked_display_snapshot},
+    };
     use gpui::{color::Color, elements::*, test::observe, AppContext};
     use language::{
         language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
         Buffer, Language, LanguageConfig, SelectionGoal,
     };
+    use project::Project;
     use rand::{prelude::*, Rng};
     use settings::SettingsStore;
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
-    use theme::SyntaxTheme;
+    use theme::{SyntaxTheme, Theme};
     use util::test::{marked_text_ranges, sample_text};
     use Bias::*;
 
@@ -1148,95 +1328,119 @@ pub mod tests {
     }
 
     #[gpui::test(retries = 5)]
-    fn test_soft_wraps(cx: &mut AppContext) {
+    async fn test_soft_wraps(cx: &mut gpui::TestAppContext) {
         cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
-        init_test(cx, |_| {});
-
-        let font_cache = cx.font_cache();
-
-        let family_id = font_cache
-            .load_family(&["Helvetica"], &Default::default())
-            .unwrap();
-        let font_id = font_cache
-            .select_font(family_id, &Default::default())
-            .unwrap();
-        let font_size = 12.0;
-        let wrap_width = Some(64.);
-
-        let text = "one two three four five\nsix seven eight";
-        let buffer = MultiBuffer::build_simple(text, cx);
-        let map = cx.add_model(|cx| {
-            DisplayMap::new(buffer.clone(), font_id, font_size, wrap_width, 1, 1, cx)
+        cx.update(|cx| {
+            init_test(cx, |_| {});
         });
 
-        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
-        assert_eq!(
-            snapshot.text_chunks(0).collect::<String>(),
-            "one two \nthree four \nfive\nsix seven \neight"
-        );
-        assert_eq!(
-            snapshot.clip_point(DisplayPoint::new(0, 8), Bias::Left),
-            DisplayPoint::new(0, 7)
-        );
-        assert_eq!(
-            snapshot.clip_point(DisplayPoint::new(0, 8), Bias::Right),
-            DisplayPoint::new(1, 0)
-        );
-        assert_eq!(
-            movement::right(&snapshot, DisplayPoint::new(0, 7)),
-            DisplayPoint::new(1, 0)
-        );
-        assert_eq!(
-            movement::left(&snapshot, DisplayPoint::new(1, 0)),
-            DisplayPoint::new(0, 7)
-        );
-        assert_eq!(
-            movement::up(
-                &snapshot,
-                DisplayPoint::new(1, 10),
-                SelectionGoal::None,
-                false
-            ),
-            (DisplayPoint::new(0, 7), SelectionGoal::Column(10))
-        );
-        assert_eq!(
-            movement::down(
-                &snapshot,
-                DisplayPoint::new(0, 7),
-                SelectionGoal::Column(10),
-                false
-            ),
-            (DisplayPoint::new(1, 10), SelectionGoal::Column(10))
-        );
-        assert_eq!(
-            movement::down(
-                &snapshot,
-                DisplayPoint::new(1, 10),
-                SelectionGoal::Column(10),
-                false
-            ),
-            (DisplayPoint::new(2, 4), SelectionGoal::Column(10))
-        );
+        let mut cx = EditorTestContext::new(cx).await;
+        let editor = cx.editor.clone();
+        let window = cx.window.clone();
 
-        let ix = snapshot.buffer_snapshot.text().find("seven").unwrap();
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([(ix..ix, "and ")], None, cx);
+        cx.update_window(window, |cx| {
+            let editor_style = editor.read(&cx).style(cx);
+
+            let font_cache = cx.font_cache().clone();
+
+            let family_id = font_cache
+                .load_family(&["Helvetica"], &Default::default())
+                .unwrap();
+            let font_id = font_cache
+                .select_font(family_id, &Default::default())
+                .unwrap();
+            let font_size = 12.0;
+            let wrap_width = Some(64.);
+
+            let text = "one two three four five\nsix seven eight";
+            let buffer = MultiBuffer::build_simple(text, cx);
+            let map = cx.add_model(|cx| {
+                DisplayMap::new(buffer.clone(), font_id, font_size, wrap_width, 1, 1, cx)
+            });
+
+            let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+            assert_eq!(
+                snapshot.text_chunks(0).collect::<String>(),
+                "one two \nthree four \nfive\nsix seven \neight"
+            );
+            assert_eq!(
+                snapshot.clip_point(DisplayPoint::new(0, 8), Bias::Left),
+                DisplayPoint::new(0, 7)
+            );
+            assert_eq!(
+                snapshot.clip_point(DisplayPoint::new(0, 8), Bias::Right),
+                DisplayPoint::new(1, 0)
+            );
+            assert_eq!(
+                movement::right(&snapshot, DisplayPoint::new(0, 7)),
+                DisplayPoint::new(1, 0)
+            );
+            assert_eq!(
+                movement::left(&snapshot, DisplayPoint::new(1, 0)),
+                DisplayPoint::new(0, 7)
+            );
+
+            let x = snapshot.x_for_point(
+                DisplayPoint::new(1, 10),
+                cx.font_cache(),
+                cx.text_layout_cache(),
+                &editor_style,
+            );
+            dbg!(x);
+            assert_eq!(
+                movement::up(
+                    &snapshot,
+                    DisplayPoint::new(1, 10),
+                    SelectionGoal::None,
+                    false,
+                    cx.font_cache(),
+                    cx.text_layout_cache(),
+                    &editor_style,
+                ),
+                (
+                    DisplayPoint::new(0, 7),
+                    SelectionGoal::HorizontalPosition(x)
+                )
+            );
+            assert_eq!(
+                movement::down(
+                    &snapshot,
+                    DisplayPoint::new(0, 7),
+                    SelectionGoal::Column(10),
+                    false
+                ),
+                (DisplayPoint::new(1, 10), SelectionGoal::Column(10))
+            );
+            assert_eq!(
+                movement::down(
+                    &snapshot,
+                    DisplayPoint::new(1, 10),
+                    SelectionGoal::Column(10),
+                    false
+                ),
+                (DisplayPoint::new(2, 4), SelectionGoal::Column(10))
+            );
+
+            let ix = snapshot.buffer_snapshot.text().find("seven").unwrap();
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(ix..ix, "and ")], None, cx);
+            });
+
+            let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+            assert_eq!(
+                snapshot.text_chunks(1).collect::<String>(),
+                "three four \nfive\nsix and \nseven eight"
+            );
+
+            // Re-wrap on font size changes
+            map.update(cx, |map, cx| map.set_font(font_id, font_size + 3., cx));
+
+            let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+            assert_eq!(
+                snapshot.text_chunks(1).collect::<String>(),
+                "three \nfour five\nsix and \nseven \neight"
+            )
         });
-
-        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
-        assert_eq!(
-            snapshot.text_chunks(1).collect::<String>(),
-            "three four \nfive\nsix and \nseven eight"
-        );
-
-        // Re-wrap on font size changes
-        map.update(cx, |map, cx| map.set_font(font_id, font_size + 3., cx));
-
-        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
-        assert_eq!(
-            snapshot.text_chunks(1).collect::<String>(),
-            "three \nfour five\nsix and \nseven \neight"
-        )
     }
 
     #[gpui::test]
@@ -1731,6 +1935,9 @@ pub mod tests {
         cx.foreground().forbid_parking();
         cx.set_global(SettingsStore::test(cx));
         language::init(cx);
+        crate::init(cx);
+        Project::init_settings(cx);
+        theme::init((), cx);
         cx.update_global::<SettingsStore, _, _>(|store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, f);
         });

@@ -4,7 +4,7 @@ use super::{
     MAX_LINE_LEN,
 };
 use crate::{
-    display_map::{BlockStyle, DisplaySnapshot, FoldStatus, TransformBlock},
+    display_map::{BlockStyle, DisplaySnapshot, FoldStatus, HighlightedChunk, TransformBlock},
     editor_settings::ShowScrollbar,
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
@@ -1584,56 +1584,7 @@ impl EditorElement {
                 .collect()
         } else {
             let style = &self.style;
-            let chunks = snapshot
-                .chunks(
-                    rows.clone(),
-                    true,
-                    Some(style.theme.hint),
-                    Some(style.theme.suggestion),
-                )
-                .map(|chunk| {
-                    let mut highlight_style = chunk
-                        .syntax_highlight_id
-                        .and_then(|id| id.style(&style.syntax));
-
-                    if let Some(chunk_highlight) = chunk.highlight_style {
-                        if let Some(highlight_style) = highlight_style.as_mut() {
-                            highlight_style.highlight(chunk_highlight);
-                        } else {
-                            highlight_style = Some(chunk_highlight);
-                        }
-                    }
-
-                    let mut diagnostic_highlight = HighlightStyle::default();
-
-                    if chunk.is_unnecessary {
-                        diagnostic_highlight.fade_out = Some(style.unnecessary_code_fade);
-                    }
-
-                    if let Some(severity) = chunk.diagnostic_severity {
-                        // Omit underlines for HINT/INFO diagnostics on 'unnecessary' code.
-                        if severity <= DiagnosticSeverity::WARNING || !chunk.is_unnecessary {
-                            let diagnostic_style = super::diagnostic_style(severity, true, style);
-                            diagnostic_highlight.underline = Some(Underline {
-                                color: Some(diagnostic_style.message.text.color),
-                                thickness: 1.0.into(),
-                                squiggly: true,
-                            });
-                        }
-                    }
-
-                    if let Some(highlight_style) = highlight_style.as_mut() {
-                        highlight_style.highlight(diagnostic_highlight);
-                    } else {
-                        highlight_style = Some(diagnostic_highlight);
-                    }
-
-                    HighlightedChunk {
-                        chunk: chunk.text,
-                        style: highlight_style,
-                        is_tab: chunk.is_tab,
-                    }
-                });
+            let chunks = snapshot.highlighted_chunks(rows.clone(), style);
 
             LineWithInvisibles::from_chunks(
                 chunks,
@@ -1868,12 +1819,6 @@ impl EditorElement {
             blocks,
         )
     }
-}
-
-struct HighlightedChunk<'a> {
-    chunk: &'a str,
-    style: Option<HighlightStyle>,
-    is_tab: bool,
 }
 
 #[derive(Debug)]

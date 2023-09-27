@@ -48,9 +48,9 @@ use gpui::{
     impl_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton},
-    serde_json, AnyElement, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element,
-    Entity, ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
-    WindowContext,
+    serde_json, text_layout, AnyElement, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem,
+    Element, Entity, ModelHandle, Subscription, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -5274,13 +5274,25 @@ impl Editor {
             return;
         }
 
+        let font_cache = cx.font_cache().clone();
+        let text_layout_cache = cx.text_layout_cache().clone();
+        let editor_style = self.style(cx);
+
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             let line_mode = s.line_mode;
             s.move_with(|map, selection| {
                 if !selection.is_empty() && !line_mode {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) = movement::up(map, selection.start, selection.goal, false);
+                let (cursor, goal) = movement::up(
+                    map,
+                    selection.start,
+                    selection.goal,
+                    false,
+                    &font_cache,
+                    &text_layout_cache,
+                    &editor_style,
+                );
                 selection.collapse_to(cursor, goal);
             });
         })
@@ -5308,22 +5320,47 @@ impl Editor {
             Autoscroll::fit()
         };
 
+        let font_cache = cx.font_cache().clone();
+        let text_layout = cx.text_layout_cache().clone();
+        let editor_style = self.style(cx);
+
         self.change_selections(Some(autoscroll), cx, |s| {
             let line_mode = s.line_mode;
             s.move_with(|map, selection| {
                 if !selection.is_empty() && !line_mode {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) =
-                    movement::up_by_rows(map, selection.end, row_count, selection.goal, false);
+                let (cursor, goal) = movement::up_by_rows(
+                    map,
+                    selection.end,
+                    row_count,
+                    selection.goal,
+                    false,
+                    &font_cache,
+                    &text_layout,
+                    &editor_style,
+                );
                 selection.collapse_to(cursor, goal);
             });
         });
     }
 
     pub fn select_up(&mut self, _: &SelectUp, cx: &mut ViewContext<Self>) {
+        let font_cache = cx.font_cache().clone();
+        let text_layout = cx.text_layout_cache().clone();
+        let editor_style = self.style(cx);
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-            s.move_heads_with(|map, head, goal| movement::up(map, head, goal, false))
+            s.move_heads_with(|map, head, goal| {
+                movement::up(
+                    map,
+                    head,
+                    goal,
+                    false,
+                    &font_cache,
+                    &text_layout,
+                    &editor_style,
+                )
+            })
         })
     }
 
