@@ -1,7 +1,61 @@
 use crate::{
-    Icon, Keybinding, Label, LabelColor, ListItem, ListItemSize, ModifierKeys, PaletteItem,
-    ToggleState,
+    Icon, Keybinding, Label, LabelColor, ListItem, ListItemSize, MicStatus, ModifierKeys,
+    PaletteItem, Player, PlayerCallStatus, PlayerWithCallStatus, ScreenShareStatus, ToggleState,
 };
+
+pub fn static_players() -> Vec<Player> {
+    vec![
+        Player::new(
+            0,
+            "https://avatars.githubusercontent.com/u/1714999?v=4".into(),
+            "nathansobo".into(),
+        ),
+        Player::new(
+            1,
+            "https://avatars.githubusercontent.com/u/326587?v=4".into(),
+            "maxbrunsfeld".into(),
+        ),
+        Player::new(
+            2,
+            "https://avatars.githubusercontent.com/u/482957?v=4".into(),
+            "as-cii".into(),
+        ),
+        Player::new(
+            3,
+            "https://avatars.githubusercontent.com/u/1714999?v=4".into(),
+            "iamnbutler".into(),
+        ),
+        Player::new(
+            4,
+            "https://avatars.githubusercontent.com/u/1486634?v=4".into(),
+            "maxdeviant".into(),
+        ),
+    ]
+}
+
+pub fn static_players_with_call_status() -> Vec<PlayerWithCallStatus> {
+    let players = static_players();
+    let mut player_0_status = PlayerCallStatus::new();
+    let player_1_status = PlayerCallStatus::new();
+    let player_2_status = PlayerCallStatus::new();
+    let mut player_3_status = PlayerCallStatus::new();
+    let mut player_4_status = PlayerCallStatus::new();
+
+    player_0_status.screen_share_status = ScreenShareStatus::Shared;
+    player_0_status.followers = Some(vec![players[1].clone(), players[3].clone()]);
+
+    player_3_status.voice_activity = 0.5;
+    player_4_status.mic_status = MicStatus::Muted;
+    player_4_status.in_current_project = false;
+
+    vec![
+        PlayerWithCallStatus::new(players[0].clone(), player_0_status),
+        PlayerWithCallStatus::new(players[1].clone(), player_1_status),
+        PlayerWithCallStatus::new(players[2].clone(), player_2_status),
+        PlayerWithCallStatus::new(players[3].clone(), player_3_status),
+        PlayerWithCallStatus::new(players[4].clone(), player_4_status),
+    ]
+}
 
 pub fn static_project_panel_project_items() -> Vec<ListItem> {
     vec![
