@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
-use crate::prelude::*;
 use crate::theme::{theme, Theme};
+use crate::{prelude::*, IconColor};
 use crate::{Button, IconAsset, IconButton, ToolDivider};
 
 #[derive(Default, PartialEq)]
@@ -103,7 +103,7 @@ impl<V: 'static> StatusBar<V> {
             .flex()
             .items_center()
             .gap_1()
-            .child(IconButton::new(IconAsset::FileTree))
+            .child(IconButton::new(IconAsset::FileTree).color(IconColor::Accent))
             .child(IconButton::new(IconAsset::Hash))
             .child(ToolDivider::new())
             .child(IconButton::new(IconAsset::XCircle))

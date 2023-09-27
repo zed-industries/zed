@@ -23,11 +23,15 @@ pub struct Pane<V: 'static> {
 
 impl<V: 'static> Pane<V> {
     pub fn new(scroll_state: ScrollState, size: Size<Length>) -> Self {
+        // Fill is only here for debugging purposes, remove before release
+        let system_color = SystemColor::new();
+
         Self {
             view_type: PhantomData,
             scroll_state,
             size,
-            fill: hsla(0., 1., 0.5, 1.),
+            fill: hsla(0.3, 0.3, 0.3, 1.),
+            // fill: system_color.transparent,
         }
     }
 
@@ -85,8 +89,8 @@ impl<V: 'static> PaneGroup<V> {
                 .flex_1()
                 .gap_px()
                 .w_full()
-                .h_full()
-                .fill(theme.lowest.accent.default.background)
+                .h_64()
+                .fill(theme.lowest.base.default.background)
                 .children(self.panes.iter_mut().map(|pane| pane.render(view, cx)));
 
             if self.split_direction == SplitDirection::Horizontal {
@@ -102,8 +106,8 @@ impl<V: 'static> PaneGroup<V> {
                 .flex_1()
                 .gap_px()
                 .w_full()
-                .h_full()
-                .fill(theme.lowest.accent.default.background)
+                .h_64()
+                .fill(theme.lowest.base.default.background)
                 .children(self.groups.iter_mut().map(|group| group.render(view, cx)));
 
             if self.split_direction == SplitDirection::Horizontal {

@@ -17,11 +17,15 @@ pub trait Stack: StyleHelpers {
 impl<V> Stack for Div<V> {}
 
 /// Horizontally stacks elements.
+///
+/// Sets `flex()`, `flex_row()`, `items_center()`
 pub fn h_stack<V: 'static>() -> Div<V> {
     div().h_stack()
 }
 
 /// Vertically stacks elements.
+///
+/// Sets `flex()`, `flex_col()`
 pub fn v_stack<V: 'static>() -> Div<V> {
     div().v_stack()
 }
