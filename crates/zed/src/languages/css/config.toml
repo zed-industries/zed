@@ -9,3 +9,4 @@ brackets = [
     { start = "'", end = "'", close = true, newline = false, not_in = ["string", "comment"] },
 ]
 word_characters = ["-"]
+block_comment = ["/* ", " */"]
