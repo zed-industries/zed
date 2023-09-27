@@ -3,7 +3,7 @@ use gpui2::geometry::rems;
 use gpui2::{Element, IntoElement, ViewContext};
 use strum::IntoEnumIterator;
 use ui::{h_stack, prelude::*, v_stack, Label};
-use ui::{Button, IconAsset, IconPosition};
+use ui::{Button, Icon, IconPosition};
 
 use crate::story::Story;
 
@@ -49,7 +49,7 @@ impl ButtonStory {
                                     .child(
                                         Button::new("Label")
                                             .variant(ButtonVariant::Ghost)
-                                            .icon(IconAsset::Plus)
+                                            .icon(Icon::Plus)
                                             .icon_position(IconPosition::Left)
                                             .state(state),
                                     )
@@ -66,7 +66,7 @@ impl ButtonStory {
                                     .child(
                                         Button::new("Label")
                                             .variant(ButtonVariant::Ghost)
-                                            .icon(IconAsset::Plus)
+                                            .icon(Icon::Plus)
                                             .icon_position(IconPosition::Right)
                                             .state(state),
                                     )
@@ -101,7 +101,7 @@ impl ButtonStory {
                                     .child(
                                         Button::new("Label")
                                             .variant(ButtonVariant::Filled)
-                                            .icon(IconAsset::Plus)
+                                            .icon(Icon::Plus)
                                             .icon_position(IconPosition::Left)
                                             .state(state),
                                     )
@@ -118,7 +118,7 @@ impl ButtonStory {
                                     .child(
                                         Button::new("Label")
                                             .variant(ButtonVariant::Filled)
-                                            .icon(IconAsset::Plus)
+                                            .icon(Icon::Plus)
                                             .icon_position(IconPosition::Right)
                                             .state(state),
                                     )
@@ -155,7 +155,7 @@ impl ButtonStory {
                                         Button::new("Label")
                                             .variant(ButtonVariant::Filled)
                                             .state(state)
-                                            .icon(IconAsset::Plus)
+                                            .icon(Icon::Plus)
                                             .icon_position(IconPosition::Left)
                                             .width(Some(rems(6.).into())),
                                     )
@@ -173,7 +173,7 @@ impl ButtonStory {
                                         Button::new("Label")
                                             .variant(ButtonVariant::Filled)
                                             .state(state)
-                                            .icon(IconAsset::Plus)
+                                            .icon(Icon::Plus)
                                             .icon_position(IconPosition::Right)
                                             .width(Some(rems(6.).into())),
                                     )

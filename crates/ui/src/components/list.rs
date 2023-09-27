@@ -1,6 +1,6 @@
 use crate::prelude::*;
 use crate::{
-    h_stack, theme, token, v_stack, Avatar, DisclosureControlVisibility, IconAsset, IconColor,
+    h_stack, theme, token, v_stack, Avatar, DisclosureControlVisibility, Icon, IconColor,
     IconElement, IconSize, InteractionState, Label, LabelColor, LabelSize, SystemColor,
     ToggleState,
 };
@@ -8,7 +8,7 @@ use crate::{
 #[derive(Element, Clone, Copy)]
 pub struct ListSectionHeader {
     label: &'static str,
-    left_icon: Option<IconAsset>,
+    left_icon: Option<Icon>,
     state: InteractionState,
     toggle: Option<ToggleState>,
 }
@@ -28,7 +28,7 @@ impl ListSectionHeader {
         self
     }
 
-    pub fn left_icon(mut self, left_icon: Option<IconAsset>) -> Self {
+    pub fn left_icon(mut self, left_icon: Option<Icon>) -> Self {
         self.left_icon = left_icon;
         self
     }
@@ -40,9 +40,9 @@ impl ListSectionHeader {
 
     fn disclosure_control(&self) -> IconElement {
         IconElement::new(if let Some(ToggleState::Toggled) = self.toggle {
-            IconAsset::ChevronDown
+            Icon::ChevronDown
         } else {
-            IconAsset::ChevronRight
+            Icon::ChevronRight
         })
         .color(IconColor::Muted)
         .size(IconSize::Small)
@@ -96,7 +96,7 @@ impl ListSectionHeader {
 
 #[derive(Clone)]
 pub enum LeftContent {
-    Icon(IconAsset),
+    Icon(Icon),
     Avatar(&'static str),
 }
 
@@ -146,7 +146,7 @@ impl ListItem {
         self
     }
 
-    pub fn left_icon(mut self, left_icon: IconAsset) -> Self {
+    pub fn left_icon(mut self, left_icon: Icon) -> Self {
         self.left_content = Some(LeftContent::Icon(left_icon));
         self
     }
@@ -290,8 +290,8 @@ impl List {
         let token = token();
 
         let disclosure_control = match self.toggle {
-            Some(ToggleState::NotToggled) => Some(IconElement::new(IconAsset::ChevronRight)),
-            Some(ToggleState::Toggled) => Some(IconElement::new(IconAsset::ChevronDown)),
+            Some(ToggleState::NotToggled) => Some(IconElement::new(Icon::ChevronRight)),
+            Some(ToggleState::Toggled) => Some(IconElement::new(Icon::ChevronDown)),
             None => None,
         };
 

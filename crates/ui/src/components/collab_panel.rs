@@ -6,7 +6,7 @@ use gpui2::ArcCow;
 use crate::prelude::*;
 use crate::theme::{theme, Theme};
 use crate::{
-    static_collab_panel_channels, static_collab_panel_current_call, v_stack, IconAsset, List,
+    static_collab_panel_channels, static_collab_panel_current_call, v_stack, Icon, List,
     ListSectionHeader, ToggleState,
 };
 
@@ -45,7 +45,7 @@ impl<V: 'static> CollabPanel<V> {
                                 List::new(static_collab_panel_current_call())
                                     .header(
                                         ListSectionHeader::new("CRDB")
-                                            .left_icon(IconAsset::Hash.into())
+                                            .left_icon(Icon::Hash.into())
                                             .set_toggle(ToggleState::Toggled),
                                     )
                                     .set_toggle(ToggleState::Toggled),

@@ -1,6 +1,6 @@
 use strum::IntoEnumIterator;
 use ui::prelude::*;
-use ui::{IconAsset, IconElement};
+use ui::{Icon, IconElement};
 
 use crate::story::Story;
 
@@ -9,7 +9,7 @@ pub struct IconStory {}
 
 impl IconStory {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
-        let icons = IconAsset::iter();
+        let icons = Icon::iter();
 
         Story::container(cx)
             .child(Story::title_for::<_, ui::IconElement>(cx))
