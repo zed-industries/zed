@@ -346,6 +346,17 @@ impl<'a> NeovimBackedTestContext<'a> {
         self.assert_state_matches().await;
     }
 
+    pub async fn assert_matches_neovim<const COUNT: usize>(
+        &mut self,
+        marked_positions: &str,
+        keystrokes: [&str; COUNT],
+        result: &str,
+    ) {
+        self.set_shared_state(marked_positions).await;
+        self.simulate_shared_keystrokes(keystrokes).await;
+        self.assert_shared_state(result).await;
+    }
+
     pub async fn assert_binding_matches_all_exempted<const COUNT: usize>(
         &mut self,
         keystrokes: [&str; COUNT],

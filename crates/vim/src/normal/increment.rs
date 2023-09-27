@@ -1,36 +1,49 @@
-use std::{ascii::AsciiExt, fmt::Binary, ops::Range};
+use std::ops::Range;
 
-use editor::{
-    movement, scroll::autoscroll::Autoscroll, Editor, MultiBufferSnapshot, ToOffset, ToPoint,
-};
-use gpui::{actions, AppContext, WindowContext};
-use language::Point;
+use editor::{scroll::autoscroll::Autoscroll, MultiBufferSnapshot, ToOffset, ToPoint};
+use gpui::{impl_actions, AppContext, WindowContext};
+use language::{Bias, Point};
+use serde::Deserialize;
 use workspace::Workspace;
 
 use crate::{state::Mode, Vim};
 
-actions!(vim, [Increment, Decrement]);
+#[derive(Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct Increment {
+    #[serde(default)]
+    step: bool,
+}
+
+#[derive(Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct Decrement {
+    #[serde(default)]
+    step: bool,
+}
+
+impl_actions!(vim, [Increment, Decrement]);
 
 pub fn init(cx: &mut AppContext) {
-    dbg!("hi");
-
-    cx.add_action(|_: &mut Workspace, _: &Increment, cx| {
+    cx.add_action(|_: &mut Workspace, action: &Increment, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
             let count = vim.take_count(cx).unwrap_or(1);
-            increment(vim, count as i32, cx)
+            let step = if action.step { 1 } else { 0 };
+            increment(vim, count as i32, step, cx)
         })
     });
-    cx.add_action(|_: &mut Workspace, _: &Decrement, cx| {
+    cx.add_action(|_: &mut Workspace, action: &Decrement, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
             let count = vim.take_count(cx).unwrap_or(1);
-            increment(vim, count as i32 * -1, cx)
+            let step = if action.step { -1 } else { 0 };
+            increment(vim, count as i32 * -1, step, cx)
         })
     });
 }
 
-fn increment(vim: &mut Vim, delta: i32, cx: &mut WindowContext) {
+fn increment(vim: &mut Vim, mut delta: i32, step: i32, cx: &mut WindowContext) {
     vim.update_active_editor(cx, |editor, cx| {
         let mut edits = Vec::new();
         let mut new_anchors = Vec::new();
@@ -38,7 +51,9 @@ fn increment(vim: &mut Vim, delta: i32, cx: &mut WindowContext) {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         for selection in editor.selections.all_adjusted(cx) {
             if !selection.is_empty() {
-                new_anchors.push((true, snapshot.anchor_before(selection.start)))
+                if vim.state().mode != Mode::VisualBlock || new_anchors.is_empty() {
+                    new_anchors.push((true, snapshot.anchor_before(selection.start)))
+                }
             }
             for row in selection.start.row..=selection.end.row {
                 let start = if row == selection.start.row {
@@ -50,6 +65,7 @@ fn increment(vim: &mut Vim, delta: i32, cx: &mut WindowContext) {
                 if let Some((range, num, radix)) = find_number(&snapshot, start) {
                     if let Ok(val) = i32::from_str_radix(&num, radix) {
                         let result = val + delta;
+                        delta += step;
                         let replace = match radix {
                             10 => format!("{}", result),
                             16 => {
@@ -79,7 +95,8 @@ fn increment(vim: &mut Vim, delta: i32, cx: &mut WindowContext) {
                 for (visual, anchor) in new_anchors.iter() {
                     let mut point = anchor.to_point(&snapshot);
                     if !*visual && point.column > 0 {
-                        point.column -= 1
+                        point.column -= 1;
+                        point = snapshot.clip_point(point, Bias::Left)
                     }
                     new_ranges.push(point..point);
                 }
@@ -87,7 +104,7 @@ fn increment(vim: &mut Vim, delta: i32, cx: &mut WindowContext) {
             })
         });
     });
-    vim.switch_mode(Mode::Normal, false, cx)
+    vim.switch_mode(Mode::Normal, true, cx)
 }
 
 fn find_number(
@@ -96,6 +113,7 @@ fn find_number(
 ) -> Option<(Range<Point>, String, u32)> {
     let mut offset = start.to_offset(snapshot);
 
+    // go backwards to the start of any number the selection is within
     for ch in snapshot.reversed_chars_at(offset) {
         if ch.is_ascii_digit() || ch == '-' || ch == 'b' || ch == 'x' {
             offset -= ch.len_utf8();
@@ -110,6 +128,7 @@ fn find_number(
     let mut radix = 10;
 
     let mut chars = snapshot.chars_at(offset).peekable();
+    // find the next number on the line (may start after the original cursor position)
     while let Some(ch) = chars.next() {
         if num == "0" && ch == 'b' && chars.peek().is_some() && chars.peek().unwrap().is_digit(2) {
             radix = 2;
@@ -122,7 +141,12 @@ fn find_number(
             num = String::new();
         }
 
-        if ch.is_digit(radix) || ch == '-' {
+        if ch.is_digit(radix)
+            || (begin.is_none()
+                && ch == '-'
+                && chars.peek().is_some()
+                && chars.peek().unwrap().is_digit(radix))
+        {
             if begin.is_none() {
                 begin = Some(offset);
             }
@@ -164,6 +188,75 @@ mod test {
         cx.assert_shared_state(indoc! {"
             1ˇ3
             "})
+            .await;
+        cx.simulate_shared_keystrokes(["ctrl-x"]).await;
+        cx.assert_shared_state(indoc! {"
+            1ˇ2
+            "})
+            .await;
+
+        cx.simulate_shared_keystrokes(["9", "9", "ctrl-a"]).await;
+        cx.assert_shared_state(indoc! {"
+            11ˇ1
+            "})
+            .await;
+        cx.simulate_shared_keystrokes(["1", "1", "1", "ctrl-x"])
+            .await;
+        cx.assert_shared_state(indoc! {"
+            ˇ0
+            "})
+            .await;
+        cx.simulate_shared_keystrokes(["."]).await;
+        cx.assert_shared_state(indoc! {"
+            -11ˇ1
+            "})
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_increment_radix(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.assert_matches_neovim("ˇ total: 0xff", ["ctrl-a"], " total: 0x10ˇ0")
+            .await;
+        cx.assert_matches_neovim("ˇ total: 0xff", ["ctrl-x"], " total: 0xfˇe")
+            .await;
+        cx.assert_matches_neovim("ˇ total: 0xFF", ["ctrl-x"], " total: 0xFˇE")
+            .await;
+        cx.assert_matches_neovim("(ˇ0b10f)", ["ctrl-a"], "(0b1ˇ1f)")
+            .await;
+        cx.assert_matches_neovim("ˇ-1", ["ctrl-a"], "ˇ0").await;
+    }
+
+    #[gpui::test]
+    async fn test_increment_steps(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            ˇ1
+            1
+            1  2
+            1
+            1"})
+            .await;
+
+        cx.simulate_shared_keystrokes(["j", "v", "shift-g", "g", "ctrl-a"])
+            .await;
+        cx.assert_shared_state(indoc! {"
+            1
+            ˇ2
+            3  2
+            4
+            5"})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-g", "ctrl-v", "g", "g", "g", "ctrl-x"])
+            .await;
+        cx.assert_shared_state(indoc! {"
+            ˇ0
+            0
+            0  2
+            0
+            0"})
             .await;
     }
 }
