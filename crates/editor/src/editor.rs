@@ -8588,6 +8588,29 @@ impl Editor {
 
         self.handle_input(text, cx);
     }
+
+    pub fn supports_inlay_hints(&self, cx: &AppContext) -> bool {
+        let Some(project) = self.project.as_ref() else {
+            return false;
+        };
+        let project = project.read(cx);
+
+        let mut supports = false;
+        self.buffer().read(cx).for_each_buffer(|buffer| {
+            if !supports {
+                supports = project
+                    .language_servers_for_buffer(buffer.read(cx), cx)
+                    .any(
+                        |(_, server)| match server.capabilities().inlay_hint_provider {
+                            Some(lsp::OneOf::Left(enabled)) => enabled,
+                            Some(lsp::OneOf::Right(_)) => true,
+                            None => false,
+                        },
+                    )
+            }
+        });
+        supports
+    }
 }
 
 fn inlay_hint_settings(

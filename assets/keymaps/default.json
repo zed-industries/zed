@@ -506,6 +506,22 @@
       "cmd-k cmd-down": [
         "workspace::ActivatePaneInDirection",
         "Down"
+      ],
+      "cmd-k shift-left": [
+        "workspace::SwapPaneInDirection",
+        "Left"
+      ],
+      "cmd-k shift-right": [
+        "workspace::SwapPaneInDirection",
+        "Right"
+      ],
+      "cmd-k shift-up": [
+        "workspace::SwapPaneInDirection",
+        "Up"
+      ],
+      "cmd-k shift-down": [
+        "workspace::SwapPaneInDirection",
+        "Down"
       ]
     }
   },
