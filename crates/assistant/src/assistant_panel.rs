@@ -5,9 +5,8 @@ use crate::{
     MessageId, MessageMetadata, MessageStatus, Role, SavedConversation, SavedConversationMetadata,
     SavedMessage,
 };
-use ai::completion::{
-    stream_completion, OpenAICompletionProvider, OpenAIRequest, RequestMessage, OPENAI_API_URL,
-};
+use ai::completion::{stream_completion, OpenAICompletionProvider, OpenAIRequest, OPENAI_API_URL};
+use ai::RequestMessage;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
 use client::{telemetry::AssistantKind, ClickhouseEvent, TelemetrySettings};

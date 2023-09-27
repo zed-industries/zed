@@ -83,6 +83,60 @@ fn outline_for_prompt(
     Some(text)
 }
 
+fn generate_codegen_planning_prompt(
+    user_prompt: String,
+    language_name: Option<&str>,
+    buffer: &BufferSnapshot,
+    range: Range<language::Anchor>,
+    cx: &AppContext,
+    kind: CodegenKind,
+) -> String {
+    let mut prompt = String::new();
+
+    // General Preamble
+    if let Some(language_name) = language_name {
+        writeln!(prompt, "You're an expert {language_name} engineer.\n").unwrap();
+    } else {
+        writeln!(prompt, "You're an expert software engineer.\n").unwrap();
+    }
+
+    let outline = outline_for_prompt(buffer, range.clone(), cx);
+    if let Some(outline) = outline {
+        writeln!(
+            prompt,
+            "You're currently working inside the Zed editor on a file with the following outline:"
+        )
+        .unwrap();
+        if let Some(language_name) = language_name {
+            let language_name = language_name.to_lowercase();
+            writeln!(prompt, "```{language_name}\n{outline}\n```").unwrap();
+        } else {
+            writeln!(prompt, "```\n{outline}\n```").unwrap();
+        }
+    }
+
+    match kind {
+        CodegenKind::Generate { position: _ } => {
+            writeln!(prompt, "In particular, the user's cursor is currently on the '<|START|>' span in the above outline, with no text selected.").unwrap();
+        }
+        CodegenKind::Transform { range: _ } => {
+            writeln!(prompt, "In particular, the user has selected a section of the text between the '<|START|' and '|END|>' spans.").unwrap();
+        }
+    }
+
+    writeln!(
+        prompt,
+        "The user has provided the following prompt: '{user_prompt}'\n"
+    )
+    .unwrap();
+    writeln!(
+        prompt,
+        "It is your task to identify if any additional context is needed from the repository"
+    )
+    .unwrap();
+
+    prompt
+}
 pub fn generate_content_prompt(
     user_prompt: String,
     language_name: Option<&str>,
@@ -97,7 +151,7 @@ pub fn generate_content_prompt(
     if let Some(language_name) = language_name {
         writeln!(prompt, "You're an expert {language_name} engineer.\n").unwrap();
     } else {
-        writeln!(prompt, "You're an expert engineer.\n").unwrap();
+        writeln!(prompt, "You're an expert software engineer.\n").unwrap();
     }
 
     let outline = outline_for_prompt(buffer, range.clone(), cx);
@@ -115,15 +169,9 @@ pub fn generate_content_prompt(
         }
     }
 
-    // Assume for now that we are just generating
-    if range.clone().start == range.end {
-        writeln!(prompt, "In particular, the user's cursor is current on the '<|START|>' span in the above outline, with no text selected.").unwrap();
-    } else {
-        writeln!(prompt, "In particular, the user has selected a section of the text between the '<|START|' and '|END|>' spans.").unwrap();
-    }
-
     match kind {
         CodegenKind::Generate { position: _ } => {
+            writeln!(prompt, "In particular, the user's cursor is current on the '<|START|>' span in the above outline, with no text selected.").unwrap();
             writeln!(
                 prompt,
                 "Assume the cursor is located where the `<|START|` marker is."
@@ -141,6 +189,7 @@ pub fn generate_content_prompt(
             .unwrap();
         }
         CodegenKind::Transform { range: _ } => {
+            writeln!(prompt, "In particular, the user has selected a section of the text between the '<|START|' and '|END|>' spans.").unwrap();
             writeln!(
                 prompt,
                 "Modify the users code selected text based upon the users prompt: {user_prompt}"

@@ -1,3 +1,4 @@
+use crate::{OpenAIUsage, RequestMessage, Role};
 use anyhow::{anyhow, Result};
 use futures::{
     future::BoxFuture, io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, FutureExt,
@@ -6,47 +7,9 @@ use futures::{
 use gpui::executor::Background;
 use isahc::{http::StatusCode, Request, RequestExt};
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt::{self, Display},
-    io,
-    sync::Arc,
-};
+use std::{io, sync::Arc};
 
 pub const OPENAI_API_URL: &'static str = "https://api.openai.com/v1";
-
-#[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum Role {
-    User,
-    Assistant,
-    System,
-}
-
-impl Role {
-    pub fn cycle(&mut self) {
-        *self = match self {
-            Role::User => Role::Assistant,
-            Role::Assistant => Role::System,
-            Role::System => Role::User,
-        }
-    }
-}
-
-impl Display for Role {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Role::User => write!(f, "User"),
-            Role::Assistant => write!(f, "Assistant"),
-            Role::System => write!(f, "System"),
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct RequestMessage {
-    pub role: Role,
-    pub content: String,
-}
 
 #[derive(Debug, Default, Serialize)]
 pub struct OpenAIRequest {
@@ -59,13 +22,6 @@ pub struct OpenAIRequest {
 pub struct ResponseMessage {
     pub role: Option<Role>,
     pub content: Option<String>,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct OpenAIUsage {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
 }
 
 #[derive(Deserialize, Debug)]
