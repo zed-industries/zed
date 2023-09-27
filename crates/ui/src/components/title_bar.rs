@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::prelude::*;
 use crate::{
-    theme, Avatar, Button, FollowGroup, IconAsset, IconButton, IconColor, ToolDivider,
+    theme, Avatar, Button, IconAsset, IconButton, IconColor, PlayerStack, ToolDivider,
     TrafficLights,
 };
 
@@ -67,9 +67,9 @@ impl<V: 'static> TitleBar<V> {
                             .child(Button::new("zed"))
                             .child(Button::new("nate/gpui2-ui-components")),
                     )
-                    .child(FollowGroup::new(player_list.clone()).player(0))
-                    .child(FollowGroup::new(player_list.clone()).player(1))
-                    .child(FollowGroup::new(player_list.clone()).player(2)),
+                    .child(PlayerStack::new(player_list.clone()).player(0))
+                    .child(PlayerStack::new(player_list.clone()).player(1))
+                    .child(PlayerStack::new(player_list.clone()).player(2)),
             )
             .child(
                 div()

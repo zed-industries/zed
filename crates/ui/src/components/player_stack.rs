@@ -2,12 +2,12 @@ use crate::prelude::*;
 use crate::{theme, Avatar, Facepile, Indicator};
 
 #[derive(Element)]
-pub struct FollowGroup {
+pub struct PlayerStack {
     player: usize,
     players: Vec<Avatar>,
 }
 
-impl FollowGroup {
+impl PlayerStack {
     pub fn new(players: Vec<Avatar>) -> Self {
         Self { player: 0, players }
     }
