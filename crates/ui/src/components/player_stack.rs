@@ -1,25 +1,20 @@
-use crate::prelude::*;
-use crate::{theme, Avatar, Facepile, Indicator};
+use crate::{prelude::*, Player, PlayerWithCallStatus};
+use crate::{Facepile, Indicator};
 
 #[derive(Element)]
 pub struct PlayerStack {
-    player: usize,
-    players: Vec<Avatar>,
+    player_with_call_status: PlayerWithCallStatus,
 }
 
 impl PlayerStack {
-    pub fn new(players: Vec<Avatar>) -> Self {
-        Self { player: 0, players }
-    }
-
-    pub fn player(mut self, player: usize) -> Self {
-        self.player = player;
-        self
+    pub fn new(player_with_call_status: PlayerWithCallStatus) -> Self {
+        Self {
+            player_with_call_status,
+        }
     }
 
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
-        let theme = theme(cx);
-        let player_bg = theme.players[self.player].selection;
+        let player = self.player_with_call_status.get_player();
 
         div()
             .h_full()
@@ -32,7 +27,7 @@ impl PlayerStack {
                     .flex()
                     .justify_center()
                     .w_full()
-                    .child(Indicator::new().player(self.player)),
+                    .child(Indicator::new().player(player.get_index())),
             )
             .child(
                 div()
@@ -42,7 +37,7 @@ impl PlayerStack {
                     .h_6()
                     .px_1()
                     .rounded_lg()
-                    .fill(player_bg)
+                    .fill(player.selection_color(cx, player.get_index()))
                     .child(Facepile::new(self.players.clone().into_iter())),
             )
     }
