@@ -1574,8 +1574,8 @@ message PrettierInstanceForBufferResponse {
 
 message InvokePrettierForBuffer {
     uint64 project_id = 1;
-    string buffer_path = 2;
-    uint64 buffer_id = 3;
+    optional uint64 buffer_id = 3;
+    string prettier_path = 2;
     optional uint64 worktree_id = 4;
     string method = 5;
 }
@@ -1585,7 +1585,12 @@ message InvokePrettierForBufferResponse {
 }
 
 message Diff {
-    VectorClockEntry version = 1;
-    string line_ending = 2;
-    string edits = 3;
+    repeated VectorClockEntry version = 1;
+    LineEnding line_ending = 2;
+    repeated DiffEdit edits = 3;
+}
+
+message DiffEdit {
+    Range range = 1;
+    string edit = 2;
 }

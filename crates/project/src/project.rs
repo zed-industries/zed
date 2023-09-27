@@ -37,7 +37,7 @@ use language::{
     point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
-        serialize_anchor, serialize_version, split_operations,
+        serialize_anchor, serialize_diff, serialize_version, split_operations,
     },
     range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, BundledFormatter, CachedLspAdapter,
     CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff,
@@ -6382,7 +6382,7 @@ impl Project {
             .filter(|(path, _, _)| {
                 !path
                     .components()
-                    .any(|component| component.as_os_str().to_str() == Some("node_modules"))
+                    .any(|component| component.as_os_str().to_string_lossy() == "node_modules")
             })
             .find(|(path, _, _)| prettier_config_files.contains(path.as_ref()));
         let current_worktree_id = worktree.read(cx).id();
@@ -8324,14 +8324,14 @@ impl Project {
                 this.prettier_instances
                     .get(&(
                         envelope.payload.worktree_id.map(WorktreeId::from_proto),
-                        PathBuf::from(&envelope.payload.buffer_path),
+                        PathBuf::from(&envelope.payload.prettier_path),
                     ))
                     .cloned()
             })
             .with_context(|| {
                 format!(
-                    "Missing prettier for worktree {:?} and path {}",
-                    envelope.payload.worktree_id, envelope.payload.buffer_path,
+                    "Missing prettier for worktree {:?} and path {:?}",
+                    envelope.payload.worktree_id, envelope.payload.prettier_path,
                 )
             })?
             .await;
@@ -8340,25 +8340,27 @@ impl Project {
             Err(e) => anyhow::bail!("Prettier instance failed to start: {e:#}"),
         };
 
-        let buffer = this
-            .update(&mut cx, |this, cx| {
-                this.opened_buffers
-                    .get(&envelope.payload.buffer_id)
-                    .and_then(|buffer| buffer.upgrade(cx))
-            })
-            .with_context(|| format!("unknown buffer id {}", envelope.payload.buffer_id))?;
+        let buffer = this.update(&mut cx, |this, cx| {
+            envelope
+                .payload
+                .buffer_id
+                .and_then(|id| this.opened_buffers.get(&id))
+                .and_then(|buffer| buffer.upgrade(cx))
+        });
 
-        let buffer_path = buffer.read_with(&cx, |buffer, cx| {
-            File::from_dyn(buffer.file()).map(|f| f.full_path(cx))
+        let buffer_path = buffer.as_ref().and_then(|buffer| {
+            buffer.read_with(&cx, |buffer, cx| {
+                File::from_dyn(buffer.file()).map(|f| f.full_path(cx))
+            })
         });
 
         let diff = prettier
-            .invoke(&buffer, buffer_path, &envelope.payload.method, &cx)
+            .invoke(buffer.as_ref(), buffer_path, &envelope.payload.method, &cx)
             .await
             .with_context(|| format!("prettier invoke method {}", &envelope.payload.method))?;
 
         Ok(proto::InvokePrettierForBufferResponse {
-            diff: todo!("TODO kb serialize diff"),
+            diff: diff.map(serialize_diff),
         })
     }
 
@@ -8523,6 +8525,7 @@ impl Project {
                             .map(|prettier_path| {
                                 let prettier_task = Task::ready(
                                     Ok(Arc::new(Prettier::remote(
+                                        project_id,
                                         worktree_id.map(|id| id.to_usize()),
                                         prettier_path.clone(),
                                         client,

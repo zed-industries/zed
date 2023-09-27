@@ -3,11 +3,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
-use client::Client;
+use client::{proto, Client};
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use gpui::{AsyncAppContext, ModelHandle};
 use language::language_settings::language_settings;
+use language::proto::deserialize_diff;
 use language::{Buffer, BundledFormatter, Diff};
 use lsp::request::Request;
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId};
@@ -28,6 +29,7 @@ pub struct Local {
 }
 
 pub struct Remote {
+    project_id: u64,
     worktree_id: Option<usize>,
     prettier_dir: PathBuf,
     client: Arc<Client>,
@@ -61,8 +63,14 @@ impl Prettier {
         ".editorconfig",
     ];
 
-    pub fn remote(worktree_id: Option<usize>, prettier_dir: PathBuf, client: Arc<Client>) -> Self {
+    pub fn remote(
+        project_id: u64,
+        worktree_id: Option<usize>,
+        prettier_dir: PathBuf,
+        client: Arc<Client>,
+    ) -> Self {
         Self::Remote(Remote {
+            project_id,
             worktree_id,
             prettier_dir,
             client,
@@ -80,7 +88,7 @@ impl Prettier {
                     .components()
                     .into_iter()
                     .take_while(|path_component| {
-                        path_component.as_os_str().to_str() != Some("node_modules")
+                        path_component.as_os_str().to_string_lossy() != "node_modules"
                     })
                     .collect::<PathBuf>();
 
@@ -137,7 +145,7 @@ impl Prettier {
                             for path_component in file_to_format.components().into_iter() {
                                 current_path = current_path.join(path_component);
                                 paths_to_check.push_front(current_path.clone());
-                                if path_component.as_os_str().to_str() == Some("node_modules") {
+                                if path_component.as_os_str().to_string_lossy() == "node_modules" {
                                     break;
                                 }
                             }
@@ -219,14 +227,18 @@ impl Prettier {
 
     pub async fn invoke(
         &self,
-        buffer: &ModelHandle<Buffer>,
+        buffer: Option<&ModelHandle<Buffer>>,
         buffer_path: Option<PathBuf>,
         method: &str,
         cx: &AsyncAppContext,
     ) -> anyhow::Result<Option<Diff>> {
         match method {
             Format::METHOD => self
-                .format(buffer, buffer_path, cx)
+                .format(
+                    buffer.expect("missing buffer for format invocation"),
+                    buffer_path,
+                    cx,
+                )
                 .await
                 .context("invoke method")
                 .map(Some),
@@ -374,7 +386,21 @@ impl Prettier {
                 let diff_task = buffer.read_with(cx, |buffer, cx| buffer.diff(response.text, cx));
                 Ok(diff_task.await)
             }
-            Self::Remote(remote) => todo!("TODO kb"),
+            Self::Remote(remote) => buffer
+                .read_with(cx, |buffer, _| {
+                    remote.client.request(proto::InvokePrettierForBuffer {
+                        buffer_id: Some(buffer.remote_id()),
+                        worktree_id: self.worktree_id().map(|id| id as u64),
+                        method: Format::METHOD.to_string(),
+                        project_id: remote.project_id,
+                        prettier_path: remote.prettier_dir.to_string_lossy().to_string(),
+                    })
+                })
+                .await
+                .context("prettier diff invoke")?
+                .diff
+                .map(deserialize_diff)
+                .context("missing diff after prettier diff invocation"),
         }
     }
 
@@ -385,7 +411,23 @@ impl Prettier {
                 .request::<ClearCache>(())
                 .await
                 .context("prettier clear cache"),
-            Self::Remote(remote) => todo!("TODO kb"),
+            Self::Remote(remote) => remote
+                .client
+                .request(proto::InvokePrettierForBuffer {
+                    buffer_id: None,
+                    worktree_id: self.worktree_id().map(|id| id as u64),
+                    method: ClearCache::METHOD.to_string(),
+                    project_id: remote.project_id,
+                    prettier_path: remote.prettier_dir.to_string_lossy().to_string(),
+                })
+                .await
+                .map(|response| {
+                    debug_assert!(
+                        response.diff.is_none(),
+                        "Cleare cache invocation returned diff data"
+                    )
+                })
+                .context("prettier invoke clear cache"),
         }
     }
 
