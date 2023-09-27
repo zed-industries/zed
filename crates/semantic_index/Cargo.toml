@@ -39,6 +39,7 @@ rand.workspace = true
 schemars.workspace = true
 globset.workspace = true
 sha1 = "0.10.5"
+ndarray = { version = "0.15.0" }
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }
