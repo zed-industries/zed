@@ -893,9 +893,13 @@ impl Pane {
     ) -> Task<Result<()>> {
         // Find the items to close.
         let mut items_to_close = Vec::new();
+        let mut dirty_items = Vec::new();
         for item in &self.items {
             if should_close(item.id()) {
                 items_to_close.push(item.boxed_clone());
+                if item.is_dirty(cx) {
+                    dirty_items.push(item.boxed_clone());
+                }
             }
         }
 
@@ -907,13 +911,10 @@ impl Pane {
 
         let workspace = self.workspace.clone();
         cx.spawn(|pane, mut cx| async move {
-            if save_intent == SaveIntent::Close && items_to_close.len() > 1 {
+            if save_intent == SaveIntent::Close && dirty_items.len() > 1 {
                 let mut answer = pane.update(&mut cx, |_, cx| {
-                    let prompt = Self::file_names_for_prompt(
-                        &mut items_to_close.iter(),
-                        items_to_close.len(),
-                        cx,
-                    );
+                    let prompt =
+                        Self::file_names_for_prompt(&mut dirty_items.iter(), dirty_items.len(), cx);
                     cx.prompt(
                         PromptLevel::Warning,
                         &prompt,
@@ -921,7 +922,7 @@ impl Pane {
                     )
                 })?;
                 match answer.next().await {
-                    Some(0) => save_intent = SaveIntent::Save,
+                    Some(0) => save_intent = SaveIntent::SaveAll,
                     Some(1) => save_intent = SaveIntent::Skip,
                     _ => {}
                 }
