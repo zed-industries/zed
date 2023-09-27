@@ -79,7 +79,7 @@ impl WorkspaceElement {
                         v_stack()
                             .flex_1()
                             .h_full()
-                            .child(div().flex().flex_1().child(root_group))
+                            .child(div().flex().flex_1().h_2_3().child(root_group))
                             .child(
                                 Panel::new(self.bottom_panel_scroll_state.clone())
                                     .allowed_sides(PanelAllowedSides::BottomOnly)
