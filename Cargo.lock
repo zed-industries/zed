@@ -570,7 +570,7 @@ dependencies = [
  "libc",
  "pin-project",
  "redox_syscall 0.2.16",
- "xattr 0.2.3",
+ "xattr",
 ]
 
 [[package]]
@@ -904,15 +904,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "blas-src"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb48fbaa7a0cb9d6d96c46bac6cedb16f13a10aebcef1c4e73515aaae8c9909d"
-dependencies = [
- "openblas-src",
-]
-
-[[package]]
 name = "block"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1189,15 +1180,6 @@ name = "castaway"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2698f953def977c68f935bb0dfa959375ad4638570e969e2f1e9f433cbf1af6"
-
-[[package]]
-name = "cblas-sys"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6feecd82cce51b0204cf063f0041d69f24ce83f680d87514b004248e7b0fa65"
-dependencies = [
- "libc",
-]
 
 [[package]]
 name = "cc"
@@ -4604,8 +4586,6 @@ version = "0.15.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "adb12d4e967ec485a5f71c6311fe28158e9d6f4bc4a447b474184d0f91a8fa32"
 dependencies = [
- "cblas-sys",
- "libc",
  "matrixmultiply",
  "num-complex 0.4.4",
  "num-integer",
@@ -4989,32 +4969,6 @@ name = "opaque-debug"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "624a8340c38c1b80fd549087862da4ba43e08858af025b236e509b6649fc13d5"
-
-[[package]]
-name = "openblas-build"
-version = "0.10.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eba42c395477605f400a8d79ee0b756cfb82abe3eb5618e35fa70d3a36010a7f"
-dependencies = [
- "anyhow",
- "flate2",
- "native-tls",
- "tar",
- "thiserror",
- "ureq",
- "walkdir",
-]
-
-[[package]]
-name = "openblas-src"
-version = "0.10.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38e5d8af0b707ac2fe1574daa88b4157da73b0de3dc7c39fe3e2c0bb64070501"
-dependencies = [
- "dirs 3.0.2",
- "openblas-build",
- "vcpkg",
-]
 
 [[package]]
 name = "openssl"
@@ -6491,18 +6445,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustls-native-certs"
-version = "0.6.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9aace74cb666635c918e9c12bc0d348266037aa8eb599b5cba565709a8dff00"
-dependencies = [
- "openssl-probe",
- "rustls-pemfile",
- "schannel",
- "security-framework",
-]
-
-[[package]]
 name = "rustls-pemfile"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6820,7 +6762,6 @@ dependencies = [
  "ai",
  "anyhow",
  "async-trait",
- "blas-src",
  "client",
  "collections",
  "ctor",
@@ -6834,7 +6775,6 @@ dependencies = [
  "log",
  "ndarray",
  "node_runtime",
- "openblas-src",
  "ordered-float",
  "parking_lot 0.11.2",
  "picker",
@@ -7711,17 +7651,6 @@ name = "tap"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
-
-[[package]]
-name = "tar"
-version = "0.4.40"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b16afcea1f22891c49a00c751c7b63b2233284064f11a200fc624137c51e2ddb"
-dependencies = [
- "filetime",
- "libc",
- "xattr 1.0.1",
-]
 
 [[package]]
 name = "target-lexicon"
@@ -8798,21 +8727,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
 
 [[package]]
-name = "ureq"
-version = "2.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b11c96ac7ee530603dcdf68ed1557050f374ce55a5a07193ebf8cbc9f8927e9"
-dependencies = [
- "base64 0.21.4",
- "flate2",
- "log",
- "native-tls",
- "once_cell",
- "rustls-native-certs",
- "url",
-]
-
-[[package]]
 name = "url"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9861,15 +9775,6 @@ name = "xattr"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d1526bbe5aaeb5eb06885f4d987bcdfa5e23187055de9b83fe00156a821fabc"
-dependencies = [
- "libc",
-]
-
-[[package]]
-name = "xattr"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4686009f71ff3e5c4dbcf1a282d0a44db3f021ba69350cd42086b3e5f1c6985"
 dependencies = [
  "libc",
 ]

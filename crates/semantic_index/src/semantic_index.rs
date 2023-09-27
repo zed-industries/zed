@@ -711,7 +711,7 @@ impl SemanticIndex {
                 .await?
                 .pop()
                 .ok_or_else(|| anyhow!("could not embed query"))?;
-            log::trace!("Embedding Search Query: {:?}", t0.elapsed().as_millis());
+            log::trace!("Embedding Search Query: {:?}ms", t0.elapsed().as_millis());
 
             let search_start = Instant::now();
             let modified_buffer_results = this.update(&mut cx, |this, cx| {

@@ -1,5 +1,3 @@
-extern crate blas_src;
-
 use crate::{
     parsing::{Span, SpanDigest},
     SEMANTIC_INDEX_VERSION,
@@ -440,25 +438,24 @@ impl VectorDatabase {
                 .filter_map(|row| row.ok())
                 .collect::<Vec<(usize, Embedding)>>();
 
-            let batch_n = 250;
+            let batch_n = 1000;
             let mut batches = Vec::new();
             let mut batch_ids = Vec::new();
             let mut batch_embeddings: Vec<f32> = Vec::new();
             deserialized_rows.iter().for_each(|(id, embedding)| {
                 batch_ids.push(id);
                 batch_embeddings.extend(&embedding.0);
+
                 if batch_ids.len() == batch_n {
-                    let array =
-                        Array2::from_shape_vec((batch_ids.len(), 1536), batch_embeddings.clone());
+                    let embeddings = std::mem::take(&mut batch_embeddings);
+                    let ids = std::mem::take(&mut batch_ids);
+                    let array = Array2::from_shape_vec((batch_ids.len(), 1536), embeddings);
                     match array {
                         Ok(array) => {
-                            batches.push((batch_ids.clone(), array));
+                            batches.push((ids, array));
                         }
                         Err(err) => log::error!("Failed to deserialize to ndarray: {:?}", err),
                     }
-
-                    batch_ids = Vec::new();
-                    batch_embeddings = Vec::new();
                 }
             });
 

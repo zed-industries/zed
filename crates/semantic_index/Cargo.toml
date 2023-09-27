@@ -39,9 +39,7 @@ rand.workspace = true
 schemars.workspace = true
 globset.workspace = true
 sha1 = "0.10.5"
-ndarray = { version = "0.15.0", features = ["blas"] }
-blas-src = { version = "0.8", features = ["openblas"] }
-openblas-src = { version = "0.10", features = ["cblas", "system"] }
+ndarray = { version = "0.15.0" }
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }
