@@ -19,17 +19,11 @@ impl PanelAllowedSides {
     /// Return a `HashSet` that contains the allowable `PanelSide`s.
     pub fn allowed_sides(&self) -> HashSet<PanelSide> {
         match self {
-            Self::LeftOnly => [PanelSide::Left].iter().cloned().collect(),
-            Self::RightOnly => [PanelSide::Right].iter().cloned().collect(),
-            Self::BottomOnly => [PanelSide::Bottom].iter().cloned().collect(),
-            Self::LeftAndRight => [PanelSide::Left, PanelSide::Right]
-                .iter()
-                .cloned()
-                .collect(),
-            Self::All => [PanelSide::Left, PanelSide::Right, PanelSide::Bottom]
-                .iter()
-                .cloned()
-                .collect(),
+            Self::LeftOnly => HashSet::from_iter([PanelSide::Left]),
+            Self::RightOnly => HashSet::from_iter([PanelSide::Right]),
+            Self::BottomOnly => HashSet::from_iter([PanelSide::Bottom]),
+            Self::LeftAndRight => HashSet::from_iter([PanelSide::Left, PanelSide::Right]),
+            Self::All => HashSet::from_iter([PanelSide::Left, PanelSide::Right, PanelSide::Bottom]),
         }
     }
 }
