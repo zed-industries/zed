@@ -2,14 +2,14 @@ use crate::{Anchor, BufferSnapshot, TextDimension};
 use std::cmp::Ordering;
 use std::ops::Range;
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SelectionGoal {
     None,
     Column(u32),
     ColumnRange { start: u32, end: u32 },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Selection<T> {
     pub id: usize,
     pub start: T,
