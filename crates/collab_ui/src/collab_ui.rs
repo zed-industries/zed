@@ -10,7 +10,7 @@ mod panel_settings;
 mod project_shared_notification;
 mod sharing_status_indicator;
 
-use call::{ActiveCall, Room};
+use call::{report_call_event_for_room, ActiveCall, Room};
 use gpui::{
     actions,
     geometry::{
@@ -55,18 +55,18 @@ pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
         let client = call.client();
         let toggle_screen_sharing = room.update(cx, |room, cx| {
             if room.is_screen_sharing() {
-                ActiveCall::report_call_event_for_room(
+                report_call_event_for_room(
                     "disable screen share",
-                    Some(room.id()),
+                    room.id(),
                     room.channel_id(),
                     &client,
                     cx,
                 );
                 Task::ready(room.unshare_screen(cx))
             } else {
-                ActiveCall::report_call_event_for_room(
+                report_call_event_for_room(
                     "enable screen share",
-                    Some(room.id()),
+                    room.id(),
                     room.channel_id(),
                     &client,
                     cx,
@@ -83,23 +83,13 @@ pub fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
     if let Some(room) = call.room().cloned() {
         let client = call.client();
         room.update(cx, |room, cx| {
-            if room.is_muted(cx) {
-                ActiveCall::report_call_event_for_room(
-                    "enable microphone",
-                    Some(room.id()),
-                    room.channel_id(),
-                    &client,
-                    cx,
-                );
+            let operation = if room.is_muted(cx) {
+                "enable microphone"
             } else {
-                ActiveCall::report_call_event_for_room(
-                    "disable microphone",
-                    Some(room.id()),
-                    room.channel_id(),
-                    &client,
-                    cx,
-                );
-            }
+                "disable microphone"
+            };
+            report_call_event_for_room(operation, room.id(), room.channel_id(), &client, cx);
+
             room.toggle_mute(cx)
         })
         .map(|task| task.detach_and_log_err(cx))

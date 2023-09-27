@@ -158,6 +158,9 @@ pub struct ActivatePane(pub usize);
 pub struct ActivatePaneInDirection(pub SplitDirection);
 
 #[derive(Clone, Deserialize, PartialEq)]
+pub struct SwapPaneInDirection(pub SplitDirection);
+
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct NewFileInDirection(pub SplitDirection);
 
 #[derive(Clone, PartialEq, Debug, Deserialize)]
@@ -233,6 +236,7 @@ impl_actions!(
     [
         ActivatePane,
         ActivatePaneInDirection,
+        SwapPaneInDirection,
         NewFileInDirection,
         Toast,
         OpenTerminal,
@@ -315,6 +319,12 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     cx.add_action(
         |workspace: &mut Workspace, action: &ActivatePaneInDirection, cx| {
             workspace.activate_pane_in_direction(action.0, cx)
+        },
+    );
+
+    cx.add_action(
+        |workspace: &mut Workspace, action: &SwapPaneInDirection, cx| {
+            workspace.swap_pane_in_direction(action.0, cx)
         },
     );
 
@@ -2236,11 +2246,32 @@ impl Workspace {
         direction: SplitDirection,
         cx: &mut ViewContext<Self>,
     ) {
-        let bounding_box = match self.center.bounding_box_for_pane(&self.active_pane) {
-            Some(coordinates) => coordinates,
-            None => {
-                return;
-            }
+        if let Some(pane) = self.find_pane_in_direction(direction, cx) {
+            cx.focus(pane);
+        }
+    }
+
+    pub fn swap_pane_in_direction(
+        &mut self,
+        direction: SplitDirection,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(to) = self
+            .find_pane_in_direction(direction, cx)
+            .map(|pane| pane.clone())
+        {
+            self.center.swap(&self.active_pane.clone(), &to);
+            cx.notify();
+        }
+    }
+
+    fn find_pane_in_direction(
+        &mut self,
+        direction: SplitDirection,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<&ViewHandle<Pane>> {
+        let Some(bounding_box) = self.center.bounding_box_for_pane(&self.active_pane) else {
+            return None;
         };
         let cursor = self.active_pane.read(cx).pixel_position_of_cursor(cx);
         let center = match cursor {
@@ -2256,10 +2287,7 @@ impl Workspace {
             SplitDirection::Up => vec2f(center.x(), bounding_box.origin_y() - distance_to_next),
             SplitDirection::Down => vec2f(center.x(), bounding_box.max_y() + distance_to_next),
         };
-
-        if let Some(pane) = self.center.pane_at_pixel_position(target) {
-            cx.focus(pane);
-        }
+        self.center.pane_at_pixel_position(target)
     }
 
     fn handle_pane_focused(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {

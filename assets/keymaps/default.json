@@ -263,6 +263,13 @@
     }
   },
   {
+    "context": "ProjectSearchBar && in_replace",
+    "bindings": {
+      "enter": "search::ReplaceNext",
+      "cmd-enter": "search::ReplaceAll"
+    }
+  },
+  {
     "context": "ProjectSearchView",
     "bindings": {
       "escape": "project_search::ToggleFocus",
@@ -499,6 +506,22 @@
       "cmd-k cmd-down": [
         "workspace::ActivatePaneInDirection",
         "Down"
+      ],
+      "cmd-k shift-left": [
+        "workspace::SwapPaneInDirection",
+        "Left"
+      ],
+      "cmd-k shift-right": [
+        "workspace::SwapPaneInDirection",
+        "Right"
+      ],
+      "cmd-k shift-up": [
+        "workspace::SwapPaneInDirection",
+        "Up"
+      ],
+      "cmd-k shift-down": [
+        "workspace::SwapPaneInDirection",
+        "Down"
       ]
     }
   },
@@ -563,7 +586,7 @@
     }
   },
   {
-    "context": "ProjectSearchBar",
+    "context": "ProjectSearchBar && !in_replace",
     "bindings": {
       "cmd-enter": "project_search::SearchInNew"
     }
