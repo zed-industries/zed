@@ -1,8 +1,8 @@
 use gpui2::geometry::{relative, rems, Size};
 use gpui2::hsla;
 
-use crate::{h_stack, prelude::*, v_stack, Panel, PanelAllowedSides, PanelSide};
-use crate::{theme, ChatPanel, CollabPanel, Pane, PaneGroup, SplitDirection, StatusBar, TitleBar};
+use crate::{prelude::*, v_stack, Panel, PanelAllowedSides, PanelSide};
+use crate::{theme, Pane, PaneGroup, SplitDirection, StatusBar, TitleBar};
 
 #[derive(Element, Default)]
 pub struct WorkspaceElement {

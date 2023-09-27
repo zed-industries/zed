@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use crate::prelude::*;
+use crate::{prelude::*, static_players_with_call_status};
 use crate::{
     theme, Avatar, Button, Icon, IconButton, IconColor, PlayerStack, ToolDivider, TrafficLights,
 };
@@ -34,12 +34,7 @@ impl<V: 'static> TitleBar<V> {
         let theme = theme(cx);
         let has_focus = cx.window_is_active();
 
-        let player_list = vec![
-            Avatar::new("https://avatars.githubusercontent.com/u/1714999?v=4"),
-            Avatar::new("https://avatars.githubusercontent.com/u/482957?v=4"),
-            Avatar::new("https://avatars.githubusercontent.com/u/326587?v=4"),
-            Avatar::new("https://avatars.githubusercontent.com/u/1789?v=4"),
-        ];
+        let player_list = static_players_with_call_status().into_iter();
 
         div()
             .flex()
@@ -62,13 +57,10 @@ impl<V: 'static> TitleBar<V> {
                             .flex()
                             .items_center()
                             .gap_1()
-                            .child(Button::new("maxbrunsfeld"))
                             .child(Button::new("zed"))
                             .child(Button::new("nate/gpui2-ui-components")),
                     )
-                    .child(PlayerStack::new(player_list.clone()).player(0))
-                    .child(PlayerStack::new(player_list.clone()).player(1))
-                    .child(PlayerStack::new(player_list.clone()).player(2)),
+                    .children(player_list.map(|p| PlayerStack::new(p))),
             )
             .child(
                 div()
