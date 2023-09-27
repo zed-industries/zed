@@ -37,8 +37,11 @@ impl Tab {
         self
     }
 
-    pub fn icon(mut self, icon: Option<Icon>) -> Self {
-        self.icon = icon;
+    pub fn icon<I>(mut self, icon: I) -> Self
+    where
+        I: Into<Option<Icon>>,
+    {
+        self.icon = icon.into();
         self
     }
 

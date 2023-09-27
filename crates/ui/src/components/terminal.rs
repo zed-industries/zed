@@ -50,14 +50,14 @@ impl Terminal {
                                 .child(
                                     Tab::new()
                                         .title("zed — fish")
-                                        .icon(Some(Icon::Terminal))
+                                        .icon(Icon::Terminal)
                                         .close_side(IconSide::Right)
                                         .current(true),
                                 )
                                 .child(
                                     Tab::new()
                                         .title("zed — fish")
-                                        .icon(Some(Icon::Terminal))
+                                        .icon(Icon::Terminal)
                                         .close_side(IconSide::Right)
                                         .current(false),
                                 ),
