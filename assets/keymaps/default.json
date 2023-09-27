@@ -32,6 +32,7 @@
       "cmd-=": "zed::IncreaseBufferFontSize",
       "cmd-+": "zed::IncreaseBufferFontSize",
       "cmd--": "zed::DecreaseBufferFontSize",
+      "cmd-_": "zed::DecreaseBufferFontSize",
       "cmd-0": "zed::ResetBufferFontSize",
       "cmd-,": "zed::OpenSettings",
       "cmd-q": "zed::Quit",
@@ -50,7 +51,7 @@
     }
   },
   {
-    "context": "Editor",
+    "context": "Editor && !VimEnabled",
     "bindings": {
       "escape": "editor::Cancel",
       "backspace": "editor::Backspace",
@@ -95,7 +96,7 @@
       "alt-right": "editor::MoveToNextWordEnd",
       "alt-f": "editor::MoveToNextWordEnd",
       "cmd-left": "editor::MoveToBeginningOfLine",
-      "ctrl-a": "editor::MoveToBeginningOfLine",
+      //  "ctrl-a": "editor::MoveToBeginningOfLine",
       "cmd-right": "editor::MoveToEndOfLine",
       "ctrl-e": "editor::MoveToEndOfLine",
       "cmd-up": "editor::MoveToBeginning",
