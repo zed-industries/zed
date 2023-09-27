@@ -130,6 +130,13 @@ fn main() {
                         stories::components::palette::PaletteStory::default(),
                     )
                 }),
+                Some(StorySelector::Component(ComponentStory::TabBar)) => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        stories::components::tab_bar::TabBarStory::default(),
+                    )
+                }),
                 Some(StorySelector::Component(ComponentStory::Toolbar)) => view(move |cx| {
                     render_story(
                         &mut ViewContext::new(cx),

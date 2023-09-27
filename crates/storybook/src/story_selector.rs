@@ -23,6 +23,7 @@ pub enum ComponentStory {
     Facepile,
     Keybinding,
     Palette,
+    TabBar,
     Toolbar,
     TrafficLights,
 }
