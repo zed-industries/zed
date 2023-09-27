@@ -58,6 +58,13 @@ impl<V: 'static> Button<V> {
         }
     }
 
+    pub fn ghost<L>(label: L) -> Self
+    where
+        L: Into<String>,
+    {
+        Self::new(label).variant(ButtonVariant::Ghost)
+    }
+
     pub fn variant(mut self, variant: ButtonVariant) -> Self {
         self.variant = variant;
         self
