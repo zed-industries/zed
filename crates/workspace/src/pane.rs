@@ -2538,14 +2538,12 @@ mod tests {
 
         set_labeled_items(&pane, ["A", "B", "C*", "D", "E"], cx);
 
-        let task = pane
-            .update(cx, |pane, cx| {
-                pane.close_inactive_items(&CloseInactiveItems, cx)
-            })
-            .unwrap();
-        cx.foreground().run_until_parked();
-        window.simulate_prompt_answer(2, cx);
-        task.await.unwrap();
+        pane.update(cx, |pane, cx| {
+            pane.close_inactive_items(&CloseInactiveItems, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
         assert_item_labels(&pane, ["C*"], cx);
     }
 
@@ -2566,12 +2564,10 @@ mod tests {
         add_labeled_item(&pane, "E", false, cx);
         assert_item_labels(&pane, ["A^", "B", "C^", "D", "E*"], cx);
 
-        let task = pane
-            .update(cx, |pane, cx| pane.close_clean_items(&CloseCleanItems, cx))
+        pane.update(cx, |pane, cx| pane.close_clean_items(&CloseCleanItems, cx))
+            .unwrap()
+            .await
             .unwrap();
-        cx.foreground().run_until_parked();
-        window.simulate_prompt_answer(2, cx);
-        task.await.unwrap();
         assert_item_labels(&pane, ["A^", "C*^"], cx);
     }
 
@@ -2587,14 +2583,12 @@ mod tests {
 
         set_labeled_items(&pane, ["A", "B", "C*", "D", "E"], cx);
 
-        let task = pane
-            .update(cx, |pane, cx| {
-                pane.close_items_to_the_left(&CloseItemsToTheLeft, cx)
-            })
-            .unwrap();
-        cx.foreground().run_until_parked();
-        window.simulate_prompt_answer(2, cx);
-        task.await.unwrap();
+        pane.update(cx, |pane, cx| {
+            pane.close_items_to_the_left(&CloseItemsToTheLeft, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
         assert_item_labels(&pane, ["C*", "D", "E"], cx);
     }
 
@@ -2610,14 +2604,12 @@ mod tests {
 
         set_labeled_items(&pane, ["A", "B", "C*", "D", "E"], cx);
 
-        let task = pane
-            .update(cx, |pane, cx| {
-                pane.close_items_to_the_right(&CloseItemsToTheRight, cx)
-            })
-            .unwrap();
-        cx.foreground().run_until_parked();
-        window.simulate_prompt_answer(2, cx);
-        task.await.unwrap();
+        pane.update(cx, |pane, cx| {
+            pane.close_items_to_the_right(&CloseItemsToTheRight, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
     }
 
@@ -2636,14 +2628,28 @@ mod tests {
         add_labeled_item(&pane, "C", false, cx);
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
-        let t = pane
+        pane.update(cx, |pane, cx| {
+            pane.close_all_items(&CloseAllItems { save_intent: None }, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_item_labels(&pane, [], cx);
+
+        add_labeled_item(&pane, "A", true, cx);
+        add_labeled_item(&pane, "B", true, cx);
+        add_labeled_item(&pane, "C", true, cx);
+        assert_item_labels(&pane, ["A^", "B^", "C*^"], cx);
+
+        let save = pane
             .update(cx, |pane, cx| {
                 pane.close_all_items(&CloseAllItems { save_intent: None }, cx)
             })
             .unwrap();
+
         cx.foreground().run_until_parked();
         window.simulate_prompt_answer(2, cx);
-        t.await.unwrap();
+        save.await.unwrap();
         assert_item_labels(&pane, [], cx);
     }
 
