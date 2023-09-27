@@ -5,7 +5,36 @@ use gpui2::geometry::AbsoluteLength;
 use crate::prelude::*;
 use crate::{theme, token, v_stack};
 
-#[derive(Default, Debug, PartialEq, Eq, Hash)]
+#[derive(Default, Debug, PartialEq, Eq, Hash, Clone, Copy)]
+pub enum PanelAllowedSides {
+    LeftOnly,
+    RightOnly,
+    BottomOnly,
+    #[default]
+    LeftAndRight,
+    All,
+}
+
+impl PanelAllowedSides {
+    /// Return a `HashSet` that contains the allowable `PanelSide`s.
+    pub fn allowed_sides(&self) -> HashSet<PanelSide> {
+        match self {
+            Self::LeftOnly => [PanelSide::Left].iter().cloned().collect(),
+            Self::RightOnly => [PanelSide::Right].iter().cloned().collect(),
+            Self::BottomOnly => [PanelSide::Bottom].iter().cloned().collect(),
+            Self::LeftAndRight => [PanelSide::Left, PanelSide::Right]
+                .iter()
+                .cloned()
+                .collect(),
+            Self::All => [PanelSide::Left, PanelSide::Right, PanelSide::Bottom]
+                .iter()
+                .cloned()
+                .collect(),
+        }
+    }
+}
+
+#[derive(Default, Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum PanelSide {
     #[default]
     Left,
@@ -20,8 +49,8 @@ pub struct Panel<V: 'static> {
     view_type: PhantomData<V>,
     scroll_state: ScrollState,
     current_side: PanelSide,
-    /// Defaults to PanelSide:Left & PanelSide::Right
-    allowed_sides: HashSet<PanelSide>,
+    /// Defaults to PanelAllowedSides::LeftAndRight
+    allowed_sides: PanelAllowedSides,
     initial_width: AbsoluteLength,
     width: Option<AbsoluteLength>,
 }
@@ -30,34 +59,47 @@ impl<V: 'static> Panel<V> {
     pub fn new(scroll_state: ScrollState) -> Self {
         let token = token();
 
-        let mut allowed_sides = HashSet::new();
-        allowed_sides.insert(PanelSide::Left);
-        allowed_sides.insert(PanelSide::Right);
-
         Self {
             view_type: PhantomData,
             scroll_state,
             current_side: PanelSide::default(),
-            allowed_sides,
+            allowed_sides: PanelAllowedSides::default(),
             initial_width: token.default_panel_size,
             width: None,
         }
     }
 
-    pub fn initial_width(&mut self, initial_width: AbsoluteLength) {
+    pub fn initial_width(mut self, initial_width: AbsoluteLength) -> Self {
         self.initial_width = initial_width;
+        self
     }
 
-    pub fn width(&mut self, width: AbsoluteLength) {
+    pub fn width(mut self, width: AbsoluteLength) -> Self {
         self.width = Some(width);
+        self
     }
 
-    pub fn allowed_sides(&mut self, allowed_sides: HashSet<PanelSide>) {
+    pub fn allowed_sides(mut self, allowed_sides: PanelAllowedSides) -> Self {
         self.allowed_sides = allowed_sides;
+        self
     }
 
-    pub fn side(&mut self, side: PanelSide) {
-        if self.allowed_sides.contains(&side) {
+    pub fn side(mut self, side: PanelSide) -> Self {
+        let allowed_sides: HashSet<PanelSide> = match self.allowed_sides {
+            PanelAllowedSides::LeftOnly => [PanelSide::Left].iter().cloned().collect(),
+            PanelAllowedSides::RightOnly => [PanelSide::Right].iter().cloned().collect(),
+            PanelAllowedSides::BottomOnly => [PanelSide::Bottom].iter().cloned().collect(),
+            PanelAllowedSides::LeftAndRight => [PanelSide::Left, PanelSide::Right]
+                .iter()
+                .cloned()
+                .collect(),
+            PanelAllowedSides::All => [PanelSide::Left, PanelSide::Right, PanelSide::Bottom]
+                .iter()
+                .cloned()
+                .collect(),
+        };
+
+        if allowed_sides.contains(&side) {
             self.current_side = side;
         } else {
             panic!(
@@ -65,6 +107,7 @@ impl<V: 'static> Panel<V> {
                 side
             );
         }
+        self
     }
 
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {

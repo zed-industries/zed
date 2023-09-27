@@ -1,14 +1,15 @@
 use gpui2::geometry::{relative, rems, Size};
 use gpui2::hsla;
 
-use crate::prelude::*;
+use crate::{h_stack, prelude::*, v_stack, Panel, PanelAllowedSides, PanelSide};
 use crate::{theme, ChatPanel, CollabPanel, Pane, PaneGroup, SplitDirection, StatusBar, TitleBar};
 
 #[derive(Element, Default)]
 pub struct WorkspaceElement {
-    left_scroll_state: ScrollState,
-    right_scroll_state: ScrollState,
+    left_panel_scroll_state: ScrollState,
+    right_panel_scroll_state: ScrollState,
     tab_bar_scroll_state: ScrollState,
+    bottom_panel_scroll_state: ScrollState,
 }
 
 impl WorkspaceElement {
@@ -25,70 +26,25 @@ impl WorkspaceElement {
                                 width: relative(1.).into(),
                                 height: temp_size,
                             },
-                        )
-                        .fill(hsla(0.6, 0.5, 0.5, 1.)),
+                        ),
                         Pane::new(
                             ScrollState::default(),
                             Size {
                                 width: relative(1.).into(),
                                 height: temp_size,
                             },
-                        )
-                        .fill(hsla(0.5, 0.5, 0.5, 1.)),
+                        ),
                     ],
                     SplitDirection::Vertical,
                 ),
-                PaneGroup::new_groups(
-                    vec![
-                        PaneGroup::new_panes(
-                            vec![Pane::new(
-                                ScrollState::default(),
-                                Size {
-                                    width: relative(1.).into(),
-                                    height: temp_size,
-                                },
-                            )
-                            .fill(hsla(0.6, 0.5, 0.5, 1.))],
-                            SplitDirection::Horizontal,
-                        ),
-                        PaneGroup::new_panes(
-                            vec![
-                                Pane::new(
-                                    ScrollState::default(),
-                                    Size {
-                                        width: relative(1.).into(),
-                                        height: temp_size,
-                                    },
-                                )
-                                .fill(hsla(0.3, 0.2, 0.6, 1.)),
-                                Pane::new(
-                                    ScrollState::default(),
-                                    Size {
-                                        width: relative(1.).into(),
-                                        height: temp_size,
-                                    },
-                                )
-                                .fill(hsla(0.7, 0.2, 0.6, 1.)),
-                                Pane::new(
-                                    ScrollState::default(),
-                                    Size {
-                                        width: relative(1.).into(),
-                                        height: temp_size,
-                                    },
-                                )
-                                .fill(hsla(0.9, 0.2, 0.6, 1.)),
-                                Pane::new(
-                                    ScrollState::default(),
-                                    Size {
-                                        width: relative(1.).into(),
-                                        height: temp_size,
-                                    },
-                                )
-                                .fill(hsla(0.7, 0.5, 0.5, 1.)),
-                            ],
-                            SplitDirection::Horizontal,
-                        ),
-                    ],
+                PaneGroup::new_panes(
+                    vec![Pane::new(
+                        ScrollState::default(),
+                        Size {
+                            width: relative(1.).into(),
+                            height: relative(1.).into(),
+                        },
+                    )],
                     SplitDirection::Vertical,
                 ),
             ],
@@ -115,9 +71,24 @@ impl WorkspaceElement {
                     .flex()
                     .flex_row()
                     .overflow_hidden()
-                    .child(CollabPanel::new(self.left_scroll_state.clone()))
-                    .child(root_group)
-                    .child(ChatPanel::new(self.right_scroll_state.clone())),
+                    .border_t()
+                    .border_b()
+                    .border_color(theme.lowest.base.default.border)
+                    .child(Panel::new(self.left_panel_scroll_state.clone()).side(PanelSide::Left))
+                    .child(
+                        v_stack()
+                            .flex_1()
+                            .h_full()
+                            .child(div().flex().flex_1().child(root_group))
+                            .child(
+                                Panel::new(self.bottom_panel_scroll_state.clone())
+                                    .allowed_sides(PanelAllowedSides::BottomOnly)
+                                    .side(PanelSide::Bottom),
+                            ),
+                    )
+                    .child(
+                        Panel::new(self.right_panel_scroll_state.clone()).side(PanelSide::Right),
+                    ),
             )
             .child(StatusBar::new())
     }

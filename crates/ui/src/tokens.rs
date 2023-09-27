@@ -13,7 +13,7 @@ impl Default for Token {
     fn default() -> Self {
         Self {
             list_indent_depth: AbsoluteLength::Rems(0.5),
-            default_panel_size: AbsoluteLength::Rems(8.),
+            default_panel_size: AbsoluteLength::Rems(16.),
             state_hover_background: hsla(0.0, 0.0, 0.0, 0.08),
             state_active_background: hsla(0.0, 0.0, 0.0, 0.16),
         }
