@@ -1,10 +1,10 @@
 use crate::prelude::*;
-use crate::{theme, Icon, IconAsset, Label, LabelColor};
+use crate::{theme, Icon, IconElement, Label, LabelColor};
 
 #[derive(Element)]
 pub struct Tab {
     title: &'static str,
-    icon: Option<IconAsset>,
+    icon: Option<Icon>,
     current: bool,
     dirty: bool,
     fs_status: FileSystemStatus,
@@ -37,7 +37,7 @@ impl Tab {
         self
     }
 
-    pub fn icon(mut self, icon: Option<IconAsset>) -> Self {
+    pub fn icon(mut self, icon: Option<Icon>) -> Self {
         self.icon = icon;
         self
     }
@@ -103,8 +103,8 @@ impl Tab {
                     .flex()
                     .items_center()
                     .gap_1()
-                    .children(self.icon.map(Icon::new))
-                    .child(Icon::new(IconAsset::Close))
+                    .children(self.icon.map(IconElement::new))
+                    .child(IconElement::new(Icon::Close))
                     .child(label),
             )
     }

@@ -1,13 +1,14 @@
 use crate::prelude::*;
 use crate::{
-    h_stack, theme, token, v_stack, Avatar, DisclosureControlVisibility, Icon, IconAsset,
-    IconColor, IconSize, InteractionState, Label, LabelColor, LabelSize, SystemColor, ToggleState,
+    h_stack, theme, token, v_stack, Avatar, DisclosureControlVisibility, Icon, IconColor,
+    IconElement, IconSize, InteractionState, Label, LabelColor, LabelSize, SystemColor,
+    ToggleState,
 };
 
 #[derive(Element, Clone, Copy)]
 pub struct ListSectionHeader {
     label: &'static str,
-    left_icon: Option<IconAsset>,
+    left_icon: Option<Icon>,
     state: InteractionState,
     toggle: Option<ToggleState>,
 }
@@ -27,7 +28,7 @@ impl ListSectionHeader {
         self
     }
 
-    pub fn left_icon(mut self, left_icon: Option<IconAsset>) -> Self {
+    pub fn left_icon(mut self, left_icon: Option<Icon>) -> Self {
         self.left_icon = left_icon;
         self
     }
@@ -37,11 +38,11 @@ impl ListSectionHeader {
         self
     }
 
-    fn disclosure_control(&self) -> Icon {
-        Icon::new(if let Some(ToggleState::Toggled) = self.toggle {
-            IconAsset::ChevronDown
+    fn disclosure_control(&self) -> IconElement {
+        IconElement::new(if let Some(ToggleState::Toggled) = self.toggle {
+            Icon::ChevronDown
         } else {
-            IconAsset::ChevronRight
+            Icon::ChevronRight
         })
         .color(IconColor::Muted)
         .size(IconSize::Small)
@@ -78,7 +79,9 @@ impl ListSectionHeader {
                             .gap_1()
                             .items_center()
                             .children(self.left_icon.map(|i| {
-                                Icon::new(i).color(IconColor::Muted).size(IconSize::Small)
+                                IconElement::new(i)
+                                    .color(IconColor::Muted)
+                                    .size(IconSize::Small)
                             }))
                             .child(
                                 Label::new(self.label.clone())
@@ -93,7 +96,7 @@ impl ListSectionHeader {
 
 #[derive(Clone)]
 pub enum LeftContent {
-    Icon(IconAsset),
+    Icon(Icon),
     Avatar(&'static str),
 }
 
@@ -143,7 +146,7 @@ impl ListItem {
         self
     }
 
-    pub fn left_icon(mut self, left_icon: IconAsset) -> Self {
+    pub fn left_icon(mut self, left_icon: Icon) -> Self {
         self.left_content = Some(LeftContent::Icon(left_icon));
         self
     }
@@ -179,9 +182,9 @@ impl ListItem {
         let token = token();
 
         let disclosure_control_icon = if let Some(ToggleState::Toggled) = self.toggle {
-            Icon::chevron_down()
+            IconElement::new(Icon::ChevronDown)
         } else {
-            Icon::chevron_right()
+            IconElement::new(Icon::ChevronRight)
         }
         .color(IconColor::Muted)
         .size(IconSize::Small);
@@ -203,7 +206,9 @@ impl ListItem {
         let system_color = SystemColor::new();
 
         let left_content = match self.left_content {
-            Some(LeftContent::Icon(i)) => Some(h_stack().child(Icon::new(i).size(IconSize::Small))),
+            Some(LeftContent::Icon(i)) => {
+                Some(h_stack().child(IconElement::new(i).size(IconSize::Small)))
+            }
             Some(LeftContent::Avatar(src)) => Some(h_stack().child(Avatar::new(src))),
             None => None,
         };
@@ -285,8 +290,8 @@ impl List {
         let token = token();
 
         let disclosure_control = match self.toggle {
-            Some(ToggleState::NotToggled) => Some(Icon::new(IconAsset::ChevronRight)),
-            Some(ToggleState::Toggled) => Some(Icon::new(IconAsset::ChevronDown)),
+            Some(ToggleState::NotToggled) => Some(IconElement::new(Icon::ChevronRight)),
+            Some(ToggleState::Toggled) => Some(IconElement::new(Icon::ChevronDown)),
             None => None,
         };
 

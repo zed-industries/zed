@@ -5,7 +5,7 @@ use gpui2::platform::MouseButton;
 use gpui2::{EventContext, Hsla, Interactive};
 
 use crate::prelude::*;
-use crate::{h_stack, theme, Icon, IconAsset, IconColor, Label, LabelColor, LabelSize};
+use crate::{h_stack, theme, Icon, IconColor, IconElement, Label, LabelColor, LabelSize};
 
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum IconPosition {
@@ -36,7 +36,7 @@ pub struct Button<V: 'static> {
     label: String,
     variant: ButtonVariant,
     state: InteractionState,
-    icon: Option<IconAsset>,
+    icon: Option<Icon>,
     icon_position: Option<IconPosition>,
     width: Option<DefiniteLength>,
     handlers: ButtonHandlers<V>,
@@ -58,6 +58,13 @@ impl<V: 'static> Button<V> {
         }
     }
 
+    pub fn ghost<L>(label: L) -> Self
+    where
+        L: Into<String>,
+    {
+        Self::new(label).variant(ButtonVariant::Ghost)
+    }
+
     pub fn variant(mut self, variant: ButtonVariant) -> Self {
         self.variant = variant;
         self
@@ -68,7 +75,7 @@ impl<V: 'static> Button<V> {
         self
     }
 
-    pub fn icon(mut self, icon: IconAsset) -> Self {
+    pub fn icon(mut self, icon: Icon) -> Self {
         self.icon = Some(icon);
         self
     }
@@ -136,8 +143,8 @@ impl<V: 'static> Button<V> {
             .color(self.label_color())
     }
 
-    fn render_icon(&self, icon_color: IconColor) -> Option<Icon> {
-        self.icon.map(|i| Icon::new(i).color(icon_color))
+    fn render_icon(&self, icon_color: IconColor) -> Option<IconElement> {
+        self.icon.map(|i| IconElement::new(i).color(icon_color))
     }
 
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {

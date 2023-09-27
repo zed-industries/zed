@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
+use crate::prelude::*;
 use crate::theme::{theme, Theme};
-use crate::{prelude::*, IconColor};
-use crate::{Button, IconButton, ToolDivider};
+use crate::{Button, Icon, IconButton, IconColor, ToolDivider};
 
 #[derive(Default, PartialEq)]
 pub enum Tool {
@@ -103,10 +103,10 @@ impl<V: 'static> StatusBar<V> {
             .flex()
             .items_center()
             .gap_1()
-            .child(IconButton::file_tree().color(IconColor::Accent))
-            .child(IconButton::hash())
+            .child(IconButton::new(Icon::FileTree).color(IconColor::Accent))
+            .child(IconButton::new(Icon::Hash))
             .child(ToolDivider::new())
-            .child(IconButton::x_circle())
+            .child(IconButton::new(Icon::XCircle))
     }
     fn right_tools(&self, theme: &Theme) -> impl Element<V> {
         div()
@@ -127,8 +127,8 @@ impl<V: 'static> StatusBar<V> {
                     .flex()
                     .items_center()
                     .gap_1()
-                    .child(IconButton::copilot())
-                    .child(IconButton::envelope()),
+                    .child(IconButton::new(Icon::Copilot))
+                    .child(IconButton::new(Icon::Envelope)),
             )
             .child(ToolDivider::new())
             .child(
@@ -136,9 +136,9 @@ impl<V: 'static> StatusBar<V> {
                     .flex()
                     .items_center()
                     .gap_1()
-                    .child(IconButton::terminal())
-                    .child(IconButton::message_bubbles())
-                    .child(IconButton::ai()),
+                    .child(IconButton::new(Icon::Terminal))
+                    .child(IconButton::new(Icon::MessageBubbles))
+                    .child(IconButton::new(Icon::Ai)),
             )
     }
 }

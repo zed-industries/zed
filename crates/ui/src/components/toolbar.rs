@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use crate::{theme, Breadcrumb, IconButton};
+use crate::{theme, Breadcrumb, Icon, IconButton};
 
 pub struct ToolbarItem {}
 
@@ -24,9 +24,9 @@ impl Toolbar {
             .child(
                 div()
                     .flex()
-                    .child(IconButton::inlay_hint())
-                    .child(IconButton::magnifying_glass())
-                    .child(IconButton::magic_wand()),
+                    .child(IconButton::new(Icon::InlayHint))
+                    .child(IconButton::new(Icon::MagnifyingGlass))
+                    .child(IconButton::new(Icon::MagicWand)),
             )
     }
 }

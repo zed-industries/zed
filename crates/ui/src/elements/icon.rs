@@ -46,7 +46,7 @@ impl IconColor {
 }
 
 #[derive(Default, PartialEq, Copy, Clone, EnumIter)]
-pub enum IconAsset {
+pub enum Icon {
     Ai,
     ArrowLeft,
     ArrowRight,
@@ -87,124 +87,65 @@ pub enum IconAsset {
     Envelope,
 }
 
-impl IconAsset {
+impl Icon {
     pub fn path(self) -> &'static str {
         match self {
-            IconAsset::Ai => "icons/ai.svg",
-            IconAsset::ArrowLeft => "icons/arrow_left.svg",
-            IconAsset::ArrowRight => "icons/arrow_right.svg",
-            IconAsset::ArrowUpRight => "icons/arrow_up_right.svg",
-            IconAsset::AudioOff => "icons/speaker-off.svg",
-            IconAsset::AudioOn => "icons/speaker-loud.svg",
-            IconAsset::Bolt => "icons/bolt.svg",
-            IconAsset::ChevronDown => "icons/chevron_down.svg",
-            IconAsset::ChevronLeft => "icons/chevron_left.svg",
-            IconAsset::ChevronRight => "icons/chevron_right.svg",
-            IconAsset::ChevronUp => "icons/chevron_up.svg",
-            IconAsset::Close => "icons/x.svg",
-            IconAsset::ExclamationTriangle => "icons/warning.svg",
-            IconAsset::File => "icons/file_icons/file.svg",
-            IconAsset::FileDoc => "icons/file_icons/book.svg",
-            IconAsset::FileGit => "icons/file_icons/git.svg",
-            IconAsset::FileLock => "icons/file_icons/lock.svg",
-            IconAsset::FileRust => "icons/file_icons/rust.svg",
-            IconAsset::FileToml => "icons/file_icons/toml.svg",
-            IconAsset::FileTree => "icons/project.svg",
-            IconAsset::Folder => "icons/file_icons/folder.svg",
-            IconAsset::FolderOpen => "icons/file_icons/folder_open.svg",
-            IconAsset::FolderX => "icons/stop_sharing.svg",
-            IconAsset::Hash => "icons/hash.svg",
-            IconAsset::InlayHint => "icons/inlay_hint.svg",
-            IconAsset::MagicWand => "icons/magic-wand.svg",
-            IconAsset::MagnifyingGlass => "icons/magnifying_glass.svg",
-            IconAsset::MessageBubbles => "icons/conversations.svg",
-            IconAsset::Mic => "icons/mic.svg",
-            IconAsset::MicMute => "icons/mic-mute.svg",
-            IconAsset::Plus => "icons/plus.svg",
-            IconAsset::Screen => "icons/desktop.svg",
-            IconAsset::Split => "icons/split.svg",
-            IconAsset::Terminal => "icons/terminal.svg",
-            IconAsset::XCircle => "icons/error.svg",
-            IconAsset::Copilot => "icons/copilot.svg",
-            IconAsset::Envelope => "icons/feedback.svg",
+            Icon::Ai => "icons/ai.svg",
+            Icon::ArrowLeft => "icons/arrow_left.svg",
+            Icon::ArrowRight => "icons/arrow_right.svg",
+            Icon::ArrowUpRight => "icons/arrow_up_right.svg",
+            Icon::AudioOff => "icons/speaker-off.svg",
+            Icon::AudioOn => "icons/speaker-loud.svg",
+            Icon::Bolt => "icons/bolt.svg",
+            Icon::ChevronDown => "icons/chevron_down.svg",
+            Icon::ChevronLeft => "icons/chevron_left.svg",
+            Icon::ChevronRight => "icons/chevron_right.svg",
+            Icon::ChevronUp => "icons/chevron_up.svg",
+            Icon::Close => "icons/x.svg",
+            Icon::ExclamationTriangle => "icons/warning.svg",
+            Icon::File => "icons/file_icons/file.svg",
+            Icon::FileDoc => "icons/file_icons/book.svg",
+            Icon::FileGit => "icons/file_icons/git.svg",
+            Icon::FileLock => "icons/file_icons/lock.svg",
+            Icon::FileRust => "icons/file_icons/rust.svg",
+            Icon::FileToml => "icons/file_icons/toml.svg",
+            Icon::FileTree => "icons/project.svg",
+            Icon::Folder => "icons/file_icons/folder.svg",
+            Icon::FolderOpen => "icons/file_icons/folder_open.svg",
+            Icon::FolderX => "icons/stop_sharing.svg",
+            Icon::Hash => "icons/hash.svg",
+            Icon::InlayHint => "icons/inlay_hint.svg",
+            Icon::MagicWand => "icons/magic-wand.svg",
+            Icon::MagnifyingGlass => "icons/magnifying_glass.svg",
+            Icon::MessageBubbles => "icons/conversations.svg",
+            Icon::Mic => "icons/mic.svg",
+            Icon::MicMute => "icons/mic-mute.svg",
+            Icon::Plus => "icons/plus.svg",
+            Icon::Screen => "icons/desktop.svg",
+            Icon::Split => "icons/split.svg",
+            Icon::Terminal => "icons/terminal.svg",
+            Icon::XCircle => "icons/error.svg",
+            Icon::Copilot => "icons/copilot.svg",
+            Icon::Envelope => "icons/feedback.svg",
         }
     }
 }
 
-mod macros {
-    macro_rules! icon_constructor {
-        ($name:ident, $asset:ident) => {
-            pub fn $name() -> Self {
-                Self::new(IconAsset::$asset)
-            }
-        };
-    }
-
-    macro_rules! icon_constructors {
-        () => {
-            icon_constructor!(ai, Ai);
-            icon_constructor!(arrow_left, ArrowLeft);
-            icon_constructor!(arrow_right, ArrowRight);
-            icon_constructor!(arrow_up_right, ArrowUpRight);
-            icon_constructor!(audio_off, AudioOff);
-            icon_constructor!(audio_on, AudioOn);
-            icon_constructor!(bolt, Bolt);
-            icon_constructor!(chevron_down, ChevronDown);
-            icon_constructor!(chevron_left, ChevronLeft);
-            icon_constructor!(chevron_right, ChevronRight);
-            icon_constructor!(chevron_up, ChevronUp);
-            icon_constructor!(close, Close);
-            icon_constructor!(exclamation_triangle, ExclamationTriangle);
-            icon_constructor!(file, File);
-            icon_constructor!(file_doc, FileDoc);
-            icon_constructor!(file_git, FileGit);
-            icon_constructor!(file_lock, FileLock);
-            icon_constructor!(file_rust, FileRust);
-            icon_constructor!(file_toml, FileToml);
-            icon_constructor!(file_tree, FileTree);
-            icon_constructor!(folder, Folder);
-            icon_constructor!(folder_open, FolderOpen);
-            icon_constructor!(folder_x, FolderX);
-            icon_constructor!(hash, Hash);
-            icon_constructor!(inlay_hint, InlayHint);
-            icon_constructor!(magic_wand, MagicWand);
-            icon_constructor!(magnifying_glass, MagnifyingGlass);
-            icon_constructor!(message_bubbles, MessageBubbles);
-            icon_constructor!(mic, Mic);
-            icon_constructor!(mic_mute, MicMute);
-            icon_constructor!(plus, Plus);
-            icon_constructor!(screen, Screen);
-            icon_constructor!(split, Split);
-            icon_constructor!(terminal, Terminal);
-            icon_constructor!(x_circle, XCircle);
-            icon_constructor!(copilot, Copilot);
-            icon_constructor!(envelope, Envelope);
-        };
-    }
-
-    pub(crate) use icon_constructor;
-    pub(crate) use icon_constructors;
-}
-
-pub(crate) use macros::{icon_constructor, icon_constructors};
-
 #[derive(Element, Clone)]
-pub struct Icon {
-    asset: IconAsset,
+pub struct IconElement {
+    icon: Icon,
     color: IconColor,
     size: IconSize,
 }
 
-impl Icon {
-    pub fn new(asset: IconAsset) -> Self {
+impl IconElement {
+    pub fn new(icon: Icon) -> Self {
         Self {
-            asset,
+            icon,
             color: IconColor::default(),
             size: IconSize::default(),
         }
     }
-
-    icon_constructors!();
 
     pub fn color(mut self, color: IconColor) -> Self {
         self.color = color;
@@ -225,6 +166,6 @@ impl Icon {
             IconSize::Large => svg().size_4(),
         };
 
-        sized_svg.flex_none().path(self.asset.path()).fill(fill)
+        sized_svg.flex_none().path(self.icon.path()).fill(fill)
     }
 }
