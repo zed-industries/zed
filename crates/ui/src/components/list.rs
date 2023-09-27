@@ -182,9 +182,9 @@ impl ListItem {
         let token = token();
 
         let disclosure_control_icon = if let Some(ToggleState::Toggled) = self.toggle {
-            IconElement::chevron_down()
+            IconElement::new(Icon::ChevronDown)
         } else {
-            IconElement::chevron_right()
+            IconElement::new(Icon::ChevronRight)
         }
         .color(IconColor::Muted)
         .size(IconSize::Small);

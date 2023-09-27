@@ -1,16 +1,16 @@
 use crate::prelude::*;
-use crate::{theme, IconColor, IconElement};
+use crate::{theme, Icon, IconColor, IconElement};
 
 #[derive(Element)]
 pub struct IconButton {
-    icon: IconElement,
+    icon: Icon,
     color: IconColor,
     variant: ButtonVariant,
     state: InteractionState,
 }
 
 impl IconButton {
-    pub fn new(icon: IconElement) -> Self {
+    pub fn new(icon: Icon) -> Self {
         Self {
             icon,
             color: IconColor::default(),
@@ -19,7 +19,7 @@ impl IconButton {
         }
     }
 
-    pub fn icon(mut self, icon: IconElement) -> Self {
+    pub fn icon(mut self, icon: Icon) -> Self {
         self.icon = icon;
         self
     }
@@ -62,6 +62,6 @@ impl IconButton {
             .fill(theme.highest.base.hovered.background)
             .active()
             .fill(theme.highest.base.pressed.background)
-            .child(self.icon.clone().color(icon_color))
+            .child(IconElement::new(self.icon).color(icon_color))
     }
 }
