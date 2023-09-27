@@ -2,6 +2,8 @@
   {
     "context": "Editor && VimControl && !VimWaiting && !menu",
     "bindings": {
+      "ctrl-a": "vim::Increment",
+      "ctrl-x": "vim::Decrement",
       "i": [
         "vim::PushOperator",
         {
@@ -380,9 +382,11 @@
       "shift-a": "vim::InsertEndOfLine",
       "x": "vim::DeleteRight",
       "shift-x": "vim::DeleteLeft",
-      "o": "vim::InsertLineBelow",
+      "k": "vim::InsertLineBelow",
       "shift-o": "vim::InsertLineAbove",
       "~": "vim::ChangeCase",
+      "ctrl-a": "vim::Increment",
+      "ctrl-x": "vim::Decrement",
       "p": "vim::Paste",
       "shift-p": [
         "vim::Paste",
@@ -494,6 +498,8 @@
       "shift-r": "vim::SubstituteLine",
       "c": "vim::Substitute",
       "~": "vim::ChangeCase",
+      "ctrl-a": "vim::Increment",
+      "ctrl-x": "vim::Decrement",
       "shift-i": "vim::InsertBefore",
       "shift-a": "vim::InsertAfter",
       "shift-j": "vim::JoinLines",
