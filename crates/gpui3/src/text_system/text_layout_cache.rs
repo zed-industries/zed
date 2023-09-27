@@ -139,7 +139,7 @@ impl<'a> PartialEq for CacheKeyRef<'a> {
             && self.runs.len() == other.runs.len()
             && self.runs.iter().zip(other.runs.iter()).all(
                 |((len_a, style_a), (len_b, style_b))| {
-                    len_a == len_b && style_a.font_id == style_b.font_id
+                    len_a == len_b && style_a.font == style_b.font
                 },
             )
     }
@@ -151,7 +151,7 @@ impl<'a> Hash for CacheKeyRef<'a> {
         self.font_size.hash(state);
         for (len, style_id) in self.runs {
             len.hash(state);
-            style_id.font_id.hash(state);
+            style_id.font.hash(state);
         }
     }
 }

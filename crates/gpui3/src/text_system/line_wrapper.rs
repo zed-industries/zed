@@ -1,11 +1,10 @@
-use super::FontId;
-use crate::{px, Line, Pixels, PlatformTextSystem, RunStyle, ShapedBoundary};
+use crate::{px, Font, Line, Pixels, PlatformTextSystem, RunStyle, ShapedBoundary};
 use collections::HashMap;
 use std::{iter, sync::Arc};
 
 pub struct LineWrapper {
     text_system: Arc<dyn PlatformTextSystem>,
-    pub(crate) font_id: FontId,
+    pub(crate) font: Font,
     pub(crate) font_size: Pixels,
     cached_ascii_char_widths: [Option<Pixels>; 128],
     cached_other_char_widths: HashMap<char, Pixels>,
@@ -14,14 +13,10 @@ pub struct LineWrapper {
 impl LineWrapper {
     pub const MAX_INDENT: u32 = 256;
 
-    pub fn new(
-        font_id: FontId,
-        font_size: Pixels,
-        text_system: Arc<dyn PlatformTextSystem>,
-    ) -> Self {
+    pub fn new(font: Font, font_size: Pixels, text_system: Arc<dyn PlatformTextSystem>) -> Self {
         Self {
             text_system,
-            font_id,
+            font,
             font_size,
             cached_ascii_char_widths: [None; 128],
             cached_other_char_widths: HashMap::default(),
@@ -190,7 +185,7 @@ impl LineWrapper {
                 &[(
                     1,
                     RunStyle {
-                        font_id: self.font_id,
+                        font: self.font.clone(),
                         color: Default::default(),
                         underline: Default::default(),
                     },
@@ -215,21 +210,17 @@ impl Boundary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{App, FontFeatures, FontWeight};
+    use crate::{font, App};
 
     #[test]
     fn test_wrap_line() {
         App::test().run(|cx| {
             let text_system = cx.text_system().clone();
-            let family = text_system
-                .load_font_family(&["Courier"], &Default::default())
-                .unwrap();
-            let font_id = text_system
-                .select_font(family, Default::default(), Default::default())
-                .unwrap();
-
-            let mut wrapper =
-                LineWrapper::new(font_id, px(16.), text_system.platform_text_system.clone());
+            let mut wrapper = LineWrapper::new(
+                font("Courier"),
+                px(16.),
+                text_system.platform_text_system.clone(),
+            );
             assert_eq!(
                 wrapper
                     .wrap_line("aa bbb cccc ddddd eeee", px(72.))
@@ -290,21 +281,13 @@ mod tests {
         App::test().run(|cx| {
             let text_system = cx.text_system().clone();
 
-            let family = text_system
-                .load_font_family(&["Helvetica"], &FontFeatures::default())
-                .unwrap();
-            let font_id = text_system
-                .select_font(family, Default::default(), Default::default())
-                .unwrap();
             let normal = RunStyle {
-                font_id,
+                font: font("Helvetica"),
                 color: Default::default(),
                 underline: Default::default(),
             };
             let bold = RunStyle {
-                font_id: text_system
-                    .select_font(family, FontWeight::BOLD, Default::default())
-                    .unwrap(),
+                font: font("Helvetica").bold(),
                 color: Default::default(),
                 underline: Default::default(),
             };
@@ -317,13 +300,16 @@ mod tests {
                     (4, normal.clone()),
                     (5, bold.clone()),
                     (6, normal.clone()),
-                    (1, bold),
-                    (7, normal),
+                    (1, bold.clone()),
+                    (7, normal.clone()),
                 ],
             );
 
-            let mut wrapper =
-                LineWrapper::new(font_id, px(16.), text_system.platform_text_system.clone());
+            let mut wrapper = LineWrapper::new(
+                normal.font,
+                px(16.),
+                text_system.platform_text_system.clone(),
+            );
             assert_eq!(
                 wrapper
                     .wrap_shaped_line(text, &line, px(72.))

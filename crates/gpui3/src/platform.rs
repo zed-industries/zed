@@ -6,8 +6,8 @@ mod mac;
 mod test;
 
 use crate::{
-    AnyWindowHandle, Bounds, FontFeatures, FontId, FontStyle, FontWeight, GlyphId, LineLayout,
-    Pixels, Point, Result, RunStyle, Scene, SharedString, Size,
+    AnyWindowHandle, Bounds, Font, FontId, FontMetrics, GlyphId, LineLayout, Pixels, Point, Result,
+    RunStyle, Scene, SharedString, Size,
 };
 use anyhow::anyhow;
 use async_task::Runnable;
@@ -156,8 +156,8 @@ pub trait PlatformDispatcher: Send + Sync {
 pub trait PlatformTextSystem: Send + Sync {
     fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> Result<()>;
     fn all_font_families(&self) -> Vec<String>;
-    fn select_font(&self, descriptor: FontDescriptor) -> Result<FontId>;
-    fn font_metrics(&self, font_id: FontId) -> FontMetrics;
+    fn select_font(&self, descriptor: Font) -> Result<FontId>;
+    fn font_metrics(&self, font_id: FontId) -> Arc<FontMetrics>;
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>>;
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>>;
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId>;
@@ -396,25 +396,4 @@ impl ClipboardItem {
         text.hash(&mut hasher);
         hasher.finish()
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub struct FontDescriptor {
-    family: SharedString,
-    features: FontFeatures,
-    weight: FontWeight,
-    style: FontStyle,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct FontMetrics {
-    pub units_per_em: u32,
-    pub ascent: f32,
-    pub descent: f32,
-    pub line_gap: f32,
-    pub underline_position: f32,
-    pub underline_thickness: f32,
-    pub cap_height: f32,
-    pub x_height: f32,
-    pub bounding_box: Bounds<f32>,
 }

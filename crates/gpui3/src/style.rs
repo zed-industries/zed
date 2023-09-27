@@ -1,7 +1,8 @@
 use crate::{
     rems, AbsoluteLength, Bounds, Corners, CornersRefinement, DefiniteLength, Edges,
-    EdgesRefinement, FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rems,
-    Result, RunStyle, SharedString, Size, SizeRefinement, ViewContext, WindowContext,
+    EdgesRefinement, Font, FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point,
+    PointRefinement, Rems, Result, RunStyle, SharedString, Size, SizeRefinement, ViewContext,
+    WindowContext,
 };
 use refineable::Refineable;
 pub use taffy::style::{
@@ -88,17 +89,8 @@ pub struct Style {
     #[refineable]
     pub corner_radii: Corners<AbsoluteLength>,
 
-    /// The color of text within this element. Cascades to children unless overridden.
-    pub text_color: Option<Hsla>,
-
-    /// The font size in rems.
-    pub font_size: Option<Rems>,
-
-    pub font_family: Option<SharedString>,
-
-    pub font_weight: Option<FontWeight>,
-
-    pub font_style: Option<FontStyle>,
+    /// TEXT
+    pub text: TextStyleRefinement,
 }
 
 #[derive(Refineable, Clone, Debug)]
@@ -106,6 +98,7 @@ pub struct Style {
 pub struct TextStyle {
     pub color: Hsla,
     pub font_family: SharedString,
+    pub font_features: FontFeatures,
     pub font_size: Rems,
     pub font_weight: FontWeight,
     pub font_style: FontStyle,
@@ -117,6 +110,7 @@ impl Default for TextStyle {
         TextStyle {
             color: Hsla::default(),
             font_family: SharedString::default(),
+            font_features: FontFeatures::default(),
             font_size: rems(1.),
             font_weight: FontWeight::default(),
             font_style: FontStyle::default(),
@@ -151,7 +145,12 @@ impl TextStyle {
 
     pub fn to_run(&self) -> RunStyle {
         RunStyle {
-            font_id: todo!(),
+            font: Font {
+                family: self.font_family.clone(),
+                features: Default::default(),
+                weight: self.font_weight,
+                style: self.font_style,
+            },
             color: self.color,
             underline: self.underline.clone(),
         }
@@ -170,24 +169,12 @@ pub struct HighlightStyle {
 impl Eq for HighlightStyle {}
 
 impl Style {
-    pub fn text_style(&self, _cx: &WindowContext) -> Option<TextStyleRefinement> {
-        if self.text_color.is_none()
-            && self.font_size.is_none()
-            && self.font_family.is_none()
-            && self.font_weight.is_none()
-            && self.font_style.is_none()
-        {
-            return None;
+    pub fn text_style(&self, _cx: &WindowContext) -> Option<&TextStyleRefinement> {
+        if self.text.is_some() {
+            Some(&self.text)
+        } else {
+            None
         }
-
-        Some(TextStyleRefinement {
-            color: self.text_color,
-            font_family: self.font_family.clone(),
-            font_size: self.font_size,
-            font_weight: self.font_weight,
-            font_style: self.font_style,
-            underline: None,
-        })
     }
 
     /// Paints the background of an element styled with this style.
@@ -244,11 +231,7 @@ impl Default for Style {
             fill: None,
             border_color: None,
             corner_radii: Corners::default(),
-            text_color: None,
-            font_size: Some(rems(1.)),
-            font_family: None,
-            font_weight: None,
-            font_style: None,
+            text: TextStyleRefinement::default(),
         }
     }
 }

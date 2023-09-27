@@ -35,7 +35,7 @@ impl<S: 'static> Element for Div<S> {
         let style = self.computed_style();
         let pop_text_style = style
             .text_style(cx)
-            .map(|style| cx.push_text_style(style))
+            .map(|style| cx.push_text_style(style.clone()))
             .is_some();
 
         let children = self
@@ -63,7 +63,7 @@ impl<S: 'static> Element for Div<S> {
         let style = self.computed_style();
         let pop_text_style = style
             .text_style(cx)
-            .map(|style| cx.push_text_style(style))
+            .map(|style| cx.push_text_style(style.clone()))
             .is_some();
         style.paint_background(bounds, cx);
         // self.interaction_handlers().paint(order, bounds, cx);

@@ -1,6 +1,6 @@
 use crate::{
     self as gpui3, relative, rems, AlignItems, Display, Fill, FlexDirection, Hsla, JustifyContent,
-    Length, Position, SharedString, Style, Styled,
+    Length, Position, SharedString, Style, StyleRefinement, Styled, TextStyleRefinement,
 };
 
 pub trait StyleHelpers: Styled<Style = Style> {
@@ -213,12 +213,16 @@ pub trait StyleHelpers: Styled<Style = Style> {
         self
     }
 
-    fn text_color<C>(mut self, color: C) -> Self
+    fn text_style(&mut self) -> &mut Option<TextStyleRefinement> {
+        let style: &mut StyleRefinement = self.declared_style();
+        &mut style.text
+    }
+
+    fn text_color(mut self, color: impl Into<Hsla>) -> Self
     where
-        C: Into<Hsla>,
         Self: Sized,
     {
-        self.declared_style().text_color = Some(color.into());
+        self.text_style().get_or_insert_with(Default::default).color = Some(color.into());
         self
     }
 
@@ -226,7 +230,9 @@ pub trait StyleHelpers: Styled<Style = Style> {
     where
         Self: Sized,
     {
-        self.declared_style().font_size = Some(rems(0.75));
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .font_size = Some(rems(0.75));
         self
     }
 
@@ -234,7 +240,9 @@ pub trait StyleHelpers: Styled<Style = Style> {
     where
         Self: Sized,
     {
-        self.declared_style().font_size = Some(rems(0.875));
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .font_size = Some(rems(0.875));
         self
     }
 
@@ -242,7 +250,9 @@ pub trait StyleHelpers: Styled<Style = Style> {
     where
         Self: Sized,
     {
-        self.declared_style().font_size = Some(rems(1.0));
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .font_size = Some(rems(1.0));
         self
     }
 
@@ -250,7 +260,9 @@ pub trait StyleHelpers: Styled<Style = Style> {
     where
         Self: Sized,
     {
-        self.declared_style().font_size = Some(rems(1.125));
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .font_size = Some(rems(1.125));
         self
     }
 
@@ -258,7 +270,9 @@ pub trait StyleHelpers: Styled<Style = Style> {
     where
         Self: Sized,
     {
-        self.declared_style().font_size = Some(rems(1.25));
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .font_size = Some(rems(1.25));
         self
     }
 
@@ -266,7 +280,9 @@ pub trait StyleHelpers: Styled<Style = Style> {
     where
         Self: Sized,
     {
-        self.declared_style().font_size = Some(rems(1.5));
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .font_size = Some(rems(1.5));
         self
     }
 
@@ -274,7 +290,9 @@ pub trait StyleHelpers: Styled<Style = Style> {
     where
         Self: Sized,
     {
-        self.declared_style().font_size = Some(rems(1.875));
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .font_size = Some(rems(1.875));
         self
     }
 
@@ -282,7 +300,9 @@ pub trait StyleHelpers: Styled<Style = Style> {
     where
         Self: Sized,
     {
-        self.declared_style().font_family = Some(family_name.into());
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .font_family = Some(family_name.into());
         self
     }
 }

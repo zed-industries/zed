@@ -6,7 +6,9 @@ pub use font_features::*;
 use line_wrapper::*;
 pub use text_layout_cache::*;
 
-use crate::{Hsla, Pixels, PlatformTextSystem, Point, Result, Size, UnderlineStyle};
+use crate::{
+    Bounds, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size, UnderlineStyle,
+};
 use collections::HashMap;
 use core::fmt;
 use parking_lot::Mutex;
@@ -26,64 +28,25 @@ pub struct FontFamilyId(pub usize);
 pub struct TextSystem {
     text_layout_cache: Arc<TextLayoutCache>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
-    wrapper_pool: Mutex<HashMap<(FontId, Pixels), Vec<LineWrapper>>>,
+    wrapper_pool: Mutex<HashMap<(Font, Pixels), Vec<LineWrapper>>>,
 }
 
 impl TextSystem {
     pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
         TextSystem {
-            // font_cache: Arc::new(FontCache::new(platform_text_system.clone())),
             text_layout_cache: Arc::new(TextLayoutCache::new(platform_text_system.clone())),
-            platform_text_system,
             wrapper_pool: Mutex::new(HashMap::default()),
+            platform_text_system,
         }
     }
 
-    pub fn font_family_name(&self, family_id: FontFamilyId) -> Result<Arc<str>> {
-        todo!()
-        // self.font_cache.family_name(family_id)
+    pub fn select_font(&self, descriptor: impl Into<Font>) -> Result<FontId> {
+        self.platform_text_system.select_font(descriptor.into())
     }
-
-    pub fn load_font_family(
-        &self,
-        names: &[&str],
-        features: &FontFeatures,
-    ) -> Result<FontFamilyId> {
-        todo!()
-        // self.font_cache.load_family(names, features)
-    }
-
-    /// Returns an arbitrary font family that is available on the system.
-    pub fn known_existing_font_family(&self) -> FontFamilyId {
-        todo!()
-        // self.font_cache.known_existing_family()
-    }
-
-    pub fn default_font(&self, family_id: FontFamilyId) -> FontId {
-        todo!()
-        // self.font_cache.default_font(family_id)
-    }
-
-    pub fn select_font(
-        &self,
-        family_id: FontFamilyId,
-        weight: FontWeight,
-        style: FontStyle,
-    ) -> Result<FontId> {
-        todo!()
-        // self.font_cache.select_font(family_id, weight, style)
-    }
-
-    // pub fn read_font_metric<F, T>(&self, font_id: FontId, f: F) -> T
-    // where
-    //     F: FnOnce(&FontMetrics) -> T,
-    //     T: 'static,
-    // {
-    //     todo!()
-    //     // self.font_cache.read_metric(font_id, f)
-    // }
 
     pub fn bounding_box(&self, font_id: FontId, font_size: Pixels) -> Size<Pixels> {
+        let metrics = self.platform_text_system.font_metrics(font_id);
+
         todo!()
         // self.font_cache.bounding_box(font_id, font_size)
     }
@@ -146,11 +109,11 @@ impl TextSystem {
         self.text_layout_cache.finish_frame()
     }
 
-    pub fn line_wrapper(self: &Arc<Self>, font_id: FontId, font_size: Pixels) -> LineWrapperHandle {
+    pub fn line_wrapper(self: &Arc<Self>, font: Font, font_size: Pixels) -> LineWrapperHandle {
         let lock = &mut self.wrapper_pool.lock();
-        let wrappers = lock.entry((font_id, font_size)).or_default();
+        let wrappers = lock.entry((font.clone(), font_size)).or_default();
         let wrapper = wrappers.pop().unwrap_or_else(|| {
-            LineWrapper::new(font_id, font_size, self.platform_text_system.clone())
+            LineWrapper::new(font, font_size, self.platform_text_system.clone())
         });
 
         LineWrapperHandle {
@@ -170,7 +133,7 @@ impl Drop for LineWrapperHandle {
         let mut state = self.text_system.wrapper_pool.lock();
         let wrapper = self.wrapper.take().unwrap();
         state
-            .get_mut(&(wrapper.font_id, wrapper.font_size))
+            .get_mut(&(wrapper.font.clone(), wrapper.font_size))
             .unwrap()
             .push(wrapper);
     }
@@ -256,8 +219,8 @@ impl Display for FontStyle {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunStyle {
+    pub font: Font,
     pub color: Hsla,
-    pub font_id: FontId,
     pub underline: Option<UnderlineStyle>,
 }
 
@@ -304,4 +267,41 @@ pub struct LineLayout {
 pub struct Run {
     pub font_id: FontId,
     pub glyphs: Vec<Glyph>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct Font {
+    pub family: SharedString,
+    pub features: FontFeatures,
+    pub weight: FontWeight,
+    pub style: FontStyle,
+}
+
+pub fn font(family: impl Into<SharedString>) -> Font {
+    Font {
+        family: family.into(),
+        features: FontFeatures::default(),
+        weight: FontWeight::default(),
+        style: FontStyle::default(),
+    }
+}
+
+impl Font {
+    pub fn bold(mut self) -> Self {
+        self.weight = FontWeight::BOLD;
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct FontMetrics {
+    pub units_per_em: u32,
+    pub ascent: f32,
+    pub descent: f32,
+    pub line_gap: f32,
+    pub underline_position: f32,
+    pub underline_thickness: f32,
+    pub cap_height: f32,
+    pub x_height: f32,
+    pub bounding_box: Bounds<f32>,
 }

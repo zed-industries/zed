@@ -1,7 +1,7 @@
 use crate::{
-    platform::FontDescriptor, point, px, size, Bounds, FontFeatures, FontId, FontMetrics,
-    FontStyle, FontWeight, Glyph, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point,
-    RasterizationOptions, Result, Run, RunStyle, SharedString, Size,
+    point, px, size, Bounds, Font, FontFeatures, FontId, FontMetrics, FontStyle, FontWeight, Glyph,
+    GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RasterizationOptions, Result, Run,
+    RunStyle, SharedString, Size,
 };
 use cocoa::appkit::{CGFloat, CGPoint};
 use collections::HashMap;
@@ -18,6 +18,7 @@ use core_graphics::{
 };
 use core_text::{font::CTFont, line::CTLine, string_attributes::kCTFontAttributeName};
 use font_kit::{
+    font::Font as FontKitFont,
     handle::Handle,
     hinting::HintingOptions,
     metrics::Metrics,
@@ -44,8 +45,9 @@ pub struct MacTextSystem(RwLock<TextSystemState>);
 struct TextSystemState {
     memory_source: MemSource,
     system_source: SystemSource,
-    fonts: Vec<font_kit::font::Font>,
-    font_selections: HashMap<FontDescriptor, FontId>,
+    fonts: Vec<FontKitFont>,
+    font_selections: HashMap<Font, FontId>,
+    font_metrics: HashMap<FontId, Arc<FontMetrics>>,
     font_ids_by_postscript_name: HashMap<String, FontId>,
     font_ids_by_family_name: HashMap<SharedString, SmallVec<[FontId; 4]>>,
     postscript_names_by_font_id: HashMap<FontId, String>,
@@ -58,6 +60,7 @@ impl MacTextSystem {
             system_source: SystemSource::new(),
             fonts: Vec::new(),
             font_selections: HashMap::default(),
+            font_metrics: HashMap::default(),
             font_ids_by_postscript_name: HashMap::default(),
             font_ids_by_family_name: HashMap::default(),
             postscript_names_by_font_id: HashMap::default(),
@@ -84,21 +87,21 @@ impl PlatformTextSystem for MacTextSystem {
             .expect("core text should never return an error")
     }
 
-    fn select_font(&self, descriptor: FontDescriptor) -> Result<FontId> {
+    fn select_font(&self, font: Font) -> Result<FontId> {
         let lock = self.0.upgradable_read();
-        if let Some(font_id) = lock.font_selections.get(&descriptor) {
+        if let Some(font_id) = lock.font_selections.get(&font) {
             Ok(*font_id)
         } else {
             let mut lock = parking_lot::RwLockUpgradableReadGuard::upgrade(lock);
-            let candidates =
-                if let Some(font_ids) = lock.font_ids_by_family_name.get(&descriptor.family) {
-                    font_ids.as_slice()
-                } else {
-                    let font_ids = lock.load_family(&descriptor.family, descriptor.features)?;
-                    lock.font_ids_by_family_name
-                        .insert(descriptor.family.clone(), font_ids);
-                    lock.font_ids_by_family_name[&descriptor.family].as_ref()
-                };
+            let candidates = if let Some(font_ids) = lock.font_ids_by_family_name.get(&font.family)
+            {
+                font_ids.as_slice()
+            } else {
+                let font_ids = lock.load_family(&font.family, font.features)?;
+                lock.font_ids_by_family_name
+                    .insert(font.family.clone(), font_ids);
+                lock.font_ids_by_family_name[&font.family].as_ref()
+            };
 
             let candidate_properties = candidates
                 .iter()
@@ -108,8 +111,8 @@ impl PlatformTextSystem for MacTextSystem {
             let ix = font_kit::matching::find_best_match(
                 &candidate_properties,
                 &font_kit::properties::Properties {
-                    style: descriptor.style.into(),
-                    weight: descriptor.weight.into(),
+                    style: font.style.into(),
+                    weight: font.weight.into(),
                     stretch: Default::default(),
                 },
             )?;
@@ -118,8 +121,16 @@ impl PlatformTextSystem for MacTextSystem {
         }
     }
 
-    fn font_metrics(&self, font_id: FontId) -> FontMetrics {
-        self.0.read().font_metrics(font_id)
+    fn font_metrics(&self, font_id: FontId) -> Arc<FontMetrics> {
+        let lock = self.0.upgradable_read();
+        if let Some(metrics) = lock.font_metrics.get(&font_id) {
+            metrics.clone()
+        } else {
+            let mut lock = parking_lot::RwLockUpgradableReadGuard::upgrade(lock);
+            let metrics: Arc<FontMetrics> = Arc::new(lock.fonts[font_id.0].metrics().into());
+            lock.font_metrics.insert(font_id, metrics.clone());
+            metrics
+        }
     }
 
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
@@ -201,46 +212,6 @@ impl TextSystemState {
             self.fonts.push(font);
         }
         Ok(font_ids)
-    }
-
-    // fn select_font(
-    //     &mut self,
-    //     family: &SharedString,
-    //     weight: FontWeight,
-    //     style: FontStyle,
-    //     features: FontFeatures,
-    // ) -> Result<FontId> {
-    //     let candidates = if let Some(font_ids) = self.font_ids_by_family_name.get(family) {
-    //         font_ids
-    //     } else {
-    //         let font_ids = if let Some(font_ids) = self.font_ids_by_family_name.get(family) {
-    //             font_ids.as_slice()
-    //         } else {
-    //             self.font_ids_by_family_name
-    //                 .insert(family.clone())
-    //                 .or_insert(font_ids).as_slice()
-    //         };
-
-    //     };
-
-    //     let font_properties = candidates
-    //         .iter()
-    //         .map(|font_id| self.fonts[font_id.0].properties())
-    //         .collect::<SmallVec<[_; 4]>>();
-
-    //     // let idx = font_kit::matching::find_best_match(
-    //     //     &candidates,
-    //     //     &font_kit::properties::Properties {
-    //     //         style: style.into(),
-    //     //         weight: weight.into(),
-    //     //         stretch: Default::default(),
-    //     //     },
-    //     // )?;
-    //     // Ok(font_ids[idx])
-    // }
-
-    fn font_metrics(&self, font_id: FontId) -> FontMetrics {
-        self.fonts[font_id.0].metrics().into()
     }
 
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
@@ -393,30 +364,30 @@ impl TextSystemState {
             string.replace_str(&CFString::new(text), CFRange::init(0, 0));
             let utf16_line_len = string.char_len() as usize;
 
-            let last_run: RefCell<Option<(usize, FontId)>> = Default::default();
+            let last_run: RefCell<Option<(usize, Font)>> = Default::default();
             let font_runs = runs
                 .iter()
                 .filter_map(|(len, style)| {
                     let mut last_run = last_run.borrow_mut();
-                    if let Some((last_len, last_font_id)) = last_run.as_mut() {
-                        if style.font_id == *last_font_id {
+                    if let Some((last_len, last_font)) = last_run.as_mut() {
+                        if style.font == *last_font {
                             *last_len += *len;
                             None
                         } else {
-                            let result = (*last_len, *last_font_id);
+                            let result = (*last_len, last_font.clone());
                             *last_len = *len;
-                            *last_font_id = style.font_id;
+                            *last_font = style.font.clone();
                             Some(result)
                         }
                     } else {
-                        *last_run = Some((*len, style.font_id));
+                        *last_run = Some((*len, style.font.clone()));
                         None
                     }
                 })
                 .chain(std::iter::from_fn(|| last_run.borrow_mut().take()));
 
             let mut ix_converter = StringIndexConverter::new(text);
-            for (run_len, font_id) in font_runs {
+            for (run_len, font_descriptor) in font_runs {
                 let utf8_end = ix_converter.utf8_ix + run_len;
                 let utf16_start = ix_converter.utf16_ix;
 
@@ -429,7 +400,9 @@ impl TextSystemState {
 
                 let cf_range =
                     CFRange::init(utf16_start as isize, (utf16_end - utf16_start) as isize);
-                let font = &self.fonts[font_id.0];
+
+                let font_id = self.font_selections[&font_descriptor];
+                let font: &FontKitFont = &self.fonts[font_id.0];
                 unsafe {
                     string.set_attribute(
                         cf_range,
