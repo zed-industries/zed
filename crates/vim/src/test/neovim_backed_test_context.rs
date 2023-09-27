@@ -1,9 +1,10 @@
+use editor::scroll::VERTICAL_SCROLL_MARGIN;
 use indoc::indoc;
 use settings::SettingsStore;
 use std::ops::{Deref, DerefMut, Range};
 
 use collections::{HashMap, HashSet};
-use gpui::ContextHandle;
+use gpui::{geometry::vector::vec2f, ContextHandle};
 use language::{
     language_settings::{AllLanguageSettings, SoftWrap},
     OffsetRangeExt,
@@ -132,7 +133,9 @@ impl<'a> NeovimBackedTestContext<'a> {
             panic!("nvim doesn't support columns < 12")
         }
         self.neovim.set_option("wrap").await;
-        self.neovim.set_option("columns=12").await;
+        self.neovim
+            .set_option(&format!("columns={}", columns))
+            .await;
 
         self.update(|cx| {
             cx.update_global(|settings: &mut SettingsStore, cx| {
@@ -142,6 +145,20 @@ impl<'a> NeovimBackedTestContext<'a> {
                 });
             })
         })
+    }
+
+    pub async fn set_scroll_height(&mut self, rows: u32) {
+        // match Zed's scrolling behavior
+        self.neovim
+            .set_option(&format!("scrolloff={}", VERTICAL_SCROLL_MARGIN))
+            .await;
+        // +2 to account for the vim command UI at the bottom.
+        self.neovim.set_option(&format!("lines={}", rows + 2)).await;
+        let window = self.window;
+        let line_height =
+            self.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
+
+        window.simulate_resize(vec2f(1000., (rows as f32) * line_height), &mut self.cx);
     }
 
     pub async fn set_neovim_option(&mut self, option: &str) {

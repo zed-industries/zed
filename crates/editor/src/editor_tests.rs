@@ -1429,7 +1429,7 @@ async fn test_scroll_page_up_page_down(cx: &mut gpui::TestAppContext) {
         assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 3.));
 
         editor.scroll_screen(&ScrollAmount::Page(-0.5), cx);
-        assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 2.));
+        assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 1.));
         editor.scroll_screen(&ScrollAmount::Page(0.5), cx);
         assert_eq!(editor.snapshot(cx).scroll_position(), vec2f(0., 3.));
     });
