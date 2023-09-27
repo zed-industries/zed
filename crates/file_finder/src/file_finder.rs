@@ -81,66 +81,82 @@ impl FoundPath {
 actions!(file_finder, [Toggle]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.add_action(toggle_file_finder);
+    cx.add_action(toggle_or_cycle_file_finder);
     FileFinder::init(cx);
 }
 
 const MAX_RECENT_SELECTIONS: usize = 20;
 
-fn toggle_file_finder(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
-    workspace.toggle_modal(cx, |workspace, cx| {
-        let project = workspace.project().read(cx);
+fn toggle_or_cycle_file_finder(
+    workspace: &mut Workspace,
+    _: &Toggle,
+    cx: &mut ViewContext<Workspace>,
+) {
+    match workspace.modal::<FileFinder>() {
+        Some(file_finder) => file_finder.update(cx, |file_finder, cx| {
+            let current_index = file_finder.delegate().selected_index();
+            file_finder.select_next(&menu::SelectNext, cx);
+            let new_index = file_finder.delegate().selected_index();
+            if current_index == new_index {
+                file_finder.select_first(&menu::SelectFirst, cx);
+            }
+        }),
+        None => {
+            workspace.toggle_modal(cx, |workspace, cx| {
+                let project = workspace.project().read(cx);
 
-        let currently_opened_path = workspace
-            .active_item(cx)
-            .and_then(|item| item.project_path(cx))
-            .map(|project_path| {
-                let abs_path = project
-                    .worktree_for_id(project_path.worktree_id, cx)
-                    .map(|worktree| worktree.read(cx).abs_path().join(&project_path.path));
-                FoundPath::new(project_path, abs_path)
-            });
+                let currently_opened_path = workspace
+                    .active_item(cx)
+                    .and_then(|item| item.project_path(cx))
+                    .map(|project_path| {
+                        let abs_path = project
+                            .worktree_for_id(project_path.worktree_id, cx)
+                            .map(|worktree| worktree.read(cx).abs_path().join(&project_path.path));
+                        FoundPath::new(project_path, abs_path)
+                    });
 
-        // if exists, bubble the currently opened path to the top
-        let history_items = currently_opened_path
-            .clone()
-            .into_iter()
-            .chain(
-                workspace
-                    .recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx)
+                // if exists, bubble the currently opened path to the top
+                let history_items = currently_opened_path
+                    .clone()
                     .into_iter()
-                    .filter(|(history_path, _)| {
-                        Some(history_path)
-                            != currently_opened_path
-                                .as_ref()
-                                .map(|found_path| &found_path.project)
-                    })
-                    .filter(|(_, history_abs_path)| {
-                        history_abs_path.as_ref()
-                            != currently_opened_path
-                                .as_ref()
-                                .and_then(|found_path| found_path.absolute.as_ref())
-                    })
-                    .map(|(history_path, abs_path)| FoundPath::new(history_path, abs_path)),
-            )
-            .collect();
+                    .chain(
+                        workspace
+                            .recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx)
+                            .into_iter()
+                            .filter(|(history_path, _)| {
+                                Some(history_path)
+                                    != currently_opened_path
+                                        .as_ref()
+                                        .map(|found_path| &found_path.project)
+                            })
+                            .filter(|(_, history_abs_path)| {
+                                history_abs_path.as_ref()
+                                    != currently_opened_path
+                                        .as_ref()
+                                        .and_then(|found_path| found_path.absolute.as_ref())
+                            })
+                            .map(|(history_path, abs_path)| FoundPath::new(history_path, abs_path)),
+                    )
+                    .collect();
 
-        let project = workspace.project().clone();
-        let workspace = cx.handle().downgrade();
-        let finder = cx.add_view(|cx| {
-            Picker::new(
-                FileFinderDelegate::new(
-                    workspace,
-                    project,
-                    currently_opened_path,
-                    history_items,
-                    cx,
-                ),
-                cx,
-            )
-        });
-        finder
-    });
+                let project = workspace.project().clone();
+                let workspace = cx.handle().downgrade();
+                let finder = cx.add_view(|cx| {
+                    Picker::new(
+                        FileFinderDelegate::new(
+                            workspace,
+                            project,
+                            currently_opened_path,
+                            history_items,
+                            cx,
+                        ),
+                        cx,
+                    )
+                });
+                finder
+            });
+        }
+    }
 }
 
 pub enum Event {
