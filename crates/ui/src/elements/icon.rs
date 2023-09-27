@@ -189,13 +189,13 @@ mod macros {
 pub(crate) use macros::{icon_constructor, icon_constructors};
 
 #[derive(Element, Clone)]
-pub struct Icon {
+pub struct IconElement {
     asset: IconAsset,
     color: IconColor,
     size: IconSize,
 }
 
-impl Icon {
+impl IconElement {
     pub fn new(asset: IconAsset) -> Self {
         Self {
             asset,

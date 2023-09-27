@@ -5,7 +5,7 @@ use gpui2::platform::MouseButton;
 use gpui2::{EventContext, Hsla, Interactive};
 
 use crate::prelude::*;
-use crate::{h_stack, theme, Icon, IconAsset, IconColor, Label, LabelColor, LabelSize};
+use crate::{h_stack, theme, IconAsset, IconColor, IconElement, Label, LabelColor, LabelSize};
 
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum IconPosition {
@@ -136,8 +136,8 @@ impl<V: 'static> Button<V> {
             .color(self.label_color())
     }
 
-    fn render_icon(&self, icon_color: IconColor) -> Option<Icon> {
-        self.icon.map(|i| Icon::new(i).color(icon_color))
+    fn render_icon(&self, icon_color: IconColor) -> Option<IconElement> {
+        self.icon.map(|i| IconElement::new(i).color(icon_color))
     }
 
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {

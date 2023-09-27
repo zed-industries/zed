@@ -1,6 +1,6 @@
 use strum::IntoEnumIterator;
 use ui::prelude::*;
-use ui::{Icon, IconAsset};
+use ui::{IconAsset, IconElement};
 
 use crate::story::Story;
 
@@ -12,8 +12,8 @@ impl IconStory {
         let icons = IconAsset::iter();
 
         Story::container(cx)
-            .child(Story::title_for::<_, ui::Icon>(cx))
+            .child(Story::title_for::<_, ui::IconElement>(cx))
             .child(Story::label(cx, "All Icons"))
-            .child(div().flex().gap_3().children(icons.map(Icon::new)))
+            .child(div().flex().gap_3().children(icons.map(IconElement::new)))
     }
 }

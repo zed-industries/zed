@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use crate::{theme, Icon, IconAsset, Label, LabelColor};
+use crate::{theme, IconAsset, IconElement, Label, LabelColor};
 
 #[derive(Element)]
 pub struct Tab {
@@ -103,8 +103,8 @@ impl Tab {
                     .flex()
                     .items_center()
                     .gap_1()
-                    .children(self.icon.map(Icon::new))
-                    .child(Icon::new(IconAsset::Close))
+                    .children(self.icon.map(IconElement::new))
+                    .child(IconElement::new(IconAsset::Close))
                     .child(label),
             )
     }

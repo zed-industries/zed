@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use crate::prelude::*;
 use crate::theme::theme;
-use crate::{Icon, IconButton};
+use crate::{IconButton, IconElement};
 
 #[derive(Element)]
 pub struct ChatPanel<V: 'static> {
@@ -54,8 +54,8 @@ impl<V: 'static> ChatPanel<V> {
                             .flex()
                             .items_center()
                             .gap_px()
-                            .child(IconButton::new(Icon::plus()))
-                            .child(IconButton::new(Icon::split())),
+                            .child(IconButton::new(IconElement::plus()))
+                            .child(IconButton::new(IconElement::split())),
                     ),
             )
     }

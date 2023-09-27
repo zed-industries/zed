@@ -1,7 +1,8 @@
 use crate::prelude::*;
 use crate::{
-    h_stack, theme, token, v_stack, Avatar, DisclosureControlVisibility, Icon, IconAsset,
-    IconColor, IconSize, InteractionState, Label, LabelColor, LabelSize, SystemColor, ToggleState,
+    h_stack, theme, token, v_stack, Avatar, DisclosureControlVisibility, IconAsset, IconColor,
+    IconElement, IconSize, InteractionState, Label, LabelColor, LabelSize, SystemColor,
+    ToggleState,
 };
 
 #[derive(Element, Clone, Copy)]
@@ -37,8 +38,8 @@ impl ListSectionHeader {
         self
     }
 
-    fn disclosure_control(&self) -> Icon {
-        Icon::new(if let Some(ToggleState::Toggled) = self.toggle {
+    fn disclosure_control(&self) -> IconElement {
+        IconElement::new(if let Some(ToggleState::Toggled) = self.toggle {
             IconAsset::ChevronDown
         } else {
             IconAsset::ChevronRight
@@ -78,7 +79,9 @@ impl ListSectionHeader {
                             .gap_1()
                             .items_center()
                             .children(self.left_icon.map(|i| {
-                                Icon::new(i).color(IconColor::Muted).size(IconSize::Small)
+                                IconElement::new(i)
+                                    .color(IconColor::Muted)
+                                    .size(IconSize::Small)
                             }))
                             .child(
                                 Label::new(self.label.clone())
@@ -179,9 +182,9 @@ impl ListItem {
         let token = token();
 
         let disclosure_control_icon = if let Some(ToggleState::Toggled) = self.toggle {
-            Icon::chevron_down()
+            IconElement::chevron_down()
         } else {
-            Icon::chevron_right()
+            IconElement::chevron_right()
         }
         .color(IconColor::Muted)
         .size(IconSize::Small);
@@ -203,7 +206,9 @@ impl ListItem {
         let system_color = SystemColor::new();
 
         let left_content = match self.left_content {
-            Some(LeftContent::Icon(i)) => Some(h_stack().child(Icon::new(i).size(IconSize::Small))),
+            Some(LeftContent::Icon(i)) => {
+                Some(h_stack().child(IconElement::new(i).size(IconSize::Small)))
+            }
             Some(LeftContent::Avatar(src)) => Some(h_stack().child(Avatar::new(src))),
             None => None,
         };
@@ -285,8 +290,8 @@ impl List {
         let token = token();
 
         let disclosure_control = match self.toggle {
-            Some(ToggleState::NotToggled) => Some(Icon::new(IconAsset::ChevronRight)),
-            Some(ToggleState::Toggled) => Some(Icon::new(IconAsset::ChevronDown)),
+            Some(ToggleState::NotToggled) => Some(IconElement::new(IconAsset::ChevronRight)),
+            Some(ToggleState::Toggled) => Some(IconElement::new(IconAsset::ChevronDown)),
             None => None,
         };
 
