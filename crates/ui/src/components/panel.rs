@@ -1,6 +1,8 @@
 use std::marker::PhantomData;
 
+use gpui2::elements::div::Div;
 use gpui2::geometry::AbsoluteLength;
+use gpui2::AnyElement;
 
 use crate::prelude::*;
 use crate::{theme, token, v_stack};
@@ -39,7 +41,10 @@ pub enum PanelSide {
 use std::collections::HashSet;
 
 #[derive(Element)]
-pub struct Panel<V: 'static> {
+pub struct Panel<V: 'static, C: 'static>
+where
+    C: IntoElement<V> + Clone,
+{
     view_type: PhantomData<V>,
     scroll_state: ScrollState,
     current_side: PanelSide,
@@ -47,10 +52,14 @@ pub struct Panel<V: 'static> {
     allowed_sides: PanelAllowedSides,
     initial_width: AbsoluteLength,
     width: Option<AbsoluteLength>,
+    children: Vec<C>,
 }
 
-impl<V: 'static> Panel<V> {
-    pub fn new(scroll_state: ScrollState) -> Self {
+impl<V: 'static, C> Panel<V, C>
+where
+    C: IntoElement<V> + Clone,
+{
+    pub fn new(scroll_state: ScrollState, children: Vec<C>) -> Self {
         let token = token();
 
         Self {
@@ -60,6 +69,7 @@ impl<V: 'static> Panel<V> {
             allowed_sides: PanelAllowedSides::default(),
             initial_width: token.default_panel_size,
             width: None,
+            children,
         }
     }
 
@@ -133,6 +143,6 @@ impl<V: 'static> Panel<V> {
             }
         }
 
-        panel_base
+        panel_base.children(self.children.clone())
     }
 }
