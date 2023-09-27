@@ -215,7 +215,7 @@ impl Boundary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{App, FontWeight};
+    use crate::{App, FontFeatures, FontWeight};
 
     #[test]
     fn test_wrap_line() {
@@ -291,7 +291,7 @@ mod tests {
             let text_system = cx.text_system().clone();
 
             let family = text_system
-                .load_font_family(&["Helvetica"], &Default::default())
+                .load_font_family(&["Helvetica"], &FontFeatures::default())
                 .unwrap();
             let font_id = text_system
                 .select_font(family, Default::default(), Default::default())

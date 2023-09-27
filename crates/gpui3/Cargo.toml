@@ -58,6 +58,7 @@ slotmap = "1.0.6"
 bytemuck = { version = "1.14.0", features = ["derive"] }
 schemars.workspace = true
 plane-split = "0.18.0"
+bitflags = "2.4.0"
 
 [dev-dependencies]
 backtrace = "0.3"

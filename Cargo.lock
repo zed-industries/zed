@@ -3243,6 +3243,7 @@ dependencies = [
  "async-task",
  "backtrace",
  "bindgen 0.65.1",
+ "bitflags 2.4.0",
  "block",
  "bytemuck",
  "cbindgen",

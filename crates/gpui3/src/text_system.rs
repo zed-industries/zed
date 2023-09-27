@@ -1,11 +1,9 @@
-mod font_cache;
+mod font_features;
 mod line_wrapper;
 mod text_layout_cache;
 
-pub use font_cache::*;
+pub use font_features::*;
 use line_wrapper::*;
-use schemars::JsonSchema;
-use serde_derive::{Deserialize, Serialize};
 pub use text_layout_cache::*;
 
 use crate::{Hsla, Pixels, PlatformTextSystem, Point, Result, Size, UnderlineStyle};
@@ -19,8 +17,13 @@ use std::{
     sync::Arc,
 };
 
+#[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
+pub struct FontId(pub usize);
+
+#[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
+pub struct FontFamilyId(pub usize);
+
 pub struct TextSystem {
-    font_cache: Arc<FontCache>,
     text_layout_cache: Arc<TextLayoutCache>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
     wrapper_pool: Mutex<HashMap<(FontId, Pixels), Vec<LineWrapper>>>,
@@ -29,7 +32,7 @@ pub struct TextSystem {
 impl TextSystem {
     pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
         TextSystem {
-            font_cache: Arc::new(FontCache::new(platform_text_system.clone())),
+            // font_cache: Arc::new(FontCache::new(platform_text_system.clone())),
             text_layout_cache: Arc::new(TextLayoutCache::new(platform_text_system.clone())),
             platform_text_system,
             wrapper_pool: Mutex::new(HashMap::default()),
@@ -37,7 +40,8 @@ impl TextSystem {
     }
 
     pub fn font_family_name(&self, family_id: FontFamilyId) -> Result<Arc<str>> {
-        self.font_cache.family_name(family_id)
+        todo!()
+        // self.font_cache.family_name(family_id)
     }
 
     pub fn load_font_family(
@@ -45,16 +49,19 @@ impl TextSystem {
         names: &[&str],
         features: &FontFeatures,
     ) -> Result<FontFamilyId> {
-        self.font_cache.load_family(names, features)
+        todo!()
+        // self.font_cache.load_family(names, features)
     }
 
     /// Returns an arbitrary font family that is available on the system.
     pub fn known_existing_font_family(&self) -> FontFamilyId {
-        self.font_cache.known_existing_family()
+        todo!()
+        // self.font_cache.known_existing_family()
     }
 
     pub fn default_font(&self, family_id: FontFamilyId) -> FontId {
-        self.font_cache.default_font(family_id)
+        todo!()
+        // self.font_cache.default_font(family_id)
     }
 
     pub fn select_font(
@@ -63,55 +70,67 @@ impl TextSystem {
         weight: FontWeight,
         style: FontStyle,
     ) -> Result<FontId> {
-        self.font_cache.select_font(family_id, weight, style)
+        todo!()
+        // self.font_cache.select_font(family_id, weight, style)
     }
 
-    pub fn read_font_metric<F, T>(&self, font_id: FontId, f: F) -> T
-    where
-        F: FnOnce(&FontMetrics) -> T,
-        T: 'static,
-    {
-        self.font_cache.read_metric(font_id, f)
-    }
+    // pub fn read_font_metric<F, T>(&self, font_id: FontId, f: F) -> T
+    // where
+    //     F: FnOnce(&FontMetrics) -> T,
+    //     T: 'static,
+    // {
+    //     todo!()
+    //     // self.font_cache.read_metric(font_id, f)
+    // }
 
     pub fn bounding_box(&self, font_id: FontId, font_size: Pixels) -> Size<Pixels> {
-        self.font_cache.bounding_box(font_id, font_size)
+        todo!()
+        // self.font_cache.bounding_box(font_id, font_size)
     }
 
     pub fn em_width(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        self.font_cache.em_width(font_id, font_size)
+        todo!()
+        // self.font_cache.em_width(font_id, font_size)
     }
 
     pub fn em_advance(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        self.font_cache.em_advance(font_id, font_size)
+        todo!()
+        // self.font_cache.em_advance(font_id, font_size)
     }
 
     pub fn line_height(&self, font_size: Pixels) -> Pixels {
-        self.font_cache.line_height(font_size)
+        todo!()
+        // self.font_cache.line_height(font_size)
     }
 
     pub fn cap_height(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        self.font_cache.cap_height(font_id, font_size)
+        todo!()
+        // self.font_cache.cap_height(font_id, font_size)
     }
 
     pub fn x_height(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        self.font_cache.x_height(font_id, font_size)
+        todo!()
+        // self.font_cache.x_height(font_id, font_size)
     }
 
     pub fn ascent(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        self.font_cache.ascent(font_id, font_size)
+        todo!()
+        // self.font_cache.ascent(font_id, font_size)
     }
 
     pub fn descent(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        self.font_cache.descent(font_id, font_size)
+        todo!()
+        // self.font_cache.descent(font_id, font_size)
     }
 
     pub fn em_size(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        self.font_cache.em_size(font_id, font_size)
+        todo!()
+        // self.font_cache.em_size(font_id, font_size)
     }
 
     pub fn baseline_offset(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        self.font_cache.baseline_offset(font_id, font_size)
+        todo!()
+        // self.font_cache.baseline_offset(font_id, font_size)
     }
 
     pub fn layout_str<'a>(
@@ -233,44 +252,6 @@ impl Display for FontStyle {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         Debug::fmt(self, f)
     }
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct FontFeatures {
-    pub calt: Option<bool>,
-    pub case: Option<bool>,
-    pub cpsp: Option<bool>,
-    pub frac: Option<bool>,
-    pub liga: Option<bool>,
-    pub onum: Option<bool>,
-    pub ordn: Option<bool>,
-    pub pnum: Option<bool>,
-    pub ss01: Option<bool>,
-    pub ss02: Option<bool>,
-    pub ss03: Option<bool>,
-    pub ss04: Option<bool>,
-    pub ss05: Option<bool>,
-    pub ss06: Option<bool>,
-    pub ss07: Option<bool>,
-    pub ss08: Option<bool>,
-    pub ss09: Option<bool>,
-    pub ss10: Option<bool>,
-    pub ss11: Option<bool>,
-    pub ss12: Option<bool>,
-    pub ss13: Option<bool>,
-    pub ss14: Option<bool>,
-    pub ss15: Option<bool>,
-    pub ss16: Option<bool>,
-    pub ss17: Option<bool>,
-    pub ss18: Option<bool>,
-    pub ss19: Option<bool>,
-    pub ss20: Option<bool>,
-    pub subs: Option<bool>,
-    pub sups: Option<bool>,
-    pub swsh: Option<bool>,
-    pub titl: Option<bool>,
-    pub tnum: Option<bool>,
-    pub zero: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

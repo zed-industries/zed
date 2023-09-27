@@ -6,8 +6,8 @@ mod mac;
 mod test;
 
 use crate::{
-    AnyWindowHandle, Bounds, FontFeatures, FontId, FontMetrics, FontStyle, FontWeight, GlyphId,
-    LineLayout, Pixels, Point, Result, RunStyle, Scene, SharedString, Size,
+    AnyWindowHandle, Bounds, FontFeatures, FontId, FontStyle, FontWeight, GlyphId, LineLayout,
+    Pixels, Point, Result, RunStyle, Scene, SharedString, Size,
 };
 use anyhow::anyhow;
 use async_task::Runnable;
@@ -25,7 +25,6 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-pub use time::UtcOffset;
 use uuid::Uuid;
 
 pub use events::*;
@@ -34,6 +33,7 @@ pub use keystroke::*;
 pub use mac::*;
 #[cfg(any(test, feature = "test"))]
 pub use test::*;
+pub use time::UtcOffset;
 
 #[cfg(target_os = "macos")]
 pub(crate) fn current_platform() -> Arc<dyn Platform> {
@@ -154,19 +154,12 @@ pub trait PlatformDispatcher: Send + Sync {
 }
 
 pub trait PlatformTextSystem: Send + Sync {
-    fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> anyhow::Result<()>;
-    fn all_families(&self) -> Vec<String>;
-    fn load_family(&self, name: &str, features: &FontFeatures) -> anyhow::Result<Vec<FontId>>;
-    fn select_font(
-        &self,
-        font_ids: &[FontId],
-        weight: FontWeight,
-        style: FontStyle,
-    ) -> anyhow::Result<FontId>;
+    fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> Result<()>;
+    fn all_font_families(&self) -> Vec<String>;
+    fn select_font(&self, descriptor: FontDescriptor) -> Result<FontId>;
     fn font_metrics(&self, font_id: FontId) -> FontMetrics;
-    fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId)
-        -> anyhow::Result<Bounds<f32>>;
-    fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> anyhow::Result<Size<f32>>;
+    fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>>;
+    fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>>;
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId>;
     fn rasterize_glyph(
         &self,
@@ -403,4 +396,25 @@ impl ClipboardItem {
         text.hash(&mut hasher);
         hasher.finish()
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct FontDescriptor {
+    family: SharedString,
+    features: FontFeatures,
+    weight: FontWeight,
+    style: FontStyle,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct FontMetrics {
+    pub units_per_em: u32,
+    pub ascent: f32,
+    pub descent: f32,
+    pub line_gap: f32,
+    pub underline_position: f32,
+    pub underline_thickness: f32,
+    pub cap_height: f32,
+    pub x_height: f32,
+    pub bounding_box: Bounds<f32>,
 }

@@ -13,6 +13,7 @@ use std::{
     marker::PhantomData,
     sync::{Arc, Weak},
 };
+use util::ResultExt;
 
 #[derive(Clone)]
 pub struct App(Arc<Mutex<AppContext>>);
@@ -173,7 +174,9 @@ impl AppContext {
             .collect::<Vec<_>>();
 
         for dirty_window_id in dirty_window_ids {
-            self.update_window(dirty_window_id, |cx| cx.draw());
+            self.update_window(dirty_window_id, |cx| cx.draw())
+                .unwrap() // We know we have the window.
+                .log_err();
         }
     }
 

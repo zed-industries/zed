@@ -1,7 +1,5 @@
 use super::ns_string;
-use crate::{
-    platform, point, px, size, Bounds, Pixels, PlatformScreen, PlatformScreenHandle, ScreenId,
-};
+use crate::{point, px, size, Bounds, Pixels, PlatformScreen, PlatformScreenHandle, ScreenId};
 use cocoa::{
     appkit::NSScreen,
     base::{id, nil},

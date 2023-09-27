@@ -1,7 +1,7 @@
 use crate::{
-    point, px, size, Bounds, FontFeatures, FontId, FontMetrics, FontStyle, FontWeight, Glyph,
-    GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RasterizationOptions, Run, RunStyle,
-    Size,
+    platform::FontDescriptor, point, px, size, Bounds, FontFeatures, FontId, FontMetrics,
+    FontStyle, FontWeight, Glyph, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point,
+    RasterizationOptions, Result, Run, RunStyle, SharedString, Size,
 };
 use cocoa::appkit::{CGFloat, CGPoint};
 use collections::HashMap;
@@ -31,6 +31,7 @@ use pathfinder_geometry::{
     transform2d::Transform2F,
     vector::{Vector2F, Vector2I},
 };
+use smallvec::SmallVec;
 use std::{cell::RefCell, char, cmp, convert::TryFrom, ffi::c_void, sync::Arc};
 
 use super::open_type;
@@ -44,7 +45,9 @@ struct TextSystemState {
     memory_source: MemSource,
     system_source: SystemSource,
     fonts: Vec<font_kit::font::Font>,
+    font_selections: HashMap<FontDescriptor, FontId>,
     font_ids_by_postscript_name: HashMap<String, FontId>,
+    font_ids_by_family_name: HashMap<SharedString, SmallVec<[FontId; 4]>>,
     postscript_names_by_font_id: HashMap<FontId, String>,
 }
 
@@ -54,8 +57,10 @@ impl MacTextSystem {
             memory_source: MemSource::empty(),
             system_source: SystemSource::new(),
             fonts: Vec::new(),
-            font_ids_by_postscript_name: Default::default(),
-            postscript_names_by_font_id: Default::default(),
+            font_selections: HashMap::default(),
+            font_ids_by_postscript_name: HashMap::default(),
+            font_ids_by_family_name: HashMap::default(),
+            postscript_names_by_font_id: HashMap::default(),
         }))
     }
 }
@@ -67,11 +72,11 @@ impl Default for MacTextSystem {
 }
 
 impl PlatformTextSystem for MacTextSystem {
-    fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> anyhow::Result<()> {
+    fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> Result<()> {
         self.0.write().add_fonts(fonts)
     }
 
-    fn all_families(&self) -> Vec<String> {
+    fn all_font_families(&self) -> Vec<String> {
         self.0
             .read()
             .system_source
@@ -79,32 +84,49 @@ impl PlatformTextSystem for MacTextSystem {
             .expect("core text should never return an error")
     }
 
-    fn load_family(&self, name: &str, features: &FontFeatures) -> anyhow::Result<Vec<FontId>> {
-        self.0.write().load_family(name, features)
-    }
+    fn select_font(&self, descriptor: FontDescriptor) -> Result<FontId> {
+        let lock = self.0.upgradable_read();
+        if let Some(font_id) = lock.font_selections.get(&descriptor) {
+            Ok(*font_id)
+        } else {
+            let mut lock = parking_lot::RwLockUpgradableReadGuard::upgrade(lock);
+            let candidates =
+                if let Some(font_ids) = lock.font_ids_by_family_name.get(&descriptor.family) {
+                    font_ids.as_slice()
+                } else {
+                    let font_ids = lock.load_family(&descriptor.family, descriptor.features)?;
+                    lock.font_ids_by_family_name
+                        .insert(descriptor.family.clone(), font_ids);
+                    lock.font_ids_by_family_name[&descriptor.family].as_ref()
+                };
 
-    fn select_font(
-        &self,
-        font_ids: &[FontId],
-        weight: FontWeight,
-        style: FontStyle,
-    ) -> anyhow::Result<FontId> {
-        self.0.read().select_font(font_ids, weight, style)
+            let candidate_properties = candidates
+                .iter()
+                .map(|font_id| lock.fonts[font_id.0].properties())
+                .collect::<SmallVec<[_; 4]>>();
+
+            let ix = font_kit::matching::find_best_match(
+                &candidate_properties,
+                &font_kit::properties::Properties {
+                    style: descriptor.style.into(),
+                    weight: descriptor.weight.into(),
+                    stretch: Default::default(),
+                },
+            )?;
+
+            Ok(candidates[ix])
+        }
     }
 
     fn font_metrics(&self, font_id: FontId) -> FontMetrics {
         self.0.read().font_metrics(font_id)
     }
 
-    fn typographic_bounds(
-        &self,
-        font_id: FontId,
-        glyph_id: GlyphId,
-    ) -> anyhow::Result<Bounds<f32>> {
+    fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
         self.0.read().typographic_bounds(font_id, glyph_id)
     }
 
-    fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> anyhow::Result<Size<f32>> {
+    fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
         self.0.read().advance(font_id, glyph_id)
     }
 
@@ -147,7 +169,7 @@ impl PlatformTextSystem for MacTextSystem {
 }
 
 impl TextSystemState {
-    fn add_fonts(&mut self, fonts: &[Arc<Vec<u8>>]) -> anyhow::Result<()> {
+    fn add_fonts(&mut self, fonts: &[Arc<Vec<u8>>]) -> Result<()> {
         self.memory_source.add_fonts(
             fonts
                 .iter()
@@ -156,13 +178,16 @@ impl TextSystemState {
         Ok(())
     }
 
-    fn load_family(&mut self, name: &str, features: &FontFeatures) -> anyhow::Result<Vec<FontId>> {
-        let mut font_ids = Vec::new();
-
+    fn load_family(
+        &mut self,
+        name: &SharedString,
+        features: FontFeatures,
+    ) -> Result<SmallVec<[FontId; 4]>> {
+        let mut font_ids = SmallVec::new();
         let family = self
             .memory_source
-            .select_family_by_name(name)
-            .or_else(|_| self.system_source.select_family_by_name(name))?;
+            .select_family_by_name(name.as_ref())
+            .or_else(|_| self.system_source.select_family_by_name(name.as_ref()))?;
         for font in family.fonts() {
             let mut font = font.load()?;
             open_type::apply_features(&mut font, features);
@@ -178,42 +203,53 @@ impl TextSystemState {
         Ok(font_ids)
     }
 
-    fn select_font(
-        &self,
-        font_ids: &[FontId],
-        weight: FontWeight,
-        style: FontStyle,
-    ) -> anyhow::Result<FontId> {
-        let candidates = font_ids
-            .iter()
-            .map(|font_id| self.fonts[font_id.0].properties())
-            .collect::<Vec<_>>();
-        let idx = font_kit::matching::find_best_match(
-            &candidates,
-            &font_kit::properties::Properties {
-                style: style.into(),
-                weight: weight.into(),
-                stretch: Default::default(),
-            },
-        )?;
-        Ok(font_ids[idx])
-    }
+    // fn select_font(
+    //     &mut self,
+    //     family: &SharedString,
+    //     weight: FontWeight,
+    //     style: FontStyle,
+    //     features: FontFeatures,
+    // ) -> Result<FontId> {
+    //     let candidates = if let Some(font_ids) = self.font_ids_by_family_name.get(family) {
+    //         font_ids
+    //     } else {
+    //         let font_ids = if let Some(font_ids) = self.font_ids_by_family_name.get(family) {
+    //             font_ids.as_slice()
+    //         } else {
+    //             self.font_ids_by_family_name
+    //                 .insert(family.clone())
+    //                 .or_insert(font_ids).as_slice()
+    //         };
+
+    //     };
+
+    //     let font_properties = candidates
+    //         .iter()
+    //         .map(|font_id| self.fonts[font_id.0].properties())
+    //         .collect::<SmallVec<[_; 4]>>();
+
+    //     // let idx = font_kit::matching::find_best_match(
+    //     //     &candidates,
+    //     //     &font_kit::properties::Properties {
+    //     //         style: style.into(),
+    //     //         weight: weight.into(),
+    //     //         stretch: Default::default(),
+    //     //     },
+    //     // )?;
+    //     // Ok(font_ids[idx])
+    // }
 
     fn font_metrics(&self, font_id: FontId) -> FontMetrics {
         self.fonts[font_id.0].metrics().into()
     }
 
-    fn typographic_bounds(
-        &self,
-        font_id: FontId,
-        glyph_id: GlyphId,
-    ) -> anyhow::Result<Bounds<f32>> {
+    fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
         Ok(self.fonts[font_id.0]
             .typographic_bounds(glyph_id.into())?
             .into())
     }
 
-    fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> anyhow::Result<Size<f32>> {
+    fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
         Ok(self.fonts[font_id.0].advance(glyph_id.into())?.into())
     }
 
@@ -659,7 +695,7 @@ impl From<FontStyle> for FontkitStyle {
 //     }
 
 //     #[test]
-//     fn test_glyph_offsets() -> anyhow::Result<()> {
+//     fn test_glyph_offsets() -> crate::Result<()> {
 //         let fonts = FontSystem::new();
 //         let zapfino = fonts.load_family("Zapfino", &Default::default())?;
 //         let zapfino_regular = RunStyle {

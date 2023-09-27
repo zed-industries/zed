@@ -1,7 +1,5 @@
 #![allow(unused, non_upper_case_globals)]
 
-use std::ptr;
-
 use crate::FontFeatures;
 use cocoa::appkit::CGFloat;
 use core_foundation::{base::TCFType, number::CFNumber};
@@ -13,6 +11,7 @@ use core_text::{
     },
 };
 use font_kit::font::Font;
+use std::ptr;
 
 const kCaseSensitiveLayoutOffSelector: i32 = 1;
 const kCaseSensitiveLayoutOnSelector: i32 = 0;
@@ -108,243 +107,243 @@ const kTypographicExtrasType: i32 = 14;
 const kVerticalFractionsSelector: i32 = 1;
 const kVerticalPositionType: i32 = 10;
 
-pub fn apply_features(font: &mut Font, features: &FontFeatures) {
+pub fn apply_features(font: &mut Font, features: FontFeatures) {
     // See https://chromium.googlesource.com/chromium/src/+/66.0.3359.158/third_party/harfbuzz-ng/src/hb-coretext.cc
     // for a reference implementation.
     toggle_open_type_feature(
         font,
-        features.calt,
+        features.calt(),
         kContextualAlternatesType,
         kContextualAlternatesOnSelector,
         kContextualAlternatesOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.case,
+        features.case(),
         kCaseSensitiveLayoutType,
         kCaseSensitiveLayoutOnSelector,
         kCaseSensitiveLayoutOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.cpsp,
+        features.cpsp(),
         kCaseSensitiveLayoutType,
         kCaseSensitiveSpacingOnSelector,
         kCaseSensitiveSpacingOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.frac,
+        features.frac(),
         kFractionsType,
         kDiagonalFractionsSelector,
         kNoFractionsSelector,
     );
     toggle_open_type_feature(
         font,
-        features.liga,
+        features.liga(),
         kLigaturesType,
         kCommonLigaturesOnSelector,
         kCommonLigaturesOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.onum,
+        features.onum(),
         kNumberCaseType,
         kLowerCaseNumbersSelector,
         2,
     );
     toggle_open_type_feature(
         font,
-        features.ordn,
+        features.ordn(),
         kVerticalPositionType,
         kOrdinalsSelector,
         kNormalPositionSelector,
     );
     toggle_open_type_feature(
         font,
-        features.pnum,
+        features.pnum(),
         kNumberSpacingType,
         kProportionalNumbersSelector,
         4,
     );
     toggle_open_type_feature(
         font,
-        features.ss01,
+        features.ss01(),
         kStylisticAlternativesType,
         kStylisticAltOneOnSelector,
         kStylisticAltOneOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.ss02,
+        features.ss02(),
         kStylisticAlternativesType,
         kStylisticAltTwoOnSelector,
         kStylisticAltTwoOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.ss03,
+        features.ss03(),
         kStylisticAlternativesType,
         kStylisticAltThreeOnSelector,
         kStylisticAltThreeOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.ss04,
+        features.ss04(),
         kStylisticAlternativesType,
         kStylisticAltFourOnSelector,
         kStylisticAltFourOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.ss05,
+        features.ss05(),
         kStylisticAlternativesType,
         kStylisticAltFiveOnSelector,
         kStylisticAltFiveOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.ss06,
+        features.ss06(),
         kStylisticAlternativesType,
         kStylisticAltSixOnSelector,
         kStylisticAltSixOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.ss07,
+        features.ss07(),
         kStylisticAlternativesType,
         kStylisticAltSevenOnSelector,
         kStylisticAltSevenOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.ss08,
+        features.ss08(),
         kStylisticAlternativesType,
         kStylisticAltEightOnSelector,
         kStylisticAltEightOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.ss09,
+        features.ss09(),
         kStylisticAlternativesType,
         kStylisticAltNineOnSelector,
         kStylisticAltNineOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.ss10,
+        features.ss10(),
         kStylisticAlternativesType,
         kStylisticAltTenOnSelector,
         kStylisticAltTenOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.ss11,
+        features.ss11(),
         kStylisticAlternativesType,
         kStylisticAltElevenOnSelector,
         kStylisticAltElevenOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.ss12,
+        features.ss12(),
         kStylisticAlternativesType,
         kStylisticAltTwelveOnSelector,
         kStylisticAltTwelveOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.ss13,
+        features.ss13(),
         kStylisticAlternativesType,
         kStylisticAltThirteenOnSelector,
         kStylisticAltThirteenOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.ss14,
+        features.ss14(),
         kStylisticAlternativesType,
         kStylisticAltFourteenOnSelector,
         kStylisticAltFourteenOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.ss15,
+        features.ss15(),
         kStylisticAlternativesType,
         kStylisticAltFifteenOnSelector,
         kStylisticAltFifteenOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.ss16,
+        features.ss16(),
         kStylisticAlternativesType,
         kStylisticAltSixteenOnSelector,
         kStylisticAltSixteenOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.ss17,
+        features.ss17(),
         kStylisticAlternativesType,
         kStylisticAltSeventeenOnSelector,
         kStylisticAltSeventeenOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.ss18,
+        features.ss18(),
         kStylisticAlternativesType,
         kStylisticAltEighteenOnSelector,
         kStylisticAltEighteenOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.ss19,
+        features.ss19(),
         kStylisticAlternativesType,
         kStylisticAltNineteenOnSelector,
         kStylisticAltNineteenOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.ss20,
+        features.ss20(),
         kStylisticAlternativesType,
         kStylisticAltTwentyOnSelector,
         kStylisticAltTwentyOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.subs,
+        features.subs(),
         kVerticalPositionType,
         kInferiorsSelector,
         kNormalPositionSelector,
     );
     toggle_open_type_feature(
         font,
-        features.sups,
+        features.sups(),
         kVerticalPositionType,
         kSuperiorsSelector,
         kNormalPositionSelector,
     );
     toggle_open_type_feature(
         font,
-        features.swsh,
+        features.swsh(),
         kContextualAlternatesType,
         kSwashAlternatesOnSelector,
         kSwashAlternatesOffSelector,
     );
     toggle_open_type_feature(
         font,
-        features.titl,
+        features.titl(),
         kStyleOptionsType,
         kTitlingCapsSelector,
         kNoStyleOptionsSelector,
     );
     toggle_open_type_feature(
         font,
-        features.tnum,
+        features.tnum(),
         kNumberSpacingType,
         kMonospacedNumbersSelector,
         4,
     );
     toggle_open_type_feature(
         font,
-        features.zero,
+        features.zero(),
         kTypographicExtrasType,
         kSlashedZeroOnSelector,
         kSlashedZeroOffSelector,

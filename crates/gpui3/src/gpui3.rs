@@ -77,7 +77,7 @@ impl<T> Flatten<T> for Result<T> {
     }
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub struct SharedString(ArcCow<'static, str>);
 
 impl Default for SharedString {
