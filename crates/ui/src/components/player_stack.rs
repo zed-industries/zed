@@ -1,25 +1,32 @@
-use crate::prelude::*;
-use crate::{theme, Avatar, Facepile, Indicator};
+use crate::{prelude::*, PlayerWithCallStatus};
+use crate::{Avatar, Facepile};
 
 #[derive(Element)]
 pub struct PlayerStack {
-    player: usize,
-    players: Vec<Avatar>,
+    player_with_call_status: PlayerWithCallStatus,
 }
 
 impl PlayerStack {
-    pub fn new(players: Vec<Avatar>) -> Self {
-        Self { player: 0, players }
-    }
-
-    pub fn player(mut self, player: usize) -> Self {
-        self.player = player;
-        self
+    pub fn new(player_with_call_status: PlayerWithCallStatus) -> Self {
+        Self {
+            player_with_call_status,
+        }
     }
 
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
-        let theme = theme(cx);
-        let player_bg = theme.players[self.player].selection;
+        let system_color = SystemColor::new();
+        let player = self.player_with_call_status.get_player();
+        self.player_with_call_status.get_call_status();
+
+        let followers = self
+            .player_with_call_status
+            .get_call_status()
+            .followers
+            .as_ref()
+            .map(|followers| followers.clone());
+
+        // if we have no followers return a slightly different element
+        // if mic_status == muted add a red ring to avatar
 
         div()
             .h_full()
@@ -28,11 +35,14 @@ impl PlayerStack {
             .gap_px()
             .justify_center()
             .child(
-                div()
-                    .flex()
-                    .justify_center()
-                    .w_full()
-                    .child(Indicator::new().player(self.player)),
+                div().flex().justify_center().w_full().child(
+                    div()
+                        .w_4()
+                        .h_1()
+                        .rounded_bl_sm()
+                        .rounded_br_sm()
+                        .fill(player.cursor_color(cx)),
+                ),
             )
             .child(
                 div()
@@ -42,8 +52,15 @@ impl PlayerStack {
                     .h_6()
                     .px_1()
                     .rounded_lg()
-                    .fill(player_bg)
-                    .child(Facepile::new(self.players.clone().into_iter())),
+                    .fill(if followers.is_none() {
+                        system_color.transparent
+                    } else {
+                        player.selection_color(cx)
+                    })
+                    .child(Avatar::new(player.avatar_src().to_string()))
+                    .children(followers.map(|followers| {
+                        div().neg_mr_1().child(Facepile::new(followers.into_iter()))
+                    })),
             )
     }
 }

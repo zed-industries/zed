@@ -1,13 +1,13 @@
-use crate::prelude::*;
-use crate::{theme, Avatar};
+use crate::theme;
+use crate::{prelude::*, Avatar, Player};
 
 #[derive(Element)]
 pub struct Facepile {
-    players: Vec<Avatar>,
+    players: Vec<Player>,
 }
 
 impl Facepile {
-    pub fn new<P: Iterator<Item = Avatar>>(players: P) -> Self {
+    pub fn new<P: Iterator<Item = Player>>(players: P) -> Self {
         Self {
             players: players.collect(),
         }
@@ -18,9 +18,10 @@ impl Facepile {
         let player_count = self.players.len();
         let player_list = self.players.iter().enumerate().map(|(ix, player)| {
             let isnt_last = ix < player_count - 1;
+
             div()
                 .when(isnt_last, |div| div.neg_mr_1())
-                .child(player.clone())
+                .child(Avatar::new(player.avatar_src().to_string()))
         });
         div().p_1().flex().items_center().children(player_list)
     }
