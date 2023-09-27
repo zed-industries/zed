@@ -79,7 +79,15 @@ impl WorkspaceElement {
                         v_stack()
                             .flex_1()
                             .h_full()
-                            .child(div().flex().flex_1().h_2_3().child(root_group))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_1()
+                                    // CSS Hack: Flex 1 has to have a set height to properly fill the space
+                                    // Or it will give you a height of 0
+                                    .h_px()
+                                    .child(root_group),
+                            )
                             .child(
                                 Panel::new(self.bottom_panel_scroll_state.clone())
                                     .allowed_sides(PanelAllowedSides::BottomOnly)
