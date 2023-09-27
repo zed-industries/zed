@@ -46,7 +46,6 @@ impl Terminal {
                         div().w_0().flex_1().h_full().child(
                             div()
                                 .flex()
-                                // .overflow_x_scroll(self.scroll_state.clone())
                                 .child(
                                     Tab::new()
                                         .title("zed — fish")
