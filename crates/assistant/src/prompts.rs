@@ -260,7 +260,7 @@ pub(crate) mod tests {
             outline.as_deref(),
             Some(indoc! {"
                 struct X
-                    <||>a: usize
+                    <|START|>a: usize
                     b
                 impl X
                     fn new
@@ -282,7 +282,7 @@ pub(crate) mod tests {
                     b
                 impl X
                     fn new() -> Self {
-                        let <|a |>= 1;
+                        let <|START|a |END|>= 1;
                         let b = 2;
                         Self { a, b }
                     }
@@ -303,7 +303,7 @@ pub(crate) mod tests {
                     a
                     b
                 impl X
-                <||>
+                <|START|>
                     fn new
                     fn a
                     fn b
@@ -323,12 +323,12 @@ pub(crate) mod tests {
                     b
                 impl X
                     fn new() -> Self {
-                        let <|a = 1;
+                        let <|START|a = 1;
                         let b = 2;
                         Self { a, b }
                     }
 
-                    pub f|>n a(&self, param: bool) -> usize {
+                    pub f|END|>n a(&self, param: bool) -> usize {
                         self.a
                     }
                     fn b
@@ -346,14 +346,14 @@ pub(crate) mod tests {
                 struct X
                     a
                     b
-                impl X<| {
+                impl X<|START| {
 
                     fn new() -> Self {
                         let a = 1;
                         let b = 2;
                         Self { a, b }
                     }
-                |>
+                |END|>
                     fn a
                     fn b
             "})
@@ -374,7 +374,7 @@ pub(crate) mod tests {
                     fn new
                     fn a
                     pub fn b(&self) -> usize {
-                        <||>self.b
+                        <|START|>self.b
                     }
             "})
         );
