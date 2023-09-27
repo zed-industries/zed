@@ -289,30 +289,23 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         }
     }
 
-    fn immutable(app: &'a AppContext, entity_id: EntityId) -> Self {
-        Self {
-            app: Reference::Immutable(app),
-            entity_type: PhantomData,
-            entity_id,
-        }
-    }
-
-    fn update<R>(&mut self, update: impl FnOnce(&mut T, &mut Self) -> R) -> R {
-        let mut entity = self
-            .app
-            .entities
-            .get_mut(self.entity_id)
-            .unwrap()
-            .take()
-            .unwrap();
-        let result = update(entity.downcast_mut::<T>().unwrap(), self);
-        self.app
-            .entities
-            .get_mut(self.entity_id)
-            .unwrap()
-            .replace(entity);
-        result
-    }
+    // todo!
+    // fn update<R>(&mut self, update: impl FnOnce(&mut T, &mut Self) -> R) -> R {
+    //     let mut entity = self
+    //         .app
+    //         .entities
+    //         .get_mut(self.entity_id)
+    //         .unwrap()
+    //         .take()
+    //         .unwrap();
+    //     let result = update(entity.downcast_mut::<T>().unwrap(), self);
+    //     self.app
+    //         .entities
+    //         .get_mut(self.entity_id)
+    //         .unwrap()
+    //         .replace(entity);
+    //     result
+    // }
 
     pub fn handle(&self) -> WeakHandle<T> {
         WeakHandle {
@@ -420,7 +413,7 @@ pub struct WeakHandle<T> {
 }
 
 impl<T: Send + Sync + 'static> WeakHandle<T> {
-    pub fn upgrade(&self, cx: &impl Context) -> Option<Handle<T>> {
+    pub fn upgrade(&self, _: &impl Context) -> Option<Handle<T>> {
         // todo!("Actually upgrade")
         Some(Handle {
             id: self.id,

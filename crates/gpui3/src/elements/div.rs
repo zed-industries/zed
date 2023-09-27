@@ -149,7 +149,7 @@ impl<V: 'static> Div<V> {
 
     fn handle_scroll(
         &mut self,
-        order: u32,
+        _order: u32,
         bounds: Bounds<Pixels>,
         overflow: Point<Overflow>,
         child_layout_ids: &[LayoutId],
@@ -164,6 +164,7 @@ impl<V: 'static> Div<V> {
             }
             scroll_max -= bounds.size;
 
+            // todo!("handle scroll")
             // let scroll_state = self.scroll_state.as_ref().unwrap().clone();
             // cx.on_event(order, move |_, event: &ScrollWheelEvent, cx| {
             //     if bounds.contains_point(event.position) {
@@ -193,56 +194,56 @@ impl<V: 'static> Div<V> {
         }
     }
 
-    fn paint_inspector(
-        &self,
-        parent_origin: Point<Pixels>,
-        layout: &Layout,
-        cx: &mut ViewContext<V>,
-    ) {
-        let style = self.styles.merged();
-        let bounds = layout.bounds;
+    // fn paint_inspector(
+    //     &self,
+    //     parent_origin: Point<Pixels>,
+    //     layout: &Layout,
+    //     cx: &mut ViewContext<V>,
+    // ) {
+    //     let style = self.styles.merged();
+    //     let bounds = layout.bounds;
 
-        let hovered = bounds.contains_point(cx.mouse_position());
-        if hovered {
-            let rem_size = cx.rem_size();
-            // cx.scene().push_quad(scene::Quad {
-            //     bounds,
-            //     background: Some(hsla(0., 0., 1., 0.05).into()),
-            //     border: gpui::Border {
-            //         color: hsla(0., 0., 1., 0.2).into(),
-            //         top: 1.,
-            //         right: 1.,
-            //         bottom: 1.,
-            //         left: 1.,
-            //     },
-            //     corner_radii: CornerRadii::default()
-            //         .refined(&style.corner_radii)
-            //         .to_gpui(bounds.size(), rem_size),
-            // })
-        }
+    //     let hovered = bounds.contains_point(cx.mouse_position());
+    //     if hovered {
+    //         let rem_size = cx.rem_size();
+    //         // cx.scene().push_quad(scene::Quad {
+    //         //     bounds,
+    //         //     background: Some(hsla(0., 0., 1., 0.05).into()),
+    //         //     border: gpui::Border {
+    //         //         color: hsla(0., 0., 1., 0.2).into(),
+    //         //         top: 1.,
+    //         //         right: 1.,
+    //         //         bottom: 1.,
+    //         //         left: 1.,
+    //         //     },
+    //         //     corner_radii: CornerRadii::default()
+    //         //         .refined(&style.corner_radii)
+    //         //         .to_gpui(bounds.size(), rem_size),
+    //         // })
+    //     }
 
-        // let pressed = Cell::new(hovered && cx.is_mouse_down(MouseButton::Left));
-        // cx.on_event(layout.order, move |_, event: &MouseButtonEvent, _| {
-        //     if bounds.contains_point(event.position) {
-        //         if event.is_down {
-        //             pressed.set(true);
-        //         } else if pressed.get() {
-        //             pressed.set(false);
-        //             eprintln!("clicked div {:?} {:#?}", bounds, style);
-        //         }
-        //     }
-        // });
+    //     // let pressed = Cell::new(hovered && cx.is_mouse_down(MouseButton::Left));
+    //     // cx.on_event(layout.order, move |_, event: &MouseButtonEvent, _| {
+    //     //     if bounds.contains_point(event.position) {
+    //     //         if event.is_down {
+    //     //             pressed.set(true);
+    //     //         } else if pressed.get() {
+    //     //             pressed.set(false);
+    //     //             eprintln!("clicked div {:?} {:#?}", bounds, style);
+    //     //         }
+    //     //     }
+    //     // });
 
-        // let hovered = Cell::new(hovered);
-        // cx.on_event(layout.order, move |_, event: &MouseMovedEvent, cx| {
-        //     cx.bubble_event();
-        //     let hovered_now = bounds.contains_point(event.position);
-        //     if hovered.get() != hovered_now {
-        //         hovered.set(hovered_now);
-        //         cx.repaint();
-        //     }
-        // });
-    }
+    //     // let hovered = Cell::new(hovered);
+    //     // cx.on_event(layout.order, move |_, event: &MouseMovedEvent, cx| {
+    //     //     cx.bubble_event();
+    //     //     let hovered_now = bounds.contains_point(event.position);
+    //     //     if hovered.get() != hovered_now {
+    //     //         hovered.set(hovered_now);
+    //     //         cx.repaint();
+    //     //     }
+    //     // });
+    // }
 }
 
 impl<V> Styled for Div<V> {

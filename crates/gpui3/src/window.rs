@@ -24,7 +24,7 @@ pub struct Window {
     content_size: Size<Pixels>,
     layout_engine: TaffyLayoutEngine,
     text_style_stack: Vec<TextStyleRefinement>,
-    cascading_states: HashMap<TypeId, Vec<Box<dyn Any + Send + Sync>>>,
+    state_stacks_by_type: HashMap<TypeId, Vec<Box<dyn Any + Send + Sync>>>,
     pub(crate) root_view: Option<AnyView<()>>,
     mouse_position: Point<Pixels>,
     pub(crate) scene: Scene,
@@ -64,7 +64,7 @@ impl Window {
             content_size,
             layout_engine: TaffyLayoutEngine::new(),
             text_style_stack: Vec::new(),
-            cascading_states: HashMap::default(),
+            state_stacks_by_type: HashMap::default(),
             root_view: None,
             mouse_position,
             scene: Scene::new(scale_factor),
@@ -168,7 +168,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub fn push_cascading_state<T: Send + Sync + 'static>(&mut self, theme: T) {
         self.window
-            .cascading_states
+            .state_stacks_by_type
             .entry(TypeId::of::<T>())
             .or_default()
             .push(Box::new(theme));
@@ -176,7 +176,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub fn pop_cascading_state<T: Send + Sync + 'static>(&mut self) {
         self.window
-            .cascading_states
+            .state_stacks_by_type
             .get_mut(&TypeId::of::<T>())
             .and_then(|stack| stack.pop())
             .expect("cascading state not found");
@@ -185,7 +185,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     pub fn cascading_state<T: Send + Sync + 'static>(&self) -> &T {
         let type_id = TypeId::of::<T>();
         self.window
-            .cascading_states
+            .state_stacks_by_type
             .get(&type_id)
             .and_then(|stack| stack.last())
             .expect("no cascading state of the specified type has been pushed")
