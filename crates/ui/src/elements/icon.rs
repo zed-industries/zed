@@ -131,6 +131,14 @@ impl IconAsset {
     }
 }
 
+macro_rules! icon_constructor {
+    ($name:ident, $asset:ident) => {
+        pub fn $name() -> Self {
+            Self::new(IconAsset::$asset)
+        }
+    };
+}
+
 #[derive(Element, Clone)]
 pub struct Icon {
     asset: IconAsset,
@@ -146,6 +154,44 @@ impl Icon {
             size: IconSize::default(),
         }
     }
+
+    icon_constructor!(ai, Ai);
+    icon_constructor!(arrow_left, ArrowLeft);
+    icon_constructor!(arrow_right, ArrowRight);
+    icon_constructor!(arrow_up_right, ArrowUpRight);
+    icon_constructor!(audio_off, AudioOff);
+    icon_constructor!(audio_on, AudioOn);
+    icon_constructor!(bolt, Bolt);
+    icon_constructor!(chevron_down, ChevronDown);
+    icon_constructor!(chevron_left, ChevronLeft);
+    icon_constructor!(chevron_right, ChevronRight);
+    icon_constructor!(chevron_up, ChevronUp);
+    icon_constructor!(close, Close);
+    icon_constructor!(exclamation_triangle, ExclamationTriangle);
+    icon_constructor!(file, File);
+    icon_constructor!(file_doc, FileDoc);
+    icon_constructor!(file_git, FileGit);
+    icon_constructor!(file_lock, FileLock);
+    icon_constructor!(file_rust, FileRust);
+    icon_constructor!(file_toml, FileToml);
+    icon_constructor!(file_tree, FileTree);
+    icon_constructor!(folder, Folder);
+    icon_constructor!(folder_open, FolderOpen);
+    icon_constructor!(folder_x, FolderX);
+    icon_constructor!(hash, Hash);
+    icon_constructor!(inlay_hint, InlayHint);
+    icon_constructor!(magic_wand, MagicWand);
+    icon_constructor!(magnifying_glass, MagnifyingGlass);
+    icon_constructor!(message_bubbles, MessageBubbles);
+    icon_constructor!(mic, Mic);
+    icon_constructor!(mic_mute, MicMute);
+    icon_constructor!(plus, Plus);
+    icon_constructor!(screen, Screen);
+    icon_constructor!(split, Split);
+    icon_constructor!(terminal, Terminal);
+    icon_constructor!(x_circle, XCircle);
+    icon_constructor!(copilot, Copilot);
+    icon_constructor!(envelope, Envelope);
 
     pub fn color(mut self, color: IconColor) -> Self {
         self.color = color;
