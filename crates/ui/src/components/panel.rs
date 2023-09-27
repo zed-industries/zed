@@ -79,19 +79,7 @@ impl<V: 'static> Panel<V> {
     }
 
     pub fn side(mut self, side: PanelSide) -> Self {
-        let allowed_sides: HashSet<PanelSide> = match self.allowed_sides {
-            PanelAllowedSides::LeftOnly => [PanelSide::Left].iter().cloned().collect(),
-            PanelAllowedSides::RightOnly => [PanelSide::Right].iter().cloned().collect(),
-            PanelAllowedSides::BottomOnly => [PanelSide::Bottom].iter().cloned().collect(),
-            PanelAllowedSides::LeftAndRight => [PanelSide::Left, PanelSide::Right]
-                .iter()
-                .cloned()
-                .collect(),
-            PanelAllowedSides::All => [PanelSide::Left, PanelSide::Right, PanelSide::Bottom]
-                .iter()
-                .cloned()
-                .collect(),
-        };
+        let allowed_sides = self.allowed_sides.allowed_sides();
 
         if allowed_sides.contains(&side) {
             self.current_side = side;
