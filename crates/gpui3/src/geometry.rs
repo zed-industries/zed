@@ -2,10 +2,10 @@ use bytemuck::{Pod, Zeroable};
 use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, Mul, Sub, SubAssign};
 use refineable::Refineable;
-use std::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
+use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Sub, SubAssign};
 
 #[derive(
-    Refineable, Default, Add, AddAssign, Sub, SubAssign, Mul, Div, Copy, Debug, PartialEq, Eq, Hash,
+    Refineable, Default, Add, AddAssign, Sub, SubAssign, Mul, Copy, Debug, PartialEq, Eq, Hash,
 )]
 #[refineable(debug)]
 #[repr(C)]
@@ -52,6 +52,17 @@ impl<T: Clone + Debug + Add<Output = T> + Copy> AddAssign<T> for Point<T> {
     }
 }
 
+impl<T: Clone + Debug + Div<S, Output = T>, S: Clone> Div<S> for Point<T> {
+    type Output = Self;
+
+    fn div(self, rhs: S) -> Self::Output {
+        Self {
+            x: self.x / rhs.clone(),
+            y: self.y / rhs,
+        }
+    }
+}
+
 impl<T: Clone + Debug + std::cmp::PartialOrd> Point<T> {
     pub fn max(&self, other: &Self) -> Self {
         Point {
@@ -81,7 +92,7 @@ impl<T: Clone + Debug> Clone for Point<T> {
 unsafe impl<T: Clone + Debug + Zeroable + Pod> Zeroable for Point<T> {}
 unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Point<T> {}
 
-#[derive(Refineable, Default, Clone, Copy, Debug, PartialEq)]
+#[derive(Refineable, Default, Clone, Copy, Debug, PartialEq, Div)]
 #[refineable(debug)]
 #[repr(C)]
 pub struct Size<T: Clone + Debug> {
@@ -166,6 +177,20 @@ impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Bounds<T>
     }
 }
 
+impl<T: Clone + Debug + Div<S, Output = T>, S: Clone> Div<S> for Bounds<T>
+where
+    Size<T>: Div<S, Output = Size<T>>,
+{
+    type Output = Self;
+
+    fn div(self, rhs: S) -> Self {
+        Self {
+            origin: self.origin / rhs.clone(),
+            size: self.size / rhs,
+        }
+    }
+}
+
 impl<T: Clone + Debug + Add<T, Output = T>> Bounds<T> {
     pub fn upper_right(&self) -> Point<T> {
         Point {
@@ -188,6 +213,13 @@ impl<T: Clone + Debug + PartialOrd + Add<T, Output = T>> Bounds<T> {
             && point.x <= self.origin.x.clone() + self.size.width.clone()
             && point.y >= self.origin.y
             && point.y <= self.origin.y.clone() + self.size.height.clone()
+    }
+
+    pub fn map<U: Clone + Debug, F: Fn(T) -> U>(&self, f: F) -> Bounds<U> {
+        Bounds {
+            origin: self.origin.map(&f),
+            size: self.size.map(f),
+        }
     }
 }
 

@@ -7,12 +7,13 @@ use line_wrapper::*;
 pub use text_layout_cache::*;
 
 use crate::{
-    Bounds, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size, UnderlineStyle,
+    px, Bounds, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size, UnderlineStyle,
 };
 use collections::HashMap;
 use core::fmt;
 use parking_lot::Mutex;
 use std::{
+    borrow::BorrowMut,
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
     ops::{Deref, DerefMut},
@@ -46,6 +47,7 @@ impl TextSystem {
 
     pub fn bounding_box(&self, font_id: FontId, font_size: Pixels) -> Size<Pixels> {
         let metrics = self.platform_text_system.font_metrics(font_id);
+        metrics.bounding_box(font_size);
 
         todo!()
         // self.font_cache.bounding_box(font_id, font_size)
@@ -293,15 +295,83 @@ impl Font {
     }
 }
 
+/// A struct for storing font metrics.
+/// It is used to define the measurements of a typeface.
 #[derive(Clone, Copy, Debug)]
 pub struct FontMetrics {
-    pub units_per_em: u32,
-    pub ascent: f32,
-    pub descent: f32,
-    pub line_gap: f32,
-    pub underline_position: f32,
-    pub underline_thickness: f32,
-    pub cap_height: f32,
-    pub x_height: f32,
-    pub bounding_box: Bounds<f32>,
+    /// The number of font units that make up the "em square",
+    /// a scalable grid for determining the size of a typeface.
+    pub(crate) units_per_em: u32,
+
+    /// The vertical distance from the baseline of the font to the top of the glyph covers.
+    pub(crate) ascent: f32,
+
+    /// The vertical distance from the baseline of the font to the bottom of the glyph covers.
+    pub(crate) descent: f32,
+
+    /// The recommended additional space to add between lines of type.
+    pub(crate) line_gap: f32,
+
+    /// The suggested position of the underline.
+    pub(crate) underline_position: f32,
+
+    /// The suggested thickness of the underline.
+    pub(crate) underline_thickness: f32,
+
+    /// The height of a capital letter measured from the baseline of the font.
+    pub(crate) cap_height: f32,
+
+    /// The height of a lowercase x.
+    pub(crate) x_height: f32,
+
+    /// The outer limits of the area that the font covers.
+    pub(crate) bounding_box: Bounds<f32>,
+}
+
+impl FontMetrics {
+    /// Returns the number of pixels that make up the "em square",
+    /// a scalable grid for determining the size of a typeface.
+    pub fn units_per_em(&self, font_size: Pixels) -> Pixels {
+        Pixels((self.units_per_em as f32 / font_size.0).ceil())
+    }
+
+    /// Returns the vertical distance from the baseline of the font to the top of the glyph covers in pixels.
+    pub fn ascent(&self, font_size: Pixels) -> Pixels {
+        Pixels((self.ascent / font_size.0).ceil() as f32)
+    }
+
+    /// Returns the vertical distance from the baseline of the font to the bottom of the glyph covers in pixels.
+    pub fn descent(&self, font_size: Pixels) -> Pixels {
+        Pixels((self.descent / font_size.0).ceil() as f32)
+    }
+
+    /// Returns the recommended additional space to add between lines of type in pixels.
+    pub fn line_gap(&self, font_size: Pixels) -> Pixels {
+        Pixels((self.line_gap / font_size.0).ceil() as f32)
+    }
+
+    /// Returns the suggested position of the underline in pixels.
+    pub fn underline_position(&self, font_size: Pixels) -> Pixels {
+        Pixels((self.underline_position / font_size.0).ceil() as f32)
+    }
+
+    /// Returns the suggested thickness of the underline in pixels.
+    pub fn underline_thickness(&self, font_size: Pixels) -> Pixels {
+        Pixels((self.underline_thickness / font_size.0).ceil() as f32)
+    }
+
+    /// Returns the height of a capital letter measured from the baseline of the font in pixels.
+    pub fn cap_height(&self, font_size: Pixels) -> Pixels {
+        Pixels((self.cap_height / font_size.0).ceil() as f32)
+    }
+
+    /// Returns the height of a lowercase x in pixels.
+    pub fn x_height(&self, font_size: Pixels) -> Pixels {
+        Pixels((self.x_height / font_size.0).ceil() as f32)
+    }
+
+    /// Returns the outer limits of the area that the font covers in pixels.
+    pub fn bounding_box(&self, font_size: Pixels) -> Bounds<Pixels> {
+        (self.bounding_box / font_size.0).map(px)
+    }
 }

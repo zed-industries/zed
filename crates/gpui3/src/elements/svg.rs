@@ -41,14 +41,15 @@ impl<S: 'static> Element for Svg<S> {
 
     fn paint(
         &mut self,
-        layout: Layout,
+        _layout: Layout,
         _: &mut Self::State,
         _: &mut Self::FrameState,
-        cx: &mut crate::ViewContext<S>,
+        _cx: &mut crate::ViewContext<S>,
     ) -> Result<()>
     where
         Self: Sized,
     {
+        // todo!
         // let fill_color = self.computed_style().fill.and_then(|fill| fill.color());
         // if let Some((path, fill_color)) = self.path.as_ref().zip(fill_color) {
         //     if let Some(svg_tree) = cx.asset_cache.svg(path).log_err() {
