@@ -2,9 +2,9 @@ pub use gpui2::elements::div::{div, ScrollState};
 pub use gpui2::style::{StyleHelpers, Styleable};
 pub use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
-pub use crate::{ButtonVariant, HackyChildren, HackyChildrenPayload, InputVariant};
+pub use crate::{theme, ButtonVariant, HackyChildren, HackyChildrenPayload, InputVariant};
 
-use gpui2::{hsla, rgb, Hsla};
+use gpui2::{hsla, rgb, Hsla, WindowContext};
 use strum::EnumIter;
 
 #[derive(Default)]
@@ -26,6 +26,51 @@ impl SystemColor {
     }
     pub fn color(&self) -> Hsla {
         self.transparent
+    }
+}
+
+#[derive(Default, PartialEq, EnumIter, Clone, Copy)]
+pub enum HighlightColor {
+    #[default]
+    Default,
+    Comment,
+    String,
+    Function,
+    Keyword,
+}
+
+impl HighlightColor {
+    pub fn hsla(&self, cx: &WindowContext) -> Hsla {
+        let theme = theme(cx);
+        let system_color = SystemColor::new();
+
+        match self {
+            Self::Default => theme
+                .syntax
+                .get("primary")
+                .expect("no theme.syntax.primary")
+                .clone(),
+            Self::Comment => theme
+                .syntax
+                .get("comment")
+                .expect("no theme.syntax.comment")
+                .clone(),
+            Self::String => theme
+                .syntax
+                .get("string")
+                .expect("no theme.syntax.string")
+                .clone(),
+            Self::Function => theme
+                .syntax
+                .get("function")
+                .expect("no theme.syntax.function")
+                .clone(),
+            Self::Keyword => theme
+                .syntax
+                .get("keyword")
+                .expect("no theme.syntax.keyword")
+                .clone(),
+        }
     }
 }
 
@@ -67,6 +112,20 @@ impl GitStatus {
             Self::Deleted => "Deleted".to_string(),
             Self::Conflict => "Conflict".to_string(),
             Self::Renamed => "Renamed".to_string(),
+        }
+    }
+
+    pub fn hsla(&self, cx: &WindowContext) -> Hsla {
+        let theme = theme(cx);
+        let system_color = SystemColor::new();
+
+        match self {
+            Self::None => system_color.transparent,
+            Self::Created => theme.lowest.positive.default.foreground,
+            Self::Modified => theme.lowest.warning.default.foreground,
+            Self::Deleted => theme.lowest.negative.default.foreground,
+            Self::Conflict => theme.lowest.warning.default.foreground,
+            Self::Renamed => theme.lowest.accent.default.foreground,
         }
     }
 }

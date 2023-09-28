@@ -116,6 +116,13 @@ fn main() {
                         stories::components::breadcrumb::BreadcrumbStory::default(),
                     )
                 }),
+                Some(StorySelector::Component(ComponentStory::Buffer)) => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        stories::components::buffer::BufferStory::default(),
+                    )
+                }),
                 Some(StorySelector::Component(ComponentStory::ChatPanel)) => view(move |cx| {
                     render_story(
                         &mut ViewContext::new(cx),

@@ -21,6 +21,7 @@ pub enum ElementStory {
 pub enum ComponentStory {
     AssistantPanel,
     Breadcrumb,
+    Buffer,
     ContextMenu,
     ChatPanel,
     CollabPanel,
