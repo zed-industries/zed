@@ -95,7 +95,7 @@ impl ActiveCall {
                 client.add_message_handler(cx.handle(), Self::handle_call_canceled),
                 client.add_request_handler(cx.handle(), Self::handle_follow),
                 client.add_message_handler(cx.handle(), Self::handle_unfollow),
-                client.add_message_handler(cx.handle(), Self::handle_update_followers),
+                client.add_message_handler(cx.handle(), Self::handle_update_from_leader),
             ],
             client,
             user_store,
@@ -259,14 +259,14 @@ impl ActiveCall {
                 project_id: envelope.payload.project_id,
                 peer_id: envelope.original_sender_id()?,
             };
-            if let Err(ix) = this.followers.binary_search(&follower) {
+            if let Ok(ix) = this.followers.binary_search(&follower) {
                 this.followers.remove(ix);
             }
             Ok(())
         })
     }
 
-    async fn handle_update_followers(
+    async fn handle_update_from_leader(
         this: ModelHandle<Self>,
         envelope: TypedEnvelope<proto::UpdateFollowers>,
         _: Arc<Client>,
