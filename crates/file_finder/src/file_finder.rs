@@ -33,14 +33,10 @@ pub struct FileFinderDelegate {
     history_items: Vec<FoundPath>,
 }
 
-#[derive(Debug)]
-enum Matches {
-    History(Vec<FoundPath>),
-    Search(Vec<PathMatch>),
-    Mixed {
-        history: Vec<FoundPath>,
-        search: Vec<PathMatch>,
-    },
+#[derive(Debug, Default)]
+struct Matches {
+    history: Vec<FoundPath>,
+    search: Vec<PathMatch>,
 }
 
 #[derive(Debug)]
@@ -51,122 +47,89 @@ enum Match<'a> {
 
 impl Matches {
     fn len(&self) -> usize {
-        match self {
-            Self::History(items) => items.len(),
-            Self::Search(items) => items.len(),
-            Self::Mixed { history, search } => history.len() + search.len(),
-        }
+        self.history.len() + self.search.len()
     }
 
     fn get(&self, index: usize) -> Option<Match<'_>> {
-        match self {
-            Self::History(items) => items.get(index).map(Match::History),
-            Self::Search(items) => items.get(index).map(Match::Search),
-            Self::Mixed { history, search } => {
-                if index < history.len() {
-                    history.get(index).map(Match::History)
-                } else {
-                    search.get(index - history.len()).map(Match::Search)
-                }
-            }
+        if index < self.history.len() {
+            self.history.get(index).map(Match::History)
+        } else {
+            self.search
+                .get(index - self.history.len())
+                .map(Match::Search)
         }
     }
 
     fn push_new_matches(
         &mut self,
+        history_items: &Vec<FoundPath>,
         query: &PathLikeWithPosition<FileSearchQuery>,
         mut new_search_matches: Vec<PathMatch>,
         extend_old_matches: bool,
     ) {
-        match self {
-            Matches::Search(search_matches) => {
-                if extend_old_matches {
-                    util::extend_sorted(
-                        search_matches,
-                        new_search_matches.into_iter(),
-                        100,
-                        |a, b| b.cmp(a),
-                    )
-                } else {
-                    *search_matches = new_search_matches;
-                }
-                return;
-            }
-            Matches::History(history_matches) => {
-                *self = Matches::Mixed {
-                    history: std::mem::take(history_matches),
-                    search: Vec::new(),
-                }
-            }
-            Matches::Mixed { .. } => {}
-        }
-
-        if let Matches::Mixed { history, search } = self {
-            let history_paths = history
-                .iter()
-                .map(|h| &h.project.path)
-                .collect::<HashSet<_>>();
-            new_search_matches.retain(|path_match| !history_paths.contains(&path_match.path));
-
-            if extend_old_matches {
-                util::extend_sorted(search, new_search_matches.into_iter(), 100, |a, b| b.cmp(a))
-            } else {
-                let candidates_by_worktrees = history
-                    .iter()
-                    .map(|found_path| {
-                        let path = &found_path.project.path;
-                        let candidate = PathMatchCandidate {
-                            path,
-                            char_bag: CharBag::from_iter(
-                                path.to_string_lossy().to_lowercase().chars(),
-                            ),
-                        };
-                        (found_path.project.worktree_id, candidate)
-                    })
-                    .fold(
-                        HashMap::default(),
-                        |mut candidates, (worktree_id, new_candidate)| {
-                            candidates
-                                .entry(worktree_id)
-                                .or_insert_with(Vec::new)
-                                .push(new_candidate);
-                            candidates
-                        },
-                    );
-
-                let mut matching_history_paths = HashSet::default();
-                for (worktree, candidates) in candidates_by_worktrees {
-                    let max_results = candidates.len() + 1;
-                    matching_history_paths.extend(
-                        fuzzy::match_fixed_path_set(
-                            candidates,
-                            worktree.to_usize(),
-                            query.path_like.path_query(),
-                            false,
-                            max_results,
-                        )
-                        .into_iter()
-                        .map(|path_match| path_match.path),
-                    );
-                }
-
-                history.retain(|history_path| {
-                    matching_history_paths.contains(&history_path.project.path)
-                });
-                if history.is_empty() {
-                    *self = Matches::Search(new_search_matches);
-                } else {
-                    *search = new_search_matches;
-                }
-            }
+        let matching_history_paths = matching_history_item_paths(history_items, query);
+        new_search_matches.retain(|path_match| !matching_history_paths.contains(&path_match.path));
+        let history_items_to_show = history_items
+            .iter()
+            .filter(|history_item| matching_history_paths.contains(&history_item.project.path))
+            .cloned()
+            .collect::<Vec<_>>();
+        self.history = history_items_to_show;
+        if extend_old_matches {
+            self.search
+                .retain(|path_match| !matching_history_paths.contains(&path_match.path));
+            util::extend_sorted(
+                &mut self.search,
+                new_search_matches.into_iter(),
+                100,
+                |a, b| b.cmp(a),
+            )
+        } else {
+            self.search = new_search_matches;
         }
     }
 }
 
-impl Default for Matches {
-    fn default() -> Self {
-        Self::History(Vec::new())
+fn matching_history_item_paths(
+    history_items: &Vec<FoundPath>,
+    query: &PathLikeWithPosition<FileSearchQuery>,
+) -> HashSet<Arc<Path>> {
+    let history_items_by_worktrees = history_items
+        .iter()
+        .map(|found_path| {
+            let path = &found_path.project.path;
+            let candidate = PathMatchCandidate {
+                path,
+                char_bag: CharBag::from_iter(path.to_string_lossy().to_lowercase().chars()),
+            };
+            (found_path.project.worktree_id, candidate)
+        })
+        .fold(
+            HashMap::default(),
+            |mut candidates, (worktree_id, new_candidate)| {
+                candidates
+                    .entry(worktree_id)
+                    .or_insert_with(Vec::new)
+                    .push(new_candidate);
+                candidates
+            },
+        );
+    let mut matching_history_paths = HashSet::default();
+    for (worktree, candidates) in history_items_by_worktrees {
+        let max_results = candidates.len() + 1;
+        matching_history_paths.extend(
+            fuzzy::match_fixed_path_set(
+                candidates,
+                worktree.to_usize(),
+                query.path_like.path_query(),
+                false,
+                max_results,
+            )
+            .into_iter()
+            .map(|path_match| path_match.path),
+        );
     }
+    matching_history_paths
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -381,7 +344,7 @@ impl FileFinderDelegate {
                         .as_ref()
                         .map(|query| query.path_like.path_query());
             self.matches
-                .push_new_matches(&query, matches, extend_old_matches);
+                .push_new_matches(&self.history_items, &query, matches, extend_old_matches);
             self.latest_search_query = Some(query);
             self.latest_search_did_cancel = did_cancel;
             cx.notify();
@@ -515,8 +478,9 @@ impl PickerDelegate for FileFinderDelegate {
         if raw_query.is_empty() {
             let project = self.project.read(cx);
             self.latest_search_id = post_inc(&mut self.search_count);
-            self.matches = Matches::History(
-                self.history_items
+            self.matches = Matches {
+                history: self
+                    .history_items
                     .iter()
                     .filter(|history_item| {
                         project
@@ -531,7 +495,8 @@ impl PickerDelegate for FileFinderDelegate {
                     })
                     .cloned()
                     .collect(),
-            );
+                search: Vec::new(),
+            };
             cx.notify();
             Task::ready(())
         } else {
@@ -975,11 +940,11 @@ mod tests {
 
         finder.update(cx, |finder, cx| {
             let delegate = finder.delegate_mut();
-            let matches = match &delegate.matches {
-                Matches::Search(path_matches) => path_matches,
-                _ => panic!("Search matches expected"),
-            }
-            .clone();
+            assert!(
+                delegate.matches.history.is_empty(),
+                "Search matches expected"
+            );
+            let matches = delegate.matches.search.clone();
 
             // Simulate a search being cancelled after the time limit,
             // returning only a subset of the matches that would have been found.
@@ -1002,12 +967,11 @@ mod tests {
                 cx,
             );
 
-            match &delegate.matches {
-                Matches::Search(new_matches) => {
-                    assert_eq!(new_matches.as_slice(), &matches[0..4])
-                }
-                _ => panic!("Search matches expected"),
-            };
+            assert!(
+                delegate.matches.history.is_empty(),
+                "Search matches expected"
+            );
+            assert_eq!(delegate.matches.search.as_slice(), &matches[0..4]);
         });
     }
 
@@ -1115,10 +1079,11 @@ mod tests {
         cx.read(|cx| {
             let finder = finder.read(cx);
             let delegate = finder.delegate();
-            let matches = match &delegate.matches {
-                Matches::Search(path_matches) => path_matches,
-                _ => panic!("Search matches expected"),
-            };
+            assert!(
+                delegate.matches.history.is_empty(),
+                "Search matches expected"
+            );
+            let matches = delegate.matches.search.clone();
             assert_eq!(matches.len(), 1);
 
             let (file_name, file_name_positions, full_path, full_path_positions) =
@@ -1197,10 +1162,11 @@ mod tests {
 
         finder.read_with(cx, |f, _| {
             let delegate = f.delegate();
-            let matches = match &delegate.matches {
-                Matches::Search(path_matches) => path_matches,
-                _ => panic!("Search matches expected"),
-            };
+            assert!(
+                delegate.matches.history.is_empty(),
+                "Search matches expected"
+            );
+            let matches = delegate.matches.search.clone();
             assert_eq!(matches[0].path.as_ref(), Path::new("dir2/a.txt"));
             assert_eq!(matches[1].path.as_ref(), Path::new("dir1/a.txt"));
         });
@@ -1745,31 +1711,71 @@ mod tests {
         .await;
 
         cx.dispatch_action(window.into(), Toggle);
-        let final_query = "f";
+        let first_query = "f";
         let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
         finder
             .update(cx, |finder, cx| {
                 finder
                     .delegate_mut()
-                    .update_matches(final_query.to_string(), cx)
+                    .update_matches(first_query.to_string(), cx)
             })
             .await;
-        finder.read_with(cx, |finder, _| match &finder.delegate().matches {
-            Matches::Mixed { history, search } => {
-                assert_eq!(history.len(), 1, "Only one history item contains {final_query}, it should be present and others should be filtered out");
-                assert_eq!(history.first().unwrap(), &FoundPath::new(
-                    ProjectPath {
-                        worktree_id,
-                        path: Arc::from(Path::new("test/first.rs")),
-                    },
-                    Some(PathBuf::from("/src/test/first.rs"))
-                ));
-                assert_eq!(search.len(), 1, "Only one non-history item contains {final_query}, it should be present");
-                assert_eq!(search.first().unwrap().path.as_ref(), Path::new("test/fourth.rs"));
-            }
-            unexpected => {
-                panic!("Unexpected matches {unexpected:?}, expect both history and search items present for query {final_query}")
-            }
+        finder.read_with(cx, |finder, _| {
+            let delegate = finder.delegate();
+            assert_eq!(delegate.matches.history.len(), 1, "Only one history item contains {first_query}, it should be present and others should be filtered out");
+            assert_eq!(delegate.matches.history.first().unwrap(), &FoundPath::new(
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/first.rs")),
+                },
+                Some(PathBuf::from("/src/test/first.rs"))
+            ));
+            assert_eq!(delegate.matches.search.len(), 1, "Only one non-history item contains {first_query}, it should be present");
+            assert_eq!(delegate.matches.search.first().unwrap().path.as_ref(), Path::new("test/fourth.rs"));
+        });
+
+        let second_query = "fsdasdsa";
+        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
+        finder
+            .update(cx, |finder, cx| {
+                finder
+                    .delegate_mut()
+                    .update_matches(second_query.to_string(), cx)
+            })
+            .await;
+        finder.read_with(cx, |finder, _| {
+            let delegate = finder.delegate();
+            assert!(
+                delegate.matches.history.is_empty(),
+                "No history entries should match {second_query}"
+            );
+            assert!(
+                delegate.matches.search.is_empty(),
+                "No search entries should match {second_query}"
+            );
+        });
+
+        let first_query_again = first_query;
+        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
+        finder
+            .update(cx, |finder, cx| {
+                finder
+                    .delegate_mut()
+                    .update_matches(first_query_again.to_string(), cx)
+            })
+            .await;
+        finder.read_with(cx, |finder, _| {
+            let delegate = finder.delegate();
+            assert_eq!(delegate.matches.history.len(), 1, "Only one history item contains {first_query_again}, it should be present and others should be filtered out, even after non-matching query");
+            assert_eq!(delegate.matches.history.first().unwrap(), &FoundPath::new(
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/first.rs")),
+                },
+                Some(PathBuf::from("/src/test/first.rs"))
+            ));
+            assert_eq!(delegate.matches.search.len(), 1, "Only one non-history item contains {first_query_again}, it should be present, even after non-matching query");
+            assert_eq!(delegate.matches.search.first().unwrap().path.as_ref(), Path::new("test/fourth.rs"));
         });
     }
 
