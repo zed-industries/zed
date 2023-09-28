@@ -1,3 +1,4 @@
+mod assistant_panel;
 mod breadcrumb;
 mod buffer;
 mod chat_panel;
@@ -22,6 +23,7 @@ mod toolbar;
 mod traffic_lights;
 mod workspace;
 
+pub use assistant_panel::*;
 pub use breadcrumb::*;
 pub use buffer::*;
 pub use chat_panel::*;

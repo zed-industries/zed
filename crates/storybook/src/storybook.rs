@@ -102,6 +102,13 @@ fn main() {
                         stories::elements::label::LabelStory::default(),
                     )
                 }),
+                Some(StorySelector::Component(ComponentStory::AssistantPanel)) => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        stories::components::assistant_panel::AssistantPanelStory::default(),
+                    )
+                }),
                 Some(StorySelector::Component(ComponentStory::Breadcrumb)) => view(move |cx| {
                     render_story(
                         &mut ViewContext::new(cx),

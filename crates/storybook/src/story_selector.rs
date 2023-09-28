@@ -19,6 +19,7 @@ pub enum ElementStory {
 #[derive(Debug, Clone, Copy, strum::Display, EnumString, EnumIter)]
 #[strum(serialize_all = "snake_case")]
 pub enum ComponentStory {
+    AssistantPanel,
     Breadcrumb,
     ContextMenu,
     ChatPanel,
