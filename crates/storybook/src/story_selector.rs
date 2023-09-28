@@ -21,6 +21,7 @@ pub enum ElementStory {
 pub enum ComponentStory {
     Breadcrumb,
     ChatPanel,
+    CollabPanel,
     Facepile,
     Keybinding,
     Palette,

@@ -116,6 +116,13 @@ fn main() {
                         stories::components::chat_panel::ChatPanelStory::default(),
                     )
                 }),
+                Some(StorySelector::Component(ComponentStory::CollabPanel)) => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        stories::components::collab_panel::CollabPanelStory::default(),
+                    )
+                }),
                 Some(StorySelector::Component(ComponentStory::Facepile)) => view(move |cx| {
                     render_story(
                         &mut ViewContext::new(cx),

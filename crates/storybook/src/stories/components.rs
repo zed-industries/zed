@@ -1,5 +1,6 @@
 pub mod breadcrumb;
 pub mod chat_panel;
+pub mod collab_panel;
 pub mod facepile;
 pub mod keybinding;
 pub mod palette;
