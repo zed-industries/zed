@@ -102,7 +102,7 @@ async fn test_core_channel_buffers(
     channel_buffer_b.read_with(cx_b, |buffer, _| {
         assert_collaborators(
             &buffer.collaborators(),
-            &[client_b.user_id(), client_a.user_id()],
+            &[client_a.user_id(), client_b.user_id()],
         );
     });
 
@@ -759,11 +759,13 @@ async fn test_following_to_channel_notes_without_a_shared_project(
 
 #[track_caller]
 fn assert_collaborators(collaborators: &HashMap<PeerId, Collaborator>, ids: &[Option<UserId>]) {
+    let mut user_ids = collaborators
+        .values()
+        .map(|collaborator| collaborator.user_id)
+        .collect::<Vec<_>>();
+    user_ids.sort();
     assert_eq!(
-        collaborators
-            .values()
-            .map(|collaborator| collaborator.user_id)
-            .collect::<Vec<_>>(),
+        user_ids,
         ids.into_iter().map(|id| id.unwrap()).collect::<Vec<_>>()
     );
 }

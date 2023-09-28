@@ -18,7 +18,7 @@ pub struct Model {
     pub calling_user_id: UserId,
     pub calling_connection_id: i32,
     pub calling_connection_server_id: Option<ServerId>,
-    pub participant_index: i32,
+    pub participant_index: Option<i32>,
 }
 
 impl Model {

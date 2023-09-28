@@ -128,6 +128,7 @@ impl Database {
                 calling_connection_server_id: ActiveValue::set(Some(ServerId(
                     connection.owner_id as i32,
                 ))),
+                participant_index: ActiveValue::set(Some(0)),
                 ..Default::default()
             }
             .insert(&*tx)
@@ -289,7 +290,11 @@ impl Database {
                 ParticipantIndex,
             }
             let existing_participant_indices: Vec<i32> = room_participant::Entity::find()
-                .filter(room_participant::Column::RoomId.eq(room_id))
+                .filter(
+                    room_participant::Column::RoomId
+                        .eq(room_id)
+                        .and(room_participant::Column::ParticipantIndex.is_not_null()),
+                )
                 .select_only()
                 .column(room_participant::Column::ParticipantIndex)
                 .into_values::<_, QueryParticipantIndices>()
@@ -317,7 +322,7 @@ impl Database {
                     calling_connection_server_id: ActiveValue::set(Some(ServerId(
                         connection.owner_id as i32,
                     ))),
-                    participant_index: ActiveValue::Set(participant_index),
+                    participant_index: ActiveValue::Set(Some(participant_index)),
                     ..Default::default()
                 }])
                 .on_conflict(
@@ -326,6 +331,7 @@ impl Database {
                             room_participant::Column::AnsweringConnectionId,
                             room_participant::Column::AnsweringConnectionServerId,
                             room_participant::Column::AnsweringConnectionLost,
+                            room_participant::Column::ParticipantIndex,
                         ])
                         .to_owned(),
                 )
@@ -340,7 +346,7 @@ impl Database {
                             .add(room_participant::Column::AnsweringConnectionId.is_null()),
                     )
                     .set(room_participant::ActiveModel {
-                        participant_index: ActiveValue::Set(participant_index),
+                        participant_index: ActiveValue::Set(Some(participant_index)),
                         answering_connection_id: ActiveValue::set(Some(connection.id as i32)),
                         answering_connection_server_id: ActiveValue::set(Some(ServerId(
                             connection.owner_id as i32,
@@ -1056,10 +1062,15 @@ impl Database {
         let mut pending_participants = Vec::new();
         while let Some(db_participant) = db_participants.next().await {
             let db_participant = db_participant?;
-            if let Some((answering_connection_id, answering_connection_server_id)) = db_participant
-                .answering_connection_id
-                .zip(db_participant.answering_connection_server_id)
-            {
+            if let (
+                Some(answering_connection_id),
+                Some(answering_connection_server_id),
+                Some(participant_index),
+            ) = (
+                db_participant.answering_connection_id,
+                db_participant.answering_connection_server_id,
+                db_participant.participant_index,
+            ) {
                 let location = match (
                     db_participant.location_kind,
                     db_participant.location_project_id,
@@ -1090,7 +1101,7 @@ impl Database {
                         peer_id: Some(answering_connection.into()),
                         projects: Default::default(),
                         location: Some(proto::ParticipantLocation { variant: location }),
-                        participant_index: db_participant.participant_index as u32,
+                        participant_index: participant_index as u32,
                     },
                 );
             } else {
