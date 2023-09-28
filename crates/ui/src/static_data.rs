@@ -158,10 +158,10 @@ pub fn static_project_panel_project_items() -> Vec<ListItem> {
             .left_icon(Icon::Folder.into())
             .indent_level(1),
         ListItem::new(Label::new(".dockerignore"))
-            .left_icon(Icon::File.into())
+            .left_icon(Icon::FileFile.into())
             .indent_level(1),
         ListItem::new(Label::new(".DS_Store").color(LabelColor::Hidden))
-            .left_icon(Icon::File.into())
+            .left_icon(Icon::FileFile.into())
             .indent_level(1),
         ListItem::new(Label::new("Cargo.lock"))
             .left_icon(Icon::FileLock.into())
@@ -170,10 +170,10 @@ pub fn static_project_panel_project_items() -> Vec<ListItem> {
             .left_icon(Icon::FileToml.into())
             .indent_level(1),
         ListItem::new(Label::new("Dockerfile"))
-            .left_icon(Icon::File.into())
+            .left_icon(Icon::FileFile.into())
             .indent_level(1),
         ListItem::new(Label::new("Procfile"))
-            .left_icon(Icon::File.into())
+            .left_icon(Icon::FileFile.into())
             .indent_level(1),
         ListItem::new(Label::new("README.md"))
             .left_icon(Icon::FileDoc.into())
@@ -190,7 +190,7 @@ pub fn static_project_panel_single_items() -> Vec<ListItem> {
             .left_icon(Icon::FileDoc.into())
             .indent_level(0),
         ListItem::new(Label::new("config.json"))
-            .left_icon(Icon::File.into())
+            .left_icon(Icon::FileFile.into())
             .indent_level(0),
     ]
 }
