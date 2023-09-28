@@ -95,6 +95,7 @@
         }
       ],
       "ctrl-o": "pane::GoBack",
+      "ctrl-i": "pane::GoForward",
       "ctrl-]": "editor::GoToDefinition",
       "escape": [
         "vim::SwitchMode",
