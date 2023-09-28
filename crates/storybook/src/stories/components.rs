@@ -1,5 +1,6 @@
 pub mod assistant_panel;
 pub mod breadcrumb;
+pub mod buffer;
 pub mod chat_panel;
 pub mod collab_panel;
 pub mod context_menu;

@@ -1,4 +1,7 @@
+use gpui2::WindowContext;
+
 use crate::{
+    Buffer, BufferRow, BufferRows, GitStatus, HighlightColor, HighlightedLine, HighlightedText,
     Icon, Keybinding, Label, LabelColor, ListEntry, ListEntrySize, ListItem, MicStatus,
     ModifierKeys, PaletteItem, Player, PlayerCallStatus, PlayerWithCallStatus, ScreenShareStatus,
     ToggleState,
@@ -331,5 +334,225 @@ pub fn example_editor_actions() -> Vec<PaletteItem> {
         PaletteItem::new("Move Line Down"),
         PaletteItem::new("Toggle Comment"),
         PaletteItem::new("Delete Line"),
+    ]
+}
+
+pub fn empty_buffer_example<V: 'static>() -> Buffer<V> {
+    Buffer::new().set_rows(Some(BufferRows::default()))
+}
+
+pub fn hello_world_rust_buffer_example<V: 'static>(cx: &WindowContext) -> Buffer<V> {
+    Buffer::new()
+        .set_title("hello_world.rs".to_string())
+        .set_path("src/hello_world.rs".to_string())
+        .set_language("rust".to_string())
+        .set_rows(Some(BufferRows {
+            show_line_numbers: true,
+            rows: hello_world_rust_buffer_rows(cx),
+        }))
+}
+
+pub fn hello_world_rust_buffer_with_status_example<V: 'static>(cx: &WindowContext) -> Buffer<V> {
+    Buffer::new()
+        .set_title("hello_world.rs".to_string())
+        .set_path("src/hello_world.rs".to_string())
+        .set_language("rust".to_string())
+        .set_rows(Some(BufferRows {
+            show_line_numbers: true,
+            rows: hello_world_rust_with_status_buffer_rows(cx),
+        }))
+}
+
+pub fn hello_world_rust_buffer_rows(cx: &WindowContext) -> Vec<BufferRow> {
+    let show_line_number = true;
+
+    vec![
+        BufferRow {
+            line_number: 1,
+            code_action: false,
+            current: true,
+            line: Some(HighlightedLine {
+                highlighted_texts: vec![
+                    HighlightedText {
+                        text: "fn ".to_string(),
+                        color: HighlightColor::Keyword.hsla(cx),
+                    },
+                    HighlightedText {
+                        text: "main".to_string(),
+                        color: HighlightColor::Function.hsla(cx),
+                    },
+                    HighlightedText {
+                        text: "() {".to_string(),
+                        color: HighlightColor::Default.hsla(cx),
+                    },
+                ],
+            }),
+            cursors: None,
+            status: GitStatus::None,
+            show_line_number,
+        },
+        BufferRow {
+            line_number: 2,
+            code_action: false,
+            current: false,
+            line: Some(HighlightedLine {
+                highlighted_texts: vec![HighlightedText {
+                    text: "    // Statements here are executed when the compiled binary is called."
+                        .to_string(),
+                    color: HighlightColor::Comment.hsla(cx),
+                }],
+            }),
+            cursors: None,
+            status: GitStatus::None,
+            show_line_number,
+        },
+        BufferRow {
+            line_number: 3,
+            code_action: false,
+            current: false,
+            line: None,
+            cursors: None,
+            status: GitStatus::None,
+            show_line_number,
+        },
+        BufferRow {
+            line_number: 4,
+            code_action: false,
+            current: false,
+            line: Some(HighlightedLine {
+                highlighted_texts: vec![HighlightedText {
+                    text: "    // Print text to the console.".to_string(),
+                    color: HighlightColor::Comment.hsla(cx),
+                }],
+            }),
+            cursors: None,
+            status: GitStatus::None,
+            show_line_number,
+        },
+        BufferRow {
+            line_number: 5,
+            code_action: false,
+            current: false,
+            line: Some(HighlightedLine {
+                highlighted_texts: vec![HighlightedText {
+                    text: "}".to_string(),
+                    color: HighlightColor::Default.hsla(cx),
+                }],
+            }),
+            cursors: None,
+            status: GitStatus::None,
+            show_line_number,
+        },
+    ]
+}
+
+pub fn hello_world_rust_with_status_buffer_rows(cx: &WindowContext) -> Vec<BufferRow> {
+    let show_line_number = true;
+
+    vec![
+        BufferRow {
+            line_number: 1,
+            code_action: false,
+            current: true,
+            line: Some(HighlightedLine {
+                highlighted_texts: vec![
+                    HighlightedText {
+                        text: "fn ".to_string(),
+                        color: HighlightColor::Keyword.hsla(cx),
+                    },
+                    HighlightedText {
+                        text: "main".to_string(),
+                        color: HighlightColor::Function.hsla(cx),
+                    },
+                    HighlightedText {
+                        text: "() {".to_string(),
+                        color: HighlightColor::Default.hsla(cx),
+                    },
+                ],
+            }),
+            cursors: None,
+            status: GitStatus::None,
+            show_line_number,
+        },
+        BufferRow {
+            line_number: 2,
+            code_action: false,
+            current: false,
+            line: Some(HighlightedLine {
+                highlighted_texts: vec![HighlightedText {
+                    text: "// Statements here are executed when the compiled binary is called."
+                        .to_string(),
+                    color: HighlightColor::Comment.hsla(cx),
+                }],
+            }),
+            cursors: None,
+            status: GitStatus::Modified,
+            show_line_number,
+        },
+        BufferRow {
+            line_number: 3,
+            code_action: false,
+            current: false,
+            line: None,
+            cursors: None,
+            status: GitStatus::None,
+            show_line_number,
+        },
+        BufferRow {
+            line_number: 4,
+            code_action: false,
+            current: false,
+            line: Some(HighlightedLine {
+                highlighted_texts: vec![HighlightedText {
+                    text: "    // Print text to the console.".to_string(),
+                    color: HighlightColor::Comment.hsla(cx),
+                }],
+            }),
+            cursors: None,
+            status: GitStatus::None,
+            show_line_number,
+        },
+        BufferRow {
+            line_number: 5,
+            code_action: false,
+            current: false,
+            line: Some(HighlightedLine {
+                highlighted_texts: vec![HighlightedText {
+                    text: "}".to_string(),
+                    color: HighlightColor::Default.hsla(cx),
+                }],
+            }),
+            cursors: None,
+            status: GitStatus::None,
+            show_line_number,
+        },
+        BufferRow {
+            line_number: 6,
+            code_action: false,
+            current: false,
+            line: Some(HighlightedLine {
+                highlighted_texts: vec![HighlightedText {
+                    text: "".to_string(),
+                    color: HighlightColor::Default.hsla(cx),
+                }],
+            }),
+            cursors: None,
+            status: GitStatus::Created,
+            show_line_number,
+        },
+        BufferRow {
+            line_number: 7,
+            code_action: false,
+            current: false,
+            line: Some(HighlightedLine {
+                highlighted_texts: vec![HighlightedText {
+                    text: "Marshall and Nate were here".to_string(),
+                    color: HighlightColor::Default.hsla(cx),
+                }],
+            }),
+            cursors: None,
+            status: GitStatus::Created,
+            show_line_number,
+        },
     ]
 }

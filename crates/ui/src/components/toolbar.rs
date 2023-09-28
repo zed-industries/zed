@@ -1,9 +1,10 @@
 use crate::prelude::*;
 use crate::{theme, Breadcrumb, Icon, IconButton};
 
+#[derive(Clone)]
 pub struct ToolbarItem {}
 
-#[derive(Element)]
+#[derive(Element, Clone)]
 pub struct Toolbar {
     items: Vec<ToolbarItem>,
 }
