@@ -2250,6 +2250,21 @@ impl Element<Editor> for EditorElement {
         }
 
         if let Some(collaboration_hub) = &editor.collaboration_hub {
+            // When following someone, render the local selections in their color.
+            if let Some(leader_id) = editor.leader_peer_id {
+                if let Some(collaborator) = collaboration_hub.collaborators(cx).get(&leader_id) {
+                    if let Some(participant_index) = collaboration_hub
+                        .user_participant_indices(cx)
+                        .get(&collaborator.user_id)
+                    {
+                        if let Some((local_selection_style, _)) = selections.first_mut() {
+                            *local_selection_style =
+                                style.selection_style_for_room_participant(participant_index.0);
+                        }
+                    }
+                }
+            }
+
             let mut remote_selections = HashMap::default();
             for selection in snapshot.remote_selections_in_range(
                 &(start_anchor..end_anchor),
@@ -2262,11 +2277,9 @@ impl Element<Editor> for EditorElement {
                     style.absent_selection
                 };
 
-                // The local selections match the leader's selections.
+                // Don't re-render the leader's selections, since the local selections
+                // match theirs.
                 if Some(selection.peer_id) == editor.leader_peer_id {
-                    if let Some((local_selection_style, _)) = selections.first_mut() {
-                        *local_selection_style = selection_style;
-                    }
                     continue;
                 }
 
