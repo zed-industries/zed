@@ -1,12 +1,8 @@
 use std::marker::PhantomData;
 
-use crate::prelude::OrderMethod;
+use crate::prelude::*;
 use crate::theme::theme;
-use crate::{label, palette_item, LabelColor, PaletteItem};
-use gpui2::elements::div::ScrollState;
-use gpui2::style::{StyleHelpers, Styleable};
-use gpui2::{elements::div, IntoElement};
-use gpui2::{Element, ParentElement, ViewContext};
+use crate::{h_stack, v_stack, Keybinding, Label, LabelColor};
 
 #[derive(Element)]
 pub struct Palette<V: 'static> {
@@ -18,20 +14,19 @@ pub struct Palette<V: 'static> {
     default_order: OrderMethod,
 }
 
-pub fn palette<V: 'static>(scroll_state: ScrollState) -> Palette<V> {
-    Palette {
-        view_type: PhantomData,
-        scroll_state,
-        input_placeholder: "Find something...",
-        empty_string: "No items found.",
-        items: vec![],
-        default_order: OrderMethod::default(),
-    }
-}
-
 impl<V: 'static> Palette<V> {
-    pub fn items(mut self, mut items: Vec<PaletteItem>) -> Self {
-        items.sort_by_key(|item| item.label);
+    pub fn new(scroll_state: ScrollState) -> Self {
+        Self {
+            view_type: PhantomData,
+            scroll_state,
+            input_placeholder: "Find something...",
+            empty_string: "No items found.",
+            items: vec![],
+            default_order: OrderMethod::default(),
+        }
+    }
+
+    pub fn items(mut self, items: Vec<PaletteItem>) -> Self {
         self.items = items;
         self
     }
@@ -55,49 +50,33 @@ impl<V: 'static> Palette<V> {
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
 
-        div()
+        v_stack()
             .w_96()
             .rounded_lg()
             .fill(theme.lowest.base.default.background)
             .border()
             .border_color(theme.lowest.base.default.border)
-            .flex()
-            .flex_col()
             .child(
-                div()
-                    .flex()
-                    .flex_col()
+                v_stack()
                     .gap_px()
-                    .child(
-                        div().py_0p5().px_1().flex().flex_col().child(
-                            div().px_2().py_0p5().child(
-                                label(self.input_placeholder).color(LabelColor::Placeholder),
-                            ),
+                    .child(v_stack().py_0p5().px_1().child(
+                        div().px_2().py_0p5().child(
+                            Label::new(self.input_placeholder).color(LabelColor::Placeholder),
                         ),
-                    )
+                    ))
                     .child(div().h_px().w_full().fill(theme.lowest.base.default.border))
                     .child(
-                        div()
+                        v_stack()
                             .py_0p5()
                             .px_1()
-                            .flex()
-                            .flex_col()
                             .grow()
                             .max_h_96()
                             .overflow_y_scroll(self.scroll_state.clone())
                             .children(
                                 vec![if self.items.is_empty() {
-                                    Some(
-                                        div()
-                                            .flex()
-                                            .flex_row()
-                                            .justify_between()
-                                            .px_2()
-                                            .py_1()
-                                            .child(
-                                                label(self.empty_string).color(LabelColor::Muted),
-                                            ),
-                                    )
+                                    Some(h_stack().justify_between().px_2().py_1().child(
+                                        Label::new(self.empty_string).color(LabelColor::Muted),
+                                    ))
                                 } else {
                                     None
                                 }]
@@ -105,9 +84,7 @@ impl<V: 'static> Palette<V> {
                                 .flatten(),
                             )
                             .children(self.items.iter().map(|item| {
-                                div()
-                                    .flex()
-                                    .flex_row()
+                                h_stack()
                                     .justify_between()
                                     .px_2()
                                     .py_0p5()
@@ -116,9 +93,52 @@ impl<V: 'static> Palette<V> {
                                     .fill(theme.lowest.base.hovered.background)
                                     .active()
                                     .fill(theme.lowest.base.pressed.background)
-                                    .child(palette_item(item.label, item.keybinding))
+                                    .child(
+                                        PaletteItem::new(item.label)
+                                            .keybinding(item.keybinding.clone()),
+                                    )
                             })),
                     ),
             )
+    }
+}
+
+#[derive(Element)]
+pub struct PaletteItem {
+    pub label: &'static str,
+    pub keybinding: Option<Keybinding>,
+}
+
+impl PaletteItem {
+    pub fn new(label: &'static str) -> Self {
+        Self {
+            label,
+            keybinding: None,
+        }
+    }
+
+    pub fn label(mut self, label: &'static str) -> Self {
+        self.label = label;
+        self
+    }
+
+    pub fn keybinding<K>(mut self, keybinding: K) -> Self
+    where
+        K: Into<Option<Keybinding>>,
+    {
+        self.keybinding = keybinding.into();
+        self
+    }
+
+    fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
+        let theme = theme(cx);
+
+        div()
+            .flex()
+            .flex_row()
+            .grow()
+            .justify_between()
+            .child(Label::new(self.label))
+            .children(self.keybinding.clone())
     }
 }

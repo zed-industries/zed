@@ -1,33 +1,41 @@
 use std::marker::PhantomData;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
-use gpui2::elements::div;
-use gpui2::style::StyleHelpers;
-use gpui2::{Element, IntoElement, ParentElement, ViewContext};
-
-use crate::prelude::Shape;
+use crate::prelude::*;
 use crate::{
-    avatar, follow_group, icon_button, text_button, theme, tool_divider, traffic_lights, IconAsset,
-    IconColor,
+    static_players_with_call_status, theme, Avatar, Button, Icon, IconButton, IconColor,
+    PlayerStack, ToolDivider, TrafficLights,
 };
 
 #[derive(Element)]
 pub struct TitleBar<V: 'static> {
     view_type: PhantomData<V>,
-}
-
-pub fn title_bar<V: 'static>() -> TitleBar<V> {
-    TitleBar {
-        view_type: PhantomData,
-    }
+    is_active: Arc<AtomicBool>,
 }
 
 impl<V: 'static> TitleBar<V> {
+    pub fn new(cx: &mut ViewContext<V>) -> Self {
+        let is_active = Arc::new(AtomicBool::new(true));
+        let active = is_active.clone();
+
+        cx.observe_window_activation(move |_, is_active, cx| {
+            active.store(is_active, std::sync::atomic::Ordering::SeqCst);
+            cx.notify();
+        })
+        .detach();
+
+        Self {
+            view_type: PhantomData,
+            is_active,
+        }
+    }
+
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
-        let player_list = vec![
-            avatar("https://avatars.githubusercontent.com/u/1714999?v=4"),
-            avatar("https://avatars.githubusercontent.com/u/1714999?v=4"),
-        ];
+        let has_focus = cx.window_is_active();
+
+        let player_list = static_players_with_call_status().into_iter();
 
         div()
             .flex()
@@ -43,20 +51,17 @@ impl<V: 'static> TitleBar<V> {
                     .h_full()
                     .gap_4()
                     .px_2()
-                    .child(traffic_lights())
+                    .child(TrafficLights::new().window_has_focus(has_focus))
                     // === Project Info === //
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .gap_1()
-                            .child(text_button("maxbrunsfeld"))
-                            .child(text_button("zed"))
-                            .child(text_button("nate/gpui2-ui-components")),
+                            .child(Button::new("zed"))
+                            .child(Button::new("nate/gpui2-ui-components")),
                     )
-                    .child(follow_group(player_list.clone()).player(0))
-                    .child(follow_group(player_list.clone()).player(1))
-                    .child(follow_group(player_list.clone()).player(2)),
+                    .children(player_list.map(|p| PlayerStack::new(p))),
             )
             .child(
                 div()
@@ -68,27 +73,23 @@ impl<V: 'static> TitleBar<V> {
                             .flex()
                             .items_center()
                             .gap_1()
-                            .child(icon_button().icon(IconAsset::FolderX))
-                            .child(icon_button().icon(IconAsset::Close)),
+                            .child(IconButton::new(Icon::FolderX))
+                            .child(IconButton::new(Icon::Close)),
                     )
-                    .child(tool_divider())
+                    .child(ToolDivider::new())
                     .child(
                         div()
                             .px_2()
                             .flex()
                             .items_center()
                             .gap_1()
-                            .child(icon_button().icon(IconAsset::Mic))
-                            .child(icon_button().icon(IconAsset::AudioOn))
-                            .child(
-                                icon_button()
-                                    .icon(IconAsset::Screen)
-                                    .color(IconColor::Accent),
-                            ),
+                            .child(IconButton::new(Icon::Mic))
+                            .child(IconButton::new(Icon::AudioOn))
+                            .child(IconButton::new(Icon::Screen).color(IconColor::Accent)),
                     )
                     .child(
                         div().px_2().flex().items_center().child(
-                            avatar("https://avatars.githubusercontent.com/u/1714999?v=4")
+                            Avatar::new("https://avatars.githubusercontent.com/u/1714999?v=4")
                                 .shape(Shape::RoundedRectangle),
                         ),
                     ),

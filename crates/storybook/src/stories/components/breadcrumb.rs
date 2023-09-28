@@ -1,5 +1,5 @@
-use gpui2::{Element, IntoElement, ParentElement, ViewContext};
-use ui::breadcrumb;
+use ui::prelude::*;
+use ui::Breadcrumb;
 
 use crate::story::Story;
 
@@ -8,9 +8,9 @@ pub struct BreadcrumbStory {}
 
 impl BreadcrumbStory {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
-        Story::container()
-            .child(Story::title_for::<_, ui::Breadcrumb>())
-            .child(Story::label("Default"))
-            .child(breadcrumb())
+        Story::container(cx)
+            .child(Story::title_for::<_, Breadcrumb>(cx))
+            .child(Story::label(cx, "Default"))
+            .child(Breadcrumb::new())
     }
 }

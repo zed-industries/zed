@@ -1,13 +1,7 @@
 use std::marker::PhantomData;
 
-use gpui2::elements::div::ScrollState;
-use gpui2::style::StyleHelpers;
-use gpui2::{elements::div, IntoElement};
-use gpui2::{Element, ParentElement, ViewContext};
-
-use crate::prelude::InteractionState;
-use crate::theme::theme;
-use crate::{icon_button, tab, IconAsset};
+use crate::prelude::*;
+use crate::{theme, Icon, IconButton, Tab};
 
 #[derive(Element)]
 pub struct TabBar<V: 'static> {
@@ -15,14 +9,14 @@ pub struct TabBar<V: 'static> {
     scroll_state: ScrollState,
 }
 
-pub fn tab_bar<V: 'static>(scroll_state: ScrollState) -> TabBar<V> {
-    TabBar {
-        view_type: PhantomData,
-        scroll_state,
-    }
-}
-
 impl<V: 'static> TabBar<V> {
+    pub fn new(scroll_state: ScrollState) -> Self {
+        Self {
+            view_type: PhantomData,
+            scroll_state,
+        }
+    }
+
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
         let can_navigate_back = true;
@@ -30,6 +24,7 @@ impl<V: 'static> TabBar<V> {
         div()
             .w_full()
             .flex()
+            .fill(theme.middle.base.default.background)
             // Left Side
             .child(
                 div()
@@ -44,12 +39,11 @@ impl<V: 'static> TabBar<V> {
                             .items_center()
                             .gap_px()
                             .child(
-                                icon_button()
-                                    .icon(IconAsset::ArrowLeft)
+                                IconButton::new(Icon::ArrowLeft)
                                     .state(InteractionState::Enabled.if_enabled(can_navigate_back)),
                             )
                             .child(
-                                icon_button().icon(IconAsset::ArrowRight).state(
+                                IconButton::new(Icon::ArrowRight).state(
                                     InteractionState::Enabled.if_enabled(can_navigate_forward),
                                 ),
                             ),
@@ -59,17 +53,52 @@ impl<V: 'static> TabBar<V> {
                 div().w_0().flex_1().h_full().child(
                     div()
                         .flex()
-                        .gap_1()
                         .overflow_x_scroll(self.scroll_state.clone())
-                        .child(tab("Cargo.toml", false))
-                        .child(tab("Channels Panel", true))
-                        .child(tab("channels_panel.rs", false))
-                        .child(tab("workspace.rs", false))
-                        .child(tab("icon_button.rs", false))
-                        .child(tab("storybook.rs", false))
-                        .child(tab("theme.rs", false))
-                        .child(tab("theme_registry.rs", false))
-                        .child(tab("styleable_helpers.rs", false)),
+                        .child(
+                            Tab::new()
+                                .title("Cargo.toml".to_string())
+                                .current(false)
+                                .git_status(GitStatus::Modified),
+                        )
+                        .child(
+                            Tab::new()
+                                .title("Channels Panel".to_string())
+                                .current(false),
+                        )
+                        .child(
+                            Tab::new()
+                                .title("channels_panel.rs".to_string())
+                                .current(true)
+                                .git_status(GitStatus::Modified),
+                        )
+                        .child(
+                            Tab::new()
+                                .title("workspace.rs".to_string())
+                                .current(false)
+                                .git_status(GitStatus::Modified),
+                        )
+                        .child(
+                            Tab::new()
+                                .title("icon_button.rs".to_string())
+                                .current(false),
+                        )
+                        .child(
+                            Tab::new()
+                                .title("storybook.rs".to_string())
+                                .current(false)
+                                .git_status(GitStatus::Created),
+                        )
+                        .child(Tab::new().title("theme.rs".to_string()).current(false))
+                        .child(
+                            Tab::new()
+                                .title("theme_registry.rs".to_string())
+                                .current(false),
+                        )
+                        .child(
+                            Tab::new()
+                                .title("styleable_helpers.rs".to_string())
+                                .current(false),
+                        ),
                 ),
             )
             // Right Side
@@ -85,8 +114,8 @@ impl<V: 'static> TabBar<V> {
                             .flex()
                             .items_center()
                             .gap_px()
-                            .child(icon_button().icon(IconAsset::Plus))
-                            .child(icon_button().icon(IconAsset::Split)),
+                            .child(IconButton::new(Icon::Plus))
+                            .child(IconButton::new(Icon::Split)),
                     ),
             )
     }

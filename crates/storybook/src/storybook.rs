@@ -1,26 +1,24 @@
 #![allow(dead_code, unused_variables)]
 
-mod collab_panel;
 mod stories;
 mod story;
 mod story_selector;
-mod workspace;
+
+use std::sync::Arc;
 
 use ::theme as legacy_theme;
 use clap::Parser;
-use gpui2::{serde_json, vec2f, view, Element, IntoElement, RectF, ViewContext, WindowBounds};
-use legacy_theme::ThemeSettings;
+use gpui2::{
+    serde_json, vec2f, view, Element, IntoElement, ParentElement, RectF, ViewContext, WindowBounds,
+};
+use legacy_theme::{ThemeRegistry, ThemeSettings};
 use log::LevelFilter;
 use settings::{default_settings, SettingsStore};
 use simplelog::SimpleLogger;
-use stories::components::breadcrumb::BreadcrumbStory;
-use stories::components::facepile::FacepileStory;
-use stories::components::toolbar::ToolbarStory;
-use stories::components::traffic_lights::TrafficLightsStory;
-use stories::elements::avatar::AvatarStory;
-use ui::{ElementExt, Theme};
+use ui::prelude::*;
+use ui::{ElementExt, Theme, WorkspaceElement};
 
-use crate::story_selector::{ComponentStory, ElementStory, StorySelector};
+use crate::story_selector::StorySelector;
 
 gpui2::actions! {
     storybook,
@@ -32,6 +30,12 @@ gpui2::actions! {
 struct Args {
     #[arg(value_enum)]
     story: Option<StorySelector>,
+
+    /// The name of the theme to use in the storybook.
+    ///
+    /// If not provided, the default theme will be used.
+    #[arg(long)]
+    theme: Option<String>,
 }
 
 fn main() {
@@ -48,31 +52,60 @@ fn main() {
         legacy_theme::init(Assets, cx);
         // load_embedded_fonts(cx.platform().as_ref());
 
+        let theme_registry = cx.global::<Arc<ThemeRegistry>>();
+
+        let theme_override = args
+            .theme
+            .and_then(|theme| {
+                theme_registry
+                    .list_names(true)
+                    .find(|known_theme| theme == *known_theme)
+            })
+            .and_then(|theme_name| theme_registry.get(&theme_name).ok());
+
         cx.add_window(
             gpui2::WindowOptions {
-                bounds: WindowBounds::Fixed(RectF::new(vec2f(0., 0.), vec2f(1600., 900.))),
+                bounds: WindowBounds::Fixed(RectF::new(vec2f(0., 0.), vec2f(1700., 980.))),
                 center: true,
                 ..Default::default()
             },
             |cx| match args.story {
-                Some(StorySelector::Element(ElementStory::Avatar)) => {
-                    view(|cx| render_story(&mut ViewContext::new(cx), AvatarStory::default()))
-                }
-                Some(StorySelector::Component(ComponentStory::Breadcrumb)) => {
-                    view(|cx| render_story(&mut ViewContext::new(cx), BreadcrumbStory::default()))
-                }
-                Some(StorySelector::Component(ComponentStory::Facepile)) => {
-                    view(|cx| render_story(&mut ViewContext::new(cx), FacepileStory::default()))
-                }
-                Some(StorySelector::Component(ComponentStory::Toolbar)) => {
-                    view(|cx| render_story(&mut ViewContext::new(cx), ToolbarStory::default()))
-                }
-                Some(StorySelector::Component(ComponentStory::TrafficLights)) => view(|cx| {
-                    render_story(&mut ViewContext::new(cx), TrafficLightsStory::default())
+                // HACK: Special-case the kitchen sink to fix scrolling.
+                // There is something about going through `children_any` that messes
+                // with the scroll interactions.
+                Some(StorySelector::KitchenSink) => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        crate::stories::kitchen_sink::KitchenSinkStory::default(),
+                    )
                 }),
-                None => {
-                    view(|cx| render_story(&mut ViewContext::new(cx), WorkspaceElement::default()))
+                // HACK: Special-case the panel story to fix scrolling.
+                // There is something about going through `children_any` that messes
+                // with the scroll interactions.
+                Some(StorySelector::Component(story_selector::ComponentStory::Panel)) => {
+                    view(move |cx| {
+                        render_story(
+                            &mut ViewContext::new(cx),
+                            theme_override.clone(),
+                            crate::stories::components::panel::PanelStory::default(),
+                        )
+                    })
                 }
+                Some(selector) => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        div().children_any(selector.story()),
+                    )
+                }),
+                None => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        WorkspaceElement::default(),
+                    )
+                }),
             },
         );
         cx.platform().activate(true);
@@ -81,23 +114,32 @@ fn main() {
 
 fn render_story<V: 'static, S: IntoElement<V>>(
     cx: &mut ViewContext<V>,
+    theme_override: Option<Arc<legacy_theme::Theme>>,
     story: S,
 ) -> impl Element<V> {
-    story.into_element().themed(current_theme(cx))
+    let theme = current_theme(cx, theme_override);
+
+    story.into_element().themed(theme)
+}
+
+fn current_theme<V: 'static>(
+    cx: &mut ViewContext<V>,
+    theme_override: Option<Arc<legacy_theme::Theme>>,
+) -> Theme {
+    let legacy_theme =
+        theme_override.unwrap_or_else(|| settings::get::<ThemeSettings>(cx).theme.clone());
+
+    let new_theme: Theme = serde_json::from_value(legacy_theme.base_theme.clone()).unwrap();
+
+    add_base_theme_to_legacy_theme(&legacy_theme, new_theme)
 }
 
 // Nathan: During the transition to gpui2, we will include the base theme on the legacy Theme struct.
-fn current_theme<V: 'static>(cx: &mut ViewContext<V>) -> Theme {
-    settings::get::<ThemeSettings>(cx)
-        .theme
+fn add_base_theme_to_legacy_theme(legacy_theme: &legacy_theme::Theme, new_theme: Theme) -> Theme {
+    legacy_theme
         .deserialized_base_theme
         .lock()
-        .get_or_insert_with(|| {
-            let theme: Theme =
-                serde_json::from_value(settings::get::<ThemeSettings>(cx).theme.base_theme.clone())
-                    .unwrap();
-            Box::new(theme)
-        })
+        .get_or_insert_with(|| Box::new(new_theme))
         .downcast_ref::<Theme>()
         .unwrap()
         .clone()
@@ -106,7 +148,6 @@ fn current_theme<V: 'static>(cx: &mut ViewContext<V>) -> Theme {
 use anyhow::{anyhow, Result};
 use gpui2::AssetSource;
 use rust_embed::RustEmbed;
-use workspace::WorkspaceElement;
 
 #[derive(RustEmbed)]
 #[folder = "../../assets"]

@@ -1,11 +1,8 @@
 use std::marker::PhantomData;
 
-use gpui2::style::StyleHelpers;
-use gpui2::{elements::div, IntoElement};
-use gpui2::{Element, ParentElement, ViewContext};
-
+use crate::prelude::*;
 use crate::theme::{theme, Theme};
-use crate::{icon_button, text_button, tool_divider, IconAsset};
+use crate::{Button, Icon, IconButton, IconColor, ToolDivider};
 
 #[derive(Default, PartialEq)]
 pub enum Tool {
@@ -40,16 +37,16 @@ pub struct StatusBar<V: 'static> {
     bottom_tools: Option<ToolGroup>,
 }
 
-pub fn status_bar<V: 'static>() -> StatusBar<V> {
-    StatusBar {
-        view_type: PhantomData,
-        left_tools: None,
-        right_tools: None,
-        bottom_tools: None,
-    }
-}
-
 impl<V: 'static> StatusBar<V> {
+    pub fn new() -> Self {
+        Self {
+            view_type: PhantomData,
+            left_tools: None,
+            right_tools: None,
+            bottom_tools: None,
+        }
+    }
+
     pub fn left_tool(mut self, tool: Tool, active_index: Option<usize>) -> Self {
         self.left_tools = {
             let mut tools = vec![tool];
@@ -106,10 +103,10 @@ impl<V: 'static> StatusBar<V> {
             .flex()
             .items_center()
             .gap_1()
-            .child(icon_button().icon(IconAsset::FileTree))
-            .child(icon_button().icon(IconAsset::Hash))
-            .child(tool_divider())
-            .child(icon_button().icon(IconAsset::XCircle))
+            .child(IconButton::new(Icon::FileTree).color(IconColor::Accent))
+            .child(IconButton::new(Icon::Hash))
+            .child(ToolDivider::new())
+            .child(IconButton::new(Icon::XCircle))
     }
     fn right_tools(&self, theme: &Theme) -> impl Element<V> {
         div()
@@ -121,27 +118,27 @@ impl<V: 'static> StatusBar<V> {
                     .flex()
                     .items_center()
                     .gap_1()
-                    .child(text_button("116:25"))
-                    .child(text_button("Rust")),
+                    .child(Button::new("116:25"))
+                    .child(Button::new("Rust")),
             )
-            .child(tool_divider())
+            .child(ToolDivider::new())
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap_1()
-                    .child(icon_button().icon(IconAsset::Copilot))
-                    .child(icon_button().icon(IconAsset::Envelope)),
+                    .child(IconButton::new(Icon::Copilot))
+                    .child(IconButton::new(Icon::Envelope)),
             )
-            .child(tool_divider())
+            .child(ToolDivider::new())
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap_1()
-                    .child(icon_button().icon(IconAsset::Terminal))
-                    .child(icon_button().icon(IconAsset::MessageBubbles))
-                    .child(icon_button().icon(IconAsset::Ai)),
+                    .child(IconButton::new(Icon::Terminal))
+                    .child(IconButton::new(Icon::MessageBubbles))
+                    .child(IconButton::new(Icon::Ai)),
             )
     }
 }

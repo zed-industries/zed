@@ -1,11 +1,19 @@
 use std::sync::Arc;
 
+use gpui2::elements::svg;
+use gpui2::Hsla;
+use strum::EnumIter;
+
+use crate::prelude::*;
 use crate::theme::theme;
 use crate::Theme;
-use gpui2::elements::svg;
-use gpui2::style::StyleHelpers;
-use gpui2::{Element, ViewContext};
-use gpui2::{Hsla, IntoElement};
+
+#[derive(Default, PartialEq, Copy, Clone)]
+pub enum IconSize {
+    Small,
+    #[default]
+    Large,
+}
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum IconColor {
@@ -37,8 +45,8 @@ impl IconColor {
     }
 }
 
-#[derive(Default, PartialEq, Copy, Clone)]
-pub enum IconAsset {
+#[derive(Default, PartialEq, Copy, Clone, EnumIter)]
+pub enum Icon {
     Ai,
     ArrowLeft,
     ArrowRight,
@@ -53,6 +61,7 @@ pub enum IconAsset {
     Close,
     ExclamationTriangle,
     File,
+    FileGeneric,
     FileDoc,
     FileGit,
     FileLock,
@@ -67,78 +76,94 @@ pub enum IconAsset {
     InlayHint,
     MagicWand,
     MagnifyingGlass,
+    Maximize,
+    Menu,
     MessageBubbles,
     Mic,
     MicMute,
     Plus,
+    Quote,
     Screen,
     Split,
+    SplitMessage,
     Terminal,
     XCircle,
     Copilot,
     Envelope,
 }
 
-impl IconAsset {
+impl Icon {
     pub fn path(self) -> &'static str {
         match self {
-            IconAsset::Ai => "icons/ai.svg",
-            IconAsset::ArrowLeft => "icons/arrow_left.svg",
-            IconAsset::ArrowRight => "icons/arrow_right.svg",
-            IconAsset::ArrowUpRight => "icons/arrow_up_right.svg",
-            IconAsset::AudioOff => "icons/speaker-off.svg",
-            IconAsset::AudioOn => "icons/speaker-loud.svg",
-            IconAsset::Bolt => "icons/bolt.svg",
-            IconAsset::ChevronDown => "icons/chevron_down.svg",
-            IconAsset::ChevronLeft => "icons/chevron_left.svg",
-            IconAsset::ChevronRight => "icons/chevron_right.svg",
-            IconAsset::ChevronUp => "icons/chevron_up.svg",
-            IconAsset::Close => "icons/x.svg",
-            IconAsset::ExclamationTriangle => "icons/warning.svg",
-            IconAsset::File => "icons/file_icons/file.svg",
-            IconAsset::FileDoc => "icons/file_icons/book.svg",
-            IconAsset::FileGit => "icons/file_icons/git.svg",
-            IconAsset::FileLock => "icons/file_icons/lock.svg",
-            IconAsset::FileRust => "icons/file_icons/rust.svg",
-            IconAsset::FileToml => "icons/file_icons/toml.svg",
-            IconAsset::FileTree => "icons/project.svg",
-            IconAsset::Folder => "icons/file_icons/folder.svg",
-            IconAsset::FolderOpen => "icons/file_icons/folder_open.svg",
-            IconAsset::FolderX => "icons/stop_sharing.svg",
-            IconAsset::Hash => "icons/hash.svg",
-            IconAsset::InlayHint => "icons/inlay_hint.svg",
-            IconAsset::MagicWand => "icons/magic-wand.svg",
-            IconAsset::MagnifyingGlass => "icons/magnifying_glass.svg",
-            IconAsset::MessageBubbles => "icons/conversations.svg",
-            IconAsset::Mic => "icons/mic.svg",
-            IconAsset::MicMute => "icons/mic-mute.svg",
-            IconAsset::Plus => "icons/plus.svg",
-            IconAsset::Screen => "icons/desktop.svg",
-            IconAsset::Split => "icons/split.svg",
-            IconAsset::Terminal => "icons/terminal.svg",
-            IconAsset::XCircle => "icons/error.svg",
-            IconAsset::Copilot => "icons/copilot.svg",
-            IconAsset::Envelope => "icons/feedback.svg",
+            Icon::Ai => "icons/ai.svg",
+            Icon::ArrowLeft => "icons/arrow_left.svg",
+            Icon::ArrowRight => "icons/arrow_right.svg",
+            Icon::ArrowUpRight => "icons/arrow_up_right.svg",
+            Icon::AudioOff => "icons/speaker-off.svg",
+            Icon::AudioOn => "icons/speaker-loud.svg",
+            Icon::Bolt => "icons/bolt.svg",
+            Icon::ChevronDown => "icons/chevron_down.svg",
+            Icon::ChevronLeft => "icons/chevron_left.svg",
+            Icon::ChevronRight => "icons/chevron_right.svg",
+            Icon::ChevronUp => "icons/chevron_up.svg",
+            Icon::Close => "icons/x.svg",
+            Icon::ExclamationTriangle => "icons/warning.svg",
+            Icon::File => "icons/file.svg",
+            Icon::FileGeneric => "icons/file_icons/file.svg",
+            Icon::FileDoc => "icons/file_icons/book.svg",
+            Icon::FileGit => "icons/file_icons/git.svg",
+            Icon::FileLock => "icons/file_icons/lock.svg",
+            Icon::FileRust => "icons/file_icons/rust.svg",
+            Icon::FileToml => "icons/file_icons/toml.svg",
+            Icon::FileTree => "icons/project.svg",
+            Icon::Folder => "icons/file_icons/folder.svg",
+            Icon::FolderOpen => "icons/file_icons/folder_open.svg",
+            Icon::FolderX => "icons/stop_sharing.svg",
+            Icon::Hash => "icons/hash.svg",
+            Icon::InlayHint => "icons/inlay_hint.svg",
+            Icon::MagicWand => "icons/magic-wand.svg",
+            Icon::MagnifyingGlass => "icons/magnifying_glass.svg",
+            Icon::Maximize => "icons/maximize.svg",
+            Icon::Menu => "icons/menu.svg",
+            Icon::MessageBubbles => "icons/conversations.svg",
+            Icon::Mic => "icons/mic.svg",
+            Icon::MicMute => "icons/mic-mute.svg",
+            Icon::Plus => "icons/plus.svg",
+            Icon::Quote => "icons/quote.svg",
+            Icon::Screen => "icons/desktop.svg",
+            Icon::Split => "icons/split.svg",
+            Icon::SplitMessage => "icons/split_message.svg",
+            Icon::Terminal => "icons/terminal.svg",
+            Icon::XCircle => "icons/error.svg",
+            Icon::Copilot => "icons/copilot.svg",
+            Icon::Envelope => "icons/feedback.svg",
         }
     }
 }
 
 #[derive(Element, Clone)]
-pub struct Icon {
-    asset: IconAsset,
+pub struct IconElement {
+    icon: Icon,
     color: IconColor,
+    size: IconSize,
 }
 
-pub fn icon(asset: IconAsset) -> Icon {
-    Icon {
-        asset,
-        color: IconColor::default(),
+impl IconElement {
+    pub fn new(icon: Icon) -> Self {
+        Self {
+            icon,
+            color: IconColor::default(),
+            size: IconSize::default(),
+        }
     }
-}
 
-impl Icon {
     pub fn color(mut self, color: IconColor) -> Self {
         self.color = color;
+        self
+    }
+
+    pub fn size(mut self, size: IconSize) -> Self {
+        self.size = size;
         self
     }
 
@@ -146,10 +171,11 @@ impl Icon {
         let theme = theme(cx);
         let fill = self.color.color(theme);
 
-        svg()
-            .flex_none()
-            .path(self.asset.path())
-            .size_4()
-            .fill(fill)
+        let sized_svg = match self.size {
+            IconSize::Small => svg().size_3p5(),
+            IconSize::Large => svg().size_4(),
+        };
+
+        sized_svg.flex_none().path(self.icon.path()).fill(fill)
     }
 }
