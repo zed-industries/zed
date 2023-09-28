@@ -9,53 +9,54 @@ impl TestPlatform {
     }
 }
 
+// todo!("implement out what our tests needed in GPUI 1")
 impl Platform for TestPlatform {
     fn dispatcher(&self) -> std::sync::Arc<dyn crate::PlatformDispatcher> {
-        todo!()
+        unimplemented!()
     }
 
     fn text_system(&self) -> std::sync::Arc<dyn crate::PlatformTextSystem> {
-        todo!()
+        unimplemented!()
     }
 
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {
-        todo!()
+        unimplemented!()
     }
 
     fn quit(&self) {
-        todo!()
+        unimplemented!()
     }
 
     fn restart(&self) {
-        todo!()
+        unimplemented!()
     }
 
     fn activate(&self, _ignoring_other_apps: bool) {
-        todo!()
+        unimplemented!()
     }
 
     fn hide(&self) {
-        todo!()
+        unimplemented!()
     }
 
     fn hide_other_apps(&self) {
-        todo!()
+        unimplemented!()
     }
 
     fn unhide_other_apps(&self) {
-        todo!()
+        unimplemented!()
     }
 
     fn screens(&self) -> Vec<std::rc::Rc<dyn crate::PlatformScreen>> {
-        todo!()
+        unimplemented!()
     }
 
     fn screen_by_id(&self, _id: ScreenId) -> Option<std::rc::Rc<dyn crate::PlatformScreen>> {
-        todo!()
+        unimplemented!()
     }
 
     fn main_window(&self) -> Option<crate::AnyWindowHandle> {
-        todo!()
+        unimplemented!()
     }
 
     fn open_window(
@@ -63,93 +64,93 @@ impl Platform for TestPlatform {
         _handle: crate::AnyWindowHandle,
         _options: crate::WindowOptions,
     ) -> Box<dyn crate::PlatformWindow> {
-        todo!()
+        unimplemented!()
     }
 
     fn open_url(&self, _url: &str) {
-        todo!()
+        unimplemented!()
     }
 
     fn on_open_urls(&self, _callback: Box<dyn FnMut(Vec<String>)>) {
-        todo!()
+        unimplemented!()
     }
 
     fn prompt_for_paths(
         &self,
         _options: crate::PathPromptOptions,
     ) -> futures::channel::oneshot::Receiver<Option<Vec<std::path::PathBuf>>> {
-        todo!()
+        unimplemented!()
     }
 
     fn prompt_for_new_path(
         &self,
         _directory: &std::path::Path,
     ) -> futures::channel::oneshot::Receiver<Option<std::path::PathBuf>> {
-        todo!()
+        unimplemented!()
     }
 
     fn reveal_path(&self, _path: &std::path::Path) {
-        todo!()
+        unimplemented!()
     }
 
     fn on_become_active(&self, _callback: Box<dyn FnMut()>) {
-        todo!()
+        unimplemented!()
     }
 
     fn on_resign_active(&self, _callback: Box<dyn FnMut()>) {
-        todo!()
+        unimplemented!()
     }
 
     fn on_quit(&self, _callback: Box<dyn FnMut()>) {
-        todo!()
+        unimplemented!()
     }
 
     fn on_reopen(&self, _callback: Box<dyn FnMut()>) {
-        todo!()
+        unimplemented!()
     }
 
     fn on_event(&self, _callback: Box<dyn FnMut(crate::Event) -> bool>) {
-        todo!()
+        unimplemented!()
     }
 
     fn os_name(&self) -> &'static str {
-        todo!()
+        unimplemented!()
     }
 
     fn os_version(&self) -> anyhow::Result<crate::SemanticVersion> {
-        todo!()
+        unimplemented!()
     }
 
     fn app_version(&self) -> anyhow::Result<crate::SemanticVersion> {
-        todo!()
+        unimplemented!()
     }
 
     fn app_path(&self) -> anyhow::Result<std::path::PathBuf> {
-        todo!()
+        unimplemented!()
     }
 
     fn local_timezone(&self) -> time::UtcOffset {
-        todo!()
+        unimplemented!()
     }
 
     fn path_for_auxiliary_executable(&self, _name: &str) -> anyhow::Result<std::path::PathBuf> {
-        todo!()
+        unimplemented!()
     }
 
     fn set_cursor_style(&self, _style: crate::CursorStyle) {
-        todo!()
+        unimplemented!()
     }
 
     fn should_auto_hide_scrollbars(&self) -> bool {
-        todo!()
+        unimplemented!()
     }
 
     fn write_to_clipboard(&self, _item: crate::ClipboardItem) {
-        todo!()
+        unimplemented!()
     }
 
     fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
-        todo!()
+        unimplemented!()
     }
 
     fn write_credentials(
@@ -158,14 +159,14 @@ impl Platform for TestPlatform {
         _username: &str,
         _password: &[u8],
     ) -> anyhow::Result<()> {
-        todo!()
+        unimplemented!()
     }
 
     fn read_credentials(&self, _url: &str) -> anyhow::Result<Option<(String, Vec<u8>)>> {
-        todo!()
+        unimplemented!()
     }
 
     fn delete_credentials(&self, _url: &str) -> anyhow::Result<()> {
-        todo!()
+        unimplemented!()
     }
 }
