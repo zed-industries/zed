@@ -43,6 +43,7 @@ pub enum ComponentStory {
 pub enum StorySelector {
     Element(ElementStory),
     Component(ComponentStory),
+    KitchenSink,
 }
 
 impl FromStr for StorySelector {
@@ -50,6 +51,10 @@ impl FromStr for StorySelector {
 
     fn from_str(raw_story_name: &str) -> std::result::Result<Self, Self::Err> {
         let story = raw_story_name.to_ascii_lowercase();
+
+        if story == "kitchen_sink" {
+            return Ok(Self::KitchenSink);
+        }
 
         if let Some((_, story)) = story.split_once("elements/") {
             let element_story = ElementStory::from_str(story)
@@ -70,15 +75,18 @@ impl FromStr for StorySelector {
 }
 
 /// The list of all stories available in the storybook.
-static ALL_STORIES: OnceLock<Vec<StorySelector>> = OnceLock::new();
+static ALL_STORY_SELECTORS: OnceLock<Vec<StorySelector>> = OnceLock::new();
 
 impl ValueEnum for StorySelector {
     fn value_variants<'a>() -> &'a [Self] {
-        let stories = ALL_STORIES.get_or_init(|| {
+        let stories = ALL_STORY_SELECTORS.get_or_init(|| {
             let element_stories = ElementStory::iter().map(Self::Element);
             let component_stories = ComponentStory::iter().map(Self::Component);
 
-            element_stories.chain(component_stories).collect::<Vec<_>>()
+            element_stories
+                .chain(component_stories)
+                .chain(std::iter::once(Self::KitchenSink))
+                .collect::<Vec<_>>()
         });
 
         stories
@@ -88,6 +96,7 @@ impl ValueEnum for StorySelector {
         let value = match self {
             Self::Element(story) => format!("elements/{story}"),
             Self::Component(story) => format!("components/{story}"),
+            Self::KitchenSink => "kitchen_sink".to_string(),
         };
 
         Some(PossibleValue::new(value))

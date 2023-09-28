@@ -228,6 +228,13 @@ fn main() {
                         stories::components::context_menu::ContextMenuStory::default(),
                     )
                 }),
+                Some(StorySelector::KitchenSink) => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        stories::kitchen_sink::KitchenSinkStory::default(),
+                    )
+                }),
                 None => view(move |cx| {
                     render_story(
                         &mut ViewContext::new(cx),
