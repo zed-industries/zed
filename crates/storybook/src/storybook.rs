@@ -165,6 +165,13 @@ fn main() {
                         stories::components::status_bar::StatusBarStory::default(),
                     )
                 }),
+                Some(StorySelector::Component(ComponentStory::Tab)) => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        stories::components::tab::TabStory::default(),
+                    )
+                }),
                 Some(StorySelector::Component(ComponentStory::TabBar)) => view(move |cx| {
                     render_story(
                         &mut ViewContext::new(cx),

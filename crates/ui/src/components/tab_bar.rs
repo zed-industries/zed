@@ -56,33 +56,49 @@ impl<V: 'static> TabBar<V> {
                         .overflow_x_scroll(self.scroll_state.clone())
                         .child(
                             Tab::new()
-                                .title("Cargo.toml")
+                                .title("Cargo.toml".to_string())
                                 .current(false)
                                 .git_status(GitStatus::Modified),
                         )
-                        .child(Tab::new().title("Channels Panel").current(false))
                         .child(
                             Tab::new()
-                                .title("channels_panel.rs")
+                                .title("Channels Panel".to_string())
+                                .current(false),
+                        )
+                        .child(
+                            Tab::new()
+                                .title("channels_panel.rs".to_string())
                                 .current(true)
                                 .git_status(GitStatus::Modified),
                         )
                         .child(
                             Tab::new()
-                                .title("workspace.rs")
+                                .title("workspace.rs".to_string())
                                 .current(false)
                                 .git_status(GitStatus::Modified),
                         )
-                        .child(Tab::new().title("icon_button.rs").current(false))
                         .child(
                             Tab::new()
-                                .title("storybook.rs")
+                                .title("icon_button.rs".to_string())
+                                .current(false),
+                        )
+                        .child(
+                            Tab::new()
+                                .title("storybook.rs".to_string())
                                 .current(false)
                                 .git_status(GitStatus::Created),
                         )
-                        .child(Tab::new().title("theme.rs").current(false))
-                        .child(Tab::new().title("theme_registry.rs").current(false))
-                        .child(Tab::new().title("styleable_helpers.rs").current(false)),
+                        .child(Tab::new().title("theme.rs".to_string()).current(false))
+                        .child(
+                            Tab::new()
+                                .title("theme_registry.rs".to_string())
+                                .current(false),
+                        )
+                        .child(
+                            Tab::new()
+                                .title("styleable_helpers.rs".to_string())
+                                .current(false),
+                        ),
                 ),
             )
             // Right Side

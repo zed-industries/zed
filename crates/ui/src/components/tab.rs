@@ -3,7 +3,7 @@ use crate::{theme, Icon, IconElement, Label, LabelColor};
 
 #[derive(Element)]
 pub struct Tab {
-    title: &'static str,
+    title: String,
     icon: Option<Icon>,
     current: bool,
     dirty: bool,
@@ -16,7 +16,7 @@ pub struct Tab {
 impl Tab {
     pub fn new() -> Self {
         Self {
-            title: "untitled",
+            title: "untitled".to_string(),
             icon: None,
             current: false,
             dirty: false,
@@ -32,7 +32,7 @@ impl Tab {
         self
     }
 
-    pub fn title(mut self, title: &'static str) -> Self {
+    pub fn title(mut self, title: String) -> Self {
         self.title = title;
         self
     }
@@ -72,14 +72,22 @@ impl Tab {
 
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
+        let has_fs_conflict = self.fs_status == FileSystemStatus::Conflict;
+        let is_deleted = self.fs_status == FileSystemStatus::Deleted;
 
-        let label = match self.git_status {
-            GitStatus::None => Label::new(self.title),
-            GitStatus::Created => Label::new(self.title).color(LabelColor::Created),
-            GitStatus::Modified => Label::new(self.title).color(LabelColor::Modified),
-            GitStatus::Deleted => Label::new(self.title).color(LabelColor::Deleted),
-            GitStatus::Renamed => Label::new(self.title).color(LabelColor::Accent),
-            GitStatus::Conflict => Label::new(self.title),
+        let label = match (self.git_status, is_deleted) {
+            (_, true) | (GitStatus::Deleted, false) => Label::new(self.title.clone())
+                .color(LabelColor::Hidden)
+                .set_strikethrough(true),
+            (GitStatus::None, false) => Label::new(self.title.clone()),
+            (GitStatus::Created, false) => {
+                Label::new(self.title.clone()).color(LabelColor::Created)
+            }
+            (GitStatus::Modified, false) => {
+                Label::new(self.title.clone()).color(LabelColor::Modified)
+            }
+            (GitStatus::Renamed, false) => Label::new(self.title.clone()).color(LabelColor::Accent),
+            (GitStatus::Conflict, false) => Label::new(self.title.clone()),
         };
 
         let close_icon = IconElement::new(Icon::Close).color(IconColor::Muted);
@@ -101,6 +109,11 @@ impl Tab {
                     .flex()
                     .items_center()
                     .gap_1()
+                    .children(has_fs_conflict.then(|| {
+                        IconElement::new(Icon::ExclamationTriangle)
+                            .size(crate::IconSize::Small)
+                            .color(IconColor::Warning)
+                    }))
                     .children(self.icon.map(IconElement::new))
                     .children(if self.close_side == IconSide::Left {
                         Some(close_icon.clone())

@@ -29,7 +29,7 @@ impl SystemColor {
     }
 }
 
-#[derive(Default, PartialEq)]
+#[derive(Default, PartialEq, EnumIter)]
 pub enum FileSystemStatus {
     #[default]
     None,
@@ -37,7 +37,17 @@ pub enum FileSystemStatus {
     Deleted,
 }
 
-#[derive(Default, PartialEq)]
+impl FileSystemStatus {
+    pub fn to_string(&self) -> String {
+        match self {
+            Self::None => "None".to_string(),
+            Self::Conflict => "Conflict".to_string(),
+            Self::Deleted => "Deleted".to_string(),
+        }
+    }
+}
+
+#[derive(Default, PartialEq, EnumIter, Clone, Copy)]
 pub enum GitStatus {
     #[default]
     None,
@@ -46,6 +56,19 @@ pub enum GitStatus {
     Deleted,
     Conflict,
     Renamed,
+}
+
+impl GitStatus {
+    pub fn to_string(&self) -> String {
+        match self {
+            Self::None => "None".to_string(),
+            Self::Created => "Created".to_string(),
+            Self::Modified => "Modified".to_string(),
+            Self::Deleted => "Deleted".to_string(),
+            Self::Conflict => "Conflict".to_string(),
+            Self::Renamed => "Renamed".to_string(),
+        }
+    }
 }
 
 #[derive(Default, PartialEq)]

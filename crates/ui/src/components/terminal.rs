@@ -48,14 +48,14 @@ impl Terminal {
                                 .flex()
                                 .child(
                                     Tab::new()
-                                        .title("zed — fish")
+                                        .title("zed — fish".to_string())
                                         .icon(Icon::Terminal)
                                         .close_side(IconSide::Right)
                                         .current(true),
                                 )
                                 .child(
                                     Tab::new()
-                                        .title("zed — fish")
+                                        .title("zed — fish".to_string())
                                         .icon(Icon::Terminal)
                                         .close_side(IconSide::Right)
                                         .current(false),
