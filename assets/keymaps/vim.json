@@ -95,6 +95,7 @@
         }
       ],
       "ctrl-o": "pane::GoBack",
+      "ctrl-i": "pane::GoForward",
       "ctrl-]": "editor::GoToDefinition",
       "escape": [
         "vim::SwitchMode",
@@ -145,6 +146,7 @@
       "g shift-s": "project_symbols::Toggle",
       "g .": "editor::ToggleCodeActions", // zed specific
       "g shift-a": "editor::FindAllReferences", // zed specific
+      "g space": "editor::OpenExcerpts", // zed specific
       "g *": [
         "vim::MoveToNext",
         {
@@ -582,11 +584,16 @@
     }
   },
   {
-    "context": "Editor && vim_mode == insert && !menu",
+    "context": "Editor && vim_mode == insert",
     "bindings": {
       "escape": "vim::NormalBefore",
       "ctrl-c": "vim::NormalBefore",
-      "ctrl-[": "vim::NormalBefore"
+      "ctrl-[": "vim::NormalBefore",
+      "ctrl-x ctrl-o": "editor::ShowCompletions",
+      "ctrl-x ctrl-a": "assistant::InlineAssist", // zed specific
+      "ctrl-x ctrl-c": "copilot::Suggest", // zed specific
+      "ctrl-x ctrl-l": "editor::ToggleCodeActions", // zed specific
+      "ctrl-x ctrl-z": "editor::Cancel"
     }
   },
   {
