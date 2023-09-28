@@ -48,9 +48,9 @@ use gpui::{
     impl_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton},
-    serde_json, AnyElement, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element,
-    Entity, ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
-    WindowContext,
+    serde_json, AnyElement, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem,
+    CursorRegion, Element, Entity, ModelHandle, MouseRegion, Subscription, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -118,6 +118,46 @@ pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
 pub const DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
 pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
+
+pub fn render_rendered_markdown(
+    md: &language::RenderedMarkdown,
+    style: &EditorStyle,
+    cx: &mut ViewContext<Editor>,
+) -> Text {
+    enum RenderedRenderedMarkdown {}
+
+    let md = md.clone();
+    let code_span_background_color = style.document_highlight_read_background;
+    let view_id = cx.view_id();
+    let mut region_id = 0;
+    Text::new(md.text, style.text.clone())
+        .with_highlights(md.highlights)
+        .with_custom_runs(md.region_ranges, move |ix, bounds, scene, _| {
+            region_id += 1;
+            let region = md.regions[ix].clone();
+            if let Some(url) = region.link_url {
+                scene.push_cursor_region(CursorRegion {
+                    bounds,
+                    style: CursorStyle::PointingHand,
+                });
+                scene.push_mouse_region(
+                    MouseRegion::new::<RenderedRenderedMarkdown>(view_id, region_id, bounds)
+                        .on_click::<Editor, _>(MouseButton::Left, move |_, _, cx| {
+                            cx.platform().open_url(&url)
+                        }),
+                );
+            }
+            if region.code {
+                scene.push_quad(gpui::Quad {
+                    bounds,
+                    background: Some(code_span_background_color),
+                    border: Default::default(),
+                    corner_radii: (2.0).into(),
+                });
+            }
+        })
+        .with_soft_wrap(true)
+}
 
 #[derive(Clone, Deserialize, PartialEq, Default)]
 pub struct SelectNext {
@@ -938,11 +978,8 @@ impl CompletionsMenu {
         project: Option<&ModelHandle<Project>>,
         cx: &mut ViewContext<Editor>,
     ) {
-        println!("attempt_resolve_selected_completion");
-        let index = self.matches[dbg!(self.selected_item)].candidate_id;
-        dbg!(index);
+        let index = self.matches[self.selected_item].candidate_id;
         let Some(project) = project else {
-            println!("no project");
             return;
         };
 
@@ -950,7 +987,6 @@ impl CompletionsMenu {
         let completions_guard = completions.read();
         let completion = &completions_guard[index];
         if completion.lsp_completion.documentation.is_some() {
-            println!("has existing documentation");
             return;
         }
 
@@ -959,7 +995,6 @@ impl CompletionsMenu {
         drop(completions_guard);
 
         let Some(server) = project.read(cx).language_server_for_id(server_id) else {
-            println!("no server");
             return;
         };
 
@@ -969,26 +1004,21 @@ impl CompletionsMenu {
             .as_ref()
             .and_then(|options| options.resolve_provider)
             .unwrap_or(false);
-        if !dbg!(can_resolve) {
+        if !can_resolve {
             return;
         }
 
         cx.spawn(|this, mut cx| async move {
-            println!("in spawn");
             let request = server.request::<lsp::request::ResolveCompletionItem>(completion);
             let Some(completion_item) = request.await.log_err() else {
-                println!("errored");
                 return;
             };
 
             if completion_item.documentation.is_some() {
-                println!("got new documentation");
                 let mut completions = completions.write();
                 completions[index].lsp_completion.documentation = completion_item.documentation;
-                println!("notifying");
+                drop(completions);
                 _ = this.update(&mut cx, |_, cx| cx.notify());
-            } else {
-                println!("did not get anything");
             }
         })
         .detach();
@@ -1169,12 +1199,16 @@ impl CompletionsMenu {
                     Some(
                         Flex::column()
                             .scrollable::<CompletionDocsMarkdown>(0, None, cx)
-                            // .with_child(language::markdown::render_markdown(
-                            //     &content.value,
-                            //     &registry,
-                            //     &language,
-                            //     &style,
-                            // ))
+                            .with_child(render_rendered_markdown(
+                                &language::markdown::render_markdown(
+                                    &content.value,
+                                    &registry,
+                                    &language,
+                                    &style.theme,
+                                ),
+                                &style,
+                                cx,
+                            ))
                             .constrained()
                             .with_width(alongside_docs_width)
                             .contained()
