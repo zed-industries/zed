@@ -137,6 +137,13 @@ fn main() {
                         stories::components::palette::PaletteStory::default(),
                     )
                 }),
+                Some(StorySelector::Component(ComponentStory::ProjectPanel)) => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        stories::components::project_panel::ProjectPanelStory::default(),
+                    )
+                }),
                 Some(StorySelector::Component(ComponentStory::TabBar)) => view(move |cx| {
                     render_story(
                         &mut ViewContext::new(cx),
