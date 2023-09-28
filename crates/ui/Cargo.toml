@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
+dyn-clone = "1.0.14"
 gpui2 = { path = "../gpui2" }
 serde.workspace = true
 settings = { path = "../settings" }

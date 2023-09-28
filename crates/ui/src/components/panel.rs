@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 
+use dyn_clone::DynClone;
 use gpui2::elements::div::Div;
 use gpui2::geometry::AbsoluteLength;
 use gpui2::AnyElement;
@@ -40,11 +41,24 @@ pub enum PanelSide {
 
 use std::collections::HashSet;
 
+pub trait HackyChildren<V: 'static>: IntoElement<V, Element = AnyElement<V>> + DynClone {}
+
+dyn_clone::clone_trait_object!(<V> HackyChildren<V>);
+
+#[derive(Clone)]
+pub struct AnyChildren<V>(Box<dyn HackyChildren<V>>);
+
+// #[derive(Clone)]
+// pub struct CloneAnyElement<V: 'static>(AnyElement<V>);
+
+// pub trait HackyChildren<V: 'static>: IntoElement<V> + Clone {
+//     fn foo(self) -> &'static str;
+// }
+
+// type HackyChildren<V> = Box<dyn IntoElement<V> + Clone>;
+
 #[derive(Element)]
-pub struct Panel<V: 'static, C: 'static>
-where
-    C: IntoElement<V> + Clone,
-{
+pub struct Panel<V: 'static> {
     view_type: PhantomData<V>,
     scroll_state: ScrollState,
     current_side: PanelSide,
@@ -52,14 +66,11 @@ where
     allowed_sides: PanelAllowedSides,
     initial_width: AbsoluteLength,
     width: Option<AbsoluteLength>,
-    children: Vec<C>,
+    children: Vec<AnyChildren<V>>,
 }
 
-impl<V: 'static, C> Panel<V, C>
-where
-    C: IntoElement<V> + Clone,
-{
-    pub fn new(scroll_state: ScrollState, children: Vec<C>) -> Self {
+impl<V: 'static> Panel<V> {
+    pub fn new(scroll_state: ScrollState, children: Vec<AnyChildren<V>>) -> Self {
         let token = token();
 
         Self {
@@ -106,7 +117,7 @@ where
         let token = token();
         let theme = theme(cx);
 
-        let panel_base;
+        let mut panel_base;
         let current_width = if let Some(width) = self.width {
             width
         } else {
@@ -143,6 +154,18 @@ where
             }
         }
 
-        panel_base.children(self.children.clone())
+        let children = self
+            .children
+            .iter()
+            .map(|child| {
+                let child = dyn_clone::clone_box(&*child);
+
+                child
+            })
+            .collect::<Vec<_>>();
+
+        panel_base.children_mut().extend(children);
+
+        panel_base
     }
 }

@@ -8608,6 +8608,7 @@ name = "ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dyn-clone",
  "gpui2",
  "serde",
  "settings",
