@@ -76,12 +76,6 @@ pub fn change_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Windo
 // word does not include the following white space.  {Vi: "cw" when on a blank
 //     followed by other blanks changes only the first blank; this is probably a
 //     bug, because "dw" deletes all the blanks}
-//
-// NOT HANDLED YET
-// Another special case: When using the "w" motion in combination with an
-// operator and the last word moved over is at the end of a line, the end of
-// that word becomes the end of the operated text, not the first word in the
-// next line.
 fn expand_changed_word_selection(
     map: &DisplaySnapshot,
     selection: &mut Selection<DisplayPoint>,

@@ -23,8 +23,6 @@ pub enum ExemptionFeatures {
     // MOTIONS
     // When an operator completes at the end of the file, an extra newline is left
     OperatorLastNewlineRemains,
-    // Deleting a word on an empty line doesn't remove the newline
-    DeleteWordOnEmptyLine,
 
     // OBJECTS
     // Resulting position after the operation is slightly incorrect for unintuitive reasons.
