@@ -2,7 +2,7 @@ pub use gpui2::elements::div::{div, ScrollState};
 pub use gpui2::style::{StyleHelpers, Styleable};
 pub use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
-pub use crate::{ButtonVariant, InputVariant};
+pub use crate::{ButtonVariant, HackyChildren, HackyChildrenPayload, InputVariant};
 
 use gpui2::{hsla, rgb, Hsla};
 use strum::EnumIter;

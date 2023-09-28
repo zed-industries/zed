@@ -4,12 +4,13 @@ use chrono::NaiveDateTime;
 
 use crate::prelude::*;
 use crate::theme::theme;
-use crate::{Icon, IconButton, Input, Label, LabelColor, Panel};
+use crate::{Icon, IconButton, Input, Label, LabelColor, Panel, PanelSide};
 
 #[derive(Element)]
 pub struct ChatPanel<V: 'static> {
     view_type: PhantomData<V>,
     scroll_state: ScrollState,
+    current_side: PanelSide,
     messages: Vec<ChatMessage>,
 }
 
@@ -18,8 +19,14 @@ impl<V: 'static> ChatPanel<V> {
         Self {
             view_type: PhantomData,
             scroll_state,
+            current_side: PanelSide::default(),
             messages: Vec::new(),
         }
+    }
+
+    pub fn side(mut self, side: PanelSide) -> Self {
+        self.current_side = side;
+        self
     }
 
     pub fn with_messages(mut self, messages: Vec<ChatMessage>) -> Self {
@@ -30,12 +37,15 @@ impl<V: 'static> ChatPanel<V> {
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
 
+        struct PanelPayload {
+            pub scroll_state: ScrollState,
+            pub messages: Vec<ChatMessage>,
+        }
+
         Panel::new(
             self.scroll_state.clone(),
             |_, payload| {
-                let (scroll_state, messages) = payload
-                    .downcast_ref::<(ScrollState, Vec<ChatMessage>)>()
-                    .unwrap();
+                let payload = payload.downcast_ref::<PanelPayload>().unwrap();
 
                 vec![div()
                     .flex()
@@ -66,15 +76,19 @@ impl<V: 'static> ChatPanel<V> {
                             .flex()
                             .flex_col()
                             .gap_3()
-                            .overflow_y_scroll(scroll_state.clone())
-                            .children(messages.clone()),
+                            .overflow_y_scroll(payload.scroll_state.clone())
+                            .children(payload.messages.clone()),
                     )
                     // Composer
                     .child(div().flex().gap_2().child(Input::new("Message #design")))
                     .into_any()]
             },
-            Box::new((self.scroll_state.clone(), self.messages.clone())),
+            Box::new(PanelPayload {
+                scroll_state: self.scroll_state.clone(),
+                messages: self.messages.clone(),
+            }),
         )
+        .side(self.current_side)
     }
 }
 
