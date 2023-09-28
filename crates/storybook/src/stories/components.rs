@@ -6,6 +6,7 @@ pub mod context_menu;
 pub mod facepile;
 pub mod keybinding;
 pub mod palette;
+pub mod panel;
 pub mod project_panel;
 pub mod status_bar;
 pub mod tab;

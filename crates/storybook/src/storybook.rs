@@ -151,6 +151,13 @@ fn main() {
                         stories::components::palette::PaletteStory::default(),
                     )
                 }),
+                Some(StorySelector::Component(ComponentStory::Panel)) => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        stories::components::panel::PanelStory::default(),
+                    )
+                }),
                 Some(StorySelector::Component(ComponentStory::ProjectPanel)) => view(move |cx| {
                     render_story(
                         &mut ViewContext::new(cx),
