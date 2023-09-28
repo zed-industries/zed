@@ -151,6 +151,13 @@ fn main() {
                         stories::components::project_panel::ProjectPanelStory::default(),
                     )
                 }),
+                Some(StorySelector::Component(ComponentStory::StatusBar)) => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        stories::components::status_bar::StatusBarStory::default(),
+                    )
+                }),
                 Some(StorySelector::Component(ComponentStory::TabBar)) => view(move |cx| {
                     render_story(
                         &mut ViewContext::new(cx),

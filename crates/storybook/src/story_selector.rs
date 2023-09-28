@@ -26,6 +26,7 @@ pub enum ComponentStory {
     Keybinding,
     Palette,
     ProjectPanel,
+    StatusBar,
     TabBar,
     Terminal,
     TitleBar,
