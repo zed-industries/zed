@@ -146,6 +146,7 @@
       "g shift-s": "project_symbols::Toggle",
       "g .": "editor::ToggleCodeActions", // zed specific
       "g shift-a": "editor::FindAllReferences", // zed specific
+      "g space": "editor::OpenExcerpts", // zed specific
       "g *": [
         "vim::MoveToNext",
         {
