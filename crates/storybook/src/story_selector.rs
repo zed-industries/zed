@@ -21,11 +21,16 @@ pub enum ElementStory {
 pub enum ComponentStory {
     Breadcrumb,
     ContextMenu,
+    ChatPanel,
+    CollabPanel,
     Facepile,
     Keybinding,
     Palette,
+    ProjectPanel,
+    StatusBar,
     TabBar,
     Terminal,
+    TitleBar,
     Toolbar,
     TrafficLights,
 }

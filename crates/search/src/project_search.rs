@@ -1958,9 +1958,9 @@ impl View for ProjectSearchBar {
 
             Flex::row()
                 .with_child(query_column)
+                .with_child(mode_column)
                 .with_child(switches_column)
                 .with_children(replacement)
-                .with_child(mode_column)
                 .with_child(nav_column)
                 .contained()
                 .with_style(theme.search.container)

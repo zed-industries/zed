@@ -430,5 +430,9 @@ mod test {
         cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 2));
         cx.simulate_keystrokes([":", "q", "enter"]);
         cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 1));
+        cx.simulate_keystrokes([":", "n", "e", "w", "enter"]);
+        cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.simulate_keystrokes([":", "q", "a", "enter"]);
+        cx.workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 0));
     }
 }

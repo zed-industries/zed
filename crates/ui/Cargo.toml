@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
+chrono = "0.4"
 gpui2 = { path = "../gpui2" }
 serde.workspace = true
 settings = { path = "../settings" }

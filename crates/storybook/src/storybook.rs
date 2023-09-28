@@ -109,6 +109,20 @@ fn main() {
                         stories::components::breadcrumb::BreadcrumbStory::default(),
                     )
                 }),
+                Some(StorySelector::Component(ComponentStory::ChatPanel)) => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        stories::components::chat_panel::ChatPanelStory::default(),
+                    )
+                }),
+                Some(StorySelector::Component(ComponentStory::CollabPanel)) => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        stories::components::collab_panel::CollabPanelStory::default(),
+                    )
+                }),
                 Some(StorySelector::Component(ComponentStory::Facepile)) => view(move |cx| {
                     render_story(
                         &mut ViewContext::new(cx),
@@ -130,6 +144,20 @@ fn main() {
                         stories::components::palette::PaletteStory::default(),
                     )
                 }),
+                Some(StorySelector::Component(ComponentStory::ProjectPanel)) => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        stories::components::project_panel::ProjectPanelStory::default(),
+                    )
+                }),
+                Some(StorySelector::Component(ComponentStory::StatusBar)) => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        stories::components::status_bar::StatusBarStory::default(),
+                    )
+                }),
                 Some(StorySelector::Component(ComponentStory::TabBar)) => view(move |cx| {
                     render_story(
                         &mut ViewContext::new(cx),
@@ -142,6 +170,13 @@ fn main() {
                         &mut ViewContext::new(cx),
                         theme_override.clone(),
                         stories::components::terminal::TerminalStory::default(),
+                    )
+                }),
+                Some(StorySelector::Component(ComponentStory::TitleBar)) => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        stories::components::title_bar::TitleBarStory::default(),
                     )
                 }),
                 Some(StorySelector::Component(ComponentStory::Toolbar)) => view(move |cx| {
