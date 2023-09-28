@@ -191,7 +191,7 @@ impl Member {
                 if let Some(leader) = &leader {
                     let leader_color = theme
                         .editor
-                        .replica_selection_style(leader.color_index)
+                        .selection_style_for_room_participant(leader.participant_index.0)
                         .cursor;
                     leader_border = Border::all(theme.workspace.leader_border_width, leader_color);
                     leader_border

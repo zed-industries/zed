@@ -923,15 +923,18 @@ impl CollabTitlebarItem {
             .background_color
             .unwrap_or_default();
 
-        let color_index = self
+        let participant_index = self
             .user_store
             .read(cx)
-            .color_indices()
+            .participant_indices()
             .get(&user_id)
             .copied();
-        if let Some(color_index) = color_index {
+        if let Some(participant_index) = participant_index {
             if followed_by_self {
-                let selection = theme.editor.replica_selection_style(color_index).selection;
+                let selection = theme
+                    .editor
+                    .selection_style_for_room_participant(participant_index.0)
+                    .selection;
                 background_color = Color::blend(selection, background_color);
                 background_color.a = 255;
             }
@@ -996,10 +999,12 @@ impl CollabTitlebarItem {
                             .contained()
                             .with_style(theme.titlebar.leader_selection);
 
-                        if let Some(color_index) = color_index {
+                        if let Some(participant_index) = participant_index {
                             if followed_by_self {
-                                let color =
-                                    theme.editor.replica_selection_style(color_index).selection;
+                                let color = theme
+                                    .editor
+                                    .selection_style_for_room_participant(participant_index.0)
+                                    .selection;
                                 container = container.with_background_color(color);
                             }
                         }
@@ -1007,8 +1012,11 @@ impl CollabTitlebarItem {
                         container
                     }))
                     .with_children((|| {
-                        let color_index = color_index?;
-                        let color = theme.editor.replica_selection_style(color_index).cursor;
+                        let participant_index = participant_index?;
+                        let color = theme
+                            .editor
+                            .selection_style_for_room_participant(participant_index.0)
+                            .cursor;
                         Some(
                             AvatarRibbon::new(color)
                                 .constrained()

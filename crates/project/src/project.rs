@@ -76,7 +76,6 @@ use std::{
 };
 use terminals::Terminals;
 use text::Anchor;
-use theme::ColorIndex;
 use util::{
     debug_panic, defer, http::HttpClient, merge_json_value_into,
     paths::LOCAL_SETTINGS_RELATIVE_PATH, post_inc, ResultExt, TryFutureExt as _,
@@ -120,7 +119,6 @@ pub struct Project {
     join_project_response_message_id: u32,
     next_diagnostic_group_id: usize,
     user_store: ModelHandle<UserStore>,
-    user_color_indices: HashMap<ReplicaId, ColorIndex>,
     fs: Arc<dyn Fs>,
     client_state: Option<ProjectClientState>,
     collaborators: HashMap<proto::PeerId, Collaborator>,
@@ -644,7 +642,6 @@ impl Project {
                 languages,
                 client,
                 user_store,
-                user_color_indices: Default::default(),
                 fs,
                 next_entry_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
@@ -717,7 +714,6 @@ impl Project {
                 _maintain_workspace_config: Self::maintain_workspace_config(cx),
                 languages,
                 user_store: user_store.clone(),
-                user_color_indices: Default::default(),
                 fs,
                 next_entry_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
@@ -920,10 +916,6 @@ impl Project {
 
     pub fn user_store(&self) -> ModelHandle<UserStore> {
         self.user_store.clone()
-    }
-
-    pub fn user_color_indices(&self) -> &HashMap<ReplicaId, ColorIndex> {
-        &self.user_color_indices
     }
 
     pub fn opened_buffers(&self, cx: &AppContext) -> Vec<ModelHandle<Buffer>> {

@@ -3,7 +3,7 @@ use call::ActiveCall;
 use channel::{Channel, ChannelBuffer, ChannelBufferEvent, ChannelId};
 use client::{
     proto::{self, PeerId},
-    Collaborator,
+    Collaborator, ParticipantIndex,
 };
 use collections::HashMap;
 use editor::{CollaborationHub, Editor};
@@ -359,7 +359,10 @@ impl CollaborationHub for ChannelBufferCollaborationHub {
         self.0.read(cx).collaborators()
     }
 
-    fn user_color_indices<'a>(&self, cx: &'a AppContext) -> &'a HashMap<u64, theme::ColorIndex> {
-        self.0.read(cx).user_store().read(cx).color_indices()
+    fn user_participant_indices<'a>(
+        &self,
+        cx: &'a AppContext,
+    ) -> &'a HashMap<u64, ParticipantIndex> {
+        self.0.read(cx).user_store().read(cx).participant_indices()
     }
 }

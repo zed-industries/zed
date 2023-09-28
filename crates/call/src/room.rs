@@ -7,7 +7,7 @@ use anyhow::{anyhow, Result};
 use audio::{Audio, Sound};
 use client::{
     proto::{self, PeerId},
-    Client, TypedEnvelope, User, UserStore,
+    Client, ParticipantIndex, TypedEnvelope, User, UserStore,
 };
 use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
@@ -21,7 +21,6 @@ use live_kit_client::{
 use postage::stream::Stream;
 use project::Project;
 use std::{future::Future, mem, pin::Pin, sync::Arc, time::Duration};
-use theme::ColorIndex;
 use util::{post_inc, ResultExt, TryFutureExt};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -715,7 +714,9 @@ impl Room {
                                 participant.user_id,
                                 RemoteParticipant {
                                     user: user.clone(),
-                                    color_index: ColorIndex(participant.color_index),
+                                    participant_index: ParticipantIndex(
+                                        participant.participant_index,
+                                    ),
                                     peer_id,
                                     projects: participant.projects,
                                     location,
@@ -810,12 +811,12 @@ impl Room {
                 }
 
                 this.user_store.update(cx, |user_store, cx| {
-                    let color_indices_by_user_id = this
+                    let participant_indices_by_user_id = this
                         .remote_participants
                         .iter()
-                        .map(|(user_id, participant)| (*user_id, participant.color_index))
+                        .map(|(user_id, participant)| (*user_id, participant.participant_index))
                         .collect();
-                    user_store.set_color_indices(color_indices_by_user_id, cx);
+                    user_store.set_participant_indices(participant_indices_by_user_id, cx);
                 });
 
                 this.check_invariants();

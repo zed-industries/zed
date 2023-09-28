@@ -4,6 +4,7 @@ use crate::{
 };
 use call::ActiveCall;
 use channel::Channel;
+use client::ParticipantIndex;
 use client::{Collaborator, UserId};
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
@@ -13,7 +14,6 @@ use gpui::{executor::Deterministic, ModelHandle, TestAppContext, ViewContext};
 use rpc::{proto::PeerId, RECEIVE_TIMEOUT};
 use serde_json::json;
 use std::{ops::Range, sync::Arc};
-use theme::ColorIndex;
 
 #[gpui::test]
 async fn test_core_channel_buffers(
@@ -122,7 +122,7 @@ async fn test_core_channel_buffers(
 }
 
 #[gpui::test]
-async fn test_channel_notes_color_indices(
+async fn test_channel_notes_participant_indices(
     deterministic: Arc<Deterministic>,
     mut cx_a: &mut TestAppContext,
     mut cx_b: &mut TestAppContext,
@@ -226,12 +226,20 @@ async fn test_channel_notes_color_indices(
     deterministic.run_until_parked();
     channel_view_a.update(cx_a, |notes, cx| {
         notes.editor.update(cx, |editor, cx| {
-            assert_remote_selections(editor, &[(Some(ColorIndex(1)), 1..2), (None, 2..3)], cx);
+            assert_remote_selections(
+                editor,
+                &[(Some(ParticipantIndex(1)), 1..2), (None, 2..3)],
+                cx,
+            );
         });
     });
     channel_view_b.update(cx_b, |notes, cx| {
         notes.editor.update(cx, |editor, cx| {
-            assert_remote_selections(editor, &[(Some(ColorIndex(0)), 0..1), (None, 2..3)], cx);
+            assert_remote_selections(
+                editor,
+                &[(Some(ParticipantIndex(0)), 0..1), (None, 2..3)],
+                cx,
+            );
         });
     });
 
@@ -275,17 +283,17 @@ async fn test_channel_notes_color_indices(
 
     // Clients A and B see each other with the same colors as in the channel notes.
     editor_a.update(cx_a, |editor, cx| {
-        assert_remote_selections(editor, &[(Some(ColorIndex(1)), 2..3)], cx);
+        assert_remote_selections(editor, &[(Some(ParticipantIndex(1)), 2..3)], cx);
     });
     editor_b.update(cx_b, |editor, cx| {
-        assert_remote_selections(editor, &[(Some(ColorIndex(0)), 0..1)], cx);
+        assert_remote_selections(editor, &[(Some(ParticipantIndex(0)), 0..1)], cx);
     });
 }
 
 #[track_caller]
 fn assert_remote_selections(
     editor: &mut Editor,
-    expected_selections: &[(Option<ColorIndex>, Range<usize>)],
+    expected_selections: &[(Option<ParticipantIndex>, Range<usize>)],
     cx: &mut ViewContext<Editor>,
 ) {
     let snapshot = editor.snapshot(cx);
@@ -295,7 +303,7 @@ fn assert_remote_selections(
         .map(|s| {
             let start = s.selection.start.to_offset(&snapshot.buffer_snapshot);
             let end = s.selection.end.to_offset(&snapshot.buffer_snapshot);
-            (s.color_index, start..end)
+            (s.participant_index, start..end)
         })
         .collect::<Vec<_>>();
     assert_eq!(

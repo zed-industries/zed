@@ -25,7 +25,7 @@ use ::git::diff::DiffHunk;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context, Result};
 use blink_manager::BlinkManager;
-use client::{ClickhouseEvent, Collaborator, TelemetrySettings};
+use client::{ClickhouseEvent, Collaborator, ParticipantIndex, TelemetrySettings};
 use clock::{Global, ReplicaId};
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
@@ -102,7 +102,7 @@ use std::{
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::Rope;
-use theme::{ColorIndex, DiagnosticStyle, Theme, ThemeSettings};
+use theme::{DiagnosticStyle, Theme, ThemeSettings};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, ViewId, Workspace};
 
@@ -637,7 +637,7 @@ pub struct RemoteSelection {
     pub cursor_shape: CursorShape,
     pub peer_id: PeerId,
     pub line_mode: bool,
-    pub color_index: Option<ColorIndex>,
+    pub participant_index: Option<ParticipantIndex>,
 }
 
 #[derive(Clone, Debug)]
@@ -8570,7 +8570,10 @@ impl Editor {
 
 pub trait CollaborationHub {
     fn collaborators<'a>(&self, cx: &'a AppContext) -> &'a HashMap<PeerId, Collaborator>;
-    fn user_color_indices<'a>(&self, cx: &'a AppContext) -> &'a HashMap<u64, ColorIndex>;
+    fn user_participant_indices<'a>(
+        &self,
+        cx: &'a AppContext,
+    ) -> &'a HashMap<u64, ParticipantIndex>;
 }
 
 impl CollaborationHub for ModelHandle<Project> {
@@ -8578,8 +8581,11 @@ impl CollaborationHub for ModelHandle<Project> {
         self.read(cx).collaborators()
     }
 
-    fn user_color_indices<'a>(&self, cx: &'a AppContext) -> &'a HashMap<u64, ColorIndex> {
-        self.read(cx).user_store().read(cx).color_indices()
+    fn user_participant_indices<'a>(
+        &self,
+        cx: &'a AppContext,
+    ) -> &'a HashMap<u64, ParticipantIndex> {
+        self.read(cx).user_store().read(cx).participant_indices()
     }
 }
 
@@ -8632,7 +8638,7 @@ impl EditorSnapshot {
         collaboration_hub: &dyn CollaborationHub,
         cx: &'a AppContext,
     ) -> impl 'a + Iterator<Item = RemoteSelection> {
-        let color_indices = collaboration_hub.user_color_indices(cx);
+        let participant_indices = collaboration_hub.user_participant_indices(cx);
         let collaborators_by_peer_id = collaboration_hub.collaborators(cx);
         let collaborators_by_replica_id = collaborators_by_peer_id
             .iter()
@@ -8642,13 +8648,13 @@ impl EditorSnapshot {
             .remote_selections_in_range(range)
             .filter_map(move |(replica_id, line_mode, cursor_shape, selection)| {
                 let collaborator = collaborators_by_replica_id.get(&replica_id)?;
-                let color_index = color_indices.get(&collaborator.user_id).copied();
+                let participant_index = participant_indices.get(&collaborator.user_id).copied();
                 Some(RemoteSelection {
                     replica_id,
                     selection,
                     cursor_shape,
                     line_mode,
-                    color_index,
+                    participant_index,
                     peer_id: collaborator.peer_id,
                 })
             })

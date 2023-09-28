@@ -2256,8 +2256,8 @@ impl Element<Editor> for EditorElement {
                 collaboration_hub.as_ref(),
                 cx,
             ) {
-                let selection_style = if let Some(color_index) = selection.color_index {
-                    style.replica_selection_style(color_index)
+                let selection_style = if let Some(participant_index) = selection.participant_index {
+                    style.selection_style_for_room_participant(participant_index.0)
                 } else {
                     style.absent_selection
                 };

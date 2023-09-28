@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use client::ParticipantIndex;
 use client::{proto, User};
 use collections::HashMap;
 use gpui::WeakModelHandle;
@@ -6,7 +7,6 @@ pub use live_kit_client::Frame;
 use live_kit_client::RemoteAudioTrack;
 use project::Project;
 use std::{fmt, sync::Arc};
-use theme::ColorIndex;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum ParticipantLocation {
@@ -44,7 +44,7 @@ pub struct RemoteParticipant {
     pub peer_id: proto::PeerId,
     pub projects: Vec<proto::ParticipantProject>,
     pub location: ParticipantLocation,
-    pub color_index: ColorIndex,
+    pub participant_index: ParticipantIndex,
     pub muted: bool,
     pub speaking: bool,
     pub video_tracks: HashMap<live_kit_client::Sid, Arc<RemoteVideoTrack>>,

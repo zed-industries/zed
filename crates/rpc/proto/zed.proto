@@ -256,7 +256,7 @@ message Participant {
     PeerId peer_id = 2;
     repeated ParticipantProject projects = 3;
     ParticipantLocation location = 4;
-    uint32 color_index = 5;
+    uint32 participant_index = 5;
 }
 
 message PendingParticipant {

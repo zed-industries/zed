@@ -152,7 +152,7 @@ impl Database {
                 room_id: ActiveValue::set(room_id),
                 user_id: ActiveValue::set(called_user_id),
                 answering_connection_lost: ActiveValue::set(false),
-                color_index: ActiveValue::NotSet,
+                participant_index: ActiveValue::NotSet,
                 calling_user_id: ActiveValue::set(calling_user_id),
                 calling_connection_id: ActiveValue::set(calling_connection.id as i32),
                 calling_connection_server_id: ActiveValue::set(Some(ServerId(
@@ -285,19 +285,19 @@ impl Database {
                 .ok_or_else(|| anyhow!("no such room"))?;
 
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-            enum QueryColorIndices {
-                ColorIndex,
+            enum QueryParticipantIndices {
+                ParticipantIndex,
             }
-            let existing_color_indices: Vec<i32> = room_participant::Entity::find()
+            let existing_participant_indices: Vec<i32> = room_participant::Entity::find()
                 .filter(room_participant::Column::RoomId.eq(room_id))
                 .select_only()
-                .column(room_participant::Column::ColorIndex)
-                .into_values::<_, QueryColorIndices>()
+                .column(room_participant::Column::ParticipantIndex)
+                .into_values::<_, QueryParticipantIndices>()
                 .all(&*tx)
                 .await?;
-            let mut color_index = 0;
-            while existing_color_indices.contains(&color_index) {
-                color_index += 1;
+            let mut participant_index = 0;
+            while existing_participant_indices.contains(&participant_index) {
+                participant_index += 1;
             }
 
             if let Some(channel_id) = channel_id {
@@ -317,7 +317,7 @@ impl Database {
                     calling_connection_server_id: ActiveValue::set(Some(ServerId(
                         connection.owner_id as i32,
                     ))),
-                    color_index: ActiveValue::Set(color_index),
+                    participant_index: ActiveValue::Set(participant_index),
                     ..Default::default()
                 }])
                 .on_conflict(
@@ -340,7 +340,7 @@ impl Database {
                             .add(room_participant::Column::AnsweringConnectionId.is_null()),
                     )
                     .set(room_participant::ActiveModel {
-                        color_index: ActiveValue::Set(color_index),
+                        participant_index: ActiveValue::Set(participant_index),
                         answering_connection_id: ActiveValue::set(Some(connection.id as i32)),
                         answering_connection_server_id: ActiveValue::set(Some(ServerId(
                             connection.owner_id as i32,
@@ -1090,7 +1090,7 @@ impl Database {
                         peer_id: Some(answering_connection.into()),
                         projects: Default::default(),
                         location: Some(proto::ParticipantLocation { variant: location }),
-                        color_index: db_participant.color_index as u32,
+                        participant_index: db_participant.participant_index as u32,
                     },
                 );
             } else {
