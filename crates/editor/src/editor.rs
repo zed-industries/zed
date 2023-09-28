@@ -4653,7 +4653,12 @@ impl Editor {
     }
 
     pub fn convert_to_title_case(&mut self, _: &ConvertToTitleCase, cx: &mut ViewContext<Self>) {
-        self.manipulate_text(cx, |text| text.to_case(Case::Title))
+        self.manipulate_text(cx, |text| {
+            // Hack to get around the fact that to_case crate doesn't support '\n' as a word boundary
+            text.split("\n")
+                .map(|line| line.to_case(Case::Title))
+                .join("\n")
+        })
     }
 
     pub fn convert_to_snake_case(&mut self, _: &ConvertToSnakeCase, cx: &mut ViewContext<Self>) {
@@ -4669,7 +4674,12 @@ impl Editor {
         _: &ConvertToUpperCamelCase,
         cx: &mut ViewContext<Self>,
     ) {
-        self.manipulate_text(cx, |text| text.to_case(Case::UpperCamel))
+        self.manipulate_text(cx, |text| {
+            // Hack to get around the fact that to_case crate doesn't support '\n' as a word boundary
+            text.split("\n")
+                .map(|line| line.to_case(Case::UpperCamel))
+                .join("\n")
+        })
     }
 
     pub fn convert_to_lower_camel_case(
