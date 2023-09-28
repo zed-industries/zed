@@ -1,6 +1,8 @@
+use std::any::Any;
 use std::marker::PhantomData;
 
 use gpui2::geometry::AbsoluteLength;
+use gpui2::AnyElement;
 
 use crate::prelude::*;
 use crate::{theme, token, v_stack};
@@ -47,10 +49,16 @@ pub struct Panel<V: 'static> {
     allowed_sides: PanelAllowedSides,
     initial_width: AbsoluteLength,
     width: Option<AbsoluteLength>,
+    children: fn(&mut ViewContext<V>, &dyn Any) -> Vec<AnyElement<V>>,
+    payload: Box<dyn Any>,
 }
 
 impl<V: 'static> Panel<V> {
-    pub fn new(scroll_state: ScrollState) -> Self {
+    pub fn new(
+        scroll_state: ScrollState,
+        children: fn(&mut ViewContext<V>, &dyn Any) -> Vec<AnyElement<V>>,
+        payload: Box<dyn Any>,
+    ) -> Self {
         let token = token();
 
         Self {
@@ -60,6 +68,8 @@ impl<V: 'static> Panel<V> {
             allowed_sides: PanelAllowedSides::default(),
             initial_width: token.default_panel_size,
             width: None,
+            children,
+            payload,
         }
     }
 
@@ -133,6 +143,6 @@ impl<V: 'static> Panel<V> {
             }
         }
 
-        panel_base
+        panel_base.children_any((self.children)(cx, self.payload.as_ref()))
     }
 }

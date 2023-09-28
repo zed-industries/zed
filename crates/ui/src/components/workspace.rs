@@ -1,6 +1,6 @@
 use gpui2::geometry::{relative, rems, Size};
 
-use crate::{prelude::*, v_stack, Panel, PanelAllowedSides, PanelSide};
+use crate::{prelude::*, v_stack, Icon, IconElement, Panel, PanelAllowedSides, PanelSide};
 use crate::{theme, Pane, PaneGroup, SplitDirection, StatusBar, TitleBar};
 
 #[derive(Element, Default)]
@@ -73,7 +73,14 @@ impl WorkspaceElement {
                     .border_t()
                     .border_b()
                     .border_color(theme.lowest.base.default.border)
-                    .child(Panel::new(self.left_panel_scroll_state.clone()).side(PanelSide::Left))
+                    .child(
+                        Panel::new(
+                            self.left_panel_scroll_state.clone(),
+                            |_, _| vec![IconElement::new(Icon::ExclamationTriangle).into_any()],
+                            Box::new("HELLO STATE"),
+                        )
+                        .side(PanelSide::Left),
+                    )
                     .child(
                         v_stack()
                             .flex_1()
@@ -88,13 +95,22 @@ impl WorkspaceElement {
                                     .child(root_group),
                             )
                             .child(
-                                Panel::new(self.bottom_panel_scroll_state.clone())
-                                    .allowed_sides(PanelAllowedSides::BottomOnly)
-                                    .side(PanelSide::Bottom),
+                                Panel::new(
+                                    self.bottom_panel_scroll_state.clone(),
+                                    |_, _| vec![IconElement::new(Icon::MagicWand).into_any()],
+                                    Box::new("temp"),
+                                )
+                                .allowed_sides(PanelAllowedSides::BottomOnly)
+                                .side(PanelSide::Bottom),
                             ),
                     )
                     .child(
-                        Panel::new(self.right_panel_scroll_state.clone()).side(PanelSide::Right),
+                        Panel::new(
+                            self.right_panel_scroll_state.clone(),
+                            |_, _| vec![IconElement::new(Icon::Ai).into_any()],
+                            Box::new("S T A T E"),
+                        )
+                        .side(PanelSide::Right),
                     ),
             )
             .child(StatusBar::new())
