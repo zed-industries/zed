@@ -2,6 +2,7 @@
 members = [
     "crates/activity_indicator",
     "crates/ai",
+    "crates/assistant",
     "crates/audio",
     "crates/auto_update",
     "crates/breadcrumbs",
@@ -69,6 +70,7 @@ members = [
     "crates/text",
     "crates/theme",
     "crates/theme_selector",
+    "crates/ui",
     "crates/util",
     "crates/semantic_index",
     "crates/vim",

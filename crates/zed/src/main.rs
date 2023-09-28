@@ -135,7 +135,7 @@ fn main() {
         let languages = Arc::new(languages);
         let node_runtime = RealNodeRuntime::new(http.clone());
 
-        languages::init(languages.clone(), node_runtime.clone());
+        languages::init(languages.clone(), node_runtime.clone(), cx);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
         let channel_store =
             cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
@@ -161,7 +161,7 @@ fn main() {
         vim::init(cx);
         terminal_view::init(cx);
         copilot::init(copilot_language_server_id, http.clone(), node_runtime, cx);
-        ai::init(cx);
+        assistant::init(cx);
         component_test::init(cx);
 
         cx.spawn(|cx| watch_themes(fs.clone(), cx)).detach();

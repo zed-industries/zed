@@ -394,9 +394,14 @@ impl ActiveCall {
 
         cx.spawn(|this, mut cx| async move {
             let result = invite.await;
+            if result.is_ok() {
+                this.update(&mut cx, |this, cx| this.report_call_event("invite", cx));
+            } else {
+                // TODO: Resport collaboration error
+            }
+
             this.update(&mut cx, |this, cx| {
                 this.pending_invites.remove(&called_user_id);
-                this.report_call_event("invite", cx);
                 cx.notify();
             });
             result
@@ -461,13 +466,7 @@ impl ActiveCall {
             .borrow_mut()
             .take()
             .ok_or_else(|| anyhow!("no incoming call"))?;
-        Self::report_call_event_for_room(
-            "decline incoming",
-            Some(call.room_id),
-            None,
-            &self.client,
-            cx,
-        );
+        report_call_event_for_room("decline incoming", call.room_id, None, &self.client, cx);
         self.client.send(proto::DeclineCall {
             room_id: call.room_id,
         })?;
@@ -597,31 +596,46 @@ impl ActiveCall {
         &self.pending_invites
     }
 
-    fn report_call_event(&self, operation: &'static str, cx: &AppContext) {
-        let (room_id, channel_id) = match self.room() {
-            Some(room) => {
-                let room = room.read(cx);
-                (Some(room.id()), room.channel_id())
-            }
-            None => (None, None),
-        };
-        Self::report_call_event_for_room(operation, room_id, channel_id, &self.client, cx)
+    pub fn report_call_event(&self, operation: &'static str, cx: &AppContext) {
+        if let Some(room) = self.room() {
+            let room = room.read(cx);
+            report_call_event_for_room(operation, room.id(), room.channel_id(), &self.client, cx);
+        }
     }
+}
 
-    pub fn report_call_event_for_room(
-        operation: &'static str,
-        room_id: Option<u64>,
-        channel_id: Option<u64>,
-        client: &Arc<Client>,
-        cx: &AppContext,
-    ) {
-        let telemetry = client.telemetry();
-        let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
-        let event = ClickhouseEvent::Call {
-            operation,
-            room_id,
-            channel_id,
-        };
-        telemetry.report_clickhouse_event(event, telemetry_settings);
-    }
+pub fn report_call_event_for_room(
+    operation: &'static str,
+    room_id: u64,
+    channel_id: Option<u64>,
+    client: &Arc<Client>,
+    cx: &AppContext,
+) {
+    let telemetry = client.telemetry();
+    let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
+    let event = ClickhouseEvent::Call {
+        operation,
+        room_id: Some(room_id),
+        channel_id,
+    };
+    telemetry.report_clickhouse_event(event, telemetry_settings);
+}
+
+pub fn report_call_event_for_channel(
+    operation: &'static str,
+    channel_id: u64,
+    client: &Arc<Client>,
+    cx: &AppContext,
+) {
+    let room = ActiveCall::global(cx).read(cx).room();
+
+    let telemetry = client.telemetry();
+    let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
+
+    let event = ClickhouseEvent::Call {
+        operation,
+        room_id: room.map(|r| r.read(cx).id()),
+        channel_id: Some(channel_id),
+    };
+    telemetry.report_clickhouse_event(event, telemetry_settings);
 }

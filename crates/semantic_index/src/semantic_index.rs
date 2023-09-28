@@ -1,5 +1,4 @@
 mod db;
-pub mod embedding;
 mod embedding_queue;
 mod parsing;
 pub mod semantic_index_settings;
@@ -8,14 +7,15 @@ pub mod semantic_index_settings;
 mod semantic_index_tests;
 
 use crate::semantic_index_settings::SemanticIndexSettings;
+use ai::embedding::{Embedding, EmbeddingProvider, OpenAIEmbeddings};
 use anyhow::{anyhow, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use db::VectorDatabase;
-use embedding::{Embedding, EmbeddingProvider, OpenAIEmbeddings};
 use embedding_queue::{EmbeddingQueue, FileToEmbed};
 use futures::{future, FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
 use language::{Anchor, Bias, Buffer, Language, LanguageRegistry};
+use lazy_static::lazy_static;
 use ordered_float::OrderedFloat;
 use parking_lot::Mutex;
 use parsing::{CodeContextRetriever, Span, SpanDigest, PARSEABLE_ENTIRE_FILE_TYPES};
@@ -24,6 +24,7 @@ use project::{search::PathMatcher, Fs, PathChange, Project, ProjectEntryId, Work
 use smol::channel;
 use std::{
     cmp::Reverse,
+    env,
     future::Future,
     mem,
     ops::Range,
@@ -37,6 +38,10 @@ use workspace::WorkspaceCreated;
 const SEMANTIC_INDEX_VERSION: usize = 11;
 const BACKGROUND_INDEXING_DELAY: Duration = Duration::from_secs(5 * 60);
 const EMBEDDING_QUEUE_FLUSH_TIMEOUT: Duration = Duration::from_millis(250);
+
+lazy_static! {
+    static ref OPENAI_API_KEY: Option<String> = env::var("OPENAI_API_KEY").ok();
+}
 
 pub fn init(
     fs: Arc<dyn Fs>,
@@ -100,6 +105,7 @@ pub fn init(
 
 #[derive(Copy, Clone, Debug)]
 pub enum SemanticIndexStatus {
+    NotAuthenticated,
     NotIndexed,
     Indexed,
     Indexing {
@@ -275,6 +281,10 @@ impl SemanticIndex {
     }
 
     pub fn status(&self, project: &ModelHandle<Project>) -> SemanticIndexStatus {
+        if !self.embedding_provider.is_authenticated() {
+            return SemanticIndexStatus::NotAuthenticated;
+        }
+
         if let Some(project_state) = self.projects.get(&project.downgrade()) {
             if project_state
                 .worktrees
@@ -694,12 +704,14 @@ impl SemanticIndex {
         let embedding_provider = self.embedding_provider.clone();
 
         cx.spawn(|this, mut cx| async move {
+            index.await?;
+            let t0 = Instant::now();
             let query = embedding_provider
                 .embed_batch(vec![query])
                 .await?
                 .pop()
                 .ok_or_else(|| anyhow!("could not embed query"))?;
-            index.await?;
+            log::trace!("Embedding Search Query: {:?}ms", t0.elapsed().as_millis());
 
             let search_start = Instant::now();
             let modified_buffer_results = this.update(&mut cx, |this, cx| {
@@ -777,10 +789,15 @@ impl SemanticIndex {
 
             let batch_n = cx.background().num_cpus();
             let ids_len = file_ids.clone().len();
-            let batch_size = if ids_len <= batch_n {
-                ids_len
-            } else {
-                ids_len / batch_n
+            let minimum_batch_size = 50;
+
+            let batch_size = {
+                let size = ids_len / batch_n;
+                if size < minimum_batch_size {
+                    minimum_batch_size
+                } else {
+                    size
+                }
             };
 
             let mut batch_results = Vec::new();
@@ -812,6 +829,7 @@ impl SemanticIndex {
                             Ok(ix) => ix,
                             Err(ix) => ix,
                         };
+
                         results.insert(ix, (id, similarity));
                         results.truncate(limit);
                     }
@@ -846,7 +864,6 @@ impl SemanticIndex {
             })?;
 
             let buffers = futures::future::join_all(tasks).await;
-
             Ok(buffers
                 .into_iter()
                 .zip(ranges)
@@ -965,6 +982,10 @@ impl SemanticIndex {
         project: ModelHandle<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
+        if !self.embedding_provider.is_authenticated() {
+            return Task::ready(Err(anyhow!("user is not authenticated")));
+        }
+
         if !self.projects.contains_key(&project.downgrade()) {
             let subscription = cx.subscribe(&project, |this, project, event, cx| match event {
                 project::Event::WorktreeAdded | project::Event::WorktreeRemoved(_) => {

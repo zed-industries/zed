@@ -136,6 +136,7 @@ actions!(
         StartMoveChannel,
         StartLinkChannel,
         MoveOrLinkToSelected,
+        InsertSpace,
     ]
 );
 
@@ -184,6 +185,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(CollabPanel::select_next);
     cx.add_action(CollabPanel::select_prev);
     cx.add_action(CollabPanel::confirm);
+    cx.add_action(CollabPanel::insert_space);
     cx.add_action(CollabPanel::remove);
     cx.add_action(CollabPanel::remove_selected_channel);
     cx.add_action(CollabPanel::show_inline_context_menu);
@@ -2518,6 +2520,14 @@ impl CollabPanel {
         }
     }
 
+    fn insert_space(&mut self, _: &InsertSpace, cx: &mut ViewContext<Self>) {
+        if self.channel_editing_state.is_some() {
+            self.channel_name_editor.update(cx, |editor, cx| {
+                editor.insert(" ", cx);
+            });
+        }
+    }
+
     fn confirm_channel_edit(&mut self, cx: &mut ViewContext<CollabPanel>) -> bool {
         if let Some(editing_state) = &mut self.channel_editing_state {
             match editing_state {
@@ -3053,6 +3063,19 @@ impl View for CollabPanel {
         })
         .on_click(MouseButton::Left, |_, _, cx| cx.focus_self())
         .into_any_named("collab panel")
+    }
+
+    fn update_keymap_context(
+        &self,
+        keymap: &mut gpui::keymap_matcher::KeymapContext,
+        _: &AppContext,
+    ) {
+        Self::reset_to_default_keymap_context(keymap);
+        if self.channel_editing_state.is_some() {
+            keymap.add_identifier("editing");
+        } else {
+            keymap.add_identifier("not_editing");
+        }
     }
 }
 

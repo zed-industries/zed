@@ -1,10 +1,10 @@
+use ai::embedding::OpenAIEmbeddings;
 use anyhow::{anyhow, Result};
 use client::{self, UserStore};
 use gpui::{AsyncAppContext, ModelHandle, Task};
 use language::LanguageRegistry;
 use node_runtime::RealNodeRuntime;
 use project::{Project, RealFs};
-use semantic_index::embedding::OpenAIEmbeddings;
 use semantic_index::semantic_index_settings::SemanticIndexSettings;
 use semantic_index::{SearchResult, SemanticIndex};
 use serde::{Deserialize, Serialize};
@@ -456,7 +456,7 @@ fn main() {
         let languages = Arc::new(languages);
 
         let node_runtime = RealNodeRuntime::new(http.clone());
-        languages::init(languages.clone(), node_runtime.clone());
+        languages::init(languages.clone(), node_runtime.clone(), cx);
         language::init(cx);
 
         project::Project::init(&client, cx);

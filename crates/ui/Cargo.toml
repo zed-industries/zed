@@ -1,0 +1,12 @@
+[package]
+name = "ui"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+gpui2 = { path = "../gpui2" }
+serde.workspace = true
+settings = { path = "../settings" }
+theme = { path = "../theme" }

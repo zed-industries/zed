@@ -996,7 +996,9 @@ impl SearchableItem for Editor {
         };
 
         if let Some(replacement) = query.replacement_for(&text) {
-            self.edit([(identifier.clone(), Arc::from(&*replacement))], cx);
+            self.transact(cx, |this, cx| {
+                this.edit([(identifier.clone(), Arc::from(&*replacement))], cx);
+            });
         }
     }
     fn match_index_for_direction(

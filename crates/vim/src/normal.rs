@@ -4,7 +4,7 @@ mod delete;
 mod paste;
 pub(crate) mod repeat;
 mod scroll;
-mod search;
+pub(crate) mod search;
 pub mod substitute;
 mod yank;
 
@@ -168,7 +168,12 @@ pub fn normal_object(object: Object, cx: &mut WindowContext) {
     })
 }
 
-fn move_cursor(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
+pub(crate) fn move_cursor(
+    vim: &mut Vim,
+    motion: Motion,
+    times: Option<usize>,
+    cx: &mut WindowContext,
+) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_cursors_with(|map, cursor, goal| {

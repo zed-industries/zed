@@ -104,7 +104,7 @@ use sum_tree::TreeMap;
 use text::Rope;
 use theme::{DiagnosticStyle, Theme, ThemeSettings};
 use util::{post_inc, RangeExt, ResultExt, TryFutureExt};
-use workspace::{ItemNavHistory, ViewId, Workspace};
+use workspace::{ItemNavHistory, SplitDirection, ViewId, Workspace};
 
 use crate::git::diff_hunk_to_display;
 
@@ -364,6 +364,7 @@ pub fn init_settings(cx: &mut AppContext) {
 pub fn init(cx: &mut AppContext) {
     init_settings(cx);
     cx.add_action(Editor::new_file);
+    cx.add_action(Editor::new_file_in_direction);
     cx.add_action(Editor::cancel);
     cx.add_action(Editor::newline);
     cx.add_action(Editor::newline_above);
@@ -1141,12 +1142,14 @@ struct CodeActionsMenu {
 impl CodeActionsMenu {
     fn select_first(&mut self, cx: &mut ViewContext<Editor>) {
         self.selected_item = 0;
+        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         cx.notify()
     }
 
     fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
         if self.selected_item > 0 {
             self.selected_item -= 1;
+            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
             cx.notify()
         }
     }
@@ -1154,12 +1157,14 @@ impl CodeActionsMenu {
     fn select_next(&mut self, cx: &mut ViewContext<Editor>) {
         if self.selected_item + 1 < self.actions.len() {
             self.selected_item += 1;
+            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
             cx.notify()
         }
     }
 
     fn select_last(&mut self, cx: &mut ViewContext<Editor>) {
         self.selected_item = self.actions.len() - 1;
+        self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         cx.notify()
     }
 
@@ -1212,7 +1217,9 @@ impl CodeActionsMenu {
                                     workspace.update(cx, |workspace, cx| {
                                         if let Some(task) = Editor::confirm_code_action(
                                             workspace,
-                                            &Default::default(),
+                                            &ConfirmCodeAction {
+                                                item_ix: Some(item_ix),
+                                            },
                                             cx,
                                         ) {
                                             task.detach_and_log_err(cx);
@@ -1631,6 +1638,26 @@ impl Editor {
             .log_err()
         {
             workspace.add_item(
+                Box::new(cx.add_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
+                cx,
+            );
+        }
+    }
+
+    pub fn new_file_in_direction(
+        workspace: &mut Workspace,
+        action: &workspace::NewFileInDirection,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let project = workspace.project().clone();
+        if project.read(cx).is_remote() {
+            cx.propagate_action();
+        } else if let Some(buffer) = project
+            .update(cx, |project, cx| project.create_buffer("", None, cx))
+            .log_err()
+        {
+            workspace.split_item(
+                action.0,
                 Box::new(cx.add_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
                 cx,
             );
@@ -4631,7 +4658,13 @@ impl Editor {
     }
 
     pub fn convert_to_title_case(&mut self, _: &ConvertToTitleCase, cx: &mut ViewContext<Self>) {
-        self.manipulate_text(cx, |text| text.to_case(Case::Title))
+        self.manipulate_text(cx, |text| {
+            // Hack to get around the fact that to_case crate doesn't support '\n' as a word boundary
+            // https://github.com/rutrum/convert-case/issues/16
+            text.split("\n")
+                .map(|line| line.to_case(Case::Title))
+                .join("\n")
+        })
     }
 
     pub fn convert_to_snake_case(&mut self, _: &ConvertToSnakeCase, cx: &mut ViewContext<Self>) {
@@ -4647,7 +4680,13 @@ impl Editor {
         _: &ConvertToUpperCamelCase,
         cx: &mut ViewContext<Self>,
     ) {
-        self.manipulate_text(cx, |text| text.to_case(Case::UpperCamel))
+        self.manipulate_text(cx, |text| {
+            // Hack to get around the fact that to_case crate doesn't support '\n' as a word boundary
+            // https://github.com/rutrum/convert-case/issues/16
+            text.split("\n")
+                .map(|line| line.to_case(Case::UpperCamel))
+                .join("\n")
+        })
     }
 
     pub fn convert_to_lower_camel_case(
@@ -7135,7 +7174,7 @@ impl Editor {
             );
         });
         if split {
-            workspace.split_item(Box::new(editor), cx);
+            workspace.split_item(SplitDirection::Right, Box::new(editor), cx);
         } else {
             workspace.add_item(Box::new(editor), cx);
         }
@@ -8565,6 +8604,29 @@ impl Editor {
         }
 
         self.handle_input(text, cx);
+    }
+
+    pub fn supports_inlay_hints(&self, cx: &AppContext) -> bool {
+        let Some(project) = self.project.as_ref() else {
+            return false;
+        };
+        let project = project.read(cx);
+
+        let mut supports = false;
+        self.buffer().read(cx).for_each_buffer(|buffer| {
+            if !supports {
+                supports = project
+                    .language_servers_for_buffer(buffer.read(cx), cx)
+                    .any(
+                        |(_, server)| match server.capabilities().inlay_hint_provider {
+                            Some(lsp::OneOf::Left(enabled)) => enabled,
+                            Some(lsp::OneOf::Right(_)) => true,
+                            None => false,
+                        },
+                    )
+            }
+        });
+        supports
     }
 }
 

@@ -13,7 +13,7 @@ Welcome to Zed, a lightning-fast, collaborative code editor that makes your drea
   sudo xcodebuild -license
   ```
 
-* Install homebrew, node and rustup-init (rutup, rust, cargo, etc.)
+* Install homebrew, node and rustup-init (rustup, rust, cargo, etc.)
   ```
   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   brew install node rustup-init
@@ -36,7 +36,7 @@ Welcome to Zed, a lightning-fast, collaborative code editor that makes your drea
     brew install foreman
     ```
 
-* Ensure the Zed.dev website is checked out in a sibling directory and install it's dependencies:
+* Ensure the Zed.dev website is checked out in a sibling directory and install its dependencies:
 
     ```
     cd ..

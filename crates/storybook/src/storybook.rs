@@ -1,31 +1,45 @@
 #![allow(dead_code, unused_variables)]
 
-use crate::theme::Theme;
+mod collab_panel;
+mod stories;
+mod story;
+mod story_selector;
+mod workspace;
+
 use ::theme as legacy_theme;
-use element_ext::ElementExt;
-use gpui2::{serde_json, vec2f, view, Element, RectF, ViewContext, WindowBounds};
+use clap::Parser;
+use gpui2::{serde_json, vec2f, view, Element, IntoElement, RectF, ViewContext, WindowBounds};
 use legacy_theme::ThemeSettings;
 use log::LevelFilter;
 use settings::{default_settings, SettingsStore};
 use simplelog::SimpleLogger;
+use stories::components::breadcrumb::BreadcrumbStory;
+use stories::components::facepile::FacepileStory;
+use stories::components::toolbar::ToolbarStory;
+use stories::components::traffic_lights::TrafficLightsStory;
+use stories::elements::avatar::AvatarStory;
+use ui::{ElementExt, Theme};
 
-mod collab_panel;
-mod components;
-mod element_ext;
-mod prelude;
-mod theme;
-mod ui;
-mod workspace;
+use crate::story_selector::{ComponentStory, ElementStory, StorySelector};
 
 gpui2::actions! {
     storybook,
     [ToggleInspector]
 }
 
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[arg(value_enum)]
+    story: Option<StorySelector>,
+}
+
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
-    gpui2::App::new(Assets).unwrap().run(|cx| {
+    let args = Args::parse();
+
+    gpui2::App::new(Assets).unwrap().run(move |cx| {
         let mut store = SettingsStore::default();
         store
             .set_default_settings(default_settings().as_ref(), cx)
@@ -40,19 +54,36 @@ fn main() {
                 center: true,
                 ..Default::default()
             },
-            |cx| {
-                view(|cx| {
-                    // cx.enable_inspector();
-                    storybook(&mut ViewContext::new(cx))
-                })
+            |cx| match args.story {
+                Some(StorySelector::Element(ElementStory::Avatar)) => {
+                    view(|cx| render_story(&mut ViewContext::new(cx), AvatarStory::default()))
+                }
+                Some(StorySelector::Component(ComponentStory::Breadcrumb)) => {
+                    view(|cx| render_story(&mut ViewContext::new(cx), BreadcrumbStory::default()))
+                }
+                Some(StorySelector::Component(ComponentStory::Facepile)) => {
+                    view(|cx| render_story(&mut ViewContext::new(cx), FacepileStory::default()))
+                }
+                Some(StorySelector::Component(ComponentStory::Toolbar)) => {
+                    view(|cx| render_story(&mut ViewContext::new(cx), ToolbarStory::default()))
+                }
+                Some(StorySelector::Component(ComponentStory::TrafficLights)) => view(|cx| {
+                    render_story(&mut ViewContext::new(cx), TrafficLightsStory::default())
+                }),
+                None => {
+                    view(|cx| render_story(&mut ViewContext::new(cx), WorkspaceElement::default()))
+                }
             },
         );
         cx.platform().activate(true);
     });
 }
 
-fn storybook<V: 'static>(cx: &mut ViewContext<V>) -> impl Element<V> {
-    workspace().themed(current_theme(cx))
+fn render_story<V: 'static, S: IntoElement<V>>(
+    cx: &mut ViewContext<V>,
+    story: S,
+) -> impl Element<V> {
+    story.into_element().themed(current_theme(cx))
 }
 
 // Nathan: During the transition to gpui2, we will include the base theme on the legacy Theme struct.
@@ -75,7 +106,7 @@ fn current_theme<V: 'static>(cx: &mut ViewContext<V>) -> Theme {
 use anyhow::{anyhow, Result};
 use gpui2::AssetSource;
 use rust_embed::RustEmbed;
-use workspace::workspace;
+use workspace::WorkspaceElement;
 
 #[derive(RustEmbed)]
 #[folder = "../../assets"]

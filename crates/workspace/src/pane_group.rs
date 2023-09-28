@@ -84,6 +84,13 @@ impl PaneGroup {
         }
     }
 
+    pub fn swap(&mut self, from: &ViewHandle<Pane>, to: &ViewHandle<Pane>) {
+        match &mut self.root {
+            Member::Pane(_) => {}
+            Member::Axis(axis) => axis.swap(from, to),
+        };
+    }
+
     pub(crate) fn render(
         &self,
         project: &ModelHandle<Project>,
@@ -418,6 +425,21 @@ impl PaneAxis {
             }
         } else {
             Err(anyhow!("Pane not found"))
+        }
+    }
+
+    fn swap(&mut self, from: &ViewHandle<Pane>, to: &ViewHandle<Pane>) {
+        for member in self.members.iter_mut() {
+            match member {
+                Member::Axis(axis) => axis.swap(from, to),
+                Member::Pane(pane) => {
+                    if pane == from {
+                        *member = Member::Pane(to.clone());
+                    } else if pane == to {
+                        *member = Member::Pane(from.clone())
+                    }
+                }
+            }
         }
     }
 

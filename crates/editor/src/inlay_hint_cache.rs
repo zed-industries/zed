@@ -941,7 +941,7 @@ async fn fetch_and_update_hints(
         })
         .await;
     if let Some(new_update) = new_update {
-        log::info!(
+        log::debug!(
             "Applying update for range {fetch_range_to_log:?}: remove from editor: {}, remove from cache: {}, add to cache: {}",
             new_update.remove_from_visible.len(),
             new_update.remove_from_cache.len(),

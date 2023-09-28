@@ -1,9 +1,10 @@
+use editor::scroll::VERTICAL_SCROLL_MARGIN;
 use indoc::indoc;
 use settings::SettingsStore;
 use std::ops::{Deref, DerefMut, Range};
 
 use collections::{HashMap, HashSet};
-use gpui::ContextHandle;
+use gpui::{geometry::vector::vec2f, ContextHandle};
 use language::{
     language_settings::{AllLanguageSettings, SoftWrap},
     OffsetRangeExt,
@@ -106,26 +107,25 @@ impl<'a> NeovimBackedTestContext<'a> {
     pub async fn simulate_shared_keystrokes<const COUNT: usize>(
         &mut self,
         keystroke_texts: [&str; COUNT],
-    ) -> ContextHandle {
+    ) {
         for keystroke_text in keystroke_texts.into_iter() {
             self.recent_keystrokes.push(keystroke_text.to_string());
             self.neovim.send_keystroke(keystroke_text).await;
         }
-        self.simulate_keystrokes(keystroke_texts)
+        self.simulate_keystrokes(keystroke_texts);
     }
 
-    pub async fn set_shared_state(&mut self, marked_text: &str) -> ContextHandle {
+    pub async fn set_shared_state(&mut self, marked_text: &str) {
         let mode = if marked_text.contains("»") {
             Mode::Visual
         } else {
             Mode::Normal
         };
-        let context_handle = self.set_state(marked_text, mode);
+        self.set_state(marked_text, mode);
         self.last_set_state = Some(marked_text.to_string());
         self.recent_keystrokes = Vec::new();
         self.neovim.set_state(marked_text).await;
         self.is_dirty = true;
-        context_handle
     }
 
     pub async fn set_shared_wrap(&mut self, columns: u32) {
@@ -133,7 +133,9 @@ impl<'a> NeovimBackedTestContext<'a> {
             panic!("nvim doesn't support columns < 12")
         }
         self.neovim.set_option("wrap").await;
-        self.neovim.set_option("columns=12").await;
+        self.neovim
+            .set_option(&format!("columns={}", columns))
+            .await;
 
         self.update(|cx| {
             cx.update_global(|settings: &mut SettingsStore, cx| {
@@ -143,6 +145,20 @@ impl<'a> NeovimBackedTestContext<'a> {
                 });
             })
         })
+    }
+
+    pub async fn set_scroll_height(&mut self, rows: u32) {
+        // match Zed's scrolling behavior
+        self.neovim
+            .set_option(&format!("scrolloff={}", VERTICAL_SCROLL_MARGIN))
+            .await;
+        // +2 to account for the vim command UI at the bottom.
+        self.neovim.set_option(&format!("lines={}", rows + 2)).await;
+        let window = self.window;
+        let line_height =
+            self.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
+
+        window.simulate_resize(vec2f(1000., (rows as f32) * line_height), &mut self.cx);
     }
 
     pub async fn set_neovim_option(&mut self, option: &str) {
@@ -288,18 +304,18 @@ impl<'a> NeovimBackedTestContext<'a> {
         &mut self,
         keystrokes: [&str; COUNT],
         initial_state: &str,
-    ) -> Option<(ContextHandle, ContextHandle)> {
+    ) {
         if let Some(possible_exempted_keystrokes) = self.exemptions.get(initial_state) {
             match possible_exempted_keystrokes {
                 Some(exempted_keystrokes) => {
                     if exempted_keystrokes.contains(&format!("{keystrokes:?}")) {
                         // This keystroke was exempted for this insertion text
-                        return None;
+                        return;
                     }
                 }
                 None => {
                     // All keystrokes for this insertion text are exempted
-                    return None;
+                    return;
                 }
             }
         }
@@ -307,7 +323,6 @@ impl<'a> NeovimBackedTestContext<'a> {
         let _state_context = self.set_shared_state(initial_state).await;
         let _keystroke_context = self.simulate_shared_keystrokes(keystrokes).await;
         self.assert_state_matches().await;
-        Some((_state_context, _keystroke_context))
     }
 
     pub async fn assert_binding_matches_all<const COUNT: usize>(

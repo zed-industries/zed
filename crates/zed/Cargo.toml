@@ -3,7 +3,7 @@ authors = ["Nathan Sobo <nathansobo@gmail.com>"]
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.106.0"
+version = "0.107.0"
 publish = false
 
 [lib]
@@ -50,7 +50,7 @@ language_selector = { path = "../language_selector" }
 lsp = { path = "../lsp" }
 language_tools = { path = "../language_tools" }
 node_runtime = { path = "../node_runtime" }
-ai = { path = "../ai" }
+assistant = { path = "../assistant" }
 outline = { path = "../outline" }
 plugin_runtime = { path = "../plugin_runtime",optional = true }
 project = { path = "../project" }
@@ -62,6 +62,7 @@ rpc = { path = "../rpc" }
 settings = { path = "../settings" }
 feature_flags = { path = "../feature_flags" }
 sum_tree = { path = "../sum_tree" }
+shellexpand = "2.1.0"
 text = { path = "../text" }
 terminal_view = { path = "../terminal_view" }
 theme = { path = "../theme" }
@@ -99,6 +100,7 @@ rust-embed.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
+schemars.workspace = true
 simplelog = "0.9"
 smallvec.workspace = true
 smol.workspace = true

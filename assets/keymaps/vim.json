@@ -18,6 +18,7 @@
           }
         }
       ],
+      ":": "command_palette::Toggle",
       "h": "vim::Left",
       "left": "vim::Left",
       "backspace": "vim::Backspace",
@@ -125,6 +126,21 @@
       "g shift-t": "pane::ActivatePrevItem",
       "g d": "editor::GoToDefinition",
       "g shift-d": "editor::GoToTypeDefinition",
+      "g n": "vim::SelectNext",
+      "g shift-n": "vim::SelectPrevious",
+      "g >": [
+        "editor::SelectNext",
+        {
+          "replace_newest": true
+        }
+      ],
+      "g <": [
+        "editor::SelectPrevious",
+        {
+          "replace_newest": true
+        }
+      ],
+      "g a": "editor::SelectAllMatches",
       "g s": "outline::Toggle",
       "g shift-s": "project_symbols::Toggle",
       "g .": "editor::ToggleCodeActions", // zed specific
@@ -205,13 +221,13 @@
       "shift-z shift-q": [
         "pane::CloseActiveItem",
         {
-          "saveBehavior": "dontSave"
+          "saveIntent": "skip"
         }
       ],
       "shift-z shift-z": [
         "pane::CloseActiveItem",
         {
-          "saveBehavior": "promptOnConflict"
+          "saveIntent": "saveAll"
         }
       ],
       // Count support
@@ -300,6 +316,38 @@
         "workspace::ActivatePaneInDirection",
         "Down"
       ],
+      "ctrl-w shift-left": [
+        "workspace::SwapPaneInDirection",
+        "Left"
+      ],
+      "ctrl-w shift-right": [
+        "workspace::SwapPaneInDirection",
+        "Right"
+      ],
+      "ctrl-w shift-up": [
+        "workspace::SwapPaneInDirection",
+        "Up"
+      ],
+      "ctrl-w shift-down": [
+        "workspace::SwapPaneInDirection",
+        "Down"
+      ],
+      "ctrl-w shift-h": [
+        "workspace::SwapPaneInDirection",
+        "Left"
+      ],
+      "ctrl-w shift-l": [
+        "workspace::SwapPaneInDirection",
+        "Right"
+      ],
+      "ctrl-w shift-k": [
+        "workspace::SwapPaneInDirection",
+        "Up"
+      ],
+      "ctrl-w shift-j": [
+        "workspace::SwapPaneInDirection",
+        "Down"
+      ],
       "ctrl-w g t": "pane::ActivateNextItem",
       "ctrl-w ctrl-g t": "pane::ActivateNextItem",
       "ctrl-w g shift-t": "pane::ActivatePrevItem",
@@ -318,7 +366,17 @@
       "ctrl-w c": "pane::CloseAllItems",
       "ctrl-w ctrl-c": "pane::CloseAllItems",
       "ctrl-w q": "pane::CloseAllItems",
-      "ctrl-w ctrl-q": "pane::CloseAllItems"
+      "ctrl-w ctrl-q": "pane::CloseAllItems",
+      "ctrl-w o": "workspace::CloseInactiveTabsAndPanes",
+      "ctrl-w ctrl-o": "workspace::CloseInactiveTabsAndPanes",
+      "ctrl-w n": [
+        "workspace::NewFileInDirection",
+        "Up"
+      ],
+      "ctrl-w ctrl-n": [
+        "workspace::NewFileInDirection",
+        "Up"
+      ]
     }
   },
   {

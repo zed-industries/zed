@@ -1,10 +1,10 @@
 use crate::{
-    embedding::{DummyEmbeddings, Embedding, EmbeddingProvider},
     embedding_queue::EmbeddingQueue,
     parsing::{subtract_ranges, CodeContextRetriever, Span, SpanDigest},
     semantic_index_settings::SemanticIndexSettings,
     FileToEmbed, JobHandle, SearchResult, SemanticIndex, EMBEDDING_QUEUE_FLUSH_TIMEOUT,
 };
+use ai::embedding::{DummyEmbeddings, Embedding, EmbeddingProvider};
 use anyhow::Result;
 use async_trait::async_trait;
 use gpui::{executor::Deterministic, Task, TestAppContext};
@@ -1267,6 +1267,9 @@ impl FakeEmbeddingProvider {
 
 #[async_trait]
 impl EmbeddingProvider for FakeEmbeddingProvider {
+    fn is_authenticated(&self) -> bool {
+        true
+    }
     fn truncate(&self, span: &str) -> (String, usize) {
         (span.to_string(), 1)
     }

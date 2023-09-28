@@ -60,7 +60,7 @@ pub fn init(cx: &mut AppContext) {
     cx.set_global(ActiveSettings::default());
     cx.add_action(ProjectSearchView::deploy);
     cx.add_action(ProjectSearchView::move_focus_to_results);
-    cx.add_action(ProjectSearchBar::search);
+    cx.add_action(ProjectSearchBar::confirm);
     cx.add_action(ProjectSearchBar::search_in_new);
     cx.add_action(ProjectSearchBar::select_next_match);
     cx.add_action(ProjectSearchBar::select_prev_match);
@@ -330,7 +330,7 @@ impl View for ProjectSearchView {
             // If Text -> Major: "Text search all files and folders", Minor: {...}
 
             let current_mode = self.current_mode;
-            let major_text = if model.pending_search.is_some() {
+            let mut major_text = if model.pending_search.is_some() {
                 Cow::Borrowed("Searching...")
             } else if model.no_results.is_some_and(|v| v) {
                 Cow::Borrowed("No Results")
@@ -344,9 +344,18 @@ impl View for ProjectSearchView {
                 }
             };
 
+            let mut show_minor_text = true;
             let semantic_status = self.semantic_state.as_ref().and_then(|semantic| {
                 let status = semantic.index_status;
                 match status {
+                    SemanticIndexStatus::NotAuthenticated => {
+                        major_text = Cow::Borrowed("Not Authenticated");
+                        show_minor_text = false;
+                        Some(
+                            "API Key Missing: Please set 'OPENAI_API_KEY' in Environment Variables"
+                                .to_string(),
+                        )
+                    }
                     SemanticIndexStatus::Indexed => Some("Indexing complete".to_string()),
                     SemanticIndexStatus::Indexing {
                         remaining_files,
@@ -388,10 +397,13 @@ impl View for ProjectSearchView {
                         let mut minor_text = Vec::new();
                         minor_text.push("".into());
                         minor_text.extend(semantic_status);
-                        minor_text.push("Simply explain the code you are looking to find.".into());
-                        minor_text.push(
-                            "ex. 'prompt user for permissions to index their project'".into(),
-                        );
+                        if show_minor_text {
+                            minor_text
+                                .push("Simply explain the code you are looking to find.".into());
+                            minor_text.push(
+                                "ex. 'prompt user for permissions to index their project'".into(),
+                            );
+                        }
                         minor_text
                     }
                     _ => vec![
@@ -1359,9 +1371,18 @@ impl ProjectSearchBar {
             })
         }
     }
-    fn search(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
+        let mut should_propagate = true;
         if let Some(search_view) = self.active_project_search.as_ref() {
-            search_view.update(cx, |search_view, cx| search_view.search(cx));
+            search_view.update(cx, |search_view, cx| {
+                if !search_view.replacement_editor.is_focused(cx) {
+                    should_propagate = false;
+                    search_view.search(cx);
+                }
+            });
+        }
+        if should_propagate {
+            cx.propagate_action();
         }
     }
 
@@ -1666,6 +1687,28 @@ impl View for ProjectSearchBar {
         "ProjectSearchBar"
     }
 
+    fn update_keymap_context(
+        &self,
+        keymap: &mut gpui::keymap_matcher::KeymapContext,
+        cx: &AppContext,
+    ) {
+        Self::reset_to_default_keymap_context(keymap);
+        let in_replace = self
+            .active_project_search
+            .as_ref()
+            .map(|search| {
+                search
+                    .read(cx)
+                    .replacement_editor
+                    .read_with(cx, |_, cx| cx.is_self_focused())
+            })
+            .flatten()
+            .unwrap_or(false);
+        if in_replace {
+            keymap.add_identifier("in_replace");
+        }
+    }
+
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         if let Some(_search) = self.active_project_search.as_ref() {
             let search = _search.read(cx);
@@ -1915,9 +1958,9 @@ impl View for ProjectSearchBar {
 
             Flex::row()
                 .with_child(query_column)
+                .with_child(mode_column)
                 .with_child(switches_column)
                 .with_children(replacement)
-                .with_child(mode_column)
                 .with_child(nav_column)
                 .contained()
                 .with_style(theme.search.container)

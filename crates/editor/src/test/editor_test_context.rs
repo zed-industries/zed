@@ -3,8 +3,8 @@ use crate::{
 };
 use futures::Future;
 use gpui::{
-    keymap_matcher::Keystroke, AnyWindowHandle, AppContext, ContextHandle, ModelContext,
-    ViewContext, ViewHandle,
+    executor::Foreground, keymap_matcher::Keystroke, AnyWindowHandle, AppContext, ContextHandle,
+    ModelContext, ViewContext, ViewHandle,
 };
 use indoc::indoc;
 use language::{Buffer, BufferSnapshot};
@@ -114,6 +114,7 @@ impl<'a> EditorTestContext<'a> {
         let keystroke = Keystroke::parse(keystroke_text).unwrap();
 
         self.cx.dispatch_keystroke(self.window, keystroke, false);
+
         keystroke_under_test_handle
     }
 
@@ -126,6 +127,16 @@ impl<'a> EditorTestContext<'a> {
         for keystroke_text in keystroke_texts.into_iter() {
             self.simulate_keystroke(keystroke_text);
         }
+        // it is common for keyboard shortcuts to kick off async actions, so this ensures that they are complete
+        // before returning.
+        // NOTE: we don't do this in simulate_keystroke() because a possible cause of bugs is that typing too
+        // quickly races with async actions.
+        if let Foreground::Deterministic { cx_id: _, executor } = self.cx.foreground().as_ref() {
+            executor.run_until_parked();
+        } else {
+            unreachable!();
+        }
+
         keystrokes_under_test_handle
     }
 

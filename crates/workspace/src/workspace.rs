@@ -126,9 +126,8 @@ actions!(
         CloseInactiveTabsAndPanes,
         AddFolderToProject,
         Unfollow,
-        Save,
         SaveAs,
-        SaveAll,
+        ReloadActiveItem,
         ActivatePreviousPane,
         ActivateNextPane,
         FollowNextCollaborator,
@@ -157,6 +156,30 @@ pub struct ActivatePane(pub usize);
 
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct ActivatePaneInDirection(pub SplitDirection);
+
+#[derive(Clone, Deserialize, PartialEq)]
+pub struct SwapPaneInDirection(pub SplitDirection);
+
+#[derive(Clone, Deserialize, PartialEq)]
+pub struct NewFileInDirection(pub SplitDirection);
+
+#[derive(Clone, PartialEq, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveAll {
+    pub save_intent: Option<SaveIntent>,
+}
+
+#[derive(Clone, PartialEq, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Save {
+    pub save_intent: Option<SaveIntent>,
+}
+
+#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CloseAllItemsAndPanes {
+    pub save_intent: Option<SaveIntent>,
+}
 
 #[derive(Deserialize)]
 pub struct Toast {
@@ -210,7 +233,17 @@ pub struct OpenTerminal {
 
 impl_actions!(
     workspace,
-    [ActivatePane, ActivatePaneInDirection, Toast, OpenTerminal]
+    [
+        ActivatePane,
+        ActivatePaneInDirection,
+        SwapPaneInDirection,
+        NewFileInDirection,
+        Toast,
+        OpenTerminal,
+        SaveAll,
+        Save,
+        CloseAllItemsAndPanes,
+    ]
 );
 
 pub type WorkspaceId = i64;
@@ -251,6 +284,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     cx.add_async_action(Workspace::follow_next_collaborator);
     cx.add_async_action(Workspace::close);
     cx.add_async_action(Workspace::close_inactive_items_and_panes);
+    cx.add_async_action(Workspace::close_all_items_and_panes);
     cx.add_global_action(Workspace::close_global);
     cx.add_global_action(restart);
     cx.add_async_action(Workspace::save_all);
@@ -262,13 +296,17 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
         },
     );
     cx.add_action(
-        |workspace: &mut Workspace, _: &Save, cx: &mut ViewContext<Workspace>| {
-            workspace.save_active_item(false, cx).detach_and_log_err(cx);
+        |workspace: &mut Workspace, action: &Save, cx: &mut ViewContext<Workspace>| {
+            workspace
+                .save_active_item(action.save_intent.unwrap_or(SaveIntent::Save), cx)
+                .detach_and_log_err(cx);
         },
     );
     cx.add_action(
         |workspace: &mut Workspace, _: &SaveAs, cx: &mut ViewContext<Workspace>| {
-            workspace.save_active_item(true, cx).detach_and_log_err(cx);
+            workspace
+                .save_active_item(SaveIntent::SaveAs, cx)
+                .detach_and_log_err(cx);
         },
     );
     cx.add_action(|workspace: &mut Workspace, _: &ActivatePreviousPane, cx| {
@@ -281,6 +319,12 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     cx.add_action(
         |workspace: &mut Workspace, action: &ActivatePaneInDirection, cx| {
             workspace.activate_pane_in_direction(action.0, cx)
+        },
+    );
+
+    cx.add_action(
+        |workspace: &mut Workspace, action: &SwapPaneInDirection, cx| {
+            workspace.swap_pane_in_direction(action.0, cx)
         },
     );
 
@@ -1303,14 +1347,19 @@ impl Workspace {
 
             Ok(this
                 .update(&mut cx, |this, cx| {
-                    this.save_all_internal(SaveBehavior::PromptOnWrite, cx)
+                    this.save_all_internal(SaveIntent::Close, cx)
                 })?
                 .await?)
         })
     }
 
-    fn save_all(&mut self, _: &SaveAll, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
-        let save_all = self.save_all_internal(SaveBehavior::PromptOnConflict, cx);
+    fn save_all(
+        &mut self,
+        action: &SaveAll,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let save_all =
+            self.save_all_internal(action.save_intent.unwrap_or(SaveIntent::SaveAll), cx);
         Some(cx.foreground().spawn(async move {
             save_all.await?;
             Ok(())
@@ -1319,13 +1368,12 @@ impl Workspace {
 
     fn save_all_internal(
         &mut self,
-        save_behaviour: SaveBehavior,
+        mut save_intent: SaveIntent,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
         if self.project.read(cx).is_read_only() {
             return Task::ready(Ok(true));
         }
-
         let dirty_items = self
             .panes
             .iter()
@@ -1341,7 +1389,27 @@ impl Workspace {
             .collect::<Vec<_>>();
 
         let project = self.project.clone();
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(|workspace, mut cx| async move {
+            // Override save mode and display "Save all files" prompt
+            if save_intent == SaveIntent::Close && dirty_items.len() > 1 {
+                let mut answer = workspace.update(&mut cx, |_, cx| {
+                    let prompt = Pane::file_names_for_prompt(
+                        &mut dirty_items.iter().map(|(_, handle)| handle),
+                        dirty_items.len(),
+                        cx,
+                    );
+                    cx.prompt(
+                        PromptLevel::Warning,
+                        &prompt,
+                        &["Save all", "Discard all", "Cancel"],
+                    )
+                })?;
+                match answer.next().await {
+                    Some(0) => save_intent = SaveIntent::SaveAll,
+                    Some(1) => save_intent = SaveIntent::Skip,
+                    _ => {}
+                }
+            }
             for (pane, item) in dirty_items {
                 let (singleton, project_entry_ids) =
                     cx.read(|cx| (item.is_singleton(cx), item.project_entry_ids(cx)));
@@ -1354,7 +1422,7 @@ impl Workspace {
                             &pane,
                             ix,
                             &*item,
-                            save_behaviour,
+                            save_intent,
                             &mut cx,
                         )
                         .await?
@@ -1626,51 +1694,24 @@ impl Workspace {
 
     pub fn save_active_item(
         &mut self,
-        force_name_change: bool,
+        save_intent: SaveIntent,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let project = self.project.clone();
-        if let Some(item) = self.active_item(cx) {
-            if !force_name_change && item.can_save(cx) {
-                if item.has_conflict(cx) {
-                    const CONFLICT_MESSAGE: &str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
+        let pane = self.active_pane();
+        let item_ix = pane.read(cx).active_item_index();
+        let item = pane.read(cx).active_item();
+        let pane = pane.downgrade();
 
-                    let mut answer = cx.prompt(
-                        PromptLevel::Warning,
-                        CONFLICT_MESSAGE,
-                        &["Overwrite", "Cancel"],
-                    );
-                    cx.spawn(|this, mut cx| async move {
-                        let answer = answer.recv().await;
-                        if answer == Some(0) {
-                            this.update(&mut cx, |this, cx| item.save(this.project.clone(), cx))?
-                                .await?;
-                        }
-                        Ok(())
-                    })
-                } else {
-                    item.save(self.project.clone(), cx)
-                }
-            } else if item.is_singleton(cx) {
-                let worktree = self.worktrees(cx).next();
-                let start_abs_path = worktree
-                    .and_then(|w| w.read(cx).as_local())
-                    .map_or(Path::new(""), |w| w.abs_path())
-                    .to_path_buf();
-                let mut abs_path = cx.prompt_for_new_path(&start_abs_path);
-                cx.spawn(|this, mut cx| async move {
-                    if let Some(abs_path) = abs_path.recv().await.flatten() {
-                        this.update(&mut cx, |_, cx| item.save_as(project, abs_path, cx))?
-                            .await?;
-                    }
-                    Ok(())
-                })
+        cx.spawn(|_, mut cx| async move {
+            if let Some(item) = item {
+                Pane::save_item(project, &pane, item_ix, item.as_ref(), save_intent, &mut cx)
+                    .await
+                    .map(|_| ())
             } else {
-                Task::ready(Ok(()))
+                Ok(())
             }
-        } else {
-            Task::ready(Ok(()))
-        }
+        })
     }
 
     pub fn close_inactive_items_and_panes(
@@ -1678,23 +1719,47 @@ impl Workspace {
         _: &CloseInactiveTabsAndPanes,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
+        self.close_all_internal(true, SaveIntent::Close, cx)
+    }
+
+    pub fn close_all_items_and_panes(
+        &mut self,
+        action: &CloseAllItemsAndPanes,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        self.close_all_internal(false, action.save_intent.unwrap_or(SaveIntent::Close), cx)
+    }
+
+    fn close_all_internal(
+        &mut self,
+        retain_active_pane: bool,
+        save_intent: SaveIntent,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
         let current_pane = self.active_pane();
 
         let mut tasks = Vec::new();
 
-        if let Some(current_pane_close) = current_pane.update(cx, |pane, cx| {
-            pane.close_inactive_items(&CloseInactiveItems, cx)
-        }) {
-            tasks.push(current_pane_close);
-        };
+        if retain_active_pane {
+            if let Some(current_pane_close) = current_pane.update(cx, |pane, cx| {
+                pane.close_inactive_items(&CloseInactiveItems, cx)
+            }) {
+                tasks.push(current_pane_close);
+            };
+        }
 
         for pane in self.panes() {
-            if pane.id() == current_pane.id() {
+            if retain_active_pane && pane.id() == current_pane.id() {
                 continue;
             }
 
             if let Some(close_pane_items) = pane.update(cx, |pane: &mut Pane, cx| {
-                pane.close_all_items(&CloseAllItems, cx)
+                pane.close_all_items(
+                    &CloseAllItems {
+                        save_intent: Some(save_intent),
+                    },
+                    cx,
+                )
             }) {
                 tasks.push(close_pane_items)
             }
@@ -1925,8 +1990,13 @@ impl Workspace {
             .update(cx, |pane, cx| pane.add_item(item, true, true, None, cx));
     }
 
-    pub fn split_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut ViewContext<Self>) {
-        let new_pane = self.split_pane(self.active_pane.clone(), SplitDirection::Right, cx);
+    pub fn split_item(
+        &mut self,
+        split_direction: SplitDirection,
+        item: Box<dyn ItemHandle>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let new_pane = self.split_pane(self.active_pane.clone(), split_direction, cx);
         new_pane.update(cx, move |new_pane, cx| {
             new_pane.add_item(item, true, true, None, cx)
         })
@@ -2104,7 +2174,7 @@ impl Workspace {
         }
 
         let item = cx.add_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
-        self.split_item(Box::new(item.clone()), cx);
+        self.split_item(SplitDirection::Right, Box::new(item.clone()), cx);
         item
     }
 
@@ -2162,11 +2232,32 @@ impl Workspace {
         direction: SplitDirection,
         cx: &mut ViewContext<Self>,
     ) {
-        let bounding_box = match self.center.bounding_box_for_pane(&self.active_pane) {
-            Some(coordinates) => coordinates,
-            None => {
-                return;
-            }
+        if let Some(pane) = self.find_pane_in_direction(direction, cx) {
+            cx.focus(pane);
+        }
+    }
+
+    pub fn swap_pane_in_direction(
+        &mut self,
+        direction: SplitDirection,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(to) = self
+            .find_pane_in_direction(direction, cx)
+            .map(|pane| pane.clone())
+        {
+            self.center.swap(&self.active_pane.clone(), &to);
+            cx.notify();
+        }
+    }
+
+    fn find_pane_in_direction(
+        &mut self,
+        direction: SplitDirection,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<&ViewHandle<Pane>> {
+        let Some(bounding_box) = self.center.bounding_box_for_pane(&self.active_pane) else {
+            return None;
         };
         let cursor = self.active_pane.read(cx).pixel_position_of_cursor(cx);
         let center = match cursor {
@@ -2182,10 +2273,7 @@ impl Workspace {
             SplitDirection::Up => vec2f(center.x(), bounding_box.origin_y() - distance_to_next),
             SplitDirection::Down => vec2f(center.x(), bounding_box.max_y() + distance_to_next),
         };
-
-        if let Some(pane) = self.center.pane_at_pixel_position(target) {
-            cx.focus(pane);
-        }
+        self.center.pane_at_pixel_position(target)
     }
 
     fn handle_pane_focused(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
@@ -4272,7 +4360,9 @@ mod tests {
         });
         let task = workspace.update(cx, |w, cx| w.prepare_to_close(false, cx));
         cx.foreground().run_until_parked();
-        window.simulate_prompt_answer(2, cx); // cancel
+        window.simulate_prompt_answer(2, cx); // cancel save all
+        cx.foreground().run_until_parked();
+        window.simulate_prompt_answer(2, cx); // cancel save all
         cx.foreground().run_until_parked();
         assert!(!window.has_pending_prompt(cx));
         assert!(!task.await.unwrap());
@@ -4324,19 +4414,21 @@ mod tests {
             let item1_id = item1.id();
             let item3_id = item3.id();
             let item4_id = item4.id();
-            pane.close_items(cx, SaveBehavior::PromptOnWrite, move |id| {
+            pane.close_items(cx, SaveIntent::Close, move |id| {
                 [item1_id, item3_id, item4_id].contains(&id)
             })
         });
         cx.foreground().run_until_parked();
 
+        assert!(window.has_pending_prompt(cx));
+        // Ignore "Save all" prompt
+        window.simulate_prompt_answer(2, cx);
+        cx.foreground().run_until_parked();
         // There's a prompt to save item 1.
         pane.read_with(cx, |pane, _| {
             assert_eq!(pane.items_len(), 4);
             assert_eq!(pane.active_item().unwrap().id(), item1.id());
         });
-        assert!(window.has_pending_prompt(cx));
-
         // Confirm saving item 1.
         window.simulate_prompt_answer(0, cx);
         cx.foreground().run_until_parked();
@@ -4462,8 +4554,12 @@ mod tests {
         // prompts, the task should complete.
 
         let close = left_pane.update(cx, |pane, cx| {
-            pane.close_items(cx, SaveBehavior::PromptOnWrite, move |_| true)
+            pane.close_items(cx, SaveIntent::Close, move |_| true)
         });
+        cx.foreground().run_until_parked();
+        // Discard "Save all" prompt
+        window.simulate_prompt_answer(2, cx);
+
         cx.foreground().run_until_parked();
         left_pane.read_with(cx, |pane, cx| {
             assert_eq!(
@@ -4580,7 +4676,7 @@ mod tests {
         });
 
         pane.update(cx, |pane, cx| {
-            pane.close_items(cx, SaveBehavior::PromptOnWrite, move |id| id == item_id)
+            pane.close_items(cx, SaveIntent::Close, move |id| id == item_id)
         })
         .await
         .unwrap();
@@ -4603,7 +4699,7 @@ mod tests {
 
         // Ensure autosave is prevented for deleted files also when closing the buffer.
         let _close_items = pane.update(cx, |pane, cx| {
-            pane.close_items(cx, SaveBehavior::PromptOnWrite, move |id| id == item_id)
+            pane.close_items(cx, SaveIntent::Close, move |id| id == item_id)
         });
         deterministic.run_until_parked();
         assert!(window.has_pending_prompt(cx));

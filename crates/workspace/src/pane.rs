@@ -42,18 +42,25 @@ use std::{
     },
 };
 use theme::{Theme, ThemeSettings};
+use util::truncate_and_remove_front;
 
 #[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
-pub enum SaveBehavior {
-    /// ask before overwriting conflicting files (used by default with %s)
-    PromptOnConflict,
-    /// ask before writing any file that wouldn't be auto-saved (used by default with %w)
-    PromptOnWrite,
-    /// never prompt, write on conflict (used with vim's :w!)
-    SilentlyOverwrite,
-    /// skip all save-related behaviour (used with vim's :cq)
-    DontSave,
+pub enum SaveIntent {
+    /// write all files (even if unchanged)
+    /// prompt before overwriting on-disk changes
+    Save,
+    /// write any files that have local changes
+    /// prompt before overwriting on-disk changes
+    SaveAll,
+    /// always prompt for a new path
+    SaveAs,
+    /// prompt "you have unsaved changes" before writing
+    Close,
+    /// write all dirty files, don't prompt on conflict
+    Overwrite,
+    /// skip all save-related behavior
+    Skip,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -78,8 +85,15 @@ pub struct CloseItemsToTheRightById {
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct CloseActiveItem {
-    pub save_behavior: Option<SaveBehavior>,
+    pub save_intent: Option<SaveIntent>,
+}
+
+#[derive(Clone, PartialEq, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloseAllItems {
+    pub save_intent: Option<SaveIntent>,
 }
 
 actions!(
@@ -92,7 +106,6 @@ actions!(
         CloseCleanItems,
         CloseItemsToTheLeft,
         CloseItemsToTheRight,
-        CloseAllItems,
         GoBack,
         GoForward,
         ReopenClosedItem,
@@ -103,7 +116,7 @@ actions!(
     ]
 );
 
-impl_actions!(pane, [ActivateItem, CloseActiveItem]);
+impl_actions!(pane, [ActivateItem, CloseActiveItem, CloseAllItems]);
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
@@ -722,7 +735,7 @@ impl Pane {
         let active_item_id = self.items[self.active_item_index].id();
         Some(self.close_item_by_id(
             active_item_id,
-            action.save_behavior.unwrap_or(SaveBehavior::PromptOnWrite),
+            action.save_intent.unwrap_or(SaveIntent::Close),
             cx,
         ))
     }
@@ -730,12 +743,10 @@ impl Pane {
     pub fn close_item_by_id(
         &mut self,
         item_id_to_close: usize,
-        save_behavior: SaveBehavior,
+        save_intent: SaveIntent,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        self.close_items(cx, save_behavior, move |view_id| {
-            view_id == item_id_to_close
-        })
+        self.close_items(cx, save_intent, move |view_id| view_id == item_id_to_close)
     }
 
     pub fn close_inactive_items(
@@ -748,11 +759,9 @@ impl Pane {
         }
 
         let active_item_id = self.items[self.active_item_index].id();
-        Some(
-            self.close_items(cx, SaveBehavior::PromptOnWrite, move |item_id| {
-                item_id != active_item_id
-            }),
-        )
+        Some(self.close_items(cx, SaveIntent::Close, move |item_id| {
+            item_id != active_item_id
+        }))
     }
 
     pub fn close_clean_items(
@@ -765,11 +774,9 @@ impl Pane {
             .filter(|item| !item.is_dirty(cx))
             .map(|item| item.id())
             .collect();
-        Some(
-            self.close_items(cx, SaveBehavior::PromptOnWrite, move |item_id| {
-                item_ids.contains(&item_id)
-            }),
-        )
+        Some(self.close_items(cx, SaveIntent::Close, move |item_id| {
+            item_ids.contains(&item_id)
+        }))
     }
 
     pub fn close_items_to_the_left(
@@ -794,7 +801,7 @@ impl Pane {
             .take_while(|item| item.id() != item_id)
             .map(|item| item.id())
             .collect();
-        self.close_items(cx, SaveBehavior::PromptOnWrite, move |item_id| {
+        self.close_items(cx, SaveIntent::Close, move |item_id| {
             item_ids.contains(&item_id)
         })
     }
@@ -822,34 +829,77 @@ impl Pane {
             .take_while(|item| item.id() != item_id)
             .map(|item| item.id())
             .collect();
-        self.close_items(cx, SaveBehavior::PromptOnWrite, move |item_id| {
+        self.close_items(cx, SaveIntent::Close, move |item_id| {
             item_ids.contains(&item_id)
         })
     }
 
     pub fn close_all_items(
         &mut self,
-        _: &CloseAllItems,
+        action: &CloseAllItems,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         if self.items.is_empty() {
             return None;
         }
 
-        Some(self.close_items(cx, SaveBehavior::PromptOnWrite, |_| true))
+        Some(
+            self.close_items(cx, action.save_intent.unwrap_or(SaveIntent::Close), |_| {
+                true
+            }),
+        )
+    }
+
+    pub(super) fn file_names_for_prompt(
+        items: &mut dyn Iterator<Item = &Box<dyn ItemHandle>>,
+        all_dirty_items: usize,
+        cx: &AppContext,
+    ) -> String {
+        /// Quantity of item paths displayed in prompt prior to cutoff..
+        const FILE_NAMES_CUTOFF_POINT: usize = 10;
+        let mut file_names: Vec<_> = items
+            .filter_map(|item| {
+                item.project_path(cx).and_then(|project_path| {
+                    project_path
+                        .path
+                        .file_name()
+                        .and_then(|name| name.to_str().map(ToOwned::to_owned))
+                })
+            })
+            .take(FILE_NAMES_CUTOFF_POINT)
+            .collect();
+        let should_display_followup_text =
+            all_dirty_items > FILE_NAMES_CUTOFF_POINT || file_names.len() != all_dirty_items;
+        if should_display_followup_text {
+            let not_shown_files = all_dirty_items - file_names.len();
+            if not_shown_files == 1 {
+                file_names.push(".. 1 file not shown".into());
+            } else {
+                file_names.push(format!(".. {} files not shown", not_shown_files).into());
+            }
+        }
+        let file_names = file_names.join("\n");
+        format!(
+            "Do you want to save changes to the following {} files?\n{file_names}",
+            all_dirty_items
+        )
     }
 
     pub fn close_items(
         &mut self,
         cx: &mut ViewContext<Pane>,
-        save_behavior: SaveBehavior,
+        mut save_intent: SaveIntent,
         should_close: impl 'static + Fn(usize) -> bool,
     ) -> Task<Result<()>> {
         // Find the items to close.
         let mut items_to_close = Vec::new();
+        let mut dirty_items = Vec::new();
         for item in &self.items {
             if should_close(item.id()) {
                 items_to_close.push(item.boxed_clone());
+                if item.is_dirty(cx) {
+                    dirty_items.push(item.boxed_clone());
+                }
             }
         }
 
@@ -861,6 +911,22 @@ impl Pane {
 
         let workspace = self.workspace.clone();
         cx.spawn(|pane, mut cx| async move {
+            if save_intent == SaveIntent::Close && dirty_items.len() > 1 {
+                let mut answer = pane.update(&mut cx, |_, cx| {
+                    let prompt =
+                        Self::file_names_for_prompt(&mut dirty_items.iter(), dirty_items.len(), cx);
+                    cx.prompt(
+                        PromptLevel::Warning,
+                        &prompt,
+                        &["Save all", "Discard all", "Cancel"],
+                    )
+                })?;
+                match answer.next().await {
+                    Some(0) => save_intent = SaveIntent::SaveAll,
+                    Some(1) => save_intent = SaveIntent::Skip,
+                    _ => {}
+                }
+            }
             let mut saved_project_items_ids = HashSet::default();
             for item in items_to_close.clone() {
                 // Find the item's current index and its set of project item models. Avoid
@@ -900,7 +966,7 @@ impl Pane {
                         &pane,
                         item_ix,
                         &*item,
-                        save_behavior,
+                        save_intent,
                         &mut cx,
                     )
                     .await?
@@ -998,18 +1064,17 @@ impl Pane {
         pane: &WeakViewHandle<Pane>,
         item_ix: usize,
         item: &dyn ItemHandle,
-        save_behavior: SaveBehavior,
+        save_intent: SaveIntent,
         cx: &mut AsyncAppContext,
     ) -> Result<bool> {
         const CONFLICT_MESSAGE: &str =
             "This file has changed on disk since you started editing it. Do you want to overwrite it?";
-        const DIRTY_MESSAGE: &str = "This file contains unsaved edits. Do you want to save it?";
 
-        if save_behavior == SaveBehavior::DontSave {
+        if save_intent == SaveIntent::Skip {
             return Ok(true);
         }
 
-        let (has_conflict, is_dirty, can_save, is_singleton) = cx.read(|cx| {
+        let (mut has_conflict, mut is_dirty, mut can_save, can_save_as) = cx.read(|cx| {
             (
                 item.has_conflict(cx),
                 item.is_dirty(cx),
@@ -1018,67 +1083,77 @@ impl Pane {
             )
         });
 
+        // when saving a single buffer, we ignore whether or not it's dirty.
+        if save_intent == SaveIntent::Save {
+            is_dirty = true;
+        }
+
+        if save_intent == SaveIntent::SaveAs {
+            is_dirty = true;
+            has_conflict = false;
+            can_save = false;
+        }
+
+        if save_intent == SaveIntent::Overwrite {
+            has_conflict = false;
+        }
+
         if has_conflict && can_save {
-            if save_behavior == SaveBehavior::SilentlyOverwrite {
-                pane.update(cx, |_, cx| item.save(project, cx))?.await?;
-            } else {
-                let mut answer = pane.update(cx, |pane, cx| {
-                    pane.activate_item(item_ix, true, true, cx);
-                    cx.prompt(
-                        PromptLevel::Warning,
-                        CONFLICT_MESSAGE,
-                        &["Overwrite", "Discard", "Cancel"],
-                    )
-                })?;
-                match answer.next().await {
-                    Some(0) => pane.update(cx, |_, cx| item.save(project, cx))?.await?,
-                    Some(1) => pane.update(cx, |_, cx| item.reload(project, cx))?.await?,
-                    _ => return Ok(false),
+            let mut answer = pane.update(cx, |pane, cx| {
+                pane.activate_item(item_ix, true, true, cx);
+                cx.prompt(
+                    PromptLevel::Warning,
+                    CONFLICT_MESSAGE,
+                    &["Overwrite", "Discard", "Cancel"],
+                )
+            })?;
+            match answer.next().await {
+                Some(0) => pane.update(cx, |_, cx| item.save(project, cx))?.await?,
+                Some(1) => pane.update(cx, |_, cx| item.reload(project, cx))?.await?,
+                _ => return Ok(false),
+            }
+        } else if is_dirty && (can_save || can_save_as) {
+            if save_intent == SaveIntent::Close {
+                let will_autosave = cx.read(|cx| {
+                    matches!(
+                        settings::get::<WorkspaceSettings>(cx).autosave,
+                        AutosaveSetting::OnFocusChange | AutosaveSetting::OnWindowChange
+                    ) && Self::can_autosave_item(&*item, cx)
+                });
+                if !will_autosave {
+                    let mut answer = pane.update(cx, |pane, cx| {
+                        pane.activate_item(item_ix, true, true, cx);
+                        let prompt = dirty_message_for(item.project_path(cx));
+                        cx.prompt(
+                            PromptLevel::Warning,
+                            &prompt,
+                            &["Save", "Don't Save", "Cancel"],
+                        )
+                    })?;
+                    match answer.next().await {
+                        Some(0) => {}
+                        Some(1) => return Ok(true), // Don't save his file
+                        _ => return Ok(false),      // Cancel
+                    }
                 }
             }
-        } else if is_dirty && (can_save || is_singleton) {
-            let will_autosave = cx.read(|cx| {
-                matches!(
-                    settings::get::<WorkspaceSettings>(cx).autosave,
-                    AutosaveSetting::OnFocusChange | AutosaveSetting::OnWindowChange
-                ) && Self::can_autosave_item(&*item, cx)
-            });
-            let should_save = if save_behavior == SaveBehavior::PromptOnWrite && !will_autosave {
-                let mut answer = pane.update(cx, |pane, cx| {
-                    pane.activate_item(item_ix, true, true, cx);
-                    cx.prompt(
-                        PromptLevel::Warning,
-                        DIRTY_MESSAGE,
-                        &["Save", "Don't Save", "Cancel"],
-                    )
-                })?;
-                match answer.next().await {
-                    Some(0) => true,
-                    Some(1) => false,
-                    _ => return Ok(false),
-                }
-            } else {
-                true
-            };
 
-            if should_save {
-                if can_save {
-                    pane.update(cx, |_, cx| item.save(project, cx))?.await?;
-                } else if is_singleton {
-                    let start_abs_path = project
-                        .read_with(cx, |project, cx| {
-                            let worktree = project.visible_worktrees(cx).next()?;
-                            Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
-                        })
-                        .unwrap_or_else(|| Path::new("").into());
+            if can_save {
+                pane.update(cx, |_, cx| item.save(project, cx))?.await?;
+            } else if can_save_as {
+                let start_abs_path = project
+                    .read_with(cx, |project, cx| {
+                        let worktree = project.visible_worktrees(cx).next()?;
+                        Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
+                    })
+                    .unwrap_or_else(|| Path::new("").into());
 
-                    let mut abs_path = cx.update(|cx| cx.prompt_for_new_path(&start_abs_path));
-                    if let Some(abs_path) = abs_path.next().await.flatten() {
-                        pane.update(cx, |_, cx| item.save_as(project, abs_path, cx))?
-                            .await?;
-                    } else {
-                        return Ok(false);
-                    }
+                let mut abs_path = cx.update(|cx| cx.prompt_for_new_path(&start_abs_path));
+                if let Some(abs_path) = abs_path.next().await.flatten() {
+                    pane.update(cx, |_, cx| item.save_as(project, abs_path, cx))?
+                        .await?;
+                } else {
+                    return Ok(false);
                 }
             }
         }
@@ -1167,15 +1242,16 @@ impl Pane {
                     vec![
                         ContextMenuItem::action(
                             "Close Active Item",
-                            CloseActiveItem {
-                                save_behavior: None,
-                            },
+                            CloseActiveItem { save_intent: None },
                         ),
                         ContextMenuItem::action("Close Inactive Items", CloseInactiveItems),
                         ContextMenuItem::action("Close Clean Items", CloseCleanItems),
                         ContextMenuItem::action("Close Items To The Left", CloseItemsToTheLeft),
                         ContextMenuItem::action("Close Items To The Right", CloseItemsToTheRight),
-                        ContextMenuItem::action("Close All Items", CloseAllItems),
+                        ContextMenuItem::action(
+                            "Close All Items",
+                            CloseAllItems { save_intent: None },
+                        ),
                     ]
                 } else {
                     // In the case of the user right clicking on a non-active tab, for some item-closing commands, we need to provide the id of the tab, for the others, we can reuse the existing command.
@@ -1187,7 +1263,7 @@ impl Pane {
                                     pane.update(cx, |pane, cx| {
                                         pane.close_item_by_id(
                                             target_item_id,
-                                            SaveBehavior::PromptOnWrite,
+                                            SaveIntent::Close,
                                             cx,
                                         )
                                         .detach_and_log_err(cx);
@@ -1219,7 +1295,10 @@ impl Pane {
                                 }
                             }
                         }),
-                        ContextMenuItem::action("Close All Items", CloseAllItems),
+                        ContextMenuItem::action(
+                            "Close All Items",
+                            CloseAllItems { save_intent: None },
+                        ),
                     ]
                 },
                 cx,
@@ -1339,12 +1418,8 @@ impl Pane {
                                 .on_click(MouseButton::Middle, {
                                     let item_id = item.id();
                                     move |_, pane, cx| {
-                                        pane.close_item_by_id(
-                                            item_id,
-                                            SaveBehavior::PromptOnWrite,
-                                            cx,
-                                        )
-                                        .detach_and_log_err(cx);
+                                        pane.close_item_by_id(item_id, SaveIntent::Close, cx)
+                                            .detach_and_log_err(cx);
                                     }
                                 })
                                 .on_down(
@@ -1552,7 +1627,7 @@ impl Pane {
                     cx.window_context().defer(move |cx| {
                         if let Some(pane) = pane.upgrade(cx) {
                             pane.update(cx, |pane, cx| {
-                                pane.close_item_by_id(item_id, SaveBehavior::PromptOnWrite, cx)
+                                pane.close_item_by_id(item_id, SaveIntent::Close, cx)
                                     .detach_and_log_err(cx);
                             });
                         }
@@ -2135,6 +2210,15 @@ impl<V: 'static> Element<V> for PaneBackdrop<V> {
     }
 }
 
+fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
+    let path = buffer_path
+        .as_ref()
+        .and_then(|p| p.path.to_str())
+        .unwrap_or(&"This buffer");
+    let path = truncate_and_remove_front(path, 80);
+    format!("{path} contains unsaved edits. Do you want to save it?")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2155,12 +2239,7 @@ mod tests {
 
         pane.update(cx, |pane, cx| {
             assert!(pane
-                .close_active_item(
-                    &CloseActiveItem {
-                        save_behavior: None
-                    },
-                    cx
-                )
+                .close_active_item(&CloseActiveItem { save_intent: None }, cx)
                 .is_none())
         });
     }
@@ -2412,12 +2491,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
 
         pane.update(cx, |pane, cx| {
-            pane.close_active_item(
-                &CloseActiveItem {
-                    save_behavior: None,
-                },
-                cx,
-            )
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
         })
         .unwrap()
         .await
@@ -2428,12 +2502,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
         pane.update(cx, |pane, cx| {
-            pane.close_active_item(
-                &CloseActiveItem {
-                    save_behavior: None,
-                },
-                cx,
-            )
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
         })
         .unwrap()
         .await
@@ -2441,12 +2510,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "B*", "C"], cx);
 
         pane.update(cx, |pane, cx| {
-            pane.close_active_item(
-                &CloseActiveItem {
-                    save_behavior: None,
-                },
-                cx,
-            )
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
         })
         .unwrap()
         .await
@@ -2454,12 +2518,7 @@ mod tests {
         assert_item_labels(&pane, ["A", "C*"], cx);
 
         pane.update(cx, |pane, cx| {
-            pane.close_active_item(
-                &CloseActiveItem {
-                    save_behavior: None,
-                },
-                cx,
-            )
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
         })
         .unwrap()
         .await
@@ -2569,10 +2628,28 @@ mod tests {
         add_labeled_item(&pane, "C", false, cx);
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
-        pane.update(cx, |pane, cx| pane.close_all_items(&CloseAllItems, cx))
-            .unwrap()
-            .await
+        pane.update(cx, |pane, cx| {
+            pane.close_all_items(&CloseAllItems { save_intent: None }, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_item_labels(&pane, [], cx);
+
+        add_labeled_item(&pane, "A", true, cx);
+        add_labeled_item(&pane, "B", true, cx);
+        add_labeled_item(&pane, "C", true, cx);
+        assert_item_labels(&pane, ["A^", "B^", "C*^"], cx);
+
+        let save = pane
+            .update(cx, |pane, cx| {
+                pane.close_all_items(&CloseAllItems { save_intent: None }, cx)
+            })
             .unwrap();
+
+        cx.foreground().run_until_parked();
+        window.simulate_prompt_answer(2, cx);
+        save.await.unwrap();
         assert_item_labels(&pane, [], cx);
     }
 

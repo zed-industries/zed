@@ -372,6 +372,27 @@
   "semantic_index": {
     "enabled": false
   },
+  // Settings specific to our elixir integration
+  "elixir": {
+    // Set Zed to use the experimental Next LS LSP server.
+    // Note that changing this setting requires a restart of Zed
+    // to take effect.
+    //
+    // May take 3 values:
+    //  1. Use the standard elixir-ls LSP server
+    //         "next": "off"
+    //  2. Use a bundled version of the next Next LS LSP server
+    //         "next": "on",
+    //  3. Use a local build of the next Next LS LSP server:
+    //         "next": {
+    //           "local": {
+    //             "path": "~/next-ls/bin/start",
+    //             "arguments": ["--stdio"]
+    //            }
+    //          },
+    //
+    "next": "off"
+  },
   // Different settings for specific languages.
   "languages": {
     "Plain Text": {

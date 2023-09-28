@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use call::ActiveCall;
+use call::report_call_event_for_channel;
 use channel::{Channel, ChannelBuffer, ChannelBufferEvent, ChannelId};
 use client::{
     proto::{self, PeerId},
@@ -52,14 +52,9 @@ impl ChannelView {
         cx.spawn(|mut cx| async move {
             let channel_view = channel_view.await?;
             pane.update(&mut cx, |pane, cx| {
-                let room_id = ActiveCall::global(cx)
-                    .read(cx)
-                    .room()
-                    .map(|room| room.read(cx).id());
-                ActiveCall::report_call_event_for_room(
+                report_call_event_for_channel(
                     "open channel notes",
-                    room_id,
-                    Some(channel_id),
+                    channel_id,
                     &workspace.read(cx).app_state().client,
                     cx,
                 );

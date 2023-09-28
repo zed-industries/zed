@@ -65,7 +65,13 @@ impl NeovimConnection {
             // Ensure we don't create neovim connections in parallel
             let _lock = NEOVIM_LOCK.lock();
             let (nvim, join_handle, child) = new_child_cmd(
-                &mut Command::new("nvim").arg("--embed").arg("--clean"),
+                &mut Command::new("nvim")
+                    .arg("--embed")
+                    .arg("--clean")
+                    // disable swap (otherwise after about 1000 test runs you run out of swap file names)
+                    .arg("-n")
+                    // disable writing files (just in case)
+                    .arg("-m"),
                 handler,
             )
             .await

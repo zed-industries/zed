@@ -1,22 +1,15 @@
-use crate::{
-    theme::theme,
-    ui::{chat_panel, project_panel, status_bar, tab_bar, title_bar},
-};
 use gpui2::{
     elements::{div, div::ScrollState},
     style::StyleHelpers,
     Element, IntoElement, ParentElement, ViewContext,
 };
+use ui::{chat_panel, project_panel, status_bar, tab_bar, theme, title_bar, toolbar};
 
 #[derive(Element, Default)]
-struct WorkspaceElement {
+pub struct WorkspaceElement {
     left_scroll_state: ScrollState,
     right_scroll_state: ScrollState,
     tab_bar_scroll_state: ScrollState,
-}
-
-pub fn workspace<V: 'static>() -> impl Element<V> {
-    WorkspaceElement::default()
 }
 
 impl WorkspaceElement {
@@ -52,7 +45,8 @@ impl WorkspaceElement {
                                     .flex()
                                     .flex_col()
                                     .flex_1()
-                                    .child(tab_bar(self.tab_bar_scroll_state.clone())),
+                                    .child(tab_bar(self.tab_bar_scroll_state.clone()))
+                                    .child(toolbar()),
                             ),
                     )
                     .child(chat_panel(self.right_scroll_state.clone())),

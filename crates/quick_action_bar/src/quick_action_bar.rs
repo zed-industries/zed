@@ -1,4 +1,4 @@
-use ai::{assistant::InlineAssist, AssistantPanel};
+use assistant::{assistant_panel::InlineAssist, AssistantPanel};
 use editor::Editor;
 use gpui::{
     elements::{Empty, Flex, MouseEventHandler, ParentElement, Svg},
@@ -48,24 +48,26 @@ impl View for QuickActionBar {
             return Empty::new().into_any();
         };
 
-        let inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
-        let mut bar = Flex::row().with_child(render_quick_action_bar_button(
-            0,
-            "icons/inlay_hint.svg",
-            inlay_hints_enabled,
-            (
-                "Toggle Inlay Hints".to_string(),
-                Some(Box::new(editor::ToggleInlayHints)),
-            ),
-            cx,
-            |this, cx| {
-                if let Some(editor) = this.active_editor() {
-                    editor.update(cx, |editor, cx| {
-                        editor.toggle_inlay_hints(&editor::ToggleInlayHints, cx);
-                    });
-                }
-            },
-        ));
+        let mut bar = Flex::row();
+        if editor.read(cx).supports_inlay_hints(cx) {
+            bar = bar.with_child(render_quick_action_bar_button(
+                0,
+                "icons/inlay_hint.svg",
+                editor.read(cx).inlay_hints_enabled(),
+                (
+                    "Toggle Inlay Hints".to_string(),
+                    Some(Box::new(editor::ToggleInlayHints)),
+                ),
+                cx,
+                |this, cx| {
+                    if let Some(editor) = this.active_editor() {
+                        editor.update(cx, |editor, cx| {
+                            editor.toggle_inlay_hints(&editor::ToggleInlayHints, cx);
+                        });
+                    }
+                },
+            ));
+        }
 
         if editor.read(cx).buffer().read(cx).is_singleton() {
             let search_bar_shown = !self.buffer_search_bar.read(cx).is_dismissed();
@@ -163,12 +165,18 @@ impl ToolbarItemView for QuickActionBar {
 
                 if let Some(editor) = active_item.downcast::<Editor>() {
                     let mut inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
+                    let mut supports_inlay_hints = editor.read(cx).supports_inlay_hints(cx);
                     self._inlay_hints_enabled_subscription =
                         Some(cx.observe(&editor, move |_, editor, cx| {
-                            let new_inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
-                            if inlay_hints_enabled != new_inlay_hints_enabled {
-                                inlay_hints_enabled = new_inlay_hints_enabled;
-                                cx.notify();
+                            let editor = editor.read(cx);
+                            let new_inlay_hints_enabled = editor.inlay_hints_enabled();
+                            let new_supports_inlay_hints = editor.supports_inlay_hints(cx);
+                            let should_notify = inlay_hints_enabled != new_inlay_hints_enabled
+                                || supports_inlay_hints != new_supports_inlay_hints;
+                            inlay_hints_enabled = new_inlay_hints_enabled;
+                            supports_inlay_hints = new_supports_inlay_hints;
+                            if should_notify {
+                                cx.notify()
                             }
                         }));
                     ToolbarItemLocation::PrimaryRight { flex: None }
