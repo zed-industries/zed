@@ -151,6 +151,13 @@ fn main() {
                         stories::components::terminal::TerminalStory::default(),
                     )
                 }),
+                Some(StorySelector::Component(ComponentStory::TitleBar)) => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        stories::components::title_bar::TitleBarStory::default(),
+                    )
+                }),
                 Some(StorySelector::Component(ComponentStory::Toolbar)) => view(move |cx| {
                     render_story(
                         &mut ViewContext::new(cx),

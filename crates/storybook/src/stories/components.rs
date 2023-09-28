@@ -5,5 +5,6 @@ pub mod keybinding;
 pub mod palette;
 pub mod tab_bar;
 pub mod terminal;
+pub mod title_bar;
 pub mod toolbar;
 pub mod traffic_lights;
