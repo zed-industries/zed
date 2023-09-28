@@ -2792,6 +2792,34 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
         «hello worldˇ»
     "});
 
+    // Test multiple line, single selection case
+    // Test code hack that covers the fact that to_case crate doesn't support '\n' as a word boundary
+    cx.set_state(indoc! {"
+        «The quick brown
+        fox jumps over
+        the lazy dogˇ»
+    "});
+    cx.update_editor(|e, cx| e.convert_to_title_case(&ConvertToTitleCase, cx));
+    cx.assert_editor_state(indoc! {"
+        «The Quick Brown
+        Fox Jumps Over
+        The Lazy Dogˇ»
+    "});
+
+    // Test multiple line, single selection case
+    // Test code hack that covers the fact that to_case crate doesn't support '\n' as a word boundary
+    cx.set_state(indoc! {"
+        «The quick brown
+        fox jumps over
+        the lazy dogˇ»
+    "});
+    cx.update_editor(|e, cx| e.convert_to_upper_camel_case(&ConvertToUpperCamelCase, cx));
+    cx.assert_editor_state(indoc! {"
+        «TheQuickBrown
+        FoxJumpsOver
+        TheLazyDogˇ»
+    "});
+
     // From here on out, test more complex cases of manipulate_text()
 
     // Test no selection case - should affect words cursors are in

@@ -2610,6 +2610,7 @@ dependencies = [
 name = "file_finder"
 version = "0.1.0"
 dependencies = [
+ "collections",
  "ctor",
  "editor",
  "env_logger 0.9.3",

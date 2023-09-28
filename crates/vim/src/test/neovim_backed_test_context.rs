@@ -23,8 +23,6 @@ pub enum ExemptionFeatures {
     // MOTIONS
     // When an operator completes at the end of the file, an extra newline is left
     OperatorLastNewlineRemains,
-    // Deleting a word on an empty line doesn't remove the newline
-    DeleteWordOnEmptyLine,
 
     // OBJECTS
     // Resulting position after the operation is slightly incorrect for unintuitive reasons.
@@ -361,6 +359,17 @@ impl<'a> NeovimBackedTestContext<'a> {
         self.set_shared_state(&marked_positions).await;
         self.simulate_shared_keystrokes(keystrokes).await;
         self.assert_state_matches().await;
+    }
+
+    pub async fn assert_matches_neovim<const COUNT: usize>(
+        &mut self,
+        marked_positions: &str,
+        keystrokes: [&str; COUNT],
+        result: &str,
+    ) {
+        self.set_shared_state(marked_positions).await;
+        self.simulate_shared_keystrokes(keystrokes).await;
+        self.assert_shared_state(result).await;
     }
 
     pub async fn assert_binding_matches_all_exempted<const COUNT: usize>(
