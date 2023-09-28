@@ -985,32 +985,6 @@ impl Database {
         Ok(room)
     }
 
-    pub async fn room_id_for_connection(&self, connection_id: ConnectionId) -> Result<RoomId> {
-        #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-        enum QueryRoomId {
-            RoomId,
-        }
-
-        self.transaction(|tx| async move {
-            Ok(room_participant::Entity::find()
-                .select_only()
-                .column(room_participant::Column::RoomId)
-                .filter(
-                    Condition::all()
-                        .add(room_participant::Column::AnsweringConnectionId.eq(connection_id.id))
-                        .add(
-                            room_participant::Column::AnsweringConnectionServerId
-                                .eq(ServerId(connection_id.owner_id as i32)),
-                        ),
-                )
-                .into_values::<_, QueryRoomId>()
-                .one(&*tx)
-                .await?
-                .ok_or_else(|| anyhow!("no room for connection {:?}", connection_id))?)
-        })
-        .await
-    }
-
     pub async fn room_connection_ids(
         &self,
         room_id: RoomId,
