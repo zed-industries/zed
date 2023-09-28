@@ -4,7 +4,7 @@ use chrono::NaiveDateTime;
 
 use crate::prelude::*;
 use crate::theme::theme;
-use crate::{Icon, IconButton, Input, Label, LabelColor};
+use crate::{Icon, IconButton, Input, Label, LabelColor, Panel};
 
 #[derive(Element)]
 pub struct ChatPanel<V: 'static> {
@@ -30,40 +30,51 @@ impl<V: 'static> ChatPanel<V> {
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
 
-        div()
-            .flex()
-            .flex_col()
-            .h_full()
-            .px_2()
-            .gap_2()
-            // Header
-            .child(
-                div()
+        Panel::new(
+            self.scroll_state.clone(),
+            |_, payload| {
+                let (scroll_state, messages) = payload
+                    .downcast_ref::<(ScrollState, Vec<ChatMessage>)>()
+                    .unwrap();
+
+                vec![div()
                     .flex()
-                    .justify_between()
+                    .flex_col()
+                    .h_full()
+                    .px_2()
                     .gap_2()
-                    .child(div().flex().child(Label::new("#design")))
+                    // Header
                     .child(
                         div()
                             .flex()
-                            .items_center()
-                            .gap_px()
-                            .child(IconButton::new(Icon::File))
-                            .child(IconButton::new(Icon::AudioOn)),
-                    ),
-            )
-            // Chat Body
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .overflow_y_scroll(self.scroll_state.clone())
-                    .children(self.messages.clone()),
-            )
-            // Composer
-            .child(div().flex().gap_2().child(Input::new("Message #design")))
+                            .justify_between()
+                            .gap_2()
+                            .child(div().flex().child(Label::new("#design")))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_px()
+                                    .child(IconButton::new(Icon::File))
+                                    .child(IconButton::new(Icon::AudioOn)),
+                            ),
+                    )
+                    // Chat Body
+                    .child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .overflow_y_scroll(scroll_state.clone())
+                            .children(messages.clone()),
+                    )
+                    // Composer
+                    .child(div().flex().gap_2().child(Input::new("Message #design")))
+                    .into_any()]
+            },
+            Box::new((self.scroll_state.clone(), self.messages.clone())),
+        )
     }
 }
 

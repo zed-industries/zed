@@ -1,6 +1,10 @@
+use chrono::DateTime;
 use gpui2::geometry::{relative, rems, Size};
 
-use crate::{prelude::*, v_stack, Icon, IconElement, Panel, PanelAllowedSides, PanelSide};
+use crate::{
+    prelude::*, v_stack, ChatMessage, ChatPanel, Icon, IconElement, Panel, PanelAllowedSides,
+    PanelSide,
+};
 use crate::{theme, Pane, PaneGroup, SplitDirection, StatusBar, TitleBar};
 
 #[derive(Element, Default)]
@@ -77,7 +81,7 @@ impl WorkspaceElement {
                         Panel::new(
                             self.left_panel_scroll_state.clone(),
                             |_, _| vec![IconElement::new(Icon::ExclamationTriangle).into_any()],
-                            Box::new("HELLO STATE"),
+                            Box::new(()),
                         )
                         .side(PanelSide::Left),
                     )
@@ -98,7 +102,7 @@ impl WorkspaceElement {
                                 Panel::new(
                                     self.bottom_panel_scroll_state.clone(),
                                     |_, _| vec![IconElement::new(Icon::MagicWand).into_any()],
-                                    Box::new("temp"),
+                                    Box::new(()),
                                 )
                                 .allowed_sides(PanelAllowedSides::BottomOnly)
                                 .side(PanelSide::Bottom),
@@ -107,8 +111,31 @@ impl WorkspaceElement {
                     .child(
                         Panel::new(
                             self.right_panel_scroll_state.clone(),
-                            |_, _| vec![IconElement::new(Icon::Ai).into_any()],
-                            Box::new("S T A T E"),
+                            |_, _| {
+                                vec![ChatPanel::new(ScrollState::default())
+                                    .with_messages(vec![
+                                        ChatMessage::new(
+                                            "osiewicz".to_string(),
+                                            "is this thing on?".to_string(),
+                                            DateTime::parse_from_rfc3339(
+                                                "2023-09-27T15:40:52.707Z",
+                                            )
+                                            .unwrap()
+                                            .naive_local(),
+                                        ),
+                                        ChatMessage::new(
+                                            "maxdeviant".to_string(),
+                                            "Reading you loud and clear!".to_string(),
+                                            DateTime::parse_from_rfc3339(
+                                                "2023-09-28T15:40:52.707Z",
+                                            )
+                                            .unwrap()
+                                            .naive_local(),
+                                        ),
+                                    ])
+                                    .into_any()]
+                            },
+                            Box::new(()),
                         )
                         .side(PanelSide::Right),
                     ),
