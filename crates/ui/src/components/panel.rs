@@ -1,9 +1,6 @@
 use std::any::Any;
 use std::marker::PhantomData;
-use std::mem::size_of;
 
-use dyn_clone::DynClone;
-use gpui2::elements::div::Div;
 use gpui2::geometry::AbsoluteLength;
 use gpui2::AnyElement;
 
@@ -43,46 +40,6 @@ pub enum PanelSide {
 
 use std::collections::HashSet;
 
-pub trait HackyChildren<V: 'static>: IntoElement<V, Element = dyn Any> + DynClone {}
-
-dyn_clone::clone_trait_object!(<V> HackyChildren<V>);
-
-#[derive(Clone)]
-pub struct AnyChildren<V>(Box<dyn HackyChildren<V>>);
-
-// pub trait IntoElement<V: 'static> {
-//     type Element: Element<V>;
-
-//     fn into_element(self) -> Self::Element;
-// }
-
-pub trait CloneIntoElement<V: 'static> {
-    type Element: Element<V>;
-
-    fn clone_into_element(&self) -> Self::Element;
-}
-
-// pub struct AnyElement<V>(Box<dyn AnyStatefulElement<V>>);
-
-pub struct CloneAnyElement<V>(Box<dyn CloneIntoElement<V>>);
-
-impl<V: 'static> CloneIntoElement<V> for crate::IconElement {
-    type Element = crate::IconElement;
-
-    fn clone_into_element(&self) -> Self::Element {
-        self.clone()
-    }
-}
-
-// #[derive(Clone)]
-// pub struct CloneAnyElement<V: 'static>(AnyElement<V>);
-
-// pub trait HackyChildren<V: 'static>: IntoElement<V> + Clone {
-//     fn foo(self) -> &'static str;
-// }
-
-// type HackyChildren<V> = Box<dyn IntoElement<V> + Clone>;
-
 #[derive(Element)]
 pub struct Panel<V: 'static> {
     view_type: PhantomData<V>,
@@ -92,11 +49,16 @@ pub struct Panel<V: 'static> {
     allowed_sides: PanelAllowedSides,
     initial_width: AbsoluteLength,
     width: Option<AbsoluteLength>,
-    children: Vec<Box<dyn CloneIntoElement<V>>>>,
+    children: fn(&mut ViewContext<V>, &dyn Any) -> Vec<AnyElement<V>>,
+    payload: Box<dyn Any>,
 }
 
 impl<V: 'static> Panel<V> {
-    pub fn new(scroll_state: ScrollState, children: Vec<Box<dyn CloneIntoElement<V>>>) -> Self {
+    pub fn new(
+        scroll_state: ScrollState,
+        children: fn(&mut ViewContext<V>, &dyn Any) -> Vec<AnyElement<V>>,
+        payload: Box<dyn Any>,
+    ) -> Self {
         let token = token();
 
         Self {
@@ -107,6 +69,7 @@ impl<V: 'static> Panel<V> {
             initial_width: token.default_panel_size,
             width: None,
             children,
+            payload,
         }
     }
 
@@ -143,7 +106,7 @@ impl<V: 'static> Panel<V> {
         let token = token();
         let theme = theme(cx);
 
-        let mut panel_base;
+        let panel_base;
         let current_width = if let Some(width) = self.width {
             width
         } else {
@@ -180,31 +143,6 @@ impl<V: 'static> Panel<V> {
             }
         }
 
-        let children = self
-            .children
-            .iter()
-            .map(|child| {
-                let cloned_child = unsafe {
-                    let size_of_ref = size_of::<&AnyElement<V>>();
-                    let size_of_owned = size_of::<AnyElement<V>>();
-
-                    let child_ptr: *const AnyElement<V> = child;
-
-                    println!("{size_of_ref} {size_of_owned}");
-
-                    let clone = std::mem::transmute_copy::<AnyElement<V>, AnyElement<V>>(child);
-
-                    clone
-                };
-
-                cloned_child
-            })
-            .collect::<Vec<_>>();
-
-        println!("{}", children.len());
-
-        panel_base.children_mut().extend(children);
-
-        panel_base
+        panel_base.children_any((self.children)(cx, self.payload.as_ref()))
     }
 }

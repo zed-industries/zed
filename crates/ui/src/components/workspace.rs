@@ -1,5 +1,4 @@
 use gpui2::geometry::{relative, rems, Size};
-use gpui2::hsla;
 
 use crate::{prelude::*, v_stack, Icon, IconElement, Panel, PanelAllowedSides, PanelSide};
 use crate::{theme, Pane, PaneGroup, SplitDirection, StatusBar, TitleBar};
@@ -77,7 +76,8 @@ impl WorkspaceElement {
                     .child(
                         Panel::new(
                             self.left_panel_scroll_state.clone(),
-                            vec![IconElement::new(Icon::ExclamationTriangle).into_any()],
+                            |_, _| vec![IconElement::new(Icon::ExclamationTriangle).into_any()],
+                            Box::new("HELLO STATE"),
                         )
                         .side(PanelSide::Left),
                     )
@@ -97,7 +97,8 @@ impl WorkspaceElement {
                             .child(
                                 Panel::new(
                                     self.bottom_panel_scroll_state.clone(),
-                                    vec![IconElement::new(Icon::MagicWand).into_any()],
+                                    |_, _| vec![IconElement::new(Icon::MagicWand).into_any()],
+                                    Box::new("temp"),
                                 )
                                 .allowed_sides(PanelAllowedSides::BottomOnly)
                                 .side(PanelSide::Bottom),
@@ -106,7 +107,8 @@ impl WorkspaceElement {
                     .child(
                         Panel::new(
                             self.right_panel_scroll_state.clone(),
-                            vec![IconElement::new(Icon::Ai).into_any()],
+                            |_, _| vec![IconElement::new(Icon::Ai).into_any()],
+                            Box::new("S T A T E"),
                         )
                         .side(PanelSide::Right),
                     ),
