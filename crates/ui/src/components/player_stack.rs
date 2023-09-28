@@ -1,5 +1,5 @@
-use crate::{prelude::*, PlayerWithCallStatus};
-use crate::{Avatar, Facepile};
+use crate::prelude::*;
+use crate::{Avatar, Facepile, PlayerWithCallStatus};
 
 #[derive(Element)]
 pub struct PlayerStack {

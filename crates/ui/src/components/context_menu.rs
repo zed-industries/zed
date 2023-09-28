@@ -1,7 +1,7 @@
+use crate::prelude::*;
 use crate::theme::theme;
 use crate::{
-    prelude::*, v_stack, Label, List, ListEntry, ListItem, ListItemVariant, ListSeparator,
-    ListSubHeader,
+    v_stack, Label, List, ListEntry, ListItem, ListItemVariant, ListSeparator, ListSubHeader,
 };
 
 #[derive(Clone)]

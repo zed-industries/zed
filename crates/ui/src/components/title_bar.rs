@@ -2,9 +2,10 @@ use std::marker::PhantomData;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use crate::{prelude::*, static_players_with_call_status};
+use crate::prelude::*;
 use crate::{
-    theme, Avatar, Button, Icon, IconButton, IconColor, PlayerStack, ToolDivider, TrafficLights,
+    static_players_with_call_status, theme, Avatar, Button, Icon, IconButton, IconColor,
+    PlayerStack, ToolDivider, TrafficLights,
 };
 
 #[derive(Element)]

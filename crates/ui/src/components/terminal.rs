@@ -1,7 +1,7 @@
 use gpui2::geometry::{relative, rems, Size};
 
-use crate::{prelude::*, Pane};
-use crate::{theme, Icon, IconButton, Tab};
+use crate::prelude::*;
+use crate::{theme, Icon, IconButton, Pane, Tab};
 
 #[derive(Element)]
 pub struct Terminal {}

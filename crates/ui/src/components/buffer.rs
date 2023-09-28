@@ -2,7 +2,8 @@ use std::marker::PhantomData;
 
 use gpui2::{Hsla, WindowContext};
 
-use crate::{h_stack, prelude::*, theme, v_stack, Icon, IconElement};
+use crate::prelude::*;
+use crate::{h_stack, theme, v_stack, Icon, IconElement};
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub struct PlayerCursor {

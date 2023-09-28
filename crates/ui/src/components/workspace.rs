@@ -1,11 +1,11 @@
 use chrono::DateTime;
 use gpui2::geometry::{relative, rems, Size};
 
+use crate::prelude::*;
 use crate::{
-    prelude::*, v_stack, ChatMessage, ChatPanel, Panel, PanelAllowedSides, PanelSide, ProjectPanel,
-    Terminal,
+    theme, v_stack, ChatMessage, ChatPanel, Pane, PaneGroup, Panel, PanelAllowedSides, PanelSide,
+    ProjectPanel, SplitDirection, StatusBar, Terminal, TitleBar,
 };
-use crate::{theme, Pane, PaneGroup, SplitDirection, StatusBar, TitleBar};
 
 #[derive(Element, Default)]
 pub struct WorkspaceElement {

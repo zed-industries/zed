@@ -1,5 +1,6 @@
-use crate::theme;
 use gpui2::{Hsla, ViewContext};
+
+use crate::theme;
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub enum PlayerStatus {

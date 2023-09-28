@@ -1,5 +1,5 @@
-use crate::{prelude::*, IconColor};
-use crate::{theme, Icon, IconElement, Label, LabelColor};
+use crate::prelude::*;
+use crate::{theme, Icon, IconColor, IconElement, Label, LabelColor};
 
 #[derive(Element)]
 pub struct Tab {

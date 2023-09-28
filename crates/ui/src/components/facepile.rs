@@ -1,5 +1,5 @@
-use crate::theme;
-use crate::{prelude::*, Avatar, Player};
+use crate::prelude::*;
+use crate::{theme, Avatar, Player};
 
 #[derive(Element)]
 pub struct Facepile {

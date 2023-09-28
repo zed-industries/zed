@@ -1,10 +1,10 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use crate::{prelude::*, Panel, PanelSide, Theme};
+use crate::prelude::*;
 use crate::{
     static_project_panel_project_items, static_project_panel_single_items, theme, Input, List,
-    ListHeader,
+    ListHeader, Panel, PanelSide, Theme,
 };
 
 #[derive(Element)]

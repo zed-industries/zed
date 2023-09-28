@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 
-use crate::{prelude::*, Buffer, Toolbar};
+use crate::prelude::*;
+use crate::{Buffer, Toolbar};
 
 #[derive(Element)]
 struct Editor<V: 'static> {
