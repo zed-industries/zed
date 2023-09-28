@@ -1,8 +1,6 @@
 use chrono::DateTime;
-use chrono::NaiveDateTime;
 use ui::prelude::*;
-use ui::ChatMessage;
-use ui::ChatPanel;
+use ui::{ChatMessage, ChatPanel};
 
 use crate::story::Story;
 

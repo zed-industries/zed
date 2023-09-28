@@ -2,9 +2,9 @@ use std::marker::PhantomData;
 
 use chrono::NaiveDateTime;
 
+use crate::prelude::*;
 use crate::theme::theme;
-use crate::{prelude::*, Input, Label};
-use crate::{Icon, IconButton};
+use crate::{Icon, IconButton, Input, Label, LabelColor};
 
 #[derive(Element)]
 pub struct ChatPanel<V: 'static> {
@@ -92,7 +92,10 @@ impl ChatMessage {
                     .flex()
                     .gap_2()
                     .child(Label::new(self.author.clone()))
-                    .child(Label::new(self.sent_at.format("%m/%d/%Y").to_string())),
+                    .child(
+                        Label::new(self.sent_at.format("%m/%d/%Y").to_string())
+                            .color(LabelColor::Muted),
+                    ),
             )
             .child(div().child(Label::new(self.text.clone())))
     }
