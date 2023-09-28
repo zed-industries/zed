@@ -1,5 +1,4 @@
 use gpui2::elements::div::Div;
-
 use ui::prelude::*;
 use ui::theme;
 

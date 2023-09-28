@@ -1,5 +1,5 @@
-use ui::{prelude::*, Label};
-use ui::{ContextMenu, ContextMenuItem};
+use ui::prelude::*;
+use ui::{ContextMenu, ContextMenuItem, Label};
 
 use crate::story::Story;
 

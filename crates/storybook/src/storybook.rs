@@ -15,7 +15,8 @@ use legacy_theme::{ThemeRegistry, ThemeSettings};
 use log::LevelFilter;
 use settings::{default_settings, SettingsStore};
 use simplelog::SimpleLogger;
-use ui::{prelude::*, ElementExt, Theme, WorkspaceElement};
+use ui::prelude::*;
+use ui::{ElementExt, Theme, WorkspaceElement};
 
 use crate::story_selector::StorySelector;
 

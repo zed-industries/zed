@@ -1,5 +1,5 @@
-use ui::Facepile;
-use ui::{prelude::*, static_players};
+use ui::prelude::*;
+use ui::{static_players, Facepile};
 
 use crate::story::Story;
 

@@ -1,8 +1,6 @@
 use strum::IntoEnumIterator;
-use ui::h_stack;
 use ui::prelude::*;
-use ui::v_stack;
-use ui::Tab;
+use ui::{h_stack, v_stack, Tab};
 
 use crate::story::Story;
 

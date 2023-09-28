@@ -1,9 +1,9 @@
 use gpui2::geometry::rems;
-use ui::empty_buffer_example;
-use ui::hello_world_rust_buffer_example;
-use ui::hello_world_rust_buffer_with_status_example;
 use ui::prelude::*;
-use ui::Buffer;
+use ui::{
+    empty_buffer_example, hello_world_rust_buffer_example,
+    hello_world_rust_buffer_with_status_example, Buffer,
+};
 
 use crate::story::Story;
 
