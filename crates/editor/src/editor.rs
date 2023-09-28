@@ -4655,6 +4655,7 @@ impl Editor {
     pub fn convert_to_title_case(&mut self, _: &ConvertToTitleCase, cx: &mut ViewContext<Self>) {
         self.manipulate_text(cx, |text| {
             // Hack to get around the fact that to_case crate doesn't support '\n' as a word boundary
+            // https://github.com/rutrum/convert-case/issues/16
             text.split("\n")
                 .map(|line| line.to_case(Case::Title))
                 .join("\n")
@@ -4676,6 +4677,7 @@ impl Editor {
     ) {
         self.manipulate_text(cx, |text| {
             // Hack to get around the fact that to_case crate doesn't support '\n' as a word boundary
+            // https://github.com/rutrum/convert-case/issues/16
             text.split("\n")
                 .map(|line| line.to_case(Case::UpperCamel))
                 .join("\n")
