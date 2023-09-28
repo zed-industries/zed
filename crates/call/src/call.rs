@@ -58,7 +58,7 @@ pub struct ActiveCall {
     _subscriptions: Vec<client::Subscription>,
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
 struct Follower {
     project_id: Option<u64>,
     peer_id: PeerId,

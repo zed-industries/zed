@@ -176,7 +176,7 @@ CREATE TABLE "servers" (
 CREATE TABLE "followers" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "room_id" INTEGER NOT NULL REFERENCES rooms (id) ON DELETE CASCADE,
-    "project_id" INTEGER REFERENCES projects (id) ON DELETE CASCADE,
+    "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     "leader_connection_server_id" INTEGER NOT NULL REFERENCES servers (id) ON DELETE CASCADE,
     "leader_connection_id" INTEGER NOT NULL,
     "follower_connection_server_id" INTEGER NOT NULL REFERENCES servers (id) ON DELETE CASCADE,

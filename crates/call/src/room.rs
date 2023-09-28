@@ -62,7 +62,7 @@ pub struct Room {
     leave_when_empty: bool,
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
-    follows_by_leader_id_project_id: HashMap<(PeerId, Option<u64>), Vec<PeerId>>,
+    follows_by_leader_id_project_id: HashMap<(PeerId, u64), Vec<PeerId>>,
     subscriptions: Vec<client::Subscription>,
     pending_room_update: Option<Task<()>>,
     maintain_connection: Option<Task<Option<()>>>,
@@ -584,7 +584,7 @@ impl Room {
 
     pub fn followers_for(&self, leader_id: PeerId, project_id: u64) -> &[PeerId] {
         self.follows_by_leader_id_project_id
-            .get(&(leader_id, Some(project_id)))
+            .get(&(leader_id, project_id))
             .map_or(&[], |v| v.as_slice())
     }
 

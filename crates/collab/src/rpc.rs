@@ -1901,7 +1901,7 @@ async fn follow(
     session
         .db()
         .await
-        .check_can_follow(room_id, project_id, leader_id, session.connection_id)
+        .check_room_participants(room_id, leader_id, session.connection_id)
         .await?;
 
     let mut response_payload = session
@@ -1913,12 +1913,14 @@ async fn follow(
         .retain(|view| view.leader_id != Some(follower_id.into()));
     response.send(response_payload)?;
 
-    let room = session
-        .db()
-        .await
-        .follow(room_id, project_id, leader_id, follower_id)
-        .await?;
-    room_updated(&room, &session.peer);
+    if let Some(project_id) = project_id {
+        let room = session
+            .db()
+            .await
+            .follow(room_id, project_id, leader_id, follower_id)
+            .await?;
+        room_updated(&room, &session.peer);
+    }
 
     Ok(())
 }
@@ -1935,19 +1937,21 @@ async fn unfollow(request: proto::Unfollow, session: Session) -> Result<()> {
     session
         .db()
         .await
-        .check_can_unfollow(room_id, project_id, leader_id, session.connection_id)
+        .check_room_participants(room_id, leader_id, session.connection_id)
         .await?;
 
     session
         .peer
         .forward_send(session.connection_id, leader_id, request)?;
 
-    let room = session
-        .db()
-        .await
-        .unfollow(room_id, project_id, leader_id, follower_id)
-        .await?;
-    room_updated(&room, &session.peer);
+    if let Some(project_id) = project_id {
+        let room = session
+            .db()
+            .await
+            .unfollow(room_id, project_id, leader_id, follower_id)
+            .await?;
+        room_updated(&room, &session.peer);
+    }
 
     Ok(())
 }

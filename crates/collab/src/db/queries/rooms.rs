@@ -1154,7 +1154,7 @@ impl Database {
             followers.push(proto::Follower {
                 leader_id: Some(db_follower.leader_connection().into()),
                 follower_id: Some(db_follower.follower_connection().into()),
-                project_id: db_follower.project_id.map(|id| id.to_proto()),
+                project_id: db_follower.project_id.to_proto(),
             });
         }
 

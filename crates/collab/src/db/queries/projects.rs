@@ -862,83 +862,34 @@ impl Database {
         .await
     }
 
-    pub async fn check_can_follow(
+    pub async fn check_room_participants(
         &self,
         room_id: RoomId,
-        project_id: Option<ProjectId>,
-        leader_id: ConnectionId,
-        follower_id: ConnectionId,
-    ) -> Result<()> {
-        let mut found_leader = false;
-        let mut found_follower = false;
-        self.transaction(|tx| async move {
-            if let Some(project_id) = project_id {
-                let mut rows = project_collaborator::Entity::find()
-                    .filter(project_collaborator::Column::ProjectId.eq(project_id))
-                    .stream(&*tx)
-                    .await?;
-                while let Some(row) = rows.next().await {
-                    let row = row?;
-                    let connection = row.connection();
-                    if connection == leader_id {
-                        found_leader = true;
-                    } else if connection == follower_id {
-                        found_follower = true;
-                    }
-                }
-            } else {
-                let mut rows = room_participant::Entity::find()
-                    .filter(room_participant::Column::RoomId.eq(room_id))
-                    .stream(&*tx)
-                    .await?;
-                while let Some(row) = rows.next().await {
-                    let row = row?;
-                    if let Some(connection) = row.answering_connection() {
-                        if connection == leader_id {
-                            found_leader = true;
-                        } else if connection == follower_id {
-                            found_follower = true;
-                        }
-                    }
-                }
-            }
-
-            if !found_leader || !found_follower {
-                Err(anyhow!("not a room participant"))?;
-            }
-
-            Ok(())
-        })
-        .await
-    }
-
-    pub async fn check_can_unfollow(
-        &self,
-        room_id: RoomId,
-        project_id: Option<ProjectId>,
         leader_id: ConnectionId,
         follower_id: ConnectionId,
     ) -> Result<()> {
         self.transaction(|tx| async move {
-            follower::Entity::find()
+            use room_participant::Column;
+
+            let count = room_participant::Entity::find()
                 .filter(
-                    Condition::all()
-                        .add(follower::Column::RoomId.eq(room_id))
-                        .add(follower::Column::ProjectId.eq(project_id))
-                        .add(follower::Column::LeaderConnectionId.eq(leader_id.id as i32))
-                        .add(follower::Column::FollowerConnectionId.eq(follower_id.id as i32))
-                        .add(
-                            follower::Column::LeaderConnectionServerId
-                                .eq(leader_id.owner_id as i32),
-                        )
-                        .add(
-                            follower::Column::FollowerConnectionServerId
-                                .eq(follower_id.owner_id as i32),
-                        ),
+                    Condition::all().add(Column::RoomId.eq(room_id)).add(
+                        Condition::any()
+                            .add(Column::AnsweringConnectionId.eq(leader_id.id as i32).and(
+                                Column::AnsweringConnectionServerId.eq(leader_id.owner_id as i32),
+                            ))
+                            .add(Column::AnsweringConnectionId.eq(follower_id.id as i32).and(
+                                Column::AnsweringConnectionServerId.eq(follower_id.owner_id as i32),
+                            )),
+                    ),
                 )
-                .one(&*tx)
-                .await?
-                .ok_or_else(|| anyhow!("not a follower"))?;
+                .count(&*tx)
+                .await?;
+
+            if count < 2 {
+                Err(anyhow!("not room participants"))?;
+            }
+
             Ok(())
         })
         .await
@@ -947,7 +898,7 @@ impl Database {
     pub async fn follow(
         &self,
         room_id: RoomId,
-        project_id: Option<ProjectId>,
+        project_id: ProjectId,
         leader_connection: ConnectionId,
         follower_connection: ConnectionId,
     ) -> Result<RoomGuard<proto::Room>> {
@@ -977,7 +928,7 @@ impl Database {
     pub async fn unfollow(
         &self,
         room_id: RoomId,
-        project_id: Option<ProjectId>,
+        project_id: ProjectId,
         leader_connection: ConnectionId,
         follower_connection: ConnectionId,
     ) -> Result<RoomGuard<proto::Room>> {
