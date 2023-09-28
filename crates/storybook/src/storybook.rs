@@ -79,6 +79,18 @@ fn main() {
                         crate::stories::kitchen_sink::KitchenSinkStory::default(),
                     )
                 }),
+                // HACK: Special-case the panel story to fix scrolling.
+                // There is something about going through `children_any` that messes
+                // with the scroll interactions.
+                Some(StorySelector::Component(story_selector::ComponentStory::Panel)) => {
+                    view(move |cx| {
+                        render_story(
+                            &mut ViewContext::new(cx),
+                            theme_override.clone(),
+                            crate::stories::components::panel::PanelStory::default(),
+                        )
+                    })
+                }
                 Some(selector) => view(move |cx| {
                     render_story(
                         &mut ViewContext::new(cx),
