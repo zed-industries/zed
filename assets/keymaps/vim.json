@@ -415,6 +415,8 @@
       "o": "vim::InsertLineBelow",
       "shift-o": "vim::InsertLineAbove",
       "~": "vim::ChangeCase",
+      "ctrl-a": "vim::Increment",
+      "ctrl-x": "vim::Decrement",
       "p": "vim::Paste",
       "shift-p": [
         "vim::Paste",
@@ -526,6 +528,20 @@
       "shift-r": "vim::SubstituteLine",
       "c": "vim::Substitute",
       "~": "vim::ChangeCase",
+      "ctrl-a": "vim::Increment",
+      "ctrl-x": "vim::Decrement",
+      "g ctrl-a": [
+        "vim::Increment",
+        {
+          "step": true
+        }
+      ],
+      "g ctrl-x": [
+        "vim::Decrement",
+        {
+          "step": true
+        }
+      ],
       "shift-i": "vim::InsertBefore",
       "shift-a": "vim::InsertAfter",
       "shift-j": "vim::JoinLines",
