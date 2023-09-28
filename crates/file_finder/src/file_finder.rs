@@ -1568,6 +1568,211 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_toggle_panel_new_selections(
+        deterministic: Arc<gpui::executor::Deterministic>,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/src",
+                json!({
+                    "test": {
+                        "first.rs": "// First Rust file",
+                        "second.rs": "// Second Rust file",
+                        "third.rs": "// Third Rust file",
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
+
+        // generate some history to select from
+        open_close_queried_buffer(
+            "fir",
+            1,
+            "first.rs",
+            window.into(),
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        open_close_queried_buffer(
+            "sec",
+            1,
+            "second.rs",
+            window.into(),
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        open_close_queried_buffer(
+            "thi",
+            1,
+            "third.rs",
+            window.into(),
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        let current_history = open_close_queried_buffer(
+            "sec",
+            1,
+            "second.rs",
+            window.into(),
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+
+        for expected_selected_index in 0..current_history.len() {
+            cx.dispatch_action(window.into(), Toggle);
+            let selected_index = cx.read(|cx| {
+                workspace
+                    .read(cx)
+                    .modal::<FileFinder>()
+                    .unwrap()
+                    .read(cx)
+                    .delegate()
+                    .selected_index()
+            });
+            assert_eq!(
+                selected_index, expected_selected_index,
+                "Should select the next item in the history"
+            );
+        }
+
+        cx.dispatch_action(window.into(), Toggle);
+        let selected_index = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .modal::<FileFinder>()
+                .unwrap()
+                .read(cx)
+                .delegate()
+                .selected_index()
+        });
+        assert_eq!(
+            selected_index, 0,
+            "Should wrap around the history and start all over"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_search_preserves_history_items(
+        deterministic: Arc<gpui::executor::Deterministic>,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/src",
+                json!({
+                    "test": {
+                        "first.rs": "// First Rust file",
+                        "second.rs": "// Second Rust file",
+                        "third.rs": "// Third Rust file",
+                        "fourth.rs": "// Fourth Rust file",
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
+        let worktree_id = cx.read(|cx| {
+            let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
+            assert_eq!(worktrees.len(), 1,);
+
+            WorktreeId::from_usize(worktrees[0].id())
+        });
+
+        // generate some history to select from
+        open_close_queried_buffer(
+            "fir",
+            1,
+            "first.rs",
+            window.into(),
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        open_close_queried_buffer(
+            "sec",
+            1,
+            "second.rs",
+            window.into(),
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        open_close_queried_buffer(
+            "thi",
+            1,
+            "third.rs",
+            window.into(),
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        open_close_queried_buffer(
+            "sec",
+            1,
+            "second.rs",
+            window.into(),
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+
+        cx.dispatch_action(window.into(), Toggle);
+        let final_query = "f";
+        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
+        finder
+            .update(cx, |finder, cx| {
+                finder
+                    .delegate_mut()
+                    .update_matches(final_query.to_string(), cx)
+            })
+            .await;
+        finder.read_with(cx, |finder, _| match &finder.delegate().matches {
+            Matches::Mixed { history, search } => {
+                assert_eq!(history.len(), 1, "Only one history item contains {final_query}, it should be present and others should be filtered out");
+                assert_eq!(history.first().unwrap(), &FoundPath::new(
+                    ProjectPath {
+                        worktree_id,
+                        path: Arc::from(Path::new("test/first.rs")),
+                    },
+                    Some(PathBuf::from("/src/test/first.rs"))
+                ));
+                assert_eq!(search.len(), 1, "Only one non-history item contains {final_query}, it should be present");
+                assert_eq!(search.first().unwrap().path.as_ref(), Path::new("test/fourth.rs"));
+            }
+            unexpected => {
+                panic!("Unexpected matches {unexpected:?}, expect both history and search items present for query {final_query}")
+            }
+        });
+    }
+
     async fn open_close_queried_buffer(
         input: &str,
         expected_matches: usize,
