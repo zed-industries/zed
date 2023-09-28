@@ -62,7 +62,7 @@ impl<S: Send + Sync + 'static, P: Send + 'static> Element for View<S, P> {
 
     fn paint(
         &mut self,
-        layout: Layout,
+        _: Layout,
         _: &mut Self::State,
         element: &mut Self::FrameState,
         cx: &mut ViewContext<Self::State>,
@@ -92,12 +92,7 @@ impl<S: Send + Sync + 'static, P: Send + 'static> ViewObject for View<S, P> {
         })
     }
 
-    fn paint(
-        &mut self,
-        layout: Layout,
-        element: &mut dyn Any,
-        cx: &mut WindowContext,
-    ) -> Result<()> {
+    fn paint(&mut self, _: Layout, element: &mut dyn Any, cx: &mut WindowContext) -> Result<()> {
         self.state.update(cx, |state, cx| {
             element
                 .downcast_mut::<AnyElement<S>>()

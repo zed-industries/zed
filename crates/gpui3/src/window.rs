@@ -89,12 +89,12 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         }
     }
 
-    pub(crate) fn immutable(app: &'a AppContext, window: &'w Window) -> Self {
-        Self {
-            app: Reference::Immutable(app),
-            window: Reference::Immutable(window),
-        }
-    }
+    // pub(crate) fn immutable(app: &'a AppContext, window: &'w Window) -> Self {
+    //     Self {
+    //         app: Reference::Immutable(app),
+    //         window: Reference::Immutable(window),
+    //     }
+    // }
 
     pub(crate) fn draw(&mut self) -> Result<()> {
         let unit_entity = self.unit_entity.clone();
@@ -204,18 +204,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     pub fn mouse_position(&self) -> Point<Pixels> {
         self.window.mouse_position
     }
-
-    fn update_window<R>(
-        &mut self,
-        window_handle: AnyWindowHandle,
-        update: impl FnOnce(&mut WindowContext) -> R,
-    ) -> Result<R> {
-        if window_handle == self.window.handle {
-            Ok(update(self))
-        } else {
-            self.app.update_window(window_handle.id, update)
-        }
-    }
 }
 
 impl Context for WindowContext<'_, '_> {
@@ -280,19 +268,6 @@ pub struct ViewContext<'a, 'w, T> {
 }
 
 impl<'a, 'w, T: Send + Sync + 'static> ViewContext<'a, 'w, T> {
-    // fn update<R>(&mut self, update: impl FnOnce(&mut T, &mut Self) -> R) -> R {
-
-    //     self.window_cx.update_entity(handle, update)
-
-    //     let mut entity = self.window_cx.app.entities.remove(&self.entity_id).unwrap();
-    //     let result = update(entity.downcast_mut::<T>().unwrap(), self);
-    //     self.window_cx
-    //         .app
-    //         .entities
-    //         .insert(self.entity_id, Box::new(entity));
-    //     result
-    // }
-
     fn mutable(app: &'a mut AppContext, window: &'w mut Window, entity_id: EntityId) -> Self {
         Self {
             window_cx: WindowContext::mutable(app, window),
@@ -301,13 +276,13 @@ impl<'a, 'w, T: Send + Sync + 'static> ViewContext<'a, 'w, T> {
         }
     }
 
-    fn immutable(app: &'a AppContext, window: &'w Window, entity_id: EntityId) -> Self {
-        Self {
-            window_cx: WindowContext::immutable(app, window),
-            entity_id,
-            entity_type: PhantomData,
-        }
-    }
+    // fn immutable(app: &'a AppContext, window: &'w Window, entity_id: EntityId) -> Self {
+    //     Self {
+    //         window_cx: WindowContext::immutable(app, window),
+    //         entity_id,
+    //         entity_type: PhantomData,
+    //     }
+    // }
 
     pub fn erase_state<R>(&mut self, f: impl FnOnce(&mut ViewContext<()>) -> R) -> R {
         let entity_id = self.unit_entity.id;

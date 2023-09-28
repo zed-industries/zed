@@ -291,7 +291,6 @@ impl Titlebar {
 // ================================================================================ //
 
 mod statusbar {
-    use gpui3::WindowContext;
 
     use super::*;
 
