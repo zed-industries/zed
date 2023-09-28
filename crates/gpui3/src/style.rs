@@ -1,5 +1,5 @@
 use crate::{
-    rems, AbsoluteLength, Bounds, Corners, CornersRefinement, DefiniteLength, Edges,
+    phi, rems, AbsoluteLength, Bounds, Corners, CornersRefinement, DefiniteLength, Edges,
     EdgesRefinement, Font, FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point,
     PointRefinement, Rems, Result, RunStyle, SharedString, Size, SizeRefinement, ViewContext,
     WindowContext,
@@ -100,6 +100,7 @@ pub struct TextStyle {
     pub font_family: SharedString,
     pub font_features: FontFeatures,
     pub font_size: Rems,
+    pub line_height: DefiniteLength,
     pub font_weight: FontWeight,
     pub font_style: FontStyle,
     pub underline: Option<UnderlineStyle>,
@@ -112,6 +113,7 @@ impl Default for TextStyle {
             font_family: SharedString::default(),
             font_features: FontFeatures::default(),
             font_size: rems(1.),
+            line_height: phi(),
             font_weight: FontWeight::default(),
             font_style: FontStyle::default(),
             underline: None,

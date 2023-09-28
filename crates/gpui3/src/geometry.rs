@@ -572,6 +572,18 @@ pub enum DefiniteLength {
     Fraction(f32),
 }
 
+impl DefiniteLength {
+    pub fn to_pixels(&self, base_size: AbsoluteLength, rem_size: Pixels) -> Pixels {
+        match self {
+            DefiniteLength::Absolute(size) => size.to_pixels(rem_size),
+            DefiniteLength::Fraction(fraction) => match base_size {
+                AbsoluteLength::Pixels(px) => px * *fraction,
+                AbsoluteLength::Rems(rems) => rems * rem_size * *fraction,
+            },
+        }
+    }
+}
+
 impl Debug for DefiniteLength {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -623,6 +635,11 @@ impl Debug for Length {
 
 pub fn relative(fraction: f32) -> DefiniteLength {
     DefiniteLength::Fraction(fraction).into()
+}
+
+/// Returns the Golden Ratio, i.e. `~(1.0 + sqrt(5.0)) / 2.0`.
+pub fn phi() -> DefiniteLength {
+    relative(1.61803398875)
 }
 
 pub fn rems(rems: f32) -> Rems {

@@ -99,17 +99,11 @@ impl TextSystem {
         let result =
             self.platform_text_system.advance(font_id, glyph_id)? / self.units_per_em(font)? as f32;
 
-        let result = result * font_size;
-        Ok(todo!())
+        Ok(result * font_size)
     }
 
     pub fn units_per_em(&self, font: &Font) -> Result<u32> {
         self.read_metrics(font, |metrics| metrics.units_per_em as u32)
-    }
-
-    pub fn line_height(&self, font_size: Pixels) -> Pixels {
-        todo!()
-        // self.font_cache.line_height(font_size)
     }
 
     pub fn cap_height(&self, font: &Font, font_size: Pixels) -> Result<Pixels> {
@@ -128,8 +122,12 @@ impl TextSystem {
         self.read_metrics(font, |metrics| metrics.descent(font_size))
     }
 
-    pub fn baseline_offset(&self, font: &Font, font_size: Pixels) -> Result<Pixels> {
-        let line_height = self.line_height(font_size);
+    pub fn baseline_offset(
+        &self,
+        font: &Font,
+        font_size: Pixels,
+        line_height: Pixels,
+    ) -> Result<Pixels> {
         let ascent = self.ascent(font, font_size)?;
         let descent = self.descent(font, font_size)?;
         let padding_top = (line_height - ascent - descent) / 2.;

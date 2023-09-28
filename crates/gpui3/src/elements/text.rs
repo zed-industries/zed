@@ -42,7 +42,9 @@ impl<S: 'static> Element for Text<S> {
         let text_system = cx.text_system().clone();
         let text_style = cx.text_style();
         let font_size = text_style.font_size * cx.rem_size();
-        let line_height = cx.text_system().line_height(font_size);
+        let line_height = text_style
+            .line_height
+            .to_pixels(font_size.into(), cx.rem_size());
         let text = self.text.clone();
         let paint_state = Arc::new(Mutex::new(None));
 
