@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use gpui2::geometry::DefiniteLength;
 use gpui2::platform::MouseButton;
-use gpui2::{EventContext, Hsla, Interactive};
+use gpui2::{EventContext, Hsla, Interactive, WindowContext};
 
 use crate::prelude::*;
 use crate::{h_stack, theme, Icon, IconColor, IconElement, Label, LabelColor, LabelSize};
@@ -137,6 +137,16 @@ impl<V: 'static> Button<V> {
         }
     }
 
+    fn border_color(&self, cx: &WindowContext) -> Hsla {
+        let theme = theme(cx);
+        let system_color = SystemColor::new();
+
+        match self.state {
+            InteractionState::Focused => theme.lowest.accent.default.border,
+            _ => system_color.transparent,
+        }
+    }
+
     fn render_label(&self) -> Label {
         Label::new(self.label.clone())
             .size(LabelSize::Small)
@@ -151,16 +161,7 @@ impl<V: 'static> Button<V> {
         let theme = theme(cx);
         let icon_color = self.icon_color();
         let system_color = SystemColor::new();
-        let border_color: Hsla;
-
-        match self.state {
-            InteractionState::Focused => {
-                border_color = theme.lowest.accent.default.border;
-            }
-            _ => {
-                border_color = system_color.transparent;
-            }
-        }
+        let border_color = self.border_color(cx);
 
         let mut el = h_stack()
             .h_6()

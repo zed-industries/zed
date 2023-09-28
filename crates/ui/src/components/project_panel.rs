@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use crate::prelude::*;
 use crate::{
     static_project_panel_project_items, static_project_panel_single_items, theme, Input, List,
-    ListSectionHeader,
+    ListHeader,
 };
 
 #[derive(Element)]
@@ -37,17 +37,13 @@ impl<V: 'static> ProjectPanel<V> {
                     .overflow_y_scroll(self.scroll_state.clone())
                     .child(
                         List::new(static_project_panel_single_items())
-                            .header(
-                                ListSectionHeader::new("FILES").set_toggle(ToggleState::Toggled),
-                            )
+                            .header(ListHeader::new("FILES").set_toggle(ToggleState::Toggled))
                             .empty_message("No files in directory")
                             .set_toggle(ToggleState::Toggled),
                     )
                     .child(
                         List::new(static_project_panel_project_items())
-                            .header(
-                                ListSectionHeader::new("PROJECT").set_toggle(ToggleState::Toggled),
-                            )
+                            .header(ListHeader::new("PROJECT").set_toggle(ToggleState::Toggled))
                             .empty_message("No folders in directory")
                             .set_toggle(ToggleState::Toggled),
                     ),

@@ -158,6 +158,13 @@ fn main() {
                         stories::components::traffic_lights::TrafficLightsStory::default(),
                     )
                 }),
+                Some(StorySelector::Component(ComponentStory::ContextMenu)) => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        stories::components::context_menu::ContextMenuStory::default(),
+                    )
+                }),
                 None => view(move |cx| {
                     render_story(
                         &mut ViewContext::new(cx),

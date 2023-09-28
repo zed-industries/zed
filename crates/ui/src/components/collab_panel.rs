@@ -7,7 +7,7 @@ use crate::prelude::*;
 use crate::theme::{theme, Theme};
 use crate::{
     static_collab_panel_channels, static_collab_panel_current_call, v_stack, Icon, List,
-    ListSectionHeader, ToggleState,
+    ListHeader, ToggleState,
 };
 
 #[derive(Element)]
@@ -44,7 +44,7 @@ impl<V: 'static> CollabPanel<V> {
                             .child(
                                 List::new(static_collab_panel_current_call())
                                     .header(
-                                        ListSectionHeader::new("CRDB")
+                                        ListHeader::new("CRDB")
                                             .left_icon(Icon::Hash.into())
                                             .set_toggle(ToggleState::Toggled),
                                     )
@@ -55,8 +55,7 @@ impl<V: 'static> CollabPanel<V> {
                         v_stack().py_1().child(
                             List::new(static_collab_panel_channels())
                                 .header(
-                                    ListSectionHeader::new("CHANNELS")
-                                        .set_toggle(ToggleState::Toggled),
+                                    ListHeader::new("CHANNELS").set_toggle(ToggleState::Toggled),
                                 )
                                 .empty_message("No channels yet. Add a channel to get started.")
                                 .set_toggle(ToggleState::Toggled),
@@ -66,7 +65,7 @@ impl<V: 'static> CollabPanel<V> {
                         v_stack().py_1().child(
                             List::new(static_collab_panel_current_call())
                                 .header(
-                                    ListSectionHeader::new("CONTACTS – ONLINE")
+                                    ListHeader::new("CONTACTS – ONLINE")
                                         .set_toggle(ToggleState::Toggled),
                                 )
                                 .set_toggle(ToggleState::Toggled),
@@ -76,7 +75,7 @@ impl<V: 'static> CollabPanel<V> {
                         v_stack().py_1().child(
                             List::new(static_collab_panel_current_call())
                                 .header(
-                                    ListSectionHeader::new("CONTACTS – OFFLINE")
+                                    ListHeader::new("CONTACTS – OFFLINE")
                                         .set_toggle(ToggleState::NotToggled),
                                 )
                                 .set_toggle(ToggleState::NotToggled),

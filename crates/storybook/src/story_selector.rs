@@ -20,6 +20,7 @@ pub enum ElementStory {
 #[strum(serialize_all = "snake_case")]
 pub enum ComponentStory {
     Breadcrumb,
+    ContextMenu,
     Facepile,
     Keybinding,
     Palette,

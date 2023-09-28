@@ -114,8 +114,10 @@ pub enum SelectedState {
     Selected,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ToggleState {
+    #[default]
+    NotToggeable,
     Toggled,
     NotToggled,
 }

@@ -1,4 +1,5 @@
 pub mod breadcrumb;
+pub mod context_menu;
 pub mod facepile;
 pub mod keybinding;
 pub mod palette;
