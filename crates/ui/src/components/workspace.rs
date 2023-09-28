@@ -3,7 +3,7 @@ use gpui2::geometry::{relative, rems, Size};
 
 use crate::{
     prelude::*, v_stack, ChatMessage, ChatPanel, Icon, IconElement, Panel, PanelAllowedSides,
-    PanelSide,
+    PanelSide, ProjectPanel,
 };
 use crate::{theme, Pane, PaneGroup, SplitDirection, StatusBar, TitleBar};
 
@@ -78,12 +78,8 @@ impl WorkspaceElement {
                     .border_b()
                     .border_color(theme.lowest.base.default.border)
                     .child(
-                        Panel::new(
-                            self.left_panel_scroll_state.clone(),
-                            |_, _| vec![IconElement::new(Icon::ExclamationTriangle).into_any()],
-                            Box::new(()),
-                        )
-                        .side(PanelSide::Left),
+                        ProjectPanel::new(self.left_panel_scroll_state.clone())
+                            .side(PanelSide::Left),
                     )
                     .child(
                         v_stack()
