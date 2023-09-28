@@ -1,4 +1,5 @@
 pub mod items;
+mod project_diagnostics_settings;
 mod toolbar_controls;
 
 use anyhow::Result;
@@ -20,6 +21,7 @@ use language::{
 };
 use lsp::LanguageServerId;
 use project::{DiagnosticSummary, Project, ProjectPath};
+use project_diagnostics_settings::ProjectDiagnosticsSettings;
 use serde_json::json;
 use smallvec::SmallVec;
 use std::{
@@ -43,6 +45,7 @@ actions!(diagnostics, [Deploy, ToggleWarnings]);
 const CONTEXT_LINE_COUNT: u32 = 1;
 
 pub fn init(cx: &mut AppContext) {
+    settings::register::<ProjectDiagnosticsSettings>(cx);
     cx.add_action(ProjectDiagnosticsEditor::deploy);
     cx.add_action(ProjectDiagnosticsEditor::toggle_warnings);
     items::init(cx);
@@ -191,7 +194,7 @@ impl ProjectDiagnosticsEditor {
             editor,
             path_states: Default::default(),
             paths_to_update,
-            include_warnings: true,
+            include_warnings: settings::get::<ProjectDiagnosticsSettings>(cx).include_warnings,
         };
         this.update_excerpts(None, cx);
         this

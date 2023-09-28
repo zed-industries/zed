@@ -227,6 +227,11 @@
   },
   // Automatically update Zed
   "auto_update": true,
+  // Diagnostics configuration.
+  "diagnostics": {
+    // Whether to show warnings or not by default.
+    "include_warnings": true
+  },
   // Git gutter behavior configuration.
   "git": {
     // Control whether the git gutter is shown. May take 2 values:
