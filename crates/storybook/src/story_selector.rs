@@ -125,9 +125,9 @@ impl FromStr for StorySelector {
 impl StorySelector {
     pub fn story<V: 'static>(&self) -> Vec<AnyElement<V>> {
         match self {
-            StorySelector::Element(element_story) => vec![element_story.story()],
-            StorySelector::Component(component_story) => vec![component_story.story()],
-            StorySelector::KitchenSink => all_story_selectors()
+            Self::Element(element_story) => vec![element_story.story()],
+            Self::Component(component_story) => vec![component_story.story()],
+            Self::KitchenSink => all_story_selectors()
                 .into_iter()
                 // Exclude the kitchen sink to prevent `story` from recursively
                 // calling itself for all eternity.
