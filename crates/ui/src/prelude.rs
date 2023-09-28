@@ -115,9 +115,59 @@ pub enum SelectedState {
 }
 
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
-pub enum ToggleState {
+pub enum Toggleable {
+    Toggleable(ToggleState),
     #[default]
-    NotToggeable,
+    NotToggleable,
+}
+
+impl Toggleable {
+    pub fn is_toggled(&self) -> bool {
+        match self {
+            Self::Toggleable(ToggleState::Toggled) => true,
+            _ => false,
+        }
+    }
+}
+
+impl From<ToggleState> for Toggleable {
+    fn from(state: ToggleState) -> Self {
+        Self::Toggleable(state)
+    }
+}
+
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ToggleState {
+    /// The "on" state of a toggleable element.
+    ///
+    /// Example:
+    ///     - A collasable list that is currently expanded
+    ///     - A toggle button that is currently on.
     Toggled,
+    /// The "off" state of a toggleable element.
+    ///
+    /// Example:
+    ///     - A collasable list that is currently collapsed
+    ///     - A toggle button that is currently off.
+    #[default]
     NotToggled,
+}
+
+impl From<Toggleable> for ToggleState {
+    fn from(toggleable: Toggleable) -> Self {
+        match toggleable {
+            Toggleable::Toggleable(state) => state,
+            Toggleable::NotToggleable => ToggleState::NotToggled,
+        }
+    }
+}
+
+impl From<bool> for ToggleState {
+    fn from(toggled: bool) -> Self {
+        if toggled {
+            ToggleState::Toggled
+        } else {
+            ToggleState::NotToggled
+        }
+    }
 }

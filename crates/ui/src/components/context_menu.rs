@@ -1,9 +1,7 @@
-use gpui2::AnyElement;
-
 use crate::theme::theme;
 use crate::{
-    prelude::*, v_stack, Label, List, ListEntry, ListHeader, ListItem, ListItemVariant,
-    ListSeparator,
+    prelude::*, v_stack, Label, List, ListEntry, ListItem, ListItemVariant, ListSeparator,
+    ListSubHeader,
 };
 
 #[derive(Clone)]
@@ -16,7 +14,7 @@ pub enum ContextMenuItem {
 impl ContextMenuItem {
     fn to_list_item(self) -> ListItem {
         match self {
-            ContextMenuItem::Header(label) => ListHeader::new(label).into(),
+            ContextMenuItem::Header(label) => ListSubHeader::new(label).into(),
             ContextMenuItem::Entry(label) => {
                 ListEntry::new(label).variant(ListItemVariant::Inset).into()
             }

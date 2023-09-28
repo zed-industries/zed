@@ -12,7 +12,7 @@ use crate::{
 pub enum ListItemVariant {
     /// The list item extends to the far left and right of the list.
     #[default]
-    EdgeToEdge,
+    FullWidth,
     Inset,
 }
 
@@ -22,7 +22,7 @@ pub struct ListHeader {
     left_icon: Option<Icon>,
     variant: ListItemVariant,
     state: InteractionState,
-    toggle: Option<ToggleState>,
+    toggleable: Toggleable,
 }
 
 impl ListHeader {
@@ -32,12 +32,17 @@ impl ListHeader {
             left_icon: None,
             variant: ListItemVariant::default(),
             state: InteractionState::default(),
-            toggle: None,
+            toggleable: Toggleable::default(),
         }
     }
 
     pub fn set_toggle(mut self, toggle: ToggleState) -> Self {
-        self.toggle = Some(toggle);
+        self.toggleable = toggle.into();
+        self
+    }
+
+    pub fn set_toggleable(mut self, toggleable: Toggleable) -> Self {
+        self.toggleable = toggleable;
         self
     }
 
@@ -51,14 +56,15 @@ impl ListHeader {
         self
     }
 
-    fn disclosure_control(&self) -> IconElement {
-        IconElement::new(if let Some(ToggleState::Toggled) = self.toggle {
-            Icon::ChevronDown
-        } else {
-            Icon::ChevronRight
-        })
-        .color(IconColor::Muted)
-        .size(IconSize::Small)
+    fn disclosure_control<V: 'static>(&self) -> Div<V> {
+        let is_toggleable = self.toggleable != Toggleable::NotToggleable;
+        let is_toggled = Toggleable::is_toggled(&self.toggleable);
+
+        match (is_toggleable, is_toggled) {
+            (false, _) => div(),
+            (_, true) => div().child(IconElement::new(Icon::ChevronRight).color(IconColor::Muted)),
+            (_, false) => div().child(IconElement::new(Icon::ChevronDown).size(IconSize::Small)),
+        }
     }
 
     fn background_color(&self, cx: &WindowContext) -> Hsla {
@@ -92,6 +98,11 @@ impl ListHeader {
         let token = token();
         let system_color = SystemColor::new();
         let background_color = self.background_color(cx);
+
+        let is_toggleable = self.toggleable != Toggleable::NotToggleable;
+        let is_toggled = Toggleable::is_toggled(&self.toggleable);
+
+        let disclosure_control = self.disclosure_control();
 
         h_stack()
             .flex_1()
@@ -129,7 +140,7 @@ impl ListHeader {
                                     .size(LabelSize::Small),
                             ),
                     )
-                    .children(self.toggle.map(|_| self.disclosure_control())),
+                    .child(disclosure_control),
             )
     }
 }
@@ -153,25 +164,6 @@ impl ListSubHeader {
     pub fn left_icon(mut self, left_icon: Option<Icon>) -> Self {
         self.left_icon = left_icon;
         self
-    }
-
-    pub fn state(mut self, state: InteractionState) -> Self {
-        self.state = state;
-        self
-    }
-
-    fn label_color(&self) -> LabelColor {
-        match self.state {
-            InteractionState::Disabled => LabelColor::Disabled,
-            _ => Default::default(),
-        }
-    }
-
-    fn icon_color(&self) -> IconColor {
-        match self.state {
-            InteractionState::Disabled => IconColor::Disabled,
-            _ => Default::default(),
-        }
     }
 
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
@@ -462,7 +454,7 @@ pub struct List {
     items: Vec<ListItem>,
     empty_message: &'static str,
     header: Option<ListHeader>,
-    toggle: Option<ToggleState>,
+    toggleable: Toggleable,
 }
 
 impl List {
@@ -471,7 +463,7 @@ impl List {
             items,
             empty_message: "No items",
             header: None,
-            toggle: None,
+            toggleable: Toggleable::default(),
         }
     }
 
@@ -486,22 +478,24 @@ impl List {
     }
 
     pub fn set_toggle(mut self, toggle: ToggleState) -> Self {
-        self.toggle = Some(toggle);
+        self.toggleable = toggle.into();
         self
     }
 
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
         let token = token();
+        let is_toggleable = self.toggleable != Toggleable::NotToggleable;
+        let is_toggled = Toggleable::is_toggled(&self.toggleable);
 
-        let disclosure_control = match self.toggle {
-            Some(ToggleState::NotToggled) => Some(IconElement::new(Icon::ChevronRight)),
-            Some(ToggleState::Toggled) => Some(IconElement::new(Icon::ChevronDown)),
-            None => None,
+        let disclosure_control = if is_toggleable {
+            IconElement::new(Icon::ChevronRight)
+        } else {
+            IconElement::new(Icon::ChevronDown)
         };
 
-        let list_content = match (self.items.is_empty(), self.toggle) {
-            (_, Some(ToggleState::NotToggled)) => div(),
+        let list_content = match (self.items.is_empty(), is_toggled) {
+            (_, false) => div(),
             (false, _) => div().children(self.items.iter().cloned()),
             (true, _) => div().child(Label::new(self.empty_message).color(LabelColor::Muted)),
         };
@@ -509,9 +503,9 @@ impl List {
         v_stack()
             .py_1()
             .children(
-                self.header.clone().map(|header| {
-                    header.set_toggle(self.toggle.unwrap_or(ToggleState::NotToggled))
-                }),
+                self.header
+                    .clone()
+                    .map(|header| header.set_toggleable(self.toggleable)),
             )
             .child(list_content)
     }

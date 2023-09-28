@@ -1,5 +1,4 @@
 use gpui2::geometry::{relative, rems, Size};
-use gpui2::hsla;
 
 use crate::{prelude::*, v_stack, Panel, PanelAllowedSides, PanelSide};
 use crate::{theme, Pane, PaneGroup, SplitDirection, StatusBar, TitleBar};
