@@ -1,9 +1,16 @@
 use crate::Context;
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use slotmap::{SecondaryMap, SlotMap};
-use std::{any::Any, marker::PhantomData, sync::Arc};
+use std::{
+    any::Any,
+    marker::PhantomData,
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc, Weak,
+    },
+};
 
 slotmap::new_key_type! { pub struct EntityId; }
 
@@ -16,24 +23,21 @@ pub struct Lease<T> {
 }
 
 pub(crate) struct EntityMap {
-    ref_counts: Arc<Mutex<SlotMap<EntityId, usize>>>,
+    ref_counts: Arc<RwLock<RefCounts>>,
     entities: Arc<Mutex<SecondaryMap<EntityId, Box<dyn Any + Send + Sync>>>>,
 }
 
 impl EntityMap {
     pub fn new() -> Self {
         Self {
-            ref_counts: Arc::new(Mutex::new(SlotMap::with_key())),
+            ref_counts: Arc::new(RwLock::new(SlotMap::with_key())),
             entities: Arc::new(Mutex::new(SecondaryMap::new())),
         }
     }
 
-    pub fn reserve<T>(&self) -> Slot<T> {
-        let id = self.ref_counts.lock().insert(1);
-        Slot(Handle {
-            id,
-            entity_type: PhantomData,
-        })
+    pub fn reserve<T: 'static + Send + Sync>(&self) -> Slot<T> {
+        let id = self.ref_counts.write().insert(1.into());
+        Slot(Handle::new(id, Arc::downgrade(&self.ref_counts)))
     }
 
     pub fn redeem<T: 'static + Any + Send + Sync>(&self, slot: Slot<T>, entity: T) -> Handle<T> {
@@ -42,7 +46,7 @@ impl EntityMap {
         handle
     }
 
-    pub fn lease<T: 'static>(&self, handle: &Handle<T>) -> Lease<T> {
+    pub fn lease<T: 'static + Send + Sync>(&self, handle: &Handle<T>) -> Lease<T> {
         let id = handle.id;
         let entity = self
             .entities
@@ -57,21 +61,33 @@ impl EntityMap {
     pub fn end_lease<T: 'static + Send + Sync>(&mut self, lease: Lease<T>) {
         self.entities.lock().insert(lease.id, lease.entity);
     }
+
+    pub fn weak_handle<T: 'static + Send + Sync>(&self, id: EntityId) -> WeakHandle<T> {
+        WeakHandle {
+            id,
+            entity_type: PhantomData,
+            ref_counts: Arc::downgrade(&self.ref_counts),
+        }
+    }
 }
 
 #[derive(Deref, DerefMut)]
-pub struct Slot<T>(Handle<T>);
+pub struct Slot<T: Send + Sync + 'static>(Handle<T>);
 
-pub struct Handle<T> {
+pub struct Handle<T: Send + Sync> {
     pub(crate) id: EntityId,
-    pub(crate) entity_type: PhantomData<T>,
+    entity_type: PhantomData<T>,
+    ref_counts: Weak<RwLock<RefCounts>>,
 }
 
-impl<T: Send + Sync + 'static> Handle<T> {
-    pub fn new(id: EntityId) -> Self {
+type RefCounts = SlotMap<EntityId, AtomicUsize>;
+
+impl<T: 'static + Send + Sync> Handle<T> {
+    pub fn new(id: EntityId, ref_counts: Weak<RwLock<RefCounts>>) -> Self {
         Self {
             id,
             entity_type: PhantomData,
+            ref_counts,
         }
     }
 
@@ -79,6 +95,7 @@ impl<T: Send + Sync + 'static> Handle<T> {
         WeakHandle {
             id: self.id,
             entity_type: self.entity_type,
+            ref_counts: self.ref_counts.clone(),
         }
     }
 
@@ -96,11 +113,23 @@ impl<T: Send + Sync + 'static> Handle<T> {
     }
 }
 
-impl<T> Clone for Handle<T> {
+impl<T: Send + Sync> Clone for Handle<T> {
     fn clone(&self) -> Self {
         Self {
             id: self.id,
             entity_type: PhantomData,
+            ref_counts: self.ref_counts.clone(),
+        }
+    }
+}
+
+impl<T: Send + Sync> Drop for Handle<T> {
+    fn drop(&mut self) {
+        if let Some(ref_counts) = self.ref_counts.upgrade() {
+            if let Some(count) = ref_counts.read().get(self.id) {
+                let prev_count = count.fetch_sub(1, SeqCst);
+                assert_ne!(prev_count, 0, "Detected over-release of a handle.");
+            }
         }
     }
 }
@@ -108,14 +137,17 @@ impl<T> Clone for Handle<T> {
 pub struct WeakHandle<T> {
     pub(crate) id: EntityId,
     pub(crate) entity_type: PhantomData<T>,
+    pub(crate) ref_counts: Weak<RwLock<RefCounts>>,
 }
 
 impl<T: Send + Sync + 'static> WeakHandle<T> {
     pub fn upgrade(&self, _: &impl Context) -> Option<Handle<T>> {
-        // todo!("Actually upgrade")
+        let ref_counts = self.ref_counts.upgrade()?;
+        ref_counts.read().get(self.id).unwrap().fetch_add(1, SeqCst);
         Some(Handle {
             id: self.id,
             entity_type: self.entity_type,
+            ref_counts: self.ref_counts.clone(),
         })
     }
 

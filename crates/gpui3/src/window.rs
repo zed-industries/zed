@@ -275,10 +275,7 @@ impl<'a, 'w, T: Send + Sync + 'static> ViewContext<'a, 'w, T> {
     }
 
     pub fn handle(&self) -> WeakHandle<T> {
-        WeakHandle {
-            id: self.entity_id,
-            entity_type: PhantomData,
-        }
+        self.entities.weak_handle(self.entity_id)
     }
 
     pub fn observe<E: Send + Sync + 'static>(

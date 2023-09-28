@@ -1,9 +1,9 @@
 mod async_context;
-mod entities;
+mod entity_map;
 mod model_context;
 
 pub use async_context::*;
-pub use entities::*;
+pub use entity_map::*;
 pub use model_context::*;
 
 use crate::{

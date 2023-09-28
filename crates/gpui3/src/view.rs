@@ -6,7 +6,7 @@ use crate::{
 };
 use std::{any::Any, marker::PhantomData, sync::Arc};
 
-pub struct View<S, P> {
+pub struct View<S: Send + Sync, P> {
     state: Handle<S>,
     render: Arc<dyn Fn(&mut S, &mut ViewContext<S>) -> AnyElement<S> + Send + Sync + 'static>,
     parent_state_type: PhantomData<P>,
@@ -21,7 +21,7 @@ impl<S: 'static + Send + Sync, P: 'static + Send> View<S, P> {
     }
 }
 
-impl<S, P> Clone for View<S, P> {
+impl<S: Send + Sync, P> Clone for View<S, P> {
     fn clone(&self) -> Self {
         Self {
             state: self.state.clone(),
@@ -33,10 +33,15 @@ impl<S, P> Clone for View<S, P> {
 
 pub type RootView<S> = View<S, ()>;
 
-pub fn view<S: 'static, P: 'static, E: Element<State = S>>(
+pub fn view<S, P, E>(
     state: Handle<S>,
     render: impl Fn(&mut S, &mut ViewContext<S>) -> E + Send + Sync + 'static,
-) -> View<S, P> {
+) -> View<S, P>
+where
+    S: 'static + Send + Sync,
+    P: 'static,
+    E: Element<State = S>,
+{
     View {
         state,
         render: Arc::new(move |state, cx| render(state, cx).into_any()),
