@@ -1,4 +1,4 @@
-use crate::prelude::*;
+use crate::{prelude::*, IconColor};
 use crate::{theme, Icon, IconElement, Label, LabelColor};
 
 #[derive(Element)]
@@ -23,7 +23,7 @@ impl Tab {
             fs_status: FileSystemStatus::None,
             git_status: GitStatus::None,
             diagnostic_status: DiagnosticStatus::None,
-            close_side: IconSide::Left,
+            close_side: IconSide::Right,
         }
     }
 
@@ -82,7 +82,7 @@ impl Tab {
             GitStatus::Conflict => Label::new(self.title),
         };
 
-        let close_icon = IconElement::new(Icon::Close);
+        let close_icon = IconElement::new(Icon::Close).color(IconColor::Muted);
 
         div()
             .px_2()
@@ -94,18 +94,6 @@ impl Tab {
                 theme.highest.base.default.background
             } else {
                 theme.middle.base.default.background
-            })
-            .hover()
-            .fill(if self.current {
-                theme.highest.base.hovered.background
-            } else {
-                theme.middle.base.hovered.background
-            })
-            .active()
-            .fill(if self.current {
-                theme.highest.base.pressed.background
-            } else {
-                theme.middle.base.pressed.background
             })
             .child(
                 div()
