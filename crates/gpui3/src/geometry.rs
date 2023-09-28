@@ -4,9 +4,7 @@ use derive_more::{Add, AddAssign, Div, Mul, Sub, SubAssign};
 use refineable::Refineable;
 use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Sub, SubAssign};
 
-#[derive(
-    Refineable, Default, Add, AddAssign, Sub, SubAssign, Mul, Copy, Debug, PartialEq, Eq, Hash,
-)]
+#[derive(Refineable, Default, Add, AddAssign, Sub, SubAssign, Copy, Debug, PartialEq, Eq, Hash)]
 #[refineable(debug)]
 #[repr(C)]
 pub struct Point<T: Clone + Debug> {
@@ -27,6 +25,17 @@ impl<T: Clone + Debug> Point<T> {
         Point {
             x: f(self.x.clone()),
             y: f(self.y.clone()),
+        }
+    }
+}
+
+impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> Mul<S> for Point<T> {
+    type Output = Self;
+
+    fn mul(self, rhs: S) -> Self::Output {
+        Self {
+            x: self.x.clone() * rhs.clone(),
+            y: self.y.clone() * rhs,
         }
     }
 }
@@ -116,6 +125,17 @@ impl<T: Clone + Debug> Size<T> {
     }
 }
 
+impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> Mul<S> for Size<T> {
+    type Output = Self;
+
+    fn mul(self, rhs: S) -> Self::Output {
+        Self {
+            width: self.width.clone() * rhs.clone(),
+            height: self.height.clone() * rhs,
+        }
+    }
+}
+
 impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Size<T> {
     fn mul_assign(&mut self, rhs: S) {
         self.width = self.width.clone() * rhs.clone();
@@ -169,6 +189,20 @@ pub struct Bounds<T: Clone + Debug> {
 
 unsafe impl<T: Clone + Debug + Zeroable + Pod> Zeroable for Bounds<T> {}
 unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Bounds<T> {}
+
+impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> Mul<S> for Bounds<T>
+where
+    T: Mul<S, Output = T>,
+{
+    type Output = Self;
+
+    fn mul(self, rhs: S) -> Self::Output {
+        Self {
+            origin: self.origin * rhs.clone(),
+            size: self.size * rhs,
+        }
+    }
+}
 
 impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Bounds<T> {
     fn mul_assign(&mut self, rhs: S) {
@@ -233,6 +267,19 @@ pub struct Edges<T: Clone + Debug> {
     pub right: T,
     pub bottom: T,
     pub left: T,
+}
+
+impl<T: Clone + Debug + Mul<Output = T>> Mul for Edges<T> {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        Self {
+            top: self.top.clone() * rhs.top,
+            right: self.right.clone() * rhs.right,
+            bottom: self.bottom.clone() * rhs.bottom,
+            left: self.left.clone() * rhs.left,
+        }
+    }
 }
 
 impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Edges<T> {
@@ -315,6 +362,19 @@ pub struct Corners<T: Clone + Debug> {
     pub top_right: T,
     pub bottom_right: T,
     pub bottom_left: T,
+}
+
+impl<T: Clone + Debug + Mul<Output = T>> Mul for Corners<T> {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        Self {
+            top_left: self.top_left.clone() * rhs.top_left,
+            top_right: self.top_right.clone() * rhs.top_right,
+            bottom_right: self.bottom_right.clone() * rhs.bottom_right,
+            bottom_left: self.bottom_left.clone() * rhs.bottom_left,
+        }
+    }
 }
 
 impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Corners<T> {

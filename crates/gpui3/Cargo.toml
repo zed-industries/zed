@@ -2,7 +2,7 @@
 name = "gpui3"
 version = "0.1.0"
 edition = "2021"
-authors = ["Nathan Sobo <nathansobo@gmail.com>"]
+authors = ["Nathan Sobo <nathan@zed.dev>"]
 description = "The next version of Zed's GPU-accelerated UI framework"
 publish = false
 

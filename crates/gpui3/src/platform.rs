@@ -156,8 +156,8 @@ pub trait PlatformDispatcher: Send + Sync {
 pub trait PlatformTextSystem: Send + Sync {
     fn add_fonts(&self, fonts: &[Arc<Vec<u8>>]) -> Result<()>;
     fn all_font_families(&self) -> Vec<String>;
-    fn select_font(&self, descriptor: Font) -> Result<FontId>;
-    fn font_metrics(&self, font_id: FontId) -> Arc<FontMetrics>;
+    fn font_id(&self, descriptor: &Font) -> Result<FontId>;
+    fn font_metrics(&self, font_id: FontId) -> FontMetrics;
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>>;
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>>;
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId>;

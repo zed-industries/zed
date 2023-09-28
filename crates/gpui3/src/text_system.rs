@@ -2,18 +2,18 @@ mod font_features;
 mod line_wrapper;
 mod text_layout_cache;
 
+use anyhow::anyhow;
 pub use font_features::*;
 use line_wrapper::*;
 pub use text_layout_cache::*;
 
 use crate::{
-    px, Bounds, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size, UnderlineStyle,
+    px, Bounds, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, UnderlineStyle,
 };
 use collections::HashMap;
 use core::fmt;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use std::{
-    borrow::BorrowMut,
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
     ops::{Deref, DerefMut},
@@ -29,33 +29,65 @@ pub struct FontFamilyId(pub usize);
 pub struct TextSystem {
     text_layout_cache: Arc<TextLayoutCache>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
-    wrapper_pool: Mutex<HashMap<(Font, Pixels), Vec<LineWrapper>>>,
+    font_ids_by_font: RwLock<HashMap<Font, FontId>>,
+    fonts_by_font_id: RwLock<HashMap<FontId, Font>>,
+    font_metrics: RwLock<HashMap<Font, FontMetrics>>,
+    wrapper_pool: Mutex<HashMap<FontWithSize, Vec<LineWrapper>>>,
 }
 
 impl TextSystem {
     pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
         TextSystem {
             text_layout_cache: Arc::new(TextLayoutCache::new(platform_text_system.clone())),
-            wrapper_pool: Mutex::new(HashMap::default()),
             platform_text_system,
+            font_metrics: RwLock::new(HashMap::default()),
+            font_ids_by_font: RwLock::new(HashMap::default()),
+            fonts_by_font_id: RwLock::new(HashMap::default()),
+            wrapper_pool: Mutex::new(HashMap::default()),
         }
     }
 
-    pub fn select_font(&self, descriptor: impl Into<Font>) -> Result<FontId> {
-        self.platform_text_system.select_font(descriptor.into())
+    pub fn font_id(&self, font: &Font) -> Result<FontId> {
+        if let Some(font_id) = self.font_ids_by_font.read().get(font) {
+            Ok(*font_id)
+        } else {
+            let font_id = self.platform_text_system.font_id(font)?;
+            self.font_ids_by_font.write().insert(font.clone(), font_id);
+            self.fonts_by_font_id.write().insert(font_id, font.clone());
+
+            Ok(font_id)
+        }
     }
 
-    pub fn bounding_box(&self, font_id: FontId, font_size: Pixels) -> Size<Pixels> {
-        let metrics = self.platform_text_system.font_metrics(font_id);
-        metrics.bounding_box(font_size);
-
-        todo!()
-        // self.font_cache.bounding_box(font_id, font_size)
+    pub fn with_font<T>(&self, font_id: FontId, f: impl FnOnce(&Self, &Font) -> T) -> Result<T> {
+        self.fonts_by_font_id
+            .read()
+            .get(&font_id)
+            .ok_or_else(|| anyhow!("font not found"))
+            .map(|font| f(self, font))
     }
 
-    pub fn em_width(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        todo!()
-        // self.font_cache.em_width(font_id, font_size)
+    pub fn bounding_box(&self, font: &Font, font_size: Pixels) -> Result<Bounds<Pixels>> {
+        self.read_metrics(&font, |metrics| metrics.bounding_box(font_size))
+    }
+
+    pub fn typographic_bounds(
+        &self,
+        font: &Font,
+        font_size: Pixels,
+        character: char,
+    ) -> Result<Bounds<Pixels>> {
+        let font_id = self.font_id(font)?;
+        let glyph_id = self
+            .platform_text_system
+            .glyph_for_char(font_id, character)
+            .ok_or_else(|| anyhow!("glyph not found for character '{}'", character))?;
+        let bounds = self
+            .platform_text_system
+            .typographic_bounds(font_id, glyph_id)?;
+        self.read_metrics(font, |metrics| {
+            (bounds / metrics.units_per_em as f32 * font_size.0).map(px)
+        })
     }
 
     pub fn em_advance(&self, font_id: FontId, font_size: Pixels) -> Pixels {
@@ -68,34 +100,41 @@ impl TextSystem {
         // self.font_cache.line_height(font_size)
     }
 
-    pub fn cap_height(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        todo!()
-        // self.font_cache.cap_height(font_id, font_size)
+    pub fn cap_height(&self, font: &Font, font_size: Pixels) -> Result<Pixels> {
+        self.read_metrics(font, |metrics| metrics.cap_height(font_size))
     }
 
-    pub fn x_height(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        todo!()
-        // self.font_cache.x_height(font_id, font_size)
+    pub fn x_height(&self, font: &Font, font_size: Pixels) -> Result<Pixels> {
+        self.read_metrics(font, |metrics| metrics.x_height(font_size))
     }
 
-    pub fn ascent(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        todo!()
-        // self.font_cache.ascent(font_id, font_size)
+    pub fn ascent(&self, font: &Font, font_size: Pixels) -> Result<Pixels> {
+        self.read_metrics(font, |metrics| metrics.ascent(font_size))
     }
 
-    pub fn descent(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        todo!()
-        // self.font_cache.descent(font_id, font_size)
+    pub fn descent(&self, font: &Font, font_size: Pixels) -> Result<Pixels> {
+        self.read_metrics(font, |metrics| metrics.descent(font_size))
     }
 
-    pub fn em_size(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        todo!()
-        // self.font_cache.em_size(font_id, font_size)
+    pub fn baseline_offset(&self, font: &Font, font_size: Pixels) -> Result<Pixels> {
+        let line_height = self.line_height(font_size);
+        let ascent = self.ascent(font, font_size)?;
+        let descent = self.descent(font, font_size)?;
+        let padding_top = (line_height - ascent - descent) / 2.;
+        Ok(padding_top + ascent)
     }
 
-    pub fn baseline_offset(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        todo!()
-        // self.font_cache.baseline_offset(font_id, font_size)
+    fn read_metrics<T>(&self, font: &Font, read: impl FnOnce(&FontMetrics) -> T) -> Result<T> {
+        if let Some(metrics) = self.font_metrics.read().get(font) {
+            Ok(read(metrics))
+        } else {
+            let font_id = self.platform_text_system.font_id(&font)?;
+            let mut lock = self.font_metrics.write();
+            let metrics = lock
+                .entry(font.clone())
+                .or_insert_with(|| self.platform_text_system.font_metrics(font_id));
+            Ok(read(metrics))
+        }
     }
 
     pub fn layout_str<'a>(
@@ -113,7 +152,12 @@ impl TextSystem {
 
     pub fn line_wrapper(self: &Arc<Self>, font: Font, font_size: Pixels) -> LineWrapperHandle {
         let lock = &mut self.wrapper_pool.lock();
-        let wrappers = lock.entry((font.clone(), font_size)).or_default();
+        let wrappers = lock
+            .entry(FontWithSize {
+                font: font.clone(),
+                font_size,
+            })
+            .or_default();
         let wrapper = wrappers.pop().unwrap_or_else(|| {
             LineWrapper::new(font, font_size, self.platform_text_system.clone())
         });
@@ -123,6 +167,12 @@ impl TextSystem {
             text_system: self.clone(),
         }
     }
+}
+
+#[derive(Hash, Eq, PartialEq)]
+struct FontWithSize {
+    font: Font,
+    font_size: Pixels,
 }
 
 pub struct LineWrapperHandle {
@@ -135,7 +185,10 @@ impl Drop for LineWrapperHandle {
         let mut state = self.text_system.wrapper_pool.lock();
         let wrapper = self.wrapper.take().unwrap();
         state
-            .get_mut(&(wrapper.font.clone(), wrapper.font_size))
+            .get_mut(&FontWithSize {
+                font: wrapper.font.clone(),
+                font_size: wrapper.font_size,
+            })
             .unwrap()
             .push(wrapper);
     }
@@ -329,49 +382,43 @@ pub struct FontMetrics {
 }
 
 impl FontMetrics {
-    /// Returns the number of pixels that make up the "em square",
-    /// a scalable grid for determining the size of a typeface.
-    pub fn units_per_em(&self, font_size: Pixels) -> Pixels {
-        Pixels((self.units_per_em as f32 / font_size.0).ceil())
-    }
-
     /// Returns the vertical distance from the baseline of the font to the top of the glyph covers in pixels.
     pub fn ascent(&self, font_size: Pixels) -> Pixels {
-        Pixels((self.ascent / font_size.0).ceil() as f32)
+        Pixels((self.ascent / self.units_per_em as f32) * font_size.0)
     }
 
     /// Returns the vertical distance from the baseline of the font to the bottom of the glyph covers in pixels.
     pub fn descent(&self, font_size: Pixels) -> Pixels {
-        Pixels((self.descent / font_size.0).ceil() as f32)
+        Pixels((self.descent / self.units_per_em as f32) * font_size.0)
     }
 
     /// Returns the recommended additional space to add between lines of type in pixels.
     pub fn line_gap(&self, font_size: Pixels) -> Pixels {
-        Pixels((self.line_gap / font_size.0).ceil() as f32)
+        Pixels((self.line_gap / self.units_per_em as f32) * font_size.0)
     }
 
     /// Returns the suggested position of the underline in pixels.
     pub fn underline_position(&self, font_size: Pixels) -> Pixels {
-        Pixels((self.underline_position / font_size.0).ceil() as f32)
+        Pixels((self.underline_position / self.units_per_em as f32) * font_size.0)
     }
 
     /// Returns the suggested thickness of the underline in pixels.
     pub fn underline_thickness(&self, font_size: Pixels) -> Pixels {
-        Pixels((self.underline_thickness / font_size.0).ceil() as f32)
+        Pixels((self.underline_thickness / self.units_per_em as f32) * font_size.0)
     }
 
     /// Returns the height of a capital letter measured from the baseline of the font in pixels.
     pub fn cap_height(&self, font_size: Pixels) -> Pixels {
-        Pixels((self.cap_height / font_size.0).ceil() as f32)
+        Pixels((self.cap_height / self.units_per_em as f32) * font_size.0)
     }
 
     /// Returns the height of a lowercase x in pixels.
     pub fn x_height(&self, font_size: Pixels) -> Pixels {
-        Pixels((self.x_height / font_size.0).ceil() as f32)
+        Pixels((self.x_height / self.units_per_em as f32) * font_size.0)
     }
 
     /// Returns the outer limits of the area that the font covers in pixels.
     pub fn bounding_box(&self, font_size: Pixels) -> Bounds<Pixels> {
-        (self.bounding_box / font_size.0).map(px)
+        (self.bounding_box / self.units_per_em as f32 * font_size.0).map(px)
     }
 }

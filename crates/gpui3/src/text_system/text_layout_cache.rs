@@ -2,6 +2,7 @@ use crate::{
     black, point, px, Bounds, FontId, Glyph, Hsla, LineLayout, Pixels, PlatformTextSystem, Point,
     Run, RunStyle, UnderlineStyle, WindowContext,
 };
+use anyhow::Result;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
 use std::{
@@ -262,79 +263,86 @@ impl Line {
         let mut underline = None;
 
         for run in &self.layout.runs {
-            let max_glyph_width = cx
-                .text_system()
-                .bounding_box(run.font_id, self.layout.font_size)
-                .width;
+            cx.text_system().with_font(run.font_id, |system, font| {
+                let max_glyph_width = cx
+                    .text_system()
+                    .bounding_box(font, self.layout.font_size)?
+                    .size
+                    .width;
 
-            for glyph in &run.glyphs {
-                let glyph_origin = origin + baseline_offset + glyph.position;
-                if glyph_origin.x > visible_bounds.upper_right().x {
-                    break;
-                }
-
-                let mut finished_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
-                if glyph.index >= run_end {
-                    if let Some(style_run) = style_runs.next() {
-                        if let Some((_, underline_style)) = &mut underline {
-                            if style_run.underline != *underline_style {
-                                finished_underline = underline.take();
-                            }
-                        }
-                        if style_run.underline.thickness > px(0.) {
-                            underline.get_or_insert((
-                                point(
-                                    glyph_origin.x,
-                                    origin.y + baseline_offset.y + (self.layout.descent * 0.618),
-                                ),
-                                UnderlineStyle {
-                                    color: style_run.underline.color,
-                                    thickness: style_run.underline.thickness,
-                                    squiggly: style_run.underline.squiggly,
-                                },
-                            ));
-                        }
-
-                        run_end += style_run.len as usize;
-                        color = style_run.color;
-                    } else {
-                        run_end = self.layout.len;
-                        finished_underline = underline.take();
+                for glyph in &run.glyphs {
+                    let glyph_origin = origin + baseline_offset + glyph.position;
+                    if glyph_origin.x > visible_bounds.upper_right().x {
+                        break;
                     }
+
+                    let mut finished_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
+                    if glyph.index >= run_end {
+                        if let Some(style_run) = style_runs.next() {
+                            if let Some((_, underline_style)) = &mut underline {
+                                if style_run.underline != *underline_style {
+                                    finished_underline = underline.take();
+                                }
+                            }
+                            if style_run.underline.thickness > px(0.) {
+                                underline.get_or_insert((
+                                    point(
+                                        glyph_origin.x,
+                                        origin.y
+                                            + baseline_offset.y
+                                            + (self.layout.descent * 0.618),
+                                    ),
+                                    UnderlineStyle {
+                                        color: style_run.underline.color,
+                                        thickness: style_run.underline.thickness,
+                                        squiggly: style_run.underline.squiggly,
+                                    },
+                                ));
+                            }
+
+                            run_end += style_run.len as usize;
+                            color = style_run.color;
+                        } else {
+                            run_end = self.layout.len;
+                            finished_underline = underline.take();
+                        }
+                    }
+
+                    if glyph_origin.x + max_glyph_width < visible_bounds.origin.x {
+                        continue;
+                    }
+
+                    if let Some((_underline_origin, _underline_style)) = finished_underline {
+                        // cx.scene().insert(Underline {
+                        //     origin: underline_origin,
+                        //     width: glyph_origin.x - underline_origin.x,
+                        //     thickness: underline_style.thickness.into(),
+                        //     color: underline_style.color.unwrap(),
+                        //     squiggly: underline_style.squiggly,
+                        // });
+                    }
+
+                    // todo!()
+                    // if glyph.is_emoji {
+                    //     cx.scene().push_image_glyph(scene::ImageGlyph {
+                    //         font_id: run.font_id,
+                    //         font_size: self.layout.font_size,
+                    //         id: glyph.id,
+                    //         origin: glyph_origin,
+                    //     });
+                    // } else {
+                    //     cx.scene().push_glyph(scene::Glyph {
+                    //         font_id: run.font_id,
+                    //         font_size: self.layout.font_size,
+                    //         id: glyph.id,
+                    //         origin: glyph_origin,
+                    //         color,
+                    //     });
+                    // }
                 }
 
-                if glyph_origin.x + max_glyph_width < visible_bounds.origin.x {
-                    continue;
-                }
-
-                if let Some((_underline_origin, _underline_style)) = finished_underline {
-                    // cx.scene().insert(Underline {
-                    //     origin: underline_origin,
-                    //     width: glyph_origin.x - underline_origin.x,
-                    //     thickness: underline_style.thickness.into(),
-                    //     color: underline_style.color.unwrap(),
-                    //     squiggly: underline_style.squiggly,
-                    // });
-                }
-
-                // todo!()
-                // if glyph.is_emoji {
-                //     cx.scene().push_image_glyph(scene::ImageGlyph {
-                //         font_id: run.font_id,
-                //         font_size: self.layout.font_size,
-                //         id: glyph.id,
-                //         origin: glyph_origin,
-                //     });
-                // } else {
-                //     cx.scene().push_glyph(scene::Glyph {
-                //         font_id: run.font_id,
-                //         font_size: self.layout.font_size,
-                //         id: glyph.id,
-                //         origin: glyph_origin,
-                //         color,
-                //     });
-                // }
-            }
+                anyhow::Ok(())
+            });
         }
 
         if let Some((_underline_start, _underline_style)) = underline.take() {
@@ -356,7 +364,7 @@ impl Line {
         line_height: Pixels,
         boundaries: &[ShapedBoundary],
         cx: &mut WindowContext,
-    ) {
+    ) -> Result<()> {
         let padding_top = (line_height - self.layout.ascent - self.layout.descent) / 2.;
         let baseline_offset = point(px(0.), padding_top + self.layout.ascent);
 
@@ -434,31 +442,32 @@ impl Line {
                     // });
                 }
 
-                let _glyph_bounds = Bounds {
-                    origin: glyph_origin,
-                    size: cx
-                        .text_system()
-                        .bounding_box(run.font_id, self.layout.font_size),
-                };
-                // todo!()
-                // if glyph_bounds.intersects(visible_bounds) {
-                //     if glyph.is_emoji {
-                //         cx.scene().push_image_glyph(scene::ImageGlyph {
-                //             font_id: run.font_id,
-                //             font_size: self.layout.font_size,
-                //             id: glyph.id,
-                //             origin: glyph_bounds.origin() + baseline_offset,
-                //         });
-                //     } else {
-                //         cx.scene().push_glyph(scene::Glyph {
-                //             font_id: run.font_id,
-                //             font_size: self.layout.font_size,
-                //             id: glyph.id,
-                //             origin: glyph_bounds.origin() + baseline_offset,
-                //             color,
-                //         });
-                //     }
-                // }
+                cx.text_system().with_font(run.font_id, |system, font| {
+                    let _glyph_bounds = Bounds {
+                        origin: glyph_origin,
+                        size: system.bounding_box(font, self.layout.font_size)?.size,
+                    };
+                    // todo!()
+                    // if glyph_bounds.intersects(visible_bounds) {
+                    //     if glyph.is_emoji {
+                    //         cx.scene().push_image_glyph(scene::ImageGlyph {
+                    //             font_id: run.font_id,
+                    //             font_size: self.layout.font_size,
+                    //             id: glyph.id,
+                    //             origin: glyph_bounds.origin() + baseline_offset,
+                    //         });
+                    //     } else {
+                    //         cx.scene().push_glyph(scene::Glyph {
+                    //             font_id: run.font_id,
+                    //             font_size: self.layout.font_size,
+                    //             id: glyph.id,
+                    //             origin: glyph_bounds.origin() + baseline_offset,
+                    //             color,
+                    //         });
+                    //     }
+                    // }
+                    anyhow::Ok(())
+                })?;
             }
         }
 
@@ -472,6 +481,8 @@ impl Line {
             //     squiggly: underline_style.squiggly,
             // });
         }
+
+        Ok(())
     }
 }
 

@@ -47,7 +47,7 @@ struct TextSystemState {
     system_source: SystemSource,
     fonts: Vec<FontKitFont>,
     font_selections: HashMap<Font, FontId>,
-    font_metrics: HashMap<FontId, Arc<FontMetrics>>,
+    font_metrics: HashMap<FontId, FontMetrics>,
     font_ids_by_postscript_name: HashMap<String, FontId>,
     font_ids_by_family_name: HashMap<SharedString, SmallVec<[FontId; 4]>>,
     postscript_names_by_font_id: HashMap<FontId, String>,
@@ -87,9 +87,9 @@ impl PlatformTextSystem for MacTextSystem {
             .expect("core text should never return an error")
     }
 
-    fn select_font(&self, font: Font) -> Result<FontId> {
+    fn font_id(&self, font: &Font) -> Result<FontId> {
         let lock = self.0.upgradable_read();
-        if let Some(font_id) = lock.font_selections.get(&font) {
+        if let Some(font_id) = lock.font_selections.get(font) {
             Ok(*font_id)
         } else {
             let mut lock = parking_lot::RwLockUpgradableReadGuard::upgrade(lock);
@@ -121,20 +121,14 @@ impl PlatformTextSystem for MacTextSystem {
         }
     }
 
-    fn font_metrics(&self, font_id: FontId) -> Arc<FontMetrics> {
-        let lock = self.0.upgradable_read();
-        if let Some(metrics) = lock.font_metrics.get(&font_id) {
-            metrics.clone()
-        } else {
-            let mut lock = parking_lot::RwLockUpgradableReadGuard::upgrade(lock);
-            let metrics: Arc<FontMetrics> = Arc::new(lock.fonts[font_id.0].metrics().into());
-            lock.font_metrics.insert(font_id, metrics.clone());
-            metrics
-        }
+    fn font_metrics(&self, font_id: FontId) -> FontMetrics {
+        self.0.read().fonts[font_id.0].metrics().into()
     }
 
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
-        self.0.read().typographic_bounds(font_id, glyph_id)
+        Ok(self.0.read().fonts[font_id.0]
+            .typographic_bounds(glyph_id.into())?
+            .into())
     }
 
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
@@ -212,12 +206,6 @@ impl TextSystemState {
             self.fonts.push(font);
         }
         Ok(font_ids)
-    }
-
-    fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
-        Ok(self.fonts[font_id.0]
-            .typographic_bounds(glyph_id.into())?
-            .into())
     }
 
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
