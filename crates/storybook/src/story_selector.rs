@@ -4,9 +4,10 @@ use std::sync::OnceLock;
 use anyhow::{anyhow, Context};
 use clap::builder::PossibleValue;
 use clap::ValueEnum;
+use gpui2::{AnyElement, Element};
 use strum::{EnumIter, EnumString, IntoEnumIterator};
 
-#[derive(Debug, Clone, Copy, strum::Display, EnumString, EnumIter)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, strum::Display, EnumString, EnumIter)]
 #[strum(serialize_all = "snake_case")]
 pub enum ElementStory {
     Avatar,
@@ -16,7 +17,21 @@ pub enum ElementStory {
     Label,
 }
 
-#[derive(Debug, Clone, Copy, strum::Display, EnumString, EnumIter)]
+impl ElementStory {
+    pub fn story<V: 'static>(&self) -> AnyElement<V> {
+        use crate::stories::elements;
+
+        match self {
+            Self::Avatar => elements::avatar::AvatarStory::default().into_any(),
+            Self::Button => elements::button::ButtonStory::default().into_any(),
+            Self::Icon => elements::icon::IconStory::default().into_any(),
+            Self::Input => elements::input::InputStory::default().into_any(),
+            Self::Label => elements::label::LabelStory::default().into_any(),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, strum::Display, EnumString, EnumIter)]
 #[strum(serialize_all = "snake_case")]
 pub enum ComponentStory {
     AssistantPanel,
@@ -39,7 +54,40 @@ pub enum ComponentStory {
     TrafficLights,
 }
 
-#[derive(Debug, Clone, Copy)]
+impl ComponentStory {
+    pub fn story<V: 'static>(&self) -> AnyElement<V> {
+        use crate::stories::components;
+
+        match self {
+            Self::AssistantPanel => {
+                components::assistant_panel::AssistantPanelStory::default().into_any()
+            }
+            Self::Breadcrumb => components::breadcrumb::BreadcrumbStory::default().into_any(),
+            Self::Buffer => components::buffer::BufferStory::default().into_any(),
+            Self::ContextMenu => components::context_menu::ContextMenuStory::default().into_any(),
+            Self::ChatPanel => components::chat_panel::ChatPanelStory::default().into_any(),
+            Self::CollabPanel => components::collab_panel::CollabPanelStory::default().into_any(),
+            Self::Facepile => components::facepile::FacepileStory::default().into_any(),
+            Self::Keybinding => components::keybinding::KeybindingStory::default().into_any(),
+            Self::Palette => components::palette::PaletteStory::default().into_any(),
+            Self::Panel => components::panel::PanelStory::default().into_any(),
+            Self::ProjectPanel => {
+                components::project_panel::ProjectPanelStory::default().into_any()
+            }
+            Self::StatusBar => components::status_bar::StatusBarStory::default().into_any(),
+            Self::Tab => components::tab::TabStory::default().into_any(),
+            Self::TabBar => components::tab_bar::TabBarStory::default().into_any(),
+            Self::Terminal => components::terminal::TerminalStory::default().into_any(),
+            Self::TitleBar => components::title_bar::TitleBarStory::default().into_any(),
+            Self::Toolbar => components::toolbar::ToolbarStory::default().into_any(),
+            Self::TrafficLights => {
+                components::traffic_lights::TrafficLightsStory::default().into_any()
+            }
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum StorySelector {
     Element(ElementStory),
     Component(ComponentStory),
@@ -74,22 +122,42 @@ impl FromStr for StorySelector {
     }
 }
 
+impl StorySelector {
+    pub fn story<V: 'static>(&self) -> Vec<AnyElement<V>> {
+        match self {
+            StorySelector::Element(element_story) => vec![element_story.story()],
+            StorySelector::Component(component_story) => vec![component_story.story()],
+            StorySelector::KitchenSink => all_story_selectors()
+                .into_iter()
+                // Exclude the kitchen sink to prevent `story` from recursively
+                // calling itself for all eternity.
+                .filter(|selector| **selector != Self::KitchenSink)
+                .flat_map(|selector| selector.story())
+                .collect(),
+        }
+    }
+}
+
 /// The list of all stories available in the storybook.
 static ALL_STORY_SELECTORS: OnceLock<Vec<StorySelector>> = OnceLock::new();
 
+fn all_story_selectors<'a>() -> &'a [StorySelector] {
+    let stories = ALL_STORY_SELECTORS.get_or_init(|| {
+        let element_stories = ElementStory::iter().map(StorySelector::Element);
+        let component_stories = ComponentStory::iter().map(StorySelector::Component);
+
+        element_stories
+            .chain(component_stories)
+            .chain(std::iter::once(StorySelector::KitchenSink))
+            .collect::<Vec<_>>()
+    });
+
+    stories
+}
+
 impl ValueEnum for StorySelector {
     fn value_variants<'a>() -> &'a [Self] {
-        let stories = ALL_STORY_SELECTORS.get_or_init(|| {
-            let element_stories = ElementStory::iter().map(Self::Element);
-            let component_stories = ComponentStory::iter().map(Self::Component);
-
-            element_stories
-                .chain(component_stories)
-                .chain(std::iter::once(Self::KitchenSink))
-                .collect::<Vec<_>>()
-        });
-
-        stories
+        all_story_selectors()
     }
 
     fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {

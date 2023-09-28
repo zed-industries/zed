@@ -216,7 +216,7 @@ pub trait ParentElement<V: 'static> {
     // of building UI on top of the current version of gpui2.
     //
     // We'll (hopefully) be moving away from this in the future.
-    fn child_any<I>(mut self, children: AnyElement<V>) -> Self
+    fn child_any(mut self, children: AnyElement<V>) -> Self
     where
         Self: Sized,
     {

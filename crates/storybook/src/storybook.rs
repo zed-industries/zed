@@ -8,14 +8,16 @@ use std::sync::Arc;
 
 use ::theme as legacy_theme;
 use clap::Parser;
-use gpui2::{serde_json, vec2f, view, Element, IntoElement, RectF, ViewContext, WindowBounds};
+use gpui2::{
+    serde_json, vec2f, view, Element, IntoElement, ParentElement, RectF, ViewContext, WindowBounds,
+};
 use legacy_theme::{ThemeRegistry, ThemeSettings};
 use log::LevelFilter;
 use settings::{default_settings, SettingsStore};
 use simplelog::SimpleLogger;
-use ui::{ElementExt, Theme, WorkspaceElement};
+use ui::{prelude::*, ElementExt, Theme, WorkspaceElement};
 
-use crate::story_selector::{ComponentStory, ElementStory, StorySelector};
+use crate::story_selector::StorySelector;
 
 gpui2::actions! {
     storybook,
@@ -67,172 +69,11 @@ fn main() {
                 ..Default::default()
             },
             |cx| match args.story {
-                Some(StorySelector::Element(ElementStory::Avatar)) => view(move |cx| {
+                Some(selector) => view(move |cx| {
                     render_story(
                         &mut ViewContext::new(cx),
                         theme_override.clone(),
-                        stories::elements::avatar::AvatarStory::default(),
-                    )
-                }),
-                Some(StorySelector::Element(ElementStory::Button)) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        stories::elements::button::ButtonStory::default(),
-                    )
-                }),
-                Some(StorySelector::Element(ElementStory::Icon)) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        stories::elements::icon::IconStory::default(),
-                    )
-                }),
-                Some(StorySelector::Element(ElementStory::Input)) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        stories::elements::input::InputStory::default(),
-                    )
-                }),
-                Some(StorySelector::Element(ElementStory::Label)) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        stories::elements::label::LabelStory::default(),
-                    )
-                }),
-                Some(StorySelector::Component(ComponentStory::AssistantPanel)) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        stories::components::assistant_panel::AssistantPanelStory::default(),
-                    )
-                }),
-                Some(StorySelector::Component(ComponentStory::Breadcrumb)) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        stories::components::breadcrumb::BreadcrumbStory::default(),
-                    )
-                }),
-                Some(StorySelector::Component(ComponentStory::Buffer)) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        stories::components::buffer::BufferStory::default(),
-                    )
-                }),
-                Some(StorySelector::Component(ComponentStory::ChatPanel)) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        stories::components::chat_panel::ChatPanelStory::default(),
-                    )
-                }),
-                Some(StorySelector::Component(ComponentStory::CollabPanel)) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        stories::components::collab_panel::CollabPanelStory::default(),
-                    )
-                }),
-                Some(StorySelector::Component(ComponentStory::Facepile)) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        stories::components::facepile::FacepileStory::default(),
-                    )
-                }),
-                Some(StorySelector::Component(ComponentStory::Keybinding)) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        stories::components::keybinding::KeybindingStory::default(),
-                    )
-                }),
-                Some(StorySelector::Component(ComponentStory::Palette)) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        stories::components::palette::PaletteStory::default(),
-                    )
-                }),
-                Some(StorySelector::Component(ComponentStory::Panel)) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        stories::components::panel::PanelStory::default(),
-                    )
-                }),
-                Some(StorySelector::Component(ComponentStory::ProjectPanel)) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        stories::components::project_panel::ProjectPanelStory::default(),
-                    )
-                }),
-                Some(StorySelector::Component(ComponentStory::StatusBar)) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        stories::components::status_bar::StatusBarStory::default(),
-                    )
-                }),
-                Some(StorySelector::Component(ComponentStory::Tab)) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        stories::components::tab::TabStory::default(),
-                    )
-                }),
-                Some(StorySelector::Component(ComponentStory::TabBar)) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        stories::components::tab_bar::TabBarStory::default(),
-                    )
-                }),
-                Some(StorySelector::Component(ComponentStory::Terminal)) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        stories::components::terminal::TerminalStory::default(),
-                    )
-                }),
-                Some(StorySelector::Component(ComponentStory::TitleBar)) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        stories::components::title_bar::TitleBarStory::default(),
-                    )
-                }),
-                Some(StorySelector::Component(ComponentStory::Toolbar)) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        stories::components::toolbar::ToolbarStory::default(),
-                    )
-                }),
-                Some(StorySelector::Component(ComponentStory::TrafficLights)) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        stories::components::traffic_lights::TrafficLightsStory::default(),
-                    )
-                }),
-                Some(StorySelector::Component(ComponentStory::ContextMenu)) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        stories::components::context_menu::ContextMenuStory::default(),
-                    )
-                }),
-                Some(StorySelector::KitchenSink) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        stories::kitchen_sink::KitchenSinkStory::default(),
+                        div().children_any(selector.story()),
                     )
                 }),
                 None => view(move |cx| {
