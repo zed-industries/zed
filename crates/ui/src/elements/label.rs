@@ -1,4 +1,4 @@
-use gpui2::Hsla;
+use gpui2::{Hsla, WindowContext};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -18,6 +18,24 @@ pub enum LabelColor {
     Accent,
 }
 
+impl LabelColor {
+    pub fn hsla(&self, cx: &WindowContext) -> Hsla {
+        let theme = theme(cx);
+
+        match self {
+            Self::Default => theme.middle.base.default.foreground,
+            Self::Muted => theme.middle.variant.default.foreground,
+            Self::Created => theme.middle.positive.default.foreground,
+            Self::Modified => theme.middle.warning.default.foreground,
+            Self::Deleted => theme.middle.negative.default.foreground,
+            Self::Disabled => theme.middle.base.disabled.foreground,
+            Self::Hidden => theme.middle.variant.default.foreground,
+            Self::Placeholder => theme.middle.base.disabled.foreground,
+            Self::Accent => theme.middle.accent.default.foreground,
+        }
+    }
+}
+
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum LabelSize {
     #[default]
@@ -31,6 +49,7 @@ pub struct Label {
     color: LabelColor,
     size: LabelSize,
     highlight_indices: Vec<usize>,
+    strikethrough: bool,
 }
 
 impl Label {
@@ -43,6 +62,7 @@ impl Label {
             color: LabelColor::Default,
             size: LabelSize::Default,
             highlight_indices: Vec::new(),
+            strikethrough: false,
         }
     }
 
@@ -61,20 +81,13 @@ impl Label {
         self
     }
 
+    pub fn set_strikethrough(mut self, strikethrough: bool) -> Self {
+        self.strikethrough = strikethrough;
+        self
+    }
+
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
-
-        let color = match self.color {
-            LabelColor::Default => theme.lowest.base.default.foreground,
-            LabelColor::Muted => theme.lowest.variant.default.foreground,
-            LabelColor::Created => theme.lowest.positive.default.foreground,
-            LabelColor::Modified => theme.lowest.warning.default.foreground,
-            LabelColor::Deleted => theme.lowest.negative.default.foreground,
-            LabelColor::Disabled => theme.lowest.base.disabled.foreground,
-            LabelColor::Hidden => theme.lowest.variant.default.foreground,
-            LabelColor::Placeholder => theme.lowest.base.disabled.foreground,
-            LabelColor::Accent => theme.lowest.accent.default.foreground,
-        };
 
         let highlight_color = theme.lowest.accent.default.foreground;
 
@@ -83,7 +96,7 @@ impl Label {
         let mut runs: SmallVec<[Run; 8]> = SmallVec::new();
 
         for (char_ix, char) in self.label.char_indices() {
-            let mut color = color;
+            let mut color = self.color.hsla(cx);
 
             if let Some(highlight_ix) = highlight_indices.peek() {
                 if char_ix == *highlight_ix {
@@ -94,6 +107,7 @@ impl Label {
             }
 
             let last_run = runs.last_mut();
+
             let start_new_run = if let Some(last_run) = last_run {
                 if color == last_run.color {
                     last_run.text.push(char);
@@ -113,17 +127,30 @@ impl Label {
             }
         }
 
-        div().flex().children(runs.into_iter().map(|run| {
-            let mut div = div();
+        div()
+            .flex()
+            .when(self.strikethrough, |this| {
+                this.relative().child(
+                    div()
+                        .absolute()
+                        .top_px()
+                        .my_auto()
+                        .w_full()
+                        .h_px()
+                        .fill(LabelColor::Hidden.hsla(cx)),
+                )
+            })
+            .children(runs.into_iter().map(|run| {
+                let mut div = div();
 
-            if self.size == LabelSize::Small {
-                div = div.text_xs();
-            } else {
-                div = div.text_sm();
-            }
+                if self.size == LabelSize::Small {
+                    div = div.text_xs();
+                } else {
+                    div = div.text_sm();
+                }
 
-            div.text_color(run.color).child(run.text)
-        }))
+                div.text_color(run.color).child(run.text)
+            }))
     }
 }
 

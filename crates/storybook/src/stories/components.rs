@@ -7,6 +7,7 @@ pub mod keybinding;
 pub mod palette;
 pub mod project_panel;
 pub mod status_bar;
+pub mod tab;
 pub mod tab_bar;
 pub mod terminal;
 pub mod title_bar;
