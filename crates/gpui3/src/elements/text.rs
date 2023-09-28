@@ -93,11 +93,11 @@ impl<S: 'static> Element for Text<S> {
             line_height = paint_state.line_height;
         }
 
-        let text_style = cx.text_style();
+        let _text_style = cx.text_style();
 
         // todo!("We haven't added visible bounds to the new element system yet, so this is a placeholder.");
         let visible_bounds = bounds;
-        line.paint(bounds.origin, visible_bounds, line_height, cx);
+        line.paint(bounds.origin, visible_bounds, line_height, cx)?;
 
         Ok(())
     }

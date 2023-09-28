@@ -247,13 +247,14 @@ impl Line {
         }
     }
 
+    // todo!
     pub fn paint(
         &self,
         origin: Point<Pixels>,
         visible_bounds: Bounds<Pixels>,
         line_height: Pixels,
         cx: &mut WindowContext,
-    ) {
+    ) -> Result<()> {
         let padding_top = (line_height - self.layout.ascent - self.layout.descent) / 2.;
         let baseline_offset = point(px(0.), padding_top + self.layout.ascent);
 
@@ -264,11 +265,7 @@ impl Line {
 
         for run in &self.layout.runs {
             cx.text_system().with_font(run.font_id, |system, font| {
-                let max_glyph_width = cx
-                    .text_system()
-                    .bounding_box(font, self.layout.font_size)?
-                    .size
-                    .width;
+                let max_glyph_width = system.bounding_box(font, self.layout.font_size)?.size.width;
 
                 for glyph in &run.glyphs {
                     let glyph_origin = origin + baseline_offset + glyph.position;
@@ -322,7 +319,6 @@ impl Line {
                         // });
                     }
 
-                    // todo!()
                     // if glyph.is_emoji {
                     //     cx.scene().push_image_glyph(scene::ImageGlyph {
                     //         font_id: run.font_id,
@@ -342,7 +338,7 @@ impl Line {
                 }
 
                 anyhow::Ok(())
-            });
+            })??;
         }
 
         if let Some((_underline_start, _underline_style)) = underline.take() {
@@ -355,6 +351,8 @@ impl Line {
             //     squiggly: underline_style.squiggly,
             // });
         }
+
+        Ok(())
     }
 
     pub fn paint_wrapped(
@@ -371,7 +369,7 @@ impl Line {
         let mut boundaries = boundaries.into_iter().peekable();
         let mut color_runs = self.style_runs.iter();
         let mut style_run_end = 0;
-        let mut color = black();
+        let mut _color = black(); // todo!
         let mut underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
 
         let mut glyph_origin = origin;
@@ -403,7 +401,7 @@ impl Line {
                 if glyph.index >= style_run_end {
                     if let Some(style_run) = color_runs.next() {
                         style_run_end += style_run.len as usize;
-                        color = style_run.color;
+                        _color = style_run.color;
                         if let Some((_, underline_style)) = &mut underline {
                             if style_run.underline != *underline_style {
                                 finished_underline = underline.take();
@@ -427,7 +425,7 @@ impl Line {
                         }
                     } else {
                         style_run_end = self.layout.len;
-                        color = black();
+                        _color = black();
                         finished_underline = underline.take();
                     }
                 }
@@ -447,7 +445,6 @@ impl Line {
                         origin: glyph_origin,
                         size: system.bounding_box(font, self.layout.font_size)?.size,
                     };
-                    // todo!()
                     // if glyph_bounds.intersects(visible_bounds) {
                     //     if glyph.is_emoji {
                     //         cx.scene().push_image_glyph(scene::ImageGlyph {
@@ -467,7 +464,7 @@ impl Line {
                     //     }
                     // }
                     anyhow::Ok(())
-                })?;
+                })??;
             }
         }
 

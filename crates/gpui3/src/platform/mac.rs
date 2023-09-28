@@ -134,6 +134,8 @@ impl NSRectExt for NSRect {
     }
 }
 
+// todo!
+#[allow(unused)]
 unsafe fn ns_url_to_path(url: id) -> crate::Result<PathBuf> {
     let path: *mut c_char = msg_send![url, fileSystemRepresentation];
     if path.is_null() {

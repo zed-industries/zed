@@ -34,6 +34,8 @@ unsafe fn build_event_source() {
     mem::forget(source);
 }
 
+// todo!
+#[allow(unused)]
 pub fn key_to_native(key: &str) -> Cow<str> {
     use cocoa::appkit::*;
     let code = match key {

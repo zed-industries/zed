@@ -40,14 +40,13 @@ use super::open_type;
 #[allow(non_upper_case_globals)]
 const kCGImageAlphaOnly: u32 = 7;
 
-pub struct MacTextSystem(RwLock<TextSystemState>);
+pub struct MacTextSystem(RwLock<MacTextSystemState>);
 
-struct TextSystemState {
+struct MacTextSystemState {
     memory_source: MemSource,
     system_source: SystemSource,
     fonts: Vec<FontKitFont>,
     font_selections: HashMap<Font, FontId>,
-    font_metrics: HashMap<FontId, FontMetrics>,
     font_ids_by_postscript_name: HashMap<String, FontId>,
     font_ids_by_family_name: HashMap<SharedString, SmallVec<[FontId; 4]>>,
     postscript_names_by_font_id: HashMap<FontId, String>,
@@ -55,12 +54,11 @@ struct TextSystemState {
 
 impl MacTextSystem {
     pub fn new() -> Self {
-        Self(RwLock::new(TextSystemState {
+        Self(RwLock::new(MacTextSystemState {
             memory_source: MemSource::empty(),
             system_source: SystemSource::new(),
             fonts: Vec::new(),
             font_selections: HashMap::default(),
-            font_metrics: HashMap::default(),
             font_ids_by_postscript_name: HashMap::default(),
             font_ids_by_family_name: HashMap::default(),
             postscript_names_by_font_id: HashMap::default(),
@@ -173,7 +171,7 @@ impl PlatformTextSystem for MacTextSystem {
     }
 }
 
-impl TextSystemState {
+impl MacTextSystemState {
     fn add_fonts(&mut self, fonts: &[Arc<Vec<u8>>]) -> Result<()> {
         self.memory_source.add_fonts(
             fonts
