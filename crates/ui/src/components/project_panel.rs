@@ -42,10 +42,11 @@ impl<V: 'static> ProjectPanel<V> {
                 let theme = payload.theme.clone();
 
                 vec![div()
-                    .w_56()
-                    .h_full()
                     .flex()
                     .flex_col()
+                    .w_56()
+                    .h_full()
+                    .px_2()
                     .fill(theme.middle.base.default.background)
                     .child(
                         div()
