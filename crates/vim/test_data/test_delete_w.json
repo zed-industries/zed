@@ -1,3 +1,7 @@
+{"Put":{"state":"Test tesˇt\n    test"}}
+{"Key":"d"}
+{"Key":"w"}
+{"Get":{"state":"Test teˇs\n    test","mode":"Normal"}}
 {"Put":{"state":"Teˇst"}}
 {"Key":"d"}
 {"Key":"w"}
@@ -14,6 +18,10 @@
 {"Key":"d"}
 {"Key":"w"}
 {"Get":{"state":"Test teˇs\ntest","mode":"Normal"}}
+{"Put":{"state":"Test test\nˇ\ntest"}}
+{"Key":"d"}
+{"Key":"w"}
+{"Get":{"state":"Test test\nˇtest","mode":"Normal"}}
 {"Put":{"state":"Test teˇst-test test"}}
 {"Key":"d"}
 {"Key":"shift-w"}

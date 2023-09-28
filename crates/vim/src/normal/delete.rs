@@ -2,6 +2,7 @@ use crate::{motion::Motion, object::Object, utils::copy_selections_content, Vim}
 use collections::{HashMap, HashSet};
 use editor::{display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Bias};
 use gpui::WindowContext;
+use language::Point;
 
 pub fn delete_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     vim.stop_recording();
@@ -14,6 +15,27 @@ pub fn delete_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
                     let original_head = selection.head();
                     original_columns.insert(selection.id, original_head.column());
                     motion.expand_selection(map, selection, times, true);
+
+                    // Motion::NextWordStart on an empty line should delete it.
+                    if let Motion::NextWordStart {
+                        ignore_punctuation: _,
+                    } = motion
+                    {
+                        if selection.is_empty()
+                            && map
+                                .buffer_snapshot
+                                .line_len(selection.start.to_point(&map).row)
+                                == 0
+                        {
+                            selection.end = map
+                                .buffer_snapshot
+                                .clip_point(
+                                    Point::new(selection.start.to_point(&map).row + 1, 0),
+                                    Bias::Left,
+                                )
+                                .to_display_point(map)
+                        }
+                    }
                 });
             });
             copy_selections_content(editor, motion.linewise(), cx);
@@ -129,28 +151,44 @@ mod test {
 
     #[gpui::test]
     async fn test_delete_w(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["d", "w"]);
-        cx.assert("Teˇst").await;
-        cx.assert("Tˇest test").await;
-        cx.assert(indoc! {"
-            Test teˇst
-            test"})
-            .await;
-        cx.assert(indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.assert_neovim_compatible(
+            indoc! {"
             Test tesˇt
-            test"})
-            .await;
-        cx.assert_exempted(
+                test"},
+            ["d", "w"],
+        )
+        .await;
+
+        cx.assert_neovim_compatible("Teˇst", ["d", "w"]).await;
+        cx.assert_neovim_compatible("Tˇest test", ["d", "w"]).await;
+        cx.assert_neovim_compatible(
+            indoc! {"
+            Test teˇst
+            test"},
+            ["d", "w"],
+        )
+        .await;
+        cx.assert_neovim_compatible(
+            indoc! {"
+            Test tesˇt
+            test"},
+            ["d", "w"],
+        )
+        .await;
+
+        cx.assert_neovim_compatible(
             indoc! {"
             Test test
             ˇ
             test"},
-            ExemptionFeatures::DeleteWordOnEmptyLine,
+            ["d", "w"],
         )
         .await;
 
         let mut cx = cx.binding(["d", "shift-w"]);
-        cx.assert("Test teˇst-test test").await;
+        cx.assert_neovim_compatible("Test teˇst-test test", ["d", "shift-w"])
+            .await;
     }
 
     #[gpui::test]

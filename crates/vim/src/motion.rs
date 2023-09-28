@@ -467,6 +467,22 @@ impl Motion {
 
                 (_, selection.end) = map.next_line_boundary(selection.end.to_point(map));
             } else {
+                // Another special case: When using the "w" motion in combination with an
+                // operator and the last word moved over is at the end of a line, the end of
+                // that word becomes the end of the operated text, not the first word in the
+                // next line.
+                if let Motion::NextWordStart {
+                    ignore_punctuation: _,
+                } = self
+                {
+                    let start_row = selection.start.to_point(&map).row;
+                    if selection.end.to_point(&map).row > start_row {
+                        selection.end =
+                            Point::new(start_row, map.buffer_snapshot.line_len(start_row))
+                                .to_display_point(&map)
+                    }
+                }
+
                 // If the motion is exclusive and the end of the motion is in column 1, the
                 // end of the motion is moved to the end of the previous line and the motion
                 // becomes inclusive. Example: "}" moves to the first line after a paragraph,
