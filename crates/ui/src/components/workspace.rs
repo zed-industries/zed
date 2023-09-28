@@ -77,7 +77,7 @@ impl WorkspaceElement {
                     .child(
                         Panel::new(
                             self.left_panel_scroll_state.clone(),
-                            vec![IconElement::new(Icon::ExclamationTriangle)],
+                            vec![IconElement::new(Icon::ExclamationTriangle).into_any()],
                         )
                         .side(PanelSide::Left),
                     )
@@ -97,7 +97,7 @@ impl WorkspaceElement {
                             .child(
                                 Panel::new(
                                     self.bottom_panel_scroll_state.clone(),
-                                    vec![IconElement::new(Icon::MagicWand)],
+                                    vec![IconElement::new(Icon::MagicWand).into_any()],
                                 )
                                 .allowed_sides(PanelAllowedSides::BottomOnly)
                                 .side(PanelSide::Bottom),
@@ -106,7 +106,7 @@ impl WorkspaceElement {
                     .child(
                         Panel::new(
                             self.right_panel_scroll_state.clone(),
-                            vec![IconElement::new(Icon::Ai)],
+                            vec![IconElement::new(Icon::Ai).into_any()],
                         )
                         .side(PanelSide::Right),
                     ),

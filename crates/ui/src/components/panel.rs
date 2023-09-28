@@ -1,4 +1,6 @@
+use std::any::Any;
 use std::marker::PhantomData;
+use std::mem::size_of;
 
 use dyn_clone::DynClone;
 use gpui2::elements::div::Div;
@@ -41,12 +43,36 @@ pub enum PanelSide {
 
 use std::collections::HashSet;
 
-pub trait HackyChildren<V: 'static>: IntoElement<V, Element = AnyElement<V>> + DynClone {}
+pub trait HackyChildren<V: 'static>: IntoElement<V, Element = dyn Any> + DynClone {}
 
 dyn_clone::clone_trait_object!(<V> HackyChildren<V>);
 
 #[derive(Clone)]
 pub struct AnyChildren<V>(Box<dyn HackyChildren<V>>);
+
+// pub trait IntoElement<V: 'static> {
+//     type Element: Element<V>;
+
+//     fn into_element(self) -> Self::Element;
+// }
+
+pub trait CloneIntoElement<V: 'static> {
+    type Element: Element<V>;
+
+    fn clone_into_element(&self) -> Self::Element;
+}
+
+// pub struct AnyElement<V>(Box<dyn AnyStatefulElement<V>>);
+
+pub struct CloneAnyElement<V>(Box<dyn CloneIntoElement<V>>);
+
+impl<V: 'static> CloneIntoElement<V> for crate::IconElement {
+    type Element = crate::IconElement;
+
+    fn clone_into_element(&self) -> Self::Element {
+        self.clone()
+    }
+}
 
 // #[derive(Clone)]
 // pub struct CloneAnyElement<V: 'static>(AnyElement<V>);
@@ -66,11 +92,11 @@ pub struct Panel<V: 'static> {
     allowed_sides: PanelAllowedSides,
     initial_width: AbsoluteLength,
     width: Option<AbsoluteLength>,
-    children: Vec<AnyChildren<V>>,
+    children: Vec<Box<dyn CloneIntoElement<V>>>>,
 }
 
 impl<V: 'static> Panel<V> {
-    pub fn new(scroll_state: ScrollState, children: Vec<AnyChildren<V>>) -> Self {
+    pub fn new(scroll_state: ScrollState, children: Vec<Box<dyn CloneIntoElement<V>>>) -> Self {
         let token = token();
 
         Self {
@@ -158,11 +184,24 @@ impl<V: 'static> Panel<V> {
             .children
             .iter()
             .map(|child| {
-                let child = dyn_clone::clone_box(&*child);
+                let cloned_child = unsafe {
+                    let size_of_ref = size_of::<&AnyElement<V>>();
+                    let size_of_owned = size_of::<AnyElement<V>>();
 
-                child
+                    let child_ptr: *const AnyElement<V> = child;
+
+                    println!("{size_of_ref} {size_of_owned}");
+
+                    let clone = std::mem::transmute_copy::<AnyElement<V>, AnyElement<V>>(child);
+
+                    clone
+                };
+
+                cloned_child
             })
             .collect::<Vec<_>>();
+
+        println!("{}", children.len());
 
         panel_base.children_mut().extend(children);
 
