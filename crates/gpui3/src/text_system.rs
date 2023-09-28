@@ -8,7 +8,7 @@ use line_wrapper::*;
 pub use text_layout_cache::*;
 
 use crate::{
-    px, Bounds, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, UnderlineStyle,
+    px, Bounds, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size, UnderlineStyle,
 };
 use collections::HashMap;
 use core::fmt;
@@ -90,9 +90,21 @@ impl TextSystem {
         })
     }
 
-    pub fn em_advance(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        todo!()
-        // self.font_cache.em_advance(font_id, font_size)
+    pub fn advance(&self, font: &Font, font_size: Pixels, ch: char) -> Result<Size<Pixels>> {
+        let font_id = self.font_id(font)?;
+        let glyph_id = self
+            .platform_text_system
+            .glyph_for_char(font_id, ch)
+            .ok_or_else(|| anyhow!("glyph not found for character '{}'", ch))?;
+        let result =
+            self.platform_text_system.advance(font_id, glyph_id)? / self.units_per_em(font)? as f32;
+
+        let result = result * font_size;
+        Ok(todo!())
+    }
+
+    pub fn units_per_em(&self, font: &Font) -> Result<u32> {
+        self.read_metrics(font, |metrics| metrics.units_per_em as u32)
     }
 
     pub fn line_height(&self, font_size: Pixels) -> Pixels {

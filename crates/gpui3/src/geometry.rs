@@ -29,13 +29,17 @@ impl<T: Clone + Debug> Point<T> {
     }
 }
 
-impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> Mul<S> for Point<T> {
-    type Output = Self;
+impl<T, Rhs> Mul<Rhs> for Point<T>
+where
+    T: Mul<Rhs, Output = Rhs> + Clone + Debug,
+    Rhs: Clone + Debug,
+{
+    type Output = Point<Rhs>;
 
-    fn mul(self, rhs: S) -> Self::Output {
-        Self {
-            x: self.x.clone() * rhs.clone(),
-            y: self.y.clone() * rhs,
+    fn mul(self, rhs: Rhs) -> Self::Output {
+        Point {
+            x: self.x * rhs.clone(),
+            y: self.y * rhs,
         }
     }
 }
@@ -125,13 +129,17 @@ impl<T: Clone + Debug> Size<T> {
     }
 }
 
-impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> Mul<S> for Size<T> {
-    type Output = Self;
+impl<T, Rhs> Mul<Rhs> for Size<T>
+where
+    T: Mul<Rhs, Output = Rhs> + Debug + Clone,
+    Rhs: Debug + Clone,
+{
+    type Output = Size<Rhs>;
 
-    fn mul(self, rhs: S) -> Self::Output {
-        Self {
-            width: self.width.clone() * rhs.clone(),
-            height: self.height.clone() * rhs,
+    fn mul(self, rhs: Rhs) -> Self::Output {
+        Size {
+            width: self.width * rhs.clone(),
+            height: self.height * rhs,
         }
     }
 }
@@ -190,14 +198,16 @@ pub struct Bounds<T: Clone + Debug> {
 unsafe impl<T: Clone + Debug + Zeroable + Pod> Zeroable for Bounds<T> {}
 unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Bounds<T> {}
 
-impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> Mul<S> for Bounds<T>
+// Bounds<f32> * Pixels = Bounds<Pixels>
+impl<T, Rhs> Mul<Rhs> for Bounds<T>
 where
-    T: Mul<S, Output = T>,
+    T: Mul<Rhs, Output = Rhs> + Clone + Debug,
+    Rhs: Clone + Debug,
 {
-    type Output = Self;
+    type Output = Bounds<Rhs>;
 
-    fn mul(self, rhs: S) -> Self::Output {
-        Self {
+    fn mul(self, rhs: Rhs) -> Self::Output {
+        Bounds {
             origin: self.origin * rhs.clone(),
             size: self.size * rhs,
         }
@@ -401,6 +411,14 @@ impl Mul<f32> for Pixels {
 
     fn mul(self, other: f32) -> Pixels {
         Pixels(self.0 * other)
+    }
+}
+
+impl Mul<Pixels> for f32 {
+    type Output = Pixels;
+
+    fn mul(self, rhs: Pixels) -> Self::Output {
+        Pixels(self * rhs.0)
     }
 }
 
