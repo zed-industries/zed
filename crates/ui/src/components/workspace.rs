@@ -2,8 +2,8 @@ use chrono::DateTime;
 use gpui2::geometry::{relative, rems, Size};
 
 use crate::{
-    prelude::*, v_stack, ChatMessage, ChatPanel, Icon, IconElement, Panel, PanelAllowedSides,
-    PanelSide, ProjectPanel,
+    prelude::*, v_stack, ChatMessage, ChatPanel, Panel, PanelAllowedSides, PanelSide, ProjectPanel,
+    Terminal,
 };
 use crate::{theme, Pane, PaneGroup, SplitDirection, StatusBar, TitleBar};
 
@@ -97,7 +97,7 @@ impl WorkspaceElement {
                             .child(
                                 Panel::new(
                                     self.bottom_panel_scroll_state.clone(),
-                                    |_, _| vec![IconElement::new(Icon::MagicWand).into_any()],
+                                    |_, _| vec![Terminal::new().into_any()],
                                     Box::new(()),
                                 )
                                 .allowed_sides(PanelAllowedSides::BottomOnly)
