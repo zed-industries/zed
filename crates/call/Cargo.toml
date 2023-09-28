@@ -31,7 +31,6 @@ language = { path = "../language" }
 media = { path = "../media" }
 project = { path = "../project" }
 settings = { path = "../settings" }
-theme = { path = "../theme" }
 util = { path = "../util" }
 
 anyhow.workspace = true

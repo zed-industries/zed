@@ -1106,7 +1106,6 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
- "theme",
  "util",
 ]
 
@@ -1247,7 +1246,6 @@ dependencies = [
  "sum_tree",
  "tempfile",
  "text",
- "theme",
  "thiserror",
  "time",
  "tiny_http",
@@ -1419,7 +1417,6 @@ dependencies = [
  "sum_tree",
  "tempfile",
  "text",
- "theme",
  "thiserror",
  "time",
  "tiny_http",
@@ -5552,7 +5549,6 @@ dependencies = [
  "tempdir",
  "terminal",
  "text",
- "theme",
  "thiserror",
  "toml 0.5.11",
  "unindent",
