@@ -23,7 +23,7 @@ pub fn div<S>() -> Div<S> {
     }
 }
 
-impl<S: 'static> Element for Div<S> {
+impl<S: 'static + Send + Sync> Element for Div<S> {
     type State = S;
     type FrameState = Vec<LayoutId>;
 
@@ -33,22 +33,16 @@ impl<S: 'static> Element for Div<S> {
         cx: &mut ViewContext<S>,
     ) -> Result<(LayoutId, Self::FrameState)> {
         let style = self.computed_style();
-        let pop_text_style = style
-            .text_style(cx)
-            .map(|style| cx.push_text_style(style.clone()))
-            .is_some();
+        let child_layout_ids = if let Some(text_style) = style.text_style(cx) {
+            cx.with_text_style(text_style.clone(), |cx| self.layout_children(view, cx))?
+        } else {
+            self.layout_children(view, cx)?
+        };
 
-        let children = self
-            .children
-            .iter_mut()
-            .map(|child| child.layout(view, cx))
-            .collect::<Result<Vec<LayoutId>>>()?;
-
-        if pop_text_style {
-            cx.pop_text_style();
-        }
-
-        Ok((cx.request_layout(style.into(), children.clone())?, children))
+        Ok((
+            cx.request_layout(style.into(), child_layout_ids.clone())?,
+            child_layout_ids,
+        ))
     }
 
     fn paint(
@@ -61,36 +55,25 @@ impl<S: 'static> Element for Div<S> {
         let Layout { order, bounds } = layout;
 
         let style = self.computed_style();
-        let pop_text_style = style
-            .text_style(cx)
-            .map(|style| cx.push_text_style(style.clone()))
-            .is_some();
         style.paint_background(bounds, cx);
-        // self.interaction_handlers().paint(order, bounds, cx);
-
-        // // TODO: Support only one dimension being hidden
-        // let mut pop_layer = false;
+        let overflow = &style.overflow;
+        // // todo!("support only one dimension being hidden")
         // if style.overflow.y != Overflow::Visible || style.overflow.x != Overflow::Visible {
         //     cx.scene().push_layer(Some(bounds));
         //     pop_layer = true;
         // }
-
-        let scroll_offset = self.scroll_offset(&style.overflow);
-        for child in &mut self.children {
-            child.paint(state, Some(scroll_offset), cx)?;
+        if let Some(text_style) = style.text_style(cx) {
+            cx.with_text_style(text_style.clone(), |cx| {
+                self.paint_children(overflow, state, cx)
+            })?;
+        } else {
+            self.paint_children(overflow, state, cx)?;
         }
-
-        // if pop_layer {
-        //     cx.scene().pop_layer();
-        // }
-
         style.paint_foreground(bounds, cx);
-        if pop_text_style {
-            cx.pop_text_style();
-        }
 
         self.handle_scroll(order, bounds, style.overflow.clone(), child_layouts, cx);
 
+        // todo!("enable inspector")
         // if cx.is_inspector_enabled() {
         //     self.paint_inspector(parent_origin, layout, cx);
         // }
@@ -99,7 +82,7 @@ impl<S: 'static> Element for Div<S> {
     }
 }
 
-impl<V: 'static> Div<V> {
+impl<S: 'static> Div<S> {
     pub fn overflow_hidden(mut self) -> Self {
         self.declared_style().overflow.x = Some(Overflow::Hidden);
         self.declared_style().overflow.y = Some(Overflow::Hidden);
@@ -147,13 +130,33 @@ impl<V: 'static> Div<V> {
         offset
     }
 
+    fn layout_children(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> Result<Vec<LayoutId>> {
+        self.children
+            .iter_mut()
+            .map(|child| child.layout(view, cx))
+            .collect::<Result<Vec<LayoutId>>>()
+    }
+
+    fn paint_children(
+        &mut self,
+        overflow: &Point<Overflow>,
+        state: &mut S,
+        cx: &mut ViewContext<S>,
+    ) -> Result<()> {
+        let scroll_offset = self.scroll_offset(overflow);
+        for child in &mut self.children {
+            child.paint(state, Some(scroll_offset), cx)?;
+        }
+        Ok(())
+    }
+
     fn handle_scroll(
         &mut self,
         _order: u32,
         bounds: Bounds<Pixels>,
         overflow: Point<Overflow>,
         child_layout_ids: &[LayoutId],
-        cx: &mut ViewContext<V>,
+        cx: &mut ViewContext<S>,
     ) {
         if overflow.y == Overflow::Scroll || overflow.x == Overflow::Scroll {
             let mut scroll_max = Point::default();
@@ -244,6 +247,7 @@ impl<V: 'static> Div<V> {
     //     //     }
     //     // });
     // }
+    //
 }
 
 impl<V> Styled for Div<V> {

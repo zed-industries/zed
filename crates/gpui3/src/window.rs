@@ -158,14 +158,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         self.window.rem_size
     }
 
-    pub fn push_text_style(&mut self, text_style: TextStyleRefinement) {
-        self.window.text_style_stack.push(text_style);
-    }
-
-    pub fn pop_text_style(&mut self) {
-        self.window.text_style_stack.pop();
-    }
-
     pub fn push_cascading_state<T: Send + Sync + 'static>(&mut self, theme: T) {
         self.window
             .state_stacks_by_type
@@ -239,15 +231,15 @@ impl Context for WindowContext<'_, '_> {
 }
 
 #[derive(Deref, DerefMut)]
-pub struct ViewContext<'a, 'w, T> {
+pub struct ViewContext<'a, 'w, S> {
     #[deref]
     #[deref_mut]
     window_cx: WindowContext<'a, 'w>,
-    entity_type: PhantomData<T>,
+    entity_type: PhantomData<S>,
     entity_id: EntityId,
 }
 
-impl<'a, 'w, T: Send + Sync + 'static> ViewContext<'a, 'w, T> {
+impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
     fn mutable(app: &'a mut AppContext, window: &'w mut Window, entity_id: EntityId) -> Self {
         Self {
             window_cx: WindowContext::mutable(app, window),
@@ -256,32 +248,25 @@ impl<'a, 'w, T: Send + Sync + 'static> ViewContext<'a, 'w, T> {
         }
     }
 
-    // fn immutable(app: &'a AppContext, window: &'w Window, entity_id: EntityId) -> Self {
-    //     Self {
-    //         window_cx: WindowContext::immutable(app, window),
-    //         entity_id,
-    //         entity_type: PhantomData,
-    //     }
-    // }
-
-    pub fn erase_state<R>(&mut self, f: impl FnOnce(&mut ViewContext<()>) -> R) -> R {
-        let entity_id = self.unit_entity.id;
-        let mut cx = ViewContext::mutable(
-            &mut *self.window_cx.app,
-            &mut *self.window_cx.window,
-            entity_id,
-        );
-        f(&mut cx)
+    pub fn handle(&self) -> WeakHandle<S> {
+        self.entities.weak_handle(self.entity_id)
     }
 
-    pub fn handle(&self) -> WeakHandle<T> {
-        self.entities.weak_handle(self.entity_id)
+    pub fn with_text_style<R>(
+        &mut self,
+        style: TextStyleRefinement,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.window.text_style_stack.push(style);
+        let result = f(self);
+        self.window.text_style_stack.pop();
+        result
     }
 
     pub fn observe<E: Send + Sync + 'static>(
         &mut self,
         handle: &Handle<E>,
-        on_notify: impl Fn(&mut T, Handle<E>, &mut ViewContext<'_, '_, T>) + Send + Sync + 'static,
+        on_notify: impl Fn(&mut S, Handle<E>, &mut ViewContext<'_, '_, S>) + Send + Sync + 'static,
     ) {
         let this = self.handle();
         let handle = handle.downgrade();
@@ -310,9 +295,19 @@ impl<'a, 'w, T: Send + Sync + 'static> ViewContext<'a, 'w, T> {
             .push_back(Effect::Notify(entity_id));
         self.window.dirty = true;
     }
+
+    pub(crate) fn erase_state<R>(&mut self, f: impl FnOnce(&mut ViewContext<()>) -> R) -> R {
+        let entity_id = self.unit_entity.id;
+        let mut cx = ViewContext::mutable(
+            &mut *self.window_cx.app,
+            &mut *self.window_cx.window,
+            entity_id,
+        );
+        f(&mut cx)
+    }
 }
 
-impl<'a, 'w, T: 'static> Context for ViewContext<'a, 'w, T> {
+impl<'a, 'w, S: 'static> Context for ViewContext<'a, 'w, S> {
     type EntityContext<'b, 'c, U: Send + Sync + 'static> = ViewContext<'b, 'c, U>;
     type Result<U> = U;
 
