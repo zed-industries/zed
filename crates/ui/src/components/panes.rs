@@ -3,8 +3,8 @@ use std::marker::PhantomData;
 use gpui2::geometry::{Length, Size};
 use gpui2::{hsla, Hsla};
 
+use crate::prelude::*;
 use crate::theme;
-use crate::{children, prelude::*};
 
 #[derive(Default, PartialEq)]
 pub enum SplitDirection {
