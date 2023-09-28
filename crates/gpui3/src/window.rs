@@ -214,18 +214,13 @@ impl Context for WindowContext<'_, '_> {
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
     ) -> Handle<T> {
-        let id = self.entities.insert(None);
-        let entity = Box::new(build_entity(&mut ViewContext::mutable(
+        let slot = self.entities.reserve();
+        let entity = build_entity(&mut ViewContext::mutable(
             &mut *self.app,
             &mut self.window,
-            id,
-        )));
-        self.entities.get_mut(id).unwrap().replace(entity);
-
-        Handle {
-            id,
-            entity_type: PhantomData,
-        }
+            slot.id,
+        ));
+        self.entities.redeem(slot, entity)
     }
 
     fn update_entity<T: Send + Sync + 'static, R>(
@@ -233,27 +228,12 @@ impl Context for WindowContext<'_, '_> {
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
     ) -> R {
-        let mut entity = self
-            .app
-            .entities
-            .get_mut(handle.id)
-            .unwrap()
-            .take()
-            .unwrap()
-            .downcast::<T>()
-            .unwrap();
-
+        let mut entity = self.entities.lease(handle);
         let result = update(
             &mut *entity,
             &mut ViewContext::mutable(&mut *self.app, &mut *self.window, handle.id),
         );
-
-        self.app
-            .entities
-            .get_mut(handle.id)
-            .unwrap()
-            .replace(entity);
-
+        self.entities.end_lease(entity);
         result
     }
 }

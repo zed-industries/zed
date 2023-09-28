@@ -1,7 +1,9 @@
 mod async_context;
+mod entities;
 mod model_context;
 
 pub use async_context::*;
+pub use entities::*;
 pub use model_context::*;
 
 use crate::{
@@ -14,11 +16,7 @@ use futures::{future, Future};
 use parking_lot::Mutex;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
-use std::{
-    any::Any,
-    marker::PhantomData,
-    sync::{Arc, Weak},
-};
+use std::sync::{Arc, Weak};
 use util::ResultExt;
 
 #[derive(Clone)]
@@ -37,8 +35,8 @@ impl App {
     fn new(platform: Arc<dyn Platform>) -> Self {
         let dispatcher = platform.dispatcher();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
-        let mut entities = SlotMap::with_key();
-        let unit_entity = Handle::new(entities.insert(Some(Box::new(()) as Box<dyn Any + Send>)));
+        let entities = EntityMap::new();
+        let unit_entity = entities.redeem(entities.reserve(), ());
         Self(Arc::new_cyclic(|this| {
             Mutex::new(AppContext {
                 this: this.clone(),
@@ -76,7 +74,7 @@ pub struct AppContext {
     text_system: Arc<TextSystem>,
     pending_updates: usize,
     pub(crate) unit_entity: Handle<()>,
-    pub(crate) entities: SlotMap<EntityId, Option<Box<dyn Any + Send>>>,
+    pub(crate) entities: EntityMap,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) pending_effects: VecDeque<Effect>,
     pub(crate) observers: HashMap<EntityId, Handlers>,
@@ -204,11 +202,9 @@ impl Context for AppContext {
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
     ) -> Handle<T> {
-        let id = self.entities.insert(None);
-        let entity = Box::new(build_entity(&mut ModelContext::mutable(self, id)));
-        self.entities.get_mut(id).unwrap().replace(entity);
-
-        Handle::new(id)
+        let slot = self.entities.reserve();
+        let entity = build_entity(&mut ModelContext::mutable(self, slot.id));
+        self.entities.redeem(slot, entity)
     }
 
     fn update_entity<T: Send + Sync + 'static, R>(
@@ -216,100 +212,10 @@ impl Context for AppContext {
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
     ) -> R {
-        let mut entity = self
-            .entities
-            .get_mut(handle.id)
-            .unwrap()
-            .take()
-            .unwrap()
-            .downcast::<T>()
-            .unwrap();
-
+        let mut entity = self.entities.lease(handle);
         let result = update(&mut *entity, &mut ModelContext::mutable(self, handle.id));
-        self.entities.get_mut(handle.id).unwrap().replace(entity);
+        self.entities.end_lease(entity);
         result
-    }
-}
-
-slotmap::new_key_type! { pub struct EntityId; }
-
-pub struct Handle<T> {
-    pub(crate) id: EntityId,
-    pub(crate) entity_type: PhantomData<T>,
-}
-
-impl<T: Send + Sync + 'static> Handle<T> {
-    fn new(id: EntityId) -> Self {
-        Self {
-            id,
-            entity_type: PhantomData,
-        }
-    }
-
-    pub fn downgrade(&self) -> WeakHandle<T> {
-        WeakHandle {
-            id: self.id,
-            entity_type: self.entity_type,
-        }
-    }
-
-    /// Update the entity referenced by this handle with the given function.
-    ///
-    /// The update function receives a context appropriate for its environment.
-    /// When updating in an `AppContext`, it receives a `ModelContext`.
-    /// When updating an a `WindowContext`, it receives a `ViewContext`.
-    pub fn update<C: Context, R>(
-        &self,
-        cx: &mut C,
-        update: impl FnOnce(&mut T, &mut C::EntityContext<'_, '_, T>) -> R,
-    ) -> C::Result<R> {
-        cx.update_entity(self, update)
-    }
-}
-
-impl<T> Clone for Handle<T> {
-    fn clone(&self) -> Self {
-        Self {
-            id: self.id,
-            entity_type: PhantomData,
-        }
-    }
-}
-
-pub struct WeakHandle<T> {
-    pub(crate) id: EntityId,
-    pub(crate) entity_type: PhantomData<T>,
-}
-
-impl<T: Send + Sync + 'static> WeakHandle<T> {
-    pub fn upgrade(&self, _: &impl Context) -> Option<Handle<T>> {
-        // todo!("Actually upgrade")
-        Some(Handle {
-            id: self.id,
-            entity_type: self.entity_type,
-        })
-    }
-
-    /// Update the entity referenced by this handle with the given function if
-    /// the referenced entity still exists. Returns an error if the entity has
-    /// been released.
-    ///
-    /// The update function receives a context appropriate for its environment.
-    /// When updating in an `AppContext`, it receives a `ModelContext`.
-    /// When updating an a `WindowContext`, it receives a `ViewContext`.
-    pub fn update<C: Context, R>(
-        &self,
-        cx: &mut C,
-        update: impl FnOnce(&mut T, &mut C::EntityContext<'_, '_, T>) -> R,
-    ) -> Result<R>
-    where
-        Result<C::Result<R>>: crate::Flatten<R>,
-    {
-        crate::Flatten::flatten(
-            self.upgrade(cx)
-                .ok_or_else(|| anyhow!("entity release"))
-                .map(|this| cx.update_entity(&this, update)),
-        )
     }
 }
 
