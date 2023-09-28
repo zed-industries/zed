@@ -370,7 +370,7 @@
   },
   // Difference settings for semantic_index
   "semantic_index": {
-    "enabled": false
+    "enabled": true
   },
   // Settings specific to our elixir integration
   "elixir": {
