@@ -70,6 +70,8 @@ impl Terminal {
                     width: relative(1.).into(),
                     height: rems(36.).into(),
                 },
+                |_, _| vec![],
+                Box::new(()),
             ))
     }
 }

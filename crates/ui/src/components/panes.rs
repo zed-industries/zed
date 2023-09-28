@@ -3,8 +3,8 @@ use std::marker::PhantomData;
 use gpui2::geometry::{Length, Size};
 use gpui2::{hsla, Hsla};
 
-use crate::prelude::*;
 use crate::theme;
+use crate::{children, prelude::*};
 
 #[derive(Default, PartialEq)]
 pub enum SplitDirection {
@@ -19,10 +19,17 @@ pub struct Pane<V: 'static> {
     scroll_state: ScrollState,
     size: Size<Length>,
     fill: Hsla,
+    children: HackyChildren<V>,
+    payload: HackyChildrenPayload,
 }
 
 impl<V: 'static> Pane<V> {
-    pub fn new(scroll_state: ScrollState, size: Size<Length>) -> Self {
+    pub fn new(
+        scroll_state: ScrollState,
+        size: Size<Length>,
+        children: HackyChildren<V>,
+        payload: HackyChildrenPayload,
+    ) -> Self {
         // Fill is only here for debugging purposes, remove before release
         let system_color = SystemColor::new();
 
@@ -32,6 +39,8 @@ impl<V: 'static> Pane<V> {
             size,
             fill: hsla(0.3, 0.3, 0.3, 1.),
             // fill: system_color.transparent,
+            children,
+            payload,
         }
     }
 
@@ -50,6 +59,7 @@ impl<V: 'static> Pane<V> {
             .w(self.size.width)
             .h(self.size.height)
             .overflow_y_scroll(self.scroll_state.clone())
+            .children_any((self.children)(cx, self.payload.as_ref()))
     }
 }
 
