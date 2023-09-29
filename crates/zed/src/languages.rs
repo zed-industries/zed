@@ -6,12 +6,11 @@ use rust_embed::RustEmbed;
 use std::{borrow::Cow, str, sync::Arc};
 use util::asset_str;
 
-use self::elixir_next::ElixirSettings;
+use self::elixir::ElixirSettings;
 
 mod c;
 mod css;
 mod elixir;
-mod elixir_next;
 mod go;
 mod html;
 mod json;
@@ -46,7 +45,7 @@ pub fn init(
     node_runtime: Arc<dyn NodeRuntime>,
     cx: &mut AppContext,
 ) {
-    settings::register::<elixir_next::ElixirSettings>(cx);
+    settings::register::<elixir::ElixirSettings>(cx);
 
     let language = |name, grammar, adapters| {
         languages.register(name, load_config(name), grammar, adapters, load_queries)
@@ -72,21 +71,21 @@ pub fn init(
         ],
     );
 
-    match &settings::get::<ElixirSettings>(cx).next {
-        elixir_next::ElixirNextSetting::Off => language(
+    match &settings::get::<ElixirSettings>(cx).lsp {
+        elixir::ElixirLspSetting::ElixirLs => language(
             "elixir",
             tree_sitter_elixir::language(),
             vec![Arc::new(elixir::ElixirLspAdapter)],
         ),
-        elixir_next::ElixirNextSetting::On => language(
+        elixir::ElixirLspSetting::NextLs => language(
             "elixir",
             tree_sitter_elixir::language(),
-            vec![Arc::new(elixir_next::NextLspAdapter)],
+            vec![Arc::new(elixir::NextLspAdapter)],
         ),
-        elixir_next::ElixirNextSetting::Local { path, arguments } => language(
+        elixir::ElixirLspSetting::Local { path, arguments } => language(
             "elixir",
             tree_sitter_elixir::language(),
-            vec![Arc::new(elixir_next::LocalNextLspAdapter {
+            vec![Arc::new(elixir::LocalLspAdapter {
                 path: path.clone(),
                 arguments: arguments.clone(),
             })],
