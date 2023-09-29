@@ -29,7 +29,7 @@ use std::{
     },
 };
 use util::http::FakeHttpClient;
-use workspace::Workspace;
+use workspace::{Workspace, WorkspaceStore};
 
 pub struct TestServer {
     pub app_state: Arc<AppState>,
@@ -204,6 +204,7 @@ impl TestServer {
 
         let fs = FakeFs::new(cx.background());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
+        let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
         let channel_store =
             cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
         let mut language_registry = LanguageRegistry::test();
@@ -211,6 +212,7 @@ impl TestServer {
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
+            workspace_store,
             channel_store: channel_store.clone(),
             languages: Arc::new(language_registry),
             fs: fs.clone(),
