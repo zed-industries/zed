@@ -18,6 +18,7 @@ impl ToolbarStory {
                 |_, _| {
                     vec![Breadcrumb::new(
                         PathBuf::from_str("crates/ui/src/components/toolbar.rs").unwrap(),
+                        vec![],
                     )
                     .into_any()]
                 },

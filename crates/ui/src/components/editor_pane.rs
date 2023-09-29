@@ -43,7 +43,7 @@ impl<V: 'static> EditorPane<V> {
                 |_, payload| {
                     let payload = payload.downcast_ref::<LeftItemsPayload>().unwrap();
 
-                    vec![Breadcrumb::new(payload.path.clone()).into_any()]
+                    vec![Breadcrumb::new(payload.path.clone(), vec![]).into_any()]
                 },
                 Box::new(LeftItemsPayload {
                     path: self.editor.path.clone(),
