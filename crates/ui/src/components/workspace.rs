@@ -3,7 +3,10 @@ use std::sync::Arc;
 use chrono::DateTime;
 use gpui2::geometry::{relative, rems, Size};
 
-use crate::{hello_world_rust_editor_with_status_example, prelude::*};
+use crate::{
+    hello_world_rust_editor_with_status_example, prelude::*, random_players_with_call_status,
+    Livestream,
+};
 use crate::{
     theme, v_stack, ChatMessage, ChatPanel, EditorPane, Pane, PaneGroup, Panel, PanelAllowedSides,
     PanelSide, ProjectPanel, SplitDirection, StatusBar, Terminal, TitleBar,
@@ -81,7 +84,10 @@ impl WorkspaceElement {
             .items_start()
             .text_color(theme.lowest.base.default.foreground)
             .fill(theme.lowest.base.default.background)
-            .child(TitleBar::new(cx))
+            .child(TitleBar::new(cx).set_livestream(Some(Livestream {
+                players: random_players_with_call_status(7),
+                channel: Some("gpui2-ui".to_string()),
+            })))
             .child(
                 div()
                     .flex_1()
