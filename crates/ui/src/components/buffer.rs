@@ -179,6 +179,7 @@ impl<V: 'static> Buffer<V> {
 
         h_stack()
             .fill(line_background)
+            .w_full()
             .gap_2()
             .px_2()
             .child(h_stack().w_4().h_full().px_1().when(row.code_action, |c| {

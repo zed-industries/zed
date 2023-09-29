@@ -18,6 +18,7 @@ impl Toolbar {
         let theme = theme(cx);
 
         div()
+            .fill(theme.highest.base.default.background)
             .p_2()
             .flex()
             .justify_between()

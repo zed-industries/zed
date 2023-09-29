@@ -11,6 +11,6 @@ impl TabBarStory {
         Story::container(cx)
             .child(Story::title_for::<_, TabBar<V>>(cx))
             .child(Story::label(cx, "Default"))
-            .child(TabBar::new(ScrollState::default()))
+            .child(TabBar::new())
     }
 }
