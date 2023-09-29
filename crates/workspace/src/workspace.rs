@@ -3042,20 +3042,18 @@ impl Workspace {
         };
 
         for (pane, state) in self.follower_states_by_leader.get(&leader_id)? {
-            let item = state
-                .active_view_id
-                .and_then(|id| state.items_by_leader_view_id.get(&id));
-            let shared_screen = self.shared_screen_for_peer(leader_id, pane, cx);
-
             if leader_in_this_app {
+                let item = state
+                    .active_view_id
+                    .and_then(|id| state.items_by_leader_view_id.get(&id));
                 if let Some(item) = item {
                     if leader_in_this_project || !item.is_project_item(cx) {
                         items_to_activate.push((pane.clone(), item.boxed_clone()));
                     }
-                } else if let Some(shared_screen) = shared_screen {
-                    items_to_activate.push((pane.clone(), Box::new(shared_screen)));
+                    continue;
                 }
-            } else if let Some(shared_screen) = shared_screen {
+            }
+            if let Some(shared_screen) = self.shared_screen_for_peer(leader_id, pane, cx) {
                 items_to_activate.push((pane.clone(), Box::new(shared_screen)));
             }
         }
