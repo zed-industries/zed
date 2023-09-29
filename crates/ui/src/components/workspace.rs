@@ -84,8 +84,12 @@ impl WorkspaceElement {
                     .border_b()
                     .border_color(theme.lowest.base.default.border)
                     .child(
-                        ProjectPanel::new(self.left_panel_scroll_state.clone())
-                            .side(PanelSide::Left),
+                        Panel::new(
+                            self.left_panel_scroll_state.clone(),
+                            |_, payload| vec![ProjectPanel::new(ScrollState::default()).into_any()],
+                            Box::new(()),
+                        )
+                        .side(PanelSide::Left),
                     )
                     .child(
                         v_stack()
