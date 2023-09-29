@@ -6,7 +6,10 @@ use anyhow::{anyhow, Result};
 use audio::Audio;
 use call_settings::CallSettings;
 use channel::ChannelId;
-use client::{proto, ClickhouseEvent, Client, TelemetrySettings, TypedEnvelope, User, UserStore};
+use client::{
+    proto, ClickhouseEvent, Client, TelemetrySettings, TypedEnvelope, User, UserStore,
+    ZED_ALWAYS_ACTIVE,
+};
 use collections::HashSet;
 use futures::{future::Shared, FutureExt};
 use gpui::{
@@ -356,12 +359,13 @@ impl ActiveCall {
         project: Option<&ModelHandle<Project>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        self.location = project.map(|project| project.downgrade());
-        if let Some((room, _)) = self.room.as_ref() {
-            room.update(cx, |room, cx| room.set_location(project, cx))
-        } else {
-            Task::ready(Ok(()))
+        if project.is_some() || !*ZED_ALWAYS_ACTIVE {
+            self.location = project.map(|project| project.downgrade());
+            if let Some((room, _)) = self.room.as_ref() {
+                return room.update(cx, |room, cx| room.set_location(project, cx));
+            }
         }
+        Task::ready(Ok(()))
     }
 
     fn set_room(
