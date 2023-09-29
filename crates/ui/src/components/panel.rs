@@ -125,7 +125,7 @@ impl<V: 'static> Panel<V> {
                     .h_full()
                     .w(current_width)
                     .fill(theme.middle.base.default.background)
-                    .border_r()
+                    .border_l()
                     .border_color(theme.middle.base.default.border);
             }
             PanelSide::Bottom => {
@@ -133,7 +133,7 @@ impl<V: 'static> Panel<V> {
                     .w_full()
                     .h(current_width)
                     .fill(theme.middle.base.default.background)
-                    .border_r()
+                    .border_t()
                     .border_color(theme.middle.base.default.border);
             }
         }
