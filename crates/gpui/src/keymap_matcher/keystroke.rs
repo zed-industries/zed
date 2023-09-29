@@ -112,7 +112,7 @@ impl std::fmt::Display for Keystroke {
             f.write_char('^')?;
         }
         if self.alt {
-            f.write_char('⎇')?;
+            f.write_char('⌥')?;
         }
         if self.cmd {
             f.write_char('⌘')?;
