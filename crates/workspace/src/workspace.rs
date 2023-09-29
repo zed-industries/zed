@@ -3117,6 +3117,7 @@ impl Workspace {
 
     pub fn on_window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         if active {
+            self.update_active_view_for_followers(cx);
             cx.background()
                 .spawn(persistence::DB.update_timestamp(self.database_id()))
                 .detach();
