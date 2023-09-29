@@ -38,9 +38,8 @@ impl PlayerStack {
                 div().flex().justify_center().w_full().child(
                     div()
                         .w_4()
-                        .h_1()
-                        .rounded_bl_sm()
-                        .rounded_br_sm()
+                        .h_0p5()
+                        .rounded_sm()
                         .fill(player.cursor_color(cx)),
                 ),
             )
@@ -50,7 +49,7 @@ impl PlayerStack {
                     .items_center()
                     .justify_center()
                     .h_6()
-                    .px_1()
+                    .pl_1()
                     .rounded_lg()
                     .fill(if followers.is_none() {
                         system_color.transparent
@@ -59,7 +58,7 @@ impl PlayerStack {
                     })
                     .child(Avatar::new(player.avatar_src().to_string()))
                     .children(followers.map(|followers| {
-                        div().neg_mr_1().child(Facepile::new(followers.into_iter()))
+                        div().neg_ml_2().child(Facepile::new(followers.into_iter()))
                     })),
             )
     }
