@@ -352,17 +352,6 @@ pub fn hello_world_rust_buffer_example<V: 'static>(cx: &WindowContext) -> Buffer
         }))
 }
 
-pub fn hello_world_rust_buffer_with_status_example<V: 'static>(cx: &WindowContext) -> Buffer<V> {
-    Buffer::new()
-        .set_title("hello_world.rs".to_string())
-        .set_path("src/hello_world.rs".to_string())
-        .set_language("rust".to_string())
-        .set_rows(Some(BufferRows {
-            show_line_numbers: true,
-            rows: hello_world_rust_with_status_buffer_rows(cx),
-        }))
-}
-
 pub fn hello_world_rust_buffer_rows(cx: &WindowContext) -> Vec<BufferRow> {
     let show_line_number = true;
 
@@ -444,6 +433,17 @@ pub fn hello_world_rust_buffer_rows(cx: &WindowContext) -> Vec<BufferRow> {
             show_line_number,
         },
     ]
+}
+
+pub fn hello_world_rust_buffer_with_status_example<V: 'static>(cx: &WindowContext) -> Buffer<V> {
+    Buffer::new()
+        .set_title("hello_world.rs".to_string())
+        .set_path("src/hello_world.rs".to_string())
+        .set_language("rust".to_string())
+        .set_rows(Some(BufferRows {
+            show_line_numbers: true,
+            rows: hello_world_rust_with_status_buffer_rows(cx),
+        }))
 }
 
 pub fn hello_world_rust_with_status_buffer_rows(cx: &WindowContext) -> Vec<BufferRow> {
