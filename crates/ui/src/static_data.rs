@@ -1,11 +1,104 @@
 use gpui2::WindowContext;
 
 use crate::{
-    theme, Buffer, BufferRow, BufferRows, GitStatus, HighlightColor, HighlightedLine,
-    HighlightedText, Icon, Keybinding, Label, LabelColor, ListEntry, ListEntrySize, ListItem,
-    MicStatus, ModifierKeys, PaletteItem, Player, PlayerCallStatus, PlayerWithCallStatus,
-    ScreenShareStatus, Theme, ToggleState,
+    theme, Buffer, BufferRow, BufferRows, FileSystemStatus, GitStatus, HighlightColor,
+    HighlightedLine, HighlightedText, Icon, Keybinding, Label, LabelColor, ListEntry,
+    ListEntrySize, ListItem, MicStatus, ModifierKeys, PaletteItem, Player, PlayerCallStatus,
+    PlayerWithCallStatus, ScreenShareStatus, Tab, Theme, ToggleState,
 };
+
+pub fn static_tabs_example() -> Vec<Tab> {
+    vec![
+        Tab::new()
+            .title("wip.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false)
+            .fs_status(FileSystemStatus::Deleted),
+        Tab::new()
+            .title("Cargo.toml".to_string())
+            .icon(Icon::FileToml)
+            .current(false)
+            .git_status(GitStatus::Modified),
+        Tab::new()
+            .title("Channels Panel".to_string())
+            .icon(Icon::Hash)
+            .current(false),
+        Tab::new()
+            .title("channels_panel.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(true)
+            .git_status(GitStatus::Modified),
+        Tab::new()
+            .title("workspace.rs".to_string())
+            .current(false)
+            .icon(Icon::FileRust)
+            .git_status(GitStatus::Modified),
+        Tab::new()
+            .title("icon_button.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false),
+        Tab::new()
+            .title("storybook.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false)
+            .git_status(GitStatus::Created),
+        Tab::new()
+            .title("theme.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false),
+        Tab::new()
+            .title("theme_registry.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false),
+        Tab::new()
+            .title("styleable_helpers.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false),
+    ]
+}
+
+pub fn static_tabs_1() -> Vec<Tab> {
+    vec![
+        Tab::new()
+            .title("project_panel.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false)
+            .fs_status(FileSystemStatus::Deleted),
+        Tab::new()
+            .title("tab_bar.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false)
+            .git_status(GitStatus::Modified),
+        Tab::new()
+            .title("workspace.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false),
+        Tab::new()
+            .title("tab.rs.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(true)
+            .git_status(GitStatus::Modified),
+    ]
+}
+
+pub fn static_tabs_2() -> Vec<Tab> {
+    vec![
+        Tab::new()
+            .title("tab_bar.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false)
+            .fs_status(FileSystemStatus::Deleted),
+        Tab::new()
+            .title("static_data.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(true)
+            .git_status(GitStatus::Modified),
+    ]
+}
+
+pub fn static_tabs_3() -> Vec<Tab> {
+    vec![Tab::new().git_status(GitStatus::Created).current(true)]
+}
 
 pub fn static_players() -> Vec<Player> {
     vec![
