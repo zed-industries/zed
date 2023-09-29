@@ -1,13 +1,31 @@
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
-use crate::{char_kind, CharKind, EditorStyle, ToOffset, ToPoint};
-use gpui::{FontCache, TextLayoutCache, WindowContext};
+use crate::{char_kind, CharKind, Editor, EditorStyle, ToOffset, ToPoint};
+use gpui::{text_layout, FontCache, TextLayoutCache, WindowContext};
 use language::Point;
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 
 #[derive(Debug, PartialEq)]
 pub enum FindRange {
     SingleLine,
     MultiLine,
+}
+
+/// TextLayoutDetails encompasses everything we need to move vertically
+/// taking into account variable width characters.
+pub struct TextLayoutDetails {
+    pub font_cache: Arc<FontCache>,
+    pub text_layout_cache: Arc<TextLayoutCache>,
+    pub editor_style: EditorStyle,
+}
+
+impl TextLayoutDetails {
+    pub fn new(editor: &Editor, cx: &WindowContext) -> TextLayoutDetails {
+        TextLayoutDetails {
+            font_cache: cx.font_cache().clone(),
+            text_layout_cache: cx.text_layout_cache().clone(),
+            editor_style: editor.style(cx),
+        }
+    }
 }
 
 pub fn left(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
@@ -48,9 +66,7 @@ pub fn up(
     start: DisplayPoint,
     goal: SelectionGoal,
     preserve_column_at_start: bool,
-    font_cache: &FontCache,
-    text_layout_cache: &TextLayoutCache,
-    editor_style: &EditorStyle,
+    text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     up_by_rows(
         map,
@@ -58,9 +74,7 @@ pub fn up(
         1,
         goal,
         preserve_column_at_start,
-        font_cache,
-        text_layout_cache,
-        editor_style,
+        text_layout_details,
     )
 }
 
@@ -79,14 +93,12 @@ pub fn up_by_rows(
     row_count: u32,
     goal: SelectionGoal,
     preserve_column_at_start: bool,
-    font_cache: &FontCache,
-    text_layout_cache: &TextLayoutCache,
-    editor_style: &EditorStyle,
+    text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     let mut goal_x = match goal {
         SelectionGoal::HorizontalPosition(x) => x,
         SelectionGoal::HorizontalRange { end, .. } => end,
-        _ => map.x_for_point(start, font_cache, text_layout_cache, editor_style),
+        _ => map.x_for_point(start, text_layout_details),
     };
 
     let prev_row = start.row().saturating_sub(row_count);
@@ -96,13 +108,7 @@ pub fn up_by_rows(
     );
     if point.row() < start.row() {
         *point.column_mut() = map
-            .column_for_x(
-                point.row(),
-                goal_x,
-                font_cache,
-                text_layout_cache,
-                editor_style,
-            )
+            .column_for_x(point.row(), goal_x, text_layout_details)
             .unwrap_or(point.column());
     } else if preserve_column_at_start {
         return (start, goal);

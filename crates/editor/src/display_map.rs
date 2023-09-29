@@ -5,8 +5,8 @@ mod tab_map;
 mod wrap_map;
 
 use crate::{
-    link_go_to_definition::InlayHighlight, Anchor, AnchorRangeExt, EditorStyle, InlayId,
-    MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
+    link_go_to_definition::InlayHighlight, movement::TextLayoutDetails, Anchor, AnchorRangeExt,
+    EditorStyle, InlayId, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 pub use block_map::{BlockMap, BlockPoint};
 use collections::{BTreeMap, HashMap, HashSet};
@@ -565,9 +565,11 @@ impl DisplaySnapshot {
     fn layout_line_for_row(
         &self,
         display_row: u32,
-        font_cache: &FontCache,
-        text_layout_cache: &TextLayoutCache,
-        editor_style: &EditorStyle,
+        TextLayoutDetails {
+            font_cache,
+            text_layout_cache,
+            editor_style,
+        }: &TextLayoutDetails,
     ) -> Line {
         let mut styles = Vec::new();
         let mut line = String::new();
@@ -605,16 +607,9 @@ impl DisplaySnapshot {
     pub fn x_for_point(
         &self,
         display_point: DisplayPoint,
-        font_cache: &FontCache,
-        text_layout_cache: &TextLayoutCache,
-        editor_style: &EditorStyle,
+        text_layout_details: &TextLayoutDetails,
     ) -> f32 {
-        let layout_line = self.layout_line_for_row(
-            display_point.row(),
-            font_cache,
-            text_layout_cache,
-            editor_style,
-        );
+        let layout_line = self.layout_line_for_row(display_point.row(), text_layout_details);
         layout_line.x_for_index(display_point.column() as usize)
     }
 
@@ -622,12 +617,9 @@ impl DisplaySnapshot {
         &self,
         display_row: u32,
         x_coordinate: f32,
-        font_cache: &FontCache,
-        text_layout_cache: &TextLayoutCache,
-        editor_style: &EditorStyle,
+        text_layout_details: &TextLayoutDetails,
     ) -> Option<u32> {
-        let layout_line =
-            self.layout_line_for_row(display_row, font_cache, text_layout_cache, editor_style);
+        let layout_line = self.layout_line_for_row(display_row, text_layout_details);
         layout_line.index_for_x(x_coordinate).map(|c| c as u32)
     }
 
@@ -1339,7 +1331,8 @@ pub mod tests {
         let window = cx.window.clone();
 
         cx.update_window(window, |cx| {
-            let editor_style = editor.read(&cx).style(cx);
+            let text_layout_details =
+                editor.read_with(cx, |editor, cx| TextLayoutDetails::new(editor, cx));
 
             let font_cache = cx.font_cache().clone();
 
@@ -1380,12 +1373,7 @@ pub mod tests {
                 DisplayPoint::new(0, 7)
             );
 
-            let x = snapshot.x_for_point(
-                DisplayPoint::new(1, 10),
-                cx.font_cache(),
-                cx.text_layout_cache(),
-                &editor_style,
-            );
+            let x = snapshot.x_for_point(DisplayPoint::new(1, 10), &text_layout_details);
             dbg!(x);
             assert_eq!(
                 movement::up(
@@ -1393,9 +1381,7 @@ pub mod tests {
                     DisplayPoint::new(1, 10),
                     SelectionGoal::None,
                     false,
-                    cx.font_cache(),
-                    cx.text_layout_cache(),
-                    &editor_style,
+                    &text_layout_details,
                 ),
                 (
                     DisplayPoint::new(0, 7),

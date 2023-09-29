@@ -71,6 +71,7 @@ use link_go_to_definition::{
 };
 use log::error;
 use lsp::LanguageServerId;
+use movement::TextLayoutDetails;
 use multi_buffer::ToOffsetUtf16;
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
@@ -5274,9 +5275,7 @@ impl Editor {
             return;
         }
 
-        let font_cache = cx.font_cache().clone();
-        let text_layout_cache = cx.text_layout_cache().clone();
-        let editor_style = self.style(cx);
+        let text_layout_details = TextLayoutDetails::new(&self, cx);
 
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             let line_mode = s.line_mode;
@@ -5289,9 +5288,7 @@ impl Editor {
                     selection.start,
                     selection.goal,
                     false,
-                    &font_cache,
-                    &text_layout_cache,
-                    &editor_style,
+                    &text_layout_details,
                 );
                 selection.collapse_to(cursor, goal);
             });
@@ -5320,9 +5317,7 @@ impl Editor {
             Autoscroll::fit()
         };
 
-        let font_cache = cx.font_cache().clone();
-        let text_layout = cx.text_layout_cache().clone();
-        let editor_style = self.style(cx);
+        let text_layout_details = TextLayoutDetails::new(&self, cx);
 
         self.change_selections(Some(autoscroll), cx, |s| {
             let line_mode = s.line_mode;
@@ -5336,9 +5331,7 @@ impl Editor {
                     row_count,
                     selection.goal,
                     false,
-                    &font_cache,
-                    &text_layout,
-                    &editor_style,
+                    &text_layout_details,
                 );
                 selection.collapse_to(cursor, goal);
             });
@@ -5346,20 +5339,10 @@ impl Editor {
     }
 
     pub fn select_up(&mut self, _: &SelectUp, cx: &mut ViewContext<Self>) {
-        let font_cache = cx.font_cache().clone();
-        let text_layout = cx.text_layout_cache().clone();
-        let editor_style = self.style(cx);
+        let text_layout_details = TextLayoutDetails::new(&self, cx);
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_heads_with(|map, head, goal| {
-                movement::up(
-                    map,
-                    head,
-                    goal,
-                    false,
-                    &font_cache,
-                    &text_layout,
-                    &editor_style,
-                )
+                movement::up(map, head, goal, false, &text_layout_details)
             })
         })
     }
