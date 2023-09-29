@@ -178,20 +178,26 @@ impl Buffer {
             .fill(line_background)
             .w_full()
             .gap_2()
-            .px_2()
-            .child(h_stack().w_4().h_full().px_1().when(row.code_action, |c| {
-                div().child(IconElement::new(Icon::Bolt))
-            }))
+            .px_1()
+            .child(
+                h_stack()
+                    .w_4()
+                    .h_full()
+                    .px_0p5()
+                    .when(row.code_action, |c| {
+                        div().child(IconElement::new(Icon::Bolt))
+                    }),
+            )
             .when(row.show_line_number, |this| {
                 this.child(
-                    h_stack().justify_end().px_1().w_4().child(
+                    h_stack().justify_end().px_0p5().w_3().child(
                         div()
                             .text_color(line_number_color)
                             .child(row.line_number.to_string()),
                     ),
                 )
             })
-            .child(div().mx_1().w_1().h_full().fill(row.status.hsla(cx)))
+            .child(div().mx_0p5().w_1().h_full().fill(row.status.hsla(cx)))
             .children(row.line.map(|line| {
                 div()
                     .flex()

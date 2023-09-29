@@ -884,8 +884,8 @@ pub fn hello_world_rust_with_status_buffer_rows(theme: &Theme) -> Vec<BufferRow>
             current: false,
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
-                    text: "Marshall and Nate were here".to_string(),
-                    color: HighlightColor::Default.hsla(&theme),
+                    text: "// Marshall and Nate were here".to_string(),
+                    color: HighlightColor::Comment.hsla(&theme),
                 }],
             }),
             cursors: None,

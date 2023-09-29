@@ -36,8 +36,15 @@ impl WorkspaceElement {
                                 width: relative(1.).into(),
                                 height: temp_size,
                             },
-                            |_, _| vec![Terminal::new().into_any()],
-                            Box::new(()),
+                            |_, payload| {
+                                let theme = payload.downcast_ref::<Arc<Theme>>().unwrap();
+
+                                vec![EditorPane::new(hello_world_rust_editor_with_status_example(
+                                    &theme,
+                                ))
+                                .into_any()]
+                            },
+                            Box::new(theme.clone()),
                         ),
                         Pane::new(
                             ScrollState::default(),
