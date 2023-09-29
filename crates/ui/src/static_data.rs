@@ -75,7 +75,7 @@ pub fn static_tabs_1() -> Vec<Tab> {
             .icon(Icon::FileRust)
             .current(false),
         Tab::new()
-            .title("tab.rs.rs".to_string())
+            .title("tab.rs".to_string())
             .icon(Icon::FileRust)
             .current(true)
             .git_status(GitStatus::Modified),
