@@ -2232,24 +2232,8 @@ impl Project {
                         .and_then(|m| m.get_mut(&language_server.server_id()))?;
                     let previous_snapshot = buffer_snapshots.last()?;
 
-                    let document_sync_kind = language_server
-                        .capabilities()
-                        .text_document_sync
-                        .as_ref()
-                        .and_then(|sync| match sync {
-                            lsp::TextDocumentSyncCapability::Kind(kind) => Some(*kind),
-                            lsp::TextDocumentSyncCapability::Options(options) => options.change,
-                        });
-
-                    let content_changes: Vec<_> = match document_sync_kind {
-                        Some(lsp::TextDocumentSyncKind::FULL) => {
-                            vec![lsp::TextDocumentContentChangeEvent {
-                                range: None,
-                                range_length: None,
-                                text: next_snapshot.text(),
-                            }]
-                        }
-                        Some(lsp::TextDocumentSyncKind::INCREMENTAL) => buffer
+                    let build_incremental_change = || {
+                        buffer
                             .edits_since::<(PointUtf16, usize)>(
                                 previous_snapshot.snapshot.version(),
                             )
@@ -2268,8 +2252,38 @@ impl Project {
                                     text: new_text,
                                 }
                             })
-                            .collect(),
-                        _ => continue,
+                            .collect()
+                    };
+
+                    let document_sync_kind = language_server
+                        .capabilities()
+                        .text_document_sync
+                        .as_ref()
+                        .and_then(|sync| match sync {
+                            lsp::TextDocumentSyncCapability::Kind(kind) => Some(*kind),
+                            lsp::TextDocumentSyncCapability::Options(options) => options.change,
+                        });
+
+                    let content_changes: Vec<_> = match document_sync_kind {
+                        Some(lsp::TextDocumentSyncKind::FULL) => {
+                            vec![lsp::TextDocumentContentChangeEvent {
+                                range: None,
+                                range_length: None,
+                                text: next_snapshot.text(),
+                            }]
+                        }
+                        Some(lsp::TextDocumentSyncKind::INCREMENTAL) => build_incremental_change(),
+                        _ => {
+                            #[cfg(any(test, feature = "test-support"))]
+                            {
+                                build_incremental_change()
+                            }
+
+                            #[cfg(not(any(test, feature = "test-support")))]
+                            {
+                                continue;
+                            }
+                        }
                     };
 
                     let next_version = previous_snapshot.version + 1;
