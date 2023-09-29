@@ -70,24 +70,11 @@ fn main() {
                 ..Default::default()
             },
             |cx| match args.story {
-                // HACK: Special-case the kitchen sink to fix scrolling.
-                Some(StorySelector::KitchenSink) => view(move |cx| {
-                    render_story(
-                        &mut ViewContext::new(cx),
-                        theme_override.clone(),
-                        crate::stories::kitchen_sink::KitchenSinkStory::default(),
-                    )
-                }),
                 Some(selector) => view(move |cx| {
                     render_story(
                         &mut ViewContext::new(cx),
                         theme_override.clone(),
-                        div()
-                            .flex()
-                            .flex_col()
-                            .w_full()
-                            .h_full()
-                            .children_any(selector.story()),
+                        div().flex().flex_col().h_full().child_any(selector.story()),
                     )
                 }),
                 None => view(move |cx| {

@@ -123,17 +123,13 @@ impl FromStr for StorySelector {
 }
 
 impl StorySelector {
-    pub fn story<V: 'static>(&self) -> Vec<AnyElement<V>> {
+    pub fn story<V: 'static>(&self) -> AnyElement<V> {
         match self {
-            Self::Element(element_story) => vec![element_story.story()],
-            Self::Component(component_story) => vec![component_story.story()],
-            Self::KitchenSink => all_story_selectors()
-                .into_iter()
-                // Exclude the kitchen sink to prevent `story` from recursively
-                // calling itself for all eternity.
-                .filter(|selector| **selector != Self::KitchenSink)
-                .flat_map(|selector| selector.story())
-                .collect(),
+            Self::Element(element_story) => element_story.story(),
+            Self::Component(component_story) => component_story.story(),
+            Self::KitchenSink => {
+                crate::stories::kitchen_sink::KitchenSinkStory::default().into_any()
+            }
         }
     }
 }
@@ -141,23 +137,19 @@ impl StorySelector {
 /// The list of all stories available in the storybook.
 static ALL_STORY_SELECTORS: OnceLock<Vec<StorySelector>> = OnceLock::new();
 
-fn all_story_selectors<'a>() -> &'a [StorySelector] {
-    let stories = ALL_STORY_SELECTORS.get_or_init(|| {
-        let element_stories = ElementStory::iter().map(StorySelector::Element);
-        let component_stories = ComponentStory::iter().map(StorySelector::Component);
-
-        element_stories
-            .chain(component_stories)
-            .chain(std::iter::once(StorySelector::KitchenSink))
-            .collect::<Vec<_>>()
-    });
-
-    stories
-}
-
 impl ValueEnum for StorySelector {
     fn value_variants<'a>() -> &'a [Self] {
-        all_story_selectors()
+        let stories = ALL_STORY_SELECTORS.get_or_init(|| {
+            let element_stories = ElementStory::iter().map(StorySelector::Element);
+            let component_stories = ComponentStory::iter().map(StorySelector::Component);
+
+            element_stories
+                .chain(component_stories)
+                .chain(std::iter::once(StorySelector::KitchenSink))
+                .collect::<Vec<_>>()
+        });
+
+        stories
     }
 
     fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
