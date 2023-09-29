@@ -6848,9 +6848,9 @@ async fn test_basic_following(
     let shared_screen = workspace_a.read_with(cx_a, |workspace, cx| {
         workspace
             .active_item(cx)
-            .unwrap()
+            .expect("no active item")
             .downcast::<SharedScreen>()
-            .unwrap()
+            .expect("active item isn't a shared screen")
     });
 
     // Client B activates Zed again, which causes the previous editor to become focused again.

@@ -273,7 +273,7 @@ impl RandomizedTest for RandomChannelBufferTest {
                         // channel buffer.
                         let collaborators = channel_buffer.collaborators();
                         let mut user_ids =
-                            collaborators.iter().map(|c| c.user_id).collect::<Vec<_>>();
+                            collaborators.values().map(|c| c.user_id).collect::<Vec<_>>();
                         user_ids.sort();
                         assert_eq!(
                             user_ids,

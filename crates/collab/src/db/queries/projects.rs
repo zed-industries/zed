@@ -738,7 +738,7 @@ impl Database {
                     Condition::any()
                         .add(
                             Condition::all()
-                                .add(follower::Column::ProjectId.eq(project_id))
+                                .add(follower::Column::ProjectId.eq(Some(project_id)))
                                 .add(
                                     follower::Column::LeaderConnectionServerId
                                         .eq(connection.owner_id),
@@ -747,7 +747,7 @@ impl Database {
                         )
                         .add(
                             Condition::all()
-                                .add(follower::Column::ProjectId.eq(project_id))
+                                .add(follower::Column::ProjectId.eq(Some(project_id)))
                                 .add(
                                     follower::Column::FollowerConnectionServerId
                                         .eq(connection.owner_id),
@@ -862,13 +862,46 @@ impl Database {
         .await
     }
 
+    pub async fn check_room_participants(
+        &self,
+        room_id: RoomId,
+        leader_id: ConnectionId,
+        follower_id: ConnectionId,
+    ) -> Result<()> {
+        self.transaction(|tx| async move {
+            use room_participant::Column;
+
+            let count = room_participant::Entity::find()
+                .filter(
+                    Condition::all().add(Column::RoomId.eq(room_id)).add(
+                        Condition::any()
+                            .add(Column::AnsweringConnectionId.eq(leader_id.id as i32).and(
+                                Column::AnsweringConnectionServerId.eq(leader_id.owner_id as i32),
+                            ))
+                            .add(Column::AnsweringConnectionId.eq(follower_id.id as i32).and(
+                                Column::AnsweringConnectionServerId.eq(follower_id.owner_id as i32),
+                            )),
+                    ),
+                )
+                .count(&*tx)
+                .await?;
+
+            if count < 2 {
+                Err(anyhow!("not room participants"))?;
+            }
+
+            Ok(())
+        })
+        .await
+    }
+
     pub async fn follow(
         &self,
+        room_id: RoomId,
         project_id: ProjectId,
         leader_connection: ConnectionId,
         follower_connection: ConnectionId,
     ) -> Result<RoomGuard<proto::Room>> {
-        let room_id = self.room_id_for_project(project_id).await?;
         self.room_transaction(room_id, |tx| async move {
             follower::ActiveModel {
                 room_id: ActiveValue::set(room_id),
@@ -894,15 +927,16 @@ impl Database {
 
     pub async fn unfollow(
         &self,
+        room_id: RoomId,
         project_id: ProjectId,
         leader_connection: ConnectionId,
         follower_connection: ConnectionId,
     ) -> Result<RoomGuard<proto::Room>> {
-        let room_id = self.room_id_for_project(project_id).await?;
         self.room_transaction(room_id, |tx| async move {
             follower::Entity::delete_many()
                 .filter(
                     Condition::all()
+                        .add(follower::Column::RoomId.eq(room_id))
                         .add(follower::Column::ProjectId.eq(project_id))
                         .add(
                             follower::Column::LeaderConnectionServerId

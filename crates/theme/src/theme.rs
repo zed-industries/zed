@@ -1065,13 +1065,12 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
 }
 
 impl Editor {
-    pub fn replica_selection_style(&self, replica_id: u16) -> &SelectionStyle {
-        let style_ix = replica_id as usize % (self.guest_selections.len() + 1);
-        if style_ix == 0 {
-            &self.selection
-        } else {
-            &self.guest_selections[style_ix - 1]
+    pub fn selection_style_for_room_participant(&self, participant_index: u32) -> SelectionStyle {
+        if self.guest_selections.is_empty() {
+            return SelectionStyle::default();
         }
+        let style_ix = participant_index as usize % self.guest_selections.len();
+        self.guest_selections[style_ix]
     }
 }
 

@@ -17,7 +17,7 @@ use language::{
     SelectionGoal,
 };
 use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
-use rpc::proto::{self, update_view};
+use rpc::proto::{self, update_view, PeerId};
 use smallvec::SmallVec;
 use std::{
     borrow::Cow,
@@ -156,13 +156,9 @@ impl FollowableItem for Editor {
         }))
     }
 
-    fn set_leader_replica_id(
-        &mut self,
-        leader_replica_id: Option<u16>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.leader_replica_id = leader_replica_id;
-        if self.leader_replica_id.is_some() {
+    fn set_leader_peer_id(&mut self, leader_peer_id: Option<PeerId>, cx: &mut ViewContext<Self>) {
+        self.leader_peer_id = leader_peer_id;
+        if self.leader_peer_id.is_some() {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.remove_active_selections(cx);
             });
@@ -308,6 +304,10 @@ impl FollowableItem for Editor {
             Event::ScrollPositionChanged { local, .. } => *local,
             _ => false,
         }
+    }
+
+    fn is_project_item(&self, _cx: &AppContext) -> bool {
+        true
     }
 }
 

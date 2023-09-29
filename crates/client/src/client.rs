@@ -62,6 +62,8 @@ lazy_static! {
         .and_then(|v| v.parse().ok());
     pub static ref ZED_APP_PATH: Option<PathBuf> =
         std::env::var("ZED_APP_PATH").ok().map(PathBuf::from);
+    pub static ref ZED_ALWAYS_ACTIVE: bool =
+        std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| e.len() > 0);
 }
 
 pub const ZED_SECRET_CLIENT_TOKEN: &str = "618033988749894";

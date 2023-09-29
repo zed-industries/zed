@@ -7,16 +7,27 @@ use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
 use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
 use std::sync::{Arc, Weak};
+use text::ReplicaId;
 use util::http::HttpClient;
 use util::TryFutureExt as _;
 
 pub type UserId = u64;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParticipantIndex(pub u32);
 
 #[derive(Default, Debug)]
 pub struct User {
     pub id: UserId,
     pub github_login: String,
     pub avatar: Option<Arc<ImageData>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Collaborator {
+    pub peer_id: proto::PeerId,
+    pub replica_id: ReplicaId,
+    pub user_id: UserId,
 }
 
 impl PartialOrd for User {
@@ -56,6 +67,7 @@ pub enum ContactRequestStatus {
 
 pub struct UserStore {
     users: HashMap<u64, Arc<User>>,
+    participant_indices: HashMap<u64, ParticipantIndex>,
     update_contacts_tx: mpsc::UnboundedSender<UpdateContacts>,
     current_user: watch::Receiver<Option<Arc<User>>>,
     contacts: Vec<Arc<Contact>>,
@@ -81,6 +93,7 @@ pub enum Event {
         kind: ContactEventKind,
     },
     ShowContacts,
+    ParticipantIndicesChanged,
 }
 
 #[derive(Clone, Copy)]
@@ -118,6 +131,7 @@ impl UserStore {
             current_user: current_user_rx,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
+            participant_indices: Default::default(),
             outgoing_contact_requests: Default::default(),
             invite_info: None,
             client: Arc::downgrade(&client),
@@ -641,6 +655,21 @@ impl UserStore {
             }
         })
     }
+
+    pub fn set_participant_indices(
+        &mut self,
+        participant_indices: HashMap<u64, ParticipantIndex>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if participant_indices != self.participant_indices {
+            self.participant_indices = participant_indices;
+            cx.emit(Event::ParticipantIndicesChanged);
+        }
+    }
+
+    pub fn participant_indices(&self) -> &HashMap<u64, ParticipantIndex> {
+        &self.participant_indices
+    }
 }
 
 impl User {
@@ -668,6 +697,16 @@ impl Contact {
             user,
             online: contact.online,
             busy: contact.busy,
+        })
+    }
+}
+
+impl Collaborator {
+    pub fn from_proto(message: proto::Collaborator) -> Result<Self> {
+        Ok(Self {
+            peer_id: message.peer_id.ok_or_else(|| anyhow!("invalid peer id"))?,
+            replica_id: message.replica_id as ReplicaId,
+            user_id: message.user_id as UserId,
         })
     }
 }

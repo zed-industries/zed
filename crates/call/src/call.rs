@@ -2,22 +2,23 @@ pub mod call_settings;
 pub mod participant;
 pub mod room;
 
-use std::sync::Arc;
-
 use anyhow::{anyhow, Result};
 use audio::Audio;
 use call_settings::CallSettings;
 use channel::ChannelId;
-use client::{proto, ClickhouseEvent, Client, TelemetrySettings, TypedEnvelope, User, UserStore};
+use client::{
+    proto, ClickhouseEvent, Client, TelemetrySettings, TypedEnvelope, User, UserStore,
+    ZED_ALWAYS_ACTIVE,
+};
 use collections::HashSet;
 use futures::{future::Shared, FutureExt};
-use postage::watch;
-
 use gpui::{
     AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Subscription, Task,
     WeakModelHandle,
 };
+use postage::watch;
 use project::Project;
+use std::sync::Arc;
 
 pub use participant::ParticipantLocation;
 pub use room::Room;
@@ -68,6 +69,7 @@ impl ActiveCall {
             location: None,
             pending_invites: Default::default(),
             incoming_call: watch::channel(),
+
             _subscriptions: vec![
                 client.add_request_handler(cx.handle(), Self::handle_incoming_call),
                 client.add_message_handler(cx.handle(), Self::handle_call_canceled),
@@ -348,17 +350,22 @@ impl ActiveCall {
         }
     }
 
+    pub fn location(&self) -> Option<&WeakModelHandle<Project>> {
+        self.location.as_ref()
+    }
+
     pub fn set_location(
         &mut self,
         project: Option<&ModelHandle<Project>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        self.location = project.map(|project| project.downgrade());
-        if let Some((room, _)) = self.room.as_ref() {
-            room.update(cx, |room, cx| room.set_location(project, cx))
-        } else {
-            Task::ready(Ok(()))
+        if project.is_some() || !*ZED_ALWAYS_ACTIVE {
+            self.location = project.map(|project| project.downgrade());
+            if let Some((room, _)) = self.room.as_ref() {
+                return room.update(cx, |room, cx| room.set_location(project, cx));
+            }
         }
+        Task::ready(Ok(()))
     }
 
     fn set_room(
