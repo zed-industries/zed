@@ -20,6 +20,7 @@ impl Terminal {
         div()
             .flex()
             .flex_col()
+            .w_full()
             .child(
                 // Terminal Tabs.
                 div()
