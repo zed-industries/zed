@@ -195,9 +195,8 @@ impl Vim {
             if editor_mode == EditorMode::Full
                 && !newest_selection_empty
                 && self.state().mode == Mode::Normal
-                // if leader_replica_id is set, then you're following someone else's cursor
-                // don't switch vim mode.
-                && editor.leader_replica_id().is_none()
+                // When following someone, don't switch vim mode.
+                && editor.leader_peer_id().is_none()
             {
                 self.switch_mode(Mode::Visual, true, cx);
             }
