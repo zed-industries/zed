@@ -4,7 +4,7 @@ use std::{cmp, sync::Arc};
 use collections::HashMap;
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
-    movement,
+    movement::{self, TextLayoutDetails},
     scroll::autoscroll::Autoscroll,
     Bias, DisplayPoint, Editor,
 };
@@ -57,6 +57,7 @@ pub fn init(cx: &mut AppContext) {
 pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
+            let text_layout_details = TextLayoutDetails::new(editor, cx);
             if vim.state().mode == Mode::VisualBlock
                 && !matches!(
                     motion,
@@ -67,7 +68,7 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
             {
                 let is_up_or_down = matches!(motion, Motion::Up { .. } | Motion::Down { .. });
                 visual_block_motion(is_up_or_down, editor, cx, |map, point, goal| {
-                    motion.move_point(map, point, goal, times)
+                    motion.move_point(map, point, goal, times, &text_layout_details)
                 })
             } else {
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
@@ -89,9 +90,13 @@ pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContex
                             current_head = movement::left(map, selection.end)
                         }
 
-                        let Some((new_head, goal)) =
-                            motion.move_point(map, current_head, selection.goal, times)
-                        else {
+                        let Some((new_head, goal)) = motion.move_point(
+                            map,
+                            current_head,
+                            selection.goal,
+                            times,
+                            &text_layout_details,
+                        ) else {
                             return;
                         };
 

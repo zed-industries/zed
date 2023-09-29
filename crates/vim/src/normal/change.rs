@@ -2,7 +2,7 @@ use crate::{motion::Motion, object::Object, state::Mode, utils::copy_selections_
 use editor::{
     char_kind,
     display_map::DisplaySnapshot,
-    movement::{self, FindRange},
+    movement::{self, FindRange, TextLayoutDetails},
     scroll::autoscroll::Autoscroll,
     CharKind, DisplayPoint,
 };
@@ -20,6 +20,7 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
             | Motion::StartOfLine { .. }
     );
     vim.update_active_editor(cx, |editor, cx| {
+        let text_layout_details = TextLayoutDetails::new(editor, cx);
         editor.transact(cx, |editor, cx| {
             // We are swapping to insert mode anyway. Just set the line end clipping behavior now
             editor.set_clip_at_line_ends(false, cx);
@@ -27,9 +28,15 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
                 s.move_with(|map, selection| {
                     motion_succeeded |= if let Motion::NextWordStart { ignore_punctuation } = motion
                     {
-                        expand_changed_word_selection(map, selection, times, ignore_punctuation)
+                        expand_changed_word_selection(
+                            map,
+                            selection,
+                            times,
+                            ignore_punctuation,
+                            &text_layout_details,
+                        )
                     } else {
-                        motion.expand_selection(map, selection, times, false)
+                        motion.expand_selection(map, selection, times, false, &text_layout_details)
                     };
                 });
             });
@@ -81,6 +88,7 @@ fn expand_changed_word_selection(
     selection: &mut Selection<DisplayPoint>,
     times: Option<usize>,
     ignore_punctuation: bool,
+    text_layout_details: &TextLayoutDetails,
 ) -> bool {
     if times.is_none() || times.unwrap() == 1 {
         let scope = map
@@ -103,11 +111,22 @@ fn expand_changed_word_selection(
                 });
             true
         } else {
-            Motion::NextWordStart { ignore_punctuation }
-                .expand_selection(map, selection, None, false)
+            Motion::NextWordStart { ignore_punctuation }.expand_selection(
+                map,
+                selection,
+                None,
+                false,
+                &text_layout_details,
+            )
         }
     } else {
-        Motion::NextWordStart { ignore_punctuation }.expand_selection(map, selection, times, false)
+        Motion::NextWordStart { ignore_punctuation }.expand_selection(
+            map,
+            selection,
+            times,
+            false,
+            &text_layout_details,
+        )
     }
 }
 

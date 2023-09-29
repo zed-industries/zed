@@ -12,13 +12,13 @@ mod yank;
 use std::sync::Arc;
 
 use crate::{
-    motion::{self, Motion},
+    motion::{self, first_non_whitespace, next_line_end, right, Motion},
     object::Object,
     state::{Mode, Operator},
     Vim,
 };
 use collections::HashSet;
-use editor::scroll::autoscroll::Autoscroll;
+use editor::{movement::TextLayoutDetails, scroll::autoscroll::Autoscroll};
 use editor::{Bias, DisplayPoint};
 use gpui::{actions, AppContext, ViewContext, WindowContext};
 use language::SelectionGoal;
@@ -177,10 +177,11 @@ pub(crate) fn move_cursor(
     cx: &mut WindowContext,
 ) {
     vim.update_active_editor(cx, |editor, cx| {
+        let text_layout_details = TextLayoutDetails::new(editor, cx);
         editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_cursors_with(|map, cursor, goal| {
                 motion
-                    .move_point(map, cursor, goal, times)
+                    .move_point(map, cursor, goal, times, &text_layout_details)
                     .unwrap_or((cursor, goal))
             })
         })
@@ -193,8 +194,8 @@ fn insert_after(_: &mut Workspace, _: &InsertAfter, cx: &mut ViewContext<Workspa
         vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.maybe_move_cursors_with(|map, cursor, goal| {
-                    Motion::Right.move_point(map, cursor, goal, None)
+                s.move_cursors_with(|map, cursor, goal| {
+                    (right(map, cursor, 1), SelectionGoal::None)
                 });
             });
         });
@@ -218,11 +219,11 @@ fn insert_first_non_whitespace(
         vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.maybe_move_cursors_with(|map, cursor, goal| {
-                    Motion::FirstNonWhitespace {
-                        display_lines: false,
-                    }
-                    .move_point(map, cursor, goal, None)
+                s.move_cursors_with(|map, cursor, goal| {
+                    (
+                        first_non_whitespace(map, false, cursor),
+                        SelectionGoal::None,
+                    )
                 });
             });
         });
@@ -235,8 +236,8 @@ fn insert_end_of_line(_: &mut Workspace, _: &InsertEndOfLine, cx: &mut ViewConte
         vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.maybe_move_cursors_with(|map, cursor, goal| {
-                    Motion::CurrentLine.move_point(map, cursor, goal, None)
+                s.move_cursors_with(|map, cursor, goal| {
+                    (next_line_end(map, cursor, 1), SelectionGoal::None)
                 });
             });
         });
@@ -281,6 +282,7 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
         vim.start_recording(cx);
         vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
+            let text_layout_details = TextLayoutDetails::new(editor, cx);
             editor.transact(cx, |editor, cx| {
                 let (map, old_selections) = editor.selections.all_display(cx);
 
@@ -299,7 +301,13 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
                 });
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.maybe_move_cursors_with(|map, cursor, goal| {
-                        Motion::CurrentLine.move_point(map, cursor, goal, None)
+                        Motion::CurrentLine.move_point(
+                            map,
+                            cursor,
+                            goal,
+                            None,
+                            &text_layout_details,
+                        )
                     });
                 });
                 editor.edit_with_autoindent(edits, cx);

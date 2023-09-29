@@ -83,8 +83,16 @@ pub fn down(
     start: DisplayPoint,
     goal: SelectionGoal,
     preserve_column_at_end: bool,
+    text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
-    down_by_rows(map, start, 1, goal, preserve_column_at_end)
+    down_by_rows(
+        map,
+        start,
+        1,
+        goal,
+        preserve_column_at_end,
+        text_layout_details,
+    )
 }
 
 pub fn up_by_rows(
@@ -130,29 +138,32 @@ pub fn down_by_rows(
     row_count: u32,
     goal: SelectionGoal,
     preserve_column_at_end: bool,
+    text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
-    let mut goal_column = match goal {
-        SelectionGoal::Column(column) => column,
-        SelectionGoal::ColumnRange { end, .. } => end,
-        _ => map.column_to_chars(start.row(), start.column()),
+    let mut goal_x = match goal {
+        SelectionGoal::HorizontalPosition(x) => x,
+        SelectionGoal::HorizontalRange { end, .. } => end,
+        _ => map.x_for_point(start, text_layout_details),
     };
 
     let new_row = start.row() + row_count;
     let mut point = map.clip_point(DisplayPoint::new(new_row, 0), Bias::Right);
     if point.row() > start.row() {
-        *point.column_mut() = map.column_from_chars(point.row(), goal_column);
+        *point.column_mut() = map
+            .column_for_x(point.row(), goal_x, text_layout_details)
+            .unwrap_or(map.line_len(point.row()));
     } else if preserve_column_at_end {
         return (start, goal);
     } else {
         point = map.max_point();
-        goal_column = map.column_to_chars(point.row(), point.column())
+        goal_x = map.x_for_point(point, text_layout_details)
     }
 
     let mut clipped_point = map.clip_point(point, Bias::Right);
     if clipped_point.row() > point.row() {
         clipped_point = map.clip_point(point, Bias::Left);
     }
-    (clipped_point, SelectionGoal::Column(goal_column))
+    (clipped_point, SelectionGoal::HorizontalPosition(goal_x))
 }
 
 pub fn line_beginning(
@@ -426,9 +437,12 @@ pub fn split_display_range_by_lines(
 mod tests {
     use super::*;
     use crate::{
-        display_map::Inlay, test::marked_display_snapshot, Buffer, DisplayMap, ExcerptRange,
-        InlayId, MultiBuffer,
+        display_map::Inlay,
+        test::{editor_test_context::EditorTestContext, marked_display_snapshot},
+        Buffer, DisplayMap, ExcerptRange, InlayId, MultiBuffer,
     };
+    use language::language_settings::AllLanguageSettings;
+    use project::Project;
     use settings::SettingsStore;
     use util::post_inc;
 
@@ -721,129 +735,173 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_move_up_and_down_with_excerpts(cx: &mut gpui::AppContext) {
-        /*
-        init_test(cx);
-
-        let family_id = cx
-            .font_cache()
-            .load_family(&["Helvetica"], &Default::default())
-            .unwrap();
-        let font_id = cx
-            .font_cache()
-            .select_font(family_id, &Default::default())
-            .unwrap();
-
-        let buffer =
-            cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "abc\ndefg\nhijkl\nmn"));
-        let multibuffer = cx.add_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(0);
-            multibuffer.push_excerpts(
-                buffer.clone(),
-                [
-                    ExcerptRange {
-                        context: Point::new(0, 0)..Point::new(1, 4),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(2, 0)..Point::new(3, 2),
-                        primary: None,
-                    },
-                ],
-                cx,
-            );
-            multibuffer
+    async fn test_move_up_and_down_with_excerpts(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            init_test(cx);
         });
-        let display_map =
-            cx.add_model(|cx| DisplayMap::new(multibuffer, font_id, 14.0, None, 2, 2, cx));
-        let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
 
+        let mut cx = EditorTestContext::new(cx).await;
+        let editor = cx.editor.clone();
+        let window = cx.window.clone();
+        cx.update_window(window, |cx| {
+            let text_layout_details =
+                editor.read_with(cx, |editor, cx| TextLayoutDetails::new(editor, cx));
 
-        assert_eq!(snapshot.text(), "\n\nabc\ndefg\n\n\nhijkl\nmn");
+            let family_id = cx
+                .font_cache()
+                .load_family(&["Helvetica"], &Default::default())
+                .unwrap();
+            let font_id = cx
+                .font_cache()
+                .select_font(family_id, &Default::default())
+                .unwrap();
 
-        // Can't move up into the first excerpt's header
-        assert_eq!(
-            up(
-                &snapshot,
-                DisplayPoint::new(2, 2),
-                SelectionGoal::Column(2),
-                false
-            ),
-            (
-                DisplayPoint::new(2, 0),
-                SelectionGoal::HorizontalPosition(0.0)
-            ),
-        );
-        assert_eq!(
-            up(
-                &snapshot,
-                DisplayPoint::new(2, 0),
-                SelectionGoal::None,
-                false
-            ),
-            (DisplayPoint::new(2, 0), SelectionGoal::Column(0)),
-        );
+            let buffer =
+                cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, "abc\ndefg\nhijkl\nmn"));
+            let multibuffer = cx.add_model(|cx| {
+                let mut multibuffer = MultiBuffer::new(0);
+                multibuffer.push_excerpts(
+                    buffer.clone(),
+                    [
+                        ExcerptRange {
+                            context: Point::new(0, 0)..Point::new(1, 4),
+                            primary: None,
+                        },
+                        ExcerptRange {
+                            context: Point::new(2, 0)..Point::new(3, 2),
+                            primary: None,
+                        },
+                    ],
+                    cx,
+                );
+                multibuffer
+            });
+            let display_map =
+                cx.add_model(|cx| DisplayMap::new(multibuffer, font_id, 14.0, None, 2, 2, cx));
+            let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
 
-        // Move up and down within first excerpt
-        assert_eq!(
-            up(
-                &snapshot,
-                DisplayPoint::new(3, 4),
-                SelectionGoal::Column(4),
-                false
-            ),
-            (DisplayPoint::new(2, 3), SelectionGoal::Column(4)),
-        );
-        assert_eq!(
-            down(
-                &snapshot,
-                DisplayPoint::new(2, 3),
-                SelectionGoal::Column(4),
-                false
-            ),
-            (DisplayPoint::new(3, 4), SelectionGoal::Column(4)),
-        );
+            assert_eq!(snapshot.text(), "\n\nabc\ndefg\n\n\nhijkl\nmn");
 
-        // Move up and down across second excerpt's header
-        assert_eq!(
-            up(
-                &snapshot,
-                DisplayPoint::new(6, 5),
-                SelectionGoal::Column(5),
-                false
-            ),
-            (DisplayPoint::new(3, 4), SelectionGoal::Column(5)),
-        );
-        assert_eq!(
-            down(
-                &snapshot,
-                DisplayPoint::new(3, 4),
-                SelectionGoal::Column(5),
-                false
-            ),
-            (DisplayPoint::new(6, 5), SelectionGoal::Column(5)),
-        );
+            let col_2_x = snapshot.x_for_point(DisplayPoint::new(2, 2), &text_layout_details);
 
-        // Can't move down off the end
-        assert_eq!(
-            down(
-                &snapshot,
-                DisplayPoint::new(7, 0),
-                SelectionGoal::Column(0),
-                false
-            ),
-            (DisplayPoint::new(7, 2), SelectionGoal::Column(2)),
-        );
-        assert_eq!(
-            down(
-                &snapshot,
-                DisplayPoint::new(7, 2),
-                SelectionGoal::Column(2),
-                false
-            ),
-            (DisplayPoint::new(7, 2), SelectionGoal::Column(2)),
-        );
-        */
+            // Can't move up into the first excerpt's header
+            assert_eq!(
+                up(
+                    &snapshot,
+                    DisplayPoint::new(2, 2),
+                    SelectionGoal::HorizontalPosition(col_2_x),
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(2, 0),
+                    SelectionGoal::HorizontalPosition(0.0)
+                ),
+            );
+            assert_eq!(
+                up(
+                    &snapshot,
+                    DisplayPoint::new(2, 0),
+                    SelectionGoal::None,
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(2, 0),
+                    SelectionGoal::HorizontalPosition(0.0)
+                ),
+            );
+
+            let col_4_x = snapshot.x_for_point(DisplayPoint::new(3, 4), &text_layout_details);
+
+            // Move up and down within first excerpt
+            assert_eq!(
+                up(
+                    &snapshot,
+                    DisplayPoint::new(3, 4),
+                    SelectionGoal::HorizontalPosition(col_4_x),
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(2, 3),
+                    SelectionGoal::HorizontalPosition(col_4_x)
+                ),
+            );
+            assert_eq!(
+                down(
+                    &snapshot,
+                    DisplayPoint::new(2, 3),
+                    SelectionGoal::HorizontalPosition(col_4_x),
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(3, 4),
+                    SelectionGoal::HorizontalPosition(col_4_x)
+                ),
+            );
+
+            let col_5_x = snapshot.x_for_point(DisplayPoint::new(6, 5), &text_layout_details);
+
+            // Move up and down across second excerpt's header
+            assert_eq!(
+                up(
+                    &snapshot,
+                    DisplayPoint::new(6, 5),
+                    SelectionGoal::HorizontalPosition(col_5_x),
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(3, 4),
+                    SelectionGoal::HorizontalPosition(col_5_x)
+                ),
+            );
+            assert_eq!(
+                down(
+                    &snapshot,
+                    DisplayPoint::new(3, 4),
+                    SelectionGoal::HorizontalPosition(col_5_x),
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(6, 5),
+                    SelectionGoal::HorizontalPosition(col_5_x)
+                ),
+            );
+
+            let max_point_x = snapshot.x_for_point(DisplayPoint::new(7, 2), &text_layout_details);
+
+            // Can't move down off the end
+            assert_eq!(
+                down(
+                    &snapshot,
+                    DisplayPoint::new(7, 0),
+                    SelectionGoal::HorizontalPosition(0.0),
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(7, 2),
+                    SelectionGoal::HorizontalPosition(max_point_x)
+                ),
+            );
+            assert_eq!(
+                down(
+                    &snapshot,
+                    DisplayPoint::new(7, 2),
+                    SelectionGoal::HorizontalPosition(max_point_x),
+                    false,
+                    &text_layout_details
+                ),
+                (
+                    DisplayPoint::new(7, 2),
+                    SelectionGoal::HorizontalPosition(max_point_x)
+                ),
+            );
+        });
     }
 
     fn init_test(cx: &mut gpui::AppContext) {
@@ -851,5 +909,6 @@ mod tests {
         theme::init((), cx);
         language::init(cx);
         crate::init(cx);
+        Project::init_settings(cx);
     }
 }

@@ -1392,19 +1392,28 @@ pub mod tests {
                 movement::down(
                     &snapshot,
                     DisplayPoint::new(0, 7),
-                    SelectionGoal::Column(10),
-                    false
+                    SelectionGoal::HorizontalPosition(x),
+                    false,
+                    &text_layout_details
                 ),
-                (DisplayPoint::new(1, 10), SelectionGoal::Column(10))
+                (
+                    DisplayPoint::new(1, 10),
+                    SelectionGoal::HorizontalPosition(x)
+                )
             );
+            dbg!("starting down...");
             assert_eq!(
                 movement::down(
                     &snapshot,
                     DisplayPoint::new(1, 10),
-                    SelectionGoal::Column(10),
-                    false
+                    SelectionGoal::HorizontalPosition(x),
+                    false,
+                    &text_layout_details
                 ),
-                (DisplayPoint::new(2, 4), SelectionGoal::Column(10))
+                (
+                    DisplayPoint::new(2, 4),
+                    SelectionGoal::HorizontalPosition(x)
+                )
             );
 
             let ix = snapshot.buffer_snapshot.text().find("seven").unwrap();

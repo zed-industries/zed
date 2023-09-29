@@ -3,7 +3,7 @@ use std::cmp;
 use editor::{
     char_kind,
     display_map::{DisplaySnapshot, FoldPoint, ToDisplayPoint},
-    movement::{self, find_boundary, find_preceding_boundary, FindRange},
+    movement::{self, find_boundary, find_preceding_boundary, FindRange, TextLayoutDetails},
     Bias, CharKind, DisplayPoint, ToOffset,
 };
 use gpui::{actions, impl_actions, AppContext, WindowContext};
@@ -361,6 +361,7 @@ impl Motion {
         point: DisplayPoint,
         goal: SelectionGoal,
         maybe_times: Option<usize>,
+        text_layout_details: &TextLayoutDetails,
     ) -> Option<(DisplayPoint, SelectionGoal)> {
         let times = maybe_times.unwrap_or(1);
         use Motion::*;
@@ -373,13 +374,13 @@ impl Motion {
             } => down(map, point, goal, times),
             Down {
                 display_lines: true,
-            } => down_display(map, point, goal, times),
+            } => down_display(map, point, goal, times, &text_layout_details),
             Up {
                 display_lines: false,
             } => up(map, point, goal, times),
             Up {
                 display_lines: true,
-            } => up_display(map, point, goal, times),
+            } => up_display(map, point, goal, times, &text_layout_details),
             Right => (right(map, point, times), SelectionGoal::None),
             NextWordStart { ignore_punctuation } => (
                 next_word_start(map, point, *ignore_punctuation, times),
@@ -442,10 +443,15 @@ impl Motion {
         selection: &mut Selection<DisplayPoint>,
         times: Option<usize>,
         expand_to_surrounding_newline: bool,
+        text_layout_details: &TextLayoutDetails,
     ) -> bool {
-        if let Some((new_head, goal)) =
-            self.move_point(map, selection.head(), selection.goal, times)
-        {
+        if let Some((new_head, goal)) = self.move_point(
+            map,
+            selection.head(),
+            selection.goal,
+            times,
+            &text_layout_details,
+        ) {
             selection.set_head(new_head, goal);
 
             if self.linewise() {
@@ -566,9 +572,10 @@ fn down_display(
     mut point: DisplayPoint,
     mut goal: SelectionGoal,
     times: usize,
+    text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     for _ in 0..times {
-        (point, goal) = movement::down(map, point, goal, true);
+        (point, goal) = movement::down(map, point, goal, true, text_layout_details);
     }
 
     (point, goal)
@@ -606,9 +613,10 @@ fn up_display(
     mut point: DisplayPoint,
     mut goal: SelectionGoal,
     times: usize,
+    text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     for _ in 0..times {
-        (point, goal) = movement::up(map, point, goal, true);
+        (point, goal) = movement::up(map, point, goal, true, &text_layout_details);
     }
 
     (point, goal)
@@ -707,7 +715,7 @@ fn previous_word_start(
     point
 }
 
-fn first_non_whitespace(
+pub(crate) fn first_non_whitespace(
     map: &DisplaySnapshot,
     display_lines: bool,
     from: DisplayPoint,
@@ -890,7 +898,11 @@ fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> 
     first_non_whitespace(map, false, correct_line)
 }
 
-fn next_line_end(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
+pub(crate) fn next_line_end(
+    map: &DisplaySnapshot,
+    mut point: DisplayPoint,
+    times: usize,
+) -> DisplayPoint {
     if times > 1 {
         point = down(map, point, SelectionGoal::None, times - 1).0;
     }

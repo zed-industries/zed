@@ -4988,6 +4988,7 @@ impl Editor {
     }
 
     pub fn transpose(&mut self, _: &Transpose, cx: &mut ViewContext<Self>) {
+        let text_layout_details = TextLayoutDetails::new(&self, cx);
         self.transact(cx, |this, cx| {
             let edits = this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 let mut edits: Vec<(Range<usize>, String)> = Default::default();
@@ -5011,7 +5012,10 @@ impl Editor {
 
                     *head.column_mut() += 1;
                     head = display_map.clip_point(head, Bias::Right);
-                    selection.collapse_to(head, SelectionGoal::Column(head.column()));
+                    let goal = SelectionGoal::HorizontalPosition(
+                        display_map.x_for_point(head, &text_layout_details),
+                    );
+                    selection.collapse_to(head, goal);
 
                     let transpose_start = display_map
                         .buffer_snapshot
@@ -5355,13 +5359,20 @@ impl Editor {
             return;
         }
 
+        let text_layout_details = TextLayoutDetails::new(&self, cx);
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             let line_mode = s.line_mode;
             s.move_with(|map, selection| {
                 if !selection.is_empty() && !line_mode {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) = movement::down(map, selection.end, selection.goal, false);
+                let (cursor, goal) = movement::down(
+                    map,
+                    selection.end,
+                    selection.goal,
+                    false,
+                    &text_layout_details,
+                );
                 selection.collapse_to(cursor, goal);
             });
         });
@@ -5398,22 +5409,32 @@ impl Editor {
             Autoscroll::fit()
         };
 
+        let text_layout_details = TextLayoutDetails::new(&self, cx);
         self.change_selections(Some(autoscroll), cx, |s| {
             let line_mode = s.line_mode;
             s.move_with(|map, selection| {
                 if !selection.is_empty() && !line_mode {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) =
-                    movement::down_by_rows(map, selection.end, row_count, selection.goal, false);
+                let (cursor, goal) = movement::down_by_rows(
+                    map,
+                    selection.end,
+                    row_count,
+                    selection.goal,
+                    false,
+                    &text_layout_details,
+                );
                 selection.collapse_to(cursor, goal);
             });
         });
     }
 
     pub fn select_down(&mut self, _: &SelectDown, cx: &mut ViewContext<Self>) {
+        let text_layout_details = TextLayoutDetails::new(&self, cx);
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-            s.move_heads_with(|map, head, goal| movement::down(map, head, goal, false))
+            s.move_heads_with(|map, head, goal| {
+                movement::down(map, head, goal, false, &text_layout_details)
+            })
         });
     }
 
@@ -6286,6 +6307,7 @@ impl Editor {
     }
 
     pub fn toggle_comments(&mut self, action: &ToggleComments, cx: &mut ViewContext<Self>) {
+        let text_layout_details = TextLayoutDetails::new(&self, cx);
         self.transact(cx, |this, cx| {
             let mut selections = this.selections.all::<Point>(cx);
             let mut edits = Vec::new();
@@ -6528,7 +6550,10 @@ impl Editor {
                         point.row += 1;
                         point = snapshot.clip_point(point, Bias::Left);
                         let display_point = point.to_display_point(display_snapshot);
-                        (display_point, SelectionGoal::Column(display_point.column()))
+                        let goal = SelectionGoal::HorizontalPosition(
+                            display_snapshot.x_for_point(display_point, &text_layout_details),
+                        );
+                        (display_point, goal)
                     })
                 });
             }
