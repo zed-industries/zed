@@ -33,6 +33,7 @@ impl<V: 'static> ChatPanel<V> {
         div()
             .flex()
             .flex_col()
+            .justify_between()
             .h_full()
             .px_2()
             .gap_2()
@@ -41,7 +42,7 @@ impl<V: 'static> ChatPanel<V> {
                 div()
                     .flex()
                     .justify_between()
-                    .gap_2()
+                    .py_2()
                     .child(div().flex().child(Label::new("#design")))
                     .child(
                         div()
@@ -52,18 +53,23 @@ impl<V: 'static> ChatPanel<V> {
                             .child(IconButton::new(Icon::AudioOn)),
                     ),
             )
-            // Chat Body
             .child(
                 div()
-                    .w_full()
                     .flex()
                     .flex_col()
-                    .gap_3()
-                    .overflow_y_scroll(self.scroll_state.clone())
-                    .children(self.messages.clone()),
+                    // Chat Body
+                    .child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .overflow_y_scroll(self.scroll_state.clone())
+                            .children(self.messages.clone()),
+                    )
+                    // Composer
+                    .child(div().flex().my_2().child(Input::new("Message #design"))),
             )
-            // Composer
-            .child(div().flex().gap_2().child(Input::new("Message #design")))
     }
 }
 
