@@ -1,5 +1,7 @@
 #![allow(dead_code, unused_variables)]
 
+use std::future;
+
 use log::LevelFilter;
 use simplelog::SimpleLogger;
 
@@ -18,6 +20,11 @@ fn main() {
 
     gpui3::App::production().run(|cx| {
         let window = cx.open_window(Default::default(), |cx| workspace(cx));
+
+        cx.spawn_on_main(move |platform, _| {
+            platform.activate(true);
+            future::ready(())
+        });
     });
 }
 

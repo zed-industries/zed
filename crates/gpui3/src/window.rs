@@ -92,9 +92,12 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             cx.window.root_view = Some(root_view);
             let scene = cx.window.scene.take();
             dbg!(&scene);
-            let _ = cx.window.platform_window.read(|platform_window| {
-                platform_window.draw(scene);
-                future::ready(())
+
+            self.run_on_main(|cx| {
+                cx.window
+                    .platform_window
+                    .borrow_on_main_thread()
+                    .draw(scene);
             });
 
             Ok(())

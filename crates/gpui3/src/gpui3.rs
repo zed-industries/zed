@@ -31,7 +31,6 @@ pub use serde_json;
 pub use smallvec;
 pub use smol::Timer;
 use std::{
-    future::Future,
     ops::{Deref, DerefMut},
     sync::Arc,
 };
@@ -176,26 +175,9 @@ impl<T: 'static + ?Sized> MainThreadOnly<T> {
         Self { dispatcher, value }
     }
 
-    pub(crate) fn borrow_on_main_thread(&self) -> &T {
+    pub(crate) fn borrow_on_main_thread(&self) -> &Arc<T> {
         assert!(self.dispatcher.is_main_thread());
         &self.value
-    }
-
-    pub(crate) fn read<R, F>(
-        &self,
-        f: impl FnOnce(&T) -> F + Send + 'static,
-    ) -> impl Future<Output = R>
-    where
-        F: Future<Output = R> + 'static,
-        R: Send + 'static,
-    {
-        let this = self.clone();
-        crate::spawn_on_main(self.dispatcher.clone(), || async move {
-            // Required so we move `this` instead of this.value. Only `this` is `Send`.
-            let this = this;
-            let result = f(&this.value);
-            result.await
-        })
     }
 }
 

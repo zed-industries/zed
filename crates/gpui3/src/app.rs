@@ -8,8 +8,9 @@ pub use model_context::*;
 use refineable::Refineable;
 
 use crate::{
-    current_platform, Context, LayoutId, MainThreadOnly, Platform, RootView, TextStyle,
-    TextStyleRefinement, TextSystem, Window, WindowContext, WindowHandle, WindowId,
+    current_platform, run_on_main, spawn_on_main, Context, LayoutId, MainThreadOnly, Platform,
+    PlatformDispatcher, Reference, RootView, TextStyle, TextStyleRefinement, TextSystem, Window,
+    WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, VecDeque};
@@ -19,6 +20,7 @@ use slotmap::SlotMap;
 use smallvec::SmallVec;
 use std::{
     any::{type_name, Any, TypeId},
+    ops::{Deref, DerefMut},
     sync::{Arc, Weak},
 };
 use util::ResultExt;
@@ -77,6 +79,7 @@ type Handlers = SmallVec<[Arc<dyn Fn(&mut AppContext) -> bool + Send + Sync + 's
 pub struct AppContext {
     this: Weak<Mutex<AppContext>>,
     platform: MainThreadOnly<dyn Platform>,
+    dispatcher: Arc<dyn PlatformDispatcher>,
     text_system: Arc<TextSystem>,
     pending_updates: usize,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
@@ -98,19 +101,36 @@ impl AppContext {
         AsyncContext(self.this.clone())
     }
 
+    pub fn run_on_main<R>(
+        &self,
+        f: impl FnOnce(&mut MainThreadContext) -> R + Send + 'static,
+    ) -> impl Future<Output = R>
+    where
+        R: Send + 'static,
+    {
+        let this = self.this.upgrade().unwrap();
+        run_on_main(self.dispatcher.clone(), move || {
+            let cx = &mut *this.lock();
+            let platform = cx.platform.borrow_on_main_thread().clone();
+            cx.update(|cx| f(&mut MainThreadContext::mutable(cx, platform.as_ref())))
+        })
+    }
+
     pub fn spawn_on_main<F, R>(
         &self,
-        f: impl FnOnce(&dyn Platform, &mut Self) -> F + Send + 'static,
+        f: impl FnOnce(&mut MainThreadContext) -> F + Send + 'static,
     ) -> impl Future<Output = R>
     where
         F: Future<Output = R> + 'static,
         R: Send + 'static,
     {
         let this = self.this.upgrade().unwrap();
-        self.platform.read(move |platform| {
+        spawn_on_main(self.dispatcher.clone(), move || {
             let cx = &mut *this.lock();
-            cx.update(|cx| f(platform, cx))
+            let platform = cx.platform.borrow_on_main_thread().clone();
+            cx.update(|cx| f(&mut MainThreadContext::mutable(cx, platform.as_ref())))
         })
+        // self.platform.read(move |platform| {
     }
 
     pub fn open_window<S: 'static + Send + Sync>(
@@ -120,13 +140,7 @@ impl AppContext {
     ) -> impl Future<Output = WindowHandle<S>> {
         let id = self.windows.insert(None);
         let handle = WindowHandle::new(id);
-        self.spawn_on_main(move |platform, cx| {
-            let mut window = Window::new(handle.into(), options, platform, cx);
-            let root_view = build_root_view(&mut WindowContext::mutable(cx, &mut window));
-            window.root_view.replace(root_view.into_any());
-            cx.windows.get_mut(id).unwrap().replace(window);
-            future::ready(handle)
-        })
+        self.spawn_on_main(move |cx| future::ready(cx.open_window(options, build_root_view)))
     }
 
     pub fn text_style(&self) -> TextStyle {
@@ -272,6 +286,53 @@ impl Context for AppContext {
         let result = update(&mut *entity, &mut ModelContext::mutable(self, handle.id));
         self.entities.end_lease(entity);
         result
+    }
+}
+
+pub struct MainThreadContext<'a> {
+    app: Reference<'a, AppContext>,
+    platform: &'a dyn Platform,
+}
+
+impl<'a> MainThreadContext<'a> {
+    fn mutable(cx: &'a mut AppContext, platform: &'a dyn Platform) -> Self {
+        Self {
+            app: Reference::Mutable(cx),
+            platform,
+        }
+    }
+
+    pub fn activate(&mut self, ignoring_other_apps: bool) {
+        self.platform.activate(ignoring_other_apps);
+    }
+
+    pub fn open_window<S: 'static + Send + Sync>(
+        &mut self,
+        options: crate::WindowOptions,
+        build_root_view: impl FnOnce(&mut WindowContext) -> RootView<S> + Send + 'static,
+    ) -> WindowHandle<S> {
+        let id = self.windows.insert(None);
+        let handle = WindowHandle::new(id);
+        let cx = &mut *self.app;
+        let mut window = Window::new(handle.into(), options, self.platform, cx);
+        let root_view = build_root_view(&mut WindowContext::mutable(cx, &mut window));
+        window.root_view.replace(root_view.into_any());
+        cx.windows.get_mut(id).unwrap().replace(window);
+        handle
+    }
+}
+
+impl<'a> Deref for MainThreadContext<'a> {
+    type Target = AppContext;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.app
+    }
+}
+
+impl<'a> DerefMut for MainThreadContext<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut *self.app
     }
 }
 

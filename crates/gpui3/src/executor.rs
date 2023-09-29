@@ -17,8 +17,21 @@ use std::{
     time::Duration,
 };
 
-/// Enqueues the given closure to be run on the application's event loop. Can be
-/// called on any thread.
+/// Enqueues the given closure to run on the application's event loop.
+/// Returns the result asynchronously.
+pub(crate) fn run_on_main<F, R>(
+    dispatcher: Arc<dyn PlatformDispatcher>,
+    func: F,
+) -> impl Future<Output = R>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    spawn_on_main(dispatcher, move || async move { func() })
+}
+
+/// Enqueues the given closure to be run on the application's event loop. The
+/// closure returns a future which will be run to completion on the main thread.
 pub(crate) fn spawn_on_main<F, R>(
     dispatcher: Arc<dyn PlatformDispatcher>,
     func: impl FnOnce() -> F + Send + 'static,
