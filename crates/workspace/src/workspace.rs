@@ -2529,6 +2529,7 @@ impl Workspace {
 
         if let Some(prev_leader_id) = self.unfollow(&pane, cx) {
             if leader_id == prev_leader_id {
+                dbg!("oh no!");
                 return None;
             }
         }
@@ -2613,16 +2614,50 @@ impl Workspace {
         leader_id: PeerId,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
+        let room = ActiveCall::global(cx).read(cx).room()?.read(cx);
+        let project = self.project.read(cx);
+
+        let Some(remote_participant) = room.remote_participant_for_peer_id(leader_id) else {
+            dbg!("no remote participant yet...");
+            return None;
+        };
+
+        let other_project_id = match remote_participant.location {
+            call::ParticipantLocation::External => None,
+            call::ParticipantLocation::UnsharedProject => None,
+            call::ParticipantLocation::SharedProject { project_id } => {
+                if Some(project_id) == project.remote_id() {
+                    None
+                } else {
+                    Some(project_id)
+                }
+            }
+        };
+        dbg!(other_project_id);
+
+        // if they are active in another project, follow there.
+        if let Some(project_id) = other_project_id {
+            let app_state = self.app_state.clone();
+            return Some(crate::join_remote_project(
+                project_id,
+                remote_participant.user.id,
+                app_state,
+                cx,
+            ));
+        }
+
+        // if you're already following, find the right pane and focus it.
         for (existing_leader_id, states_by_pane) in &mut self.follower_states_by_leader {
             if leader_id == *existing_leader_id {
                 for (pane, _) in states_by_pane {
+                    dbg!("focusing pane");
                     cx.focus(pane);
                     return None;
                 }
             }
         }
 
-        // not currently following, so follow.
+        // Otherwise, follow.
         self.toggle_follow(leader_id, cx)
     }
 
@@ -4214,6 +4249,7 @@ pub fn join_remote_project(
     app_state: Arc<AppState>,
     cx: &mut AppContext,
 ) -> Task<Result<()>> {
+    dbg!("huh??");
     cx.spawn(|mut cx| async move {
         let existing_workspace = cx
             .windows()
@@ -4232,8 +4268,10 @@ pub fn join_remote_project(
             .flatten();
 
         let workspace = if let Some(existing_workspace) = existing_workspace {
+            dbg!("huh");
             existing_workspace
         } else {
+            dbg!("huh/");
             let active_call = cx.read(ActiveCall::global);
             let room = active_call
                 .read_with(&cx, |call, _| call.room().cloned())
@@ -4249,6 +4287,7 @@ pub fn join_remote_project(
                 })
                 .await?;
 
+            dbg!("huh//");
             let window_bounds_override = window_bounds_env_override(&cx);
             let window = cx.add_window(
                 (app_state.build_window_options)(
@@ -4271,6 +4310,7 @@ pub fn join_remote_project(
             workspace.downgrade()
         };
 
+        dbg!("huh///");
         workspace.window().activate(&mut cx);
         cx.platform().activate(true);
 
@@ -4293,12 +4333,12 @@ pub fn join_remote_project(
                         Some(collaborator.peer_id)
                     });
 
+                dbg!(follow_peer_id);
+
                 if let Some(follow_peer_id) = follow_peer_id {
-                    if !workspace.is_being_followed(follow_peer_id) {
-                        workspace
-                            .toggle_follow(follow_peer_id, cx)
-                            .map(|follow| follow.detach_and_log_err(cx));
-                    }
+                    workspace
+                        .follow(follow_peer_id, cx)
+                        .map(|follow| follow.detach_and_log_err(cx));
                 }
             }
         })?;

@@ -1090,55 +1090,30 @@ impl CollabTitlebarItem {
             },
         );
 
-        match (replica_id, location) {
-            // If the user's location isn't known, do nothing.
-            (_, None) => content.into_any(),
-
-            // If the user is not in this project, but is in another share project,
-            // join that project.
-            (None, Some(ParticipantLocation::SharedProject { project_id })) => content
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, this, cx| {
-                    if let Some(workspace) = this.workspace.upgrade(cx) {
-                        let app_state = workspace.read(cx).app_state().clone();
-                        workspace::join_remote_project(project_id, user_id, app_state, cx)
-                            .detach_and_log_err(cx);
-                    }
-                })
-                .with_tooltip::<TitlebarParticipant>(
-                    peer_id.as_u64() as usize,
-                    format!("Follow {} into external project", user.github_login),
-                    Some(Box::new(FollowNextCollaborator)),
-                    theme.tooltip.clone(),
-                    cx,
-                )
-                .into_any(),
-
-            // Otherwise, follow the user in the current window.
-            _ => content
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, move |_, item, cx| {
-                    if let Some(workspace) = item.workspace.upgrade(cx) {
-                        if let Some(task) = workspace
-                            .update(cx, |workspace, cx| workspace.toggle_follow(peer_id, cx))
-                        {
-                            task.detach_and_log_err(cx);
-                        }
-                    }
-                })
-                .with_tooltip::<TitlebarParticipant>(
-                    peer_id.as_u64() as usize,
-                    if self_following {
-                        format!("Unfollow {}", user.github_login)
-                    } else {
-                        format!("Follow {}", user.github_login)
-                    },
-                    Some(Box::new(FollowNextCollaborator)),
-                    theme.tooltip.clone(),
-                    cx,
-                )
-                .into_any(),
+        if Some(peer_id) == self_peer_id {
+            return content.into_any();
         }
+
+        content
+            .with_cursor_style(CursorStyle::PointingHand)
+            .on_click(MouseButton::Left, move |_, this, cx| {
+                let Some(workspace) = this.workspace.upgrade(cx) else {
+                    return;
+                };
+                if let Some(task) =
+                    workspace.update(cx, |workspace, cx| workspace.follow(peer_id, cx))
+                {
+                    task.detach_and_log_err(cx);
+                }
+            })
+            .with_tooltip::<TitlebarParticipant>(
+                peer_id.as_u64() as usize,
+                format!("Follow {}", user.github_login),
+                Some(Box::new(FollowNextCollaborator)),
+                theme.tooltip.clone(),
+                cx,
+            )
+            .into_any()
     }
 
     fn location_style(
