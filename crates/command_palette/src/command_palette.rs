@@ -265,7 +265,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                     .with_children(
                         [
                             (keystroke.ctrl, "^"),
-                            (keystroke.alt, "⎇"),
+                            (keystroke.alt, "⌥"),
                             (keystroke.cmd, "⌘"),
                             (keystroke.shift, "⇧"),
                         ]
