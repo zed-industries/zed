@@ -13,6 +13,7 @@ pub trait OpenAIFunction: erased_serde::Serialize {
     fn description(&self) -> String;
     fn system_prompt(&self) -> String;
     fn parameters(&self) -> serde_json::Value;
+    fn complete(&self, arguments: serde_json::Value) -> anyhow::Result<String>;
 }
 serialize_trait_object!(OpenAIFunction);
 
@@ -83,6 +84,7 @@ pub struct FunctionCallDetails {
     pub arguments: serde_json::Value, // json object respresenting provided arguments
 }
 
+#[derive(Clone)]
 pub struct OpenAIFunctionCallingProvider {
     api_key: String,
 }

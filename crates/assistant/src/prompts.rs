@@ -1,4 +1,4 @@
-use gpui::AppContext;
+use gpui::{AppContext, AsyncAppContext};
 use language::{BufferSnapshot, OffsetRangeExt, ToOffset};
 use std::cmp;
 use std::ops::Range;
@@ -83,14 +83,14 @@ fn outline_for_prompt(
     Some(text)
 }
 
-fn generate_codegen_planning_prompt(
+pub fn generate_codegen_planning_prompt(
     user_prompt: String,
     language_name: Option<&str>,
     buffer: &BufferSnapshot,
     range: Range<language::Anchor>,
     cx: &AppContext,
     kind: CodegenKind,
-) -> String {
+) -> (String, Option<String>) {
     let mut prompt = String::new();
 
     // General Preamble
@@ -101,7 +101,7 @@ fn generate_codegen_planning_prompt(
     }
 
     let outline = outline_for_prompt(buffer, range.clone(), cx);
-    if let Some(outline) = outline {
+    if let Some(outline) = outline.clone() {
         writeln!(
             prompt,
             "You're currently working inside the Zed editor on a file with the following outline:"
@@ -135,33 +135,41 @@ fn generate_codegen_planning_prompt(
     )
     .unwrap();
 
-    prompt
+    (prompt, outline)
 }
 pub fn generate_content_prompt(
     user_prompt: String,
-    language_name: Option<&str>,
-    buffer: &BufferSnapshot,
-    range: Range<language::Anchor>,
-    cx: &AppContext,
+    language_name: Option<String>,
+    outline: Option<String>,
     kind: CodegenKind,
+    snippet: Vec<String>,
 ) -> String {
     let mut prompt = String::new();
 
     // General Preamble
-    if let Some(language_name) = language_name {
+    if let Some(language_name) = language_name.clone() {
         writeln!(prompt, "You're an expert {language_name} engineer.\n").unwrap();
     } else {
         writeln!(prompt, "You're an expert software engineer.\n").unwrap();
     }
 
-    let outline = outline_for_prompt(buffer, range.clone(), cx);
+    if snippet.len() > 0 {
+        writeln!(
+            prompt,
+            "Here are a few snippets from the codebase which may help: "
+        );
+    }
+    for snip in snippet {
+        writeln!(prompt, "{snip}");
+    }
+
     if let Some(outline) = outline {
         writeln!(
             prompt,
             "The file you are currently working on has the following outline:"
         )
         .unwrap();
-        if let Some(language_name) = language_name {
+        if let Some(language_name) = language_name.clone() {
             let language_name = language_name.to_lowercase();
             writeln!(prompt, "```{language_name}\n{outline}\n```").unwrap();
         } else {

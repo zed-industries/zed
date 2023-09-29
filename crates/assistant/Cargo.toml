@@ -23,6 +23,8 @@ theme = { path = "../theme" }
 util = { path = "../util" }
 uuid = { version = "1.1.2", features = ["v4"] }
 workspace = { path = "../workspace" }
+semantic_index = { path = "../semantic_index" }
+project = { path = "../project" }
 
 anyhow.workspace = true
 chrono = { version = "0.4", features = ["serde"] }

@@ -2,6 +2,7 @@ mod db;
 mod embedding_queue;
 mod parsing;
 pub mod semantic_index_settings;
+pub mod skills;
 
 #[cfg(test)]
 mod semantic_index_tests;

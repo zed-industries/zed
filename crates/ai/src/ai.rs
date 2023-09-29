@@ -1,6 +1,7 @@
 pub mod completion;
 pub mod embedding;
 pub mod function_calling;
+pub mod skills;
 
 use core::fmt;
 use std::fmt::Display;
@@ -35,7 +36,7 @@ impl Display for Role {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 pub struct RequestMessage {
     pub role: Role,
     pub content: String,

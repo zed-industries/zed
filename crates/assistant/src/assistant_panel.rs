@@ -1,12 +1,16 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, OpenAIModel},
     codegen::{self, Codegen, CodegenKind},
-    prompts::generate_content_prompt,
+    prompts::{generate_codegen_planning_prompt, generate_content_prompt},
     MessageId, MessageMetadata, MessageStatus, Role, SavedConversation, SavedConversationMetadata,
     SavedMessage,
 };
-use ai::completion::{stream_completion, OpenAICompletionProvider, OpenAIRequest, OPENAI_API_URL};
-use ai::RequestMessage;
+use ai::{
+    completion::{stream_completion, OpenAICompletionProvider, OpenAIRequest, OPENAI_API_URL},
+    function_calling::OpenAIFunctionCallingProvider,
+    skills::RewritePrompt,
+};
+use ai::{function_calling::OpenAIFunction, RequestMessage};
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
 use client::{telemetry::AssistantKind, ClickhouseEvent, TelemetrySettings};
@@ -34,7 +38,9 @@ use gpui::{
     WindowContext,
 };
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset as _};
+use project::Project;
 use search::BufferSearchBar;
+use semantic_index::{skills::RepositoryContextRetriever, SemanticIndex};
 use settings::SettingsStore;
 use std::{
     cell::{Cell, RefCell},
@@ -144,6 +150,8 @@ pub struct AssistantPanel {
     include_conversation_in_next_inline_assist: bool,
     inline_prompt_history: VecDeque<String>,
     _watch_saved_conversations: Task<Result<()>>,
+    semantic_index: ModelHandle<SemanticIndex>,
+    project: ModelHandle<Project>,
 }
 
 impl AssistantPanel {
@@ -153,6 +161,7 @@ impl AssistantPanel {
         workspace: WeakViewHandle<Workspace>,
         cx: AsyncAppContext,
     ) -> Task<Result<ViewHandle<Self>>> {
+        let index = cx.read(|cx| SemanticIndex::global(cx).unwrap());
         cx.spawn(|mut cx| async move {
             let fs = workspace.read_with(&cx, |workspace, _| workspace.app_state().fs.clone())?;
             let saved_conversations = SavedConversationMetadata::list(fs.clone())
@@ -190,6 +199,9 @@ impl AssistantPanel {
                         toolbar.add_item(cx.add_view(|cx| BufferSearchBar::new(cx)), cx);
                         toolbar
                     });
+
+                    let project = workspace.project().clone();
+
                     let mut this = Self {
                         workspace: workspace_handle,
                         active_editor_index: Default::default(),
@@ -214,6 +226,8 @@ impl AssistantPanel {
                         include_conversation_in_next_inline_assist: false,
                         inline_prompt_history: Default::default(),
                         _watch_saved_conversations,
+                        semantic_index: index,
+                        project,
                     };
 
                     let mut old_dock_position = this.position(cx);
@@ -276,9 +290,10 @@ impl AssistantPanel {
         let inline_assist_id = post_inc(&mut self.next_inline_assist_id);
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
         let provider = Arc::new(OpenAICompletionProvider::new(
-            api_key,
+            api_key.clone(),
             cx.background().clone(),
         ));
+        let fc_provider = OpenAIFunctionCallingProvider::new(api_key);
         let selection = editor.read(cx).selections.newest_anchor().clone();
         let codegen_kind = if editor.read(cx).selections.newest::<usize>(cx).is_empty() {
             CodegenKind::Generate {
@@ -289,8 +304,18 @@ impl AssistantPanel {
                 range: selection.start..selection.end,
             }
         };
+
+        let project = self.project.clone();
+
         let codegen = cx.add_model(|cx| {
-            Codegen::new(editor.read(cx).buffer().clone(), codegen_kind, provider, cx)
+            Codegen::new(
+                editor.read(cx).buffer().clone(),
+                codegen_kind,
+                provider,
+                fc_provider,
+                cx,
+                project.clone(),
+            )
         });
 
         let measurements = Rc::new(Cell::new(BlockMeasurements::default()));
@@ -572,42 +597,74 @@ impl AssistantPanel {
         let language_name = language_name.as_deref();
 
         let codegen_kind = pending_assist.codegen.read(cx).kind().clone();
-        let prompt = generate_content_prompt(
-            user_prompt.to_string(),
-            language_name,
-            &snapshot,
-            language_range,
-            cx,
-            codegen_kind,
-        );
+        let index = self.semantic_index.clone();
 
-        let mut messages = Vec::new();
-        let mut model = settings::get::<AssistantSettings>(cx)
-            .default_open_ai_model
-            .clone();
-        if let Some(conversation) = conversation {
-            let conversation = conversation.read(cx);
-            let buffer = conversation.buffer.read(cx);
-            messages.extend(
-                conversation
-                    .messages(cx)
-                    .map(|message| message.to_open_ai_message(buffer)),
-            );
-            model = conversation.model.clone();
-        }
-
-        messages.push(RequestMessage {
-            role: Role::User,
-            content: prompt,
+        pending_assist.codegen.update(cx, |codegen, cx| {
+            codegen.start(
+                user_prompt.to_string(),
+                cx,
+                language_name,
+                snapshot,
+                language_range.clone(),
+                codegen_kind.clone(),
+                index,
+            )
         });
-        let request = OpenAIRequest {
-            model: model.full_name().into(),
-            messages,
-            stream: true,
-        };
-        pending_assist
-            .codegen
-            .update(cx, |codegen, cx| codegen.start(request, cx));
+
+        // let api_key = self.api_key.as_ref().clone().into_inner().clone().unwrap();
+        // let function_provider = OpenAIFunctionCallingProvider::new(api_key);
+
+        // let planning_messages = vec![RequestMessage {
+        //     role: Role::User,
+        //     content: planning_prompt,
+        // }];
+
+        // println!("GETTING HERE");
+
+        // let function_call = cx
+        //     .spawn(|this, mut cx| async move {
+        //         let result = function_provider
+        //             .complete("gpt-4".to_string(), planning_messages, functions)
+        //             .await;
+        //         dbg!(&result);
+        //         result
+        //     })
+        //     .detach();
+
+        // let function_name = function_call.name.as_str();
+        // let prompt = match function_name {
+        //     "rewrite_prompt" => {
+        //         let user_prompt = RewritePrompt::load()
+        //             .complete(function_call.arguments)
+        //             .unwrap();
+        //         generate_content_prompt(
+        //             user_prompt.to_string(),
+        //             language_name,
+        //             &snapshot,
+        //             language_range,
+        //             cx,
+        //             codegen_kind,
+        //         )
+        //     }
+        //     _ => {
+        //         todo!();
+        //     }
+        // };
+
+        // let mut messages = Vec::new();
+        // let mut model = settings::get::<AssistantSettings>(cx)
+        //     .default_open_ai_model
+        //     .clone();
+        // if let Some(conversation) = conversation {
+        //     let conversation = conversation.read(cx);
+        //     let buffer = conversation.buffer.read(cx);
+        //     messages.extend(
+        //         conversation
+        //             .messages(cx)
+        //             .map(|message| message.to_open_ai_message(buffer)),
+        //     );
+        //     model = conversation.model.clone();
+        // }
     }
 
     fn update_highlights_for_editor(
