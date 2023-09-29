@@ -2980,30 +2980,28 @@ impl Workspace {
     }
 
     fn update_active_view_for_followers(&self, cx: &AppContext) {
-        let item = self
-            .active_item(cx)
-            .and_then(|item| item.to_followable_item_handle(cx));
-        if let Some(item) = item {
-            self.update_followers(
-                item.is_project_item(cx),
-                proto::update_followers::Variant::UpdateActiveView(proto::UpdateActiveView {
+        let mut is_project_item = true;
+        let mut update = proto::UpdateActiveView::default();
+        if self.active_pane.read(cx).has_focus() {
+            let item = self
+                .active_item(cx)
+                .and_then(|item| item.to_followable_item_handle(cx));
+            if let Some(item) = item {
+                is_project_item = item.is_project_item(cx);
+                update = proto::UpdateActiveView {
                     id: item
                         .remote_id(&self.app_state.client, cx)
                         .map(|id| id.to_proto()),
                     leader_id: self.leader_for_pane(&self.active_pane),
-                }),
-                cx,
-            );
-        } else {
-            self.update_followers(
-                true,
-                proto::update_followers::Variant::UpdateActiveView(proto::UpdateActiveView {
-                    id: None,
-                    leader_id: None,
-                }),
-                cx,
-            );
+                };
+            }
         }
+
+        self.update_followers(
+            is_project_item,
+            proto::update_followers::Variant::UpdateActiveView(update),
+            cx,
+        );
     }
 
     fn update_followers(
