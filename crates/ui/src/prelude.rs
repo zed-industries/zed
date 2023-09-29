@@ -2,7 +2,7 @@ pub use gpui2::elements::div::{div, ScrollState};
 pub use gpui2::style::{StyleHelpers, Styleable};
 pub use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 
-pub use crate::{theme, ButtonVariant, HackyChildren, HackyChildrenPayload, InputVariant};
+pub use crate::{theme, ButtonVariant, HackyChildren, HackyChildrenPayload, InputVariant, Theme};
 
 use gpui2::{hsla, rgb, Hsla, WindowContext};
 use strum::EnumIter;
@@ -40,8 +40,7 @@ pub enum HighlightColor {
 }
 
 impl HighlightColor {
-    pub fn hsla(&self, cx: &WindowContext) -> Hsla {
-        let theme = theme(cx);
+    pub fn hsla(&self, theme: &Theme) -> Hsla {
         let system_color = SystemColor::new();
 
         match self {

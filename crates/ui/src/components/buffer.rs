@@ -172,9 +172,9 @@ impl<V: 'static> Buffer<V> {
         };
 
         let line_number_color = if row.current {
-            HighlightColor::Default.hsla(cx)
+            HighlightColor::Default.hsla(&theme)
         } else {
-            HighlightColor::Comment.hsla(cx)
+            HighlightColor::Comment.hsla(&theme)
         };
 
         h_stack()

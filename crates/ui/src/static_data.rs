@@ -1,10 +1,10 @@
 use gpui2::WindowContext;
 
 use crate::{
-    Buffer, BufferRow, BufferRows, GitStatus, HighlightColor, HighlightedLine, HighlightedText,
-    Icon, Keybinding, Label, LabelColor, ListEntry, ListEntrySize, ListItem, MicStatus,
-    ModifierKeys, PaletteItem, Player, PlayerCallStatus, PlayerWithCallStatus, ScreenShareStatus,
-    ToggleState,
+    theme, Buffer, BufferRow, BufferRows, GitStatus, HighlightColor, HighlightedLine,
+    HighlightedText, Icon, Keybinding, Label, LabelColor, ListEntry, ListEntrySize, ListItem,
+    MicStatus, ModifierKeys, PaletteItem, Player, PlayerCallStatus, PlayerWithCallStatus,
+    ScreenShareStatus, Theme, ToggleState,
 };
 
 pub fn static_players() -> Vec<Player> {
@@ -353,6 +353,8 @@ pub fn hello_world_rust_buffer_example<V: 'static>(cx: &WindowContext) -> Buffer
 }
 
 pub fn hello_world_rust_buffer_rows(cx: &WindowContext) -> Vec<BufferRow> {
+    let theme = theme(cx);
+
     let show_line_number = true;
 
     vec![
@@ -364,15 +366,15 @@ pub fn hello_world_rust_buffer_rows(cx: &WindowContext) -> Vec<BufferRow> {
                 highlighted_texts: vec![
                     HighlightedText {
                         text: "fn ".to_string(),
-                        color: HighlightColor::Keyword.hsla(cx),
+                        color: HighlightColor::Keyword.hsla(&theme),
                     },
                     HighlightedText {
                         text: "main".to_string(),
-                        color: HighlightColor::Function.hsla(cx),
+                        color: HighlightColor::Function.hsla(&theme),
                     },
                     HighlightedText {
                         text: "() {".to_string(),
-                        color: HighlightColor::Default.hsla(cx),
+                        color: HighlightColor::Default.hsla(&theme),
                     },
                 ],
             }),
@@ -388,7 +390,7 @@ pub fn hello_world_rust_buffer_rows(cx: &WindowContext) -> Vec<BufferRow> {
                 highlighted_texts: vec![HighlightedText {
                     text: "    // Statements here are executed when the compiled binary is called."
                         .to_string(),
-                    color: HighlightColor::Comment.hsla(cx),
+                    color: HighlightColor::Comment.hsla(&theme),
                 }],
             }),
             cursors: None,
@@ -411,7 +413,7 @@ pub fn hello_world_rust_buffer_rows(cx: &WindowContext) -> Vec<BufferRow> {
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "    // Print text to the console.".to_string(),
-                    color: HighlightColor::Comment.hsla(cx),
+                    color: HighlightColor::Comment.hsla(&theme),
                 }],
             }),
             cursors: None,
@@ -425,7 +427,7 @@ pub fn hello_world_rust_buffer_rows(cx: &WindowContext) -> Vec<BufferRow> {
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "}".to_string(),
-                    color: HighlightColor::Default.hsla(cx),
+                    color: HighlightColor::Default.hsla(&theme),
                 }],
             }),
             cursors: None,
@@ -447,6 +449,8 @@ pub fn hello_world_rust_buffer_with_status_example<V: 'static>(cx: &WindowContex
 }
 
 pub fn hello_world_rust_with_status_buffer_rows(cx: &WindowContext) -> Vec<BufferRow> {
+    let theme = theme(cx);
+
     let show_line_number = true;
 
     vec![
@@ -458,15 +462,15 @@ pub fn hello_world_rust_with_status_buffer_rows(cx: &WindowContext) -> Vec<Buffe
                 highlighted_texts: vec![
                     HighlightedText {
                         text: "fn ".to_string(),
-                        color: HighlightColor::Keyword.hsla(cx),
+                        color: HighlightColor::Keyword.hsla(&theme),
                     },
                     HighlightedText {
                         text: "main".to_string(),
-                        color: HighlightColor::Function.hsla(cx),
+                        color: HighlightColor::Function.hsla(&theme),
                     },
                     HighlightedText {
                         text: "() {".to_string(),
-                        color: HighlightColor::Default.hsla(cx),
+                        color: HighlightColor::Default.hsla(&theme),
                     },
                 ],
             }),
@@ -482,7 +486,7 @@ pub fn hello_world_rust_with_status_buffer_rows(cx: &WindowContext) -> Vec<Buffe
                 highlighted_texts: vec![HighlightedText {
                     text: "// Statements here are executed when the compiled binary is called."
                         .to_string(),
-                    color: HighlightColor::Comment.hsla(cx),
+                    color: HighlightColor::Comment.hsla(&theme),
                 }],
             }),
             cursors: None,
@@ -505,7 +509,7 @@ pub fn hello_world_rust_with_status_buffer_rows(cx: &WindowContext) -> Vec<Buffe
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "    // Print text to the console.".to_string(),
-                    color: HighlightColor::Comment.hsla(cx),
+                    color: HighlightColor::Comment.hsla(&theme),
                 }],
             }),
             cursors: None,
@@ -519,7 +523,7 @@ pub fn hello_world_rust_with_status_buffer_rows(cx: &WindowContext) -> Vec<Buffe
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "}".to_string(),
-                    color: HighlightColor::Default.hsla(cx),
+                    color: HighlightColor::Default.hsla(&theme),
                 }],
             }),
             cursors: None,
@@ -533,7 +537,7 @@ pub fn hello_world_rust_with_status_buffer_rows(cx: &WindowContext) -> Vec<Buffe
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "".to_string(),
-                    color: HighlightColor::Default.hsla(cx),
+                    color: HighlightColor::Default.hsla(&theme),
                 }],
             }),
             cursors: None,
@@ -547,11 +551,81 @@ pub fn hello_world_rust_with_status_buffer_rows(cx: &WindowContext) -> Vec<Buffe
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "Marshall and Nate were here".to_string(),
-                    color: HighlightColor::Default.hsla(cx),
+                    color: HighlightColor::Default.hsla(&theme),
                 }],
             }),
             cursors: None,
             status: GitStatus::Created,
+            show_line_number,
+        },
+    ]
+}
+
+pub fn terminal_buffer<V: 'static>(theme: &Theme) -> Buffer<V> {
+    Buffer::new()
+        .set_title("zed — fish".to_string())
+        .set_rows(Some(BufferRows {
+            show_line_numbers: false,
+            rows: terminal_buffer_rows(theme),
+        }))
+}
+
+pub fn terminal_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
+    let show_line_number = false;
+
+    vec![
+        BufferRow {
+            line_number: 1,
+            code_action: false,
+            current: false,
+            line: Some(HighlightedLine {
+                highlighted_texts: vec![
+                    HighlightedText {
+                        text: "maxdeviant ".to_string(),
+                        color: HighlightColor::Keyword.hsla(&theme),
+                    },
+                    HighlightedText {
+                        text: "in ".to_string(),
+                        color: HighlightColor::Default.hsla(&theme),
+                    },
+                    HighlightedText {
+                        text: "profaned-capital ".to_string(),
+                        color: HighlightColor::Function.hsla(&theme),
+                    },
+                    HighlightedText {
+                        text: "in ".to_string(),
+                        color: HighlightColor::Default.hsla(&theme),
+                    },
+                    HighlightedText {
+                        text: "~/p/zed ".to_string(),
+                        color: HighlightColor::Function.hsla(&theme),
+                    },
+                    HighlightedText {
+                        text: "on ".to_string(),
+                        color: HighlightColor::Default.hsla(&theme),
+                    },
+                    HighlightedText {
+                        text: " gpui2-ui ".to_string(),
+                        color: HighlightColor::Keyword.hsla(&theme),
+                    },
+                ],
+            }),
+            cursors: None,
+            status: GitStatus::None,
+            show_line_number,
+        },
+        BufferRow {
+            line_number: 2,
+            code_action: false,
+            current: false,
+            line: Some(HighlightedLine {
+                highlighted_texts: vec![HighlightedText {
+                    text: "λ ".to_string(),
+                    color: HighlightColor::String.hsla(&theme),
+                }],
+            }),
+            cursors: None,
+            status: GitStatus::None,
             show_line_number,
         },
     ]
