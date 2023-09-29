@@ -114,7 +114,6 @@ impl<V: 'static> Panel<V> {
         match self.current_side {
             PanelSide::Left => {
                 panel_base = v_stack()
-                    .overflow_y_scroll(self.scroll_state.clone())
                     .h_full()
                     .w(current_width)
                     .fill(theme.middle.base.default.background)
@@ -123,7 +122,6 @@ impl<V: 'static> Panel<V> {
             }
             PanelSide::Right => {
                 panel_base = v_stack()
-                    .overflow_y_scroll(self.scroll_state.clone())
                     .h_full()
                     .w(current_width)
                     .fill(theme.middle.base.default.background)
@@ -132,7 +130,6 @@ impl<V: 'static> Panel<V> {
             }
             PanelSide::Bottom => {
                 panel_base = v_stack()
-                    .overflow_y_scroll(self.scroll_state.clone())
                     .w_full()
                     .h(current_width)
                     .fill(theme.middle.base.default.background)
