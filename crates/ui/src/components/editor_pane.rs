@@ -1,20 +1,28 @@
 use std::marker::PhantomData;
 
-use crate::Toolbar;
-use crate::{hello_world_rust_buffer_with_status_example, prelude::*, v_stack, Tab, TabBar};
+use crate::prelude::*;
+use crate::{v_stack, Buffer, HighlightedText, Tab, TabBar, Toolbar};
+
+pub struct Editor {
+    pub tabs: Vec<Tab>,
+    pub path: Vec<String>,
+    pub symbols: Vec<HighlightedText>,
+    pub buffer: Buffer,
+}
 
 #[derive(Element)]
 pub struct EditorPane<V: 'static> {
     view_type: PhantomData<V>,
+    editor: Editor,
     // toolbar: Toolbar,
     // buffer: Buffer<V>,
 }
 
 impl<V: 'static> EditorPane<V> {
-    pub fn new(// toolbar: Toolbar, buffer: Buffer<V>
-    ) -> Self {
+    pub fn new(editor: Editor) -> Self {
         Self {
             view_type: PhantomData,
+            editor,
             // toolbar,
             // buffer,
         }
@@ -57,6 +65,6 @@ impl<V: 'static> EditorPane<V> {
                     .current(false),
             ]))
             .child(Toolbar::new())
-            .child(hello_world_rust_buffer_with_status_example(cx))
+            .child(self.editor.buffer.clone())
     }
 }

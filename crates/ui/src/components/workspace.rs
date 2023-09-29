@@ -1,7 +1,9 @@
+use std::sync::Arc;
+
 use chrono::DateTime;
 use gpui2::geometry::{relative, rems, Size};
 
-use crate::prelude::*;
+use crate::{hello_world_rust_editor_with_status_example, prelude::*};
 use crate::{
     theme, v_stack, ChatMessage, ChatPanel, EditorPane, Pane, PaneGroup, Panel, PanelAllowedSides,
     PanelSide, ProjectPanel, SplitDirection, StatusBar, Terminal, TitleBar,
@@ -17,6 +19,8 @@ pub struct WorkspaceElement {
 
 impl WorkspaceElement {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
+        let theme = theme(cx).clone();
+
         let temp_size = rems(36.).into();
 
         let root_group = PaneGroup::new_groups(
@@ -51,16 +55,21 @@ impl WorkspaceElement {
                             width: relative(1.).into(),
                             height: relative(1.).into(),
                         },
-                        |_, _| vec![EditorPane::new().into_any()],
-                        Box::new(()),
+                        |_, payload| {
+                            let theme = payload.downcast_ref::<Arc<Theme>>().unwrap();
+
+                            vec![EditorPane::new(hello_world_rust_editor_with_status_example(
+                                &theme,
+                            ))
+                            .into_any()]
+                        },
+                        Box::new(theme.clone()),
                     )],
                     SplitDirection::Vertical,
                 ),
             ],
             SplitDirection::Horizontal,
         );
-
-        let theme = theme(cx).clone();
 
         div()
             .size_full()
