@@ -105,11 +105,7 @@ impl<V: 'static> Panel<V> {
         let theme = theme(cx);
 
         let panel_base;
-        let current_width = if let Some(width) = self.width {
-            width
-        } else {
-            self.initial_width
-        };
+        let current_width = self.width.unwrap_or(self.initial_width);
 
         match self.current_side {
             PanelSide::Left => {
