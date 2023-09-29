@@ -404,6 +404,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         if let Some(followed_item) = self.to_followable_item_handle(cx) {
             if let Some(message) = followed_item.to_state_proto(cx) {
                 workspace.update_followers(
+                    followed_item.is_project_item(cx),
                     proto::update_followers::Variant::CreateView(proto::View {
                         id: followed_item
                             .remote_id(&workspace.app_state.client, cx)
@@ -439,6 +440,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                     };
 
                     if let Some(item) = item.to_followable_item_handle(cx) {
+                        let is_project_item = item.is_project_item(cx);
                         let leader_id = workspace.leader_for_pane(&pane);
 
                         if leader_id.is_some() && item.should_unfollow_on_event(event, cx) {
@@ -458,6 +460,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                                 move |this, cx| {
                                     pending_update_scheduled.store(false, Ordering::SeqCst);
                                     this.update_followers(
+                                        is_project_item,
                                         proto::update_followers::Variant::UpdateView(
                                             proto::UpdateView {
                                                 id: item

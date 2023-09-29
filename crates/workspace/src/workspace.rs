@@ -2795,8 +2795,13 @@ impl Workspace {
 
     // RPC handlers
 
-    fn handle_follow(&mut self, cx: &mut ViewContext<Self>) -> proto::FollowResponse {
+    fn handle_follow(
+        &mut self,
+        follower_project_id: Option<u64>,
+        cx: &mut ViewContext<Self>,
+    ) -> proto::FollowResponse {
         let client = &self.app_state.client;
+        let project_id = self.project.read(cx).remote_id();
 
         let active_view_id = self.active_item(cx).and_then(|i| {
             Some(
@@ -2819,6 +2824,12 @@ impl Workspace {
                         let cx = &cx;
                         move |item| {
                             let item = item.to_followable_item_handle(cx)?;
+                            if project_id.is_some()
+                                && project_id != follower_project_id
+                                && item.is_project_item(cx)
+                            {
+                                return None;
+                            }
                             let id = item.remote_id(client, cx)?.to_proto();
                             let variant = item.to_state_proto(cx)?;
                             Some(proto::View {
@@ -2969,20 +2980,23 @@ impl Workspace {
     }
 
     fn update_active_view_for_followers(&self, cx: &AppContext) {
-        if self.active_pane.read(cx).has_focus() {
+        let item = self
+            .active_item(cx)
+            .and_then(|item| item.to_followable_item_handle(cx));
+        if let Some(item) = item {
             self.update_followers(
+                item.is_project_item(cx),
                 proto::update_followers::Variant::UpdateActiveView(proto::UpdateActiveView {
-                    id: self.active_item(cx).and_then(|item| {
-                        item.to_followable_item_handle(cx)?
-                            .remote_id(&self.app_state.client, cx)
-                            .map(|id| id.to_proto())
-                    }),
+                    id: item
+                        .remote_id(&self.app_state.client, cx)
+                        .map(|id| id.to_proto()),
                     leader_id: self.leader_for_pane(&self.active_pane),
                 }),
                 cx,
             );
         } else {
             self.update_followers(
+                true,
                 proto::update_followers::Variant::UpdateActiveView(proto::UpdateActiveView {
                     id: None,
                     leader_id: None,
@@ -2994,11 +3008,17 @@ impl Workspace {
 
     fn update_followers(
         &self,
+        project_only: bool,
         update: proto::update_followers::Variant,
         cx: &AppContext,
     ) -> Option<()> {
+        let project_id = if project_only {
+            self.project.read(cx).remote_id()
+        } else {
+            None
+        };
         self.app_state().workspace_store.read_with(cx, |store, cx| {
-            store.update_followers(self.project.read(cx).remote_id(), update, cx)
+            store.update_followers(project_id, update, cx)
         })
     }
 
@@ -3873,7 +3893,7 @@ impl WorkspaceStore {
             _subscriptions: vec![
                 client.add_request_handler(cx.handle(), Self::handle_follow),
                 client.add_message_handler(cx.handle(), Self::handle_unfollow),
-                client.add_message_handler(cx.handle(), Self::handle_update_from_leader),
+                client.add_message_handler(cx.handle(), Self::handle_update_followers),
             ],
             client,
         }
@@ -3894,7 +3914,11 @@ impl WorkspaceStore {
             .followers
             .iter()
             .filter_map(|follower| {
-                (follower.project_id == project_id).then_some(follower.peer_id.into())
+                if follower.project_id == project_id || project_id.is_none() {
+                    Some(follower.peer_id.into())
+                } else {
+                    None
+                }
             })
             .collect();
         if follower_ids.is_empty() {
@@ -3921,11 +3945,10 @@ impl WorkspaceStore {
                 project_id: envelope.payload.project_id,
                 peer_id: envelope.original_sender_id()?,
             };
-            let active_project_id = ActiveCall::global(cx)
+            let active_project = ActiveCall::global(cx)
                 .read(cx)
                 .location()
-                .as_ref()
-                .and_then(|project| project.upgrade(cx)?.read(cx).remote_id());
+                .map(|project| project.id());
 
             let mut response = proto::FollowResponse::default();
             for workspace in &this.workspaces {
@@ -3934,12 +3957,7 @@ impl WorkspaceStore {
                 };
 
                 workspace.update(cx.as_mut(), |workspace, cx| {
-                    let project_id = workspace.project.read(cx).remote_id();
-                    if follower.project_id != project_id && follower.project_id.is_some() {
-                        return;
-                    }
-
-                    let handler_response = workspace.handle_follow(cx);
+                    let handler_response = workspace.handle_follow(follower.project_id, cx);
                     if response.views.is_empty() {
                         response.views = handler_response.views;
                     } else {
@@ -3947,7 +3965,9 @@ impl WorkspaceStore {
                     }
 
                     if let Some(active_view_id) = handler_response.active_view_id.clone() {
-                        if response.active_view_id.is_none() || project_id == active_project_id {
+                        if response.active_view_id.is_none()
+                            || Some(workspace.project.id()) == active_project
+                        {
                             response.active_view_id = Some(active_view_id);
                         }
                     }
@@ -3980,7 +4000,7 @@ impl WorkspaceStore {
         })
     }
 
-    async fn handle_update_from_leader(
+    async fn handle_update_followers(
         this: ModelHandle<Self>,
         envelope: TypedEnvelope<proto::UpdateFollowers>,
         _: Arc<Client>,
