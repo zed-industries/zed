@@ -1,3 +1,6 @@
+use std::path::PathBuf;
+use std::str::FromStr;
+
 use crate::prelude::*;
 use crate::{theme, Breadcrumb, Icon, IconButton};
 
@@ -22,7 +25,9 @@ impl Toolbar {
             .p_2()
             .flex()
             .justify_between()
-            .child(Breadcrumb::new())
+            .child(Breadcrumb::new(
+                PathBuf::from_str("crates/ui/src/components/toolbar.rs").unwrap(),
+            ))
             .child(
                 div()
                     .flex()
