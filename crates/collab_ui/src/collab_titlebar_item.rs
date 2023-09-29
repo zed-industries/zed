@@ -889,22 +889,17 @@ impl CollabTitlebarItem {
         let user_id = user.id;
         let project_id = workspace.read(cx).project().read(cx).remote_id();
         let room = ActiveCall::global(cx).read(cx).room().cloned();
-        let is_being_followed = workspace.read(cx).is_being_followed(peer_id);
-        let followed_by_self = room
-            .as_ref()
-            .and_then(|room| {
-                Some(
-                    is_being_followed
-                        && room
-                            .read(cx)
-                            .followers_for(peer_id, project_id?)
-                            .iter()
-                            .any(|&follower| {
-                                Some(follower) == workspace.read(cx).client().peer_id()
-                            }),
-                )
-            })
-            .unwrap_or(false);
+        let self_peer_id = workspace.read(cx).client().peer_id();
+        let self_following = workspace.read(cx).is_being_followed(peer_id);
+        let self_following_initialized = self_following
+            && room.as_ref().map_or(false, |room| match project_id {
+                None => true,
+                Some(project_id) => room
+                    .read(cx)
+                    .followers_for(peer_id, project_id)
+                    .iter()
+                    .any(|&follower| Some(follower) == self_peer_id),
+            });
 
         let leader_style = theme.titlebar.leader_avatar;
         let follower_style = theme.titlebar.follower_avatar;
@@ -930,7 +925,7 @@ impl CollabTitlebarItem {
             .get(&user_id)
             .copied();
         if let Some(participant_index) = participant_index {
-            if followed_by_self {
+            if self_following_initialized {
                 let selection = theme
                     .editor
                     .selection_style_for_room_participant(participant_index.0)
@@ -960,31 +955,14 @@ impl CollabTitlebarItem {
                                     let project_id = project_id?;
                                     let room = room?.read(cx);
                                     let followers = room.followers_for(peer_id, project_id);
-
-                                    Some(followers.into_iter().flat_map(|&follower| {
-                                        let remote_participant =
-                                            room.remote_participant_for_peer_id(follower);
-
-                                        let avatar = remote_participant
-                                            .and_then(|p| p.user.avatar.clone())
-                                            .or_else(|| {
-                                                if follower
-                                                    == workspace.read(cx).client().peer_id()?
-                                                {
-                                                    workspace
-                                                        .read(cx)
-                                                        .user_store()
-                                                        .read(cx)
-                                                        .current_user()?
-                                                        .avatar
-                                                        .clone()
-                                                } else {
-                                                    None
-                                                }
-                                            })?;
-
+                                    Some(followers.into_iter().filter_map(|&follower| {
+                                        if Some(follower) == self_peer_id {
+                                            return None;
+                                        }
+                                        let participant =
+                                            room.remote_participant_for_peer_id(follower)?;
                                         Some(Self::render_face(
-                                            avatar.clone(),
+                                            participant.user.avatar.clone()?,
                                             follower_style,
                                             background_color,
                                             None,
@@ -993,6 +971,18 @@ impl CollabTitlebarItem {
                                 })()
                                 .into_iter()
                                 .flatten(),
+                            )
+                            .with_children(
+                                self_following_initialized
+                                    .then(|| self.user_store.read(cx).current_user())
+                                    .and_then(|user| {
+                                        Some(Self::render_face(
+                                            user?.avatar.clone()?,
+                                            follower_style,
+                                            background_color,
+                                            None,
+                                        ))
+                                    }),
                             );
 
                         let mut container = face_pile
@@ -1000,7 +990,7 @@ impl CollabTitlebarItem {
                             .with_style(theme.titlebar.leader_selection);
 
                         if let Some(participant_index) = participant_index {
-                            if followed_by_self {
+                            if self_following_initialized {
                                 let color = theme
                                     .editor
                                     .selection_style_for_room_participant(participant_index.0)
@@ -1067,7 +1057,7 @@ impl CollabTitlebarItem {
                 })
                 .with_tooltip::<TitlebarParticipant>(
                     peer_id.as_u64() as usize,
-                    if is_being_followed {
+                    if self_following {
                         format!("Unfollow {}", user.github_login)
                     } else {
                         format!("Follow {}", user.github_login)
