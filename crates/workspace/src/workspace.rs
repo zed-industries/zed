@@ -2608,6 +2608,24 @@ impl Workspace {
             .and_then(|leader_id| self.toggle_follow(leader_id, cx))
     }
 
+    pub fn follow(
+        &mut self,
+        leader_id: PeerId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        for (existing_leader_id, states_by_pane) in &mut self.follower_states_by_leader {
+            if leader_id == *existing_leader_id {
+                for (pane, _) in states_by_pane {
+                    cx.focus(pane);
+                    return None;
+                }
+            }
+        }
+
+        // not currently following, so follow.
+        self.toggle_follow(leader_id, cx)
+    }
+
     pub fn unfollow(
         &mut self,
         pane: &ViewHandle<Pane>,

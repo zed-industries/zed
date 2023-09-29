@@ -215,7 +215,13 @@ impl CollabTitlebarItem {
         let git_style = theme.titlebar.git_menu_button.clone();
         let item_spacing = theme.titlebar.item_spacing;
 
-        let mut ret = Flex::row().with_child(
+        let mut ret = Flex::row();
+
+        if let Some(project_host) = self.collect_project_host(theme.clone(), cx) {
+            ret = ret.with_child(project_host)
+        }
+
+        ret = ret.with_child(
             Stack::new()
                 .with_child(
                     MouseEventHandler::new::<ToggleProjectMenu, _>(0, cx, |mouse_state, cx| {
@@ -281,6 +287,71 @@ impl CollabTitlebarItem {
             )
         }
         ret.into_any()
+    }
+
+    fn collect_project_host(
+        &self,
+        theme: Arc<Theme>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<AnyElement<Self>> {
+        if ActiveCall::global(cx).read(cx).room().is_none() {
+            return None;
+        }
+        let project = self.project.read(cx);
+        let user_store = self.user_store.read(cx);
+
+        if project.is_local() {
+            return None;
+        }
+
+        let Some(host) = project.host() else {
+            return None;
+        };
+        let (Some(host_user), Some(participant_index)) = (
+            user_store.get_cached_user(host.user_id),
+            user_store.participant_indices().get(&host.user_id),
+        ) else {
+            return None;
+        };
+
+        enum ProjectHost {}
+        enum ProjectHostTooltip {}
+
+        let host_style = theme.titlebar.project_host.clone();
+        let selection_style = theme
+            .editor
+            .selection_style_for_room_participant(participant_index.0);
+        let peer_id = host.peer_id.clone();
+
+        Some(
+            MouseEventHandler::new::<ProjectHost, _>(0, cx, |mouse_state, _| {
+                let mut host_style = host_style.style_for(mouse_state).clone();
+                host_style.text.color = selection_style.cursor;
+                Label::new(host_user.github_login.clone(), host_style.text)
+                    .contained()
+                    .with_style(host_style.container)
+                    .aligned()
+                    .left()
+            })
+            .with_cursor_style(CursorStyle::PointingHand)
+            .on_click(MouseButton::Left, move |_, this, cx| {
+                if let Some(workspace) = this.workspace.upgrade(cx) {
+                    if let Some(task) =
+                        workspace.update(cx, |workspace, cx| workspace.follow(peer_id, cx))
+                    {
+                        task.detach_and_log_err(cx);
+                    }
+                }
+            })
+            .with_tooltip::<ProjectHostTooltip>(
+                0,
+                host_user.github_login.clone() + " is sharing this project. Click to follow.",
+                None,
+                theme.tooltip.clone(),
+                cx,
+            )
+            .into_any_named("project-host"),
+        )
     }
 
     fn window_activation_changed(&mut self, active: bool, cx: &mut ViewContext<Self>) {

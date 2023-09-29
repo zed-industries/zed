@@ -975,6 +975,10 @@ impl Project {
         &self.collaborators
     }
 
+    pub fn host(&self) -> Option<&Collaborator> {
+        self.collaborators.values().find(|c| c.replica_id == 0)
+    }
+
     /// Collect all worktrees, including ones that don't appear in the project panel
     pub fn worktrees<'a>(
         &'a self,
