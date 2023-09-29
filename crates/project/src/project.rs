@@ -2231,26 +2231,48 @@ impl Project {
                         .get_mut(&buffer.remote_id())
                         .and_then(|m| m.get_mut(&language_server.server_id()))?;
                     let previous_snapshot = buffer_snapshots.last()?;
-                    let next_version = previous_snapshot.version + 1;
 
-                    let content_changes = buffer
-                        .edits_since::<(PointUtf16, usize)>(previous_snapshot.snapshot.version())
-                        .map(|edit| {
-                            let edit_start = edit.new.start.0;
-                            let edit_end = edit_start + (edit.old.end.0 - edit.old.start.0);
-                            let new_text = next_snapshot
-                                .text_for_range(edit.new.start.1..edit.new.end.1)
-                                .collect();
-                            lsp::TextDocumentContentChangeEvent {
-                                range: Some(lsp::Range::new(
-                                    point_to_lsp(edit_start),
-                                    point_to_lsp(edit_end),
-                                )),
+                    let document_sync_kind = language_server
+                        .capabilities()
+                        .text_document_sync
+                        .as_ref()
+                        .and_then(|sync| match sync {
+                            lsp::TextDocumentSyncCapability::Kind(kind) => Some(*kind),
+                            lsp::TextDocumentSyncCapability::Options(options) => options.change,
+                        });
+
+                    let content_changes: Vec<_> = match document_sync_kind {
+                        Some(lsp::TextDocumentSyncKind::FULL) => {
+                            vec![lsp::TextDocumentContentChangeEvent {
+                                range: None,
                                 range_length: None,
-                                text: new_text,
-                            }
-                        })
-                        .collect();
+                                text: next_snapshot.text(),
+                            }]
+                        }
+                        Some(lsp::TextDocumentSyncKind::INCREMENTAL) => buffer
+                            .edits_since::<(PointUtf16, usize)>(
+                                previous_snapshot.snapshot.version(),
+                            )
+                            .map(|edit| {
+                                let edit_start = edit.new.start.0;
+                                let edit_end = edit_start + (edit.old.end.0 - edit.old.start.0);
+                                let new_text = next_snapshot
+                                    .text_for_range(edit.new.start.1..edit.new.end.1)
+                                    .collect();
+                                lsp::TextDocumentContentChangeEvent {
+                                    range: Some(lsp::Range::new(
+                                        point_to_lsp(edit_start),
+                                        point_to_lsp(edit_end),
+                                    )),
+                                    range_length: None,
+                                    text: new_text,
+                                }
+                            })
+                            .collect(),
+                        _ => continue,
+                    };
+
+                    let next_version = previous_snapshot.version + 1;
 
                     buffer_snapshots.push(LspBufferSnapshot {
                         version: next_version,
