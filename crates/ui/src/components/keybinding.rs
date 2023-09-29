@@ -92,7 +92,7 @@ impl ModifierKey {
     pub fn glyph(&self) -> char {
         match self {
             Self::Control => '^',
-            Self::Alt => '⎇',
+            Self::Alt => '⌥',
             Self::Command => '⌘',
             Self::Shift => '⇧',
         }
