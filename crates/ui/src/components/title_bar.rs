@@ -2,16 +2,24 @@ use std::marker::PhantomData;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use crate::prelude::*;
+use crate::{prelude::*, PlayerWithCallStatus};
 use crate::{
-    static_players_with_call_status, theme, Avatar, Button, Icon, IconButton, IconColor,
-    PlayerStack, ToolDivider, TrafficLights,
+    theme, Avatar, Button, Icon, IconButton, IconColor, PlayerStack, ToolDivider, TrafficLights,
 };
+
+#[derive(Clone)]
+pub struct Livestream {
+    pub players: Vec<PlayerWithCallStatus>,
+    pub channel: Option<String>, // projects
+                                 // windows
+}
 
 #[derive(Element)]
 pub struct TitleBar<V: 'static> {
     view_type: PhantomData<V>,
+    /// If the window is active from the OS's perspective.
     is_active: Arc<AtomicBool>,
+    livestream: Option<Livestream>,
 }
 
 impl<V: 'static> TitleBar<V> {
@@ -28,14 +36,24 @@ impl<V: 'static> TitleBar<V> {
         Self {
             view_type: PhantomData,
             is_active,
+            livestream: None,
         }
+    }
+
+    pub fn set_livestream(mut self, livestream: Option<Livestream>) -> Self {
+        self.livestream = livestream;
+        self
     }
 
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
         let has_focus = cx.window_is_active();
 
-        let player_list = static_players_with_call_status().into_iter();
+        let player_list = if let Some(livestream) = &self.livestream {
+            livestream.players.clone().into_iter()
+        } else {
+            vec![].into_iter()
+        };
 
         div()
             .flex()
@@ -61,7 +79,8 @@ impl<V: 'static> TitleBar<V> {
                             .child(Button::new("zed"))
                             .child(Button::new("nate/gpui2-ui-components")),
                     )
-                    .children(player_list.map(|p| PlayerStack::new(p))),
+                    .children(player_list.map(|p| PlayerStack::new(p)))
+                    .child(IconButton::new(Icon::Plus)),
             )
             .child(
                 div()
