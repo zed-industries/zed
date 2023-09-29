@@ -695,6 +695,30 @@ pub fn hello_world_rust_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
             code_action: false,
             current: false,
             line: Some(HighlightedLine {
+                highlighted_texts: vec![
+                    HighlightedText {
+                        text: "    println!(".to_string(),
+                        color: HighlightColor::Default.hsla(&theme),
+                    },
+                    HighlightedText {
+                        text: "\"Hello, world!\"".to_string(),
+                        color: HighlightColor::String.hsla(&theme),
+                    },
+                    HighlightedText {
+                        text: ");".to_string(),
+                        color: HighlightColor::Default.hsla(&theme),
+                    },
+                ],
+            }),
+            cursors: None,
+            status: GitStatus::None,
+            show_line_number,
+        },
+        BufferRow {
+            line_number: 6,
+            code_action: false,
+            current: false,
+            line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "}".to_string(),
                     color: HighlightColor::Default.hsla(&theme),
@@ -807,6 +831,30 @@ pub fn hello_world_rust_with_status_buffer_rows(theme: &Theme) -> Vec<BufferRow>
             code_action: false,
             current: false,
             line: Some(HighlightedLine {
+                highlighted_texts: vec![
+                    HighlightedText {
+                        text: "    println!(".to_string(),
+                        color: HighlightColor::Default.hsla(&theme),
+                    },
+                    HighlightedText {
+                        text: "\"Hello, world!\"".to_string(),
+                        color: HighlightColor::String.hsla(&theme),
+                    },
+                    HighlightedText {
+                        text: ");".to_string(),
+                        color: HighlightColor::Default.hsla(&theme),
+                    },
+                ],
+            }),
+            cursors: None,
+            status: GitStatus::None,
+            show_line_number,
+        },
+        BufferRow {
+            line_number: 6,
+            code_action: false,
+            current: false,
+            line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "}".to_string(),
                     color: HighlightColor::Default.hsla(&theme),
@@ -817,7 +865,7 @@ pub fn hello_world_rust_with_status_buffer_rows(theme: &Theme) -> Vec<BufferRow>
             show_line_number,
         },
         BufferRow {
-            line_number: 6,
+            line_number: 7,
             code_action: false,
             current: false,
             line: Some(HighlightedLine {
@@ -831,7 +879,7 @@ pub fn hello_world_rust_with_status_buffer_rows(theme: &Theme) -> Vec<BufferRow>
             show_line_number,
         },
         BufferRow {
-            line_number: 7,
+            line_number: 8,
             code_action: false,
             current: false,
             line: Some(HighlightedLine {
