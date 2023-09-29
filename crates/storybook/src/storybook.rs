@@ -71,8 +71,6 @@ fn main() {
             },
             |cx| match args.story {
                 // HACK: Special-case the kitchen sink to fix scrolling.
-                // There is something about going through `children_any` that messes
-                // with the scroll interactions.
                 Some(StorySelector::KitchenSink) => view(move |cx| {
                     render_story(
                         &mut ViewContext::new(cx),
@@ -80,23 +78,16 @@ fn main() {
                         crate::stories::kitchen_sink::KitchenSinkStory::default(),
                     )
                 }),
-                // HACK: Special-case the panel story to fix scrolling.
-                // There is something about going through `children_any` that messes
-                // with the scroll interactions.
-                Some(StorySelector::Component(story_selector::ComponentStory::Panel)) => {
-                    view(move |cx| {
-                        render_story(
-                            &mut ViewContext::new(cx),
-                            theme_override.clone(),
-                            crate::stories::components::panel::PanelStory::default(),
-                        )
-                    })
-                }
                 Some(selector) => view(move |cx| {
                     render_story(
                         &mut ViewContext::new(cx),
                         theme_override.clone(),
-                        div().children_any(selector.story()),
+                        div()
+                            .flex()
+                            .flex_col()
+                            .w_full()
+                            .h_full()
+                            .children_any(selector.story()),
                     )
                 }),
                 None => view(move |cx| {
