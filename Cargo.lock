@@ -2210,6 +2210,9 @@ dependencies = [
  "lsp",
  "postage",
  "project",
+ "schemars",
+ "serde",
+ "serde_derive",
  "serde_json",
  "settings",
  "smallvec",
@@ -7398,8 +7401,10 @@ name = "storybook"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap 4.4.4",
  "gpui2",
+ "itertools 0.11.0",
  "log",
  "rust-embed",
  "serde",
@@ -8631,9 +8636,12 @@ name = "ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "gpui2",
  "serde",
  "settings",
+ "smallvec",
+ "strum",
  "theme",
 ]
 

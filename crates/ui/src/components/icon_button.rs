@@ -1,29 +1,16 @@
-use gpui2::elements::div;
-use gpui2::style::{StyleHelpers, Styleable};
-use gpui2::{Element, IntoElement, ParentElement, ViewContext};
-
-use crate::{icon, theme, IconColor};
-use crate::{prelude::*, IconAsset};
+use crate::prelude::*;
+use crate::{theme, Icon, IconColor, IconElement};
 
 #[derive(Element)]
 pub struct IconButton {
-    icon: IconAsset,
+    icon: Icon,
     color: IconColor,
     variant: ButtonVariant,
     state: InteractionState,
 }
 
-pub fn icon_button() -> IconButton {
-    IconButton {
-        icon: IconAsset::default(),
-        color: IconColor::default(),
-        variant: ButtonVariant::default(),
-        state: InteractionState::default(),
-    }
-}
-
 impl IconButton {
-    pub fn new(icon: IconAsset) -> Self {
+    pub fn new(icon: Icon) -> Self {
         Self {
             icon,
             color: IconColor::default(),
@@ -32,7 +19,7 @@ impl IconButton {
         }
     }
 
-    pub fn icon(mut self, icon: IconAsset) -> Self {
+    pub fn icon(mut self, icon: Icon) -> Self {
         self.icon = icon;
         self
     }
@@ -75,6 +62,6 @@ impl IconButton {
             .fill(theme.highest.base.hovered.background)
             .active()
             .fill(theme.highest.base.pressed.background)
-            .child(icon(self.icon).color(icon_color))
+            .child(IconElement::new(self.icon).color(icon_color))
     }
 }

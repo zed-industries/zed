@@ -1,7 +1,4 @@
-use gpui2::elements::div;
-use gpui2::style::StyleHelpers;
-use gpui2::{Element, IntoElement, ParentElement, ViewContext};
-
+use crate::prelude::*;
 use crate::theme;
 
 #[derive(Element, Clone)]
@@ -10,11 +7,11 @@ pub struct Details {
     meta: Option<&'static str>,
 }
 
-pub fn details(text: &'static str) -> Details {
-    Details { text, meta: None }
-}
-
 impl Details {
+    pub fn new(text: &'static str) -> Self {
+        Self { text, meta: None }
+    }
+
     pub fn meta_text(mut self, meta: &'static str) -> Self {
         self.meta = Some(meta);
         self

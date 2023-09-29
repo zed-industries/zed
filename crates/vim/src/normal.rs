@@ -1,6 +1,7 @@
 mod case;
 mod change;
 mod delete;
+mod increment;
 mod paste;
 pub(crate) mod repeat;
 mod scroll;
@@ -56,6 +57,7 @@ pub fn init(cx: &mut AppContext) {
     scroll::init(cx);
     search::init(cx);
     substitute::init(cx);
+    increment::init(cx);
 
     cx.add_action(insert_after);
     cx.add_action(insert_before);

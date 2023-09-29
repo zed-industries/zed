@@ -95,6 +95,7 @@
         }
       ],
       "ctrl-o": "pane::GoBack",
+      "ctrl-i": "pane::GoForward",
       "ctrl-]": "editor::GoToDefinition",
       "escape": [
         "vim::SwitchMode",
@@ -145,6 +146,7 @@
       "g shift-s": "project_symbols::Toggle",
       "g .": "editor::ToggleCodeActions", // zed specific
       "g shift-a": "editor::FindAllReferences", // zed specific
+      "g space": "editor::OpenExcerpts", // zed specific
       "g *": [
         "vim::MoveToNext",
         {
@@ -415,6 +417,8 @@
       "o": "vim::InsertLineBelow",
       "shift-o": "vim::InsertLineAbove",
       "~": "vim::ChangeCase",
+      "ctrl-a": "vim::Increment",
+      "ctrl-x": "vim::Decrement",
       "p": "vim::Paste",
       "shift-p": [
         "vim::Paste",
@@ -526,6 +530,20 @@
       "shift-r": "vim::SubstituteLine",
       "c": "vim::Substitute",
       "~": "vim::ChangeCase",
+      "ctrl-a": "vim::Increment",
+      "ctrl-x": "vim::Decrement",
+      "g ctrl-a": [
+        "vim::Increment",
+        {
+          "step": true
+        }
+      ],
+      "g ctrl-x": [
+        "vim::Decrement",
+        {
+          "step": true
+        }
+      ],
       "shift-i": "vim::InsertBefore",
       "shift-a": "vim::InsertAfter",
       "shift-j": "vim::JoinLines",
@@ -566,11 +584,16 @@
     }
   },
   {
-    "context": "Editor && vim_mode == insert && !menu",
+    "context": "Editor && vim_mode == insert",
     "bindings": {
       "escape": "vim::NormalBefore",
       "ctrl-c": "vim::NormalBefore",
-      "ctrl-[": "vim::NormalBefore"
+      "ctrl-[": "vim::NormalBefore",
+      "ctrl-x ctrl-o": "editor::ShowCompletions",
+      "ctrl-x ctrl-a": "assistant::InlineAssist", // zed specific
+      "ctrl-x ctrl-c": "copilot::Suggest", // zed specific
+      "ctrl-x ctrl-l": "editor::ToggleCodeActions", // zed specific
+      "ctrl-x ctrl-z": "editor::Cancel"
     }
   },
   {

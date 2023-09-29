@@ -1,101 +1,85 @@
-use crate::theme::{theme, Theme};
-use gpui2::{
-    elements::{div, div::ScrollState, img, svg},
-    style::{StyleHelpers, Styleable},
-    ArcCow, Element, IntoElement, ParentElement, ViewContext,
-};
 use std::marker::PhantomData;
 
+use gpui2::elements::{img, svg};
+use gpui2::ArcCow;
+
+use crate::prelude::*;
+use crate::theme::{theme, Theme};
+use crate::{
+    static_collab_panel_channels, static_collab_panel_current_call, v_stack, Icon, List,
+    ListHeader, ToggleState,
+};
+
 #[derive(Element)]
-pub struct CollabPanelElement<V: 'static> {
+pub struct CollabPanel<V: 'static> {
     view_type: PhantomData<V>,
     scroll_state: ScrollState,
 }
 
-// When I improve child view rendering, I'd like to have V implement a trait  that
-// provides the scroll state, among other things.
-pub fn collab_panel<V: 'static>(scroll_state: ScrollState) -> CollabPanelElement<V> {
-    CollabPanelElement {
-        view_type: PhantomData,
-        scroll_state,
+impl<V: 'static> CollabPanel<V> {
+    pub fn new(scroll_state: ScrollState) -> Self {
+        Self {
+            view_type: PhantomData,
+            scroll_state,
+        }
     }
-}
 
-impl<V: 'static> CollabPanelElement<V> {
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
 
-        // Panel
-        div()
+        v_stack()
             .w_64()
             .h_full()
-            .flex()
-            .flex_col()
-            .font("Zed Sans Extended")
-            .text_color(theme.middle.base.default.foreground)
-            .border_color(theme.middle.base.default.border)
-            .border()
             .fill(theme.middle.base.default.background)
             .child(
-                div()
+                v_stack()
                     .w_full()
-                    .flex()
-                    .flex_col()
                     .overflow_y_scroll(self.scroll_state.clone())
-                    // List Container
                     .child(
                         div()
                             .fill(theme.lowest.base.default.background)
                             .pb_1()
                             .border_color(theme.lowest.base.default.border)
                             .border_b()
-                            //:: https://tailwindcss.com/docs/hover-focus-and-other-states#styling-based-on-parent-state
-                            // .group()
-                            // List Section Header
-                            .child(self.list_section_header("#CRDB", true, &theme))
-                            // List Item Large
-                            .child(self.list_item(
-                                "http://github.com/maxbrunsfeld.png?s=50",
-                                "maxbrunsfeld",
-                                &theme,
-                            )),
-                    )
-                    .child(
-                        div()
-                            .py_2()
-                            .flex()
-                            .flex_col()
-                            .child(self.list_section_header("CHANNELS", true, &theme)),
-                    )
-                    .child(
-                        div()
-                            .py_2()
-                            .flex()
-                            .flex_col()
-                            .child(self.list_section_header("CONTACTS", true, &theme))
-                            .children(
-                                std::iter::repeat_with(|| {
-                                    vec![
-                                        self.list_item(
-                                            "http://github.com/as-cii.png?s=50",
-                                            "as-cii",
-                                            &theme,
-                                        ),
-                                        self.list_item(
-                                            "http://github.com/nathansobo.png?s=50",
-                                            "nathansobo",
-                                            &theme,
-                                        ),
-                                        self.list_item(
-                                            "http://github.com/maxbrunsfeld.png?s=50",
-                                            "maxbrunsfeld",
-                                            &theme,
-                                        ),
-                                    ]
-                                })
-                                .take(3)
-                                .flatten(),
+                            .child(
+                                List::new(static_collab_panel_current_call())
+                                    .header(
+                                        ListHeader::new("CRDB")
+                                            .left_icon(Icon::Hash.into())
+                                            .set_toggle(ToggleState::Toggled),
+                                    )
+                                    .set_toggle(ToggleState::Toggled),
                             ),
+                    )
+                    .child(
+                        v_stack().py_1().child(
+                            List::new(static_collab_panel_channels())
+                                .header(
+                                    ListHeader::new("CHANNELS").set_toggle(ToggleState::Toggled),
+                                )
+                                .empty_message("No channels yet. Add a channel to get started.")
+                                .set_toggle(ToggleState::Toggled),
+                        ),
+                    )
+                    .child(
+                        v_stack().py_1().child(
+                            List::new(static_collab_panel_current_call())
+                                .header(
+                                    ListHeader::new("CONTACTS – ONLINE")
+                                        .set_toggle(ToggleState::Toggled),
+                                )
+                                .set_toggle(ToggleState::Toggled),
+                        ),
+                    )
+                    .child(
+                        v_stack().py_1().child(
+                            List::new(static_collab_panel_current_call())
+                                .header(
+                                    ListHeader::new("CONTACTS – OFFLINE")
+                                        .set_toggle(ToggleState::NotToggled),
+                                )
+                                .set_toggle(ToggleState::NotToggled),
+                        ),
                     ),
             )
             .child(

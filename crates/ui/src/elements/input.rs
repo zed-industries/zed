@@ -1,9 +1,12 @@
-use gpui2::elements::div;
-use gpui2::style::{StyleHelpers, Styleable};
-use gpui2::{Element, IntoElement, ParentElement, ViewContext};
-
 use crate::prelude::*;
 use crate::theme;
+
+#[derive(Default, PartialEq)]
+pub enum InputVariant {
+    #[default]
+    Ghost,
+    Filled,
+}
 
 #[derive(Element)]
 pub struct Input {
@@ -13,24 +16,26 @@ pub struct Input {
     variant: InputVariant,
 }
 
-pub fn input(placeholder: &'static str) -> Input {
-    Input {
-        placeholder,
-        value: "".to_string(),
-        state: InteractionState::default(),
-        variant: InputVariant::default(),
-    }
-}
-
 impl Input {
+    pub fn new(placeholder: &'static str) -> Self {
+        Self {
+            placeholder,
+            value: "".to_string(),
+            state: InteractionState::default(),
+            variant: InputVariant::default(),
+        }
+    }
+
     pub fn value(mut self, value: String) -> Self {
         self.value = value;
         self
     }
+
     pub fn state(mut self, state: InteractionState) -> Self {
         self.state = state;
         self
     }
+
     pub fn variant(mut self, variant: InputVariant) -> Self {
         self.variant = variant;
         self

@@ -198,6 +198,31 @@ pub trait ParentElement<V: 'static> {
         );
         self
     }
+
+    // HACK: This is a temporary hack to get children working for the purposes
+    // of building UI on top of the current version of gpui2.
+    //
+    // We'll (hopefully) be moving away from this in the future.
+    fn children_any<I>(mut self, children: I) -> Self
+    where
+        I: IntoIterator<Item = AnyElement<V>>,
+        Self: Sized,
+    {
+        self.children_mut().extend(children.into_iter());
+        self
+    }
+
+    // HACK: This is a temporary hack to get children working for the purposes
+    // of building UI on top of the current version of gpui2.
+    //
+    // We'll (hopefully) be moving away from this in the future.
+    fn child_any(mut self, children: AnyElement<V>) -> Self
+    where
+        Self: Sized,
+    {
+        self.children_mut().push(children);
+        self
+    }
 }
 
 pub trait IntoElement<V: 'static> {

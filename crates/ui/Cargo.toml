@@ -6,7 +6,10 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
+chrono = "0.4"
 gpui2 = { path = "../gpui2" }
 serde.workspace = true
 settings = { path = "../settings" }
+smallvec.workspace = true
+strum = { version = "0.25.0", features = ["derive"] }
 theme = { path = "../theme" }

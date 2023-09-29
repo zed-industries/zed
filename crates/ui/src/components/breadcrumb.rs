@@ -1,24 +1,19 @@
-use gpui2::elements::div;
-use gpui2::style::{StyleHelpers, Styleable};
-use gpui2::{Element, IntoElement, ParentElement, ViewContext};
-
-use crate::theme;
+use crate::prelude::*;
+use crate::{h_stack, theme};
 
 #[derive(Element)]
 pub struct Breadcrumb {}
 
-pub fn breadcrumb() -> Breadcrumb {
-    Breadcrumb {}
-}
-
 impl Breadcrumb {
+    pub fn new() -> Self {
+        Self {}
+    }
+
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
 
-        div()
+        h_stack()
             .px_1()
-            .flex()
-            .flex_row()
             // TODO: Read font from theme (or settings?).
             .font("Zed Mono Extended")
             .text_sm()

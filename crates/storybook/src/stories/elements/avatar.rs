@@ -1,6 +1,5 @@
-use gpui2::{Element, IntoElement, ParentElement, ViewContext};
 use ui::prelude::*;
-use ui::{avatar, theme};
+use ui::Avatar;
 
 use crate::story::Story;
 
@@ -9,17 +8,15 @@ pub struct AvatarStory {}
 
 impl AvatarStory {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
-        let theme = theme(cx);
-
-        Story::container()
-            .child(Story::title_for::<_, ui::Avatar>())
-            .child(Story::label("Default"))
-            .child(avatar(
+        Story::container(cx)
+            .child(Story::title_for::<_, ui::Avatar>(cx))
+            .child(Story::label(cx, "Default"))
+            .child(Avatar::new(
                 "https://avatars.githubusercontent.com/u/1714999?v=4",
             ))
-            .child(Story::label("Rounded rectangle"))
+            .child(Story::label(cx, "Rounded rectangle"))
             .child(
-                avatar("https://avatars.githubusercontent.com/u/1714999?v=4")
+                Avatar::new("https://avatars.githubusercontent.com/u/1714999?v=4")
                     .shape(Shape::RoundedRectangle),
             )
     }

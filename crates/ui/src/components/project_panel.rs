@@ -1,62 +1,87 @@
-use crate::{
-    input, list, list_section_header, prelude::*, static_project_panel_project_items,
-    static_project_panel_single_items, theme,
-};
-
-use gpui2::{
-    elements::{div, div::ScrollState},
-    style::StyleHelpers,
-    ParentElement, ViewContext,
-};
-use gpui2::{Element, IntoElement};
 use std::marker::PhantomData;
+use std::sync::Arc;
+
+use crate::prelude::*;
+use crate::{
+    static_project_panel_project_items, static_project_panel_single_items, theme, Input, List,
+    ListHeader, Panel, PanelSide, Theme,
+};
 
 #[derive(Element)]
 pub struct ProjectPanel<V: 'static> {
     view_type: PhantomData<V>,
     scroll_state: ScrollState,
-}
-
-pub fn project_panel<V: 'static>(scroll_state: ScrollState) -> ProjectPanel<V> {
-    ProjectPanel {
-        view_type: PhantomData,
-        scroll_state,
-    }
+    current_side: PanelSide,
 }
 
 impl<V: 'static> ProjectPanel<V> {
-    fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
-        let theme = theme(cx);
+    pub fn new(scroll_state: ScrollState) -> Self {
+        Self {
+            view_type: PhantomData,
+            scroll_state,
+            current_side: PanelSide::default(),
+        }
+    }
 
-        div()
-            .w_56()
-            .h_full()
-            .flex()
-            .flex_col()
-            .fill(theme.middle.base.default.background)
-            .child(
-                div()
-                    .w_56()
+    pub fn side(mut self, side: PanelSide) -> Self {
+        self.current_side = side;
+        self
+    }
+
+    fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
+        struct PanelPayload {
+            pub theme: Arc<Theme>,
+            pub scroll_state: ScrollState,
+        }
+
+        Panel::new(
+            self.scroll_state.clone(),
+            |_, payload| {
+                let payload = payload.downcast_ref::<PanelPayload>().unwrap();
+
+                let theme = payload.theme.clone();
+
+                vec![div()
                     .flex()
                     .flex_col()
-                    .overflow_y_scroll(self.scroll_state.clone())
+                    .w_56()
+                    .h_full()
+                    .px_2()
+                    .fill(theme.middle.base.default.background)
                     .child(
-                        list(static_project_panel_single_items())
-                            .header(list_section_header("FILES").set_toggle(ToggleState::Toggled))
-                            .empty_message("No files in directory")
-                            .set_toggle(ToggleState::Toggled),
+                        div()
+                            .w_56()
+                            .flex()
+                            .flex_col()
+                            .overflow_y_scroll(payload.scroll_state.clone())
+                            .child(
+                                List::new(static_project_panel_single_items())
+                                    .header(
+                                        ListHeader::new("FILES").set_toggle(ToggleState::Toggled),
+                                    )
+                                    .empty_message("No files in directory")
+                                    .set_toggle(ToggleState::Toggled),
+                            )
+                            .child(
+                                List::new(static_project_panel_project_items())
+                                    .header(
+                                        ListHeader::new("PROJECT").set_toggle(ToggleState::Toggled),
+                                    )
+                                    .empty_message("No folders in directory")
+                                    .set_toggle(ToggleState::Toggled),
+                            ),
                     )
                     .child(
-                        list(static_project_panel_project_items())
-                            .header(list_section_header("PROJECT").set_toggle(ToggleState::Toggled))
-                            .empty_message("No folders in directory")
-                            .set_toggle(ToggleState::Toggled),
-                    ),
-            )
-            .child(
-                input("Find something...")
-                    .value("buffe".to_string())
-                    .state(InteractionState::Focused),
-            )
+                        Input::new("Find something...")
+                            .value("buffe".to_string())
+                            .state(InteractionState::Focused),
+                    )
+                    .into_any()]
+            },
+            Box::new(PanelPayload {
+                theme: theme(cx),
+                scroll_state: self.scroll_state.clone(),
+            }),
+        )
     }
 }

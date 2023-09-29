@@ -1,30 +1,68 @@
-use crate::{chat_panel, collab_panel, project_panel, status_bar, tab_bar, theme, title_bar};
+use chrono::DateTime;
+use gpui2::geometry::{relative, rems, Size};
 
-use gpui2::{
-    elements::{div, div::ScrollState},
-    style::StyleHelpers,
-    Element, IntoElement, ParentElement, ViewContext,
+use crate::prelude::*;
+use crate::{
+    theme, v_stack, ChatMessage, ChatPanel, Pane, PaneGroup, Panel, PanelAllowedSides, PanelSide,
+    ProjectPanel, SplitDirection, StatusBar, Terminal, TitleBar,
 };
 
 #[derive(Element, Default)]
-struct WorkspaceElement {
-    project_panel_scroll_state: ScrollState,
-    collab_panel_scroll_state: ScrollState,
-    right_scroll_state: ScrollState,
+pub struct WorkspaceElement {
+    left_panel_scroll_state: ScrollState,
+    right_panel_scroll_state: ScrollState,
     tab_bar_scroll_state: ScrollState,
-    palette_scroll_state: ScrollState,
-}
-
-pub fn workspace<V: 'static>() -> impl Element<V> {
-    WorkspaceElement::default()
+    bottom_panel_scroll_state: ScrollState,
 }
 
 impl WorkspaceElement {
     fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
-        let theme = theme(cx);
+        let temp_size = rems(36.).into();
+
+        let root_group = PaneGroup::new_groups(
+            vec![
+                PaneGroup::new_panes(
+                    vec![
+                        Pane::new(
+                            ScrollState::default(),
+                            Size {
+                                width: relative(1.).into(),
+                                height: temp_size,
+                            },
+                            |_, _| vec![Terminal::new().into_any()],
+                            Box::new(()),
+                        ),
+                        Pane::new(
+                            ScrollState::default(),
+                            Size {
+                                width: relative(1.).into(),
+                                height: temp_size,
+                            },
+                            |_, _| vec![Terminal::new().into_any()],
+                            Box::new(()),
+                        ),
+                    ],
+                    SplitDirection::Vertical,
+                ),
+                PaneGroup::new_panes(
+                    vec![Pane::new(
+                        ScrollState::default(),
+                        Size {
+                            width: relative(1.).into(),
+                            height: relative(1.).into(),
+                        },
+                        |_, _| vec![Terminal::new().into_any()],
+                        Box::new(()),
+                    )],
+                    SplitDirection::Vertical,
+                ),
+            ],
+            SplitDirection::Horizontal,
+        );
+
+        let theme = theme(cx).clone();
 
         div()
-            // Elevation Level 0
             .size_full()
             .flex()
             .flex_col()
@@ -34,9 +72,7 @@ impl WorkspaceElement {
             .items_start()
             .text_color(theme.lowest.base.default.foreground)
             .fill(theme.lowest.base.default.background)
-            .relative()
-            // Elevation Level 1
-            .child(title_bar())
+            .child(TitleBar::new(cx))
             .child(
                 div()
                     .flex_1()
@@ -44,37 +80,57 @@ impl WorkspaceElement {
                     .flex()
                     .flex_row()
                     .overflow_hidden()
-                    .child(project_panel(self.project_panel_scroll_state.clone()))
-                    .child(collab_panel(self.collab_panel_scroll_state.clone()))
+                    .border_t()
+                    .border_b()
+                    .border_color(theme.lowest.base.default.border)
                     .child(
-                        div()
-                            .h_full()
+                        ProjectPanel::new(self.left_panel_scroll_state.clone())
+                            .side(PanelSide::Left),
+                    )
+                    .child(
+                        v_stack()
                             .flex_1()
-                            .fill(theme.highest.base.default.background)
+                            .h_full()
                             .child(
                                 div()
                                     .flex()
-                                    .flex_col()
                                     .flex_1()
-                                    .child(tab_bar(self.tab_bar_scroll_state.clone())),
+                                    // CSS Hack: Flex 1 has to have a set height to properly fill the space
+                                    // Or it will give you a height of 0
+                                    .h_px()
+                                    .child(root_group),
+                            )
+                            .child(
+                                Panel::new(
+                                    self.bottom_panel_scroll_state.clone(),
+                                    |_, _| vec![Terminal::new().into_any()],
+                                    Box::new(()),
+                                )
+                                .allowed_sides(PanelAllowedSides::BottomOnly)
+                                .side(PanelSide::Bottom),
                             ),
                     )
-                    .child(chat_panel(self.right_scroll_state.clone())),
+                    .child(ChatPanel::new(ScrollState::default()).with_messages(vec![
+                                ChatMessage::new(
+                                    "osiewicz".to_string(),
+                                    "is this thing on?".to_string(),
+                                    DateTime::parse_from_rfc3339(
+                                        "2023-09-27T15:40:52.707Z",
+                                    )
+                                    .unwrap()
+                                    .naive_local(),
+                                ),
+                                ChatMessage::new(
+                                    "maxdeviant".to_string(),
+                                    "Reading you loud and clear!".to_string(),
+                                    DateTime::parse_from_rfc3339(
+                                        "2023-09-28T15:40:52.707Z",
+                                    )
+                                    .unwrap()
+                                    .naive_local(),
+                                ),
+                            ])),
             )
-            .child(status_bar())
-        // Elevation Level 3
-        // .child(
-        //     div()
-        //         .absolute()
-        //         .top_0()
-        //         .left_0()
-        //         .size_full()
-        //         .flex()
-        //         .justify_center()
-        //         .items_center()
-        //         // .fill(theme.lowest.base.default.background)
-        //         // Elevation Level 4
-        //         .child(command_palette(self.palette_scroll_state.clone())),
-        // )
+            .child(StatusBar::new())
     }
 }
