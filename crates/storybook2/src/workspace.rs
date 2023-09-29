@@ -1,7 +1,6 @@
 use crate::{
     collab_panel::{collab_panel, CollabPanel},
-    element_ext::ElementExt,
-    theme::theme,
+    theme::{theme, themed},
     themes::rose_pine_dawn,
 };
 use gpui3::{
@@ -15,9 +14,7 @@ pub struct Workspace {
 }
 
 pub fn workspace(cx: &mut WindowContext) -> RootView<Workspace> {
-    view(cx.entity(|cx| Workspace::new(cx)), |workspace, cx| {
-        workspace.render(cx)
-    })
+    view(cx.entity(|cx| Workspace::new(cx)), Workspace::render)
 }
 
 impl Workspace {
@@ -31,36 +28,37 @@ impl Workspace {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<State = Self> {
         let theme = rose_pine_dawn();
 
-        div::<Self>()
-            .size_full()
-            .flex()
-            .flex_col()
-            .font("Zed Sans Extended")
-            .gap_0()
-            .justify_start()
-            .items_start()
-            .text_color(theme.lowest.base.default.foreground)
-            .fill(theme.middle.base.default.background)
-            .child(titlebar(cx))
-            .child(
-                div::<Self>()
-                    .flex_1()
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .overflow_hidden()
-                    .child(self.left_panel.clone())
-                    .child(div().h_full().flex_1())
-                    .child(self.right_panel.clone()),
-            )
-            .child(statusbar::statusbar(cx))
-            .themed(theme)
+        themed(rose_pine_dawn(), cx, |cx| {
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .font("Zed Sans Extended")
+                .gap_0()
+                .justify_start()
+                .items_start()
+                .text_color(theme.lowest.base.default.foreground)
+                .fill(theme.middle.base.default.background)
+                .child(titlebar(cx))
+                .child(
+                    div()
+                        .flex_1()
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .overflow_hidden()
+                        .child(self.left_panel.clone())
+                        .child(div().h_full().flex_1())
+                        .child(self.right_panel.clone()),
+                )
+                .child(statusbar::statusbar(cx))
+        })
     }
 }
 
 struct Titlebar;
 
-pub fn titlebar<S: 'static>(cx: &mut ViewContext<S>) -> impl Element<State = S> {
+pub fn titlebar<S: 'static + Send + Sync>(cx: &mut ViewContext<S>) -> impl Element<State = S> {
     let ref mut this = Titlebar;
     let theme = theme(cx);
     div()
@@ -75,7 +73,10 @@ pub fn titlebar<S: 'static>(cx: &mut ViewContext<S>) -> impl Element<State = S> 
 }
 
 impl Titlebar {
-    fn render<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl Element<State = V> {
+    fn render<V: 'static + Send + Sync>(
+        &mut self,
+        cx: &mut ViewContext<V>,
+    ) -> impl Element<State = V> {
         let theme = theme(cx);
         div()
             .flex()
@@ -88,7 +89,10 @@ impl Titlebar {
             .child(self.right_group(cx))
     }
 
-    fn left_group<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl Element<State = V> {
+    fn left_group<S: 'static + Send + Sync>(
+        &mut self,
+        cx: &mut ViewContext<S>,
+    ) -> impl Element<State = S> {
         let theme = theme(cx);
         div()
             .flex()
@@ -162,7 +166,10 @@ impl Titlebar {
             )
     }
 
-    fn right_group<V: 'static>(&mut self, cx: &mut ViewContext<V>) -> impl Element<State = V> {
+    fn right_group<S: 'static + Send + Sync>(
+        &mut self,
+        cx: &mut ViewContext<S>,
+    ) -> impl Element<State = S> {
         let theme = theme(cx);
         div()
             .flex()
@@ -294,7 +301,7 @@ mod statusbar {
 
     use super::*;
 
-    pub fn statusbar<S: 'static>(cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    pub fn statusbar<S: 'static + Send + Sync>(cx: &mut ViewContext<S>) -> impl Element<State = S> {
         let theme = theme(cx);
         div()
             .flex()
@@ -307,7 +314,7 @@ mod statusbar {
         // .child(right_group(cx))
     }
 
-    fn left_group<V: 'static>(cx: &mut ViewContext<V>) -> impl Element<State = V> {
+    fn left_group<V: 'static + Send + Sync>(cx: &mut ViewContext<V>) -> impl Element<State = V> {
         let theme = theme(cx);
         div()
             .flex()
@@ -404,7 +411,7 @@ mod statusbar {
             )
     }
 
-    fn right_group<S: 'static>(cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    fn right_group<S: 'static + Send + Sync>(cx: &mut ViewContext<S>) -> impl Element<State = S> {
         let theme = theme(cx);
         div()
             .flex()

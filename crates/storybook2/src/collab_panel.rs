@@ -9,9 +9,7 @@ pub struct CollabPanel {
 }
 
 pub fn collab_panel<S: 'static>(cx: &mut WindowContext) -> View<CollabPanel, S> {
-    view(cx.entity(|cx| CollabPanel::new(cx)), |panel, cx| {
-        panel.render(cx)
-    })
+    view(cx.entity(|cx| CollabPanel::new(cx)), CollabPanel::render)
 }
 
 impl CollabPanel {

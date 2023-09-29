@@ -1,4 +1,4 @@
-use gpui3::{Element, Hsla, Layout, LayoutId, Result, ViewContext, WindowContext};
+use gpui3::{Element, Hsla, Layout, LayoutId, Result, StackContext, ViewContext, WindowContext};
 use serde::{de::Visitor, Deserialize, Deserializer};
 use std::{collections::HashMap, fmt};
 
@@ -127,6 +127,15 @@ where
     deserializer.deserialize_map(SyntaxVisitor)
 }
 
+pub fn themed<E, F>(theme: Theme, cx: &mut ViewContext<E::State>, build_child: F) -> Themed<E>
+where
+    E: Element,
+    F: FnOnce(&mut ViewContext<E::State>) -> E,
+{
+    let child = cx.with_state(theme.clone(), |cx| build_child(cx));
+    Themed { theme, child }
+}
+
 pub struct Themed<E> {
     pub(crate) theme: Theme,
     pub(crate) child: E,
@@ -144,10 +153,7 @@ impl<E: Element> Element for Themed<E> {
     where
         Self: Sized,
     {
-        cx.push_cascading_state(self.theme.clone());
-        let result = self.child.layout(state, cx);
-        cx.pop_cascading_state::<Theme>();
-        result
+        cx.with_state(self.theme.clone(), |cx| self.child.layout(state, cx))
     }
 
     fn paint(
@@ -160,10 +166,9 @@ impl<E: Element> Element for Themed<E> {
     where
         Self: Sized,
     {
-        cx.push_cascading_state(self.theme.clone());
-        self.child.paint(layout, state, frame_state, cx)?;
-        cx.pop_cascading_state::<Theme>();
-        Ok(())
+        cx.with_state(self.theme.clone(), |cx| {
+            self.child.paint(layout, state, frame_state, cx)
+        })
     }
 }
 
@@ -184,5 +189,5 @@ impl<E: Element> Element for Themed<E> {
 // }
 
 pub fn theme<'a>(cx: &'a WindowContext) -> &'a Theme {
-    cx.cascading_state()
+    cx.state()
 }

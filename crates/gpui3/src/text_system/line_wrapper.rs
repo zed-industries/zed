@@ -1,10 +1,10 @@
-use crate::{px, Font, Line, Pixels, PlatformTextSystem, RunStyle, ShapedBoundary};
+use crate::{px, FontId, Line, Pixels, PlatformTextSystem, ShapedBoundary};
 use collections::HashMap;
 use std::{iter, sync::Arc};
 
 pub struct LineWrapper {
-    text_system: Arc<dyn PlatformTextSystem>,
-    pub(crate) font: Font,
+    platform_text_system: Arc<dyn PlatformTextSystem>,
+    pub(crate) font_id: FontId,
     pub(crate) font_size: Pixels,
     cached_ascii_char_widths: [Option<Pixels>; 128],
     cached_other_char_widths: HashMap<char, Pixels>,
@@ -13,10 +13,14 @@ pub struct LineWrapper {
 impl LineWrapper {
     pub const MAX_INDENT: u32 = 256;
 
-    pub fn new(font: Font, font_size: Pixels, text_system: Arc<dyn PlatformTextSystem>) -> Self {
+    pub fn new(
+        font_id: FontId,
+        font_size: Pixels,
+        text_system: Arc<dyn PlatformTextSystem>,
+    ) -> Self {
         Self {
-            text_system,
-            font,
+            platform_text_system: text_system,
+            font_id,
             font_size,
             cached_ascii_char_widths: [None; 128],
             cached_other_char_widths: HashMap::default(),
@@ -178,19 +182,8 @@ impl LineWrapper {
     }
 
     fn compute_width_for_char(&self, c: char) -> Pixels {
-        self.text_system
-            .layout_line(
-                &c.to_string(),
-                self.font_size,
-                &[(
-                    1,
-                    RunStyle {
-                        font: self.font.clone(),
-                        color: Default::default(),
-                        underline: Default::default(),
-                    },
-                )],
-            )
+        self.platform_text_system
+            .layout_line(&c.to_string(), self.font_size, &[(1, self.font_id)])
             .width
     }
 }
@@ -210,14 +203,14 @@ impl Boundary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{font, App};
+    use crate::{font, App, RunStyle};
 
     #[test]
     fn test_wrap_line() {
         App::test().run(|cx| {
             let text_system = cx.text_system().clone();
             let mut wrapper = LineWrapper::new(
-                font("Courier"),
+                text_system.font_id(&font("Courier")).unwrap(),
                 px(16.),
                 text_system.platform_text_system.clone(),
             );
@@ -293,20 +286,22 @@ mod tests {
             };
 
             let text = "aa bbb cccc ddddd eeee";
-            let line = text_system.layout_str(
-                text,
-                px(16.),
-                &[
-                    (4, normal.clone()),
-                    (5, bold.clone()),
-                    (6, normal.clone()),
-                    (1, bold.clone()),
-                    (7, normal.clone()),
-                ],
-            );
+            let line = text_system
+                .layout_line(
+                    text,
+                    px(16.),
+                    &[
+                        (4, normal.clone()),
+                        (5, bold.clone()),
+                        (6, normal.clone()),
+                        (1, bold.clone()),
+                        (7, normal.clone()),
+                    ],
+                )
+                .unwrap();
 
             let mut wrapper = LineWrapper::new(
-                normal.font,
+                text_system.font_id(&normal.font).unwrap(),
                 px(16.),
                 text_system.platform_text_system.clone(),
             );

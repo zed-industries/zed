@@ -15,7 +15,7 @@ use std::{
 pub(crate) struct TextLayoutCache {
     prev_frame: Mutex<HashMap<CacheKeyValue, Arc<LineLayout>>>,
     curr_frame: RwLock<HashMap<CacheKeyValue, Arc<LineLayout>>>,
-    fonts: Arc<dyn PlatformTextSystem>,
+    platform_text_system: Arc<dyn PlatformTextSystem>,
 }
 
 impl TextLayoutCache {
@@ -23,7 +23,7 @@ impl TextLayoutCache {
         Self {
             prev_frame: Mutex::new(HashMap::new()),
             curr_frame: RwLock::new(HashMap::new()),
-            fonts,
+            platform_text_system: fonts,
         }
     }
 
@@ -34,12 +34,12 @@ impl TextLayoutCache {
         curr_frame.clear();
     }
 
-    pub fn layout_str<'a>(
+    pub fn layout_line<'a>(
         &'a self,
         text: &'a str,
         font_size: Pixels,
-        runs: &'a [(usize, RunStyle)],
-    ) -> Line {
+        runs: &[(usize, FontId)],
+    ) -> Arc<LineLayout> {
         let key = &CacheKeyRef {
             text,
             font_size,
@@ -47,22 +47,22 @@ impl TextLayoutCache {
         } as &dyn CacheKey;
         let curr_frame = self.curr_frame.upgradable_read();
         if let Some(layout) = curr_frame.get(key) {
-            return Line::new(layout.clone(), runs);
+            return layout.clone();
         }
 
         let mut curr_frame = RwLockUpgradableReadGuard::upgrade(curr_frame);
         if let Some((key, layout)) = self.prev_frame.lock().remove_entry(key) {
             curr_frame.insert(key, layout.clone());
-            Line::new(layout, runs)
+            layout
         } else {
-            let layout = Arc::new(self.fonts.layout_line(text, font_size, runs));
+            let layout = Arc::new(self.platform_text_system.layout_line(text, font_size, runs));
             let key = CacheKeyValue {
                 text: text.into(),
                 font_size,
                 runs: SmallVec::from(runs),
             };
             curr_frame.insert(key, layout.clone());
-            Line::new(layout, runs)
+            layout
         }
     }
 }
@@ -89,7 +89,7 @@ impl<'a> Hash for (dyn CacheKey + 'a) {
 struct CacheKeyValue {
     text: String,
     font_size: Pixels,
-    runs: SmallVec<[(usize, RunStyle); 1]>,
+    runs: SmallVec<[(usize, FontId); 1]>,
 }
 
 impl CacheKey for CacheKeyValue {
@@ -120,11 +120,11 @@ impl<'a> Borrow<dyn CacheKey + 'a> for CacheKeyValue {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 struct CacheKeyRef<'a> {
     text: &'a str,
     font_size: Pixels,
-    runs: &'a [(usize, RunStyle)],
+    runs: &'a [(usize, FontId)],
 }
 
 impl<'a> CacheKey for CacheKeyRef<'a> {
@@ -133,26 +133,13 @@ impl<'a> CacheKey for CacheKeyRef<'a> {
     }
 }
 
-impl<'a> PartialEq for CacheKeyRef<'a> {
-    fn eq(&self, other: &Self) -> bool {
-        self.text == other.text
-            && self.font_size == other.font_size
-            && self.runs.len() == other.runs.len()
-            && self.runs.iter().zip(other.runs.iter()).all(
-                |((len_a, style_a), (len_b, style_b))| {
-                    len_a == len_b && style_a.font == style_b.font
-                },
-            )
-    }
-}
-
 impl<'a> Hash for CacheKeyRef<'a> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.text.hash(state);
         self.font_size.hash(state);
-        for (len, style_id) in self.runs {
+        for (len, font_id) in self.runs {
             len.hash(state);
-            style_id.font.hash(state);
+            font_id.hash(state);
         }
     }
 }

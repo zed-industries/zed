@@ -3,7 +3,7 @@ use crate::{
 };
 use parking_lot::Mutex;
 use std::{marker::PhantomData, sync::Arc};
-use util::arc_cow::ArcCow;
+use util::{arc_cow::ArcCow, ResultExt};
 
 impl<S: 'static> IntoAnyElement<S> for ArcCow<'static, str> {
     fn into_any(self) -> AnyElement<S> {
@@ -52,11 +52,16 @@ impl<S: 'static> Element for Text<S> {
         let layout_id = cx.request_measured_layout(Default::default(), rem_size, {
             let frame_state = paint_state.clone();
             move |_, _| {
-                let line_layout = text_system.layout_str(
-                    text.as_ref(),
-                    font_size,
-                    &[(text.len(), text_style.to_run())],
-                );
+                let Some(line_layout) = text_system
+                    .layout_line(
+                        text.as_ref(),
+                        font_size,
+                        &[(text.len(), text_style.to_run())],
+                    )
+                    .log_err()
+                else {
+                    return Size::default();
+                };
 
                 let size = Size {
                     width: line_layout.width(),

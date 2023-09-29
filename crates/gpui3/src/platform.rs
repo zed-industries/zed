@@ -7,7 +7,7 @@ mod test;
 
 use crate::{
     AnyWindowHandle, Bounds, Font, FontId, FontMetrics, GlyphId, LineLayout, Pixels, Point, Result,
-    RunStyle, Scene, SharedString, Size,
+    Scene, SharedString, Size,
 };
 use anyhow::anyhow;
 use async_task::Runnable;
@@ -170,7 +170,7 @@ pub trait PlatformTextSystem: Send + Sync {
         scale_factor: f32,
         options: RasterizationOptions,
     ) -> Option<(Bounds<u32>, Vec<u8>)>;
-    fn layout_line(&self, text: &str, font_size: Pixels, runs: &[(usize, RunStyle)]) -> LineLayout;
+    fn layout_line(&self, text: &str, font_size: Pixels, runs: &[(usize, FontId)]) -> LineLayout;
     fn wrap_line(
         &self,
         text: &str,

@@ -1,15 +1,9 @@
 #![allow(dead_code, unused_variables)]
 
-use crate::theme::Theme;
-use element_ext::ElementExt;
-use gpui3::{Element, ViewContext};
-
 use log::LevelFilter;
 use simplelog::SimpleLogger;
 
 mod collab_panel;
-// mod components;
-mod element_ext;
 mod theme;
 mod themes;
 mod workspace;
@@ -25,53 +19,6 @@ fn main() {
     gpui3::App::production().run(|cx| {
         let window = cx.open_window(Default::default(), |cx| workspace(cx));
     });
-
-    // gpui3::App::new(Assets).unwrap().run(|cx| {
-    //     let mut store = SettingsStore::default();
-    //     store
-    //         .set_default_settings(default_settings().as_ref(), cx)
-    //         .unwrap();
-    //     cx.set_global(store);
-    //     legacy_theme::init(Assets, cx);
-    //     // load_embedded_fonts(cx.platform().as_ref());
-
-    //     cx.add_window(
-    //         gpui2::WindowOptions {
-    //             bounds: WindowBounds::Fixed(RectF::new(vec2f(0., 0.), vec2f(1400., 900.))),
-    //             center: true,
-    //             ..Default::default()
-    //         },
-    //         |cx| {
-    //             view(|cx| {
-    //                 cx.enable_inspector();
-    //                 storybook(&mut ViewContext::new(cx))
-    //             })
-    //         },
-    //     );
-    //     cx.platform().activate(true);
-    // });
-}
-
-fn storybook<V: 'static>(cx: &mut ViewContext<V>) -> impl Element {
-    workspace(cx).themed(current_theme(cx))
-}
-
-// Nathan: During the transition to gpui2, we will include the base theme on the legacy Theme struct.
-fn current_theme<V: 'static>(cx: &mut ViewContext<V>) -> Theme {
-    todo!()
-    // settings::get::<ThemeSettings>(cx)
-    //     .theme
-    //     .deserialized_base_theme
-    //     .lock()
-    //     .get_or_insert_with(|| {
-    //         let theme: Theme =
-    //             serde_json::from_value(settings::get::<ThemeSettings>(cx).theme.base_theme.clone())
-    //                 .unwrap();
-    //         Box::new(theme)
-    //     })
-    //     .downcast_ref::<Theme>()
-    //     .unwrap()
-    //     .clone()
 }
 
 use rust_embed::RustEmbed;

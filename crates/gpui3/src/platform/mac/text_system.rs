@@ -1,7 +1,7 @@
 use crate::{
     point, px, size, Bounds, Font, FontFeatures, FontId, FontMetrics, FontStyle, FontWeight, Glyph,
     GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RasterizationOptions, Result, Run,
-    RunStyle, SharedString, Size,
+    SharedString, Size,
 };
 use cocoa::appkit::{CGFloat, CGPoint};
 use collections::HashMap;
@@ -33,7 +33,7 @@ use pathfinder_geometry::{
     vector::{Vector2F, Vector2I},
 };
 use smallvec::SmallVec;
-use std::{cell::RefCell, char, cmp, convert::TryFrom, ffi::c_void, sync::Arc};
+use std::{char, cmp, convert::TryFrom, ffi::c_void, sync::Arc};
 
 use super::open_type;
 
@@ -156,8 +156,13 @@ impl PlatformTextSystem for MacTextSystem {
         )
     }
 
-    fn layout_line(&self, text: &str, font_size: Pixels, runs: &[(usize, RunStyle)]) -> LineLayout {
-        self.0.write().layout_line(text, font_size, runs)
+    fn layout_line(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        font_runs: &[(usize, FontId)],
+    ) -> LineLayout {
+        self.0.write().layout_line(text, font_size, font_runs)
     }
 
     fn wrap_line(
@@ -342,7 +347,7 @@ impl MacTextSystemState {
         &mut self,
         text: &str,
         font_size: Pixels,
-        runs: &[(usize, RunStyle)],
+        font_runs: &[(usize, FontId)],
     ) -> LineLayout {
         // Construct the attributed string, converting UTF8 ranges to UTF16 ranges.
         let mut string = CFMutableAttributedString::new();
@@ -350,30 +355,8 @@ impl MacTextSystemState {
             string.replace_str(&CFString::new(text), CFRange::init(0, 0));
             let utf16_line_len = string.char_len() as usize;
 
-            let last_run: RefCell<Option<(usize, Font)>> = Default::default();
-            let font_runs = runs
-                .iter()
-                .filter_map(|(len, style)| {
-                    let mut last_run = last_run.borrow_mut();
-                    if let Some((last_len, last_font)) = last_run.as_mut() {
-                        if style.font == *last_font {
-                            *last_len += *len;
-                            None
-                        } else {
-                            let result = (*last_len, last_font.clone());
-                            *last_len = *len;
-                            *last_font = style.font.clone();
-                            Some(result)
-                        }
-                    } else {
-                        *last_run = Some((*len, style.font.clone()));
-                        None
-                    }
-                })
-                .chain(std::iter::from_fn(|| last_run.borrow_mut().take()));
-
             let mut ix_converter = StringIndexConverter::new(text);
-            for (run_len, font_descriptor) in font_runs {
+            for (run_len, font_id) in font_runs {
                 let utf8_end = ix_converter.utf8_ix + run_len;
                 let utf16_start = ix_converter.utf16_ix;
 
@@ -387,7 +370,6 @@ impl MacTextSystemState {
                 let cf_range =
                     CFRange::init(utf16_start as isize, (utf16_end - utf16_start) as isize);
 
-                let font_id = self.font_selections[&font_descriptor];
                 let font: &FontKitFont = &self.fonts[font_id.0];
                 unsafe {
                     string.set_attribute(

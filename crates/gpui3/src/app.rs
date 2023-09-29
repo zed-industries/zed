@@ -5,10 +5,11 @@ mod model_context;
 pub use async_context::*;
 pub use entity_map::*;
 pub use model_context::*;
+use refineable::Refineable;
 
 use crate::{
-    current_platform, Context, LayoutId, MainThreadOnly, Platform, RootView, TextSystem, Window,
-    WindowContext, WindowHandle, WindowId,
+    current_platform, Context, LayoutId, MainThreadOnly, Platform, RootView, TextStyle,
+    TextStyleRefinement, TextSystem, Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, VecDeque};
@@ -16,7 +17,10 @@ use futures::{future, Future};
 use parking_lot::Mutex;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
-use std::sync::{Arc, Weak};
+use std::{
+    any::{type_name, Any, TypeId},
+    sync::{Arc, Weak},
+};
 use util::ResultExt;
 
 #[derive(Clone)]
@@ -42,10 +46,12 @@ impl App {
                 this: this.clone(),
                 platform: MainThreadOnly::new(platform, dispatcher),
                 text_system,
+                pending_updates: 0,
+                text_style_stack: Vec::new(),
+                state_stacks_by_type: HashMap::default(),
                 unit_entity,
                 entities,
                 windows: SlotMap::with_key(),
-                pending_updates: 0,
                 pending_effects: Default::default(),
                 observers: Default::default(),
                 layout_id_buffer: Default::default(),
@@ -73,6 +79,8 @@ pub struct AppContext {
     platform: MainThreadOnly<dyn Platform>,
     text_system: Arc<TextSystem>,
     pending_updates: usize,
+    pub(crate) text_style_stack: Vec<TextStyleRefinement>,
+    pub(crate) state_stacks_by_type: HashMap<TypeId, Vec<Box<dyn Any + Send + Sync>>>,
     pub(crate) unit_entity: Handle<()>,
     pub(crate) entities: EntityMap,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
@@ -119,6 +127,54 @@ impl AppContext {
             cx.windows.get_mut(id).unwrap().replace(window);
             future::ready(handle)
         })
+    }
+
+    pub fn text_style(&self) -> TextStyle {
+        let mut style = TextStyle::default();
+        for refinement in &self.text_style_stack {
+            style.refine(refinement);
+        }
+        style
+    }
+
+    pub fn state<S: 'static>(&self) -> &S {
+        self.state_stacks_by_type
+            .get(&TypeId::of::<S>())
+            .and_then(|stack| stack.last())
+            .and_then(|any_state| any_state.downcast_ref::<S>())
+            .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<S>()))
+            .unwrap()
+    }
+
+    pub fn state_mut<S: 'static>(&mut self) -> &mut S {
+        self.state_stacks_by_type
+            .get_mut(&TypeId::of::<S>())
+            .and_then(|stack| stack.last_mut())
+            .and_then(|any_state| any_state.downcast_mut::<S>())
+            .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<S>()))
+            .unwrap()
+    }
+
+    pub(crate) fn push_text_style(&mut self, text_style: TextStyleRefinement) {
+        self.text_style_stack.push(text_style);
+    }
+
+    pub(crate) fn pop_text_style(&mut self) {
+        self.text_style_stack.pop();
+    }
+
+    pub(crate) fn push_state<T: Send + Sync + 'static>(&mut self, state: T) {
+        self.state_stacks_by_type
+            .entry(TypeId::of::<T>())
+            .or_default()
+            .push(Box::new(state));
+    }
+
+    pub(crate) fn pop_state<T: 'static>(&mut self) {
+        self.state_stacks_by_type
+            .get_mut(&TypeId::of::<T>())
+            .and_then(|stack| stack.pop())
+            .expect("state stack underflow");
     }
 
     pub(crate) fn update_window<R>(

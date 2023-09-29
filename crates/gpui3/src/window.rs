@@ -1,18 +1,11 @@
 use crate::{
     px, AnyView, AppContext, AvailableSpace, Bounds, Context, Effect, Element, EntityId, Handle,
     LayoutId, MainThreadOnly, Pixels, Platform, PlatformWindow, Point, Reference, Scene, Size,
-    Style, TaffyLayoutEngine, TextStyle, TextStyleRefinement, WeakHandle, WindowOptions,
+    StackContext, Style, TaffyLayoutEngine, WeakHandle, WindowOptions,
 };
 use anyhow::Result;
-use collections::HashMap;
 use derive_more::{Deref, DerefMut};
-use refineable::Refineable;
-use std::{
-    any::{Any, TypeId},
-    future,
-    marker::PhantomData,
-    sync::Arc,
-};
+use std::{any::TypeId, future, marker::PhantomData, sync::Arc};
 use util::ResultExt;
 
 pub struct AnyWindow {}
@@ -23,8 +16,6 @@ pub struct Window {
     rem_size: Pixels,
     content_size: Size<Pixels>,
     layout_engine: TaffyLayoutEngine,
-    text_style_stack: Vec<TextStyleRefinement>,
-    state_stacks_by_type: HashMap<TypeId, Vec<Box<dyn Any + Send + Sync>>>,
     pub(crate) root_view: Option<AnyView<()>>,
     mouse_position: Point<Pixels>,
     pub(crate) scene: Scene,
@@ -63,8 +54,6 @@ impl Window {
             rem_size: px(16.),
             content_size,
             layout_engine: TaffyLayoutEngine::new(),
-            text_style_stack: Vec::new(),
-            state_stacks_by_type: HashMap::default(),
             root_view: None,
             mouse_position,
             scene: Scene::new(scale_factor),
@@ -88,13 +77,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             window: Reference::Mutable(window),
         }
     }
-
-    // pub(crate) fn immutable(app: &'a AppContext, window: &'w Window) -> Self {
-    //     Self {
-    //         app: Reference::Immutable(app),
-    //         window: Reference::Immutable(window),
-    //     }
-    // }
 
     pub(crate) fn draw(&mut self) -> Result<()> {
         let unit_entity = self.unit_entity.clone();
@@ -158,41 +140,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         self.window.rem_size
     }
 
-    pub fn push_cascading_state<T: Send + Sync + 'static>(&mut self, theme: T) {
-        self.window
-            .state_stacks_by_type
-            .entry(TypeId::of::<T>())
-            .or_default()
-            .push(Box::new(theme));
-    }
-
-    pub fn pop_cascading_state<T: Send + Sync + 'static>(&mut self) {
-        self.window
-            .state_stacks_by_type
-            .get_mut(&TypeId::of::<T>())
-            .and_then(|stack| stack.pop())
-            .expect("cascading state not found");
-    }
-
-    pub fn cascading_state<T: Send + Sync + 'static>(&self) -> &T {
-        let type_id = TypeId::of::<T>();
-        self.window
-            .state_stacks_by_type
-            .get(&type_id)
-            .and_then(|stack| stack.last())
-            .expect("no cascading state of the specified type has been pushed")
-            .downcast_ref::<T>()
-            .unwrap()
-    }
-
-    pub fn text_style(&self) -> TextStyle {
-        let mut style = TextStyle::default();
-        for refinement in &self.window.text_style_stack {
-            style.refine(refinement);
-        }
-        style
-    }
-
     pub fn mouse_position(&self) -> Point<Pixels> {
         self.window.mouse_position
     }
@@ -230,6 +177,32 @@ impl Context for WindowContext<'_, '_> {
     }
 }
 
+impl<S> StackContext for ViewContext<'_, '_, S> {
+    fn app(&mut self) -> &mut AppContext {
+        &mut *self.app
+    }
+
+    fn with_text_style<F, R>(&mut self, style: crate::TextStyleRefinement, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        self.push_text_style(style);
+        let result = f(self);
+        self.pop_text_style();
+        result
+    }
+
+    fn with_state<T: Send + Sync + 'static, F, R>(&mut self, state: T, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        self.push_state(state);
+        let result = f(self);
+        self.pop_state::<T>();
+        result
+    }
+}
+
 #[derive(Deref, DerefMut)]
 pub struct ViewContext<'a, 'w, S> {
     #[deref]
@@ -250,17 +223,6 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
 
     pub fn handle(&self) -> WeakHandle<S> {
         self.entities.weak_handle(self.entity_id)
-    }
-
-    pub fn with_text_style<R>(
-        &mut self,
-        style: TextStyleRefinement,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
-        self.window.text_style_stack.push(style);
-        let result = f(self);
-        self.window.text_style_stack.pop();
-        result
     }
 
     pub fn observe<E: Send + Sync + 'static>(

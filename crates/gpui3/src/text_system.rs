@@ -32,7 +32,8 @@ pub struct TextSystem {
     font_ids_by_font: RwLock<HashMap<Font, FontId>>,
     fonts_by_font_id: RwLock<HashMap<FontId, Font>>,
     font_metrics: RwLock<HashMap<Font, FontMetrics>>,
-    wrapper_pool: Mutex<HashMap<FontWithSize, Vec<LineWrapper>>>,
+    wrapper_pool: Mutex<HashMap<FontIdWithSize, Vec<LineWrapper>>>,
+    font_runs_pool: Mutex<Vec<Vec<(usize, FontId)>>>,
 }
 
 impl TextSystem {
@@ -44,6 +45,7 @@ impl TextSystem {
             font_ids_by_font: RwLock::new(HashMap::default()),
             fonts_by_font_id: RwLock::new(HashMap::default()),
             wrapper_pool: Mutex::new(HashMap::default()),
+            font_runs_pool: Default::default(),
         }
     }
 
@@ -147,41 +149,67 @@ impl TextSystem {
         }
     }
 
-    pub fn layout_str<'a>(
-        &'a self,
-        text: &'a str,
+    pub fn layout_line(
+        &self,
+        text: &str,
         font_size: Pixels,
-        runs: &'a [(usize, RunStyle)],
-    ) -> Line {
-        self.text_layout_cache.layout_str(text, font_size, runs)
+        runs: &[(usize, RunStyle)],
+    ) -> Result<Line> {
+        let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+        let mut last_font: Option<&Font> = None;
+        for (len, style) in runs {
+            if let Some(last_font) = last_font.as_ref() {
+                if **last_font == style.font {
+                    font_runs.last_mut().unwrap().0 += len;
+                    continue;
+                }
+            }
+            last_font = Some(&style.font);
+            font_runs.push((*len, self.font_id(&style.font)?));
+        }
+
+        let layout = self
+            .text_layout_cache
+            .layout_line(text, font_size, &font_runs);
+
+        font_runs.clear();
+        self.font_runs_pool.lock().push(font_runs);
+
+        Ok(Line::new(layout.clone(), runs))
     }
 
     pub fn finish_frame(&self) {
         self.text_layout_cache.finish_frame()
     }
 
-    pub fn line_wrapper(self: &Arc<Self>, font: Font, font_size: Pixels) -> LineWrapperHandle {
+    pub fn line_wrapper(
+        self: &Arc<Self>,
+        font: Font,
+        font_size: Pixels,
+    ) -> Result<LineWrapperHandle> {
         let lock = &mut self.wrapper_pool.lock();
+        let font_id = self.font_id(&font)?;
         let wrappers = lock
-            .entry(FontWithSize {
-                font: font.clone(),
-                font_size,
-            })
+            .entry(FontIdWithSize { font_id, font_size })
             .or_default();
-        let wrapper = wrappers.pop().unwrap_or_else(|| {
-            LineWrapper::new(font, font_size, self.platform_text_system.clone())
-        });
+        let wrapper = wrappers.pop().map(anyhow::Ok).unwrap_or_else(|| {
+            Ok(LineWrapper::new(
+                font_id,
+                font_size,
+                self.platform_text_system.clone(),
+            ))
+        })?;
 
-        LineWrapperHandle {
+        Ok(LineWrapperHandle {
             wrapper: Some(wrapper),
             text_system: self.clone(),
-        }
+        })
     }
 }
 
 #[derive(Hash, Eq, PartialEq)]
-struct FontWithSize {
-    font: Font,
+struct FontIdWithSize {
+    font_id: FontId,
     font_size: Pixels,
 }
 
@@ -195,8 +223,8 @@ impl Drop for LineWrapperHandle {
         let mut state = self.text_system.wrapper_pool.lock();
         let wrapper = self.wrapper.take().unwrap();
         state
-            .get_mut(&FontWithSize {
-                font: wrapper.font.clone(),
+            .get_mut(&FontIdWithSize {
+                font_id: wrapper.font_id.clone(),
                 font_size: wrapper.font_size,
             })
             .unwrap()
