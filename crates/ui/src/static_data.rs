@@ -7,7 +7,7 @@ use crate::{
     Buffer, BufferRow, BufferRows, Editor, FileSystemStatus, GitStatus, HighlightColor,
     HighlightedLine, HighlightedText, Icon, Keybinding, Label, LabelColor, ListEntry,
     ListEntrySize, ListItem, Livestream, MicStatus, ModifierKeys, PaletteItem, Player,
-    PlayerCallStatus, PlayerWithCallStatus, ScreenShareStatus, Tab, Theme, ToggleState,
+    PlayerCallStatus, PlayerWithCallStatus, ScreenShareStatus, Symbol, Tab, Theme, ToggleState,
     VideoStatus,
 };
 
@@ -599,7 +599,16 @@ pub fn hello_world_rust_editor_example(theme: &Theme) -> Editor {
     Editor {
         tabs: static_tabs_example(),
         path: PathBuf::from_str("crates/ui/src/static_data.rs").unwrap(),
-        symbols: vec![],
+        symbols: vec![Symbol(vec![
+            HighlightedText {
+                text: "fn ".to_string(),
+                color: HighlightColor::Keyword.hsla(&theme),
+            },
+            HighlightedText {
+                text: "main".to_string(),
+                color: HighlightColor::Function.hsla(&theme),
+            },
+        ])],
         buffer: hello_world_rust_buffer_example(theme),
     }
 }
@@ -702,7 +711,16 @@ pub fn hello_world_rust_editor_with_status_example(theme: &Theme) -> Editor {
     Editor {
         tabs: static_tabs_example(),
         path: PathBuf::from_str("crates/ui/src/static_data.rs").unwrap(),
-        symbols: vec![],
+        symbols: vec![Symbol(vec![
+            HighlightedText {
+                text: "fn ".to_string(),
+                color: HighlightColor::Keyword.hsla(&theme),
+            },
+            HighlightedText {
+                text: "main".to_string(),
+                color: HighlightColor::Function.hsla(&theme),
+            },
+        ])],
         buffer: hello_world_rust_buffer_with_status_example(theme),
     }
 }

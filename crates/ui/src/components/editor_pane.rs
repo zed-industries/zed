@@ -2,12 +2,12 @@ use std::marker::PhantomData;
 use std::path::PathBuf;
 
 use crate::prelude::*;
-use crate::{v_stack, Breadcrumb, Buffer, HighlightedText, Icon, IconButton, Tab, TabBar, Toolbar};
+use crate::{v_stack, Breadcrumb, Buffer, Icon, IconButton, Symbol, Tab, TabBar, Toolbar};
 
 pub struct Editor {
     pub tabs: Vec<Tab>,
     pub path: PathBuf,
-    pub symbols: Vec<HighlightedText>,
+    pub symbols: Vec<Symbol>,
     pub buffer: Buffer,
 }
 
@@ -32,6 +32,7 @@ impl<V: 'static> EditorPane<V> {
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         struct LeftItemsPayload {
             path: PathBuf,
+            symbols: Vec<Symbol>,
         }
 
         v_stack()
@@ -43,10 +44,11 @@ impl<V: 'static> EditorPane<V> {
                 |_, payload| {
                     let payload = payload.downcast_ref::<LeftItemsPayload>().unwrap();
 
-                    vec![Breadcrumb::new(payload.path.clone(), vec![]).into_any()]
+                    vec![Breadcrumb::new(payload.path.clone(), payload.symbols.clone()).into_any()]
                 },
                 Box::new(LeftItemsPayload {
                     path: self.editor.path.clone(),
+                    symbols: self.editor.symbols.clone(),
                 }),
                 |_, _| {
                     vec![

@@ -5,6 +5,7 @@ use gpui2::elements::div::Div;
 use crate::{h_stack, theme};
 use crate::{prelude::*, HighlightedText};
 
+#[derive(Clone)]
 pub struct Symbol(pub Vec<HighlightedText>);
 
 #[derive(Element)]
