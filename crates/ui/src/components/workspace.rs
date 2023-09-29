@@ -3,8 +3,8 @@ use gpui2::geometry::{relative, rems, Size};
 
 use crate::prelude::*;
 use crate::{
-    theme, v_stack, ChatMessage, ChatPanel, Pane, PaneGroup, Panel, PanelAllowedSides, PanelSide,
-    ProjectPanel, SplitDirection, StatusBar, Terminal, TitleBar,
+    theme, v_stack, ChatMessage, ChatPanel, Editor, Pane, PaneGroup, Panel, PanelAllowedSides,
+    PanelSide, ProjectPanel, SplitDirection, StatusBar, Terminal, TitleBar,
 };
 
 #[derive(Element, Default)]
@@ -51,7 +51,7 @@ impl WorkspaceElement {
                             width: relative(1.).into(),
                             height: relative(1.).into(),
                         },
-                        |_, _| vec![Terminal::new().into_any()],
+                        |_, _| vec![Editor::new().into_any()],
                         Box::new(()),
                     )],
                     SplitDirection::Vertical,

@@ -11,12 +11,16 @@ pub struct TabBar<V: 'static> {
 }
 
 impl<V: 'static> TabBar<V> {
-    pub fn new(scroll_state: ScrollState, tabs: Vec<Tab>) -> Self {
+    pub fn new(tabs: Vec<Tab>) -> Self {
         Self {
             view_type: PhantomData,
-            scroll_state,
+            scroll_state: ScrollState::default(),
             tabs,
         }
+    }
+
+    pub fn bind_scroll_state(&mut self, scroll_state: ScrollState) {
+        self.scroll_state = scroll_state;
     }
 
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
