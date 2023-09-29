@@ -430,7 +430,7 @@ pub fn example_editor_actions() -> Vec<PaletteItem> {
 
 pub fn empty_editor_example() -> Editor {
     Editor {
-        tabs: vec![],
+        tabs: static_tabs_example(),
         path: vec![],
         symbols: vec![],
         buffer: empty_buffer_example(),
@@ -443,7 +443,7 @@ pub fn empty_buffer_example() -> Buffer {
 
 pub fn hello_world_rust_editor_example(theme: &Theme) -> Editor {
     Editor {
-        tabs: vec![],
+        tabs: static_tabs_example(),
         path: vec![],
         symbols: vec![],
         buffer: hello_world_rust_buffer_example(theme),
@@ -546,7 +546,7 @@ pub fn hello_world_rust_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
 
 pub fn hello_world_rust_editor_with_status_example(theme: &Theme) -> Editor {
     Editor {
-        tabs: vec![],
+        tabs: static_tabs_example(),
         path: vec![],
         symbols: vec![],
         buffer: hello_world_rust_buffer_with_status_example(theme),
