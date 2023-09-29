@@ -4,7 +4,7 @@ mod stories;
 mod story;
 mod story_selector;
 
-use std::sync::Arc;
+use std::{process::Command, sync::Arc};
 
 use ::theme as legacy_theme;
 use clap::Parser;
@@ -38,10 +38,27 @@ struct Args {
     theme: Option<String>,
 }
 
+async fn watch_zed_changes(fs: Arc<dyn fs::Fs>) -> Option<()> {
+    use futures::StreamExt;
+    let mut events = fs
+        .watch(".".as_ref(), std::time::Duration::from_millis(100))
+        .await;
+    while let Some(event) = events.next().await {
+        log::error!("Storybook changed, rebuilding...");
+        Command::new("cargo")
+            .args(["run", "-p", "storybook"])
+            .spawn()
+            .ok()?;
+    }
+    Some(())
+}
+
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
     let args = Args::parse();
+
+    let fs = Arc::new(fs::RealFs);
 
     gpui2::App::new(Assets).unwrap().run(move |cx| {
         let mut store = SettingsStore::default();
@@ -63,6 +80,11 @@ fn main() {
             })
             .and_then(|theme_name| theme_registry.get(&theme_name).ok());
 
+        cx
+            .spawn(|_| async move {
+                watch_zed_changes(fs).await;
+            })
+            .detach();
         cx.add_window(
             gpui2::WindowOptions {
                 bounds: WindowBounds::Fixed(RectF::new(vec2f(0., 0.), vec2f(1700., 980.))),

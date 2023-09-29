@@ -93,32 +93,6 @@ pub struct Metadata {
     pub is_dir: bool,
 }
 
-impl From<lsp::CreateFileOptions> for CreateOptions {
-    fn from(options: lsp::CreateFileOptions) -> Self {
-        Self {
-            overwrite: options.overwrite.unwrap_or(false),
-            ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
-        }
-    }
-}
-
-impl From<lsp::RenameFileOptions> for RenameOptions {
-    fn from(options: lsp::RenameFileOptions) -> Self {
-        Self {
-            overwrite: options.overwrite.unwrap_or(false),
-            ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
-        }
-    }
-}
-
-impl From<lsp::DeleteFileOptions> for RemoveOptions {
-    fn from(options: lsp::DeleteFileOptions) -> Self {
-        Self {
-            recursive: options.recursive.unwrap_or(false),
-            ignore_if_not_exists: options.ignore_if_not_exists.unwrap_or(false),
-        }
-    }
-}
 
 pub struct RealFs;
 
