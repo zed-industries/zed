@@ -4,13 +4,13 @@ use crate::Toolbar;
 use crate::{hello_world_rust_buffer_with_status_example, prelude::*, v_stack, Tab, TabBar};
 
 #[derive(Element)]
-pub struct Editor<V: 'static> {
+pub struct EditorPane<V: 'static> {
     view_type: PhantomData<V>,
     // toolbar: Toolbar,
     // buffer: Buffer<V>,
 }
 
-impl<V: 'static> Editor<V> {
+impl<V: 'static> EditorPane<V> {
     pub fn new(// toolbar: Toolbar, buffer: Buffer<V>
     ) -> Self {
         Self {
