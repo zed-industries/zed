@@ -19,7 +19,8 @@ impl KitchenSinkStory {
             .child(div().flex().flex_col().children_any(element_stories))
             .child(Story::label(cx, "Components"))
             .child(div().flex().flex_col().children_any(component_stories))
-            // Add a bit of space at the bottom of the kitchen sink.
+            // Add a bit of space at the bottom of the kitchen sink so elements
+            // don't end up squished right up against the bottom of the screen.
             .child(div().p_4())
     }
 }
