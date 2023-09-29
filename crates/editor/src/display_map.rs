@@ -618,9 +618,9 @@ impl DisplaySnapshot {
         display_row: u32,
         x_coordinate: f32,
         text_layout_details: &TextLayoutDetails,
-    ) -> Option<u32> {
+    ) -> u32 {
         let layout_line = self.layout_line_for_row(display_row, text_layout_details);
-        layout_line.index_for_x(x_coordinate).map(|c| c as u32)
+        layout_line.closest_index_for_x(x_coordinate) as u32
     }
 
     // column_for_x(row, x)

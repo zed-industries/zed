@@ -115,9 +115,7 @@ pub fn up_by_rows(
         Bias::Left,
     );
     if point.row() < start.row() {
-        *point.column_mut() = map
-            .column_for_x(point.row(), goal_x, text_layout_details)
-            .unwrap_or(point.column());
+        *point.column_mut() = map.column_for_x(point.row(), goal_x, text_layout_details)
     } else if preserve_column_at_start {
         return (start, goal);
     } else {
@@ -149,9 +147,7 @@ pub fn down_by_rows(
     let new_row = start.row() + row_count;
     let mut point = map.clip_point(DisplayPoint::new(new_row, 0), Bias::Right);
     if point.row() > start.row() {
-        *point.column_mut() = map
-            .column_for_x(point.row(), goal_x, text_layout_details)
-            .unwrap_or(map.line_len(point.row()));
+        *point.column_mut() = map.column_for_x(point.row(), goal_x, text_layout_details)
     } else if preserve_column_at_end {
         return (start, goal);
     } else {
