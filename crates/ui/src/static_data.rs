@@ -1,11 +1,14 @@
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use rand::Rng;
+
 use crate::{
     Buffer, BufferRow, BufferRows, Editor, FileSystemStatus, GitStatus, HighlightColor,
     HighlightedLine, HighlightedText, Icon, Keybinding, Label, LabelColor, ListEntry,
-    ListEntrySize, ListItem, MicStatus, ModifierKeys, PaletteItem, Player, PlayerCallStatus,
-    PlayerWithCallStatus, ScreenShareStatus, Tab, Theme, ToggleState,
+    ListEntrySize, ListItem, Livestream, MicStatus, ModifierKeys, PaletteItem, Player,
+    PlayerCallStatus, PlayerWithCallStatus, ScreenShareStatus, Tab, Theme, ToggleState,
+    VideoStatus,
 };
 
 pub fn static_tabs_example() -> Vec<Tab> {
@@ -129,6 +132,154 @@ pub fn static_players() -> Vec<Player> {
             "maxdeviant".into(),
         ),
     ]
+}
+
+#[derive(Debug)]
+pub struct PlayerData {
+    pub url: String,
+    pub name: String,
+}
+pub fn static_player_data() -> Vec<PlayerData> {
+    vec![
+        PlayerData {
+            url: "https://avatars.githubusercontent.com/u/1714999?v=4".into(),
+            name: "iamnbutler".into(),
+        },
+        PlayerData {
+            url: "https://avatars.githubusercontent.com/u/326587?v=4".into(),
+            name: "maxbrunsfeld".into(),
+        },
+        PlayerData {
+            url: "https://avatars.githubusercontent.com/u/482957?v=4".into(),
+            name: "as-cii".into(),
+        },
+        PlayerData {
+            url: "https://avatars.githubusercontent.com/u/1789?v=4".into(),
+            name: "nathansobo".into(),
+        },
+        PlayerData {
+            url: "https://avatars.githubusercontent.com/u/1486634?v=4".into(),
+            name: "ForLoveOfCats".into(),
+        },
+        PlayerData {
+            url: "https://avatars.githubusercontent.com/u/2690773?v=4".into(),
+            name: "SomeoneToIgnore".into(),
+        },
+        PlayerData {
+            url: "https://avatars.githubusercontent.com/u/19867440?v=4".into(),
+            name: "JosephTLyons".into(),
+        },
+        PlayerData {
+            url: "https://avatars.githubusercontent.com/u/24362066?v=4".into(),
+            name: "osiewicz".into(),
+        },
+        PlayerData {
+            url: "https://avatars.githubusercontent.com/u/22121886?v=4".into(),
+            name: "KCaverly".into(),
+        },
+        PlayerData {
+            url: "https://avatars.githubusercontent.com/u/1486634?v=4".into(),
+            name: "maxdeviant".into(),
+        },
+    ]
+}
+pub fn create_static_players(player_data: Vec<PlayerData>) -> Vec<Player> {
+    let mut players = Vec::new();
+    for data in player_data {
+        players.push(Player::new(players.len(), data.url, data.name));
+    }
+    players
+}
+pub fn static_player_1(data: &Vec<PlayerData>) -> Player {
+    Player::new(1, data[0].url.clone(), data[0].name.clone())
+}
+pub fn static_player_2(data: &Vec<PlayerData>) -> Player {
+    Player::new(2, data[1].url.clone(), data[1].name.clone())
+}
+pub fn static_player_3(data: &Vec<PlayerData>) -> Player {
+    Player::new(3, data[2].url.clone(), data[2].name.clone())
+}
+pub fn static_player_4(data: &Vec<PlayerData>) -> Player {
+    Player::new(4, data[3].url.clone(), data[3].name.clone())
+}
+pub fn static_player_5(data: &Vec<PlayerData>) -> Player {
+    Player::new(5, data[4].url.clone(), data[4].name.clone())
+}
+pub fn static_player_6(data: &Vec<PlayerData>) -> Player {
+    Player::new(6, data[5].url.clone(), data[5].name.clone())
+}
+pub fn static_player_7(data: &Vec<PlayerData>) -> Player {
+    Player::new(7, data[6].url.clone(), data[6].name.clone())
+}
+pub fn static_player_8(data: &Vec<PlayerData>) -> Player {
+    Player::new(8, data[7].url.clone(), data[7].name.clone())
+}
+pub fn static_player_9(data: &Vec<PlayerData>) -> Player {
+    Player::new(9, data[8].url.clone(), data[8].name.clone())
+}
+pub fn static_player_10(data: &Vec<PlayerData>) -> Player {
+    Player::new(10, data[9].url.clone(), data[9].name.clone())
+}
+pub fn static_livestream() -> Livestream {
+    Livestream {
+        players: random_players_with_call_status(7),
+        channel: Some("gpui2-ui".to_string()),
+    }
+}
+pub fn populate_player_call_status(
+    player: Player,
+    followers: Option<Vec<Player>>,
+) -> PlayerCallStatus {
+    let mut rng = rand::thread_rng();
+    let in_current_project: bool = rng.gen();
+    let disconnected: bool = rng.gen();
+    let voice_activity: f32 = rng.gen();
+    let mic_status = if rng.gen_bool(0.5) {
+        MicStatus::Muted
+    } else {
+        MicStatus::Unmuted
+    };
+    let video_status = if rng.gen_bool(0.5) {
+        VideoStatus::On
+    } else {
+        VideoStatus::Off
+    };
+    let screen_share_status = if rng.gen_bool(0.5) {
+        ScreenShareStatus::Shared
+    } else {
+        ScreenShareStatus::NotShared
+    };
+    PlayerCallStatus {
+        mic_status,
+        voice_activity,
+        video_status,
+        screen_share_status,
+        in_current_project,
+        disconnected,
+        following: None,
+        followers,
+    }
+}
+pub fn random_players_with_call_status(number_of_players: usize) -> Vec<PlayerWithCallStatus> {
+    let players = create_static_players(static_player_data());
+    let mut player_status = vec![];
+    for i in 0..number_of_players {
+        let followers = if i == 0 {
+            Some(vec![
+                players[1].clone(),
+                players[3].clone(),
+                players[5].clone(),
+                players[6].clone(),
+            ])
+        } else if i == 1 {
+            Some(vec![players[2].clone(), players[6].clone()])
+        } else {
+            None
+        };
+        let call_status = populate_player_call_status(players[i].clone(), followers);
+        player_status.push(PlayerWithCallStatus::new(players[i].clone(), call_status));
+    }
+    player_status
 }
 
 pub fn static_players_with_call_status() -> Vec<PlayerWithCallStatus> {
