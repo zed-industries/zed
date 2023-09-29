@@ -154,6 +154,8 @@ impl<'a, T> DerefMut for Reference<'a, T> {
     }
 }
 
+pub struct MainThread;
+
 pub(crate) struct MainThreadOnly<T: ?Sized> {
     dispatcher: Arc<dyn PlatformDispatcher>,
     value: Arc<T>,
@@ -175,7 +177,7 @@ impl<T: 'static + ?Sized> MainThreadOnly<T> {
         Self { dispatcher, value }
     }
 
-    pub(crate) fn borrow_on_main_thread(&self) -> &Arc<T> {
+    pub(crate) fn borrow_on_main_thread(&self) -> &T {
         assert!(self.dispatcher.is_main_thread());
         &self.value
     }
