@@ -73,7 +73,7 @@ impl HighlightColor {
     }
 }
 
-#[derive(Default, PartialEq, EnumIter)]
+#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
 pub enum FileSystemStatus {
     #[default]
     None,
@@ -91,7 +91,7 @@ impl FileSystemStatus {
     }
 }
 
-#[derive(Default, PartialEq, EnumIter, Clone, Copy)]
+#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
 pub enum GitStatus {
     #[default]
     None,
@@ -129,7 +129,7 @@ impl GitStatus {
     }
 }
 
-#[derive(Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
 pub enum DiagnosticStatus {
     #[default]
     None,
@@ -138,14 +138,14 @@ pub enum DiagnosticStatus {
     Info,
 }
 
-#[derive(Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
 pub enum IconSide {
     #[default]
     Left,
     Right,
 }
 
-#[derive(Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
 pub enum OrderMethod {
     #[default]
     Ascending,
@@ -153,14 +153,14 @@ pub enum OrderMethod {
     MostRecent,
 }
 
-#[derive(Default, PartialEq, Clone, Copy)]
+#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
 pub enum Shape {
     #[default]
     Circle,
     RoundedRectangle,
 }
 
-#[derive(Default, PartialEq, Clone, Copy)]
+#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
 pub enum DisclosureControlVisibility {
     #[default]
     OnHover,
