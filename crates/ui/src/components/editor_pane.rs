@@ -1,13 +1,12 @@
 use std::marker::PhantomData;
 use std::path::PathBuf;
-use std::str::FromStr;
 
 use crate::prelude::*;
 use crate::{v_stack, Breadcrumb, Buffer, HighlightedText, Icon, IconButton, Tab, TabBar, Toolbar};
 
 pub struct Editor {
     pub tabs: Vec<Tab>,
-    pub path: Vec<String>,
+    pub path: PathBuf,
     pub symbols: Vec<HighlightedText>,
     pub buffer: Buffer,
 }
@@ -31,19 +30,24 @@ impl<V: 'static> EditorPane<V> {
     }
 
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
+        struct LeftItemsPayload {
+            path: PathBuf,
+        }
+
         v_stack()
             .w_full()
             .h_full()
             .flex_1()
             .child(TabBar::new(self.editor.tabs.clone()))
             .child(Toolbar::new(
-                |_, _| {
-                    vec![Breadcrumb::new(
-                        PathBuf::from_str("crates/ui/src/components/toolbar.rs").unwrap(),
-                    )
-                    .into_any()]
+                |_, payload| {
+                    let payload = payload.downcast_ref::<LeftItemsPayload>().unwrap();
+
+                    vec![Breadcrumb::new(payload.path.clone()).into_any()]
                 },
-                Box::new(()),
+                Box::new(LeftItemsPayload {
+                    path: self.editor.path.clone(),
+                }),
                 |_, _| {
                     vec![
                         IconButton::new(Icon::InlayHint).into_any(),
