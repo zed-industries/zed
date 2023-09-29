@@ -26,7 +26,7 @@ impl<V: 'static> ProjectPanel<V> {
         div()
             .flex()
             .flex_col()
-            .w_56()
+            .w_full()
             .h_full()
             .px_2()
             .fill(theme.middle.base.default.background)
