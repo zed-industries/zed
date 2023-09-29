@@ -27,10 +27,10 @@ impl<S: 'static + Send + Sync> Element for Div<S> {
     type State = S;
     type FrameState = Vec<LayoutId>;
 
-    fn layout(
+    fn layout<Thread>(
         &mut self,
         view: &mut S,
-        cx: &mut ViewContext<S>,
+        cx: &mut ViewContext<S, Thread>,
     ) -> Result<(LayoutId, Self::FrameState)> {
         let style = self.computed_style();
         let child_layout_ids = if let Some(text_style) = style.text_style(cx) {
@@ -45,12 +45,12 @@ impl<S: 'static + Send + Sync> Element for Div<S> {
         ))
     }
 
-    fn paint(
+    fn paint<Thread>(
         &mut self,
         layout: Layout,
         state: &mut S,
         child_layouts: &mut Self::FrameState,
-        cx: &mut ViewContext<S>,
+        cx: &mut ViewContext<S, Thread>,
     ) -> Result<()> {
         let Layout { order, bounds } = layout;
 
@@ -130,18 +130,22 @@ impl<S: 'static> Div<S> {
         offset
     }
 
-    fn layout_children(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> Result<Vec<LayoutId>> {
+    fn layout_children<Thread>(
+        &mut self,
+        view: &mut S,
+        cx: &mut ViewContext<S, Thread>,
+    ) -> Result<Vec<LayoutId>> {
         self.children
             .iter_mut()
             .map(|child| child.layout(view, cx))
             .collect::<Result<Vec<LayoutId>>>()
     }
 
-    fn paint_children(
+    fn paint_children<Thread>(
         &mut self,
         overflow: &Point<Overflow>,
         state: &mut S,
-        cx: &mut ViewContext<S>,
+        cx: &mut ViewContext<S, Thread>,
     ) -> Result<()> {
         let scroll_offset = self.scroll_offset(overflow);
         for child in &mut self.children {
@@ -150,13 +154,13 @@ impl<S: 'static> Div<S> {
         Ok(())
     }
 
-    fn handle_scroll(
+    fn handle_scroll<Thread>(
         &mut self,
         _order: u32,
         bounds: Bounds<Pixels>,
         overflow: Point<Overflow>,
         child_layout_ids: &[LayoutId],
-        cx: &mut ViewContext<S>,
+        cx: &mut ViewContext<S, Thread>,
     ) {
         if overflow.y == Overflow::Scroll || overflow.x == Overflow::Scroll {
             let mut scroll_max = Point::default();

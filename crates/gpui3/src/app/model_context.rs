@@ -1,14 +1,14 @@
 use crate::{AppContext, Context, Effect, EntityId, Handle, Reference, WeakHandle};
 use std::{marker::PhantomData, sync::Arc};
 
-pub struct ModelContext<'a, T> {
-    app: Reference<'a, AppContext>,
+pub struct ModelContext<'a, T, Thread = ()> {
+    app: Reference<'a, AppContext<Thread>>,
     entity_type: PhantomData<T>,
     entity_id: EntityId,
 }
 
-impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
-    pub(crate) fn mutable(app: &'a mut AppContext, entity_id: EntityId) -> Self {
+impl<'a, T: Send + Sync + 'static, Thread> ModelContext<'a, T, Thread> {
+    pub(crate) fn mutable(app: &'a mut AppContext<Thread>, entity_id: EntityId) -> Self {
         Self {
             app: Reference::Mutable(app),
             entity_type: PhantomData,
@@ -41,7 +41,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
     pub fn observe<E: Send + Sync + 'static>(
         &mut self,
         handle: &Handle<E>,
-        on_notify: impl Fn(&mut T, Handle<E>, &mut ModelContext<'_, T>) + Send + Sync + 'static,
+        on_notify: impl Fn(&mut T, Handle<E>, &mut ModelContext<'_, T, Thread>) + Send + Sync + 'static,
     ) {
         let this = self.handle();
         let handle = handle.downgrade();

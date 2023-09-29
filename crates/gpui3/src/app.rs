@@ -120,40 +120,40 @@ impl<Thread> AppContext<Thread> {
         AsyncContext(self.this.clone())
     }
 
-    pub fn run_on_main<R>(
-        &self,
-        f: impl FnOnce(&mut AppContext<MainThread>) -> R + Send + 'static,
-    ) -> impl Future<Output = R>
-    where
-        R: Send + 'static,
-    {
-        let this = self.this.upgrade().unwrap();
-        run_on_main(self.dispatcher.clone(), move || {
-            let cx = &mut *this.lock();
-            let main_thread_cx: &mut AppContext<MainThread> = unsafe { std::mem::transmute(cx) };
-            main_thread_cx.update(|cx| f(cx))
-        })
-    }
+    // pub fn run_on_main<R>(
+    //     &self,
+    //     f: impl FnOnce(&mut AppContext<MainThread>) -> R + Send + 'static,
+    // ) -> impl Future<Output = R>
+    // where
+    //     R: Send + 'static,
+    // {
+    //     let this = self.this.upgrade().unwrap();
+    //     run_on_main(self.dispatcher.clone(), move || {
+    //         let cx = &mut *this.lock();
+    //         let main_thread_cx: &mut AppContext<MainThread> = unsafe { std::mem::transmute(cx) };
+    //         main_thread_cx.update(|cx| f(cx))
+    //     })
+    // }
 
-    pub fn spawn_on_main<F, R>(
-        &self,
-        f: impl FnOnce(&mut AppContext<MainThread>) -> F + Send + 'static,
-    ) -> impl Future<Output = R>
-    where
-        F: Future<Output = R> + 'static,
-        R: Send + 'static,
-    {
-        let this = self.this.upgrade().unwrap();
-        spawn_on_main(self.dispatcher.clone(), move || {
-            let cx = &mut *this.lock();
-            let platform = cx.platform.borrow_on_main_thread().clone();
-            // todo!()
-            // cx.update(|cx| f(&mut MainThreadContext::mutable(cx, platform.as_ref())))
+    // pub fn spawn_on_main<F, R>(
+    //     &self,
+    //     f: impl FnOnce(&mut AppContext<MainThread>) -> F + Send + 'static,
+    // ) -> impl Future<Output = R>
+    // where
+    //     F: Future<Output = R> + 'static,
+    //     R: Send + 'static,
+    // {
+    //     let this = self.this.upgrade().unwrap();
+    //     spawn_on_main(self.dispatcher.clone(), move || {
+    //         let cx = &mut *this.lock();
+    //         let platform = cx.platform.borrow_on_main_thread().clone();
+    //         // todo!()
+    //         // cx.update(|cx| f(&mut MainThreadContext::mutable(cx, platform.as_ref())))
 
-            future::ready(())
-        })
-        // self.platform.read(move |platform| {
-    }
+    //         future::ready(())
+    //     })
+    //     // self.platform.read(move |platform| {
+    // }
 
     pub fn text_style(&self) -> TextStyle {
         let mut style = TextStyle::default();
@@ -276,8 +276,8 @@ impl<Thread> AppContext<Thread> {
     }
 }
 
-impl Context for AppContext {
-    type EntityContext<'a, 'w, T: Send + Sync + 'static> = ModelContext<'a, T>;
+impl<Thread: 'static> Context for AppContext<Thread> {
+    type EntityContext<'a, 'w, T: Send + Sync + 'static> = ModelContext<'a, T, Thread>;
     type Result<T> = T;
 
     fn entity<T: Send + Sync + 'static>(

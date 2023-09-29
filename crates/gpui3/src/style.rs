@@ -171,7 +171,7 @@ pub struct HighlightStyle {
 impl Eq for HighlightStyle {}
 
 impl Style {
-    pub fn text_style(&self, _cx: &WindowContext) -> Option<&TextStyleRefinement> {
+    pub fn text_style<Thread>(&self, _cx: &WindowContext<Thread>) -> Option<&TextStyleRefinement> {
         if self.text.is_some() {
             Some(&self.text)
         } else {
@@ -180,7 +180,11 @@ impl Style {
     }
 
     /// Paints the background of an element styled with this style.
-    pub fn paint_background<V: 'static>(&self, _bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
+    pub fn paint_background<V: 'static, Thread>(
+        &self,
+        _bounds: Bounds<Pixels>,
+        cx: &mut ViewContext<V, Thread>,
+    ) {
         let _rem_size = cx.rem_size();
         if let Some(_color) = self.fill.as_ref().and_then(Fill::color) {
             todo!();
@@ -188,7 +192,11 @@ impl Style {
     }
 
     /// Paints the foreground of an element styled with this style.
-    pub fn paint_foreground<V: 'static>(&self, _bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
+    pub fn paint_foreground<V: 'static, Thread>(
+        &self,
+        _bounds: Bounds<Pixels>,
+        cx: &mut ViewContext<V, Thread>,
+    ) {
         let rem_size = cx.rem_size();
 
         if let Some(_color) = self.border_color {

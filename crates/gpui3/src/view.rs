@@ -1,14 +1,15 @@
 use parking_lot::Mutex;
 
 use crate::{
-    AnyElement, Element, Handle, IntoAnyElement, Layout, LayoutId, Result, ViewContext,
+    AnyElement, Element, Handle, IntoAnyElement, Layout, LayoutId, MainThread, Result, ViewContext,
     WindowContext,
 };
 use std::{any::Any, marker::PhantomData, sync::Arc};
 
-pub struct View<S: Send + Sync, P> {
+pub struct View<S: Send + Sync, P, Thread = ()> {
     state: Handle<S>,
-    render: Arc<dyn Fn(&mut S, &mut ViewContext<S>) -> AnyElement<S> + Send + Sync + 'static>,
+    render:
+        Arc<dyn Fn(&mut S, &mut ViewContext<S, Thread>) -> AnyElement<S> + Send + Sync + 'static>,
     parent_state_type: PhantomData<P>,
 }
 
