@@ -1,4 +1,6 @@
 pub mod items;
+mod project_diagnostics_settings;
+mod toolbar_controls;
 
 use anyhow::Result;
 use collections::{BTreeSet, HashSet};
@@ -19,6 +21,7 @@ use language::{
 };
 use lsp::LanguageServerId;
 use project::{DiagnosticSummary, Project, ProjectPath};
+use project_diagnostics_settings::ProjectDiagnosticsSettings;
 use serde_json::json;
 use smallvec::SmallVec;
 use std::{
@@ -30,18 +33,21 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeSettings;
+pub use toolbar_controls::ToolbarControls;
 use util::TryFutureExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
     ItemNavHistory, Pane, PaneBackdrop, ToolbarItemLocation, Workspace,
 };
 
-actions!(diagnostics, [Deploy]);
+actions!(diagnostics, [Deploy, ToggleWarnings]);
 
 const CONTEXT_LINE_COUNT: u32 = 1;
 
 pub fn init(cx: &mut AppContext) {
+    settings::register::<ProjectDiagnosticsSettings>(cx);
     cx.add_action(ProjectDiagnosticsEditor::deploy);
+    cx.add_action(ProjectDiagnosticsEditor::toggle_warnings);
     items::init(cx);
 }
 
@@ -55,6 +61,7 @@ struct ProjectDiagnosticsEditor {
     excerpts: ModelHandle<MultiBuffer>,
     path_states: Vec<PathState>,
     paths_to_update: BTreeSet<(ProjectPath, LanguageServerId)>,
+    include_warnings: bool,
 }
 
 struct PathState {
@@ -187,6 +194,7 @@ impl ProjectDiagnosticsEditor {
             editor,
             path_states: Default::default(),
             paths_to_update,
+            include_warnings: settings::get::<ProjectDiagnosticsSettings>(cx).include_warnings,
         };
         this.update_excerpts(None, cx);
         this
@@ -202,6 +210,18 @@ impl ProjectDiagnosticsEditor {
             });
             workspace.add_item(Box::new(diagnostics), cx);
         }
+    }
+
+    fn toggle_warnings(&mut self, _: &ToggleWarnings, cx: &mut ViewContext<Self>) {
+        self.include_warnings = !self.include_warnings;
+        self.paths_to_update = self
+            .project
+            .read(cx)
+            .diagnostic_summaries(cx)
+            .map(|(path, server_id, _)| (path, server_id))
+            .collect();
+        self.update_excerpts(None, cx);
+        cx.notify();
     }
 
     fn update_excerpts(
@@ -277,14 +297,18 @@ impl ProjectDiagnosticsEditor {
         let mut blocks_to_add = Vec::new();
         let mut blocks_to_remove = HashSet::default();
         let mut first_excerpt_id = None;
+        let max_severity = if self.include_warnings {
+            DiagnosticSeverity::WARNING
+        } else {
+            DiagnosticSeverity::ERROR
+        };
         let excerpts_snapshot = self.excerpts.update(cx, |excerpts, excerpts_cx| {
             let mut old_groups = path_state.diagnostic_groups.iter().enumerate().peekable();
             let mut new_groups = snapshot
                 .diagnostic_groups(language_server_id)
                 .into_iter()
                 .filter(|(_, group)| {
-                    group.entries[group.primary_ix].diagnostic.severity
-                        <= DiagnosticSeverity::WARNING
+                    group.entries[group.primary_ix].diagnostic.severity <= max_severity
                 })
                 .peekable();
             loop {
@@ -1501,6 +1525,7 @@ mod tests {
             client::init_settings(cx);
             workspace::init_settings(cx);
             Project::init_settings(cx);
+            crate::init(cx);
         });
     }
 

@@ -21,6 +21,9 @@ util = { path = "../util" }
 workspace = { path = "../workspace" }
 
 anyhow.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
 smallvec.workspace = true
 postage.workspace = true
 
