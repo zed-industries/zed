@@ -622,9 +622,8 @@ impl Workspace {
         cx.observe(&project, |_, _, cx| cx.notify()).detach();
         cx.subscribe(&project, move |this, _, event, cx| {
             match event {
-                project::Event::RemoteIdChanged(remote_id) => {
+                project::Event::RemoteIdChanged(_) => {
                     this.update_window_title(cx);
-                    this.project_remote_id_changed(*remote_id, cx);
                 }
 
                 project::Event::CollaboratorLeft(peer_id) => {
@@ -776,7 +775,8 @@ impl Workspace {
             }),
         ];
 
-        let mut this = Workspace {
+        cx.defer(|this, cx| this.update_window_title(cx));
+        Workspace {
             weak_self: weak_handle.clone(),
             modal: None,
             zoomed: None,
@@ -805,10 +805,7 @@ impl Workspace {
             leader_updates_tx,
             subscriptions,
             pane_history_timestamp,
-        };
-        this.project_remote_id_changed(project.read(cx).remote_id(), cx);
-        cx.defer(|this, cx| this.update_window_title(cx));
-        this
+        }
     }
 
     fn new_local(
@@ -2510,10 +2507,6 @@ impl Workspace {
 
     pub fn active_pane(&self) -> &ViewHandle<Pane> {
         &self.active_pane
-    }
-
-    fn project_remote_id_changed(&mut self, _project_id: Option<u64>, _cx: &mut ViewContext<Self>) {
-        // TODO
     }
 
     fn collaborator_left(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
