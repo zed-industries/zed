@@ -71,8 +71,8 @@ pub struct WindowContext<'a, 'w, Thread = ()> {
     window: Reference<'w, Window>,
 }
 
-impl<'a, 'w, Thread> WindowContext<'a, 'w, Thread> {
-    pub(crate) fn mutable(app: &'a mut AppContext<Thread>, window: &'w mut Window) -> Self {
+impl<'a, 'w> WindowContext<'a, 'w> {
+    pub(crate) fn mutable(app: &'a mut AppContext, window: &'w mut Window) -> Self {
         Self {
             thread: PhantomData,
             app: Reference::Mutable(app),
@@ -158,8 +158,8 @@ impl WindowContext<'_, '_, MainThread> {
     }
 }
 
-impl<Thread: 'static> Context for WindowContext<'_, '_, Thread> {
-    type EntityContext<'a, 'w, T: Send + Sync + 'static> = ViewContext<'a, 'w, T, Thread>;
+impl Context for WindowContext<'_, '_> {
+    type EntityContext<'a, 'w, T: Send + Sync + 'static> = ViewContext<'a, 'w, T>;
     type Result<T> = T;
 
     fn entity<T: Send + Sync + 'static>(
@@ -167,7 +167,7 @@ impl<Thread: 'static> Context for WindowContext<'_, '_, Thread> {
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
     ) -> Handle<T> {
         let slot = self.entities.reserve();
-        let entity = build_entity(&mut ViewContext::<'_, '_, T, Thread>::mutable(
+        let entity = build_entity(&mut ViewContext::mutable(
             &mut *self.app,
             &mut self.window,
             slot.id,
@@ -190,8 +190,8 @@ impl<Thread: 'static> Context for WindowContext<'_, '_, Thread> {
     }
 }
 
-impl<S, Thread> StackContext for ViewContext<'_, '_, S, Thread> {
-    fn app(&mut self) -> &mut AppContext<Thread> {
+impl<S> StackContext for ViewContext<'_, '_, S> {
+    fn app(&mut self) -> &mut AppContext {
         &mut *self.app
     }
 
@@ -226,12 +226,8 @@ pub struct ViewContext<'a, 'w, S, Thread = ()> {
     thread: PhantomData<Thread>,
 }
 
-impl<'a, 'w, S: Send + Sync + 'static, Thread> ViewContext<'a, 'w, S, Thread> {
-    fn mutable(
-        app: &'a mut AppContext<Thread>,
-        window: &'w mut Window,
-        entity_id: EntityId,
-    ) -> Self {
+impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
+    fn mutable(app: &'a mut AppContext, window: &'w mut Window, entity_id: EntityId) -> Self {
         Self {
             window_cx: WindowContext::mutable(app, window),
             entity_id,
@@ -247,10 +243,7 @@ impl<'a, 'w, S: Send + Sync + 'static, Thread> ViewContext<'a, 'w, S, Thread> {
     pub fn observe<E: Send + Sync + 'static>(
         &mut self,
         handle: &Handle<E>,
-        on_notify: impl Fn(&mut S, Handle<E>, &mut ViewContext<'_, '_, S, Thread>)
-            + Send
-            + Sync
-            + 'static,
+        on_notify: impl Fn(&mut S, Handle<E>, &mut ViewContext<'_, '_, S>) + Send + Sync + 'static,
     ) {
         let this = self.handle();
         let handle = handle.downgrade();
@@ -280,10 +273,7 @@ impl<'a, 'w, S: Send + Sync + 'static, Thread> ViewContext<'a, 'w, S, Thread> {
         self.window.dirty = true;
     }
 
-    pub(crate) fn erase_state<R>(
-        &mut self,
-        f: impl FnOnce(&mut ViewContext<(), Thread>) -> R,
-    ) -> R {
+    pub(crate) fn erase_state<R>(&mut self, f: impl FnOnce(&mut ViewContext<()>) -> R) -> R {
         let entity_id = self.unit_entity.id;
         let mut cx = ViewContext::mutable(
             &mut *self.window_cx.app,
@@ -294,8 +284,8 @@ impl<'a, 'w, S: Send + Sync + 'static, Thread> ViewContext<'a, 'w, S, Thread> {
     }
 }
 
-impl<'a, 'w, S: 'static, Thread: 'static> Context for ViewContext<'a, 'w, S, Thread> {
-    type EntityContext<'b, 'c, U: Send + Sync + 'static> = ViewContext<'b, 'c, U, Thread>;
+impl<'a, 'w, S: 'static> Context for ViewContext<'a, 'w, S> {
+    type EntityContext<'b, 'c, U: Send + Sync + 'static> = ViewContext<'b, 'c, U>;
     type Result<U> = U;
 
     fn entity<T2: Send + Sync + 'static>(

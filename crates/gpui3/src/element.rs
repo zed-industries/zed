@@ -5,18 +5,18 @@ pub trait Element: 'static {
     type State;
     type FrameState;
 
-    fn layout<Thread>(
+    fn layout(
         &mut self,
         state: &mut Self::State,
-        cx: &mut ViewContext<Self::State, Thread>,
+        cx: &mut ViewContext<Self::State>,
     ) -> Result<(LayoutId, Self::FrameState)>;
 
-    fn paint<Thread>(
+    fn paint(
         &mut self,
         layout: Layout,
         state: &mut Self::State,
         frame_state: &mut Self::FrameState,
-        cx: &mut ViewContext<Self::State, Thread>,
+        cx: &mut ViewContext<Self::State>,
     ) -> Result<()>;
 }
 
@@ -42,16 +42,12 @@ pub trait ParentElement<S> {
 }
 
 trait ElementObject<S> {
-    fn layout<Thread>(
-        &mut self,
-        state: &mut S,
-        cx: &mut ViewContext<S, Thread>,
-    ) -> Result<LayoutId>;
-    fn paint<Thread>(
+    fn layout(&mut self, state: &mut S, cx: &mut ViewContext<S>) -> Result<LayoutId>;
+    fn paint(
         &mut self,
         state: &mut S,
         offset: Option<Point<Pixels>>,
-        cx: &mut ViewContext<S, Thread>,
+        cx: &mut ViewContext<S>,
     ) -> Result<()>;
 }
 
@@ -139,19 +135,15 @@ impl<E: Element> ElementObject<E::State> for RenderedElement<E> {
 pub struct AnyElement<S>(Box<dyn ElementObject<S>>);
 
 impl<S> AnyElement<S> {
-    pub fn layout<Thread>(
-        &mut self,
-        state: &mut S,
-        cx: &mut ViewContext<S, Thread>,
-    ) -> Result<LayoutId> {
+    pub fn layout(&mut self, state: &mut S, cx: &mut ViewContext<S>) -> Result<LayoutId> {
         self.0.layout(state, cx)
     }
 
-    pub fn paint<Thread>(
+    pub fn paint(
         &mut self,
         state: &mut S,
         offset: Option<Point<Pixels>>,
-        cx: &mut ViewContext<S, Thread>,
+        cx: &mut ViewContext<S>,
     ) -> Result<()> {
         self.0.paint(state, offset, cx)
     }

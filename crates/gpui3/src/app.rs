@@ -112,6 +112,23 @@ impl DerefMut for AppContext<MainThread> {
 }
 
 impl<Thread> AppContext<Thread> {
+    // TODO: Better names for these?
+    #[inline]
+    pub fn downcast(&self) -> &AppContext<()> {
+        // Any `Thread` can become `()`.
+        //
+        // Can't do this in a blanket `Deref` impl, as it infinitely recurses.
+        unsafe { std::mem::transmute::<&AppContext<Thread>, &AppContext<()>>(self) }
+    }
+
+    #[inline]
+    pub fn downcast_mut(&mut self) -> &mut AppContext<()> {
+        // Any `Thread` can become `()`.
+        //
+        // Can't do this in a blanket `DerefMut` impl, as it infinitely recurses.
+        unsafe { std::mem::transmute::<&mut AppContext<Thread>, &mut AppContext<()>>(self) }
+    }
+
     pub fn text_system(&self) -> &Arc<TextSystem> {
         &self.text_system
     }
@@ -206,7 +223,7 @@ impl<Thread> AppContext<Thread> {
     pub(crate) fn update_window<R>(
         &mut self,
         id: WindowId,
-        update: impl FnOnce(&mut WindowContext<Thread>) -> R,
+        update: impl FnOnce(&mut WindowContext) -> R,
     ) -> Result<R> {
         self.update(|cx| {
             let mut window = cx
@@ -216,7 +233,7 @@ impl<Thread> AppContext<Thread> {
                 .take()
                 .unwrap();
 
-            let result = update(&mut WindowContext::mutable(cx, &mut window));
+            let result = update(&mut WindowContext::mutable(cx.downcast_mut(), &mut window));
             window.dirty = true;
 
             cx.windows
@@ -276,8 +293,8 @@ impl<Thread> AppContext<Thread> {
     }
 }
 
-impl<Thread: 'static> Context for AppContext<Thread> {
-    type EntityContext<'a, 'w, T: Send + Sync + 'static> = ModelContext<'a, T, Thread>;
+impl Context for AppContext {
+    type EntityContext<'a, 'w, T: Send + Sync + 'static> = ModelContext<'a, T>;
     type Result<T> = T;
 
     fn entity<T: Send + Sync + 'static>(

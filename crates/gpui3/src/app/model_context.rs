@@ -7,8 +7,8 @@ pub struct ModelContext<'a, T, Thread = ()> {
     entity_id: EntityId,
 }
 
-impl<'a, T: Send + Sync + 'static, Thread> ModelContext<'a, T, Thread> {
-    pub(crate) fn mutable(app: &'a mut AppContext<Thread>, entity_id: EntityId) -> Self {
+impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
+    pub(crate) fn mutable(app: &'a mut AppContext, entity_id: EntityId) -> Self {
         Self {
             app: Reference::Mutable(app),
             entity_type: PhantomData,
@@ -41,7 +41,7 @@ impl<'a, T: Send + Sync + 'static, Thread> ModelContext<'a, T, Thread> {
     pub fn observe<E: Send + Sync + 'static>(
         &mut self,
         handle: &Handle<E>,
-        on_notify: impl Fn(&mut T, Handle<E>, &mut ModelContext<'_, T, Thread>) + Send + Sync + 'static,
+        on_notify: impl Fn(&mut T, Handle<E>, &mut ModelContext<'_, T>) + Send + Sync + 'static,
     ) {
         let this = self.handle();
         let handle = handle.downgrade();
