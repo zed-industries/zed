@@ -18,6 +18,12 @@ impl KitchenSinkStory {
             .child(Story::label(cx, "Elements"))
             .child(div().flex().flex_col().children_any(element_stories))
             .child(Story::label(cx, "Components"))
-            .child(div().flex().flex_col().children_any(component_stories))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .py_4()
+                    .children_any(component_stories),
+            )
     }
 }
