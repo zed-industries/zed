@@ -30,7 +30,10 @@ impl Workspace {
         let theme = rose_pine_dawn();
 
         dbg!("Render workspace");
-        div().size_full().fill(gpui3::hsla(0.83, 1., 0.5, 1.))
+        div()
+
+        // TODO: Implement style.
+        //.size_full().fill(gpui3::hsla(0.83, 1., 0.5, 1.))
 
         // TODO: Debug font not font.
         //.child("Is this thing on?")
