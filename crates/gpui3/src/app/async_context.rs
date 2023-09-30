@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 use std::sync::Weak;
 
 #[derive(Clone)]
-pub struct AsyncContext(pub(crate) Weak<Mutex<AppContext>>);
+pub struct AsyncContext<Thread = ()>(pub(crate) Weak<Mutex<AppContext<Thread>>>);
 
 impl Context for AsyncContext {
     type EntityContext<'a, 'b, T: Send + Sync + 'static> = ModelContext<'a, T>;
@@ -36,7 +36,7 @@ impl Context for AsyncContext {
     }
 }
 
-impl AsyncContext {
+impl<Thread: 'static + Send + Sync> AsyncContext<Thread> {
     pub fn update_window<T>(
         &self,
         handle: AnyWindowHandle,

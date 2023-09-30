@@ -1,5 +1,6 @@
 #![allow(dead_code, unused_variables)]
 
+use gpui3::{Bounds, WindowBounds, WindowOptions};
 use log::LevelFilter;
 use simplelog::SimpleLogger;
 
@@ -19,9 +20,20 @@ fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
     gpui3::App::production().run(|cx| {
-        cx.run_on_main(|cx| {
-            let window = cx.open_window(Default::default(), |cx| workspace(cx));
-        });
+        let window = cx.open_window(
+            WindowOptions {
+                bounds: WindowBounds::Fixed(Bounds {
+                    size: gpui3::Size {
+                        width: 1400_f32.into(),
+                        height: 900_f32.into(),
+                    },
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            |cx| workspace(cx),
+        );
+        cx.activate(true);
     });
 }
 

@@ -27,7 +27,7 @@ use std::{
 use util::ResultExt;
 
 #[derive(Clone)]
-pub struct App(Arc<Mutex<AppContext>>);
+pub struct App(Arc<Mutex<AppContext<MainThread>>>);
 
 impl App {
     pub fn production() -> Self {
@@ -66,7 +66,7 @@ impl App {
 
     pub fn run<F>(self, on_finish_launching: F)
     where
-        F: 'static + FnOnce(&mut AppContext),
+        F: 'static + FnOnce(&mut AppContext<MainThread>),
     {
         let this = self.clone();
         let platform = self.0.lock().platform.clone();
@@ -82,7 +82,7 @@ type Handlers<Thread> =
 
 pub struct AppContext<Thread = ()> {
     thread: PhantomData<Thread>,
-    this: Weak<Mutex<AppContext>>,
+    this: Weak<Mutex<AppContext<Thread>>>,
     platform: MainThreadOnly<dyn Platform>,
     dispatcher: Arc<dyn PlatformDispatcher>,
     text_system: Arc<TextSystem>,
@@ -97,7 +97,7 @@ pub struct AppContext<Thread = ()> {
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
 }
 
-impl<Thread> AppContext<Thread> {
+impl<Thread: 'static + Send + Sync> AppContext<Thread> {
     // TODO: Better names for these?
     #[inline]
     pub fn downcast(&self) -> &AppContext<()> {
@@ -119,7 +119,7 @@ impl<Thread> AppContext<Thread> {
         &self.text_system
     }
 
-    pub fn to_async(&self) -> AsyncContext {
+    pub fn to_async(&self) -> AsyncContext<Thread> {
         AsyncContext(self.this.clone())
     }
 
@@ -133,8 +133,9 @@ impl<Thread> AppContext<Thread> {
         let this = self.this.upgrade().unwrap();
         run_on_main(self.dispatcher.clone(), move || {
             let cx = &mut *this.lock();
-            let main_thread_cx =
-                unsafe { std::mem::transmute::<&mut AppContext, &mut AppContext<MainThread>>(cx) };
+            let main_thread_cx = unsafe {
+                std::mem::transmute::<&mut AppContext<Thread>, &mut AppContext<MainThread>>(cx)
+            };
             main_thread_cx.update(|cx| f(cx))
         })
     }
@@ -150,8 +151,9 @@ impl<Thread> AppContext<Thread> {
         let this = self.this.upgrade().unwrap();
         spawn_on_main(self.dispatcher.clone(), move || {
             let cx = &mut *this.lock();
-            let main_thread_cx =
-                unsafe { std::mem::transmute::<&mut AppContext, &mut AppContext<MainThread>>(cx) };
+            let main_thread_cx = unsafe {
+                std::mem::transmute::<&mut AppContext<Thread>, &mut AppContext<MainThread>>(cx)
+            };
             main_thread_cx.update(|cx| f(cx))
         })
     }
