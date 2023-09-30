@@ -230,19 +230,16 @@ impl<Thread: 'static + Send + Sync> AppContext<Thread> {
     }
 
     fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
-        dbg!("update");
         self.pending_updates += 1;
         let result = update(self);
-        self.pending_updates -= 1;
-        if self.pending_updates == 0 {
+        if self.pending_updates == 1 {
             self.flush_effects();
         }
+        self.pending_updates -= 1;
         result
     }
 
     fn flush_effects(&mut self) {
-        dbg!("Flush effects");
-
         while let Some(effect) = self.pending_effects.pop_front() {
             match effect {
                 Effect::Notify(entity_id) => self.apply_notify_effect(entity_id),
@@ -319,16 +316,16 @@ impl AppContext<MainThread> {
         options: crate::WindowOptions,
         build_root_view: impl FnOnce(&mut WindowContext) -> RootView<S> + Send + 'static,
     ) -> WindowHandle<S> {
-        let id = self.windows.insert(None);
-        let handle = WindowHandle::new(id);
-        let mut window = Window::new(handle.into(), options, self);
-        let root_view = build_root_view(&mut WindowContext::mutable(
-            self.downcast_mut(),
-            &mut window,
-        ));
-        window.root_view.replace(root_view.into_any());
-        self.windows.get_mut(id).unwrap().replace(window);
-        handle
+        self.update(|cx| {
+            let id = cx.windows.insert(None);
+            let handle = WindowHandle::new(id);
+            let mut window = Window::new(handle.into(), options, cx);
+            let root_view =
+                build_root_view(&mut WindowContext::mutable(cx.downcast_mut(), &mut window));
+            window.root_view.replace(root_view.into_any());
+            cx.windows.get_mut(id).unwrap().replace(window);
+            handle
+        })
     }
 }
 

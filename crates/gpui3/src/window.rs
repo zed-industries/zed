@@ -128,7 +128,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 
     pub(crate) fn draw(&mut self) -> Result<()> {
-        dbg!("Draw");
         let unit_entity = self.unit_entity.clone();
         self.update_entity(&unit_entity, |_, cx| {
             let mut root_view = cx.window.root_view.take().unwrap();
@@ -138,14 +137,13 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 .layout_engine
                 .compute_layout(root_layout_id, available_space)?;
             let layout = cx.window.layout_engine.layout(root_layout_id)?;
-            dbg!("Paint root view");
             root_view.paint(layout, &mut (), &mut frame_state, cx)?;
             cx.window.root_view = Some(root_view);
             let scene = cx.window.scene.take();
 
             dbg!(&scene);
 
-            // todo!
+            // // todo!
             // self.run_on_main(|cx| {
             //     cx.window
             //         .platform_window

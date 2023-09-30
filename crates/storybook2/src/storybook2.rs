@@ -20,26 +20,21 @@ fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
     gpui3::App::production().run(|cx| {
-        cx.run_on_main(|cx| {
-            dbg!("Run on main");
-            let window = cx.open_window(
-                WindowOptions {
-                    bounds: WindowBounds::Fixed(Bounds {
-                        size: gpui3::Size {
-                            width: 800_f32.into(),
-                            height: 600_f32.into(),
-                        },
-                        ..Default::default()
-                    }),
+        let window = cx.open_window(
+            WindowOptions {
+                bounds: WindowBounds::Fixed(Bounds {
+                    size: gpui3::Size {
+                        width: 800_f32.into(),
+                        height: 600_f32.into(),
+                    },
                     ..Default::default()
-                },
-                |cx| {
-                    dbg!("in build_root_view");
-                    workspace(cx)
-                },
-            );
-            cx.activate(true);
-        });
+                }),
+                ..Default::default()
+            },
+            |cx| workspace(cx),
+        );
+
+        cx.activate(true);
     });
 }
 

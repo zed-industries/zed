@@ -228,7 +228,6 @@ impl MetalRenderer {
             "instance buffer exhausted"
         );
 
-        dbg!(quads.len());
         command_encoder.draw_primitives_instanced(
             metal::MTLPrimitiveType::Triangle,
             0,

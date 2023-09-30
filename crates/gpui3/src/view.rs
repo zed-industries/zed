@@ -59,7 +59,6 @@ impl<S: Send + Sync + 'static, P: Send + 'static> Element for View<S, P> {
         _: &mut Self::State,
         cx: &mut ViewContext<Self::State>,
     ) -> Result<(LayoutId, Self::FrameState)> {
-        dbg!("Layout view");
         self.state.update(cx, |state, cx| {
             let mut element = (self.render)(state, cx);
             let layout_id = element.layout(state, cx)?;
@@ -74,7 +73,6 @@ impl<S: Send + Sync + 'static, P: Send + 'static> Element for View<S, P> {
         element: &mut Self::FrameState,
         cx: &mut ViewContext<Self::State>,
     ) -> Result<()> {
-        dbg!("Paint view");
         self.state
             .update(cx, |state, cx| element.paint(state, None, cx))
     }
@@ -128,11 +126,10 @@ impl<S: 'static> Element for AnyView<S> {
     fn paint(
         &mut self,
         layout: Layout,
-        _: &mut Self::State,
-        element: &mut Self::FrameState,
+        _: &mut (),
+        element: &mut Box<dyn Any>,
         cx: &mut ViewContext<Self::State>,
     ) -> Result<()> {
-        dbg!("Element.paint for AnyView");
         self.view.lock().paint(layout, element.as_mut(), cx)
     }
 }
