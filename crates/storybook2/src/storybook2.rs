@@ -15,25 +15,31 @@ mod workspace;
 // }
 
 fn main() {
-    unsafe { backtrace_on_stack_overflow::enable() };
+    // unsafe { backtrace_on_stack_overflow::enable() };
 
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
     gpui3::App::production().run(|cx| {
-        let window = cx.open_window(
-            WindowOptions {
-                bounds: WindowBounds::Fixed(Bounds {
-                    size: gpui3::Size {
-                        width: 800_f32.into(),
-                        height: 600_f32.into(),
-                    },
+        cx.run_on_main(|cx| {
+            dbg!("Run on main");
+            let window = cx.open_window(
+                WindowOptions {
+                    bounds: WindowBounds::Fixed(Bounds {
+                        size: gpui3::Size {
+                            width: 800_f32.into(),
+                            height: 600_f32.into(),
+                        },
+                        ..Default::default()
+                    }),
                     ..Default::default()
-                }),
-                ..Default::default()
-            },
-            |cx| workspace(cx),
-        );
-        cx.activate(true);
+                },
+                |cx| {
+                    dbg!("in build_root_view");
+                    workspace(cx)
+                },
+            );
+            cx.activate(true);
+        });
     });
 }
 

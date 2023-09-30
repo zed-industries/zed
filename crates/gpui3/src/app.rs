@@ -232,6 +232,7 @@ impl<Thread: 'static + Send + Sync> AppContext<Thread> {
     }
 
     fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
+        dbg!("update");
         self.pending_updates += 1;
         let result = update(self);
         self.pending_updates -= 1;
@@ -242,6 +243,8 @@ impl<Thread: 'static + Send + Sync> AppContext<Thread> {
     }
 
     fn flush_effects(&mut self) {
+        dbg!("Flush effects");
+
         while let Some(effect) = self.pending_effects.pop_front() {
             match effect {
                 Effect::Notify(entity_id) => self.apply_notify_effect(entity_id),
