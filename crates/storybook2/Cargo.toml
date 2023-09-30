@@ -10,6 +10,8 @@ path = "src/storybook2.rs"
 
 [dependencies]
 anyhow.workspace = true
+# TODO: Remove after diagnosing stack overflow.
+backtrace-on-stack-overflow = "0.3.0"
 gpui3 = { path = "../gpui3" }
 log.workspace = true
 rust-embed.workspace = true

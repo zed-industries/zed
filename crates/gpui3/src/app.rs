@@ -97,20 +97,6 @@ pub struct AppContext<Thread = ()> {
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
 }
 
-impl Deref for AppContext<MainThread> {
-    type Target = AppContext<()>;
-
-    fn deref(&self) -> &Self::Target {
-        self
-    }
-}
-
-impl DerefMut for AppContext<MainThread> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self
-    }
-}
-
 impl<Thread> AppContext<Thread> {
     // TODO: Better names for these?
     #[inline]
@@ -333,7 +319,10 @@ impl AppContext<MainThread> {
         let id = self.windows.insert(None);
         let handle = WindowHandle::new(id);
         let mut window = Window::new(handle.into(), options, self);
-        let root_view = build_root_view(&mut WindowContext::mutable(self, &mut window));
+        let root_view = build_root_view(&mut WindowContext::mutable(
+            self.downcast_mut(),
+            &mut window,
+        ));
         window.root_view.replace(root_view.into_any());
         self.windows.get_mut(id).unwrap().replace(window);
         handle

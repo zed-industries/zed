@@ -14,6 +14,8 @@ mod workspace;
 // }
 
 fn main() {
+    unsafe { backtrace_on_stack_overflow::enable() };
+
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
     gpui3::App::production().run(|cx| {
