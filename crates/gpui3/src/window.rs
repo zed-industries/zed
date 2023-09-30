@@ -80,33 +80,8 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         }
     }
 
-    pub(crate) fn draw(&mut self) -> Result<()> {
-        dbg!("Draw");
-        let unit_entity = self.unit_entity.clone();
-        self.update_entity(&unit_entity, |_, cx| {
-            let mut root_view = cx.window.root_view.take().unwrap();
-            let (root_layout_id, mut frame_state) = root_view.layout(&mut (), cx)?;
-            let available_space = cx.window.content_size.map(Into::into);
-            cx.window
-                .layout_engine
-                .compute_layout(root_layout_id, available_space)?;
-            let layout = cx.window.layout_engine.layout(root_layout_id)?;
-            dbg!("Paint root view");
-            root_view.paint(layout, &mut (), &mut frame_state, cx)?;
-            cx.window.root_view = Some(root_view);
-            let scene = cx.window.scene.take();
-            dbg!(&scene);
-
-            // todo!
-            // self.run_on_main(|cx| {
-            //     cx.window
-            //         .platform_window
-            //         .borrow_on_main_thread()
-            //         .draw(scene);
-            // });
-
-            Ok(())
-        })
+    pub fn notify(&mut self) {
+        self.window.dirty = true;
     }
 
     pub fn request_layout(
@@ -150,6 +125,37 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub fn mouse_position(&self) -> Point<Pixels> {
         self.window.mouse_position
+    }
+
+    pub(crate) fn draw(&mut self) -> Result<()> {
+        dbg!("Draw");
+        let unit_entity = self.unit_entity.clone();
+        self.update_entity(&unit_entity, |_, cx| {
+            let mut root_view = cx.window.root_view.take().unwrap();
+            let (root_layout_id, mut frame_state) = root_view.layout(&mut (), cx)?;
+            let available_space = cx.window.content_size.map(Into::into);
+            cx.window
+                .layout_engine
+                .compute_layout(root_layout_id, available_space)?;
+            let layout = cx.window.layout_engine.layout(root_layout_id)?;
+            dbg!("Paint root view");
+            root_view.paint(layout, &mut (), &mut frame_state, cx)?;
+            cx.window.root_view = Some(root_view);
+            let scene = cx.window.scene.take();
+
+            dbg!(&scene);
+
+            // todo!
+            // self.run_on_main(|cx| {
+            //     cx.window
+            //         .platform_window
+            //         .borrow_on_main_thread()
+            //         .draw(scene);
+            // });
+
+            cx.window.dirty = false;
+            Ok(())
+        })
     }
 }
 
@@ -268,11 +274,11 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
     }
 
     pub fn notify(&mut self) {
-        let entity_id = self.entity_id;
-        self.app
+        self.window_cx.notify();
+        self.window_cx
+            .app
             .pending_effects
-            .push_back(Effect::Notify(entity_id));
-        self.window.dirty = true;
+            .push_back(Effect::Notify(self.entity_id));
     }
 
     pub(crate) fn erase_state<R>(&mut self, f: impl FnOnce(&mut ViewContext<()>) -> R) -> R {

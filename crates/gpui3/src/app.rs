@@ -21,7 +21,6 @@ use smallvec::SmallVec;
 use std::{
     any::{type_name, Any, TypeId},
     marker::PhantomData,
-    ops::{Deref, DerefMut},
     sync::{Arc, Weak},
 };
 use util::ResultExt;
@@ -220,7 +219,6 @@ impl<Thread: 'static + Send + Sync> AppContext<Thread> {
                 .unwrap();
 
             let result = update(&mut WindowContext::mutable(cx.downcast_mut(), &mut window));
-            window.dirty = true;
 
             cx.windows
                 .get_mut(id)
@@ -266,7 +264,7 @@ impl<Thread: 'static + Send + Sync> AppContext<Thread> {
 
         for dirty_window_id in dirty_window_ids {
             self.update_window(dirty_window_id, |cx| cx.draw())
-                .unwrap() // We know we have the window.
+                .unwrap()
                 .log_err();
         }
     }

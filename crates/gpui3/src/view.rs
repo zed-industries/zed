@@ -102,9 +102,7 @@ impl<S: Send + Sync + 'static, P: Send + 'static> ViewObject for View<S, P> {
 
     fn paint(&mut self, _: Layout, element: &mut dyn Any, cx: &mut WindowContext) -> Result<()> {
         self.state.update(cx, |state, cx| {
-            let boxed_element = element.downcast_mut::<Box<dyn Any>>().unwrap();
-            let element = boxed_element.downcast_mut::<AnyElement<S>>().unwrap();
-
+            let element = element.downcast_mut::<AnyElement<S>>().unwrap();
             element.paint(state, None, cx)
         })
     }
@@ -135,7 +133,7 @@ impl<S: 'static> Element for AnyView<S> {
         cx: &mut ViewContext<Self::State>,
     ) -> Result<()> {
         dbg!("Element.paint for AnyView");
-        self.view.lock().paint(layout, element, cx)
+        self.view.lock().paint(layout, element.as_mut(), cx)
     }
 }
 
