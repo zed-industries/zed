@@ -24,8 +24,8 @@ fn main() {
             WindowOptions {
                 bounds: WindowBounds::Fixed(Bounds {
                     size: gpui3::Size {
-                        width: 1400_f32.into(),
-                        height: 900_f32.into(),
+                        width: 800_f32.into(),
+                        height: 600_f32.into(),
                     },
                     ..Default::default()
                 }),
