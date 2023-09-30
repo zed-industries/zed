@@ -137,40 +137,38 @@ impl<Thread> AppContext<Thread> {
         AsyncContext(self.this.clone())
     }
 
-    // pub fn run_on_main<R>(
-    //     &self,
-    //     f: impl FnOnce(&mut AppContext<MainThread>) -> R + Send + 'static,
-    // ) -> impl Future<Output = R>
-    // where
-    //     R: Send + 'static,
-    // {
-    //     let this = self.this.upgrade().unwrap();
-    //     run_on_main(self.dispatcher.clone(), move || {
-    //         let cx = &mut *this.lock();
-    //         let main_thread_cx: &mut AppContext<MainThread> = unsafe { std::mem::transmute(cx) };
-    //         main_thread_cx.update(|cx| f(cx))
-    //     })
-    // }
+    pub fn run_on_main<R>(
+        &self,
+        f: impl FnOnce(&mut AppContext<MainThread>) -> R + Send + 'static,
+    ) -> impl Future<Output = R>
+    where
+        R: Send + 'static,
+    {
+        let this = self.this.upgrade().unwrap();
+        run_on_main(self.dispatcher.clone(), move || {
+            let cx = &mut *this.lock();
+            let main_thread_cx =
+                unsafe { std::mem::transmute::<&mut AppContext, &mut AppContext<MainThread>>(cx) };
+            main_thread_cx.update(|cx| f(cx))
+        })
+    }
 
-    // pub fn spawn_on_main<F, R>(
-    //     &self,
-    //     f: impl FnOnce(&mut AppContext<MainThread>) -> F + Send + 'static,
-    // ) -> impl Future<Output = R>
-    // where
-    //     F: Future<Output = R> + 'static,
-    //     R: Send + 'static,
-    // {
-    //     let this = self.this.upgrade().unwrap();
-    //     spawn_on_main(self.dispatcher.clone(), move || {
-    //         let cx = &mut *this.lock();
-    //         let platform = cx.platform.borrow_on_main_thread().clone();
-    //         // todo!()
-    //         // cx.update(|cx| f(&mut MainThreadContext::mutable(cx, platform.as_ref())))
-
-    //         future::ready(())
-    //     })
-    //     // self.platform.read(move |platform| {
-    // }
+    pub fn spawn_on_main<F, R>(
+        &self,
+        f: impl FnOnce(&mut AppContext<MainThread>) -> F + Send + 'static,
+    ) -> impl Future<Output = R>
+    where
+        F: Future<Output = R> + 'static,
+        R: Send + 'static,
+    {
+        let this = self.this.upgrade().unwrap();
+        spawn_on_main(self.dispatcher.clone(), move || {
+            let cx = &mut *this.lock();
+            let main_thread_cx =
+                unsafe { std::mem::transmute::<&mut AppContext, &mut AppContext<MainThread>>(cx) };
+            main_thread_cx.update(|cx| f(cx))
+        })
+    }
 
     pub fn text_style(&self) -> TextStyle {
         let mut style = TextStyle::default();
@@ -319,7 +317,7 @@ impl Context for AppContext {
 }
 
 impl AppContext<MainThread> {
-    fn platform(&self) -> &dyn Platform {
+    pub(crate) fn platform(&self) -> &dyn Platform {
         self.platform.borrow_on_main_thread()
     }
 
@@ -334,7 +332,7 @@ impl AppContext<MainThread> {
     ) -> WindowHandle<S> {
         let id = self.windows.insert(None);
         let handle = WindowHandle::new(id);
-        let mut window = Window::new(handle.into(), options, self.platform(), self);
+        let mut window = Window::new(handle.into(), options, self);
         let root_view = build_root_view(&mut WindowContext::mutable(self, &mut window));
         window.root_view.replace(root_view.into_any());
         self.windows.get_mut(id).unwrap().replace(window);

@@ -26,10 +26,9 @@ impl Window {
     pub fn new(
         handle: AnyWindowHandle,
         options: WindowOptions,
-        platform: &dyn Platform,
         cx: &mut AppContext<MainThread>,
     ) -> Self {
-        let platform_window = platform.open_window(handle, options);
+        let platform_window = cx.platform().open_window(handle, options);
         let mouse_position = platform_window.mouse_position();
         let content_size = platform_window.content_size();
         let scale_factor = platform_window.scale_factor();
@@ -46,7 +45,8 @@ impl Window {
             }
         }));
 
-        let platform_window = MainThreadOnly::new(Arc::new(platform_window), platform.dispatcher());
+        let platform_window =
+            MainThreadOnly::new(Arc::new(platform_window), cx.platform().dispatcher());
 
         Window {
             handle,

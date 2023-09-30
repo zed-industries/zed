@@ -17,7 +17,9 @@ fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
     gpui3::App::production().run(|cx| {
-        let window = cx.open_window(Default::default(), |cx| workspace(cx));
+        cx.run_on_main(|cx| {
+            let window = cx.open_window(Default::default(), |cx| workspace(cx));
+        });
     });
 }
 
