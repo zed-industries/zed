@@ -436,6 +436,7 @@ pub struct Channel {
 pub struct ChannelsForUser {
     pub channels: ChannelGraph,
     pub channel_participants: HashMap<ChannelId, Vec<UserId>>,
+    pub channels_with_changed_notes: HashSet<ChannelId>,
     pub channels_with_admin_privileges: HashSet<ChannelId>,
 }
 

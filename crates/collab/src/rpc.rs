@@ -2691,7 +2691,7 @@ async fn update_channel_buffer(
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
 
-    let collaborators = db
+    let (collaborators, non_collaborators) = db
         .update_channel_buffer(channel_id, session.user_id, &request.operations)
         .await?;
 
@@ -2704,6 +2704,25 @@ async fn update_channel_buffer(
         },
         &session.peer,
     );
+
+    let pool = &*session.connection_pool().await;
+
+    broadcast(
+        None,
+        non_collaborators
+            .iter()
+            .flat_map(|user_id| pool.user_connection_ids(*user_id)),
+        |peer_id| {
+            session.peer.send(
+                peer_id.into(),
+                proto::UpdateChannels {
+                    notes_changed: vec![channel_id.to_proto()],
+                    ..Default::default()
+                },
+            )
+        },
+    );
+
     Ok(())
 }
 
@@ -2985,6 +3004,12 @@ fn build_initial_channels_update(
             name: channel.name,
         });
     }
+
+    update.notes_changed = channels
+        .channels_with_changed_notes
+        .iter()
+        .map(|channel_id| channel_id.to_proto())
+        .collect();
 
     update.insert_edge = channels.channels.edges;
 

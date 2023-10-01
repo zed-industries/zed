@@ -391,7 +391,8 @@ impl Database {
                 .all(&*tx)
                 .await?;
 
-            self.get_user_channels(channel_memberships, &tx).await
+            self.get_user_channels(user_id, channel_memberships, &tx)
+                .await
         })
         .await
     }
@@ -414,13 +415,15 @@ impl Database {
                 .all(&*tx)
                 .await?;
 
-            self.get_user_channels(channel_membership, &tx).await
+            self.get_user_channels(user_id, channel_membership, &tx)
+                .await
         })
         .await
     }
 
     pub async fn get_user_channels(
         &self,
+        user_id: UserId,
         channel_memberships: Vec<channel_member::Model>,
         tx: &DatabaseTransaction,
     ) -> Result<ChannelsForUser> {
@@ -460,10 +463,18 @@ impl Database {
             }
         }
 
+        let mut channels_with_changed_notes = HashSet::default();
+        for channel in graph.channels.iter() {
+            if self.has_note_changed(user_id, channel.id, tx).await? {
+                channels_with_changed_notes.insert(channel.id);
+            }
+        }
+
         Ok(ChannelsForUser {
             channels: graph,
             channel_participants,
             channels_with_admin_privileges,
+            channels_with_changed_notes,
         })
     }
 

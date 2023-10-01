@@ -43,6 +43,7 @@ pub type ChannelData = (Channel, ChannelPath);
 pub struct Channel {
     pub id: ChannelId,
     pub name: String,
+    pub has_changed: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
@@ -205,6 +206,13 @@ impl ChannelStore {
             |channel, cx| ChannelBuffer::new(channel, client, user_store, cx),
             cx,
         )
+    }
+
+    pub fn has_channel_buffer_changed(&self, channel_id: ChannelId) -> Option<bool> {
+        self.channel_index
+            .by_id()
+            .get(&channel_id)
+            .map(|channel| channel.has_changed)
     }
 
     pub fn open_channel_chat(
@@ -779,6 +787,7 @@ impl ChannelStore {
                     Arc::new(Channel {
                         id: channel.id,
                         name: channel.name,
+                        has_changed: false,
                     }),
                 ),
             }
@@ -787,7 +796,8 @@ impl ChannelStore {
         let channels_changed = !payload.channels.is_empty()
             || !payload.delete_channels.is_empty()
             || !payload.insert_edge.is_empty()
-            || !payload.delete_edge.is_empty();
+            || !payload.delete_edge.is_empty()
+            || !payload.notes_changed.is_empty();
 
         if channels_changed {
             if !payload.delete_channels.is_empty() {
@@ -812,6 +822,10 @@ impl ChannelStore {
             let mut index = self.channel_index.bulk_insert();
             for channel in payload.channels {
                 index.insert(channel)
+            }
+
+            for id_changed in payload.notes_changed {
+                index.has_changed(id_changed);
             }
 
             for edge in payload.insert_edge {

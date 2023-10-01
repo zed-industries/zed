@@ -220,7 +220,7 @@ async fn test_channel_buffers_diffs(db: &Database) {
     };
 
     // Zero test: A should not register as changed on an unitialized channel buffer
-    assert!(!db.has_buffer_changed(a_id, zed_id).await.unwrap());
+    assert!(!db.test_has_note_changed(a_id, zed_id).await.unwrap());
 
     let _ = db
         .join_channel_buffer(zed_id, a_id, connection_id_a)
@@ -228,7 +228,7 @@ async fn test_channel_buffers_diffs(db: &Database) {
         .unwrap();
 
     // Zero test: A should register as changed on an empty channel buffer
-    assert!(!db.has_buffer_changed(a_id, zed_id).await.unwrap());
+    assert!(!db.test_has_note_changed(a_id, zed_id).await.unwrap());
 
     let mut buffer_a = Buffer::new(0, 0, "".to_string());
     let mut operations = Vec::new();
@@ -245,15 +245,16 @@ async fn test_channel_buffers_diffs(db: &Database) {
         .unwrap();
 
     // Smoke test: Does B register as changed, A as unchanged?
-    assert!(db.has_buffer_changed(b_id, zed_id).await.unwrap());
-    assert!(!db.has_buffer_changed(a_id, zed_id).await.unwrap());
+    assert!(db.test_has_note_changed(b_id, zed_id).await.unwrap());
+
+    assert!(!db.test_has_note_changed(a_id, zed_id).await.unwrap());
 
     db.leave_channel_buffer(zed_id, connection_id_a)
         .await
         .unwrap();
 
     // Snapshotting from leaving the channel buffer should not have a diff
-    assert!(!db.has_buffer_changed(a_id, zed_id).await.unwrap());
+    assert!(!db.test_has_note_changed(a_id, zed_id).await.unwrap());
 
     let _ = db
         .join_channel_buffer(zed_id, b_id, connection_id_b)
@@ -261,13 +262,13 @@ async fn test_channel_buffers_diffs(db: &Database) {
         .unwrap();
 
     // B has opened the channel buffer, so we shouldn't have any diff
-    assert!(!db.has_buffer_changed(b_id, zed_id).await.unwrap());
+    assert!(!db.test_has_note_changed(b_id, zed_id).await.unwrap());
 
     db.leave_channel_buffer(zed_id, connection_id_b)
         .await
         .unwrap();
 
     // Since B just opened and closed the buffer without editing, neither should have a diff
-    assert!(!db.has_buffer_changed(a_id, zed_id).await.unwrap());
-    assert!(!db.has_buffer_changed(b_id, zed_id).await.unwrap());
+    assert!(!db.test_has_note_changed(a_id, zed_id).await.unwrap());
+    assert!(!db.test_has_note_changed(b_id, zed_id).await.unwrap());
 }

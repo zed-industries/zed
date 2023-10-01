@@ -267,10 +267,18 @@ export default function contacts_panel(): any {
         }),
         channel_row: item_row,
         channel_name: {
-            ...text(layer, "sans", { size: "sm" }),
-            margin: {
-                left: CHANNEL_SPACING,
+            active: {
+                ...text(layer, "sans", { size: "sm", weight: "bold" }),
+                margin: {
+                    left: CHANNEL_SPACING,
+                },
             },
+            inactive: {
+                ...text(layer, "sans", { size: "sm" }),
+                margin: {
+                    left: CHANNEL_SPACING,
+                },
+            }
         },
         list_empty_label_container: {
             margin: {

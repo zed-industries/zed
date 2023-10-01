@@ -410,10 +410,7 @@ async fn test_channel_buffer_disconnect(
     channel_buffer_a.update(cx_a, |buffer, _| {
         assert_eq!(
             buffer.channel().as_ref(),
-            &Channel {
-                id: channel_id,
-                name: "the-channel".to_string()
-            }
+            &channel(channel_id, "the-channel")
         );
         assert!(!buffer.is_connected());
     });
@@ -438,13 +435,18 @@ async fn test_channel_buffer_disconnect(
     channel_buffer_b.update(cx_b, |buffer, _| {
         assert_eq!(
             buffer.channel().as_ref(),
-            &Channel {
-                id: channel_id,
-                name: "the-channel".to_string()
-            }
+            &channel(channel_id, "the-channel")
         );
         assert!(!buffer.is_connected());
     });
+}
+
+fn channel(id: u64, name: &'static str) -> Channel {
+    Channel {
+        id,
+        name: name.to_string(),
+        has_changed: false,
+    }
 }
 
 #[gpui::test]
@@ -627,6 +629,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
+
     let client_c = server.create_client(cx_c, "user_c").await;
 
     cx_a.update(editor::init);
@@ -755,6 +758,50 @@ async fn test_following_to_channel_notes_without_a_shared_project(
     channel_view_2_b.read_with(cx_b, |notes, cx| {
         assert_eq!(notes.channel(cx).name, "channel-2");
     });
+}
+
+#[gpui::test]
+async fn test_channel_buffer_changes(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+
+    let channel_id = server
+        .make_channel(
+            "the-channel",
+            None,
+            (&client_a, cx_a),
+            &mut [(&client_b, cx_b)],
+        )
+        .await;
+
+    let channel_buffer_a = client_a
+        .channel_store()
+        .update(cx_a, |store, cx| store.open_channel_buffer(channel_id, cx))
+        .await
+        .unwrap();
+
+    channel_buffer_a.update(cx_a, |buffer, cx| {
+        buffer.buffer().update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "1")], None, cx);
+        })
+    });
+    deterministic.run_until_parked();
+
+    let has_buffer_changed = cx_b.read(|cx| {
+        client_b
+            .channel_store()
+            .read(cx)
+            .has_channel_buffer_changed(channel_id)
+            .unwrap()
+    });
+
+    assert!(has_buffer_changed);
 }
 
 #[track_caller]

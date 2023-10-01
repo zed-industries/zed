@@ -1816,12 +1816,19 @@ impl CollabPanel {
                         .left(),
                 )
                 .with_child(
-                    Label::new(channel.name.clone(), theme.channel_name.text.clone())
-                        .contained()
-                        .with_style(theme.channel_name.container)
-                        .aligned()
-                        .left()
-                        .flex(1., true),
+                    Label::new(
+                        channel.name.clone(),
+                        theme
+                            .channel_name
+                            .in_state(channel.has_changed)
+                            .text
+                            .clone(),
+                    )
+                    .contained()
+                    .with_style(theme.channel_name.container)
+                    .aligned()
+                    .left()
+                    .flex(1., true),
                 )
                 .with_child(
                     MouseEventHandler::new::<ChannelCall, _>(ix, cx, move |_, cx| {

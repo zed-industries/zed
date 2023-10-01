@@ -251,7 +251,7 @@ pub struct CollabPanel {
     pub leave_call: Interactive<ContainedText>,
     pub contact_row: Toggleable<Interactive<ContainerStyle>>,
     pub channel_row: Toggleable<Interactive<ContainerStyle>>,
-    pub channel_name: ContainedText,
+    pub channel_name: Toggleable<ContainedText>,
     pub row_height: f32,
     pub project_row: Toggleable<Interactive<ProjectRow>>,
     pub tree_branch: Toggleable<Interactive<TreeBranch>>,

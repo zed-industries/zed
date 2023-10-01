@@ -1,12 +1,12 @@
-use crate::db::{ChannelId, UserId};
+use crate::db::{BufferId, UserId};
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
-#[sea_orm(table_name = "observed_channel_note_edits")]
+#[sea_orm(table_name = "observed_buffer_edits")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub user_id: UserId,
-    pub channel_id: ChannelId,
+    pub buffer_id: BufferId,
     pub epoch: i32,
     pub lamport_timestamp: i32,
 }
@@ -14,11 +14,11 @@ pub struct Model {
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
     #[sea_orm(
-        belongs_to = "super::channel::Entity",
-        from = "Column::ChannelId",
-        to = "super::channel::Column::Id"
+        belongs_to = "super::buffer::Entity",
+        from = "Column::BufferId",
+        to = "super::buffer::Column::Id"
     )]
-    Channel,
+    Buffer,
     #[sea_orm(
         belongs_to = "super::user::Entity",
         from = "Column::UserId",
@@ -27,9 +27,9 @@ pub enum Relation {
     User,
 }
 
-impl Related<super::channel::Entity> for Entity {
+impl Related<super::buffer::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::Channel.def()
+        Relation::Buffer.def()
     }
 }
 
