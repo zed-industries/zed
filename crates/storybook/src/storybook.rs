@@ -39,16 +39,32 @@ struct Args {
 }
 
 async fn watch_zed_changes(fs: Arc<dyn fs::Fs>) -> Option<()> {
+    if std::env::var("ZED_HOT_RELOAD").is_err() {
+        return None;
+    }
     use futures::StreamExt;
     let mut events = fs
         .watch(".".as_ref(), std::time::Duration::from_millis(100))
         .await;
-    while let Some(event) = events.next().await {
-        log::error!("Storybook changed, rebuilding...");
-        Command::new("cargo")
-            .args(["run", "-p", "storybook"])
-            .spawn()
-            .ok()?;
+    let mut current_child: Option<std::process::Child> = None;
+    while let Some(events) = events.next().await {
+        if !events.iter().any(|event| {
+            event
+                .path
+                .to_str()
+                .map(|path| path.contains("/crates/"))
+                .unwrap_or_default()
+        }) {
+            continue;
+        }
+        let child = current_child.take().map(|mut child| child.kill());
+        log::info!("Storybook changed, rebuilding...");
+        current_child = Some(
+            Command::new("cargo")
+                .args(["run", "-p", "storybook"])
+                .spawn()
+                .ok()?,
+        );
     }
     Some(())
 }
