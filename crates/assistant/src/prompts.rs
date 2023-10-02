@@ -144,15 +144,9 @@ pub fn generate_content_prompt(
         writeln!(prompt, "```\n{outline}\n```").unwrap();
     }
 
-    // Assume for now that we are just generating
-    if range.clone().start == range.end {
-        writeln!(prompt, "In particular, the user's cursor is current on the '<|START|>' span in the above outline, with no text selected.").unwrap();
-    } else {
-        writeln!(prompt, "In particular, the user has selected a section of the text between the '<|START|' and '|END|>' spans.").unwrap();
-    }
-
     match kind {
         CodegenKind::Generate { position: _ } => {
+            writeln!(prompt, "In particular, the user's cursor is current on the '<|START|>' span in the above outline, with no text selected.").unwrap();
             writeln!(
                 prompt,
                 "Assume the cursor is located where the `<|START|` marker is."
@@ -170,6 +164,7 @@ pub fn generate_content_prompt(
             .unwrap();
         }
         CodegenKind::Transform { range: _ } => {
+            writeln!(prompt, "In particular, the user has selected a section of the text between the '<|START|' and '|END|>' spans.").unwrap();
             writeln!(
                 prompt,
                 "Modify the users code selected text based upon the users prompt: {user_prompt}"

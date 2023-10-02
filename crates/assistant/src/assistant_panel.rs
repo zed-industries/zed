@@ -581,8 +581,6 @@ impl AssistantPanel {
             codegen_kind,
         );
 
-        dbg!(&prompt);
-
         let mut messages = Vec::new();
         let mut model = settings::get::<AssistantSettings>(cx)
             .default_open_ai_model
