@@ -7,20 +7,27 @@ use crate::{theme, Icon, IconButton, Tab};
 pub struct TabBar<V: 'static> {
     view_type: PhantomData<V>,
     scroll_state: ScrollState,
+    tabs: Vec<Tab>,
 }
 
 impl<V: 'static> TabBar<V> {
-    pub fn new(scroll_state: ScrollState) -> Self {
+    pub fn new(tabs: Vec<Tab>) -> Self {
         Self {
             view_type: PhantomData,
-            scroll_state,
+            scroll_state: ScrollState::default(),
+            tabs,
         }
+    }
+
+    pub fn bind_scroll_state(&mut self, scroll_state: ScrollState) {
+        self.scroll_state = scroll_state;
     }
 
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
         let can_navigate_back = true;
         let can_navigate_forward = false;
+
         div()
             .w_full()
             .flex()
@@ -54,51 +61,7 @@ impl<V: 'static> TabBar<V> {
                     div()
                         .flex()
                         .overflow_x_scroll(self.scroll_state.clone())
-                        .child(
-                            Tab::new()
-                                .title("Cargo.toml".to_string())
-                                .current(false)
-                                .git_status(GitStatus::Modified),
-                        )
-                        .child(
-                            Tab::new()
-                                .title("Channels Panel".to_string())
-                                .current(false),
-                        )
-                        .child(
-                            Tab::new()
-                                .title("channels_panel.rs".to_string())
-                                .current(true)
-                                .git_status(GitStatus::Modified),
-                        )
-                        .child(
-                            Tab::new()
-                                .title("workspace.rs".to_string())
-                                .current(false)
-                                .git_status(GitStatus::Modified),
-                        )
-                        .child(
-                            Tab::new()
-                                .title("icon_button.rs".to_string())
-                                .current(false),
-                        )
-                        .child(
-                            Tab::new()
-                                .title("storybook.rs".to_string())
-                                .current(false)
-                                .git_status(GitStatus::Created),
-                        )
-                        .child(Tab::new().title("theme.rs".to_string()).current(false))
-                        .child(
-                            Tab::new()
-                                .title("theme_registry.rs".to_string())
-                                .current(false),
-                        )
-                        .child(
-                            Tab::new()
-                                .title("styleable_helpers.rs".to_string())
-                                .current(false),
-                        ),
+                        .children(self.tabs.clone()),
                 ),
             )
             // Right Side

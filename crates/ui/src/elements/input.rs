@@ -81,6 +81,7 @@ impl Input {
 
         div()
             .h_7()
+            .w_full()
             .px_2()
             .border()
             .border_color(border_color_default)

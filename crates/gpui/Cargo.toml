@@ -11,7 +11,7 @@ path = "src/gpui.rs"
 doctest = false
 
 [features]
-test-support = ["backtrace", "dhat", "env_logger", "collections/test-support"]
+test-support = ["backtrace", "dhat", "env_logger", "collections/test-support", "util/test-support"]
 
 [dependencies]
 collections = { path = "../collections" }

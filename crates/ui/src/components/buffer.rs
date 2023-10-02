@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use gpui2::{Hsla, WindowContext};
 
 use crate::prelude::*;
@@ -33,6 +31,7 @@ pub struct BufferRow {
     pub show_line_number: bool,
 }
 
+#[derive(Clone)]
 pub struct BufferRows {
     pub show_line_numbers: bool,
     pub rows: Vec<BufferRow>,
@@ -108,9 +107,8 @@ impl BufferRow {
     }
 }
 
-#[derive(Element)]
-pub struct Buffer<V: 'static> {
-    view_type: PhantomData<V>,
+#[derive(Element, Clone)]
+pub struct Buffer {
     scroll_state: ScrollState,
     rows: Option<BufferRows>,
     readonly: bool,
@@ -119,10 +117,9 @@ pub struct Buffer<V: 'static> {
     path: Option<String>,
 }
 
-impl<V: 'static> Buffer<V> {
+impl Buffer {
     pub fn new() -> Self {
         Self {
-            view_type: PhantomData,
             scroll_state: ScrollState::default(),
             rows: Some(BufferRows::default()),
             readonly: false,
@@ -161,7 +158,7 @@ impl<V: 'static> Buffer<V> {
         self
     }
 
-    fn render_row(row: BufferRow, cx: &WindowContext) -> impl IntoElement<V> {
+    fn render_row<V: 'static>(row: BufferRow, cx: &WindowContext) -> impl IntoElement<V> {
         let theme = theme(cx);
         let system_color = SystemColor::new();
 
@@ -172,28 +169,35 @@ impl<V: 'static> Buffer<V> {
         };
 
         let line_number_color = if row.current {
-            HighlightColor::Default.hsla(cx)
+            HighlightColor::Default.hsla(&theme)
         } else {
-            HighlightColor::Comment.hsla(cx)
+            HighlightColor::Comment.hsla(&theme)
         };
 
         h_stack()
             .fill(line_background)
+            .w_full()
             .gap_2()
-            .px_2()
-            .child(h_stack().w_4().h_full().px_1().when(row.code_action, |c| {
-                div().child(IconElement::new(Icon::Bolt))
-            }))
+            .px_1()
+            .child(
+                h_stack()
+                    .w_4()
+                    .h_full()
+                    .px_0p5()
+                    .when(row.code_action, |c| {
+                        div().child(IconElement::new(Icon::Bolt))
+                    }),
+            )
             .when(row.show_line_number, |this| {
                 this.child(
-                    h_stack().justify_end().px_1().w_4().child(
+                    h_stack().justify_end().px_0p5().w_3().child(
                         div()
                             .text_color(line_number_color)
                             .child(row.line_number.to_string()),
                     ),
                 )
             })
-            .child(div().mx_1().w_1().h_full().fill(row.status.hsla(cx)))
+            .child(div().mx_0p5().w_1().h_full().fill(row.status.hsla(cx)))
             .children(row.line.map(|line| {
                 div()
                     .flex()
@@ -205,7 +209,7 @@ impl<V: 'static> Buffer<V> {
             }))
     }
 
-    fn render_rows(&self, cx: &WindowContext) -> Vec<impl IntoElement<V>> {
+    fn render_rows<V: 'static>(&self, cx: &WindowContext) -> Vec<impl IntoElement<V>> {
         match &self.rows {
             Some(rows) => rows
                 .rows
@@ -216,7 +220,7 @@ impl<V: 'static> Buffer<V> {
         }
     }
 
-    fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
+    fn render<V: 'static>(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let theme = theme(cx);
         let rows = self.render_rows(cx);
         v_stack()

@@ -1,11 +1,108 @@
-use gpui2::WindowContext;
+use std::path::PathBuf;
+use std::str::FromStr;
+
+use rand::Rng;
 
 use crate::{
-    Buffer, BufferRow, BufferRows, GitStatus, HighlightColor, HighlightedLine, HighlightedText,
-    Icon, Keybinding, Label, LabelColor, ListEntry, ListEntrySize, ListItem, MicStatus,
-    ModifierKeys, PaletteItem, Player, PlayerCallStatus, PlayerWithCallStatus, ScreenShareStatus,
-    ToggleState,
+    Buffer, BufferRow, BufferRows, Editor, FileSystemStatus, GitStatus, HighlightColor,
+    HighlightedLine, HighlightedText, Icon, Keybinding, Label, LabelColor, ListEntry,
+    ListEntrySize, ListItem, Livestream, MicStatus, ModifierKeys, PaletteItem, Player,
+    PlayerCallStatus, PlayerWithCallStatus, ScreenShareStatus, Symbol, Tab, Theme, ToggleState,
+    VideoStatus,
 };
+
+pub fn static_tabs_example() -> Vec<Tab> {
+    vec![
+        Tab::new()
+            .title("wip.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false)
+            .fs_status(FileSystemStatus::Deleted),
+        Tab::new()
+            .title("Cargo.toml".to_string())
+            .icon(Icon::FileToml)
+            .current(false)
+            .git_status(GitStatus::Modified),
+        Tab::new()
+            .title("Channels Panel".to_string())
+            .icon(Icon::Hash)
+            .current(false),
+        Tab::new()
+            .title("channels_panel.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(true)
+            .git_status(GitStatus::Modified),
+        Tab::new()
+            .title("workspace.rs".to_string())
+            .current(false)
+            .icon(Icon::FileRust)
+            .git_status(GitStatus::Modified),
+        Tab::new()
+            .title("icon_button.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false),
+        Tab::new()
+            .title("storybook.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false)
+            .git_status(GitStatus::Created),
+        Tab::new()
+            .title("theme.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false),
+        Tab::new()
+            .title("theme_registry.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false),
+        Tab::new()
+            .title("styleable_helpers.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false),
+    ]
+}
+
+pub fn static_tabs_1() -> Vec<Tab> {
+    vec![
+        Tab::new()
+            .title("project_panel.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false)
+            .fs_status(FileSystemStatus::Deleted),
+        Tab::new()
+            .title("tab_bar.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false)
+            .git_status(GitStatus::Modified),
+        Tab::new()
+            .title("workspace.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false),
+        Tab::new()
+            .title("tab.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(true)
+            .git_status(GitStatus::Modified),
+    ]
+}
+
+pub fn static_tabs_2() -> Vec<Tab> {
+    vec![
+        Tab::new()
+            .title("tab_bar.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false)
+            .fs_status(FileSystemStatus::Deleted),
+        Tab::new()
+            .title("static_data.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(true)
+            .git_status(GitStatus::Modified),
+    ]
+}
+
+pub fn static_tabs_3() -> Vec<Tab> {
+    vec![Tab::new().git_status(GitStatus::Created).current(true)]
+}
 
 pub fn static_players() -> Vec<Player> {
     vec![
@@ -35,6 +132,154 @@ pub fn static_players() -> Vec<Player> {
             "maxdeviant".into(),
         ),
     ]
+}
+
+#[derive(Debug)]
+pub struct PlayerData {
+    pub url: String,
+    pub name: String,
+}
+pub fn static_player_data() -> Vec<PlayerData> {
+    vec![
+        PlayerData {
+            url: "https://avatars.githubusercontent.com/u/1714999?v=4".into(),
+            name: "iamnbutler".into(),
+        },
+        PlayerData {
+            url: "https://avatars.githubusercontent.com/u/326587?v=4".into(),
+            name: "maxbrunsfeld".into(),
+        },
+        PlayerData {
+            url: "https://avatars.githubusercontent.com/u/482957?v=4".into(),
+            name: "as-cii".into(),
+        },
+        PlayerData {
+            url: "https://avatars.githubusercontent.com/u/1789?v=4".into(),
+            name: "nathansobo".into(),
+        },
+        PlayerData {
+            url: "https://avatars.githubusercontent.com/u/1486634?v=4".into(),
+            name: "ForLoveOfCats".into(),
+        },
+        PlayerData {
+            url: "https://avatars.githubusercontent.com/u/2690773?v=4".into(),
+            name: "SomeoneToIgnore".into(),
+        },
+        PlayerData {
+            url: "https://avatars.githubusercontent.com/u/19867440?v=4".into(),
+            name: "JosephTLyons".into(),
+        },
+        PlayerData {
+            url: "https://avatars.githubusercontent.com/u/24362066?v=4".into(),
+            name: "osiewicz".into(),
+        },
+        PlayerData {
+            url: "https://avatars.githubusercontent.com/u/22121886?v=4".into(),
+            name: "KCaverly".into(),
+        },
+        PlayerData {
+            url: "https://avatars.githubusercontent.com/u/1486634?v=4".into(),
+            name: "maxdeviant".into(),
+        },
+    ]
+}
+pub fn create_static_players(player_data: Vec<PlayerData>) -> Vec<Player> {
+    let mut players = Vec::new();
+    for data in player_data {
+        players.push(Player::new(players.len(), data.url, data.name));
+    }
+    players
+}
+pub fn static_player_1(data: &Vec<PlayerData>) -> Player {
+    Player::new(1, data[0].url.clone(), data[0].name.clone())
+}
+pub fn static_player_2(data: &Vec<PlayerData>) -> Player {
+    Player::new(2, data[1].url.clone(), data[1].name.clone())
+}
+pub fn static_player_3(data: &Vec<PlayerData>) -> Player {
+    Player::new(3, data[2].url.clone(), data[2].name.clone())
+}
+pub fn static_player_4(data: &Vec<PlayerData>) -> Player {
+    Player::new(4, data[3].url.clone(), data[3].name.clone())
+}
+pub fn static_player_5(data: &Vec<PlayerData>) -> Player {
+    Player::new(5, data[4].url.clone(), data[4].name.clone())
+}
+pub fn static_player_6(data: &Vec<PlayerData>) -> Player {
+    Player::new(6, data[5].url.clone(), data[5].name.clone())
+}
+pub fn static_player_7(data: &Vec<PlayerData>) -> Player {
+    Player::new(7, data[6].url.clone(), data[6].name.clone())
+}
+pub fn static_player_8(data: &Vec<PlayerData>) -> Player {
+    Player::new(8, data[7].url.clone(), data[7].name.clone())
+}
+pub fn static_player_9(data: &Vec<PlayerData>) -> Player {
+    Player::new(9, data[8].url.clone(), data[8].name.clone())
+}
+pub fn static_player_10(data: &Vec<PlayerData>) -> Player {
+    Player::new(10, data[9].url.clone(), data[9].name.clone())
+}
+pub fn static_livestream() -> Livestream {
+    Livestream {
+        players: random_players_with_call_status(7),
+        channel: Some("gpui2-ui".to_string()),
+    }
+}
+pub fn populate_player_call_status(
+    player: Player,
+    followers: Option<Vec<Player>>,
+) -> PlayerCallStatus {
+    let mut rng = rand::thread_rng();
+    let in_current_project: bool = rng.gen();
+    let disconnected: bool = rng.gen();
+    let voice_activity: f32 = rng.gen();
+    let mic_status = if rng.gen_bool(0.5) {
+        MicStatus::Muted
+    } else {
+        MicStatus::Unmuted
+    };
+    let video_status = if rng.gen_bool(0.5) {
+        VideoStatus::On
+    } else {
+        VideoStatus::Off
+    };
+    let screen_share_status = if rng.gen_bool(0.5) {
+        ScreenShareStatus::Shared
+    } else {
+        ScreenShareStatus::NotShared
+    };
+    PlayerCallStatus {
+        mic_status,
+        voice_activity,
+        video_status,
+        screen_share_status,
+        in_current_project,
+        disconnected,
+        following: None,
+        followers,
+    }
+}
+pub fn random_players_with_call_status(number_of_players: usize) -> Vec<PlayerWithCallStatus> {
+    let players = create_static_players(static_player_data());
+    let mut player_status = vec![];
+    for i in 0..number_of_players {
+        let followers = if i == 0 {
+            Some(vec![
+                players[1].clone(),
+                players[3].clone(),
+                players[5].clone(),
+                players[6].clone(),
+            ])
+        } else if i == 1 {
+            Some(vec![players[2].clone(), players[6].clone()])
+        } else {
+            None
+        };
+        let call_status = populate_player_call_status(players[i].clone(), followers);
+        player_status.push(PlayerWithCallStatus::new(players[i].clone(), call_status));
+    }
+    player_status
 }
 
 pub fn static_players_with_call_status() -> Vec<PlayerWithCallStatus> {
@@ -123,7 +368,7 @@ pub fn static_project_panel_project_items() -> Vec<ListItem> {
             .left_icon(Icon::FolderOpen.into())
             .indent_level(3)
             .set_toggle(ToggleState::Toggled),
-        ListEntry::new(Label::new("derrive_element.rs"))
+        ListEntry::new(Label::new("derive_element.rs"))
             .left_icon(Icon::FileRust.into())
             .indent_level(4),
         ListEntry::new(Label::new("storybook").color(LabelColor::Modified))
@@ -337,33 +582,49 @@ pub fn example_editor_actions() -> Vec<PaletteItem> {
     ]
 }
 
-pub fn empty_buffer_example<V: 'static>() -> Buffer<V> {
+pub fn empty_editor_example() -> Editor {
+    Editor {
+        tabs: static_tabs_example(),
+        path: PathBuf::from_str("crates/ui/src/static_data.rs").unwrap(),
+        symbols: vec![],
+        buffer: empty_buffer_example(),
+    }
+}
+
+pub fn empty_buffer_example() -> Buffer {
     Buffer::new().set_rows(Some(BufferRows::default()))
 }
 
-pub fn hello_world_rust_buffer_example<V: 'static>(cx: &WindowContext) -> Buffer<V> {
+pub fn hello_world_rust_editor_example(theme: &Theme) -> Editor {
+    Editor {
+        tabs: static_tabs_example(),
+        path: PathBuf::from_str("crates/ui/src/static_data.rs").unwrap(),
+        symbols: vec![Symbol(vec![
+            HighlightedText {
+                text: "fn ".to_string(),
+                color: HighlightColor::Keyword.hsla(&theme),
+            },
+            HighlightedText {
+                text: "main".to_string(),
+                color: HighlightColor::Function.hsla(&theme),
+            },
+        ])],
+        buffer: hello_world_rust_buffer_example(theme),
+    }
+}
+
+pub fn hello_world_rust_buffer_example(theme: &Theme) -> Buffer {
     Buffer::new()
         .set_title("hello_world.rs".to_string())
         .set_path("src/hello_world.rs".to_string())
         .set_language("rust".to_string())
         .set_rows(Some(BufferRows {
             show_line_numbers: true,
-            rows: hello_world_rust_buffer_rows(cx),
+            rows: hello_world_rust_buffer_rows(theme),
         }))
 }
 
-pub fn hello_world_rust_buffer_with_status_example<V: 'static>(cx: &WindowContext) -> Buffer<V> {
-    Buffer::new()
-        .set_title("hello_world.rs".to_string())
-        .set_path("src/hello_world.rs".to_string())
-        .set_language("rust".to_string())
-        .set_rows(Some(BufferRows {
-            show_line_numbers: true,
-            rows: hello_world_rust_with_status_buffer_rows(cx),
-        }))
-}
-
-pub fn hello_world_rust_buffer_rows(cx: &WindowContext) -> Vec<BufferRow> {
+pub fn hello_world_rust_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
     let show_line_number = true;
 
     vec![
@@ -375,15 +636,15 @@ pub fn hello_world_rust_buffer_rows(cx: &WindowContext) -> Vec<BufferRow> {
                 highlighted_texts: vec![
                     HighlightedText {
                         text: "fn ".to_string(),
-                        color: HighlightColor::Keyword.hsla(cx),
+                        color: HighlightColor::Keyword.hsla(&theme),
                     },
                     HighlightedText {
                         text: "main".to_string(),
-                        color: HighlightColor::Function.hsla(cx),
+                        color: HighlightColor::Function.hsla(&theme),
                     },
                     HighlightedText {
                         text: "() {".to_string(),
-                        color: HighlightColor::Default.hsla(cx),
+                        color: HighlightColor::Default.hsla(&theme),
                     },
                 ],
             }),
@@ -399,7 +660,7 @@ pub fn hello_world_rust_buffer_rows(cx: &WindowContext) -> Vec<BufferRow> {
                 highlighted_texts: vec![HighlightedText {
                     text: "    // Statements here are executed when the compiled binary is called."
                         .to_string(),
-                    color: HighlightColor::Comment.hsla(cx),
+                    color: HighlightColor::Comment.hsla(&theme),
                 }],
             }),
             cursors: None,
@@ -422,7 +683,7 @@ pub fn hello_world_rust_buffer_rows(cx: &WindowContext) -> Vec<BufferRow> {
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "    // Print text to the console.".to_string(),
-                    color: HighlightColor::Comment.hsla(cx),
+                    color: HighlightColor::Comment.hsla(&theme),
                 }],
             }),
             cursors: None,
@@ -434,9 +695,33 @@ pub fn hello_world_rust_buffer_rows(cx: &WindowContext) -> Vec<BufferRow> {
             code_action: false,
             current: false,
             line: Some(HighlightedLine {
+                highlighted_texts: vec![
+                    HighlightedText {
+                        text: "    println!(".to_string(),
+                        color: HighlightColor::Default.hsla(&theme),
+                    },
+                    HighlightedText {
+                        text: "\"Hello, world!\"".to_string(),
+                        color: HighlightColor::String.hsla(&theme),
+                    },
+                    HighlightedText {
+                        text: ");".to_string(),
+                        color: HighlightColor::Default.hsla(&theme),
+                    },
+                ],
+            }),
+            cursors: None,
+            status: GitStatus::None,
+            show_line_number,
+        },
+        BufferRow {
+            line_number: 6,
+            code_action: false,
+            current: false,
+            line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "}".to_string(),
-                    color: HighlightColor::Default.hsla(cx),
+                    color: HighlightColor::Default.hsla(&theme),
                 }],
             }),
             cursors: None,
@@ -446,7 +731,36 @@ pub fn hello_world_rust_buffer_rows(cx: &WindowContext) -> Vec<BufferRow> {
     ]
 }
 
-pub fn hello_world_rust_with_status_buffer_rows(cx: &WindowContext) -> Vec<BufferRow> {
+pub fn hello_world_rust_editor_with_status_example(theme: &Theme) -> Editor {
+    Editor {
+        tabs: static_tabs_example(),
+        path: PathBuf::from_str("crates/ui/src/static_data.rs").unwrap(),
+        symbols: vec![Symbol(vec![
+            HighlightedText {
+                text: "fn ".to_string(),
+                color: HighlightColor::Keyword.hsla(&theme),
+            },
+            HighlightedText {
+                text: "main".to_string(),
+                color: HighlightColor::Function.hsla(&theme),
+            },
+        ])],
+        buffer: hello_world_rust_buffer_with_status_example(theme),
+    }
+}
+
+pub fn hello_world_rust_buffer_with_status_example(theme: &Theme) -> Buffer {
+    Buffer::new()
+        .set_title("hello_world.rs".to_string())
+        .set_path("src/hello_world.rs".to_string())
+        .set_language("rust".to_string())
+        .set_rows(Some(BufferRows {
+            show_line_numbers: true,
+            rows: hello_world_rust_with_status_buffer_rows(theme),
+        }))
+}
+
+pub fn hello_world_rust_with_status_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
     let show_line_number = true;
 
     vec![
@@ -458,15 +772,15 @@ pub fn hello_world_rust_with_status_buffer_rows(cx: &WindowContext) -> Vec<Buffe
                 highlighted_texts: vec![
                     HighlightedText {
                         text: "fn ".to_string(),
-                        color: HighlightColor::Keyword.hsla(cx),
+                        color: HighlightColor::Keyword.hsla(&theme),
                     },
                     HighlightedText {
                         text: "main".to_string(),
-                        color: HighlightColor::Function.hsla(cx),
+                        color: HighlightColor::Function.hsla(&theme),
                     },
                     HighlightedText {
                         text: "() {".to_string(),
-                        color: HighlightColor::Default.hsla(cx),
+                        color: HighlightColor::Default.hsla(&theme),
                     },
                 ],
             }),
@@ -482,7 +796,7 @@ pub fn hello_world_rust_with_status_buffer_rows(cx: &WindowContext) -> Vec<Buffe
                 highlighted_texts: vec![HighlightedText {
                     text: "// Statements here are executed when the compiled binary is called."
                         .to_string(),
-                    color: HighlightColor::Comment.hsla(cx),
+                    color: HighlightColor::Comment.hsla(&theme),
                 }],
             }),
             cursors: None,
@@ -505,7 +819,7 @@ pub fn hello_world_rust_with_status_buffer_rows(cx: &WindowContext) -> Vec<Buffe
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
                     text: "    // Print text to the console.".to_string(),
-                    color: HighlightColor::Comment.hsla(cx),
+                    color: HighlightColor::Comment.hsla(&theme),
                 }],
             }),
             cursors: None,
@@ -517,10 +831,20 @@ pub fn hello_world_rust_with_status_buffer_rows(cx: &WindowContext) -> Vec<Buffe
             code_action: false,
             current: false,
             line: Some(HighlightedLine {
-                highlighted_texts: vec![HighlightedText {
-                    text: "}".to_string(),
-                    color: HighlightColor::Default.hsla(cx),
-                }],
+                highlighted_texts: vec![
+                    HighlightedText {
+                        text: "    println!(".to_string(),
+                        color: HighlightColor::Default.hsla(&theme),
+                    },
+                    HighlightedText {
+                        text: "\"Hello, world!\"".to_string(),
+                        color: HighlightColor::String.hsla(&theme),
+                    },
+                    HighlightedText {
+                        text: ");".to_string(),
+                        color: HighlightColor::Default.hsla(&theme),
+                    },
+                ],
             }),
             cursors: None,
             status: GitStatus::None,
@@ -532,12 +856,12 @@ pub fn hello_world_rust_with_status_buffer_rows(cx: &WindowContext) -> Vec<Buffe
             current: false,
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
-                    text: "".to_string(),
-                    color: HighlightColor::Default.hsla(cx),
+                    text: "}".to_string(),
+                    color: HighlightColor::Default.hsla(&theme),
                 }],
             }),
             cursors: None,
-            status: GitStatus::Created,
+            status: GitStatus::None,
             show_line_number,
         },
         BufferRow {
@@ -546,12 +870,96 @@ pub fn hello_world_rust_with_status_buffer_rows(cx: &WindowContext) -> Vec<Buffe
             current: false,
             line: Some(HighlightedLine {
                 highlighted_texts: vec![HighlightedText {
-                    text: "Marshall and Nate were here".to_string(),
-                    color: HighlightColor::Default.hsla(cx),
+                    text: "".to_string(),
+                    color: HighlightColor::Default.hsla(&theme),
                 }],
             }),
             cursors: None,
             status: GitStatus::Created,
+            show_line_number,
+        },
+        BufferRow {
+            line_number: 8,
+            code_action: false,
+            current: false,
+            line: Some(HighlightedLine {
+                highlighted_texts: vec![HighlightedText {
+                    text: "// Marshall and Nate were here".to_string(),
+                    color: HighlightColor::Comment.hsla(&theme),
+                }],
+            }),
+            cursors: None,
+            status: GitStatus::Created,
+            show_line_number,
+        },
+    ]
+}
+
+pub fn terminal_buffer(theme: &Theme) -> Buffer {
+    Buffer::new()
+        .set_title("zed — fish".to_string())
+        .set_rows(Some(BufferRows {
+            show_line_numbers: false,
+            rows: terminal_buffer_rows(theme),
+        }))
+}
+
+pub fn terminal_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
+    let show_line_number = false;
+
+    vec![
+        BufferRow {
+            line_number: 1,
+            code_action: false,
+            current: false,
+            line: Some(HighlightedLine {
+                highlighted_texts: vec![
+                    HighlightedText {
+                        text: "maxdeviant ".to_string(),
+                        color: HighlightColor::Keyword.hsla(&theme),
+                    },
+                    HighlightedText {
+                        text: "in ".to_string(),
+                        color: HighlightColor::Default.hsla(&theme),
+                    },
+                    HighlightedText {
+                        text: "profaned-capital ".to_string(),
+                        color: HighlightColor::Function.hsla(&theme),
+                    },
+                    HighlightedText {
+                        text: "in ".to_string(),
+                        color: HighlightColor::Default.hsla(&theme),
+                    },
+                    HighlightedText {
+                        text: "~/p/zed ".to_string(),
+                        color: HighlightColor::Function.hsla(&theme),
+                    },
+                    HighlightedText {
+                        text: "on ".to_string(),
+                        color: HighlightColor::Default.hsla(&theme),
+                    },
+                    HighlightedText {
+                        text: " gpui2-ui ".to_string(),
+                        color: HighlightColor::Keyword.hsla(&theme),
+                    },
+                ],
+            }),
+            cursors: None,
+            status: GitStatus::None,
+            show_line_number,
+        },
+        BufferRow {
+            line_number: 2,
+            code_action: false,
+            current: false,
+            line: Some(HighlightedLine {
+                highlighted_texts: vec![HighlightedText {
+                    text: "λ ".to_string(),
+                    color: HighlightColor::String.hsla(&theme),
+                }],
+            }),
+            cursors: None,
+            status: GitStatus::None,
             show_line_number,
         },
     ]

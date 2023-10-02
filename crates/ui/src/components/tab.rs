@@ -1,7 +1,7 @@
 use crate::prelude::*;
 use crate::{theme, Icon, IconColor, IconElement, Label, LabelColor};
 
-#[derive(Element)]
+#[derive(Element, Clone)]
 pub struct Tab {
     title: String,
     icon: Option<Icon>,
