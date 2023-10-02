@@ -13,6 +13,7 @@ pub mod feature_flag;
 pub mod follower;
 pub mod language_server;
 pub mod observed_buffer_edits;
+pub mod observed_channel_messages;
 pub mod project;
 pub mod project_collaborator;
 pub mod room;

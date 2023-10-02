@@ -787,16 +787,6 @@ impl Database {
     }
 }
 
-fn max_assign<T: Ord>(max: &mut Option<T>, val: T) {
-    if let Some(max_val) = max {
-        if val > *max_val {
-            *max = Some(val);
-        }
-    } else {
-        *max = Some(val);
-    }
-}
-
 fn operation_to_storage(
     operation: &proto::Operation,
     buffer: &buffer::Model,
