@@ -578,7 +578,6 @@ impl AssistantPanel {
             language_name,
             &snapshot,
             language_range,
-            cx,
             codegen_kind,
         );
 
