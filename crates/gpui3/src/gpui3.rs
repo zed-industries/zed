@@ -21,7 +21,6 @@ pub use color::*;
 pub use element::*;
 pub use elements::*;
 pub use executor::*;
-use futures::Future;
 pub use geometry::*;
 pub use gpui3_macros::*;
 pub use platform::*;

@@ -128,8 +128,7 @@ impl<T: Send + Sync> Drop for Handle<T> {
         if let Some(ref_counts) = self.ref_counts.upgrade() {
             if let Some(count) = ref_counts.read().get(self.id) {
                 let prev_count = count.fetch_sub(1, SeqCst);
-                // TODO: Look into why this assertion is failing.
-                // assert_ne!(prev_count, 0, "Detected over-release of a handle.");
+                assert_ne!(prev_count, 0, "Detected over-release of a handle.");
             }
         }
     }

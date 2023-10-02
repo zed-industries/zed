@@ -39,6 +39,8 @@ impl<S: 'static> Element for Text<S> {
         _view: &mut S,
         cx: &mut ViewContext<S>,
     ) -> Result<(LayoutId, Self::FrameState)> {
+        dbg!("layout text");
+
         let text_system = cx.text_system().clone();
         let text_style = cx.text_style();
         let font_size = text_style.font_size * cx.rem_size();
@@ -52,6 +54,7 @@ impl<S: 'static> Element for Text<S> {
         let layout_id = cx.request_measured_layout(Default::default(), rem_size, {
             let frame_state = paint_state.clone();
             move |_, _| {
+                dbg!("starting measurement");
                 let Some(line_layout) = text_system
                     .layout_line(
                         text.as_ref(),
@@ -62,6 +65,7 @@ impl<S: 'static> Element for Text<S> {
                 else {
                     return Size::default();
                 };
+                dbg!("bbbb");
 
                 let size = Size {
                     width: line_layout.width(),
@@ -73,10 +77,11 @@ impl<S: 'static> Element for Text<S> {
                     line_height,
                 });
 
-                size
+                dbg!(size)
             }
         });
 
+        dbg!("got to end of text layout");
         Ok((layout_id?, paint_state))
     }
 

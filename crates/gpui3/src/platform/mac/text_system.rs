@@ -26,7 +26,7 @@ use font_kit::{
     source::SystemSource,
     sources::mem::MemSource,
 };
-use parking_lot::RwLock;
+use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use pathfinder_geometry::{
     rect::{RectF, RectI},
     transform2d::Transform2F,
@@ -90,7 +90,7 @@ impl PlatformTextSystem for MacTextSystem {
         if let Some(font_id) = lock.font_selections.get(font) {
             Ok(*font_id)
         } else {
-            let mut lock = parking_lot::RwLockUpgradableReadGuard::upgrade(lock);
+            let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
             let candidates = if let Some(font_ids) = lock.font_ids_by_family_name.get(&font.family)
             {
                 font_ids.as_slice()

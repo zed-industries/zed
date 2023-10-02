@@ -40,6 +40,7 @@ impl TextLayoutCache {
         font_size: Pixels,
         runs: &[(usize, FontId)],
     ) -> Arc<LineLayout> {
+        dbg!("layout line");
         let key = &CacheKeyRef {
             text,
             font_size,

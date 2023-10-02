@@ -149,12 +149,15 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             let mut root_view = cx.window.root_view.take().unwrap();
             let (root_layout_id, mut frame_state) = root_view.layout(&mut (), cx)?;
             let available_space = cx.window.content_size.map(Into::into);
+
+            dbg!("computing layout");
             cx.window
                 .layout_engine
                 .compute_layout(root_layout_id, available_space)?;
+            dbg!("asking for layout");
             let layout = cx.window.layout_engine.layout(root_layout_id)?;
 
-            dbg!(&layout.bounds);
+            dbg!("painting root view");
 
             root_view.paint(layout, &mut (), &mut frame_state, cx)?;
             cx.window.root_view = Some(root_view);

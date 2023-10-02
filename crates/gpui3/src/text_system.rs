@@ -12,7 +12,7 @@ use crate::{
 };
 use collections::HashMap;
 use core::fmt;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use std::{
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
@@ -50,13 +50,12 @@ impl TextSystem {
     }
 
     pub fn font_id(&self, font: &Font) -> Result<FontId> {
-        if let Some(font_id) = self.font_ids_by_font.read().get(font) {
-            Ok(*font_id)
+        if let Some(font_id) = self.font_ids_by_font.read().get(font).copied() {
+            Ok(font_id)
         } else {
             let font_id = self.platform_text_system.font_id(font)?;
             self.font_ids_by_font.write().insert(font.clone(), font_id);
             self.fonts_by_font_id.write().insert(font_id, font.clone());
-
             Ok(font_id)
         }
     }
@@ -137,11 +136,13 @@ impl TextSystem {
     }
 
     fn read_metrics<T>(&self, font: &Font, read: impl FnOnce(&FontMetrics) -> T) -> Result<T> {
-        if let Some(metrics) = self.font_metrics.read().get(font) {
+        let lock = self.font_metrics.upgradable_read();
+
+        if let Some(metrics) = lock.get(font) {
             Ok(read(metrics))
         } else {
             let font_id = self.platform_text_system.font_id(&font)?;
-            let mut lock = self.font_metrics.write();
+            let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
             let metrics = lock
                 .entry(font.clone())
                 .or_insert_with(|| self.platform_text_system.font_metrics(font_id));
@@ -156,17 +157,29 @@ impl TextSystem {
         runs: &[(usize, RunStyle)],
     ) -> Result<Line> {
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+
+        dbg!("got font runs from pool");
         let mut last_font: Option<&Font> = None;
         for (len, style) in runs {
+            dbg!(len);
             if let Some(last_font) = last_font.as_ref() {
+                dbg!("a");
                 if **last_font == style.font {
+                    dbg!("b");
                     font_runs.last_mut().unwrap().0 += len;
+                    dbg!("c");
                     continue;
                 }
+                dbg!("d");
             }
+            dbg!("e");
             last_font = Some(&style.font);
+            dbg!("f");
             font_runs.push((*len, self.font_id(&style.font)?));
+            dbg!("g");
         }
+
+        dbg!("built font runs");
 
         let layout = self
             .text_layout_cache
