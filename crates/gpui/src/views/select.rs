@@ -53,8 +53,10 @@ impl Select {
     }
 
     pub fn set_item_count(&mut self, count: usize, cx: &mut ViewContext<Self>) {
-        self.item_count = count;
-        cx.notify();
+        if count != self.item_count {
+            self.item_count = count;
+            cx.notify();
+        }
     }
 
     fn toggle(&mut self, cx: &mut ViewContext<Self>) {
@@ -63,9 +65,11 @@ impl Select {
     }
 
     pub fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Self>) {
-        self.selected_item_ix = ix;
-        self.is_open = false;
-        cx.notify();
+        if ix != self.selected_item_ix || self.is_open {
+            self.selected_item_ix = ix;
+            self.is_open = false;
+            cx.notify();
+        }
     }
 
     pub fn selected_index(&self) -> usize {
