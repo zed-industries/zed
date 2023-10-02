@@ -177,7 +177,7 @@ fn main() {
         })
         .detach();
 
-        client.telemetry().start(installation_id);
+        client.telemetry().start(installation_id, cx);
 
         let app_state = Arc::new(AppState {
             languages,
