@@ -38,4 +38,4 @@ gpui = { path = "../gpui", optional  = true}
 gpui = { path = "../gpui", features = ["test-support"] }
 
 [features]
-test-support = ["gpui?/test-support"]
+test-support = ["gpui/test-support"]
