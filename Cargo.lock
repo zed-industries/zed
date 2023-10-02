@@ -321,6 +321,7 @@ dependencies = [
  "regex",
  "schemars",
  "search",
+ "semantic_index",
  "serde",
  "serde_json",
  "settings",

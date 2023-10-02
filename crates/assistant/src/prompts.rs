@@ -121,6 +121,7 @@ pub fn generate_content_prompt(
     buffer: &BufferSnapshot,
     range: Range<impl ToOffset>,
     kind: CodegenKind,
+    search_results: Vec<String>,
 ) -> String {
     let mut prompt = String::new();
 

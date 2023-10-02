@@ -36,6 +36,7 @@ use gpui::{
 };
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset as _};
 use search::BufferSearchBar;
+use semantic_index::SemanticIndex;
 use settings::SettingsStore;
 use std::{
     cell::{Cell, RefCell},
@@ -145,6 +146,7 @@ pub struct AssistantPanel {
     include_conversation_in_next_inline_assist: bool,
     inline_prompt_history: VecDeque<String>,
     _watch_saved_conversations: Task<Result<()>>,
+    semantic_index: Option<ModelHandle<SemanticIndex>>,
 }
 
 impl AssistantPanel {
@@ -191,6 +193,9 @@ impl AssistantPanel {
                         toolbar.add_item(cx.add_view(|cx| BufferSearchBar::new(cx)), cx);
                         toolbar
                     });
+
+                    let semantic_index = SemanticIndex::global(cx);
+
                     let mut this = Self {
                         workspace: workspace_handle,
                         active_editor_index: Default::default(),
@@ -215,6 +220,7 @@ impl AssistantPanel {
                         include_conversation_in_next_inline_assist: false,
                         inline_prompt_history: Default::default(),
                         _watch_saved_conversations,
+                        semantic_index,
                     };
 
                     let mut old_dock_position = this.position(cx);
@@ -578,10 +584,55 @@ impl AssistantPanel {
 
         let codegen_kind = codegen.read(cx).kind().clone();
         let user_prompt = user_prompt.to_string();
-        let prompt = cx.background().spawn(async move {
-            let language_name = language_name.as_deref();
-            generate_content_prompt(user_prompt, language_name, &buffer, range, codegen_kind)
+
+        let project = if let Some(workspace) = self.workspace.upgrade(cx) {
+            workspace.read(cx).project()
+        } else {
+            return;
+        };
+
+        let project = project.to_owned();
+        let search_results = if let Some(semantic_index) = self.semantic_index.clone() {
+            let search_results = semantic_index.update(cx, |this, cx| {
+                this.search_project(project, user_prompt.to_string(), 10, vec![], vec![], cx)
+            });
+
+            cx.background()
+                .spawn(async move { search_results.await.unwrap_or_default() })
+        } else {
+            Task::ready(Vec::new())
+        };
+
+        let snippets = cx.spawn(|_, cx| async move {
+            let mut snippets = Vec::new();
+            for result in search_results.await {
+                snippets.push(result.buffer.read_with(&cx, |buffer, _| {
+                    buffer
+                        .snapshot()
+                        .text_for_range(result.range)
+                        .collect::<String>()
+                }));
+            }
+            snippets
         });
+
+        let prompt = cx.background().spawn(async move {
+            let snippets = snippets.await;
+            for snippet in &snippets {
+                println!("SNIPPET: \n{:?}", snippet);
+            }
+
+            let language_name = language_name.as_deref();
+            generate_content_prompt(
+                user_prompt,
+                language_name,
+                &buffer,
+                range,
+                codegen_kind,
+                snippets,
+            )
+        });
+
         let mut messages = Vec::new();
         let mut model = settings::get::<AssistantSettings>(cx)
             .default_open_ai_model
