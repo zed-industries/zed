@@ -4,8 +4,10 @@ use crate::{
     MessageId, MessageMetadata, MessageStatus, Role, SavedConversation, SavedConversationMetadata,
     SavedMessage,
 };
-use ai::completion::{
-    stream_completion, OpenAICompletionProvider, OpenAIRequest, RequestMessage, OPENAI_API_URL,
+use ai::RequestMessage;
+use ai::{
+    completion::{stream_completion, OpenAICompletionProvider, OpenAIRequest, OPENAI_API_URL},
+    truncate_messages,
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
@@ -51,6 +53,7 @@ use theme::{
     components::{action_button::Button, ComponentExt},
     AssistantStyle,
 };
+use tiktoken_rs::{get_bpe_from_model, get_chat_completion_max_tokens};
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use workspace::{
@@ -1558,12 +1561,14 @@ impl Conversation {
                         Role::Assistant => "assistant".into(),
                         Role::System => "system".into(),
                     },
-                    content: self
-                        .buffer
-                        .read(cx)
-                        .text_for_range(message.offset_range)
-                        .collect(),
+                    content: Some(
+                        self.buffer
+                            .read(cx)
+                            .text_for_range(message.offset_range)
+                            .collect(),
+                    ),
                     name: None,
+                    function_call: None,
                 })
             })
             .collect::<Vec<_>>();
@@ -1649,13 +1654,24 @@ impl Conversation {
                 return Default::default();
             };
 
+            let reserved_count = 2000;
+            let done_messages = self
+                .messages(cx)
+                .filter(|message| matches!(message.status, MessageStatus::Done))
+                .map(|message| message.to_open_ai_message(self.buffer.read(cx)))
+                .collect();
+            // Truncate if possible
+            let open_ai_messages = if let Some(open_ai_messages) =
+                truncate_messages(&done_messages, self.model.full_name(), reserved_count).log_err()
+            {
+                open_ai_messages
+            } else {
+                done_messages
+            };
+
             let request = OpenAIRequest {
                 model: self.model.full_name().to_string(),
-                messages: self
-                    .messages(cx)
-                    .filter(|message| matches!(message.status, MessageStatus::Done))
-                    .map(|message| message.to_open_ai_message(self.buffer.read(cx)))
-                    .collect(),
+                messages: open_ai_messages,
                 stream: true,
             };
 

@@ -32,3 +32,4 @@ bincode = "1.3.3"
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }
+util = { path = "../util", features = ["test-support"] }
