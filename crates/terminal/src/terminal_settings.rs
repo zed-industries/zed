@@ -69,6 +69,7 @@ pub enum ActivateScript {
     Default,
     Csh,
     Fish,
+    Nushell,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
