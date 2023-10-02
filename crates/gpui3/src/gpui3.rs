@@ -45,7 +45,7 @@ pub use view::*;
 pub use window::*;
 
 pub trait Context {
-    type EntityContext<'a, 'w, T: Send + Sync + 'static>;
+    type EntityContext<'a, 'w, T: 'static + Send + Sync>;
     type Result<T>;
 
     fn entity<T: Send + Sync + 'static>(
@@ -58,6 +58,29 @@ pub trait Context {
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
     ) -> Self::Result<R>;
+}
+
+#[repr(transparent)]
+pub struct MainThread<T>(T);
+
+impl<T> MainThread<T> {
+    fn new(value: T) -> Self {
+        Self(value)
+    }
+}
+
+impl<T> Deref for MainThread<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for MainThread<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 pub trait StackContext {
@@ -153,8 +176,6 @@ impl<'a, T> DerefMut for Reference<'a, T> {
         }
     }
 }
-
-pub struct MainThread;
 
 pub(crate) struct MainThreadOnly<T: ?Sized> {
     dispatcher: Arc<dyn PlatformDispatcher>,

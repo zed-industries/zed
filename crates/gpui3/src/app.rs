@@ -14,19 +14,19 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, VecDeque};
-use futures::{future, Future};
+use futures::Future;
 use parking_lot::Mutex;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
 use std::{
     any::{type_name, Any, TypeId},
-    marker::PhantomData,
+    mem,
     sync::{Arc, Weak},
 };
 use util::ResultExt;
 
 #[derive(Clone)]
-pub struct App(Arc<Mutex<AppContext<MainThread>>>);
+pub struct App(Arc<Mutex<MainThread<AppContext>>>);
 
 impl App {
     pub fn production() -> Self {
@@ -44,8 +44,7 @@ impl App {
         let entities = EntityMap::new();
         let unit_entity = entities.redeem(entities.reserve(), ());
         Self(Arc::new_cyclic(|this| {
-            Mutex::new(AppContext {
-                thread: PhantomData,
+            Mutex::new(MainThread::new(AppContext {
                 this: this.clone(),
                 platform: MainThreadOnly::new(platform, dispatcher.clone()),
                 dispatcher,
@@ -59,13 +58,13 @@ impl App {
                 pending_effects: Default::default(),
                 observers: Default::default(),
                 layout_id_buffer: Default::default(),
-            })
+            }))
         }))
     }
 
     pub fn run<F>(self, on_finish_launching: F)
     where
-        F: 'static + FnOnce(&mut AppContext<MainThread>),
+        F: 'static + FnOnce(&mut MainThread<AppContext>),
     {
         let this = self.clone();
         let platform = self.0.lock().platform.clone();
@@ -76,12 +75,10 @@ impl App {
     }
 }
 
-type Handlers<Thread> =
-    SmallVec<[Arc<dyn Fn(&mut AppContext<Thread>) -> bool + Send + Sync + 'static>; 2]>;
+type Handlers = SmallVec<[Arc<dyn Fn(&mut AppContext) -> bool + Send + Sync + 'static>; 2]>;
 
-pub struct AppContext<Thread = ()> {
-    thread: PhantomData<Thread>,
-    this: Weak<Mutex<AppContext<Thread>>>,
+pub struct AppContext {
+    this: Weak<Mutex<MainThread<AppContext>>>,
     platform: MainThreadOnly<dyn Platform>,
     dispatcher: Arc<dyn PlatformDispatcher>,
     text_system: Arc<TextSystem>,
@@ -92,39 +89,89 @@ pub struct AppContext<Thread = ()> {
     pub(crate) entities: EntityMap,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) pending_effects: VecDeque<Effect>,
-    pub(crate) observers: HashMap<EntityId, Handlers<Thread>>,
+    pub(crate) observers: HashMap<EntityId, Handlers>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
 }
 
-impl<Thread: 'static + Send + Sync> AppContext<Thread> {
-    // TODO: Better names for these?
-    #[inline]
-    pub fn downcast(&self) -> &AppContext<()> {
-        // Any `Thread` can become `()`.
-        //
-        // Can't do this in a blanket `Deref` impl, as it infinitely recurses.
-        unsafe { std::mem::transmute::<&AppContext<Thread>, &AppContext<()>>(self) }
+impl AppContext {
+    fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
+        self.pending_updates += 1;
+        let result = update(self);
+        if self.pending_updates == 1 {
+            self.flush_effects();
+        }
+        self.pending_updates -= 1;
+        result
     }
 
-    #[inline]
-    pub fn downcast_mut(&mut self) -> &mut AppContext<()> {
-        // Any `Thread` can become `()`.
-        //
-        // Can't do this in a blanket `DerefMut` impl, as it infinitely recurses.
-        unsafe { std::mem::transmute::<&mut AppContext<Thread>, &mut AppContext<()>>(self) }
+    pub(crate) fn update_window<R>(
+        &mut self,
+        id: WindowId,
+        update: impl FnOnce(&mut WindowContext) -> R,
+    ) -> Result<R> {
+        self.update(|cx| {
+            let mut window = cx
+                .windows
+                .get_mut(id)
+                .ok_or_else(|| anyhow!("window not found"))?
+                .take()
+                .unwrap();
+
+            let result = update(&mut WindowContext::mutable(cx, &mut window));
+
+            cx.windows
+                .get_mut(id)
+                .ok_or_else(|| anyhow!("window not found"))?
+                .replace(window);
+
+            Ok(result)
+        })
     }
 
-    pub fn text_system(&self) -> &Arc<TextSystem> {
-        &self.text_system
+    fn flush_effects(&mut self) {
+        while let Some(effect) = self.pending_effects.pop_front() {
+            match effect {
+                Effect::Notify(entity_id) => self.apply_notify_effect(entity_id),
+            }
+        }
+
+        let dirty_window_ids = self
+            .windows
+            .iter()
+            .filter_map(|(window_id, window)| {
+                let window = window.as_ref().unwrap();
+                if window.dirty {
+                    Some(window_id)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        for dirty_window_id in dirty_window_ids {
+            self.update_window(dirty_window_id, |cx| cx.draw())
+                .unwrap()
+                .log_err();
+        }
     }
 
-    pub fn to_async(&self) -> AsyncContext<Thread> {
-        AsyncContext(self.this.clone())
+    fn apply_notify_effect(&mut self, updated_entity: EntityId) {
+        if let Some(mut handlers) = self.observers.remove(&updated_entity) {
+            handlers.retain(|handler| handler(self));
+            if let Some(new_handlers) = self.observers.remove(&updated_entity) {
+                handlers.extend(new_handlers);
+            }
+            self.observers.insert(updated_entity, handlers);
+        }
+    }
+
+    pub fn to_async(&self) -> AsyncContext {
+        AsyncContext(unsafe { mem::transmute(self.this.clone()) })
     }
 
     pub fn run_on_main<R>(
         &self,
-        f: impl FnOnce(&mut AppContext<MainThread>) -> R + Send + 'static,
+        f: impl FnOnce(&mut MainThread<AppContext>) -> R + Send + 'static,
     ) -> impl Future<Output = R>
     where
         R: Send + 'static,
@@ -132,16 +179,15 @@ impl<Thread: 'static + Send + Sync> AppContext<Thread> {
         let this = self.this.upgrade().unwrap();
         run_on_main(self.dispatcher.clone(), move || {
             let cx = &mut *this.lock();
-            let main_thread_cx = unsafe {
-                std::mem::transmute::<&mut AppContext<Thread>, &mut AppContext<MainThread>>(cx)
-            };
-            main_thread_cx.update(|cx| f(cx))
+            cx.update(|cx| {
+                f(unsafe { mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(cx) })
+            })
         })
     }
 
     pub fn spawn_on_main<F, R>(
         &self,
-        f: impl FnOnce(&mut AppContext<MainThread>) -> F + Send + 'static,
+        f: impl FnOnce(&mut MainThread<AppContext>) -> F + Send + 'static,
     ) -> impl Future<Output = R>
     where
         F: Future<Output = R> + 'static,
@@ -150,11 +196,14 @@ impl<Thread: 'static + Send + Sync> AppContext<Thread> {
         let this = self.this.upgrade().unwrap();
         spawn_on_main(self.dispatcher.clone(), move || {
             let cx = &mut *this.lock();
-            let main_thread_cx = unsafe {
-                std::mem::transmute::<&mut AppContext<Thread>, &mut AppContext<MainThread>>(cx)
-            };
-            main_thread_cx.update(|cx| f(cx))
+            cx.update(|cx| {
+                f(unsafe { mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(cx) })
+            })
         })
+    }
+
+    pub fn text_system(&self) -> &Arc<TextSystem> {
+        &self.text_system
     }
 
     pub fn text_style(&self) -> TextStyle {
@@ -204,77 +253,6 @@ impl<Thread: 'static + Send + Sync> AppContext<Thread> {
             .and_then(|stack| stack.pop())
             .expect("state stack underflow");
     }
-
-    pub(crate) fn update_window<R>(
-        &mut self,
-        id: WindowId,
-        update: impl FnOnce(&mut WindowContext) -> R,
-    ) -> Result<R> {
-        self.update(|cx| {
-            let mut window = cx
-                .windows
-                .get_mut(id)
-                .ok_or_else(|| anyhow!("window not found"))?
-                .take()
-                .unwrap();
-
-            let result = update(&mut WindowContext::mutable(cx.downcast_mut(), &mut window));
-
-            cx.windows
-                .get_mut(id)
-                .ok_or_else(|| anyhow!("window not found"))?
-                .replace(window);
-
-            Ok(result)
-        })
-    }
-
-    fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
-        self.pending_updates += 1;
-        let result = update(self);
-        if self.pending_updates == 1 {
-            self.flush_effects();
-        }
-        self.pending_updates -= 1;
-        result
-    }
-
-    fn flush_effects(&mut self) {
-        while let Some(effect) = self.pending_effects.pop_front() {
-            match effect {
-                Effect::Notify(entity_id) => self.apply_notify_effect(entity_id),
-            }
-        }
-
-        let dirty_window_ids = self
-            .windows
-            .iter()
-            .filter_map(|(window_id, window)| {
-                let window = window.as_ref().unwrap();
-                if window.dirty {
-                    Some(window_id)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-
-        for dirty_window_id in dirty_window_ids {
-            self.update_window(dirty_window_id, |cx| cx.draw())
-                .unwrap()
-                .log_err();
-        }
-    }
-
-    fn apply_notify_effect(&mut self, updated_entity: EntityId) {
-        if let Some(mut handlers) = self.observers.remove(&updated_entity) {
-            handlers.retain(|handler| handler(self));
-            if let Some(new_handlers) = self.observers.remove(&updated_entity) {
-                handlers.extend(new_handlers);
-            }
-            self.observers.insert(updated_entity, handlers);
-        }
-    }
 }
 
 impl Context for AppContext {
@@ -302,7 +280,15 @@ impl Context for AppContext {
     }
 }
 
-impl AppContext<MainThread> {
+impl MainThread<AppContext> {
+    fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
+        self.0.update(|cx| {
+            update(unsafe {
+                std::mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(cx)
+            })
+        })
+    }
+
     pub(crate) fn platform(&self) -> &dyn Platform {
         self.platform.borrow_on_main_thread()
     }
@@ -320,8 +306,7 @@ impl AppContext<MainThread> {
             let id = cx.windows.insert(None);
             let handle = WindowHandle::new(id);
             let mut window = Window::new(handle.into(), options, cx);
-            let root_view =
-                build_root_view(&mut WindowContext::mutable(cx.downcast_mut(), &mut window));
+            let root_view = build_root_view(&mut WindowContext::mutable(cx, &mut window));
             window.root_view.replace(root_view.into_any());
             cx.windows.get_mut(id).unwrap().replace(window);
             handle

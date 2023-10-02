@@ -1,6 +1,6 @@
 use crate::{
     collab_panel::{collab_panel, CollabPanel},
-    theme::{theme, themed},
+    theme::theme,
     themes::rose_pine_dawn,
 };
 use gpui3::{

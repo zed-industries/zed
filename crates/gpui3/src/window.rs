@@ -1,10 +1,9 @@
 use crate::{
     px, AnyView, AppContext, AvailableSpace, Bounds, Context, Effect, Element, EntityId, Handle,
-    LayoutId, MainThread, MainThreadOnly, Pixels, Platform, PlatformWindow, Point, Reference,
-    Scene, Size, StackContext, Style, TaffyLayoutEngine, WeakHandle, WindowOptions,
+    LayoutId, MainThread, MainThreadOnly, Pixels, PlatformWindow, Point, Reference, Scene, Size,
+    StackContext, Style, TaffyLayoutEngine, WeakHandle, WindowOptions,
 };
 use anyhow::Result;
-use derive_more::{Deref, DerefMut};
 use std::{any::TypeId, marker::PhantomData, sync::Arc};
 use util::ResultExt;
 
@@ -26,7 +25,7 @@ impl Window {
     pub fn new(
         handle: AnyWindowHandle,
         options: WindowOptions,
-        cx: &mut AppContext<MainThread>,
+        cx: &mut MainThread<AppContext>,
     ) -> Self {
         let platform_window = cx.platform().open_window(handle, options);
         let mouse_position = platform_window.mouse_position();
@@ -62,19 +61,14 @@ impl Window {
     }
 }
 
-#[derive(Deref, DerefMut)]
-pub struct WindowContext<'a, 'w, Thread = ()> {
-    thread: PhantomData<Thread>,
-    #[deref]
-    #[deref_mut]
-    app: Reference<'a, AppContext<Thread>>,
+pub struct WindowContext<'a, 'w> {
+    app: Reference<'a, AppContext>,
     window: Reference<'w, Window>,
 }
 
 impl<'a, 'w> WindowContext<'a, 'w> {
     pub(crate) fn mutable(app: &'a mut AppContext, window: &'w mut Window) -> Self {
         Self {
-            thread: PhantomData,
             app: Reference::Mutable(app),
             window: Reference::Mutable(window),
         }
@@ -157,7 +151,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 }
 
-impl WindowContext<'_, '_, MainThread> {
+impl MainThread<WindowContext<'_, '_>> {
     // todo!("implement other methods that use platform window")
     fn platform_window(&self) -> &dyn PlatformWindow {
         self.window.platform_window.borrow_on_main_thread().as_ref()
@@ -165,14 +159,14 @@ impl WindowContext<'_, '_, MainThread> {
 }
 
 impl Context for WindowContext<'_, '_> {
-    type EntityContext<'a, 'w, T: Send + Sync + 'static> = ViewContext<'a, 'w, T>;
+    type EntityContext<'a, 'w, T: 'static + Send + Sync> = ViewContext<'a, 'w, T>;
     type Result<T> = T;
 
     fn entity<T: Send + Sync + 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
     ) -> Handle<T> {
-        let slot = self.entities.reserve();
+        let slot = self.app.entities.reserve();
         let entity = build_entity(&mut ViewContext::mutable(
             &mut *self.app,
             &mut self.window,
@@ -196,18 +190,32 @@ impl Context for WindowContext<'_, '_> {
     }
 }
 
+impl<'a, 'w> std::ops::Deref for WindowContext<'a, 'w> {
+    type Target = AppContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.app
+    }
+}
+
+impl<'a, 'w> std::ops::DerefMut for WindowContext<'a, 'w> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.app
+    }
+}
+
 impl<S> StackContext for ViewContext<'_, '_, S> {
     fn app(&mut self) -> &mut AppContext {
-        &mut *self.app
+        &mut *self.window_cx.app
     }
 
     fn with_text_style<F, R>(&mut self, style: crate::TextStyleRefinement, f: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
     {
-        self.push_text_style(style);
+        self.window_cx.app.push_text_style(style);
         let result = f(self);
-        self.pop_text_style();
+        self.window_cx.app.pop_text_style();
         result
     }
 
@@ -215,21 +223,17 @@ impl<S> StackContext for ViewContext<'_, '_, S> {
     where
         F: FnOnce(&mut Self) -> R,
     {
-        self.push_state(state);
+        self.window_cx.app.push_state(state);
         let result = f(self);
-        self.pop_state::<T>();
+        self.window_cx.app.pop_state::<T>();
         result
     }
 }
 
-#[derive(Deref, DerefMut)]
-pub struct ViewContext<'a, 'w, S, Thread = ()> {
-    #[deref]
-    #[deref_mut]
-    window_cx: WindowContext<'a, 'w, Thread>,
+pub struct ViewContext<'a, 'w, S> {
+    window_cx: WindowContext<'a, 'w>,
     entity_type: PhantomData<S>,
     entity_id: EntityId,
-    thread: PhantomData<Thread>,
 }
 
 impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
@@ -238,7 +242,6 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
             window_cx: WindowContext::mutable(app, window),
             entity_id,
             entity_type: PhantomData,
-            thread: PhantomData,
         }
     }
 
@@ -290,8 +293,8 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
     }
 }
 
-impl<'a, 'w, S: 'static> Context for ViewContext<'a, 'w, S> {
-    type EntityContext<'b, 'c, U: Send + Sync + 'static> = ViewContext<'b, 'c, U>;
+impl<'a, 'w, S> Context for ViewContext<'a, 'w, S> {
+    type EntityContext<'b, 'c, U: 'static + Send + Sync> = ViewContext<'b, 'c, U>;
     type Result<U> = U;
 
     fn entity<T2: Send + Sync + 'static>(
@@ -310,7 +313,19 @@ impl<'a, 'w, S: 'static> Context for ViewContext<'a, 'w, S> {
     }
 }
 
-impl<S> ViewContext<'_, '_, S, MainThread> {}
+impl<'a, 'w, S: 'static> std::ops::Deref for ViewContext<'a, 'w, S> {
+    type Target = WindowContext<'a, 'w>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.window_cx
+    }
+}
+
+impl<'a, 'w, S: 'static> std::ops::DerefMut for ViewContext<'a, 'w, S> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.window_cx
+    }
+}
 
 // #[derive(Clone, Copy, Eq, PartialEq, Hash)]
 slotmap::new_key_type! { pub struct WindowId; }

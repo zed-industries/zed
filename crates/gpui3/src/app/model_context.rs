@@ -1,8 +1,8 @@
 use crate::{AppContext, Context, Effect, EntityId, Handle, Reference, WeakHandle};
 use std::{marker::PhantomData, sync::Arc};
 
-pub struct ModelContext<'a, T, Thread = ()> {
-    app: Reference<'a, AppContext<Thread>>,
+pub struct ModelContext<'a, T> {
+    app: Reference<'a, AppContext>,
     entity_type: PhantomData<T>,
     entity_id: EntityId,
 }
