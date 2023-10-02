@@ -368,7 +368,7 @@ pub fn static_project_panel_project_items() -> Vec<ListItem> {
             .left_icon(Icon::FolderOpen.into())
             .indent_level(3)
             .set_toggle(ToggleState::Toggled),
-        ListEntry::new(Label::new("derrive_element.rs"))
+        ListEntry::new(Label::new("derive_element.rs"))
             .left_icon(Icon::FileRust.into())
             .indent_level(4),
         ListEntry::new(Label::new("storybook").color(LabelColor::Modified))
