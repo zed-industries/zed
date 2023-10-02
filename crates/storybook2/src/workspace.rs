@@ -27,7 +27,9 @@ impl Workspace {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<State = Self> {
         let theme = rose_pine_dawn();
-        div().fill(theme.middle.positive.default.background)
+        div()
+            .size_full()
+            .fill(theme.middle.positive.default.background)
 
         // TODO: Implement style.
         //.size_full().fill(gpui3::hsla(0.83, 1., 0.5, 1.))

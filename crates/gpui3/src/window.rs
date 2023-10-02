@@ -4,7 +4,8 @@ use crate::{
     StackContext, Style, TaffyLayoutEngine, WeakHandle, WindowOptions,
 };
 use anyhow::Result;
-use std::{any::TypeId, marker::PhantomData, sync::Arc};
+use futures::Future;
+use std::{any::TypeId, marker::PhantomData, mem, sync::Arc};
 use util::ResultExt;
 
 pub struct AnyWindow {}
@@ -125,6 +126,23 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         &mut self.window.scene
     }
 
+    pub fn run_on_main<R>(
+        &self,
+        f: impl FnOnce(&mut MainThread<WindowContext>) -> R + Send + 'static,
+    ) -> impl Future<Output = Result<R>>
+    where
+        R: Send + 'static,
+    {
+        let id = self.window.handle.id;
+        self.app.run_on_main(move |cx| {
+            cx.update_window(id, |cx| {
+                f(unsafe {
+                    mem::transmute::<&mut WindowContext, &mut MainThread<WindowContext>>(cx)
+                })
+            })
+        })
+    }
+
     pub(crate) fn draw(&mut self) -> Result<()> {
         let unit_entity = self.unit_entity.clone();
         self.update_entity(&unit_entity, |_, cx| {
@@ -135,19 +153,19 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 .layout_engine
                 .compute_layout(root_layout_id, available_space)?;
             let layout = cx.window.layout_engine.layout(root_layout_id)?;
+
+            dbg!(&layout.bounds);
+
             root_view.paint(layout, &mut (), &mut frame_state, cx)?;
             cx.window.root_view = Some(root_view);
             let scene = cx.window.scene.take();
 
-            dbg!(&scene);
-
-            // // todo!
-            // self.run_on_main(|cx| {
-            //     cx.window
-            //         .platform_window
-            //         .borrow_on_main_thread()
-            //         .draw(scene);
-            // });
+            let _ = cx.run_on_main(|cx| {
+                cx.window
+                    .platform_window
+                    .borrow_on_main_thread()
+                    .draw(scene);
+            });
 
             cx.window.dirty = false;
             Ok(())

@@ -289,6 +289,18 @@ impl MainThread<AppContext> {
         })
     }
 
+    pub(crate) fn update_window<R>(
+        &mut self,
+        id: WindowId,
+        update: impl FnOnce(&mut WindowContext) -> R,
+    ) -> Result<R> {
+        self.0.update_window(id, |cx| {
+            update(unsafe {
+                std::mem::transmute::<&mut WindowContext, &mut MainThread<WindowContext>>(cx)
+            })
+        })
+    }
+
     pub(crate) fn platform(&self) -> &dyn Platform {
         self.platform.borrow_on_main_thread()
     }

@@ -1358,6 +1358,7 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
         let window_state = get_window_state(this);
         let mut window_state = window_state.as_ref().lock();
         if let Some(scene) = window_state.scene_to_render.take() {
+            dbg!("render", &scene);
             window_state.renderer.draw(&scene);
         }
     }
