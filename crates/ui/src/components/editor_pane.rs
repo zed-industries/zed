@@ -15,8 +15,6 @@ pub struct Editor {
 pub struct EditorPane<V: 'static> {
     view_type: PhantomData<V>,
     editor: Editor,
-    // toolbar: Toolbar,
-    // buffer: Buffer<V>,
 }
 
 impl<V: 'static> EditorPane<V> {
@@ -24,8 +22,6 @@ impl<V: 'static> EditorPane<V> {
         Self {
             view_type: PhantomData,
             editor,
-            // toolbar,
-            // buffer,
         }
     }
 
