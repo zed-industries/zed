@@ -8,15 +8,20 @@ publish = false
 name = "storybook"
 path = "src/storybook.rs"
 
+[features]
+test-support = []
+
 [dependencies]
 anyhow.workspace = true
 clap = { version = "4.4", features = ["derive", "string"] }
 chrono = "0.4"
+derive_more.workspace = true
 fs = { path = "../fs" }
 futures.workspace = true
 gpui2 = { path = "../gpui2" }
 itertools = "0.11.0"
 log.workspace = true
+refineable = { path = "../refineable" }
 rust-embed.workspace = true
 serde.workspace = true
 settings = { path = "../settings" }

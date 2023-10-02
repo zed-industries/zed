@@ -22,6 +22,8 @@ use gpui2_macros::styleable_helpers;
 use refineable::{Refineable, RefinementCascade};
 use std::sync::Arc;
 
+pub type StyleCascade = RefinementCascade<Style>;
+
 #[derive(Clone, Refineable, Debug)]
 #[refineable(debug)]
 pub struct Style {
@@ -129,7 +131,7 @@ impl Style {
             color: self.text_color.map(Into::into),
             font_family: self.font_family.clone(),
             font_size: self.font_size.map(|size| size * cx.rem_size()),
-            font_weight: self.font_weight,
+            font_weight: self.font_weight.map(Into::into),
             font_style: self.font_style,
             underline: None,
         })
