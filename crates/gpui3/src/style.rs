@@ -1,7 +1,7 @@
 use crate::{
     phi, rems, AbsoluteLength, Bounds, Corners, CornersRefinement, DefiniteLength, Edges,
     EdgesRefinement, Font, FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point,
-    PointRefinement, Rems, Result, RunStyle, SharedString, Size, SizeRefinement, ViewContext,
+    PointRefinement, Quad, Rems, Result, RunStyle, SharedString, Size, SizeRefinement, ViewContext,
     WindowContext,
 };
 use refineable::Refineable;
@@ -180,23 +180,28 @@ impl Style {
     }
 
     /// Paints the background of an element styled with this style.
-    pub fn paint_background<V: 'static>(&self, _bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
-        let _rem_size = cx.rem_size();
-        if let Some(_color) = self.fill.as_ref().and_then(Fill::color) {
-            todo!();
+    pub fn paint<V: 'static>(&self, order: u32, bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
+        let rem_size = cx.rem_size();
+
+        let background_color = self.fill.as_ref().and_then(Fill::color);
+        if background_color.is_some() || self.is_border_visible() {
+            cx.scene().insert(Quad {
+                order,
+                bounds,
+                clip_bounds: bounds, // todo!
+                clip_corner_radii: self.corner_radii.map(|length| length.to_pixels(rem_size)),
+                background: background_color.unwrap_or_default(),
+                border_color: self.border_color.unwrap_or_default(),
+                corner_radii: self.corner_radii.map(|length| length.to_pixels(rem_size)),
+                border_widths: self.border_widths.map(|length| length.to_pixels(rem_size)),
+            });
         }
     }
 
-    /// Paints the foreground of an element styled with this style.
-    pub fn paint_foreground<V: 'static>(&self, _bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
-        let rem_size = cx.rem_size();
-
-        if let Some(_color) = self.border_color {
-            let border = self.border_widths.to_pixels(rem_size);
-            if !border.is_empty() {
-                todo!();
-            }
-        }
+    fn is_border_visible(&self) -> bool {
+        self.border_color
+            .map_or(false, |color| !color.is_transparent())
+            && self.border_widths.any(|length| !length.is_zero())
     }
 }
 
@@ -269,15 +274,6 @@ impl From<Hsla> for Fill {
     fn from(color: Hsla) -> Self {
         Self::Color(color)
     }
-}
-
-#[derive(Clone, Refineable, Default, Debug)]
-#[refineable(debug)]
-pub struct CornerRadii {
-    pub top_left: AbsoluteLength,
-    pub top_right: AbsoluteLength,
-    pub bottom_left: AbsoluteLength,
-    pub bottom_right: AbsoluteLength,
 }
 
 impl From<TextStyle> for HighlightStyle {

@@ -49,9 +49,10 @@ impl<S: 'static> Element for Img<S> {
         cx: &mut crate::ViewContext<Self::State>,
     ) -> Result<()> {
         let style = self.computed_style();
+        let order = layout.order;
         let bounds = layout.bounds;
 
-        style.paint_background(bounds, cx);
+        style.paint(order, bounds, cx);
 
         // if let Some(uri) = &self.uri {
         //     let image_future = cx.image_cache.get(uri.clone());

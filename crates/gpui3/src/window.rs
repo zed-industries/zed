@@ -121,6 +121,10 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         self.window.mouse_position
     }
 
+    pub fn scene(&mut self) -> &mut Scene {
+        &mut self.window.scene
+    }
+
     pub(crate) fn draw(&mut self) -> Result<()> {
         let unit_entity = self.unit_entity.clone();
         self.update_entity(&unit_entity, |_, cx| {

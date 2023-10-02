@@ -307,6 +307,24 @@ unsafe impl<T: Clone + Debug + Zeroable + Pod> Zeroable for Edges<T> {}
 
 unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Edges<T> {}
 
+impl<T: Clone + Debug> Edges<T> {
+    pub fn map<U: Clone + Debug, F: Fn(&T) -> U>(&self, f: F) -> Edges<U> {
+        Edges {
+            top: f(&self.top),
+            right: f(&self.right),
+            bottom: f(&self.bottom),
+            left: f(&self.left),
+        }
+    }
+
+    pub fn any<F: Fn(&T) -> bool>(&self, predicate: F) -> bool {
+        predicate(&self.top)
+            || predicate(&self.right)
+            || predicate(&self.bottom)
+            || predicate(&self.left)
+    }
+}
+
 impl Edges<Length> {
     pub fn auto() -> Self {
         Self {
@@ -358,12 +376,6 @@ impl Edges<AbsoluteLength> {
     }
 }
 
-impl Edges<Pixels> {
-    pub fn is_empty(&self) -> bool {
-        self.top == px(0.) && self.right == px(0.) && self.bottom == px(0.) && self.left == px(0.)
-    }
-}
-
 #[derive(Refineable, Clone, Default, Debug)]
 #[refineable(debug)]
 #[repr(C)]
@@ -372,6 +384,17 @@ pub struct Corners<T: Clone + Debug> {
     pub top_right: T,
     pub bottom_right: T,
     pub bottom_left: T,
+}
+
+impl<T: Clone + Debug> Corners<T> {
+    pub fn map<U: Clone + Debug, F: Fn(&T) -> U>(&self, f: F) -> Corners<U> {
+        Corners {
+            top_left: f(&self.top_left),
+            top_right: f(&self.top_right),
+            bottom_right: f(&self.bottom_right),
+            bottom_left: f(&self.bottom_left),
+        }
+    }
 }
 
 impl<T: Clone + Debug + Mul<Output = T>> Mul for Corners<T> {
@@ -535,6 +558,15 @@ impl Debug for Rems {
 pub enum AbsoluteLength {
     Pixels(Pixels),
     Rems(Rems),
+}
+
+impl AbsoluteLength {
+    pub fn is_zero(&self) -> bool {
+        match self {
+            AbsoluteLength::Pixels(px) => px.0 == 0.,
+            AbsoluteLength::Rems(rems) => rems.0 == 0.,
+        }
+    }
 }
 
 impl From<Pixels> for AbsoluteLength {

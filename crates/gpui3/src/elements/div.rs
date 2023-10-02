@@ -55,7 +55,7 @@ impl<S: 'static + Send + Sync> Element for Div<S> {
         let Layout { order, bounds } = layout;
 
         let style = self.computed_style();
-        style.paint_background(bounds, cx);
+        style.paint(order, bounds, cx);
         let overflow = &style.overflow;
         // // todo!("support only one dimension being hidden")
         // if style.overflow.y != Overflow::Visible || style.overflow.x != Overflow::Visible {
@@ -69,7 +69,6 @@ impl<S: 'static + Send + Sync> Element for Div<S> {
         } else {
             self.paint_children(overflow, state, cx)?;
         }
-        style.paint_foreground(bounds, cx);
 
         self.handle_scroll(order, bounds, style.overflow.clone(), child_layouts, cx);
 
