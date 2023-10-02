@@ -43,7 +43,7 @@ pub type ChannelData = (Channel, ChannelPath);
 pub struct Channel {
     pub id: ChannelId,
     pub name: String,
-    pub has_changed: bool,
+    pub has_note_changed: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
@@ -200,19 +200,27 @@ impl ChannelStore {
     ) -> Task<Result<ModelHandle<ChannelBuffer>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
-        self.open_channel_resource(
+        let open_channel_buffer = self.open_channel_resource(
             channel_id,
             |this| &mut this.opened_buffers,
             |channel, cx| ChannelBuffer::new(channel, client, user_store, cx),
             cx,
-        )
+        );
+        cx.spawn(|this, mut cx| async move {
+            let buffer = open_channel_buffer.await?;
+            this.update(&mut cx, |this, cx| {
+                this.channel_index.clear_note_changed(channel_id);
+                cx.notify();
+            });
+            Ok(buffer)
+        })
     }
 
     pub fn has_channel_buffer_changed(&self, channel_id: ChannelId) -> Option<bool> {
         self.channel_index
             .by_id()
             .get(&channel_id)
-            .map(|channel| channel.has_changed)
+            .map(|channel| channel.has_note_changed)
     }
 
     pub fn open_channel_chat(
@@ -787,7 +795,7 @@ impl ChannelStore {
                     Arc::new(Channel {
                         id: channel.id,
                         name: channel.name,
-                        has_changed: false,
+                        has_note_changed: false,
                     }),
                 ),
             }
@@ -825,7 +833,7 @@ impl ChannelStore {
             }
 
             for id_changed in payload.notes_changed {
-                index.has_changed(id_changed);
+                index.note_changed(id_changed);
             }
 
             for edge in payload.insert_edge {

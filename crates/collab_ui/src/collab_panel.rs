@@ -1774,6 +1774,7 @@ impl CollabPanel {
         const FACEPILE_LIMIT: usize = 3;
 
         enum ChannelCall {}
+        enum ChannelNote {}
 
         let mut is_dragged_over = false;
         if cx
@@ -1820,7 +1821,7 @@ impl CollabPanel {
                         channel.name.clone(),
                         theme
                             .channel_name
-                            .in_state(channel.has_changed)
+                            .in_state(channel.has_note_changed)
                             .text
                             .clone(),
                     )
@@ -1863,6 +1864,8 @@ impl CollabPanel {
                                 .with_color(theme.channel_hash.color)
                                 .constrained()
                                 .with_width(theme.channel_hash.width)
+                                .contained()
+                                .with_margin_right(theme.channel_hash.container.margin.left)
                                 .into_any()
                         } else {
                             Empty::new().into_any()
@@ -1870,6 +1873,34 @@ impl CollabPanel {
                     })
                     .on_click(MouseButton::Left, move |_, this, cx| {
                         this.join_channel_call(channel_id, cx);
+                    }),
+                )
+                .with_child(
+                    MouseEventHandler::new::<ChannelNote, _>(ix, cx, move |_, cx| {
+                        let participants =
+                            self.channel_store.read(cx).channel_participants(channel_id);
+                        if participants.is_empty() {
+                            if channel.has_note_changed {
+                                Svg::new("icons/terminal.svg")
+                                    .with_color(theme.channel_note_active_color)
+                                    .constrained()
+                                    .with_width(theme.channel_hash.width)
+                                    .into_any()
+                            } else if row_hovered {
+                                Svg::new("icons/terminal.svg")
+                                    .with_color(theme.channel_hash.color)
+                                    .constrained()
+                                    .with_width(theme.channel_hash.width)
+                                    .into_any()
+                            } else {
+                                Empty::new().into_any()
+                            }
+                        } else {
+                            Empty::new().into_any()
+                        }
+                    })
+                    .on_click(MouseButton::Left, move |_, this, cx| {
+                        this.open_channel_notes(&OpenChannelNotes { channel_id }, cx);
                     }),
                 )
                 .align_children_center()

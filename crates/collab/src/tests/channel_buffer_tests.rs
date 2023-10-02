@@ -445,7 +445,7 @@ fn channel(id: u64, name: &'static str) -> Channel {
     Channel {
         id,
         name: name.to_string(),
-        has_changed: false,
+        has_note_changed: false,
     }
 }
 
@@ -786,9 +786,70 @@ async fn test_channel_buffer_changes(
         .await
         .unwrap();
 
+    // Client A makes an edit, and client B should see that the note has changed.
     channel_buffer_a.update(cx_a, |buffer, cx| {
         buffer.buffer().update(cx, |buffer, cx| {
             buffer.edit([(0..0, "1")], None, cx);
+        })
+    });
+    deterministic.run_until_parked();
+
+    let has_buffer_changed = cx_b.read(|cx| {
+        client_b
+            .channel_store()
+            .read(cx)
+            .has_channel_buffer_changed(channel_id)
+            .unwrap()
+    });
+
+    assert!(has_buffer_changed);
+
+    // Opening the buffer should clear the changed flag.
+    let channel_buffer_b = client_b
+        .channel_store()
+        .update(cx_b, |store, cx| store.open_channel_buffer(channel_id, cx))
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+
+    let has_buffer_changed = cx_b.read(|cx| {
+        client_b
+            .channel_store()
+            .read(cx)
+            .has_channel_buffer_changed(channel_id)
+            .unwrap()
+    });
+
+    assert!(!has_buffer_changed);
+
+    // Editing the channel while the buffer is open shuold not show that the buffer has changed.
+    channel_buffer_a.update(cx_a, |buffer, cx| {
+        buffer.buffer().update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "2")], None, cx);
+        })
+    });
+    deterministic.run_until_parked();
+
+    let has_buffer_changed = cx_b.read(|cx| {
+        client_b
+            .channel_store()
+            .read(cx)
+            .has_channel_buffer_changed(channel_id)
+            .unwrap()
+    });
+
+    assert!(!has_buffer_changed);
+
+    // Closing the buffer should re-enable change tracking
+    cx_b.update(|_| {
+        drop(channel_buffer_b);
+    });
+
+    deterministic.run_until_parked();
+
+    channel_buffer_a.update(cx_a, |buffer, cx| {
+        buffer.buffer().update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "3")], None, cx);
         })
     });
     deterministic.run_until_parked();

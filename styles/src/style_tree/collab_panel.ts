@@ -194,6 +194,7 @@ export default function contacts_panel(): any {
         },
         user_query_editor: filter_input,
         channel_hash: icon_style,
+        channel_note_active_color: foreground(layer, "active"),
         user_query_editor_height: 33,
         add_contact_button: header_icon_button,
         add_channel_button: header_icon_button,

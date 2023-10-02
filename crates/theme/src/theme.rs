@@ -238,6 +238,7 @@ pub struct CollabPanel {
     pub log_in_button: Interactive<ContainedText>,
     pub channel_editor: ContainerStyle,
     pub channel_hash: Icon,
+    pub channel_note_active_color: Color,
     pub tabbed_modal: TabbedModal,
     pub contact_finder: ContactFinder,
     pub channel_modal: ChannelModal,
