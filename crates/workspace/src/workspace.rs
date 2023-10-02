@@ -2520,18 +2520,12 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn toggle_follow(
+    fn start_following(
         &mut self,
         leader_id: PeerId,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let pane = self.active_pane().clone();
-
-        if let Some(prev_leader_id) = self.unfollow(&pane, cx) {
-            if leader_id == prev_leader_id {
-                return None;
-            }
-        }
 
         self.last_leaders_by_pane
             .insert(pane.downgrade(), leader_id);
@@ -2603,9 +2597,15 @@ impl Workspace {
             None
         };
 
-        next_leader_id
-            .or_else(|| collaborators.keys().copied().next())
-            .and_then(|leader_id| self.toggle_follow(leader_id, cx))
+        let pane = self.active_pane.clone();
+        let Some(leader_id) = next_leader_id.or_else(|| collaborators.keys().copied().next())
+        else {
+            return None;
+        };
+        if Some(leader_id) == self.unfollow(&pane, cx) {
+            return None;
+        }
+        self.follow(leader_id, cx)
     }
 
     pub fn follow(
@@ -2654,7 +2654,7 @@ impl Workspace {
         }
 
         // Otherwise, follow.
-        self.toggle_follow(leader_id, cx)
+        self.start_following(leader_id, cx)
     }
 
     pub fn unfollow(
