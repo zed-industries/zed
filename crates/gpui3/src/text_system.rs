@@ -50,7 +50,9 @@ impl TextSystem {
     }
 
     pub fn font_id(&self, font: &Font) -> Result<FontId> {
-        if let Some(font_id) = self.font_ids_by_font.read().get(font).copied() {
+        let font_id = self.font_ids_by_font.read().get(font).copied();
+
+        if let Some(font_id) = font_id {
             Ok(font_id)
         } else {
             let font_id = self.platform_text_system.font_id(font)?;
