@@ -65,6 +65,8 @@ test_both_dbs!(
 );
 
 async fn test_channel_message_new_notification(db: &Arc<Database>) {
+    panic!("Rewriting the way this works");
+
     let user_a = db
         .create_user(
             "user_a@example.com",
@@ -108,7 +110,7 @@ async fn test_channel_message_new_notification(db: &Arc<Database>) {
     let owner_id = db.create_server("test").await.unwrap().0 as u32;
 
     // Zero case: no messages at all
-    assert!(!db.has_new_message_tx(channel, user_b).await.unwrap());
+    // assert!(!db.has_new_message_tx(channel, user_b).await.unwrap());
 
     let a_connection_id = rpc::ConnectionId { owner_id, id: 0 };
     db.join_channel_chat(channel, a_connection_id, user_a)
@@ -131,7 +133,7 @@ async fn test_channel_message_new_notification(db: &Arc<Database>) {
         .unwrap();
 
     // Smoke test: can we detect a new message?
-    assert!(db.has_new_message_tx(channel, user_b).await.unwrap());
+    // assert!(db.has_new_message_tx(channel, user_b).await.unwrap());
 
     let b_connection_id = rpc::ConnectionId { owner_id, id: 1 };
     db.join_channel_chat(channel, b_connection_id, user_b)
@@ -139,7 +141,7 @@ async fn test_channel_message_new_notification(db: &Arc<Database>) {
         .unwrap();
 
     // Joining the channel should _not_ update us to the latest message
-    assert!(db.has_new_message_tx(channel, user_b).await.unwrap());
+    // assert!(db.has_new_message_tx(channel, user_b).await.unwrap());
 
     // Reading the earlier messages should not change that we have new messages
     let _ = db
@@ -147,7 +149,7 @@ async fn test_channel_message_new_notification(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    assert!(db.has_new_message_tx(channel, user_b).await.unwrap());
+    // assert!(db.has_new_message_tx(channel, user_b).await.unwrap());
 
     // This constraint is currently inexpressible, creating a message implicitly broadcasts
     // it to all participants
@@ -165,7 +167,7 @@ async fn test_channel_message_new_notification(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    assert!(!db.has_new_message_tx(channel, user_b).await.unwrap());
+    // assert!(!db.has_new_message_tx(channel, user_b).await.unwrap());
 
     // And future messages should not reset the flag
     let _ = db
@@ -173,26 +175,26 @@ async fn test_channel_message_new_notification(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    assert!(!db.has_new_message_tx(channel, user_b).await.unwrap());
+    // assert!(!db.has_new_message_tx(channel, user_b).await.unwrap());
 
     let _ = db
         .create_channel_message(channel, user_b, "6", OffsetDateTime::now_utc(), 6)
         .await
         .unwrap();
 
-    assert!(!db.has_new_message_tx(channel, user_b).await.unwrap());
+    // assert!(!db.has_new_message_tx(channel, user_b).await.unwrap());
 
     // And we should start seeing the flag again after we've left the channel
     db.leave_channel_chat(channel, b_connection_id, user_b)
         .await
         .unwrap();
 
-    assert!(!db.has_new_message_tx(channel, user_b).await.unwrap());
+    // assert!(!db.has_new_message_tx(channel, user_b).await.unwrap());
 
     let _ = db
         .create_channel_message(channel, user_a, "7", OffsetDateTime::now_utc(), 7)
         .await
         .unwrap();
 
-    assert!(db.has_new_message_tx(channel, user_b).await.unwrap());
+    // assert!(db.has_new_message_tx(channel, user_b).await.unwrap());
 }

@@ -171,6 +171,8 @@ test_both_dbs!(
 );
 
 async fn test_channel_buffers_diffs(db: &Database) {
+    panic!("Rewriting the way this works");
+
     let a_id = db
         .create_user(
             "user_a@example.com",

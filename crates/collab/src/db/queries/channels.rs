@@ -463,20 +463,14 @@ impl Database {
             }
         }
 
+        let channel_ids = graph.channels.iter().map(|c| c.id).collect::<Vec<_>>();
         let channels_with_changed_notes = self
-            .channels_with_changed_notes(
-                user_id,
-                graph.channels.iter().map(|channel| channel.id),
-                &*tx,
-            )
+            .channels_with_changed_notes(user_id, &channel_ids, &*tx)
             .await?;
 
-        let mut channels_with_new_messages = HashSet::default();
-        for channel in graph.channels.iter() {
-            if self.has_new_message(channel.id, user_id, tx).await? {
-                channels_with_new_messages.insert(channel.id);
-            }
-        }
+        let channels_with_new_messages = self
+            .channels_with_new_messages(user_id, &channel_ids, &*tx)
+            .await?;
 
         Ok(ChannelsForUser {
             channels: graph,

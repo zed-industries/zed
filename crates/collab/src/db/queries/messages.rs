@@ -217,14 +217,12 @@ impl Database {
                 ConnectionId,
             }
 
-            // Observe this message for all participants
-            observed_channel_messages::Entity::insert_many(participant_user_ids.iter().map(
-                |pariticpant_id| observed_channel_messages::ActiveModel {
-                    user_id: ActiveValue::Set(*pariticpant_id),
-                    channel_id: ActiveValue::Set(channel_id),
-                    channel_message_id: ActiveValue::Set(message.last_insert_id),
-                },
-            ))
+            // Observe this message for the sender
+            observed_channel_messages::Entity::insert(observed_channel_messages::ActiveModel {
+                user_id: ActiveValue::Set(user_id),
+                channel_id: ActiveValue::Set(channel_id),
+                channel_message_id: ActiveValue::Set(message.last_insert_id),
+            })
             .on_conflict(
                 OnConflict::columns([
                     observed_channel_messages::Column::ChannelId,
@@ -248,51 +246,74 @@ impl Database {
         .await
     }
 
-    #[cfg(test)]
-    pub async fn has_new_message_tx(&self, channel_id: ChannelId, user_id: UserId) -> Result<bool> {
-        self.transaction(|tx| async move { self.has_new_message(channel_id, user_id, &*tx).await })
-            .await
-    }
-
-    #[cfg(test)]
-    pub async fn dbg_print_messages(&self) -> Result<()> {
-        self.transaction(|tx| async move {
-            dbg!(observed_channel_messages::Entity::find()
-                .all(&*tx)
-                .await
-                .unwrap());
-            dbg!(channel_message::Entity::find().all(&*tx).await.unwrap());
-
-            Ok(())
-        })
-        .await
-    }
-
-    pub async fn has_new_message(
+    pub async fn channels_with_new_messages(
         &self,
-        channel_id: ChannelId,
         user_id: UserId,
+        channel_ids: &[ChannelId],
         tx: &DatabaseTransaction,
-    ) -> Result<bool> {
-        self.check_user_is_channel_member(channel_id, user_id, &*tx)
+    ) -> Result<HashSet<ChannelId>> {
+        let mut observed_messages_by_channel_id = HashMap::default();
+        let mut rows = observed_channel_messages::Entity::find()
+            .filter(observed_channel_messages::Column::UserId.eq(user_id))
+            .filter(observed_channel_messages::Column::ChannelId.is_in(channel_ids.iter().copied()))
+            .stream(&*tx)
             .await?;
 
-        let latest_message_id = channel_message::Entity::find()
-            .filter(Condition::all().add(channel_message::Column::ChannelId.eq(channel_id)))
-            .order_by(channel_message::Column::SentAt, sea_query::Order::Desc)
-            .limit(1 as u64)
-            .one(&*tx)
-            .await?
-            .map(|model| model.id);
+        while let Some(row) = rows.next().await {
+            let row = row?;
+            observed_messages_by_channel_id.insert(row.channel_id, row);
+        }
+        drop(rows);
+        let mut values = String::new();
+        for id in channel_ids {
+            if !values.is_empty() {
+                values.push_str(", ");
+            }
+            write!(&mut values, "({})", id).unwrap();
+        }
 
-        let last_message_read = observed_channel_messages::Entity::find()
-            .filter(observed_channel_messages::Column::ChannelId.eq(channel_id))
-            .filter(observed_channel_messages::Column::UserId.eq(user_id))
-            .one(&*tx)
-            .await?
-            .map(|model| model.channel_message_id);
+        if values.is_empty() {
+            return Ok(Default::default());
+        }
 
-        Ok(last_message_read != latest_message_id)
+        let sql = format!(
+            r#"
+            SELECT
+                *
+            FROM (
+                SELECT
+                    *,
+                    row_number() OVER (
+                        PARTITION BY channel_id
+                        ORDER BY id DESC
+                    ) as row_number
+                FROM channel_messages
+                WHERE
+                    channel_id in ({values})
+            ) AS messages
+            WHERE
+                row_number = 1
+            "#,
+        );
+
+        let stmt = Statement::from_string(self.pool.get_database_backend(), sql);
+        let last_messages = channel_message::Model::find_by_statement(stmt)
+            .all(&*tx)
+            .await?;
+
+        let mut channels_with_new_changes = HashSet::default();
+        for last_message in last_messages {
+            if let Some(observed_message) =
+                observed_messages_by_channel_id.get(&last_message.channel_id)
+            {
+                if observed_message.channel_message_id == last_message.id {
+                    continue;
+                }
+            }
+            channels_with_new_changes.insert(last_message.channel_id);
+        }
+
+        Ok(channels_with_new_changes)
     }
 
     pub async fn remove_channel_message(

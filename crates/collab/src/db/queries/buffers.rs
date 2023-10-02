@@ -529,7 +529,7 @@ impl Database {
         .on_conflict(
             OnConflict::columns([Column::UserId, Column::BufferId])
                 .update_columns([Column::Epoch, Column::LamportTimestamp, Column::ReplicaId])
-                .target_cond_where(
+                .action_cond_where(
                     Condition::any()
                         .add(Column::Epoch.lt(*max_operation.epoch.as_ref()))
                         .add(
@@ -702,7 +702,7 @@ impl Database {
     pub async fn channels_with_changed_notes(
         &self,
         user_id: UserId,
-        channel_ids: impl IntoIterator<Item = ChannelId>,
+        channel_ids: &[ChannelId],
         tx: &DatabaseTransaction,
     ) -> Result<HashSet<ChannelId>> {
         #[derive(Debug, Clone, Copy, EnumIter, DeriveColumn)]
@@ -713,7 +713,7 @@ impl Database {
 
         let mut channel_ids_by_buffer_id = HashMap::default();
         let mut rows = buffer::Entity::find()
-            .filter(buffer::Column::ChannelId.is_in(channel_ids))
+            .filter(buffer::Column::ChannelId.is_in(channel_ids.iter().copied()))
             .stream(&*tx)
             .await?;
         while let Some(row) = rows.next().await {
