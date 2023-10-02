@@ -32,7 +32,7 @@ log.workspace = true
 libc = "0.2"
 time.workspace = true
 
-gpui = { path = "../gpui", optional  = true}
+gpui = { path = "../gpui", optional = true}
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }
