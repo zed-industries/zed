@@ -119,7 +119,7 @@ pub fn generate_content_prompt(
     user_prompt: String,
     language_name: Option<&str>,
     buffer: &BufferSnapshot,
-    range: Range<language::Anchor>,
+    range: Range<impl ToOffset>,
     kind: CodegenKind,
 ) -> String {
     let mut prompt = String::new();
@@ -131,7 +131,7 @@ pub fn generate_content_prompt(
         writeln!(prompt, "You're an expert engineer.\n").unwrap();
     }
 
-    let outline = summarize(buffer, range.clone());
+    let outline = summarize(buffer, range);
     writeln!(
         prompt,
         "The file you are currently working on has the following outline:"

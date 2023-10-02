@@ -274,13 +274,17 @@ impl AssistantPanel {
             return;
         };
 
+        let selection = editor.read(cx).selections.newest_anchor().clone();
+        if selection.start.excerpt_id() != selection.end.excerpt_id() {
+            return;
+        }
+
         let inline_assist_id = post_inc(&mut self.next_inline_assist_id);
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
         let provider = Arc::new(OpenAICompletionProvider::new(
             api_key,
             cx.background().clone(),
         ));
-        let selection = editor.read(cx).selections.newest_anchor().clone();
         let codegen_kind = if editor.read(cx).selections.newest::<usize>(cx).is_empty() {
             CodegenKind::Generate {
                 position: selection.start,
@@ -542,25 +546,25 @@ impl AssistantPanel {
             self.inline_prompt_history.pop_front();
         }
 
-        let multi_buffer = editor.read(cx).buffer().read(cx);
-        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-        let snapshot = if multi_buffer.is_singleton() {
-            multi_buffer.as_singleton().unwrap().read(cx).snapshot()
+        let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+        let range = pending_assist.codegen.read(cx).range();
+        let start = snapshot.point_to_buffer_offset(range.start);
+        let end = snapshot.point_to_buffer_offset(range.end);
+        let (buffer, range) = if let Some((start, end)) = start.zip(end) {
+            let (start_buffer, start_buffer_offset) = start;
+            let (end_buffer, end_buffer_offset) = end;
+            if start_buffer.remote_id() == end_buffer.remote_id() {
+                (start_buffer, start_buffer_offset..end_buffer_offset)
+            } else {
+                self.finish_inline_assist(inline_assist_id, false, cx);
+                return;
+            }
         } else {
+            self.finish_inline_assist(inline_assist_id, false, cx);
             return;
         };
 
-        let range = pending_assist.codegen.read(cx).range();
-        let language_range = snapshot.anchor_at(
-            range.start.to_offset(&multi_buffer_snapshot),
-            language::Bias::Left,
-        )
-            ..snapshot.anchor_at(
-                range.end.to_offset(&multi_buffer_snapshot),
-                language::Bias::Right,
-            );
-
-        let language = snapshot.language_at(language_range.start);
+        let language = buffer.language_at(range.start);
         let language_name = if let Some(language) = language.as_ref() {
             if Arc::ptr_eq(language, &language::PLAIN_TEXT) {
                 None
@@ -576,8 +580,8 @@ impl AssistantPanel {
         let prompt = generate_content_prompt(
             user_prompt.to_string(),
             language_name,
-            &snapshot,
-            language_range,
+            &buffer,
+            range,
             codegen_kind,
         );
 
