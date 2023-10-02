@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS "observed_buffer_edits" (
     "buffer_id" INTEGER NOT NULL REFERENCES buffers (id) ON DELETE CASCADE,
     "epoch" INTEGER NOT NULL,
     "lamport_timestamp" INTEGER NOT NULL,
+    "replica_id" INTEGER NOT NULL,
     PRIMARY KEY (user_id, buffer_id)
 );
 

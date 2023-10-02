@@ -463,12 +463,16 @@ impl Database {
             }
         }
 
-        let mut channels_with_changed_notes = HashSet::default();
+        let channels_with_changed_notes = self
+            .channels_with_changed_notes(
+                user_id,
+                graph.channels.iter().map(|channel| channel.id),
+                &*tx,
+            )
+            .await?;
+
         let mut channels_with_new_messages = HashSet::default();
         for channel in graph.channels.iter() {
-            if self.has_note_changed(user_id, channel.id, tx).await? {
-                channels_with_changed_notes.insert(channel.id);
-            }
             if self.has_new_message(channel.id, user_id, tx).await? {
                 channels_with_new_messages.insert(channel.id);
             }

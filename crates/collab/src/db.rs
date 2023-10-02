@@ -119,7 +119,7 @@ impl Database {
         Ok(new_migrations)
     }
 
-    async fn transaction<F, Fut, T>(&self, f: F) -> Result<T>
+    pub async fn transaction<F, Fut, T>(&self, f: F) -> Result<T>
     where
         F: Send + Fn(TransactionHandle) -> Fut,
         Fut: Send + Future<Output = Result<T>>,
@@ -321,7 +321,7 @@ fn is_serialization_error(error: &Error) -> bool {
     }
 }
 
-struct TransactionHandle(Arc<Option<DatabaseTransaction>>);
+pub struct TransactionHandle(Arc<Option<DatabaseTransaction>>);
 
 impl Deref for TransactionHandle {
     type Target = DatabaseTransaction;

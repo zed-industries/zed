@@ -9,6 +9,7 @@ pub struct Model {
     pub buffer_id: BufferId,
     pub epoch: i32,
     pub lamport_timestamp: i32,
+    pub replica_id: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
