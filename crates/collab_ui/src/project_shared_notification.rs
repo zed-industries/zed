@@ -41,6 +41,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
             }
         }
         room::Event::RemoteProjectUnshared { project_id }
+        | room::Event::RemoteProjectJoined { project_id }
         | room::Event::RemoteProjectInvitationDiscarded { project_id } => {
             if let Some(windows) = notification_windows.remove(&project_id) {
                 for window in windows {
@@ -50,13 +51,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
         }
         room::Event::Left => {
             for (_, windows) in notification_windows.drain() {
-                for window in windows {
-                    window.remove(cx);
-                }
-            }
-        }
-        room::Event::RemoteProjectJoined { project_id } => {
-            if let Some(windows) = notification_windows.remove(&project_id) {
                 for window in windows {
                     window.remove(cx);
                 }

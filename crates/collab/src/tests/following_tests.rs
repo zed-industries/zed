@@ -2,12 +2,10 @@ use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 use call::ActiveCall;
 use collab_ui::project_shared_notification::ProjectSharedNotification;
 use editor::{Editor, ExcerptRange, MultiBuffer};
-use gpui::{
-    executor::Deterministic, geometry::vector::vec2f, AppContext, TestAppContext, ViewHandle,
-};
+use gpui::{executor::Deterministic, geometry::vector::vec2f, TestAppContext, ViewHandle};
 use live_kit_client::MacOSDisplay;
 use serde_json::json;
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 use workspace::{
     dock::{test::TestPanel, DockPosition},
     item::{test::TestItem, ItemHandle as _},
@@ -1104,11 +1102,10 @@ async fn test_following_across_workspaces(
     // a shares project 1
     // b shares project 2
     //
-    //
-    // b joins project 1
-    //
-    // test: when a is in project 2 and b clicks follow (from unshared project), b should open project 2 and follow a
-    // test: when a is in project 1 and b clicks follow, b should open project 1 and follow a
+    // b follows a: causes project 2 to be joined, and b to follow a.
+    // b opens a different file in project 2, a follows b
+    // b opens a different file in project 1, a cannot follow b
+    // b shares the project, a joins the project and follows b
     deterministic.forbid_parking();
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
@@ -1153,16 +1150,10 @@ async fn test_following_across_workspaces(
     cx_a.update(|cx| collab_ui::init(&client_a.app_state, cx));
     cx_b.update(|cx| collab_ui::init(&client_b.app_state, cx));
 
-    let project_a_id = active_call_a
+    active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    /*
-    let project_b_id = active_call_b
-        .update(cx_b, |call, cx| call.share_project(project_b.clone(), cx))
-        .await
-        .unwrap();
-        */
 
     active_call_a
         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
@@ -1173,18 +1164,14 @@ async fn test_following_across_workspaces(
         .await
         .unwrap();
 
-    let editor_a = workspace_a
+    workspace_a
         .update(cx_a, |workspace, cx| {
             workspace.open_path((worktree_id_a, "w.rs"), None, true, cx)
         })
         .await
-        .unwrap()
-        .downcast::<Editor>()
         .unwrap();
 
     deterministic.run_until_parked();
-    assert_eq!(cx_b.windows().len(), 2);
-
     assert_eq!(visible_push_notifications(cx_b).len(), 1);
 
     workspace_b.update(cx_b, |workspace, cx| {
@@ -1205,14 +1192,115 @@ async fn test_following_across_workspaces(
         .root(cx_b);
 
     // assert that b is following a in project a in w.rs
-    workspace_b_project_a.update(cx_b, |workspace, _| {
+    workspace_b_project_a.update(cx_b, |workspace, cx| {
         assert!(workspace.is_being_followed(client_a.peer_id().unwrap()));
         assert_eq!(
             client_a.peer_id(),
             workspace.leader_for_pane(workspace.active_pane())
         );
+        let item = workspace.active_item(cx).unwrap();
+        assert_eq!(item.tab_description(0, cx).unwrap(), Cow::Borrowed("w.rs"));
     });
+
+    // TODO: in app code, this would be done by the collab_ui.
+    active_call_b
+        .update(cx_b, |call, cx| {
+            let project = workspace_b_project_a.read(cx).project().clone();
+            call.set_location(Some(&project), cx)
+        })
+        .await
+        .unwrap();
 
     // assert that there are no share notifications open
     assert_eq!(visible_push_notifications(cx_b).len(), 0);
+
+    // b moves to x.rs in a's project, and a follows
+    workspace_b_project_a
+        .update(cx_b, |workspace, cx| {
+            workspace.open_path((worktree_id_a, "x.rs"), None, true, cx)
+        })
+        .await
+        .unwrap();
+
+    deterministic.run_until_parked();
+    workspace_b_project_a.update(cx_b, |workspace, cx| {
+        let item = workspace.active_item(cx).unwrap();
+        assert_eq!(item.tab_description(0, cx).unwrap(), Cow::Borrowed("x.rs"));
+    });
+
+    workspace_a.update(cx_a, |workspace, cx| {
+        workspace
+            .follow(client_b.peer_id().unwrap(), cx)
+            .unwrap()
+            .detach()
+    });
+
+    deterministic.run_until_parked();
+    workspace_a.update(cx_a, |workspace, cx| {
+        assert!(workspace.is_being_followed(client_b.peer_id().unwrap()));
+        assert_eq!(
+            client_b.peer_id(),
+            workspace.leader_for_pane(workspace.active_pane())
+        );
+        let item = workspace.active_pane().read(cx).active_item().unwrap();
+        assert_eq!(item.tab_description(0, cx).unwrap(), Cow::Borrowed("x.rs"));
+    });
+
+    // b moves to y.rs in b's project, a is still following but can't yet see
+    workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.open_path((worktree_id_b, "y.rs"), None, true, cx)
+        })
+        .await
+        .unwrap();
+
+    // TODO: in app code, this would be done by the collab_ui.
+    active_call_b
+        .update(cx_b, |call, cx| {
+            let project = workspace_b.read(cx).project().clone();
+            call.set_location(Some(&project), cx)
+        })
+        .await
+        .unwrap();
+
+    let project_b_id = active_call_b
+        .update(cx_b, |call, cx| call.share_project(project_b.clone(), cx))
+        .await
+        .unwrap();
+
+    deterministic.run_until_parked();
+    assert_eq!(visible_push_notifications(cx_a).len(), 1);
+    cx_a.update(|cx| {
+        workspace::join_remote_project(
+            project_b_id,
+            client_b.user_id().unwrap(),
+            client_a.app_state.clone(),
+            cx,
+        )
+    })
+    .await
+    .unwrap();
+
+    deterministic.run_until_parked();
+
+    assert_eq!(visible_push_notifications(cx_a).len(), 0);
+    let workspace_a_project_b = cx_a
+        .windows()
+        .iter()
+        .max_by_key(|window| window.id())
+        .unwrap()
+        .downcast::<Workspace>()
+        .unwrap()
+        .root(cx_a);
+
+    workspace_a_project_b.update(cx_a, |workspace, cx| {
+        assert_eq!(workspace.project().read(cx).remote_id(), Some(project_b_id));
+        assert!(workspace.is_being_followed(client_b.peer_id().unwrap()));
+        assert_eq!(
+            client_b.peer_id(),
+            workspace.leader_for_pane(workspace.active_pane())
+        );
+        let item = workspace.active_item(cx).unwrap();
+        assert_eq!(item.tab_description(0, cx).unwrap(), Cow::Borrowed("y.rs"));
+    });
 }

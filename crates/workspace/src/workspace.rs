@@ -4246,21 +4246,20 @@ pub fn join_remote_project(
     cx: &mut AppContext,
 ) -> Task<Result<()>> {
     cx.spawn(|mut cx| async move {
-        let existing_workspace = cx
-            .windows()
-            .into_iter()
-            .find_map(|window| {
-                window.downcast::<Workspace>().and_then(|window| {
-                    window.read_root_with(&cx, |workspace, cx| {
+        let windows = cx.windows();
+        let existing_workspace = windows.into_iter().find_map(|window| {
+            window.downcast::<Workspace>().and_then(|window| {
+                window
+                    .read_root_with(&cx, |workspace, cx| {
                         if workspace.project().read(cx).remote_id() == Some(project_id) {
                             Some(cx.handle().downgrade())
                         } else {
                             None
                         }
                     })
-                })
+                    .unwrap_or(None)
             })
-            .flatten();
+        });
 
         let workspace = if let Some(existing_workspace) = existing_workspace {
             existing_workspace
