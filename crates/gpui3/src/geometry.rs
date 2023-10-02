@@ -425,7 +425,9 @@ unsafe impl<T: Clone + Debug + Zeroable + Pod> Zeroable for Corners<T> {}
 
 unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Corners<T> {}
 
-#[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd)]
+#[derive(
+    Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd, Zeroable, Pod,
+)]
 #[repr(transparent)]
 pub struct Pixels(pub(crate) f32);
 
@@ -442,6 +444,12 @@ impl Mul<Pixels> for f32 {
 
     fn mul(self, rhs: Pixels) -> Self::Output {
         Pixels(self * rhs.0)
+    }
+}
+
+impl MulAssign<f32> for Pixels {
+    fn mul_assign(&mut self, other: f32) {
+        self.0 *= other;
     }
 }
 
@@ -488,9 +496,6 @@ impl From<f32> for Pixels {
         Pixels(val)
     }
 }
-
-unsafe impl bytemuck::Pod for Pixels {}
-unsafe impl bytemuck::Zeroable for Pixels {}
 
 impl Debug for Pixels {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -1,9 +1,12 @@
 mod font_features;
+mod line;
 mod line_wrapper;
 mod text_layout_cache;
 
 use anyhow::anyhow;
+use bytemuck::{Pod, Zeroable};
 pub use font_features::*;
+pub use line::*;
 use line_wrapper::*;
 pub use text_layout_cache::*;
 
@@ -20,7 +23,8 @@ use std::{
     sync::Arc,
 };
 
-#[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
+#[derive(Hash, PartialEq, Eq, Clone, Copy, Debug, Zeroable, Pod)]
+#[repr(C)]
 pub struct FontId(pub usize);
 
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
@@ -51,7 +55,6 @@ impl TextSystem {
 
     pub fn font_id(&self, font: &Font) -> Result<FontId> {
         let font_id = self.font_ids_by_font.read().get(font).copied();
-
         if let Some(font_id) = font_id {
             Ok(font_id)
         } else {
@@ -160,28 +163,17 @@ impl TextSystem {
     ) -> Result<Line> {
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
 
-        dbg!("got font runs from pool");
         let mut last_font: Option<&Font> = None;
         for (len, style) in runs {
-            dbg!(len);
             if let Some(last_font) = last_font.as_ref() {
-                dbg!("a");
                 if **last_font == style.font {
-                    dbg!("b");
                     font_runs.last_mut().unwrap().0 += len;
-                    dbg!("c");
                     continue;
                 }
-                dbg!("d");
             }
-            dbg!("e");
             last_font = Some(&style.font);
-            dbg!("f");
             font_runs.push((*len, self.font_id(&style.font)?));
-            dbg!("g");
         }
-
-        dbg!("built font runs");
 
         let layout = self
             .text_layout_cache
@@ -332,7 +324,8 @@ pub struct RunStyle {
     pub underline: Option<UnderlineStyle>,
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Zeroable, Pod)]
+#[repr(C)]
 pub struct GlyphId(u32);
 
 impl From<GlyphId> for u32 {

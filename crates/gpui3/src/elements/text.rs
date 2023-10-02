@@ -3,7 +3,7 @@ use crate::{
 };
 use parking_lot::Mutex;
 use std::{marker::PhantomData, sync::Arc};
-use util::{arc_cow::ArcCow, ResultExt};
+use util::arc_cow::ArcCow;
 
 impl<S: 'static> IntoAnyElement<S> for ArcCow<'static, str> {
     fn into_any(self) -> AnyElement<S> {
@@ -92,8 +92,6 @@ impl<S: 'static> Element for Text<S> {
         paint_state: &mut Self::FrameState,
         cx: &mut ViewContext<S>,
     ) -> Result<()> {
-        let bounds = layout.bounds;
-
         let line;
         let line_height;
         {
@@ -108,8 +106,8 @@ impl<S: 'static> Element for Text<S> {
         let _text_style = cx.text_style();
 
         // todo!("We haven't added visible bounds to the new element system yet, so this is a placeholder.");
-        let visible_bounds = bounds;
-        line.paint(bounds.origin, visible_bounds, line_height, cx)?;
+        let visible_bounds = layout.bounds;
+        line.paint(&layout, visible_bounds, line_height, cx)?;
 
         Ok(())
     }

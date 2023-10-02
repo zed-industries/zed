@@ -5,6 +5,7 @@ use crate::{
 };
 use anyhow::Result;
 use futures::Future;
+use smallvec::SmallVec;
 use std::{any::TypeId, marker::PhantomData, mem, sync::Arc};
 use util::ResultExt;
 
@@ -18,6 +19,7 @@ pub struct Window {
     layout_engine: TaffyLayoutEngine,
     pub(crate) root_view: Option<AnyView<()>>,
     mouse_position: Point<Pixels>,
+    z_index_stack: SmallVec<[u32; 8]>,
     pub(crate) scene: Scene,
     pub(crate) dirty: bool,
 }
@@ -56,6 +58,7 @@ impl Window {
             layout_engine: TaffyLayoutEngine::new(),
             root_view: None,
             mouse_position,
+            z_index_stack: SmallVec::new(),
             scene: Scene::new(scale_factor),
             dirty: true,
         }
@@ -124,6 +127,13 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub fn scene(&mut self) -> &mut Scene {
         &mut self.window.scene
+    }
+
+    pub fn with_z_index<R>(&mut self, z_index: u32, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.window.z_index_stack.push(z_index);
+        let result = f(self);
+        self.window.z_index_stack.pop();
+        result
     }
 
     pub fn run_on_main<R>(

@@ -1,7 +1,7 @@
 use std::mem;
 
 use super::{Bounds, Hsla, Pixels, Point};
-use crate::{Corners, Edges};
+use crate::{Corners, Edges, FontId, GlyphId};
 use bytemuck::{Pod, Zeroable};
 use collections::BTreeMap;
 
@@ -17,6 +17,7 @@ pub struct Scene {
 #[derive(Default, Debug)]
 pub struct SceneLayer {
     pub quads: Vec<Quad>,
+    pub symbol: Vec<Symbol>,
 }
 
 impl Scene {
@@ -40,6 +41,7 @@ impl Scene {
         let layer = self.layers.entry(primitive.order()).or_default();
         match primitive {
             Primitive::Quad(quad) => layer.quads.push(quad),
+            Primitive::MonochromeGlyph(glyph) => layer.symbol.push(glyph),
         }
     }
 
@@ -51,20 +53,14 @@ impl Scene {
 #[derive(Clone, Debug)]
 pub enum Primitive {
     Quad(Quad),
+    MonochromeGlyph(Symbol),
 }
 
 impl Primitive {
     pub fn order(&self) -> u32 {
         match self {
             Primitive::Quad(quad) => quad.order,
-        }
-    }
-
-    pub fn is_transparent(&self) -> bool {
-        match self {
-            Primitive::Quad(quad) => {
-                quad.background.is_transparent() && quad.border_color.is_transparent()
-            }
+            Primitive::MonochromeGlyph(glyph) => glyph.order,
         }
     }
 
@@ -72,6 +68,9 @@ impl Primitive {
         match self {
             Primitive::Quad(quad) => {
                 quad.scale(factor);
+            }
+            Primitive::MonochromeGlyph(glyph) => {
+                glyph.scale(factor);
             }
         }
     }
@@ -117,5 +116,29 @@ impl Quad {
 impl From<Quad> for Primitive {
     fn from(quad: Quad) -> Self {
         Primitive::Quad(quad)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct Symbol {
+    pub order: u32,
+    pub origin: Point<Pixels>,
+    pub font_id: FontId,
+    pub font_size: Pixels,
+    pub id: GlyphId,
+    pub color: Hsla,
+}
+
+impl Symbol {
+    pub fn scale(&mut self, factor: f32) {
+        self.font_size *= factor;
+        self.origin *= factor;
+    }
+}
+
+impl From<Symbol> for Primitive {
+    fn from(glyph: Symbol) -> Self {
+        Primitive::MonochromeGlyph(glyph)
     }
 }
