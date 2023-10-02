@@ -73,6 +73,7 @@ actions!(
         ResetKey,
         InlineAssist,
         ToggleIncludeConversation,
+        ToggleRetrieveContext,
     ]
 );
 
@@ -109,6 +110,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(InlineAssistant::confirm);
     cx.add_action(InlineAssistant::cancel);
     cx.add_action(InlineAssistant::toggle_include_conversation);
+    cx.add_action(InlineAssistant::toggle_retrieve_context);
     cx.add_action(InlineAssistant::move_up);
     cx.add_action(InlineAssistant::move_down);
 }
@@ -147,6 +149,7 @@ pub struct AssistantPanel {
     inline_prompt_history: VecDeque<String>,
     _watch_saved_conversations: Task<Result<()>>,
     semantic_index: Option<ModelHandle<SemanticIndex>>,
+    retrieve_context_in_next_inline_assist: bool,
 }
 
 impl AssistantPanel {
@@ -221,6 +224,7 @@ impl AssistantPanel {
                         inline_prompt_history: Default::default(),
                         _watch_saved_conversations,
                         semantic_index,
+                        retrieve_context_in_next_inline_assist: false,
                     };
 
                     let mut old_dock_position = this.position(cx);
@@ -314,6 +318,7 @@ impl AssistantPanel {
                 codegen.clone(),
                 self.workspace.clone(),
                 cx,
+                self.retrieve_context_in_next_inline_assist,
             );
             cx.focus_self();
             assistant
@@ -445,6 +450,9 @@ impl AssistantPanel {
                 include_conversation,
             } => {
                 self.include_conversation_in_next_inline_assist = *include_conversation;
+            }
+            InlineAssistantEvent::RetrieveContextToggled { retrieve_context } => {
+                self.retrieve_context_in_next_inline_assist = *retrieve_context
             }
         }
     }
@@ -2679,6 +2687,9 @@ enum InlineAssistantEvent {
     IncludeConversationToggled {
         include_conversation: bool,
     },
+    RetrieveContextToggled {
+        retrieve_context: bool,
+    },
 }
 
 struct InlineAssistant {
@@ -2694,6 +2705,7 @@ struct InlineAssistant {
     pending_prompt: String,
     codegen: ModelHandle<Codegen>,
     _subscriptions: Vec<Subscription>,
+    retrieve_context: bool,
 }
 
 impl Entity for InlineAssistant {
@@ -2719,6 +2731,18 @@ impl View for InlineAssistant {
                             .with_contents(theme::components::svg::Svg::new("icons/ai.svg"))
                             .toggleable(self.include_conversation)
                             .with_style(theme.assistant.inline.include_conversation.clone())
+                            .element()
+                            .aligned(),
+                    )
+                    .with_child(
+                        Button::action(ToggleRetrieveContext)
+                            .with_tooltip("Retrieve Context", theme.tooltip.clone())
+                            .with_id(self.id)
+                            .with_contents(theme::components::svg::Svg::new(
+                                "icons/magnifying_glass.svg",
+                            ))
+                            .toggleable(self.retrieve_context)
+                            .with_style(theme.assistant.inline.retrieve_context.clone())
                             .element()
                             .aligned(),
                     )
@@ -2802,6 +2826,7 @@ impl InlineAssistant {
         codegen: ModelHandle<Codegen>,
         workspace: WeakViewHandle<Workspace>,
         cx: &mut ViewContext<Self>,
+        retrieve_context: bool,
     ) -> Self {
         let prompt_editor = cx.add_view(|cx| {
             let mut editor = Editor::single_line(
@@ -2832,6 +2857,7 @@ impl InlineAssistant {
             pending_prompt: String::new(),
             codegen,
             _subscriptions: subscriptions,
+            retrieve_context,
         }
     }
 
@@ -2900,6 +2926,14 @@ impl InlineAssistant {
             self.confirmed = true;
             cx.notify();
         }
+    }
+
+    fn toggle_retrieve_context(&mut self, _: &ToggleRetrieveContext, cx: &mut ViewContext<Self>) {
+        self.retrieve_context = !self.retrieve_context;
+        cx.emit(InlineAssistantEvent::RetrieveContextToggled {
+            retrieve_context: self.retrieve_context,
+        });
+        cx.notify();
     }
 
     fn toggle_include_conversation(

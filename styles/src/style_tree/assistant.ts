@@ -79,6 +79,62 @@ export default function assistant(): any {
                 },
             },
             pending_edit_background: background(theme.highest, "positive"),
+            retrieve_context: toggleable({
+                base: interactive({
+                    base: {
+                        icon_size: 12,
+                        color: foreground(theme.highest, "variant"),
+
+                        button_width: 12,
+                        background: background(theme.highest, "on"),
+                        corner_radius: 2,
+                        border: {
+                            width: 1., color: background(theme.highest, "on")
+                        },
+                        padding: {
+                            left: 4,
+                            right: 4,
+                            top: 4,
+                            bottom: 4,
+                        },
+                    },
+                    state: {
+                        hovered: {
+                            ...text(theme.highest, "mono", "variant", "hovered"),
+                            background: background(theme.highest, "on", "hovered"),
+                            border: {
+                                width: 1., color: background(theme.highest, "on", "hovered")
+                            },
+                        },
+                        clicked: {
+                            ...text(theme.highest, "mono", "variant", "pressed"),
+                            background: background(theme.highest, "on", "pressed"),
+                            border: {
+                                width: 1., color: background(theme.highest, "on", "pressed")
+                            },
+                        },
+                    },
+                }),
+                state: {
+                    active: {
+                        default: {
+                            icon_size: 12,
+                            button_width: 12,
+                            color: foreground(theme.highest, "variant"),
+                            background: background(theme.highest, "accent"),
+                            border: border(theme.highest, "accent"),
+                        },
+                        hovered: {
+                            background: background(theme.highest, "accent", "hovered"),
+                            border: border(theme.highest, "accent", "hovered"),
+                        },
+                        clicked: {
+                            background: background(theme.highest, "accent", "pressed"),
+                            border: border(theme.highest, "accent", "pressed"),
+                        },
+                    },
+                },
+            }),
             include_conversation: toggleable({
                 base: interactive({
                     base: {
