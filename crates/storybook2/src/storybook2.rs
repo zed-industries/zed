@@ -7,6 +7,7 @@ use simplelog::SimpleLogger;
 mod collab_panel;
 mod theme;
 mod themes;
+mod ui;
 mod workspace;
 
 // gpui2::actions! {

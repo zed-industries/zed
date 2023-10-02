@@ -7613,12 +7613,15 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "backtrace-on-stack-overflow",
+ "clap 4.4.6",
  "gpui3",
+ "itertools 0.11.0",
  "log",
  "rust-embed",
  "serde",
  "settings",
  "simplelog",
+ "strum",
  "theme",
  "util",
 ]

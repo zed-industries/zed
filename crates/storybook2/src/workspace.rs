@@ -1,3 +1,4 @@
+use crate::ui::Stack;
 use crate::{
     collab_panel::{collab_panel, CollabPanel},
     theme::theme,
@@ -27,12 +28,44 @@ impl Workspace {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<State = Self> {
         let theme = rose_pine_dawn();
+
         div()
-            .font("Helvetica")
-            .text_base()
             .size_full()
-            .fill(theme.middle.positive.default.background)
-            .child("Hello world")
+            .v_stack()
+            .fill(theme.lowest.base.default.background)
+            .child(
+                div()
+                    .size_full()
+                    .flex()
+                    .fill(theme.middle.positive.default.background),
+            )
+            .child(
+                div()
+                    .size_full()
+                    .h_stack()
+                    .gap_3()
+                    .children((0..4).map(|i| {
+                        div().size_full().flex().fill(gpui3::hsla(
+                            0. + (i as f32 / 7.),
+                            0. + (i as f32 / 5.),
+                            0.5,
+                            1.,
+                        ))
+                    })),
+            )
+            .child(
+                div()
+                    .size_full()
+                    .flex()
+                    .fill(theme.middle.negative.default.background),
+            )
+
+        // div()
+        //     .font("Helvetica")
+        //     .text_base()
+        //     .size_full()
+        //     .fill(theme.middle.positive.default.background)
+        //     .child("Hello world")
 
         // TODO: Implement style.
         //.size_full().fill(gpui3::hsla(0.83, 1., 0.5, 1.))

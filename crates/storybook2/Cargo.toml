@@ -12,12 +12,15 @@ path = "src/storybook2.rs"
 anyhow.workspace = true
 # TODO: Remove after diagnosing stack overflow.
 backtrace-on-stack-overflow = "0.3.0"
+clap = { version = "4.4", features = ["derive", "string"] }
 gpui3 = { path = "../gpui3" }
+itertools = "0.11.0"
 log.workspace = true
 rust-embed.workspace = true
 serde.workspace = true
 settings = { path = "../settings" }
 simplelog = "0.9"
+strum = { version = "0.25.0", features = ["derive"] }
 theme = { path = "../theme" }
 util = { path = "../util" }
 
