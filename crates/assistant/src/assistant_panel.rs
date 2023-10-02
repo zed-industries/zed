@@ -53,7 +53,6 @@ use theme::{
     components::{action_button::Button, ComponentExt},
     AssistantStyle,
 };
-use tiktoken_rs::{get_bpe_from_model, get_chat_completion_max_tokens};
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use workspace::{

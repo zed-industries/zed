@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use std::fmt::{self, Display};
 
 use serde::{Deserialize, Serialize};
