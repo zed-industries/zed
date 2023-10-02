@@ -361,7 +361,7 @@
           ".venv",
           "venv"
         ],
-        // Can also be 'csh' and 'fish'
+        // Can also be 'csh', 'fish', and `nushell`
         "activate_script": "default"
       }
     }
