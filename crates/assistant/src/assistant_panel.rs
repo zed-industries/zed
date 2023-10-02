@@ -546,15 +546,16 @@ impl AssistantPanel {
             self.inline_prompt_history.pop_front();
         }
 
+        let codegen = pending_assist.codegen.clone();
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
-        let range = pending_assist.codegen.read(cx).range();
+        let range = codegen.read(cx).range();
         let start = snapshot.point_to_buffer_offset(range.start);
         let end = snapshot.point_to_buffer_offset(range.end);
         let (buffer, range) = if let Some((start, end)) = start.zip(end) {
             let (start_buffer, start_buffer_offset) = start;
             let (end_buffer, end_buffer_offset) = end;
             if start_buffer.remote_id() == end_buffer.remote_id() {
-                (start_buffer, start_buffer_offset..end_buffer_offset)
+                (start_buffer.clone(), start_buffer_offset..end_buffer_offset)
             } else {
                 self.finish_inline_assist(inline_assist_id, false, cx);
                 return;
@@ -574,17 +575,13 @@ impl AssistantPanel {
         } else {
             None
         };
-        let language_name = language_name.as_deref();
 
-        let codegen_kind = pending_assist.codegen.read(cx).kind().clone();
-        let prompt = generate_content_prompt(
-            user_prompt.to_string(),
-            language_name,
-            &buffer,
-            range,
-            codegen_kind,
-        );
-
+        let codegen_kind = codegen.read(cx).kind().clone();
+        let user_prompt = user_prompt.to_string();
+        let prompt = cx.background().spawn(async move {
+            let language_name = language_name.as_deref();
+            generate_content_prompt(user_prompt, language_name, &buffer, range, codegen_kind)
+        });
         let mut messages = Vec::new();
         let mut model = settings::get::<AssistantSettings>(cx)
             .default_open_ai_model
@@ -600,18 +597,21 @@ impl AssistantPanel {
             model = conversation.model.clone();
         }
 
-        messages.push(RequestMessage {
-            role: Role::User,
-            content: prompt,
-        });
-        let request = OpenAIRequest {
-            model: model.full_name().into(),
-            messages,
-            stream: true,
-        };
-        pending_assist
-            .codegen
-            .update(cx, |codegen, cx| codegen.start(request, cx));
+        cx.spawn(|_, mut cx| async move {
+            let prompt = prompt.await;
+
+            messages.push(RequestMessage {
+                role: Role::User,
+                content: prompt,
+            });
+            let request = OpenAIRequest {
+                model: model.full_name().into(),
+                messages,
+                stream: true,
+            };
+            codegen.update(&mut cx, |codegen, cx| codegen.start(request, cx));
+        })
+        .detach();
     }
 
     fn update_highlights_for_editor(
