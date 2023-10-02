@@ -44,6 +44,7 @@ pub struct Channel {
     pub id: ChannelId,
     pub name: String,
     pub has_note_changed: bool,
+    pub has_new_messages: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
@@ -223,6 +224,13 @@ impl ChannelStore {
             .map(|channel| channel.has_note_changed)
     }
 
+    pub fn has_new_messages(&self, channel_id: ChannelId) -> Option<bool> {
+        self.channel_index
+            .by_id()
+            .get(&channel_id)
+            .map(|channel| channel.has_new_messages)
+    }
+
     pub fn open_channel_chat(
         &mut self,
         channel_id: ChannelId,
@@ -230,12 +238,20 @@ impl ChannelStore {
     ) -> Task<Result<ModelHandle<ChannelChat>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
-        self.open_channel_resource(
+        let open_channel_chat = self.open_channel_resource(
             channel_id,
             |this| &mut this.opened_chats,
             |channel, cx| ChannelChat::new(channel, user_store, client, cx),
             cx,
-        )
+        );
+        cx.spawn(|this, mut cx| async move {
+            let chat = open_channel_chat.await?;
+            this.update(&mut cx, |this, cx| {
+                this.channel_index.clear_message_changed(channel_id);
+                cx.notify();
+            });
+            Ok(chat)
+        })
     }
 
     /// Asynchronously open a given resource associated with a channel.
@@ -796,6 +812,7 @@ impl ChannelStore {
                         id: channel.id,
                         name: channel.name,
                         has_note_changed: false,
+                        has_new_messages: false,
                     }),
                 ),
             }
@@ -805,7 +822,8 @@ impl ChannelStore {
             || !payload.delete_channels.is_empty()
             || !payload.insert_edge.is_empty()
             || !payload.delete_edge.is_empty()
-            || !payload.notes_changed.is_empty();
+            || !payload.notes_changed.is_empty()
+            || !payload.new_messages.is_empty();
 
         if channels_changed {
             if !payload.delete_channels.is_empty() {
@@ -834,6 +852,10 @@ impl ChannelStore {
 
             for id_changed in payload.notes_changed {
                 index.note_changed(id_changed);
+            }
+
+            for id_changed in payload.new_messages {
+                index.new_messages(id_changed);
             }
 
             for edge in payload.insert_edge {

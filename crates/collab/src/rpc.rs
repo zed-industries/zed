@@ -2568,6 +2568,16 @@ async fn respond_to_channel_invite(
                         name: channel.name,
                     }),
             );
+        update.notes_changed = result
+            .channels_with_changed_notes
+            .iter()
+            .map(|id| id.to_proto())
+            .collect();
+        update.new_messages = result
+            .channels_with_new_messages
+            .iter()
+            .map(|id| id.to_proto())
+            .collect();
         update.insert_edge = result.channels.edges;
         update
             .channel_participants
@@ -2818,7 +2828,7 @@ async fn send_channel_message(
         .ok_or_else(|| anyhow!("nonce can't be blank"))?;
 
     let channel_id = ChannelId::from_proto(request.channel_id);
-    let (message_id, connection_ids) = session
+    let (message_id, connection_ids, non_participants) = session
         .db()
         .await
         .create_channel_message(
@@ -2848,6 +2858,26 @@ async fn send_channel_message(
     response.send(proto::SendChannelMessageResponse {
         message: Some(message),
     })?;
+
+    dbg!(&non_participants);
+    let pool = &*session.connection_pool().await;
+
+    broadcast(
+        None,
+        non_participants
+            .iter()
+            .flat_map(|user_id| pool.user_connection_ids(*user_id)),
+        |peer_id| {
+            session.peer.send(
+                peer_id.into(),
+                proto::UpdateChannels {
+                    new_messages: vec![channel_id.to_proto()],
+                    ..Default::default()
+                },
+            )
+        },
+    );
+
     Ok(())
 }
 
@@ -3007,6 +3037,12 @@ fn build_initial_channels_update(
 
     update.notes_changed = channels
         .channels_with_changed_notes
+        .iter()
+        .map(|channel_id| channel_id.to_proto())
+        .collect();
+
+    update.new_messages = channels
+        .channels_with_new_messages
         .iter()
         .map(|channel_id| channel_id.to_proto())
         .collect();

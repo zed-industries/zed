@@ -44,6 +44,12 @@ impl ChannelIndex {
             Arc::make_mut(channel).has_note_changed = false;
         }
     }
+
+    pub fn clear_message_changed(&mut self, channel_id: ChannelId) {
+        if let Some(channel) = self.channels_by_id.get_mut(&channel_id) {
+            Arc::make_mut(channel).has_new_messages = false;
+        }
+    }
 }
 
 impl Deref for ChannelIndex {
@@ -88,6 +94,12 @@ impl<'a> ChannelPathsInsertGuard<'a> {
         }
     }
 
+    pub fn new_messages(&mut self, channel_id: ChannelId) {
+        if let Some(channel) = self.channels_by_id.get_mut(&channel_id) {
+            Arc::make_mut(channel).has_new_messages = true;
+        }
+    }
+
     pub fn insert(&mut self, channel_proto: proto::Channel) {
         if let Some(existing_channel) = self.channels_by_id.get_mut(&channel_proto.id) {
             Arc::make_mut(existing_channel).name = channel_proto.name;
@@ -98,6 +110,7 @@ impl<'a> ChannelPathsInsertGuard<'a> {
                     id: channel_proto.id,
                     name: channel_proto.name,
                     has_note_changed: false,
+                    has_new_messages: false,
                 }),
             );
             self.insert_root(channel_proto.id);

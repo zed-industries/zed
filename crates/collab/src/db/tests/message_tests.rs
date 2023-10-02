@@ -120,7 +120,7 @@ async fn test_channel_message_new_notification(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    let (second_message, _) = db
+    let (second_message, _, _) = db
         .create_channel_message(channel, user_a, "2", OffsetDateTime::now_utc(), 2)
         .await
         .unwrap();

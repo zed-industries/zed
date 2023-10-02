@@ -1821,7 +1821,7 @@ impl CollabPanel {
                         channel.name.clone(),
                         theme
                             .channel_name
-                            .in_state(channel.has_note_changed)
+                            .in_state(channel.has_new_messages)
                             .text
                             .clone(),
                     )

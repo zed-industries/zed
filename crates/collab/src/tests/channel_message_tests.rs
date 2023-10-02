@@ -1,6 +1,6 @@
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 use channel::{ChannelChat, ChannelMessageId};
-use gpui::{executor::Deterministic, ModelHandle, TestAppContext};
+use gpui::{executor::Deterministic, BorrowAppContext, ModelHandle, TestAppContext};
 use std::sync::Arc;
 
 #[gpui::test]
@@ -222,4 +222,107 @@ fn assert_messages(chat: &ModelHandle<ChannelChat>, messages: &[&str], cx: &mut 
             .collect::<Vec<_>>(),),
         messages
     );
+}
+
+#[gpui::test]
+async fn test_channel_message_changes(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+
+    let channel_id = server
+        .make_channel(
+            "the-channel",
+            None,
+            (&client_a, cx_a),
+            &mut [(&client_b, cx_b)],
+        )
+        .await;
+
+    // Client A sends a message, client B should see that there is a new message.
+    let channel_chat_a = client_a
+        .channel_store()
+        .update(cx_a, |store, cx| store.open_channel_chat(channel_id, cx))
+        .await
+        .unwrap();
+
+    channel_chat_a
+        .update(cx_a, |c, cx| c.send_message("one".into(), cx).unwrap())
+        .await
+        .unwrap();
+
+    deterministic.run_until_parked();
+
+    let b_has_messages = cx_b.read_with(|cx| {
+        client_b
+            .channel_store()
+            .read(cx)
+            .has_new_messages(channel_id)
+            .unwrap()
+    });
+
+    assert!(b_has_messages);
+
+    // Opening the chat should clear the changed flag.
+    let channel_chat_b = client_b
+        .channel_store()
+        .update(cx_b, |store, cx| store.open_channel_chat(channel_id, cx))
+        .await
+        .unwrap();
+
+    let b_has_messages = cx_b.read_with(|cx| {
+        client_b
+            .channel_store()
+            .read(cx)
+            .has_new_messages(channel_id)
+            .unwrap()
+    });
+
+    assert!(!b_has_messages);
+
+    // Sending a message while the chat is open should not change the flag.
+    channel_chat_a
+        .update(cx_a, |c, cx| c.send_message("two".into(), cx).unwrap())
+        .await
+        .unwrap();
+
+    deterministic.run_until_parked();
+
+    let b_has_messages = cx_b.read_with(|cx| {
+        client_b
+            .channel_store()
+            .read(cx)
+            .has_new_messages(channel_id)
+            .unwrap()
+    });
+
+    assert!(!b_has_messages);
+
+    // Closing the chat should re-enable change tracking
+
+    cx_b.update(|_| {
+        drop(channel_chat_b);
+    });
+
+    deterministic.run_until_parked();
+
+    channel_chat_a
+        .update(cx_a, |c, cx| c.send_message("three".into(), cx).unwrap())
+        .await
+        .unwrap();
+
+    let b_has_messages = cx_b.read_with(|cx| {
+        client_b
+            .channel_store()
+            .read(cx)
+            .has_new_messages(channel_id)
+            .unwrap()
+    });
+
+    assert!(b_has_messages);
 }

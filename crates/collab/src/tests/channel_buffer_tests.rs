@@ -446,6 +446,7 @@ fn channel(id: u64, name: &'static str) -> Channel {
         id,
         name: name.to_string(),
         has_note_changed: false,
+        has_new_messages: false,
     }
 }
 

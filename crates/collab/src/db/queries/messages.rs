@@ -97,7 +97,7 @@ impl Database {
             let mut messages = Vec::new();
             while let Some(row) = rows.next().await {
                 let row = row?;
-                dbg!(&max_id);
+
                 max_assign(&mut max_id, row.id);
 
                 let nonce = row.nonce.as_u64_pair();
@@ -113,23 +113,18 @@ impl Database {
                 });
             }
             drop(rows);
-            dbg!(&max_id);
 
             if let Some(max_id) = max_id {
-                let has_older_message = dbg!(
-                    observed_channel_messages::Entity::find()
-                        .filter(
-                            observed_channel_messages::Column::UserId
-                                .eq(user_id)
-                                .and(observed_channel_messages::Column::ChannelId.eq(channel_id))
-                                .and(
-                                    observed_channel_messages::Column::ChannelMessageId.lt(max_id)
-                                ),
-                        )
-                        .one(&*tx)
-                        .await
-                )?
-                .is_some();
+                let has_older_message = observed_channel_messages::Entity::find()
+                    .filter(
+                        observed_channel_messages::Column::UserId
+                            .eq(user_id)
+                            .and(observed_channel_messages::Column::ChannelId.eq(channel_id))
+                            .and(observed_channel_messages::Column::ChannelMessageId.lt(max_id)),
+                    )
+                    .one(&*tx)
+                    .await?
+                    .is_some();
 
                 if has_older_message {
                     observed_channel_messages::Entity::update(
@@ -174,7 +169,7 @@ impl Database {
         body: &str,
         timestamp: OffsetDateTime,
         nonce: u128,
-    ) -> Result<(MessageId, Vec<ConnectionId>)> {
+    ) -> Result<(MessageId, Vec<ConnectionId>, Vec<UserId>)> {
         self.transaction(|tx| async move {
             let mut rows = channel_chat_participant::Entity::find()
                 .filter(channel_chat_participant::Column::ChannelId.eq(channel_id))
@@ -241,7 +236,14 @@ impl Database {
             .exec(&*tx)
             .await?;
 
-            Ok((message.last_insert_id, participant_connection_ids))
+            let mut channel_members = self.get_channel_members_internal(channel_id, &*tx).await?;
+            channel_members.retain(|member| !participant_user_ids.contains(member));
+
+            Ok((
+                message.last_insert_id,
+                participant_connection_ids,
+                channel_members,
+            ))
         })
         .await
     }
@@ -290,7 +292,7 @@ impl Database {
             .await?
             .map(|model| model.channel_message_id);
 
-        Ok(dbg!(last_message_read) != dbg!(latest_message_id))
+        Ok(last_message_read != latest_message_id)
     }
 
     pub async fn remove_channel_message(

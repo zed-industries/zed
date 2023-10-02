@@ -464,9 +464,13 @@ impl Database {
         }
 
         let mut channels_with_changed_notes = HashSet::default();
+        let mut channels_with_new_messages = HashSet::default();
         for channel in graph.channels.iter() {
             if self.has_note_changed(user_id, channel.id, tx).await? {
                 channels_with_changed_notes.insert(channel.id);
+            }
+            if self.has_new_message(channel.id, user_id, tx).await? {
+                channels_with_new_messages.insert(channel.id);
             }
         }
 
@@ -475,6 +479,7 @@ impl Database {
             channel_participants,
             channels_with_admin_privileges,
             channels_with_changed_notes,
+            channels_with_new_messages,
         })
     }
 

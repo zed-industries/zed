@@ -956,6 +956,7 @@ message UpdateChannels {
     repeated ChannelParticipants channel_participants = 7;
     repeated ChannelPermission channel_permissions = 8;
     repeated uint64 notes_changed = 9;
+    repeated uint64 new_messages = 10;
 }
 
 message ChannelEdge {
