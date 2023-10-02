@@ -1057,7 +1057,8 @@ impl CompletionsMenu {
                                     item_ix: Some(item_ix),
                                 },
                                 cx,
-                            );
+                            )
+                            .map(|task| task.detach());
                         })
                         .into_any(),
                     );
