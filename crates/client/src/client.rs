@@ -453,10 +453,6 @@ impl Client {
         self.state.read().status.1.clone()
     }
 
-    pub fn is_connected(&self) -> bool {
-        matches!(&*self.status().borrow(), Status::Connected { .. })
-    }
-
     fn set_status(self: &Arc<Self>, status: Status, cx: &AsyncAppContext) {
         log::info!("set status on client {}: {:?}", self.id, status);
         let mut state = self.state.write();
