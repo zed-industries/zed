@@ -40,7 +40,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                     .push(window);
             }
         }
-        room::Event::RemoteProjectUnshared { project_id } => {
+        room::Event::RemoteProjectUnshared { project_id }
+        | room::Event::RemoteProjectInvitationDiscarded { project_id } => {
             if let Some(windows) = notification_windows.remove(&project_id) {
                 for window in windows {
                     window.remove(cx);
@@ -49,6 +50,13 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
         }
         room::Event::Left => {
             for (_, windows) in notification_windows.drain() {
+                for window in windows {
+                    window.remove(cx);
+                }
+            }
+        }
+        room::Event::RemoteProjectJoined { project_id } => {
+            if let Some(windows) = notification_windows.remove(&project_id) {
                 for window in windows {
                     window.remove(cx);
                 }
@@ -82,7 +90,6 @@ impl ProjectSharedNotification {
     }
 
     fn join(&mut self, cx: &mut ViewContext<Self>) {
-        cx.remove_window();
         if let Some(app_state) = self.app_state.upgrade() {
             workspace::join_remote_project(self.project_id, self.owner.id, app_state, cx)
                 .detach_and_log_err(cx);
@@ -90,7 +97,15 @@ impl ProjectSharedNotification {
     }
 
     fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
-        cx.remove_window();
+        if let Some(active_room) =
+            ActiveCall::global(cx).read_with(cx, |call, _| call.room().cloned())
+        {
+            active_room.update(cx, |_, cx| {
+                cx.emit(room::Event::RemoteProjectInvitationDiscarded {
+                    project_id: self.project_id,
+                });
+            });
+        }
     }
 
     fn render_owner(&self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {

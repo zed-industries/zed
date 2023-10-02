@@ -1,7 +1,10 @@
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 use call::ActiveCall;
+use collab_ui::project_shared_notification::ProjectSharedNotification;
 use editor::{Editor, ExcerptRange, MultiBuffer};
-use gpui::{executor::Deterministic, geometry::vector::vec2f, TestAppContext, ViewHandle};
+use gpui::{
+    executor::Deterministic, geometry::vector::vec2f, AppContext, TestAppContext, ViewHandle,
+};
 use live_kit_client::MacOSDisplay;
 use serde_json::json;
 use std::sync::Arc;
@@ -1073,6 +1076,24 @@ async fn test_peers_simultaneously_following_each_other(
     });
 }
 
+fn visible_push_notifications(
+    cx: &mut TestAppContext,
+) -> Vec<gpui::ViewHandle<ProjectSharedNotification>> {
+    let mut ret = Vec::new();
+    for window in cx.windows() {
+        window.read_with(cx, |window| {
+            if let Some(handle) = window
+                .root_view()
+                .clone()
+                .downcast::<ProjectSharedNotification>()
+            {
+                ret.push(handle)
+            }
+        });
+    }
+    ret
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_following_across_workspaces(
     deterministic: Arc<Deterministic>,
@@ -1126,17 +1147,22 @@ async fn test_following_across_workspaces(
     let (project_a, worktree_id_a) = client_a.build_local_project("/a", cx_a).await;
     let (project_b, worktree_id_b) = client_b.build_local_project("/b", cx_b).await;
 
+    let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
+    let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
+
+    cx_a.update(|cx| collab_ui::init(&client_a.app_state, cx));
+    cx_b.update(|cx| collab_ui::init(&client_b.app_state, cx));
+
     let project_a_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
+    /*
     let project_b_id = active_call_b
         .update(cx_b, |call, cx| call.share_project(project_b.clone(), cx))
         .await
         .unwrap();
-
-    let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
-    let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
+        */
 
     active_call_a
         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
@@ -1157,7 +1183,9 @@ async fn test_following_across_workspaces(
         .unwrap();
 
     deterministic.run_until_parked();
-    assert_eq!(cx_b.windows().len(), 1);
+    assert_eq!(cx_b.windows().len(), 2);
+
+    assert_eq!(visible_push_notifications(cx_b).len(), 1);
 
     workspace_b.update(cx_b, |workspace, cx| {
         workspace
@@ -1186,4 +1214,5 @@ async fn test_following_across_workspaces(
     });
 
     // assert that there are no share notifications open
+    assert_eq!(visible_push_notifications(cx_b).len(), 0);
 }

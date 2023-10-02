@@ -2529,7 +2529,6 @@ impl Workspace {
 
         if let Some(prev_leader_id) = self.unfollow(&pane, cx) {
             if leader_id == prev_leader_id {
-                dbg!("oh no!");
                 return None;
             }
         }
@@ -2618,7 +2617,6 @@ impl Workspace {
         let project = self.project.read(cx);
 
         let Some(remote_participant) = room.remote_participant_for_peer_id(leader_id) else {
-            dbg!("no remote participant yet...");
             return None;
         };
 
@@ -2633,7 +2631,6 @@ impl Workspace {
                 }
             }
         };
-        dbg!(other_project_id);
 
         // if they are active in another project, follow there.
         if let Some(project_id) = other_project_id {
@@ -2650,7 +2647,6 @@ impl Workspace {
         for (existing_leader_id, states_by_pane) in &mut self.follower_states_by_leader {
             if leader_id == *existing_leader_id {
                 for (pane, _) in states_by_pane {
-                    dbg!("focusing pane");
                     cx.focus(pane);
                     return None;
                 }
@@ -4249,7 +4245,6 @@ pub fn join_remote_project(
     app_state: Arc<AppState>,
     cx: &mut AppContext,
 ) -> Task<Result<()>> {
-    dbg!("huh??");
     cx.spawn(|mut cx| async move {
         let existing_workspace = cx
             .windows()
@@ -4268,10 +4263,8 @@ pub fn join_remote_project(
             .flatten();
 
         let workspace = if let Some(existing_workspace) = existing_workspace {
-            dbg!("huh");
             existing_workspace
         } else {
-            dbg!("huh/");
             let active_call = cx.read(ActiveCall::global);
             let room = active_call
                 .read_with(&cx, |call, _| call.room().cloned())
@@ -4287,7 +4280,6 @@ pub fn join_remote_project(
                 })
                 .await?;
 
-            dbg!("huh//");
             let window_bounds_override = window_bounds_env_override(&cx);
             let window = cx.add_window(
                 (app_state.build_window_options)(
@@ -4310,7 +4302,6 @@ pub fn join_remote_project(
             workspace.downgrade()
         };
 
-        dbg!("huh///");
         workspace.window().activate(&mut cx);
         cx.platform().activate(true);
 
@@ -4332,8 +4323,6 @@ pub fn join_remote_project(
                             .find(|collaborator| collaborator.replica_id == 0)?;
                         Some(collaborator.peer_id)
                     });
-
-                dbg!(follow_peer_id);
 
                 if let Some(follow_peer_id) = follow_peer_id {
                     workspace

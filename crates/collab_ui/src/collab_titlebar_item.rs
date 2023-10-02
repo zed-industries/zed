@@ -948,7 +948,7 @@ impl CollabTitlebarItem {
     fn render_face_pile(
         &self,
         user: &User,
-        replica_id: Option<ReplicaId>,
+        _replica_id: Option<ReplicaId>,
         peer_id: PeerId,
         location: Option<ParticipantLocation>,
         muted: bool,

@@ -44,6 +44,12 @@ pub enum Event {
     RemoteProjectUnshared {
         project_id: u64,
     },
+    RemoteProjectJoined {
+        project_id: u64,
+    },
+    RemoteProjectInvitationDiscarded {
+        project_id: u64,
+    },
     Left,
 }
 
@@ -1015,6 +1021,7 @@ impl Room {
     ) -> Task<Result<ModelHandle<Project>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
+        cx.emit(Event::RemoteProjectJoined { project_id: id });
         cx.spawn(|this, mut cx| async move {
             let project =
                 Project::remote(id, client, user_store, language_registry, fs, cx.clone()).await?;
