@@ -96,11 +96,10 @@ fn main() {
             })
             .and_then(|theme_name| theme_registry.get(&theme_name).ok());
 
-        cx
-            .spawn(|_| async move {
-                watch_zed_changes(fs).await;
-            })
-            .detach();
+        cx.spawn(|_| async move {
+            watch_zed_changes(fs).await;
+        })
+        .detach();
         cx.add_window(
             gpui2::WindowOptions {
                 bounds: WindowBounds::Fixed(RectF::new(vec2f(0., 0.), vec2f(1700., 980.))),

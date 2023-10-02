@@ -93,7 +93,6 @@ pub struct Metadata {
     pub is_dir: bool,
 }
 
-
 pub struct RealFs;
 
 #[async_trait::async_trait]
