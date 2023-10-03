@@ -185,8 +185,9 @@ impl Style {
 
         let background_color = self.fill.as_ref().and_then(Fill::color);
         if background_color.is_some() || self.is_border_visible() {
+            let layer_id = cx.current_layer_id();
             cx.scene().insert(
-                todo!(),
+                layer_id,
                 Quad {
                     order,
                     bounds,

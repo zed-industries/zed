@@ -119,7 +119,7 @@ impl MetalAtlasTexture {
         let allocation = self.allocator.allocate(size)?;
         let tile = AtlasTile {
             texture_id: self.id,
-            tile_id: allocation.id,
+            tile_id: allocation.id.into(),
             bounds_in_atlas: allocation.rectangle.into(),
         };
         let region = metal::MTLRegion::new_2d(

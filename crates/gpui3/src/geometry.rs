@@ -206,7 +206,7 @@ impl Size<Length> {
     }
 }
 
-#[derive(Refineable, Clone, Default, Debug, PartialEq)]
+#[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
 #[refineable(debug)]
 #[repr(C)]
 pub struct Bounds<T: Clone + Debug> {
@@ -289,7 +289,7 @@ impl<T: Clone + Debug + PartialOrd + Add<T, Output = T>> Bounds<T> {
 
 impl<T: Clone + Debug + Copy> Copy for Bounds<T> {}
 
-#[derive(Refineable, Clone, Default, Debug)]
+#[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
 #[refineable(debug)]
 #[repr(C)]
 pub struct Edges<T: Clone + Debug> {
@@ -396,7 +396,7 @@ impl Edges<AbsoluteLength> {
     }
 }
 
-#[derive(Refineable, Clone, Default, Debug)]
+#[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
 #[refineable(debug)]
 #[repr(C)]
 pub struct Corners<T: Clone + Debug> {

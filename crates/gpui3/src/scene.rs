@@ -1,8 +1,10 @@
 use std::{iter::Peekable, mem};
 
 use super::{Bounds, Hsla, Pixels, Point};
-use crate::{AtlasTile, Corners, DevicePixels, Edges};
+use crate::{AtlasTextureId, AtlasTile, Corners, Edges};
 use bytemuck::{Pod, Zeroable};
+use collections::BTreeMap;
+use smallvec::SmallVec;
 
 // Exported to metal
 pub type PointF = Point<f32>;
@@ -38,8 +40,7 @@ impl Scene {
                 quad.scale(self.scale_factor);
                 layer.quads.push(quad);
             }
-            Primitive::Sprite(mut sprite) => {
-                sprite.scale(self.scale_factor);
+            Primitive::Sprite(sprite) => {
                 layer.sprites.push(sprite);
             }
         }
@@ -58,8 +59,8 @@ pub(crate) struct SceneLayer {
 
 impl SceneLayer {
     pub fn batches(&mut self) -> impl Iterator<Item = PrimitiveBatch> {
-        self.quads.sort_unstable_by(|a, b| a.order.cmp(&b.order));
-        self.sprites.sort_unstable_by(|a, b| a.order.cmp(&b.order));
+        self.quads.sort_unstable();
+        self.sprites.sort_unstable();
 
         BatchIterator::new(
             &self.quads,
@@ -75,7 +76,6 @@ where
     Q: Iterator<Item = &'a Quad>,
     S: Iterator<Item = &'a MonochromeSprite>,
 {
-    next_batch_kind: Option<PrimitiveKind>,
     quads: &'a [Quad],
     sprites: &'a [MonochromeSprite],
     quads_start: usize,
@@ -92,41 +92,52 @@ where
     type Item = PrimitiveBatch<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(batch_kind) = self.next_batch_kind.take() {
-            match batch_kind {
-                PrimitiveKind::Quad => {
-                    let max_order = self
-                        .next_order(Some(PrimitiveKind::Quad))
-                        .unwrap_or(u32::MAX);
-                    let quads_start = self.quads_start;
-                    let quads_end = quads_start
-                        + self
-                            .quads_iter
-                            .by_ref()
-                            .take_while(|quad| quad.order <= max_order)
-                            .count();
-                    self.quads_start = quads_end;
-                    Some(PrimitiveBatch::Quads(&self.quads[quads_start..quads_end]))
-                }
-                PrimitiveKind::Sprite => {
-                    let max_order = self
-                        .next_order(Some(PrimitiveKind::Sprite))
-                        .unwrap_or(u32::MAX);
-                    let sprites_start = self.sprites_start;
-                    let sprites_end = sprites_start
-                        + self
-                            .sprites_iter
-                            .by_ref()
-                            .take_while(|sprite| sprite.order <= max_order)
-                            .count();
-                    self.sprites_start = sprites_end;
-                    Some(PrimitiveBatch::Sprites(
-                        &self.sprites[sprites_start..sprites_end],
-                    ))
-                }
-            }
+        let mut kinds_and_orders = [
+            (PrimitiveKind::Quad, self.quads_iter.peek().map(|q| q.order)),
+            (
+                PrimitiveKind::Sprite,
+                self.sprites_iter.peek().map(|s| s.order),
+            ),
+        ];
+        kinds_and_orders.sort_by_key(|(_, order)| order.unwrap_or(u32::MAX));
+
+        let first = kinds_and_orders[0];
+        let second = kinds_and_orders[1];
+        let (batch_kind, max_order) = if first.1.is_some() {
+            (first.0, second.1.unwrap_or(u32::MAX))
         } else {
-            None
+            return None;
+        };
+
+        match batch_kind {
+            PrimitiveKind::Quad => {
+                let quads_start = self.quads_start;
+                let quads_end = quads_start
+                    + self
+                        .quads_iter
+                        .by_ref()
+                        .take_while(|quad| quad.order <= max_order)
+                        .count();
+                self.quads_start = quads_end;
+                Some(PrimitiveBatch::Quads(&self.quads[quads_start..quads_end]))
+            }
+            PrimitiveKind::Sprite => {
+                let texture_id = self.sprites_iter.peek().unwrap().tile.texture_id;
+                let sprites_start = self.sprites_start;
+                let sprites_end = sprites_start
+                    + self
+                        .sprites_iter
+                        .by_ref()
+                        .take_while(|sprite| {
+                            sprite.order <= max_order && sprite.tile.texture_id == texture_id
+                        })
+                        .count();
+                self.sprites_start = sprites_end;
+                Some(PrimitiveBatch::Sprites {
+                    texture_id,
+                    sprites: &self.sprites[sprites_start..sprites_end],
+                })
+            }
         }
     }
 }
@@ -142,39 +153,14 @@ where
         sprites: &'a [MonochromeSprite],
         sprites_iter: Peekable<S>,
     ) -> Self {
-        let mut this = Self {
+        Self {
             quads,
             quads_start: 0,
             quads_iter,
             sprites,
             sprites_start: 0,
             sprites_iter,
-            next_batch_kind: None,
-        };
-        this.next_order(None); // Called for its side effect of setting this.next_batch_kind
-        this
-    }
-
-    fn next_order(&mut self, exclude_kind: Option<PrimitiveKind>) -> Option<u32> {
-        let mut next_order = u32::MAX;
-
-        if exclude_kind != Some(PrimitiveKind::Quad) {
-            if let Some(next_quad) = self.quads_iter.peek() {
-                self.next_batch_kind = Some(PrimitiveKind::Quad);
-                next_order = next_quad.order;
-            }
         }
-
-        if exclude_kind != Some(PrimitiveKind::Sprite) {
-            if let Some(next_sprite) = self.sprites_iter.peek() {
-                if next_sprite.order < next_order {
-                    self.next_batch_kind = Some(PrimitiveKind::Sprite);
-                    next_order = next_sprite.order;
-                }
-            }
-        }
-
-        (next_order < u32::MAX).then_some(next_order)
     }
 }
 
@@ -190,12 +176,15 @@ pub enum Primitive {
     Sprite(MonochromeSprite),
 }
 
-pub enum PrimitiveBatch<'a> {
+pub(crate) enum PrimitiveBatch<'a> {
     Quads(&'a [Quad]),
-    Sprites(&'a [MonochromeSprite]),
+    Sprites {
+        texture_id: AtlasTextureId,
+        sprites: &'a [MonochromeSprite],
+    },
 }
 
-#[derive(Debug, Copy, Clone, Zeroable, Pod)]
+#[derive(Debug, Copy, Clone, Zeroable, Pod, Eq, PartialEq)]
 #[repr(C)]
 pub struct Quad {
     pub order: u32,
@@ -232,13 +221,25 @@ impl Quad {
     }
 }
 
+impl Ord for Quad {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.order.cmp(&other.order)
+    }
+}
+
+impl PartialOrd for Quad {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl From<Quad> for Primitive {
     fn from(quad: Quad) -> Self {
         Primitive::Quad(quad)
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub struct MonochromeSprite {
     pub order: u32,
@@ -247,9 +248,18 @@ pub struct MonochromeSprite {
     pub tile: AtlasTile,
 }
 
-impl MonochromeSprite {
-    pub fn scale(&mut self, factor: f32) {
-        self.bounds *= factor;
+impl Ord for MonochromeSprite {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match self.order.cmp(&other.order) {
+            std::cmp::Ordering::Equal => self.tile.tile_id.cmp(&other.tile.tile_id),
+            order => order,
+        }
+    }
+}
+
+impl PartialOrd for MonochromeSprite {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -261,7 +271,3 @@ impl From<MonochromeSprite> for Primitive {
 
 #[derive(Copy, Clone, Debug)]
 pub struct AtlasId(pub(crate) usize);
-
-use collections::BTreeMap;
-use etagere::AllocId as TileId;
-use smallvec::SmallVec;

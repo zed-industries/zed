@@ -1,5 +1,6 @@
 use crate::{
-    point, size, DevicePixels, MetalAtlas, MonochromeSprite, Quad, RasterizedGlyphId, Scene, Size,
+    point, size, AtlasTextureId, DevicePixels, MetalAtlas, MonochromeSprite, Quad,
+    RasterizedGlyphId, Scene, Size,
 };
 use bytemuck::{Pod, Zeroable};
 use cocoa::{
@@ -186,8 +187,12 @@ impl MetalRenderer {
                             command_encoder,
                         );
                     }
-                    crate::PrimitiveBatch::Sprites(sprites) => {
+                    crate::PrimitiveBatch::Sprites {
+                        texture_id,
+                        sprites,
+                    } => {
                         self.draw_monochrome_sprites(
+                            texture_id,
                             sprites,
                             &mut instance_offset,
                             viewport_size,
@@ -270,6 +275,7 @@ impl MetalRenderer {
 
     fn draw_monochrome_sprites(
         &mut self,
+        texture_id: AtlasTextureId,
         monochrome: &[MonochromeSprite],
         offset: &mut usize,
         viewport_size: Size<DevicePixels>,

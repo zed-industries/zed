@@ -14,6 +14,7 @@ use async_task::Runnable;
 use futures::channel::oneshot;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::ffi::c_void;
 use std::hash::{Hash, Hasher};
 use std::{
@@ -187,7 +188,7 @@ pub trait PlatformAtlas<Key>: Send + Sync {
     fn clear(&self);
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[repr(C)]
 pub struct AtlasTile {
     pub(crate) texture_id: AtlasTextureId,
@@ -195,11 +196,31 @@ pub struct AtlasTile {
     pub(crate) bounds_in_atlas: Bounds<DevicePixels>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
 pub(crate) struct AtlasTextureId(pub(crate) usize);
 
-pub(crate) type TileId = etagere::AllocId;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(C)]
+pub(crate) struct TileId(pub(crate) etagere::AllocId);
+
+impl From<etagere::AllocId> for TileId {
+    fn from(id: etagere::AllocId) -> Self {
+        Self(id)
+    }
+}
+
+impl Ord for TileId {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.serialize().cmp(&other.0.serialize())
+    }
+}
+
+impl PartialOrd for TileId {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 pub trait PlatformInputHandler {
     fn selected_text_range(&self) -> Option<Range<usize>>;
