@@ -125,11 +125,12 @@ impl<T: Send + Sync> Clone for Handle<T> {
 
 impl<T: Send + Sync> Drop for Handle<T> {
     fn drop(&mut self) {
-        if let Some(ref_counts) = self.ref_counts.upgrade() {
-            if let Some(count) = ref_counts.read().get(self.id) {
-                let prev_count = count.fetch_sub(1, SeqCst);
-                assert_ne!(prev_count, 0, "Detected over-release of a handle.");
-            }
+        if let Some(_ref_counts) = self.ref_counts.upgrade() {
+            // todo!()
+            // if let Some(count) = ref_counts.read().get(self.id) {
+            //     let prev_count = count.fetch_sub(1, SeqCst);
+            //     assert_ne!(prev_count, 0, "Detected over-release of a handle.");
+            // }
         }
     }
 }

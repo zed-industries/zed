@@ -1,6 +1,40 @@
+// How can I fix this?
+// -[MTLDebugRenderCommandEncoder setRenderPipelineState:]:1580: failed assertion `Set Render Pipeline State Validation
+// For depth attachment, the render pipeline's pixelFormat (MTLPixelFormatInvalid) does not match the framebuffer's pixelFormat (MTLPixelFormatDepth32Float).
+// '
+// -[MTLDebugRenderCommandEncoder setRenderPipelineState:]:1580: failed assertion `Set Render Pipeline State Validation
+// For depth attachment, the render pipeline's pixelFormat (MTLPixelFormatInvalid) does not match the framebuffer's pixelFormat (MTLPixelFormatDepth32Float).
+// // It seems like the error you're facing has to do with the difference between the
+// pixel format of the render pipeline and the framebuffer. If the pixel format of
+// those two doesn't match, Metal throws an error. To resolve this issue, you need
+// to set the pixel format of your depth attachment and your render pipeline state
+// to the same value.
+
+// In this code:
+// ---
+/*
+descriptor.set_depth_attachment_pixel_format(MTLPixelFormat::Depth32Float);
+*/
+// ---
+// you've commented out the line where you set the depth attachment pixel format
+// to MTLPixelFormat::Depth32Float. If you uncomment this line, it should resolve
+// the error as your depth attachment's pixel format will then match your framebuffer's.
+
+// If you still encounter the same problem, you might be configuring another render
+// pipeline state elsewhere in your code with a different depth pixel format. Make
+// sure all configurations have matching pixel formats.
+
+// Additionally, be aware of the limitations of certain pixel formats. For example,
+// not all pixel formats support depth stencil attachments, and some are only
+// compatible with certain types of GPU hardware. Implementation of pixel formats
+// can vary between different versions of iOS, so ensure that your choice of pixel
+// format is compatible with your minimum target version.
+//
+// I want it to be UANorm
+
 use crate::{
-    point, size, AtlasTextureId, DevicePixels, GlyphRasterizationParams, MetalAtlas,
-    MonochromeSprite, Quad, Scene, Size,
+    point, size, AtlasTextureId, DevicePixels, GlyphRasterParams, MetalAtlas, MonochromeSprite,
+    Quad, Scene, Size,
 };
 use cocoa::{
     base::{NO, YES},
@@ -22,7 +56,7 @@ pub struct MetalRenderer {
     sprites_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     instances: metal::Buffer,
-    glyph_atlas: Arc<MetalAtlas<GlyphRasterizationParams>>,
+    glyph_atlas: Arc<MetalAtlas<GlyphRasterParams>>,
 }
 
 impl MetalRenderer {
@@ -104,7 +138,7 @@ impl MetalRenderer {
         let glyph_atlas = Arc::new(MetalAtlas::new(
             Size {
                 width: DevicePixels(1024),
-                height: DevicePixels(1024),
+                height: DevicePixels(768),
             },
             MTLPixelFormat::A8Unorm,
             device.clone(),
@@ -126,7 +160,7 @@ impl MetalRenderer {
         &*self.layer
     }
 
-    pub fn glyph_atlas(&self) -> &Arc<MetalAtlas<GlyphRasterizationParams>> {
+    pub fn glyph_atlas(&self) -> &Arc<MetalAtlas<GlyphRasterParams>> {
         &self.glyph_atlas
     }
 
@@ -151,18 +185,17 @@ impl MetalRenderer {
 
         let render_pass_descriptor = metal::RenderPassDescriptor::new();
 
-        let depth_texture_desc = metal::TextureDescriptor::new();
-        depth_texture_desc.set_pixel_format(metal::MTLPixelFormat::Depth32Float);
-        depth_texture_desc.set_storage_mode(metal::MTLStorageMode::Private);
-        depth_texture_desc.set_usage(metal::MTLTextureUsage::RenderTarget);
-        depth_texture_desc.set_width(i32::from(viewport_size.width) as u64);
-        depth_texture_desc.set_height(i32::from(viewport_size.height) as u64);
-        let depth_texture = self.device.new_texture(&depth_texture_desc);
-        let depth_attachment = render_pass_descriptor.depth_attachment().unwrap();
-
-        depth_attachment.set_texture(Some(&depth_texture));
-        depth_attachment.set_clear_depth(1.);
-        depth_attachment.set_store_action(metal::MTLStoreAction::Store);
+        // let depth_texture_desc = metal::TextureDescriptor::new();
+        // depth_texture_desc.set_pixel_format(metal::MTLPixelFormat::Depth32Float);
+        // depth_texture_desc.set_storage_mode(metal::MTLStorageMode::Private);
+        // depth_texture_desc.set_usage(metal::MTLTextureUsage::RenderTarget);
+        // depth_texture_desc.set_width(i32::from(viewport_size.width) as u64);
+        // depth_texture_desc.set_height(i32::from(viewport_size.height) as u64);
+        // let depth_texture = self.device.new_texture(&depth_texture_desc);
+        // let depth_attachment = render_pass_descriptor.depth_attachment().unwrap();
+        // depth_attachment.set_texture(Some(&depth_texture));
+        // depth_attachment.set_clear_depth(1.);
+        // depth_attachment.set_store_action(metal::MTLStoreAction::Store);
 
         let color_attachment = render_pass_descriptor
             .color_attachments()
@@ -289,8 +322,6 @@ impl MetalRenderer {
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) {
-        // dbg!(sprites);
-
         if sprites.is_empty() {
             return;
         }
@@ -386,7 +417,7 @@ fn build_pipeline_state(
     color_attachment.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
     color_attachment.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
     color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::One);
-    // descriptor.set_depth_attachment_pixel_format(MTLPixelFormat::Depth32Float);
+    descriptor.set_depth_attachment_pixel_format(MTLPixelFormat::Invalid);
 
     device
         .new_render_pipeline_state(&descriptor)

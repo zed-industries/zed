@@ -1,6 +1,6 @@
 use crate::{
     px, AnyView, AppContext, AvailableSpace, Bounds, Context, Effect, Element, EntityId, FontId,
-    GlyphId, GlyphRasterizationParams, Handle, Hsla, IsZero, LayoutId, MainThread, MainThreadOnly,
+    GlyphId, GlyphRasterParams, Handle, Hsla, IsZero, LayoutId, MainThread, MainThreadOnly,
     MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point, Reference, Scene, Size,
     StackContext, StackingOrder, Style, TaffyLayoutEngine, WeakHandle, WindowOptions,
     SUBPIXEL_VARIANTS,
@@ -16,7 +16,7 @@ pub struct AnyWindow {}
 pub struct Window {
     handle: AnyWindowHandle,
     platform_window: MainThreadOnly<Box<dyn PlatformWindow>>,
-    glyph_atlas: Arc<dyn PlatformAtlas<GlyphRasterizationParams>>,
+    glyph_atlas: Arc<dyn PlatformAtlas<GlyphRasterParams>>,
     rem_size: Pixels,
     content_size: Size<Pixels>,
     layout_engine: TaffyLayoutEngine,
@@ -181,7 +181,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
             y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
         };
-        let params = GlyphRasterizationParams {
+        let params = GlyphRasterParams {
             font_id,
             glyph_id,
             font_size,
@@ -190,17 +190,12 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         };
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
-
         if !raster_bounds.is_zero() {
             let layer_id = self.current_layer_id();
-            let offset = raster_bounds.origin.map(Into::into);
-            let glyph_origin = glyph_origin.map(|px| px.floor()) + offset;
-            // dbg!(glyph_origin);
             let bounds = Bounds {
-                origin: glyph_origin,
+                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
                 size: raster_bounds.size.map(Into::into),
             };
-
             let tile = self
                 .window
                 .glyph_atlas

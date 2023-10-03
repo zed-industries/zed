@@ -1,7 +1,7 @@
 use crate::{
     point, px, size, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontStyle,
-    FontWeight, GlyphId, GlyphRasterizationParams, Pixels, PlatformTextSystem, Point, Result,
-    ShapedGlyph, ShapedLine, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
+    FontWeight, GlyphId, GlyphRasterParams, Pixels, PlatformTextSystem, Point, Result, ShapedGlyph,
+    ShapedLine, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
 };
 use anyhow::anyhow;
 use cocoa::appkit::{CGFloat, CGPoint};
@@ -134,16 +134,13 @@ impl PlatformTextSystem for MacTextSystem {
         self.0.read().glyph_for_char(font_id, ch)
     }
 
-    fn glyph_raster_bounds(
-        &self,
-        params: &GlyphRasterizationParams,
-    ) -> Result<Bounds<DevicePixels>> {
+    fn glyph_raster_bounds(&self, params: &GlyphRasterParams) -> Result<Bounds<DevicePixels>> {
         self.0.read().raster_bounds(params)
     }
 
     fn rasterize_glyph(
         &self,
-        glyph_id: &GlyphRasterizationParams,
+        glyph_id: &GlyphRasterParams,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
         self.0.read().rasterize_glyph(glyph_id)
     }
@@ -237,7 +234,7 @@ impl MacTextSystemState {
             })
     }
 
-    fn raster_bounds(&self, params: &GlyphRasterizationParams) -> Result<Bounds<DevicePixels>> {
+    fn raster_bounds(&self, params: &GlyphRasterParams) -> Result<Bounds<DevicePixels>> {
         let font = &self.fonts[params.font_id.0];
         let scale = Transform2F::from_scale(params.scale_factor);
         Ok(font
@@ -251,10 +248,7 @@ impl MacTextSystemState {
             .into())
     }
 
-    fn rasterize_glyph(
-        &self,
-        params: &GlyphRasterizationParams,
-    ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
+    fn rasterize_glyph(&self, params: &GlyphRasterParams) -> Result<(Size<DevicePixels>, Vec<u8>)> {
         let glyph_bounds = self.raster_bounds(params)?;
         if glyph_bounds.size.width.0 == 0 || glyph_bounds.size.height.0 == 0 {
             Err(anyhow!("glyph bounds are empty"))
@@ -292,7 +286,7 @@ impl MacTextSystemState {
 
             let subpixel_shift = params
                 .subpixel_variant
-                .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32 / params.scale_factor);
+                .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
             cx.set_allows_font_subpixel_positioning(true);
             cx.set_should_subpixel_position_fonts(true);
             cx.set_allows_font_subpixel_quantization(false);
@@ -303,8 +297,8 @@ impl MacTextSystemState {
                 .draw_glyphs(
                     &[u32::from(params.glyph_id) as CGGlyph],
                     &[CGPoint::new(
-                        subpixel_shift.x as CGFloat,
-                        subpixel_shift.y as CGFloat,
+                        (subpixel_shift.x / params.scale_factor) as CGFloat,
+                        (subpixel_shift.y / params.scale_factor) as CGFloat,
                     )],
                     cx,
                 );

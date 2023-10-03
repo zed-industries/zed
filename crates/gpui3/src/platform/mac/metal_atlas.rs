@@ -93,7 +93,7 @@ impl<Key> MetalAtlasState<Key> {
             };
             descriptor.set_width(min_size.width.into());
             descriptor.set_height(min_size.height.into());
-
+            descriptor.set_pixel_format(metal::MTLPixelFormat::Depth32Float);
             size = min_size;
             metal_texture = self.device.new_texture(&descriptor);
         } else {
@@ -119,16 +119,15 @@ struct MetalAtlasTexture {
 
 impl MetalAtlasTexture {
     fn upload(&mut self, size: Size<DevicePixels>, bytes: &[u8]) -> Option<AtlasTile> {
-        dbg!(size);
-        let size = size.into();
-        let allocation = self.allocator.allocate(size)?;
+        let allocation = self.allocator.allocate(size.into())?;
         let tile = AtlasTile {
             texture_id: self.id,
             tile_id: allocation.id.into(),
-            bounds: allocation.rectangle.into(),
+            bounds: Bounds {
+                origin: allocation.rectangle.min.into(),
+                size,
+            },
         };
-
-        // eprintln!("upload {:?}", tile.bounds);
 
         let region = metal::MTLRegion::new_2d(
             tile.bounds.origin.x.into(),

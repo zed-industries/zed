@@ -1,8 +1,8 @@
 use super::{ns_string, MetalRenderer, NSRange};
 use crate::{
-    point, px, size, AnyWindowHandle, Bounds, Event, GlyphRasterizationParams, KeyDownEvent,
-    Keystroke, MacScreen, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMovedEvent, MouseUpEvent, NSRectExt, Pixels, Platform, PlatformAtlas, PlatformDispatcher,
+    point, px, size, AnyWindowHandle, Bounds, Event, GlyphRasterParams, KeyDownEvent, Keystroke,
+    MacScreen, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMovedEvent,
+    MouseUpEvent, NSRectExt, Pixels, Platform, PlatformAtlas, PlatformDispatcher,
     PlatformInputHandler, PlatformScreen, PlatformWindow, Point, Scene, Size, Timer,
     WindowAppearance, WindowBounds, WindowKind, WindowOptions, WindowPromptLevel,
 };
@@ -886,7 +886,7 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn glyph_atlas(&self) -> Arc<dyn PlatformAtlas<GlyphRasterizationParams>> {
+    fn glyph_atlas(&self) -> Arc<dyn PlatformAtlas<GlyphRasterParams>> {
         self.0.lock().renderer.glyph_atlas().clone()
     }
 }
