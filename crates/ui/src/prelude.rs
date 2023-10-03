@@ -44,7 +44,7 @@ impl ThemeColor {
         Self {
             border: theme.lowest.base.default.border,
             border_variant: theme.lowest.variant.default.border,
-            elevated_surface: theme.lowest.base.default.background,
+            elevated_surface: theme.middle.base.default.background,
         }
     }
 }

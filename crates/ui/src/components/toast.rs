@@ -35,7 +35,7 @@ impl<V: 'static> Toast<V> {
         payload: HackyChildrenPayload,
     ) -> Self {
         Self {
-            origin: ToastOrigin::BottomRight,
+            origin,
             children,
             payload,
         }
@@ -43,20 +43,23 @@ impl<V: 'static> Toast<V> {
 
     fn render(&mut self, _: &mut V, cx: &mut ViewContext<V>) -> impl IntoElement<V> {
         let color = ThemeColor::new(cx);
-        let system_color = SystemColor::new();
 
         let mut div = div();
 
         if self.origin == ToastOrigin::Bottom {
-            div = div.right_1_2().bottom_0();
+            div = div.right_1_2();
         } else {
-            div = div.right_0().bottom_0();
+            div = div.right_4();
         }
 
         div.absolute()
-            .p_2()
+            .bottom_4()
+            .flex()
+            .py_2()
+            .px_1p5()
+            .min_w_40()
             .rounded_md()
-            .fill(system_color.mac_os_traffic_light_red)
+            .fill(color.elevated_surface)
             .max_w_64()
             .children_any((self.children)(cx, self.payload.as_ref()))
     }
