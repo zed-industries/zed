@@ -1,12 +1,13 @@
 pub use crate::{
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
-    markdown::RenderedMarkdown,
+    markdown::ParsedMarkdown,
     proto, BracketPair, Grammar, Language, LanguageConfig, LanguageRegistry, PLAIN_TEXT,
 };
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
     language_settings::{language_settings, LanguageSettings},
+    markdown,
     outline::OutlineItem,
     syntax_map::{
         SyntaxLayerInfo, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatches,
@@ -144,12 +145,51 @@ pub struct Diagnostic {
     pub is_unnecessary: bool,
 }
 
+pub fn prepare_completion_documentation(
+    documentation: &lsp::Documentation,
+    language_registry: &Arc<LanguageRegistry>,
+    language: Option<Arc<Language>>,
+    style: &theme::Editor,
+) -> Option<Documentation> {
+    match documentation {
+        lsp::Documentation::String(text) => {
+            if text.lines().count() <= 1 {
+                Some(Documentation::SingleLine(text.clone()))
+            } else {
+                Some(Documentation::MultiLinePlainText(text.clone()))
+            }
+        }
+
+        lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
+            lsp::MarkupKind::PlainText => {
+                if value.lines().count() <= 1 {
+                    Some(Documentation::SingleLine(value.clone()))
+                } else {
+                    Some(Documentation::MultiLinePlainText(value.clone()))
+                }
+            }
+
+            lsp::MarkupKind::Markdown => {
+                let parsed = markdown::parse_markdown(value, language_registry, language, style);
+                Some(Documentation::MultiLineMarkdown(parsed))
+            }
+        },
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum Documentation {
+    SingleLine(String),
+    MultiLinePlainText(String),
+    MultiLineMarkdown(ParsedMarkdown),
+}
+
 #[derive(Clone, Debug)]
 pub struct Completion {
     pub old_range: Range<Anchor>,
     pub new_text: String,
     pub label: CodeLabel,
-    pub alongside_documentation: Option<RenderedMarkdown>,
+    pub documentation: Option<Documentation>,
     pub server_id: LanguageServerId,
     pub lsp_completion: lsp::CompletionItem,
 }

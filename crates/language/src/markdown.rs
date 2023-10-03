@@ -7,31 +7,31 @@ use gpui::fonts::{HighlightStyle, Underline, Weight};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 
 #[derive(Debug, Clone)]
-pub struct RenderedMarkdown {
+pub struct ParsedMarkdown {
     pub text: String,
     pub highlights: Vec<(Range<usize>, HighlightStyle)>,
     pub region_ranges: Vec<Range<usize>>,
-    pub regions: Vec<RenderedRegion>,
+    pub regions: Vec<ParsedRegion>,
 }
 
 #[derive(Debug, Clone)]
-pub struct RenderedRegion {
+pub struct ParsedRegion {
     pub code: bool,
     pub link_url: Option<String>,
 }
 
-pub fn render_markdown(
+pub fn parse_markdown(
     markdown: &str,
     language_registry: &Arc<LanguageRegistry>,
-    language: &Option<Arc<Language>>,
+    language: Option<Arc<Language>>,
     style: &theme::Editor,
-) -> RenderedMarkdown {
+) -> ParsedMarkdown {
     let mut text = String::new();
     let mut highlights = Vec::new();
     let mut region_ranges = Vec::new();
     let mut regions = Vec::new();
 
-    render_markdown_block(
+    parse_markdown_block(
         markdown,
         language_registry,
         language,
@@ -42,7 +42,7 @@ pub fn render_markdown(
         &mut regions,
     );
 
-    RenderedMarkdown {
+    ParsedMarkdown {
         text,
         highlights,
         region_ranges,
@@ -50,15 +50,15 @@ pub fn render_markdown(
     }
 }
 
-pub fn render_markdown_block(
+pub fn parse_markdown_block(
     markdown: &str,
     language_registry: &Arc<LanguageRegistry>,
-    language: &Option<Arc<Language>>,
+    language: Option<Arc<Language>>,
     style: &theme::Editor,
     text: &mut String,
     highlights: &mut Vec<(Range<usize>, HighlightStyle)>,
     region_ranges: &mut Vec<Range<usize>>,
-    regions: &mut Vec<RenderedRegion>,
+    regions: &mut Vec<ParsedRegion>,
 ) {
     let mut bold_depth = 0;
     let mut italic_depth = 0;
@@ -71,7 +71,7 @@ pub fn render_markdown_block(
         match event {
             Event::Text(t) => {
                 if let Some(language) = &current_language {
-                    render_code(text, highlights, t.as_ref(), language, style);
+                    highlight_code(text, highlights, t.as_ref(), language, style);
                 } else {
                     text.push_str(t.as_ref());
 
@@ -84,7 +84,7 @@ pub fn render_markdown_block(
                     }
                     if let Some(link_url) = link_url.clone() {
                         region_ranges.push(prev_len..text.len());
-                        regions.push(RenderedRegion {
+                        regions.push(ParsedRegion {
                             link_url: Some(link_url),
                             code: false,
                         });
@@ -124,7 +124,7 @@ pub fn render_markdown_block(
                         },
                     ));
                 }
-                regions.push(RenderedRegion {
+                regions.push(ParsedRegion {
                     code: true,
                     link_url: link_url.clone(),
                 });
@@ -202,7 +202,7 @@ pub fn render_markdown_block(
     }
 }
 
-pub fn render_code(
+pub fn highlight_code(
     text: &mut String,
     highlights: &mut Vec<(Range<usize>, HighlightStyle)>,
     content: &str,

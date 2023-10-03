@@ -1470,7 +1470,7 @@ impl LspCommand for GetCompletions {
                                     lsp_completion.filter_text.as_deref(),
                                 )
                             }),
-                            alongside_documentation: None,
+                            documentation: None,
                             server_id,
                             lsp_completion,
                         }

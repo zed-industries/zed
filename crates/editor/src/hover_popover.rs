@@ -13,7 +13,7 @@ use gpui::{
     AnyElement, AppContext, CursorRegion, Element, ModelHandle, MouseRegion, Task, ViewContext,
 };
 use language::{
-    markdown::{self, RenderedRegion},
+    markdown::{self, ParsedRegion},
     Bias, DiagnosticEntry, DiagnosticSeverity, Language, LanguageRegistry,
 };
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart, Project};
@@ -367,9 +367,9 @@ fn render_blocks(
     theme_id: usize,
     blocks: &[HoverBlock],
     language_registry: &Arc<LanguageRegistry>,
-    language: &Option<Arc<Language>>,
+    language: Option<Arc<Language>>,
     style: &EditorStyle,
-) -> RenderedInfo {
+) -> ParsedInfo {
     let mut text = String::new();
     let mut highlights = Vec::new();
     let mut region_ranges = Vec::new();
@@ -382,10 +382,10 @@ fn render_blocks(
                 text.push_str(&block.text);
             }
 
-            HoverBlockKind::Markdown => markdown::render_markdown_block(
+            HoverBlockKind::Markdown => markdown::parse_markdown_block(
                 &block.text,
                 language_registry,
-                language,
+                language.clone(),
                 style,
                 &mut text,
                 &mut highlights,
@@ -399,7 +399,7 @@ fn render_blocks(
                     .now_or_never()
                     .and_then(Result::ok)
                 {
-                    markdown::render_code(
+                    markdown::highlight_code(
                         &mut text,
                         &mut highlights,
                         &block.text,
@@ -413,7 +413,7 @@ fn render_blocks(
         }
     }
 
-    RenderedInfo {
+    ParsedInfo {
         theme_id,
         text: text.trim().to_string(),
         highlights,
@@ -482,16 +482,16 @@ pub struct InfoPopover {
     symbol_range: DocumentRange,
     pub blocks: Vec<HoverBlock>,
     language: Option<Arc<Language>>,
-    rendered_content: Option<RenderedInfo>,
+    rendered_content: Option<ParsedInfo>,
 }
 
 #[derive(Debug, Clone)]
-struct RenderedInfo {
+struct ParsedInfo {
     theme_id: usize,
     text: String,
     highlights: Vec<(Range<usize>, HighlightStyle)>,
     region_ranges: Vec<Range<usize>>,
-    regions: Vec<RenderedRegion>,
+    regions: Vec<ParsedRegion>,
 }
 
 impl InfoPopover {
@@ -511,7 +511,7 @@ impl InfoPopover {
                 style.theme_id,
                 &self.blocks,
                 self.project.read(cx).languages(),
-                &self.language,
+                self.language.clone(),
                 style,
             )
         });
@@ -877,7 +877,7 @@ mod tests {
             );
 
             let style = editor.style(cx);
-            let rendered = render_blocks(0, &blocks, &Default::default(), &None, &style);
+            let rendered = render_blocks(0, &blocks, &Default::default(), None, &style);
             assert_eq!(
                 rendered.text,
                 code_str.trim(),
@@ -1069,7 +1069,7 @@ mod tests {
                 expected_styles,
             } in &rows[0..]
             {
-                let rendered = render_blocks(0, &blocks, &Default::default(), &None, &style);
+                let rendered = render_blocks(0, &blocks, &Default::default(), None, &style);
 
                 let (expected_text, ranges) = marked_text_ranges(expected_marked_text, false);
                 let expected_highlights = ranges
