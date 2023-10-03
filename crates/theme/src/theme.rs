@@ -131,6 +131,7 @@ pub struct Titlebar {
     pub menu: TitlebarMenu,
     pub project_menu_button: Toggleable<Interactive<ContainedText>>,
     pub git_menu_button: Toggleable<Interactive<ContainedText>>,
+    pub project_host: Interactive<ContainedText>,
     pub item_spacing: f32,
     pub face_pile_spacing: f32,
     pub avatar_ribbon: AvatarRibbon,

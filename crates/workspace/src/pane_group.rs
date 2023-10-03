@@ -222,7 +222,7 @@ impl Member {
                                         |_, _| {
                                             Label::new(
                                                 format!(
-                                                    "Follow {} on their active project",
+                                                    "Follow {} to their active project",
                                                     leader_user.github_login,
                                                 ),
                                                 theme

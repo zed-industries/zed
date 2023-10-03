@@ -7,7 +7,7 @@ mod face_pile;
 mod incoming_call_notification;
 mod notifications;
 mod panel_settings;
-mod project_shared_notification;
+pub mod project_shared_notification;
 mod sharing_status_indicator;
 
 use call::{report_call_event_for_room, ActiveCall, Room};

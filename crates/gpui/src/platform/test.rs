@@ -103,6 +103,7 @@ pub struct Platform {
     current_clipboard_item: Mutex<Option<ClipboardItem>>,
     cursor: Mutex<CursorStyle>,
     active_window: Arc<Mutex<Option<AnyWindowHandle>>>,
+    active_screen: Screen,
 }
 
 impl Platform {
@@ -113,6 +114,7 @@ impl Platform {
             current_clipboard_item: Default::default(),
             cursor: Mutex::new(CursorStyle::Arrow),
             active_window: Default::default(),
+            active_screen: Screen::new(),
         }
     }
 }
@@ -136,12 +138,16 @@ impl super::Platform for Platform {
 
     fn quit(&self) {}
 
-    fn screen_by_id(&self, _id: uuid::Uuid) -> Option<Rc<dyn crate::platform::Screen>> {
-        None
+    fn screen_by_id(&self, uuid: uuid::Uuid) -> Option<Rc<dyn crate::platform::Screen>> {
+        if self.active_screen.uuid == uuid {
+            Some(Rc::new(self.active_screen.clone()))
+        } else {
+            None
+        }
     }
 
     fn screens(&self) -> Vec<Rc<dyn crate::platform::Screen>> {
-        Default::default()
+        vec![Rc::new(self.active_screen.clone())]
     }
 
     fn open_window(
@@ -158,6 +164,7 @@ impl super::Platform for Platform {
                 WindowBounds::Fixed(rect) => rect.size(),
             },
             self.active_window.clone(),
+            Rc::new(self.active_screen.clone()),
         ))
     }
 
@@ -170,6 +177,7 @@ impl super::Platform for Platform {
             handle,
             vec2f(24., 24.),
             self.active_window.clone(),
+            Rc::new(self.active_screen.clone()),
         ))
     }
 
@@ -238,8 +246,18 @@ impl super::Platform for Platform {
     fn restart(&self) {}
 }
 
-#[derive(Debug)]
-pub struct Screen;
+#[derive(Debug, Clone)]
+pub struct Screen {
+    uuid: uuid::Uuid,
+}
+
+impl Screen {
+    fn new() -> Self {
+        Self {
+            uuid: uuid::Uuid::new_v4(),
+        }
+    }
+}
 
 impl super::Screen for Screen {
     fn as_any(&self) -> &dyn Any {
@@ -255,7 +273,7 @@ impl super::Screen for Screen {
     }
 
     fn display_uuid(&self) -> Option<uuid::Uuid> {
-        Some(uuid::Uuid::new_v4())
+        Some(self.uuid)
     }
 }
 
@@ -275,6 +293,7 @@ pub struct Window {
     pub(crate) edited: bool,
     pub(crate) pending_prompts: RefCell<VecDeque<oneshot::Sender<usize>>>,
     active_window: Arc<Mutex<Option<AnyWindowHandle>>>,
+    screen: Rc<Screen>,
 }
 
 impl Window {
@@ -282,6 +301,7 @@ impl Window {
         handle: AnyWindowHandle,
         size: Vector2F,
         active_window: Arc<Mutex<Option<AnyWindowHandle>>>,
+        screen: Rc<Screen>,
     ) -> Self {
         Self {
             handle,
@@ -299,6 +319,7 @@ impl Window {
             edited: false,
             pending_prompts: Default::default(),
             active_window,
+            screen,
         }
     }
 
@@ -329,7 +350,7 @@ impl super::Window for Window {
     }
 
     fn screen(&self) -> Rc<dyn crate::platform::Screen> {
-        Rc::new(Screen)
+        self.screen.clone()
     }
 
     fn mouse_position(&self) -> Vector2F {
