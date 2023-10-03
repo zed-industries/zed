@@ -39,8 +39,6 @@ impl<S: 'static> Element for Text<S> {
         _view: &mut S,
         cx: &mut ViewContext<S>,
     ) -> Result<(LayoutId, Self::FrameState)> {
-        dbg!("layout text");
-
         let text_system = cx.text_system().clone();
         let text_style = cx.text_style();
         let font_size = text_style.font_size * cx.rem_size();

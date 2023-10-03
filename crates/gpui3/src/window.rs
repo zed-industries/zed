@@ -251,14 +251,10 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             let (root_layout_id, mut frame_state) = root_view.layout(&mut (), cx)?;
             let available_space = cx.window.content_size.map(Into::into);
 
-            dbg!("computing layout");
             cx.window
                 .layout_engine
                 .compute_layout(root_layout_id, available_space)?;
-            dbg!("asking for layout");
             let layout = cx.window.layout_engine.layout(root_layout_id)?;
-
-            dbg!("painting root view");
 
             root_view.paint(layout, &mut (), &mut frame_state, cx)?;
             cx.window.root_view = Some(root_view);
@@ -274,13 +270,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             cx.window.dirty = false;
             Ok(())
         })
-    }
-}
-
-impl MainThread<WindowContext<'_, '_>> {
-    // todo!("implement other methods that use platform window")
-    fn platform_window(&self) -> &dyn PlatformWindow {
-        self.window.platform_window.borrow_on_main_thread().as_ref()
     }
 }
 
