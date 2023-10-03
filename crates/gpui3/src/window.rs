@@ -1,7 +1,8 @@
 use crate::{
-    px, AnyView, AppContext, AvailableSpace, Bounds, Context, Effect, Element, EntityId, Handle,
-    LayoutId, MainThread, MainThreadOnly, Pixels, PlatformWindow, Point, Reference, Scene, Size,
-    StackContext, StackingOrder, Style, TaffyLayoutEngine, WeakHandle, WindowOptions,
+    px, AnyView, AppContext, AvailableSpace, Bounds, Context, Effect, Element, EntityId, FontId,
+    GlyphId, Handle, LayoutId, MainThread, MainThreadOnly, Pixels, PlatformAtlas, PlatformWindow,
+    Point, RasterizedGlyphId, Reference, Scene, Size, StackContext, StackingOrder, Style,
+    TaffyLayoutEngine, WeakHandle, WindowOptions,
 };
 use anyhow::Result;
 use futures::Future;
@@ -14,6 +15,7 @@ pub struct AnyWindow {}
 pub struct Window {
     handle: AnyWindowHandle,
     platform_window: MainThreadOnly<Box<dyn PlatformWindow>>,
+    glyph_atlas: Arc<dyn PlatformAtlas<RasterizedGlyphId>>,
     rem_size: Pixels,
     content_size: Size<Pixels>,
     layout_engine: TaffyLayoutEngine,
@@ -31,6 +33,7 @@ impl Window {
         cx: &mut MainThread<AppContext>,
     ) -> Self {
         let platform_window = cx.platform().open_window(handle, options);
+        let glyph_atlas = platform_window.glyph_atlas();
         let mouse_position = platform_window.mouse_position();
         let content_size = platform_window.content_size();
         let scale_factor = platform_window.scale_factor();
@@ -53,6 +56,7 @@ impl Window {
         Window {
             handle,
             platform_window,
+            glyph_atlas,
             rem_size: px(16.),
             content_size,
             layout_engine: TaffyLayoutEngine::new(),

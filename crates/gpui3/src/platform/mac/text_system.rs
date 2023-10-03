@@ -1,7 +1,7 @@
 use crate::{
-    point, px, size, Bounds, Font, FontFeatures, FontId, FontMetrics, FontStyle, FontWeight, Glyph,
-    GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RasterizationOptions, Result, Run,
-    SharedString, Size,
+    point, px, size, Bounds, Font, FontFeatures, FontId, FontMetrics, FontStyle, FontWeight,
+    GlyphId, Pixels, PlatformTextSystem, Point, RasterizationOptions, Result, ShapedGlyph,
+    ShapedLine, ShapedRun, SharedString, Size,
 };
 use cocoa::appkit::{CGFloat, CGPoint};
 use collections::HashMap;
@@ -161,7 +161,7 @@ impl PlatformTextSystem for MacTextSystem {
         text: &str,
         font_size: Pixels,
         font_runs: &[(usize, FontId)],
-    ) -> LineLayout {
+    ) -> ShapedLine {
         self.0.write().layout_line(text, font_size, font_runs)
     }
 
@@ -348,7 +348,7 @@ impl MacTextSystemState {
         text: &str,
         font_size: Pixels,
         font_runs: &[(usize, FontId)],
-    ) -> LineLayout {
+    ) -> ShapedLine {
         // Construct the attributed string, converting UTF8 ranges to UTF16 ranges.
         let mut string = CFMutableAttributedString::new();
         {
@@ -409,7 +409,7 @@ impl MacTextSystemState {
             {
                 let glyph_utf16_ix = usize::try_from(*glyph_utf16_ix).unwrap();
                 ix_converter.advance_to_utf16_ix(glyph_utf16_ix);
-                glyphs.push(Glyph {
+                glyphs.push(ShapedGlyph {
                     id: (*glyph_id).into(),
                     position: point(position.x as f32, position.y as f32).map(px),
                     index: ix_converter.utf8_ix,
@@ -417,11 +417,11 @@ impl MacTextSystemState {
                 });
             }
 
-            runs.push(Run { font_id, glyphs })
+            runs.push(ShapedRun { font_id, glyphs })
         }
 
         let typographic_bounds = line.get_typographic_bounds();
-        LineLayout {
+        ShapedLine {
             width: typographic_bounds.width.into(),
             ascent: typographic_bounds.ascent.into(),
             descent: typographic_bounds.descent.into(),

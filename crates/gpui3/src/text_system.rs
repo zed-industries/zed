@@ -346,28 +346,35 @@ impl From<u32> for GlyphId {
     }
 }
 
+#[derive(Default, Debug)]
+pub struct ShapedLine {
+    pub font_size: Pixels,
+    pub width: Pixels,
+    pub ascent: Pixels,
+    pub descent: Pixels,
+    pub runs: Vec<ShapedRun>,
+    pub len: usize,
+}
+
+#[derive(Debug)]
+pub struct ShapedRun {
+    pub font_id: FontId,
+    pub glyphs: Vec<ShapedGlyph>,
+}
+
 #[derive(Clone, Debug)]
-pub struct Glyph {
+pub struct ShapedGlyph {
     pub id: GlyphId,
     pub position: Point<Pixels>,
     pub index: usize,
     pub is_emoji: bool,
 }
 
-#[derive(Default, Debug)]
-pub struct LineLayout {
-    pub font_size: Pixels,
-    pub width: Pixels,
-    pub ascent: Pixels,
-    pub descent: Pixels,
-    pub runs: Vec<Run>,
-    pub len: usize,
-}
-
-#[derive(Debug)]
-pub struct Run {
-    pub font_id: FontId,
-    pub glyphs: Vec<Glyph>,
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct RasterizedGlyphId {
+    font_id: FontId,
+    glyph_id: GlyphId,
+    font_size: Pixels,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]

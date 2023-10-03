@@ -1,35 +1,54 @@
 use crate::{AtlasTextureId, AtlasTile, Bounds, DevicePixels, PlatformAtlas, Point, Size};
 use collections::HashMap;
+use derive_more::{Deref, DerefMut};
 use etagere::BucketedAtlasAllocator;
 use foreign_types::ForeignType;
-use metal::{Device, TextureDescriptor, TextureDescriptorRef};
+use metal::{Device, TextureDescriptor};
 use objc::{msg_send, sel, sel_impl};
-use parking_lot::{RwLock, RwLockUpgradableReadGuard};
+use parking_lot::Mutex;
 use std::hash::Hash;
 
-pub struct MetalAtlas<Key>(RwLock<MetalAtlasState<Key>>);
+pub struct MetalAtlas<Key>(Mutex<MetalAtlasState<Key>>);
+
+impl<Key> MetalAtlas<Key> {
+    pub fn new(
+        size: Size<DevicePixels>,
+        pixel_format: metal::MTLPixelFormat,
+        device: Device,
+    ) -> Self {
+        let texture_descriptor = metal::TextureDescriptor::new();
+        texture_descriptor.set_pixel_format(pixel_format);
+        texture_descriptor.set_width(size.width.into());
+        texture_descriptor.set_height(size.height.into());
+        MetalAtlas(Mutex::new(MetalAtlasState {
+            device: AssertSend(device),
+            texture_descriptor: AssertSend(texture_descriptor),
+            textures: Default::default(),
+            tiles_by_key: Default::default(),
+        }))
+    }
+}
 
 struct MetalAtlasState<Key> {
-    device: Device,
-    texture_descriptor: TextureDescriptor,
+    device: AssertSend<Device>,
+    texture_descriptor: AssertSend<TextureDescriptor>,
     textures: Vec<MetalAtlasTexture>,
     tiles_by_key: HashMap<Key, AtlasTile>,
 }
 
 impl<Key> PlatformAtlas<Key> for MetalAtlas<Key>
 where
-    Key: Eq + Hash,
+    Key: Eq + Hash + Send,
 {
     fn get_or_insert_with(
         &self,
         key: Key,
-        build: impl FnOnce() -> (Size<DevicePixels>, Vec<u8>),
+        build: &dyn Fn() -> (Size<DevicePixels>, Vec<u8>),
     ) -> AtlasTile {
-        let lock = self.0.upgradable_read();
+        let mut lock = self.0.lock();
         if let Some(tile) = lock.tiles_by_key.get(&key) {
             return tile.clone();
         } else {
-            let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
             let (size, bytes) = build();
             lock.textures
                 .iter_mut()
@@ -45,7 +64,7 @@ where
     }
 
     fn clear(&self) {
-        self.0.write().tiles_by_key.clear();
+        self.0.lock().tiles_by_key.clear();
     }
 }
 
@@ -62,7 +81,7 @@ impl<Key> MetalAtlasState<Key> {
         {
             let descriptor = unsafe {
                 let descriptor_ptr: *mut metal::MTLTextureDescriptor =
-                    msg_send![self.texture_descriptor, copy];
+                    msg_send![*self.texture_descriptor, copy];
                 metal::TextureDescriptor::from_ptr(descriptor_ptr)
             };
             descriptor.set_width(min_size.width.into());
@@ -78,7 +97,7 @@ impl<Key> MetalAtlasState<Key> {
         let atlas_texture = MetalAtlasTexture {
             id: AtlasTextureId(self.textures.len()),
             allocator: etagere::BucketedAtlasAllocator::new(size.into()),
-            metal_texture,
+            metal_texture: AssertSend(metal_texture),
         };
         self.textures.push(atlas_texture);
         self.textures.last_mut().unwrap()
@@ -88,7 +107,7 @@ impl<Key> MetalAtlasState<Key> {
 struct MetalAtlasTexture {
     id: AtlasTextureId,
     allocator: BucketedAtlasAllocator,
-    metal_texture: metal::Texture,
+    metal_texture: AssertSend<metal::Texture>,
 }
 
 impl MetalAtlasTexture {
@@ -162,3 +181,8 @@ impl From<etagere::Rectangle> for Bounds<DevicePixels> {
         }
     }
 }
+
+#[derive(Deref, DerefMut)]
+struct AssertSend<T>(T);
+
+unsafe impl<T> Send for AssertSend<T> {}

@@ -1,4 +1,4 @@
-use crate::{FontId, Glyph, LineLayout, Pixels, PlatformTextSystem, Run};
+use crate::{FontId, Pixels, PlatformTextSystem, ShapedGlyph, ShapedLine, ShapedRun};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
 use std::{
@@ -9,8 +9,8 @@ use std::{
 };
 
 pub(crate) struct TextLayoutCache {
-    prev_frame: Mutex<HashMap<CacheKeyValue, Arc<LineLayout>>>,
-    curr_frame: RwLock<HashMap<CacheKeyValue, Arc<LineLayout>>>,
+    prev_frame: Mutex<HashMap<CacheKeyValue, Arc<ShapedLine>>>,
+    curr_frame: RwLock<HashMap<CacheKeyValue, Arc<ShapedLine>>>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
 }
 
@@ -35,7 +35,7 @@ impl TextLayoutCache {
         text: &'a str,
         font_size: Pixels,
         runs: &[(usize, FontId)],
-    ) -> Arc<LineLayout> {
+    ) -> Arc<ShapedLine> {
         let key = &CacheKeyRef {
             text,
             font_size,
@@ -146,8 +146,8 @@ pub struct ShapedBoundary {
     pub glyph_ix: usize,
 }
 
-impl Run {
-    pub fn glyphs(&self) -> &[Glyph] {
+impl ShapedRun {
+    pub fn glyphs(&self) -> &[ShapedGlyph] {
         &self.glyphs
     }
 }

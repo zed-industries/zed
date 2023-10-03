@@ -6,8 +6,8 @@ mod mac;
 mod test;
 
 use crate::{
-    AnyWindowHandle, Bounds, DevicePixels, Font, FontId, FontMetrics, GlyphId, LineLayout,
-    MonochromeSprite, Pixels, Point, Result, Scene, SharedString, Size,
+    AnyWindowHandle, Bounds, DevicePixels, Font, FontId, FontMetrics, GlyphId, MonochromeSprite,
+    Pixels, Point, RasterizedGlyphId, Result, Scene, ShapedLine, SharedString, Size,
 };
 use anyhow::anyhow;
 use async_task::Runnable;
@@ -146,6 +146,8 @@ pub trait PlatformWindow {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
     fn draw(&self, scene: Scene);
+
+    fn glyph_atlas(&self) -> Arc<dyn PlatformAtlas<RasterizedGlyphId>>;
 }
 
 pub trait PlatformDispatcher: Send + Sync {
@@ -170,7 +172,7 @@ pub trait PlatformTextSystem: Send + Sync {
         scale_factor: f32,
         options: RasterizationOptions,
     ) -> Option<(Bounds<u32>, Vec<u8>)>;
-    fn layout_line(&self, text: &str, font_size: Pixels, runs: &[(usize, FontId)]) -> LineLayout;
+    fn layout_line(&self, text: &str, font_size: Pixels, runs: &[(usize, FontId)]) -> ShapedLine;
     fn wrap_line(
         &self,
         text: &str,
@@ -180,11 +182,11 @@ pub trait PlatformTextSystem: Send + Sync {
     ) -> Vec<usize>;
 }
 
-pub trait PlatformAtlas<Key> {
+pub trait PlatformAtlas<Key>: Send + Sync {
     fn get_or_insert_with(
         &self,
         key: Key,
-        build: impl FnOnce() -> (Size<DevicePixels>, Vec<u8>),
+        build: &dyn Fn() -> (Size<DevicePixels>, Vec<u8>),
     ) -> AtlasTile;
 
     fn clear(&self);

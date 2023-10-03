@@ -1,4 +1,6 @@
-use crate::{point, size, DevicePixels, MonochromeSprite, Quad, Scene, Size};
+use crate::{
+    point, size, DevicePixels, MetalAtlas, MonochromeSprite, Quad, RasterizedGlyphId, Scene, Size,
+};
 use bytemuck::{Pod, Zeroable};
 use cocoa::{
     base::{NO, YES},
@@ -7,7 +9,7 @@ use cocoa::{
 };
 use metal::{CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
 use objc::{self, msg_send, sel, sel_impl};
-use std::{ffi::c_void, mem, ptr};
+use std::{ffi::c_void, mem, ptr, sync::Arc};
 
 const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
 const INSTANCE_BUFFER_SIZE: usize = 8192 * 1024; // This is an arbitrary decision. There's probably a more optimal value.
@@ -19,6 +21,7 @@ pub struct MetalRenderer {
     quad_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     instances: metal::Buffer,
+    glyph_atlas: Arc<MetalAtlas<RasterizedGlyphId>>,
 }
 
 impl MetalRenderer {
@@ -88,6 +91,15 @@ impl MetalRenderer {
         );
 
         let command_queue = device.new_command_queue();
+        let glyph_atlas = Arc::new(MetalAtlas::new(
+            Size {
+                width: DevicePixels(1024),
+                height: DevicePixels(1024),
+            },
+            MTLPixelFormat::A8Unorm,
+            device.clone(),
+        ));
+
         Self {
             device,
             layer,
@@ -95,11 +107,16 @@ impl MetalRenderer {
             quad_pipeline_state,
             unit_vertices,
             instances,
+            glyph_atlas,
         }
     }
 
     pub fn layer(&self) -> &metal::MetalLayerRef {
         &*self.layer
+    }
+
+    pub fn glyph_atlas(&self) -> &Arc<MetalAtlas<RasterizedGlyphId>> {
+        &self.glyph_atlas
     }
 
     pub fn draw(&mut self, scene: &mut Scene) {
