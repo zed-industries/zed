@@ -1,6 +1,6 @@
 use super::*;
 use crate::test_both_dbs;
-use language::proto;
+use language::proto::{self, serialize_version};
 use text::Buffer;
 
 test_both_dbs!(
@@ -165,117 +165,6 @@ async fn test_channel_buffers(db: &Arc<Database>) {
 }
 
 test_both_dbs!(
-    test_channel_buffers_diffs,
-    test_channel_buffers_diffs_postgres,
-    test_channel_buffers_diffs_sqlite
-);
-
-async fn test_channel_buffers_diffs(db: &Database) {
-    panic!("Rewriting the way this works");
-
-    let a_id = db
-        .create_user(
-            "user_a@example.com",
-            false,
-            NewUserParams {
-                github_login: "user_a".into(),
-                github_user_id: 101,
-                invite_count: 0,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
-    let b_id = db
-        .create_user(
-            "user_b@example.com",
-            false,
-            NewUserParams {
-                github_login: "user_b".into(),
-                github_user_id: 102,
-                invite_count: 0,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
-
-    let owner_id = db.create_server("production").await.unwrap().0 as u32;
-
-    let zed_id = db.create_root_channel("zed", "1", a_id).await.unwrap();
-
-    db.invite_channel_member(zed_id, b_id, a_id, false)
-        .await
-        .unwrap();
-
-    db.respond_to_channel_invite(zed_id, b_id, true)
-        .await
-        .unwrap();
-
-    let connection_id_a = ConnectionId {
-        owner_id,
-        id: a_id.0 as u32,
-    };
-    let connection_id_b = ConnectionId {
-        owner_id,
-        id: b_id.0 as u32,
-    };
-
-    // Zero test: A should not register as changed on an unitialized channel buffer
-    assert!(!db.test_has_note_changed(a_id, zed_id).await.unwrap());
-
-    let _ = db
-        .join_channel_buffer(zed_id, a_id, connection_id_a)
-        .await
-        .unwrap();
-
-    // Zero test: A should register as changed on an empty channel buffer
-    assert!(!db.test_has_note_changed(a_id, zed_id).await.unwrap());
-
-    let mut buffer_a = Buffer::new(0, 0, "".to_string());
-    let mut operations = Vec::new();
-    operations.push(buffer_a.edit([(0..0, "hello world")]));
-    assert_eq!(buffer_a.text(), "hello world");
-
-    let operations = operations
-        .into_iter()
-        .map(|op| proto::serialize_operation(&language::Operation::Buffer(op)))
-        .collect::<Vec<_>>();
-
-    db.update_channel_buffer(zed_id, a_id, &operations)
-        .await
-        .unwrap();
-
-    // Smoke test: Does B register as changed, A as unchanged?
-    assert!(db.test_has_note_changed(b_id, zed_id).await.unwrap());
-
-    assert!(!db.test_has_note_changed(a_id, zed_id).await.unwrap());
-
-    db.leave_channel_buffer(zed_id, connection_id_a)
-        .await
-        .unwrap();
-
-    // Snapshotting from leaving the channel buffer should not have a diff
-    assert!(!db.test_has_note_changed(a_id, zed_id).await.unwrap());
-
-    let _ = db
-        .join_channel_buffer(zed_id, b_id, connection_id_b)
-        .await
-        .unwrap();
-
-    // B has opened the channel buffer, so we shouldn't have any diff
-    assert!(!db.test_has_note_changed(b_id, zed_id).await.unwrap());
-
-    db.leave_channel_buffer(zed_id, connection_id_b)
-        .await
-        .unwrap();
-
-    // Since B just opened and closed the buffer without editing, neither should have a diff
-    assert!(!db.test_has_note_changed(a_id, zed_id).await.unwrap());
-    assert!(!db.test_has_note_changed(b_id, zed_id).await.unwrap());
-}
-
-test_both_dbs!(
     test_channel_buffers_last_operations,
     test_channel_buffers_last_operations_postgres,
     test_channel_buffers_last_operations_sqlite
@@ -295,6 +184,19 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         .await
         .unwrap()
         .user_id;
+    let observer_id = db
+        .create_user(
+            "user_b@example.com",
+            false,
+            NewUserParams {
+                github_login: "user_b".into(),
+                github_user_id: 102,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap()
+        .user_id;
     let owner_id = db.create_server("production").await.unwrap().0 as u32;
     let connection_id = ConnectionId {
         owner_id,
@@ -306,6 +208,13 @@ async fn test_channel_buffers_last_operations(db: &Database) {
     for i in 0..3 {
         let channel = db
             .create_root_channel(&format!("channel-{i}"), &format!("room-{i}"), user_id)
+            .await
+            .unwrap();
+
+        db.invite_channel_member(channel, observer_id, user_id, false)
+            .await
+            .unwrap();
+        db.respond_to_channel_invite(channel, observer_id, true)
             .await
             .unwrap();
 
@@ -422,45 +331,146 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         ],
     );
 
-    async fn update_buffer(
-        channel_id: ChannelId,
-        user_id: UserId,
-        db: &Database,
-        operations: Vec<text::Operation>,
-    ) {
-        let operations = operations
-            .into_iter()
-            .map(|op| proto::serialize_operation(&language::Operation::Buffer(op)))
-            .collect::<Vec<_>>();
-        db.update_channel_buffer(channel_id, user_id, &operations)
-            .await
-            .unwrap();
-    }
+    let changed_channels = db
+        .transaction(|tx| {
+            let buffers = &buffers;
+            async move {
+                db.channels_with_changed_notes(
+                    observer_id,
+                    &[
+                        buffers[0].channel_id,
+                        buffers[1].channel_id,
+                        buffers[2].channel_id,
+                    ],
+                    &*tx,
+                )
+                .await
+            }
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        changed_channels,
+        [
+            buffers[0].channel_id,
+            buffers[1].channel_id,
+            buffers[2].channel_id,
+        ]
+        .into_iter()
+        .collect::<HashSet<_>>()
+    );
 
-    fn assert_operations(
-        operations: &[buffer_operation::Model],
-        expected: &[(BufferId, i32, &text::Buffer)],
-    ) {
-        let actual = operations
-            .iter()
-            .map(|op| buffer_operation::Model {
-                buffer_id: op.buffer_id,
-                epoch: op.epoch,
-                lamport_timestamp: op.lamport_timestamp,
-                replica_id: op.replica_id,
-                value: vec![],
-            })
-            .collect::<Vec<_>>();
-        let expected = expected
-            .iter()
-            .map(|(buffer_id, epoch, buffer)| buffer_operation::Model {
-                buffer_id: *buffer_id,
-                epoch: *epoch,
-                lamport_timestamp: buffer.lamport_clock.value as i32 - 1,
-                replica_id: buffer.replica_id() as i32,
-                value: vec![],
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(actual, expected, "unexpected operations")
-    }
+    db.observe_buffer_version(
+        buffers[1].id,
+        observer_id,
+        1,
+        &serialize_version(&text_buffers[1].version()),
+    )
+    .await
+    .unwrap();
+
+    let changed_channels = db
+        .transaction(|tx| {
+            let buffers = &buffers;
+            async move {
+                db.channels_with_changed_notes(
+                    observer_id,
+                    &[
+                        buffers[0].channel_id,
+                        buffers[1].channel_id,
+                        buffers[2].channel_id,
+                    ],
+                    &*tx,
+                )
+                .await
+            }
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        changed_channels,
+        [buffers[0].channel_id, buffers[2].channel_id,]
+            .into_iter()
+            .collect::<HashSet<_>>()
+    );
+
+    // Observe an earlier version of the buffer.
+    db.observe_buffer_version(
+        buffers[1].id,
+        observer_id,
+        1,
+        &[rpc::proto::VectorClockEntry {
+            replica_id: 0,
+            timestamp: 0,
+        }],
+    )
+    .await
+    .unwrap();
+
+    let changed_channels = db
+        .transaction(|tx| {
+            let buffers = &buffers;
+            async move {
+                db.channels_with_changed_notes(
+                    observer_id,
+                    &[
+                        buffers[0].channel_id,
+                        buffers[1].channel_id,
+                        buffers[2].channel_id,
+                    ],
+                    &*tx,
+                )
+                .await
+            }
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        changed_channels,
+        [buffers[0].channel_id, buffers[2].channel_id,]
+            .into_iter()
+            .collect::<HashSet<_>>()
+    );
+}
+
+async fn update_buffer(
+    channel_id: ChannelId,
+    user_id: UserId,
+    db: &Database,
+    operations: Vec<text::Operation>,
+) {
+    let operations = operations
+        .into_iter()
+        .map(|op| proto::serialize_operation(&language::Operation::Buffer(op)))
+        .collect::<Vec<_>>();
+    db.update_channel_buffer(channel_id, user_id, &operations)
+        .await
+        .unwrap();
+}
+
+fn assert_operations(
+    operations: &[buffer_operation::Model],
+    expected: &[(BufferId, i32, &text::Buffer)],
+) {
+    let actual = operations
+        .iter()
+        .map(|op| buffer_operation::Model {
+            buffer_id: op.buffer_id,
+            epoch: op.epoch,
+            lamport_timestamp: op.lamport_timestamp,
+            replica_id: op.replica_id,
+            value: vec![],
+        })
+        .collect::<Vec<_>>();
+    let expected = expected
+        .iter()
+        .map(|(buffer_id, epoch, buffer)| buffer_operation::Model {
+            buffer_id: *buffer_id,
+            epoch: *epoch,
+            lamport_timestamp: buffer.lamport_clock.value as i32 - 1,
+            replica_id: buffer.replica_id() as i32,
+            value: vec![],
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(actual, expected, "unexpected operations")
 }

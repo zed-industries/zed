@@ -218,20 +218,12 @@ impl Database {
             }
 
             // Observe this message for the sender
-            observed_channel_messages::Entity::insert(observed_channel_messages::ActiveModel {
-                user_id: ActiveValue::Set(user_id),
-                channel_id: ActiveValue::Set(channel_id),
-                channel_message_id: ActiveValue::Set(message.last_insert_id),
-            })
-            .on_conflict(
-                OnConflict::columns([
-                    observed_channel_messages::Column::ChannelId,
-                    observed_channel_messages::Column::UserId,
-                ])
-                .update_column(observed_channel_messages::Column::ChannelMessageId)
-                .to_owned(),
+            self.observe_channel_message_internal(
+                channel_id,
+                user_id,
+                message.last_insert_id,
+                &*tx,
             )
-            .exec(&*tx)
             .await?;
 
             let mut channel_members = self.get_channel_members_internal(channel_id, &*tx).await?;
@@ -246,12 +238,53 @@ impl Database {
         .await
     }
 
+    pub async fn observe_channel_message(
+        &self,
+        channel_id: ChannelId,
+        user_id: UserId,
+        message_id: MessageId,
+    ) -> Result<()> {
+        self.transaction(|tx| async move {
+            self.observe_channel_message_internal(channel_id, user_id, message_id, &*tx)
+                .await?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn observe_channel_message_internal(
+        &self,
+        channel_id: ChannelId,
+        user_id: UserId,
+        message_id: MessageId,
+        tx: &DatabaseTransaction,
+    ) -> Result<()> {
+        observed_channel_messages::Entity::insert(observed_channel_messages::ActiveModel {
+            user_id: ActiveValue::Set(user_id),
+            channel_id: ActiveValue::Set(channel_id),
+            channel_message_id: ActiveValue::Set(message_id),
+        })
+        .on_conflict(
+            OnConflict::columns([
+                observed_channel_messages::Column::ChannelId,
+                observed_channel_messages::Column::UserId,
+            ])
+            .update_column(observed_channel_messages::Column::ChannelMessageId)
+            .action_cond_where(observed_channel_messages::Column::ChannelMessageId.lt(message_id))
+            .to_owned(),
+        )
+        // TODO: Try to upgrade SeaORM so we don't have to do this hack around their bug
+        .exec_without_returning(&*tx)
+        .await?;
+        Ok(())
+    }
+
     pub async fn channels_with_new_messages(
         &self,
         user_id: UserId,
         channel_ids: &[ChannelId],
         tx: &DatabaseTransaction,
-    ) -> Result<HashSet<ChannelId>> {
+    ) -> Result<collections::HashSet<ChannelId>> {
         let mut observed_messages_by_channel_id = HashMap::default();
         let mut rows = observed_channel_messages::Entity::find()
             .filter(observed_channel_messages::Column::UserId.eq(user_id))

@@ -1,6 +1,5 @@
 use super::*;
 use prost::Message;
-use sea_query::Order::Desc;
 use text::{EditOperation, UndoOperation};
 
 pub struct LeftChannelBuffer {
@@ -456,9 +455,21 @@ impl Database {
             let mut channel_members;
 
             if !operations.is_empty() {
+                let max_operation = operations
+                    .iter()
+                    .max_by_key(|op| (op.lamport_timestamp.as_ref(), op.replica_id.as_ref()))
+                    .unwrap();
+
                 // get current channel participants and save the max operation above
-                self.save_max_operation(user, buffer.id, buffer.epoch, operations.as_slice(), &*tx)
-                    .await?;
+                self.save_max_operation(
+                    user,
+                    buffer.id,
+                    buffer.epoch,
+                    *max_operation.replica_id.as_ref(),
+                    *max_operation.lamport_timestamp.as_ref(),
+                    &*tx,
+                )
+                .await?;
 
                 channel_members = self.get_channel_members_internal(channel_id, &*tx).await?;
                 let collaborators = self
@@ -509,52 +520,38 @@ impl Database {
         user_id: UserId,
         buffer_id: BufferId,
         epoch: i32,
-        operations: &[buffer_operation::ActiveModel],
+        replica_id: i32,
+        lamport_timestamp: i32,
         tx: &DatabaseTransaction,
     ) -> Result<()> {
         use observed_buffer_edits::Column;
-
-        let max_operation = operations
-            .iter()
-            .max_by_key(|op| (op.lamport_timestamp.as_ref(), op.replica_id.as_ref()))
-            .unwrap();
 
         observed_buffer_edits::Entity::insert(observed_buffer_edits::ActiveModel {
             user_id: ActiveValue::Set(user_id),
             buffer_id: ActiveValue::Set(buffer_id),
             epoch: ActiveValue::Set(epoch),
-            replica_id: max_operation.replica_id.clone(),
-            lamport_timestamp: max_operation.lamport_timestamp.clone(),
+            replica_id: ActiveValue::Set(replica_id),
+            lamport_timestamp: ActiveValue::Set(lamport_timestamp),
         })
         .on_conflict(
             OnConflict::columns([Column::UserId, Column::BufferId])
                 .update_columns([Column::Epoch, Column::LamportTimestamp, Column::ReplicaId])
                 .action_cond_where(
-                    Condition::any()
-                        .add(Column::Epoch.lt(*max_operation.epoch.as_ref()))
-                        .add(
-                            Condition::all()
-                                .add(Column::Epoch.eq(*max_operation.epoch.as_ref()))
+                    Condition::any().add(Column::Epoch.lt(epoch)).add(
+                        Condition::all().add(Column::Epoch.eq(epoch)).add(
+                            Condition::any()
+                                .add(Column::LamportTimestamp.lt(lamport_timestamp))
                                 .add(
-                                    Condition::any()
-                                        .add(
-                                            Column::LamportTimestamp
-                                                .lt(*max_operation.lamport_timestamp.as_ref()),
-                                        )
-                                        .add(
-                                            Column::LamportTimestamp
-                                                .eq(*max_operation.lamport_timestamp.as_ref())
-                                                .and(
-                                                    Column::ReplicaId
-                                                        .lt(*max_operation.replica_id.as_ref()),
-                                                ),
-                                        ),
+                                    Column::LamportTimestamp
+                                        .eq(lamport_timestamp)
+                                        .and(Column::ReplicaId.lt(replica_id)),
                                 ),
                         ),
+                    ),
                 )
                 .to_owned(),
         )
-        .exec(tx)
+        .exec_without_returning(tx)
         .await?;
 
         Ok(())
@@ -689,14 +686,30 @@ impl Database {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub async fn test_has_note_changed(
+    pub async fn observe_buffer_version(
         &self,
+        buffer_id: BufferId,
         user_id: UserId,
-        channel_id: ChannelId,
-    ) -> Result<bool> {
-        self.transaction(|tx| async move { self.has_note_changed(user_id, channel_id, &*tx).await })
-            .await
+        epoch: i32,
+        version: &[proto::VectorClockEntry],
+    ) -> Result<()> {
+        self.transaction(|tx| async move {
+            // For now, combine concurrent operations.
+            let Some(component) = version.iter().max_by_key(|version| version.timestamp) else {
+                return Ok(());
+            };
+            self.save_max_operation(
+                user_id,
+                buffer_id,
+                epoch,
+                component.replica_id as i32,
+                component.timestamp as i32,
+                &*tx,
+            )
+            .await?;
+            Ok(())
+        })
+        .await
     }
 
     pub async fn channels_with_changed_notes(
@@ -810,67 +823,6 @@ impl Database {
             .all(&*tx)
             .await?;
         Ok(operations)
-    }
-
-    pub async fn has_note_changed(
-        &self,
-        user_id: UserId,
-        channel_id: ChannelId,
-        tx: &DatabaseTransaction,
-    ) -> Result<bool> {
-        let Some(buffer_id) = channel::Model {
-            id: channel_id,
-            ..Default::default()
-        }
-        .find_related(buffer::Entity)
-        .one(&*tx)
-        .await?
-        .map(|buffer| buffer.id) else {
-            return Ok(false);
-        };
-
-        let user_max = observed_buffer_edits::Entity::find()
-            .filter(observed_buffer_edits::Column::UserId.eq(user_id))
-            .filter(observed_buffer_edits::Column::BufferId.eq(buffer_id))
-            .one(&*tx)
-            .await?
-            .map(|model| (model.epoch, model.lamport_timestamp));
-
-        let channel_buffer = channel::Model {
-            id: channel_id,
-            ..Default::default()
-        }
-        .find_related(buffer::Entity)
-        .one(&*tx)
-        .await?;
-
-        let Some(channel_buffer) = channel_buffer else {
-            return Ok(false);
-        };
-
-        let mut channel_max = buffer_operation::Entity::find()
-            .filter(buffer_operation::Column::BufferId.eq(channel_buffer.id))
-            .filter(buffer_operation::Column::Epoch.eq(channel_buffer.epoch))
-            .order_by(buffer_operation::Column::Epoch, Desc)
-            .order_by(buffer_operation::Column::LamportTimestamp, Desc)
-            .one(&*tx)
-            .await?
-            .map(|model| (model.epoch, model.lamport_timestamp));
-
-        // If there are no edits in this epoch
-        if channel_max.is_none() {
-            // check if this user observed the last edit of the previous epoch
-            channel_max = buffer_operation::Entity::find()
-                .filter(buffer_operation::Column::BufferId.eq(channel_buffer.id))
-                .filter(buffer_operation::Column::Epoch.eq(channel_buffer.epoch.saturating_sub(1)))
-                .order_by(buffer_operation::Column::Epoch, Desc)
-                .order_by(buffer_operation::Column::LamportTimestamp, Desc)
-                .one(&*tx)
-                .await?
-                .map(|model| (model.epoch, model.lamport_timestamp));
-        }
-
-        Ok(user_max != channel_max)
     }
 }
 

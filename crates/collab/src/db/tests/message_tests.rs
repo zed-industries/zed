@@ -65,9 +65,7 @@ test_both_dbs!(
 );
 
 async fn test_channel_message_new_notification(db: &Arc<Database>) {
-    panic!("Rewriting the way this works");
-
-    let user_a = db
+    let user = db
         .create_user(
             "user_a@example.com",
             false,
@@ -80,7 +78,7 @@ async fn test_channel_message_new_notification(db: &Arc<Database>) {
         .await
         .unwrap()
         .user_id;
-    let user_b = db
+    let observer = db
         .create_user(
             "user_b@example.com",
             false,
@@ -94,107 +92,132 @@ async fn test_channel_message_new_notification(db: &Arc<Database>) {
         .unwrap()
         .user_id;
 
-    let channel = db
-        .create_channel("channel", None, "room", user_a)
+    let channel_1 = db
+        .create_channel("channel", None, "room", user)
         .await
         .unwrap();
 
-    db.invite_channel_member(channel, user_b, user_a, false)
+    let channel_2 = db
+        .create_channel("channel-2", None, "room", user)
         .await
         .unwrap();
 
-    db.respond_to_channel_invite(channel, user_b, true)
+    db.invite_channel_member(channel_1, observer, user, false)
+        .await
+        .unwrap();
+
+    db.respond_to_channel_invite(channel_1, observer, true)
+        .await
+        .unwrap();
+
+    db.invite_channel_member(channel_2, observer, user, false)
+        .await
+        .unwrap();
+
+    db.respond_to_channel_invite(channel_2, observer, true)
         .await
         .unwrap();
 
     let owner_id = db.create_server("test").await.unwrap().0 as u32;
+    let user_connection_id = rpc::ConnectionId { owner_id, id: 0 };
 
-    // Zero case: no messages at all
-    // assert!(!db.has_new_message_tx(channel, user_b).await.unwrap());
-
-    let a_connection_id = rpc::ConnectionId { owner_id, id: 0 };
-    db.join_channel_chat(channel, a_connection_id, user_a)
+    db.join_channel_chat(channel_1, user_connection_id, user)
         .await
         .unwrap();
 
     let _ = db
-        .create_channel_message(channel, user_a, "1", OffsetDateTime::now_utc(), 1)
+        .create_channel_message(channel_1, user, "1_1", OffsetDateTime::now_utc(), 1)
         .await
         .unwrap();
 
     let (second_message, _, _) = db
-        .create_channel_message(channel, user_a, "2", OffsetDateTime::now_utc(), 2)
+        .create_channel_message(channel_1, user, "1_2", OffsetDateTime::now_utc(), 2)
+        .await
+        .unwrap();
+
+    let (third_message, _, _) = db
+        .create_channel_message(channel_1, user, "1_3", OffsetDateTime::now_utc(), 3)
+        .await
+        .unwrap();
+
+    db.join_channel_chat(channel_2, user_connection_id, user)
         .await
         .unwrap();
 
     let _ = db
-        .create_channel_message(channel, user_a, "3", OffsetDateTime::now_utc(), 3)
+        .create_channel_message(channel_2, user, "2_1", OffsetDateTime::now_utc(), 4)
         .await
         .unwrap();
 
-    // Smoke test: can we detect a new message?
-    // assert!(db.has_new_message_tx(channel, user_b).await.unwrap());
-
-    let b_connection_id = rpc::ConnectionId { owner_id, id: 1 };
-    db.join_channel_chat(channel, b_connection_id, user_b)
+    // Check that observer has new messages
+    let channels_with_new_messages = db
+        .transaction(|tx| async move {
+            db.channels_with_new_messages(observer, &[channel_1, channel_2], &*tx)
+                .await
+        })
         .await
         .unwrap();
 
-    // Joining the channel should _not_ update us to the latest message
-    // assert!(db.has_new_message_tx(channel, user_b).await.unwrap());
+    assert_eq!(
+        channels_with_new_messages,
+        [channel_1, channel_2]
+            .into_iter()
+            .collect::<collections::HashSet<_>>()
+    );
 
-    // Reading the earlier messages should not change that we have new messages
-    let _ = db
-        .get_channel_messages(channel, user_b, 1, Some(second_message))
+    // Observe the second message
+    db.observe_channel_message(channel_1, observer, second_message)
         .await
         .unwrap();
 
-    // assert!(db.has_new_message_tx(channel, user_b).await.unwrap());
+    // Make sure the observer still has a new message
+    let channels_with_new_messages = db
+        .transaction(|tx| async move {
+            db.channels_with_new_messages(observer, &[channel_1, channel_2], &*tx)
+                .await
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        channels_with_new_messages,
+        [channel_1, channel_2]
+            .into_iter()
+            .collect::<collections::HashSet<_>>()
+    );
 
-    // This constraint is currently inexpressible, creating a message implicitly broadcasts
-    // it to all participants
-    //
-    // Creating new messages when we haven't read the latest one should not change the flag
-    // let _ = db
-    //     .create_channel_message(channel, user_a, "4", OffsetDateTime::now_utc(), 4)
-    //     .await
-    //     .unwrap();
-    // assert!(db.has_new_message_tx(channel, user_b).await.unwrap());
-
-    // But reading the latest message should clear the flag
-    let _ = db
-        .get_channel_messages(channel, user_b, 4, None)
+    // Observe the third message,
+    db.observe_channel_message(channel_1, observer, third_message)
         .await
         .unwrap();
 
-    // assert!(!db.has_new_message_tx(channel, user_b).await.unwrap());
+    // Make sure the observer does not have a new method
+    let channels_with_new_messages = db
+        .transaction(|tx| async move {
+            db.channels_with_new_messages(observer, &[channel_1, channel_2], &*tx)
+                .await
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        channels_with_new_messages,
+        [channel_2].into_iter().collect::<collections::HashSet<_>>()
+    );
 
-    // And future messages should not reset the flag
-    let _ = db
-        .create_channel_message(channel, user_a, "5", OffsetDateTime::now_utc(), 5)
+    // Observe the second message again, should not regress our observed state
+    db.observe_channel_message(channel_1, observer, second_message)
         .await
         .unwrap();
 
-    // assert!(!db.has_new_message_tx(channel, user_b).await.unwrap());
-
-    let _ = db
-        .create_channel_message(channel, user_b, "6", OffsetDateTime::now_utc(), 6)
+    // Make sure the observer does not have a new method
+    let channels_with_new_messages = db
+        .transaction(|tx| async move {
+            db.channels_with_new_messages(observer, &[channel_1, channel_2], &*tx)
+                .await
+        })
         .await
         .unwrap();
-
-    // assert!(!db.has_new_message_tx(channel, user_b).await.unwrap());
-
-    // And we should start seeing the flag again after we've left the channel
-    db.leave_channel_chat(channel, b_connection_id, user_b)
-        .await
-        .unwrap();
-
-    // assert!(!db.has_new_message_tx(channel, user_b).await.unwrap());
-
-    let _ = db
-        .create_channel_message(channel, user_a, "7", OffsetDateTime::now_utc(), 7)
-        .await
-        .unwrap();
-
-    // assert!(db.has_new_message_tx(channel, user_b).await.unwrap());
+    assert_eq!(
+        channels_with_new_messages,
+        [channel_2].into_iter().collect::<collections::HashSet<_>>()
+    );
 }
