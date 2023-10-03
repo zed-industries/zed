@@ -1050,20 +1050,6 @@ name = "bytemuck"
 version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "374d28ec25809ee0e23827c2ab573d729e293f281dfe393500e7ad618baa61c6"
-dependencies = [
- "bytemuck_derive",
-]
-
-[[package]]
-name = "bytemuck_derive"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "965ab7eb5f8f97d2a083c799f3a1b994fc397b2fe2da5d1da1626ce15a39f2b1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.29",
-]
 
 [[package]]
 name = "byteorder"
@@ -3256,7 +3242,6 @@ dependencies = [
  "bindgen 0.65.1",
  "bitflags 2.4.0",
  "block",
- "bytemuck",
  "cbindgen",
  "cocoa",
  "collections",

@@ -1,4 +1,3 @@
-use bytemuck::{Pod, Zeroable};
 use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, Mul, Sub, SubAssign};
 use refineable::Refineable;
@@ -102,9 +101,6 @@ impl<T: Clone + Debug> Clone for Point<T> {
     }
 }
 
-unsafe impl<T: Clone + Debug + Zeroable + Pod> Zeroable for Point<T> {}
-unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Point<T> {}
-
 #[derive(Refineable, Default, Clone, Copy, Debug, PartialEq, Div, Hash)]
 #[refineable(debug)]
 #[repr(C)]
@@ -112,9 +108,6 @@ pub struct Size<T: Clone + Debug> {
     pub width: T,
     pub height: T,
 }
-
-unsafe impl<T: Clone + Debug + Zeroable + Pod> Zeroable for Size<T> {}
-unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Size<T> {}
 
 pub fn size<T: Clone + Debug>(width: T, height: T) -> Size<T> {
     Size { width, height }
@@ -213,9 +206,6 @@ pub struct Bounds<T: Clone + Debug> {
     pub origin: Point<T>,
     pub size: Size<T>,
 }
-
-unsafe impl<T: Clone + Debug + Zeroable + Pod> Zeroable for Bounds<T> {}
-unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Bounds<T> {}
 
 // Bounds<f32> * Pixels = Bounds<Pixels>
 impl<T, Rhs> Mul<Rhs> for Bounds<T>
@@ -322,10 +312,6 @@ impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Edges<T> 
 }
 
 impl<T: Clone + Debug + Copy> Copy for Edges<T> {}
-
-unsafe impl<T: Clone + Debug + Zeroable + Pod> Zeroable for Edges<T> {}
-
-unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Edges<T> {}
 
 impl<T: Clone + Debug> Edges<T> {
     pub fn map<U: Clone + Debug, F: Fn(&T) -> U>(&self, f: F) -> Edges<U> {
@@ -441,13 +427,7 @@ impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Corners<T
 
 impl<T: Clone + Debug + Copy> Copy for Corners<T> {}
 
-unsafe impl<T: Clone + Debug + Zeroable + Pod> Zeroable for Corners<T> {}
-
-unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Corners<T> {}
-
-#[derive(
-    Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd, Zeroable, Pod,
-)]
+#[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd)]
 #[repr(transparent)]
 pub struct Pixels(pub(crate) f32);
 
@@ -569,9 +549,6 @@ impl DevicePixels {
         self.0 * bytes_per_pixel as u32
     }
 }
-
-unsafe impl bytemuck::Pod for DevicePixels {}
-unsafe impl bytemuck::Zeroable for DevicePixels {}
 
 impl From<DevicePixels> for u32 {
     fn from(device_pixels: DevicePixels) -> Self {

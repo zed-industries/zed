@@ -2,7 +2,6 @@ use crate::{
     point, size, AtlasTextureId, DevicePixels, MetalAtlas, MonochromeSprite, Quad,
     RasterizedGlyphId, Scene, Size,
 };
-use bytemuck::{Pod, Zeroable};
 use cocoa::{
     base::{NO, YES},
     foundation::NSUInteger,
@@ -245,20 +244,19 @@ impl MetalRenderer {
         );
         let quad_uniforms = QuadUniforms { viewport_size };
 
-        let quad_uniform_bytes = bytemuck::bytes_of(&quad_uniforms);
         command_encoder.set_vertex_bytes(
             QuadInputIndex::Uniforms as u64,
-            quad_uniform_bytes.len() as u64,
-            quad_uniform_bytes.as_ptr() as *const c_void,
+            mem::size_of_val(&quad_uniforms) as u64,
+            &quad_uniforms as *const QuadUniforms as *const _,
         );
 
-        let quad_bytes = bytemuck::cast_slice(quads);
+        let quad_bytes_len = mem::size_of::<Quad>() * quads.len();
         let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
         unsafe {
-            ptr::copy_nonoverlapping(quad_bytes.as_ptr(), buffer_contents, quad_bytes.len());
+            ptr::copy_nonoverlapping(quads.as_ptr() as *const u8, buffer_contents, quad_bytes_len);
         }
 
-        let next_offset = *offset + quad_bytes.len();
+        let next_offset = *offset + quad_bytes_len;
         assert!(
             next_offset <= INSTANCE_BUFFER_SIZE,
             "instance buffer exhausted"
@@ -332,7 +330,7 @@ enum QuadInputIndex {
     Uniforms = 2,
 }
 
-#[derive(Debug, Clone, Copy, Zeroable, Pod)]
+#[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub(crate) struct QuadUniforms {
     viewport_size: Size<DevicePixels>,

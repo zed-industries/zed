@@ -2,7 +2,6 @@ use std::{iter::Peekable, mem};
 
 use super::{Bounds, Hsla, Pixels, Point};
 use crate::{AtlasTextureId, AtlasTile, Corners, Edges};
-use bytemuck::{Pod, Zeroable};
 use collections::BTreeMap;
 use smallvec::SmallVec;
 
@@ -184,7 +183,7 @@ pub(crate) enum PrimitiveBatch<'a> {
     },
 }
 
-#[derive(Debug, Copy, Clone, Zeroable, Pod, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 #[repr(C)]
 pub struct Quad {
     pub order: u32,

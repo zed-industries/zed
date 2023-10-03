@@ -14,7 +14,6 @@ use async_task::Runnable;
 use futures::channel::oneshot;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
 use std::ffi::c_void;
 use std::hash::{Hash, Hasher};
 use std::{
@@ -196,11 +195,11 @@ pub struct AtlasTile {
     pub(crate) bounds_in_atlas: Bounds<DevicePixels>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Zeroable, Pod)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
 pub(crate) struct AtlasTextureId(pub(crate) usize);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Zeroable, Pod)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(C)]
 pub(crate) struct TileId(pub(crate) u32);
 

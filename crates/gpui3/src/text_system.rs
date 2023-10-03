@@ -4,7 +4,6 @@ mod line_wrapper;
 mod text_layout_cache;
 
 use anyhow::anyhow;
-use bytemuck::{Pod, Zeroable};
 pub use font_features::*;
 pub use line::*;
 use line_wrapper::*;
@@ -24,7 +23,7 @@ use std::{
     sync::Arc,
 };
 
-#[derive(Hash, PartialEq, Eq, Clone, Copy, Debug, Zeroable, Pod)]
+#[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
 #[repr(C)]
 pub struct FontId(pub usize);
 
@@ -334,7 +333,7 @@ pub struct RunStyle {
     pub underline: Option<UnderlineStyle>,
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Zeroable, Pod)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(C)]
 pub struct GlyphId(u32);
 
