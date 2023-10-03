@@ -1,11 +1,10 @@
 use crate::{
-    black, point, px, Bounds, Corners, FontId, Hsla, Layout, MonochromeSprite, Pixels, Point,
-    RunStyle, ShapedBoundary, ShapedLine, ShapedRun, UnderlineStyle, WindowContext,
+    black, point, px, Bounds, FontId, Hsla, Layout, Pixels, Point, RunStyle, ShapedBoundary,
+    ShapedLine, ShapedRun, UnderlineStyle, WindowContext,
 };
 use anyhow::Result;
 use smallvec::SmallVec;
 use std::sync::Arc;
-use util::ResultExt;
 
 #[derive(Default, Debug, Clone)]
 pub struct Line {
@@ -162,36 +161,14 @@ impl Line {
                     if glyph.is_emoji {
                         todo!()
                     } else {
-                        if let Some(tile) = cx
-                            .rasterize_glyph(
-                                run.font_id,
-                                glyph.id,
-                                self.layout.font_size,
-                                glyph_origin,
-                                cx.scale_factor(),
-                            )
-                            .log_err()
-                        {
-                            let layer_id = cx.current_layer_id();
-
-                            let bounds = Bounds {
-                                origin: glyph_origin + todo!(),
-                                size: todo!(),
-                            };
-                            // cx.text_system().raster_bounds()
-
-                            cx.scene().insert(
-                                layer_id,
-                                MonochromeSprite {
-                                    order: layout.order,
-                                    bounds,
-                                    clip_bounds: bounds,
-                                    clip_corner_radii: Corners::default(),
-                                    color,
-                                    tile,
-                                },
-                            );
-                        }
+                        cx.paint_glyph(
+                            glyph_origin,
+                            layout.order,
+                            run.font_id,
+                            glyph.id,
+                            self.layout.font_size,
+                            color,
+                        )?;
                     }
                 }
 

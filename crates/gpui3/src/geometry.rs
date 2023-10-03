@@ -618,6 +618,12 @@ impl From<ScaledPixels> for DevicePixels {
     }
 }
 
+impl From<DevicePixels> for ScaledPixels {
+    fn from(device: DevicePixels) -> Self {
+        ScaledPixels(device.0 as f32)
+    }
+}
+
 #[derive(Clone, Copy, Default, Add, Sub, Mul, Div)]
 pub struct Rems(f32);
 
@@ -800,5 +806,78 @@ impl Default for Length {
 impl From<()> for Length {
     fn from(_: ()) -> Self {
         Self::Definite(DefiniteLength::default())
+    }
+}
+
+pub trait IsZero {
+    fn is_zero(&self) -> bool;
+}
+
+impl IsZero for DevicePixels {
+    fn is_zero(&self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl IsZero for ScaledPixels {
+    fn is_zero(&self) -> bool {
+        self.0 == 0.
+    }
+}
+
+impl IsZero for Pixels {
+    fn is_zero(&self) -> bool {
+        self.0 == 0.
+    }
+}
+
+impl IsZero for Rems {
+    fn is_zero(&self) -> bool {
+        self.0 == 0.
+    }
+}
+
+impl IsZero for AbsoluteLength {
+    fn is_zero(&self) -> bool {
+        match self {
+            AbsoluteLength::Pixels(pixels) => pixels.is_zero(),
+            AbsoluteLength::Rems(rems) => rems.is_zero(),
+        }
+    }
+}
+
+impl IsZero for DefiniteLength {
+    fn is_zero(&self) -> bool {
+        match self {
+            DefiniteLength::Absolute(length) => length.is_zero(),
+            DefiniteLength::Fraction(fraction) => *fraction == 0.,
+        }
+    }
+}
+
+impl IsZero for Length {
+    fn is_zero(&self) -> bool {
+        match self {
+            Length::Definite(length) => length.is_zero(),
+            Length::Auto => false,
+        }
+    }
+}
+
+impl<T: IsZero + Debug + Clone> IsZero for Point<T> {
+    fn is_zero(&self) -> bool {
+        self.x.is_zero() && self.y.is_zero()
+    }
+}
+
+impl<T: IsZero + Debug + Clone> IsZero for Size<T> {
+    fn is_zero(&self) -> bool {
+        self.width.is_zero() && self.height.is_zero()
+    }
+}
+
+impl<T: IsZero + Debug + Clone> IsZero for Bounds<T> {
+    fn is_zero(&self) -> bool {
+        self.origin.is_zero() && self.size.is_zero()
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
     point, px, size, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontStyle,
-    FontWeight, GlyphId, Pixels, PlatformTextSystem, Point, RasterizeGlyphParams, Result,
+    FontWeight, GlyphId, GlyphRasterizationParams, Pixels, PlatformTextSystem, Point, Result,
     ShapedGlyph, ShapedLine, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
 };
 use anyhow::anyhow;
@@ -134,9 +134,16 @@ impl PlatformTextSystem for MacTextSystem {
         self.0.read().glyph_for_char(font_id, ch)
     }
 
+    fn glyph_raster_bounds(
+        &self,
+        params: &GlyphRasterizationParams,
+    ) -> Result<Bounds<DevicePixels>> {
+        self.0.read().raster_bounds(params)
+    }
+
     fn rasterize_glyph(
         &self,
-        glyph_id: &RasterizeGlyphParams,
+        glyph_id: &GlyphRasterizationParams,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
         self.0.read().rasterize_glyph(glyph_id)
     }
@@ -230,37 +237,54 @@ impl MacTextSystemState {
             })
     }
 
+    fn raster_bounds(&self, params: &GlyphRasterizationParams) -> Result<Bounds<DevicePixels>> {
+        let font = &self.fonts[params.font_id.0];
+        let scale = Transform2F::from_scale(params.scale_factor);
+        Ok(font
+            .raster_bounds(
+                params.glyph_id.into(),
+                params.font_size.into(),
+                scale,
+                HintingOptions::None,
+                font_kit::canvas::RasterizationOptions::GrayscaleAa,
+            )?
+            .into())
+    }
+
     fn rasterize_glyph(
         &self,
-        glyph_id: &RasterizeGlyphParams,
+        params: &GlyphRasterizationParams,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
-        let font = &self.fonts[glyph_id.font_id.0];
-        let scale = Transform2F::from_scale(glyph_id.scale_factor);
-        let glyph_bounds = font.raster_bounds(
-            glyph_id.glyph_id.into(),
-            glyph_id.font_size.into(),
-            scale,
-            HintingOptions::None,
-            font_kit::canvas::RasterizationOptions::GrayscaleAa,
-        )?;
+        let glyph_bounds = self.raster_bounds(params)?;
 
-        if glyph_bounds.width() == 0 || glyph_bounds.height() == 0 {
+        // let scale = Transform2F::from_scale(params.scale_factor);
+        // let glyph_bounds = font.raster_bounds(
+        //     params.glyph_id.into(),
+        //     params.font_size.into(),
+        //     scale,
+        //     HintingOptions::None,
+        //     font_kit::canvas::RasterizationOptions::GrayscaleAa,
+        // )?;
+
+        if glyph_bounds.size.width.0 == 0 || glyph_bounds.size.height.0 == 0 {
             Err(anyhow!("glyph bounds are empty"))
         } else {
-            // Make room for subpixel variants.
-            let subpixel_padding = Vector2I::new(
-                glyph_id.subpixel_variant.x.min(1) as i32,
-                glyph_id.subpixel_variant.y.min(1) as i32,
-            );
-            let bitmap_size = glyph_bounds.size() + subpixel_padding;
+            // Add an extra pixel when the subpixel variant isn't zero to make room for anti-aliasing.
+            let mut bitmap_size = glyph_bounds.size;
+            if params.subpixel_variant.x > 0 {
+                bitmap_size.width += DevicePixels(1);
+            }
+            if params.subpixel_variant.y > 0 {
+                bitmap_size.height += DevicePixels(1);
+            }
 
-            let mut bytes = vec![0; bitmap_size.x() as usize * bitmap_size.y() as usize];
+            let mut bytes = vec![0; bitmap_size.width.0 as usize * bitmap_size.height.0 as usize];
             let cx = CGContext::create_bitmap_context(
                 Some(bytes.as_mut_ptr() as *mut _),
-                bitmap_size.x() as usize,
-                bitmap_size.y() as usize,
+                bitmap_size.width.0 as usize,
+                bitmap_size.height.0 as usize,
                 8,
-                bitmap_size.x() as usize,
+                bitmap_size.width.0 as usize,
                 &CGColorSpace::create_device_gray(),
                 kCGImageAlphaOnly,
             );
@@ -268,26 +292,27 @@ impl MacTextSystemState {
             // Move the origin to bottom left and account for scaling, this
             // makes drawing text consistent with the font-kit's raster_bounds.
             cx.translate(
-                -glyph_bounds.origin_x() as CGFloat,
-                (glyph_bounds.origin_y() + glyph_bounds.height()) as CGFloat,
+                -glyph_bounds.origin.x.0 as CGFloat,
+                (glyph_bounds.origin.y.0 + glyph_bounds.size.height.0) as CGFloat,
             );
             cx.scale(
-                glyph_id.scale_factor as CGFloat,
-                glyph_id.scale_factor as CGFloat,
+                params.scale_factor as CGFloat,
+                params.scale_factor as CGFloat,
             );
 
-            let subpixel_shift = glyph_id
+            let subpixel_shift = params
                 .subpixel_variant
-                .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32 / glyph_id.scale_factor);
+                .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32 / params.scale_factor);
 
             cx.set_allows_font_subpixel_positioning(true);
             cx.set_should_subpixel_position_fonts(true);
             cx.set_allows_font_subpixel_quantization(false);
             cx.set_should_subpixel_quantize_fonts(false);
-            font.native_font()
-                .clone_with_font_size(f32::from(glyph_id.font_size) as CGFloat)
+            self.fonts[params.font_id.0]
+                .native_font()
+                .clone_with_font_size(f32::from(params.font_size) as CGFloat)
                 .draw_glyphs(
-                    &[u32::from(glyph_id.glyph_id) as CGGlyph],
+                    &[u32::from(params.glyph_id) as CGGlyph],
                     &[CGPoint::new(
                         subpixel_shift.x as CGFloat,
                         subpixel_shift.y as CGFloat,

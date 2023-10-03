@@ -1,6 +1,6 @@
 use std::{iter::Peekable, mem};
 
-use super::{Bounds, Hsla, Pixels, Point};
+use super::{Bounds, Hsla, Point};
 use crate::{AtlasTextureId, AtlasTile, Corners, Edges, ScaledPixels};
 use collections::BTreeMap;
 use smallvec::SmallVec;
@@ -35,7 +35,7 @@ impl Scene {
 
         let primitive = primitive.into();
         match primitive {
-            Primitive::Quad(mut quad) => {
+            Primitive::Quad(quad) => {
                 layer.quads.push(quad);
             }
             Primitive::Sprite(sprite) => {
@@ -233,9 +233,9 @@ impl From<Quad> for Primitive {
 #[repr(C)]
 pub struct MonochromeSprite {
     pub order: u32,
-    pub bounds: Bounds<Pixels>,
-    pub clip_bounds: Bounds<Pixels>,
-    pub clip_corner_radii: Corners<Pixels>,
+    pub bounds: Bounds<ScaledPixels>,
+    pub clip_bounds: Bounds<ScaledPixels>,
+    pub clip_corner_radii: Corners<ScaledPixels>,
     pub color: Hsla,
     pub tile: AtlasTile,
 }

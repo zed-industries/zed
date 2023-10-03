@@ -6,8 +6,8 @@ mod mac;
 mod test;
 
 use crate::{
-    AnyWindowHandle, Bounds, DevicePixels, Font, FontId, FontMetrics, GlyphId, Pixels, Point,
-    RasterizeGlyphParams, Result, Scene, ShapedLine, SharedString, Size,
+    AnyWindowHandle, Bounds, DevicePixels, Font, FontId, FontMetrics, GlyphId,
+    GlyphRasterizationParams, Pixels, Point, Result, Scene, ShapedLine, SharedString, Size,
 };
 use anyhow::anyhow;
 use async_task::Runnable;
@@ -147,7 +147,7 @@ pub trait PlatformWindow {
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
     fn draw(&self, scene: Scene);
 
-    fn glyph_atlas(&self) -> Arc<dyn PlatformAtlas<RasterizeGlyphParams>>;
+    fn glyph_atlas(&self) -> Arc<dyn PlatformAtlas<GlyphRasterizationParams>>;
 }
 
 pub trait PlatformDispatcher: Send + Sync {
@@ -163,9 +163,13 @@ pub trait PlatformTextSystem: Send + Sync {
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>>;
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>>;
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId>;
+    fn glyph_raster_bounds(
+        &self,
+        params: &GlyphRasterizationParams,
+    ) -> Result<Bounds<DevicePixels>>;
     fn rasterize_glyph(
         &self,
-        glyph_id: &RasterizeGlyphParams,
+        params: &GlyphRasterizationParams,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[(usize, FontId)]) -> ShapedLine;
     fn wrap_line(

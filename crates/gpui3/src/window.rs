@@ -1,8 +1,9 @@
 use crate::{
     px, AnyView, AppContext, AtlasTile, AvailableSpace, Bounds, Context, Effect, Element, EntityId,
-    FontId, GlyphId, Handle, LayoutId, MainThread, MainThreadOnly, Pixels, PlatformAtlas,
-    PlatformWindow, Point, RasterizeGlyphParams, Reference, Scene, Size, StackContext,
-    StackingOrder, Style, TaffyLayoutEngine, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
+    FontId, GlyphId, GlyphRasterizationParams, Handle, Hsla, IsZero, LayoutId, MainThread,
+    MainThreadOnly, MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point, Reference,
+    Scene, Size, StackContext, StackingOrder, Style, TaffyLayoutEngine, WeakHandle, WindowOptions,
+    SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use futures::Future;
@@ -15,7 +16,7 @@ pub struct AnyWindow {}
 pub struct Window {
     handle: AnyWindowHandle,
     platform_window: MainThreadOnly<Box<dyn PlatformWindow>>,
-    glyph_atlas: Arc<dyn PlatformAtlas<RasterizeGlyphParams>>,
+    glyph_atlas: Arc<dyn PlatformAtlas<GlyphRasterizationParams>>,
     rem_size: Pixels,
     content_size: Size<Pixels>,
     layout_engine: TaffyLayoutEngine,
@@ -165,6 +166,57 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         })
     }
 
+    pub fn paint_glyph(
+        &mut self,
+        origin: Point<Pixels>,
+        order: u32,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+        color: Hsla,
+    ) -> Result<()> {
+        let scale_factor = self.scale_factor();
+        let origin = origin.scale(scale_factor);
+        let subpixel_variant = Point {
+            x: (origin.x.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
+            y: (origin.y.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
+        };
+        let params = GlyphRasterizationParams {
+            font_id,
+            glyph_id,
+            font_size,
+            subpixel_variant,
+            scale_factor,
+        };
+
+        let raster_bounds = self.text_system().raster_bounds(&params)?;
+
+        if !raster_bounds.is_zero() {
+            let layer_id = self.current_layer_id();
+            let bounds = Bounds {
+                origin: origin + raster_bounds.origin.map(Into::into),
+                size: raster_bounds.size.map(Into::into),
+            };
+            let tile = self
+                .window
+                .glyph_atlas
+                .get_or_insert_with(&params, &mut || self.text_system().rasterize_glyph(&params))?;
+
+            self.window.scene.insert(
+                layer_id,
+                MonochromeSprite {
+                    order,
+                    bounds,
+                    clip_bounds: bounds,
+                    clip_corner_radii: Default::default(),
+                    color,
+                    tile,
+                },
+            );
+        }
+        Ok(())
+    }
+
     pub fn rasterize_glyph(
         &self,
         font_id: FontId,
@@ -178,7 +230,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             x: (target_position.x.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
             y: (target_position.y.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
         };
-        let rasterized_glyph_id = RasterizeGlyphParams {
+        let rasterized_glyph_id = GlyphRasterizationParams {
             font_id,
             glyph_id,
             font_size,
