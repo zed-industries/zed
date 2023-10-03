@@ -32,7 +32,7 @@ pub struct Text<S> {
 
 impl<S: 'static> Element for Text<S> {
     type State = S;
-    type FrameState = Arc<Mutex<Option<TextLayout>>>;
+    type FrameState = Arc<Mutex<Option<TextFrameState>>>;
 
     fn layout(
         &mut self,
@@ -54,7 +54,6 @@ impl<S: 'static> Element for Text<S> {
         let layout_id = cx.request_measured_layout(Default::default(), rem_size, {
             let frame_state = paint_state.clone();
             move |_, _| {
-                dbg!("starting measurement");
                 let Some(line_layout) = text_system
                     .layout_line(
                         text.as_ref(),
@@ -65,23 +64,21 @@ impl<S: 'static> Element for Text<S> {
                 else {
                     return Size::default();
                 };
-                dbg!("bbbb");
 
                 let size = Size {
                     width: line_layout.width(),
                     height: line_height,
                 };
 
-                frame_state.lock().replace(TextLayout {
+                frame_state.lock().replace(TextFrameState {
                     line: Arc::new(line_layout),
                     line_height,
                 });
 
-                dbg!(size)
+                size
             }
         });
 
-        dbg!("got to end of text layout");
         Ok((layout_id?, paint_state))
     }
 
@@ -89,21 +86,19 @@ impl<S: 'static> Element for Text<S> {
         &mut self,
         layout: Layout,
         _: &mut Self::State,
-        paint_state: &mut Self::FrameState,
+        frame_state: &mut Self::FrameState,
         cx: &mut ViewContext<S>,
     ) -> Result<()> {
         let line;
         let line_height;
         {
-            let paint_state = paint_state.lock();
-            let paint_state = paint_state
+            let frame_state = frame_state.lock();
+            let frame_state = frame_state
                 .as_ref()
                 .expect("measurement has not been performed");
-            line = paint_state.line.clone();
-            line_height = paint_state.line_height;
+            line = frame_state.line.clone();
+            line_height = frame_state.line_height;
         }
-
-        let _text_style = cx.text_style();
 
         // todo!("We haven't added visible bounds to the new element system yet, so this is a placeholder.");
         let visible_bounds = layout.bounds;
@@ -113,7 +108,7 @@ impl<S: 'static> Element for Text<S> {
     }
 }
 
-pub struct TextLayout {
+pub struct TextFrameState {
     line: Arc<Line>,
     line_height: Pixels,
 }

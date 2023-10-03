@@ -180,13 +180,29 @@ pub trait PlatformTextSystem: Send + Sync {
     ) -> Vec<usize>;
 }
 
-pub trait PlatformSpriteSystem<Key> {
+pub trait PlatformAtlas<Key> {
     fn get_or_insert_with(
         &self,
         key: Key,
         build: impl FnOnce() -> (Size<DevicePixels>, Vec<u8>),
-    ) -> MonochromeSprite;
+    ) -> AtlasTile;
+
+    fn clear(&self);
 }
+
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct AtlasTile {
+    pub(crate) texture_id: AtlasTextureId,
+    pub(crate) tile_id: TileId,
+    pub(crate) bounds_in_atlas: Bounds<DevicePixels>,
+}
+
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+pub(crate) struct AtlasTextureId(pub(crate) usize);
+
+pub(crate) type TileId = etagere::AllocId;
 
 pub trait PlatformInputHandler {
     fn selected_text_range(&self) -> Option<Range<usize>>;

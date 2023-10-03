@@ -1,7 +1,7 @@
 use std::{iter::Peekable, mem};
 
 use super::{Bounds, Hsla, Pixels, Point};
-use crate::{Corners, DevicePixels, Edges};
+use crate::{AtlasTile, Corners, DevicePixels, Edges};
 use bytemuck::{Pod, Zeroable};
 
 // Exported to metal
@@ -243,10 +243,8 @@ impl From<Quad> for Primitive {
 pub struct MonochromeSprite {
     pub order: u32,
     pub bounds: Bounds<Pixels>,
-    pub atlas_id: AtlasId,
-    pub tile_id: TileId,
-    pub bounds_in_atlas: Bounds<DevicePixels>,
-    pub color: Option<Hsla>,
+    pub color: Hsla,
+    pub tile: AtlasTile,
 }
 
 impl MonochromeSprite {
