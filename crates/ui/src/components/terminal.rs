@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use gpui2::geometry::{relative, rems, Size};
 
 use crate::prelude::*;
@@ -20,6 +22,7 @@ impl Terminal {
         div()
             .flex()
             .flex_col()
+            .w_full()
             .child(
                 // Terminal Tabs.
                 div()
@@ -70,8 +73,12 @@ impl Terminal {
                     width: relative(1.).into(),
                     height: rems(36.).into(),
                 },
-                |_, _| vec![],
-                Box::new(()),
+                |_, payload| {
+                    let theme = payload.downcast_ref::<Arc<Theme>>().unwrap();
+
+                    vec![crate::static_data::terminal_buffer(&theme).into_any()]
+                },
+                Box::new(theme),
             ))
     }
 }

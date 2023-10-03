@@ -1,6 +1,6 @@
 use crate::codegen::CodegenKind;
 use language::{BufferSnapshot, OffsetRangeExt, ToOffset};
-use std::cmp;
+use std::cmp::{self, Reverse};
 use std::fmt::Write;
 use std::iter;
 use std::ops::Range;
@@ -14,59 +14,58 @@ fn summarize(buffer: &BufferSnapshot, selected_range: Range<impl ToOffset>) -> S
     }
 
     let selected_range = selected_range.to_offset(buffer);
-    let mut matches = buffer.matches(0..buffer.len(), |grammar| {
+    let mut ts_matches = buffer.matches(0..buffer.len(), |grammar| {
         Some(&grammar.embedding_config.as_ref()?.query)
     });
-    let configs = matches
+    let configs = ts_matches
         .grammars()
         .iter()
         .map(|g| g.embedding_config.as_ref().unwrap())
         .collect::<Vec<_>>();
-    let mut matches = iter::from_fn(move || {
-        while let Some(mat) = matches.peek() {
-            let config = &configs[mat.grammar_index];
-            if let Some(collapse) = mat.captures.iter().find_map(|cap| {
-                if Some(cap.index) == config.collapse_capture_ix {
-                    Some(cap.node.byte_range())
-                } else {
-                    None
-                }
-            }) {
-                let mut keep = Vec::new();
-                for capture in mat.captures.iter() {
-                    if Some(capture.index) == config.keep_capture_ix {
-                        keep.push(capture.node.byte_range());
-                    } else {
-                        continue;
-                    }
-                }
-                matches.advance();
-                return Some(Match { collapse, keep });
+    let mut matches = Vec::new();
+    while let Some(mat) = ts_matches.peek() {
+        let config = &configs[mat.grammar_index];
+        if let Some(collapse) = mat.captures.iter().find_map(|cap| {
+            if Some(cap.index) == config.collapse_capture_ix {
+                Some(cap.node.byte_range())
             } else {
-                matches.advance();
+                None
             }
+        }) {
+            let mut keep = Vec::new();
+            for capture in mat.captures.iter() {
+                if Some(capture.index) == config.keep_capture_ix {
+                    keep.push(capture.node.byte_range());
+                } else {
+                    continue;
+                }
+            }
+            ts_matches.advance();
+            matches.push(Match { collapse, keep });
+        } else {
+            ts_matches.advance();
         }
-        None
-    })
-    .peekable();
+    }
+    matches.sort_unstable_by_key(|mat| (mat.collapse.start, Reverse(mat.collapse.end)));
+    let mut matches = matches.into_iter().peekable();
 
     let mut summary = String::new();
     let mut offset = 0;
     let mut flushed_selection = false;
-    while let Some(mut mat) = matches.next() {
+    while let Some(mat) = matches.next() {
         // Keep extending the collapsed range if the next match surrounds
         // the current one.
         while let Some(next_mat) = matches.peek() {
-            if next_mat.collapse.start <= mat.collapse.start
-                && next_mat.collapse.end >= mat.collapse.end
+            if mat.collapse.start <= next_mat.collapse.start
+                && mat.collapse.end >= next_mat.collapse.end
             {
-                mat = matches.next().unwrap();
+                matches.next().unwrap();
             } else {
                 break;
             }
         }
 
-        if offset >= mat.collapse.start {
+        if offset > mat.collapse.start {
             // Skip collapsed nodes that have already been summarized.
             offset = cmp::max(offset, mat.collapse.end);
             continue;

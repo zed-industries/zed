@@ -7,7 +7,7 @@ use anyhow::{anyhow, Result};
 use audio::{Audio, Sound};
 use client::{
     proto::{self, PeerId},
-    Client, TypedEnvelope, User, UserStore,
+    Client, ParticipantIndex, TypedEnvelope, User, UserStore,
 };
 use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
@@ -42,6 +42,12 @@ pub enum Event {
         worktree_root_names: Vec<String>,
     },
     RemoteProjectUnshared {
+        project_id: u64,
+    },
+    RemoteProjectJoined {
+        project_id: u64,
+    },
+    RemoteProjectInvitationDiscarded {
         project_id: u64,
     },
     Left,
@@ -714,6 +720,9 @@ impl Room {
                                 participant.user_id,
                                 RemoteParticipant {
                                     user: user.clone(),
+                                    participant_index: ParticipantIndex(
+                                        participant.participant_index,
+                                    ),
                                     peer_id,
                                     projects: participant.projects,
                                     location,
@@ -806,6 +815,15 @@ impl Room {
                     log::info!("room is empty, leaving");
                     let _ = this.leave(cx);
                 }
+
+                this.user_store.update(cx, |user_store, cx| {
+                    let participant_indices_by_user_id = this
+                        .remote_participants
+                        .iter()
+                        .map(|(user_id, participant)| (*user_id, participant.participant_index))
+                        .collect();
+                    user_store.set_participant_indices(participant_indices_by_user_id, cx);
+                });
 
                 this.check_invariants();
                 cx.notify();
@@ -1003,6 +1021,7 @@ impl Room {
     ) -> Task<Result<ModelHandle<Project>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
+        cx.emit(Event::RemoteProjectJoined { project_id: id });
         cx.spawn(|this, mut cx| async move {
             let project =
                 Project::remote(id, client, user_store, language_registry, fs, cx.clone()).await?;

@@ -1416,6 +1416,7 @@ dependencies = [
  "settings",
  "smol",
  "sum_tree",
+ "sysinfo",
  "tempfile",
  "text",
  "thiserror",
@@ -2791,7 +2792,6 @@ dependencies = [
  "lazy_static",
  "libc",
  "log",
- "lsp",
  "parking_lot 0.11.2",
  "regex",
  "rope",
@@ -7404,6 +7404,8 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap 4.4.4",
+ "fs",
+ "futures 0.3.28",
  "gpui2",
  "itertools 0.11.0",
  "log",
@@ -7607,9 +7609,9 @@ dependencies = [
 
 [[package]]
 name = "sysinfo"
-version = "0.27.8"
+version = "0.29.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a902e9050fca0a5d6877550b769abd2bd1ce8c04634b941dbe2809735e1a1e33"
+checksum = "0a18d114d420ada3a891e6bc8e96a2023402203296a47cdd65083377dad18ba5"
 dependencies = [
  "cfg-if 1.0.0",
  "core-foundation-sys 0.8.3",
@@ -8624,6 +8626,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "gpui2",
+ "rand 0.8.5",
  "serde",
  "settings",
  "smallvec",

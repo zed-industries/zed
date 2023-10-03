@@ -12,6 +12,8 @@ path = "src/storybook.rs"
 anyhow.workspace = true
 clap = { version = "4.4", features = ["derive", "string"] }
 chrono = "0.4"
+fs = { path = "../fs" }
+futures.workspace = true
 gpui2 = { path = "../gpui2" }
 itertools = "0.11.0"
 log.workspace = true

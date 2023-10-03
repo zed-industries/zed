@@ -1,5 +1,5 @@
 use ui::prelude::*;
-use ui::ProjectPanel;
+use ui::{Panel, ProjectPanel};
 
 use crate::story::Story;
 
@@ -11,6 +11,10 @@ impl ProjectPanelStory {
         Story::container(cx)
             .child(Story::title_for::<_, ProjectPanel<V>>(cx))
             .child(Story::label(cx, "Default"))
-            .child(ProjectPanel::new(ScrollState::default()))
+            .child(Panel::new(
+                ScrollState::default(),
+                |_, _| vec![ProjectPanel::new(ScrollState::default()).into_any()],
+                Box::new(()),
+            ))
     }
 }

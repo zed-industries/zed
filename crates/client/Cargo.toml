@@ -33,15 +33,16 @@ parking_lot.workspace = true
 postage.workspace = true
 rand.workspace = true
 schemars.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
 smol.workspace = true
+sysinfo.workspace = true
+tempfile = "3"
 thiserror.workspace = true
 time.workspace = true
 tiny_http = "0.8"
-uuid = { version = "1.1.2", features = ["v4"] }
 url = "2.2"
-serde.workspace = true
-serde_derive.workspace = true
-tempfile = "3"
+uuid = { version = "1.1.2", features = ["v4"] }
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }

@@ -198,10 +198,11 @@ impl ChannelStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<ChannelBuffer>>> {
         let client = self.client.clone();
+        let user_store = self.user_store.clone();
         self.open_channel_resource(
             channel_id,
             |this| &mut this.opened_buffers,
-            |channel, cx| ChannelBuffer::new(channel, client, cx),
+            |channel, cx| ChannelBuffer::new(channel, client, user_store, cx),
             cx,
         )
     }

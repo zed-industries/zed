@@ -38,8 +38,8 @@ use lazy_static::lazy_static;
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
-        self, Ack, AddChannelBufferCollaborator, AnyTypedEnvelope, ChannelEdge, EntityMessage,
-        EnvelopedMessage, LiveKitConnectionInfo, RequestMessage,
+        self, Ack, AnyTypedEnvelope, ChannelEdge, EntityMessage, EnvelopedMessage,
+        LiveKitConnectionInfo, RequestMessage, UpdateChannelBufferCollaborators,
     },
     Connection, ConnectionId, Peer, Receipt, TypedEnvelope,
 };
@@ -313,9 +313,16 @@ impl Server {
                             .trace_err()
                         {
                             for connection_id in refreshed_channel_buffer.connection_ids {
-                                for message in &refreshed_channel_buffer.removed_collaborators {
-                                    peer.send(connection_id, message.clone()).trace_err();
-                                }
+                                peer.send(
+                                    connection_id,
+                                    proto::UpdateChannelBufferCollaborators {
+                                        channel_id: channel_id.to_proto(),
+                                        collaborators: refreshed_channel_buffer
+                                            .collaborators
+                                            .clone(),
+                                    },
+                                )
+                                .trace_err();
                             }
                         }
                     }
@@ -1883,24 +1890,19 @@ async fn follow(
     response: Response<proto::Follow>,
     session: Session,
 ) -> Result<()> {
-    let project_id = ProjectId::from_proto(request.project_id);
+    let room_id = RoomId::from_proto(request.room_id);
+    let project_id = request.project_id.map(ProjectId::from_proto);
     let leader_id = request
         .leader_id
         .ok_or_else(|| anyhow!("invalid leader id"))?
         .into();
     let follower_id = session.connection_id;
 
-    {
-        let project_connection_ids = session
-            .db()
-            .await
-            .project_connection_ids(project_id, session.connection_id)
-            .await?;
-
-        if !project_connection_ids.contains(&leader_id) {
-            Err(anyhow!("no such peer"))?;
-        }
-    }
+    session
+        .db()
+        .await
+        .check_room_participants(room_id, leader_id, session.connection_id)
+        .await?;
 
     let mut response_payload = session
         .peer
@@ -1911,56 +1913,63 @@ async fn follow(
         .retain(|view| view.leader_id != Some(follower_id.into()));
     response.send(response_payload)?;
 
-    let room = session
-        .db()
-        .await
-        .follow(project_id, leader_id, follower_id)
-        .await?;
-    room_updated(&room, &session.peer);
+    if let Some(project_id) = project_id {
+        let room = session
+            .db()
+            .await
+            .follow(room_id, project_id, leader_id, follower_id)
+            .await?;
+        room_updated(&room, &session.peer);
+    }
 
     Ok(())
 }
 
 async fn unfollow(request: proto::Unfollow, session: Session) -> Result<()> {
-    let project_id = ProjectId::from_proto(request.project_id);
+    let room_id = RoomId::from_proto(request.room_id);
+    let project_id = request.project_id.map(ProjectId::from_proto);
     let leader_id = request
         .leader_id
         .ok_or_else(|| anyhow!("invalid leader id"))?
         .into();
     let follower_id = session.connection_id;
 
-    if !session
+    session
         .db()
         .await
-        .project_connection_ids(project_id, session.connection_id)
-        .await?
-        .contains(&leader_id)
-    {
-        Err(anyhow!("no such peer"))?;
-    }
+        .check_room_participants(room_id, leader_id, session.connection_id)
+        .await?;
 
     session
         .peer
         .forward_send(session.connection_id, leader_id, request)?;
 
-    let room = session
-        .db()
-        .await
-        .unfollow(project_id, leader_id, follower_id)
-        .await?;
-    room_updated(&room, &session.peer);
+    if let Some(project_id) = project_id {
+        let room = session
+            .db()
+            .await
+            .unfollow(room_id, project_id, leader_id, follower_id)
+            .await?;
+        room_updated(&room, &session.peer);
+    }
 
     Ok(())
 }
 
 async fn update_followers(request: proto::UpdateFollowers, session: Session) -> Result<()> {
-    let project_id = ProjectId::from_proto(request.project_id);
-    let project_connection_ids = session
-        .db
-        .lock()
-        .await
-        .project_connection_ids(project_id, session.connection_id)
-        .await?;
+    let room_id = RoomId::from_proto(request.room_id);
+    let database = session.db.lock().await;
+
+    let connection_ids = if let Some(project_id) = request.project_id {
+        let project_id = ProjectId::from_proto(project_id);
+        database
+            .project_connection_ids(project_id, session.connection_id)
+            .await?
+    } else {
+        database
+            .room_connection_ids(room_id, session.connection_id)
+            .await?
+    };
 
     let leader_id = request.variant.as_ref().and_then(|variant| match variant {
         proto::update_followers::Variant::CreateView(payload) => payload.leader_id,
@@ -1969,9 +1978,7 @@ async fn update_followers(request: proto::UpdateFollowers, session: Session) -> 
     });
     for follower_peer_id in request.follower_ids.iter().copied() {
         let follower_connection_id = follower_peer_id.into();
-        if project_connection_ids.contains(&follower_connection_id)
-            && Some(follower_peer_id) != leader_id
-        {
+        if Some(follower_peer_id) != leader_id && connection_ids.contains(&follower_connection_id) {
             session.peer.forward_send(
                 session.connection_id,
                 follower_connection_id,
@@ -2658,18 +2665,12 @@ async fn join_channel_buffer(
         .join_channel_buffer(channel_id, session.user_id, session.connection_id)
         .await?;
 
-    let replica_id = open_response.replica_id;
     let collaborators = open_response.collaborators.clone();
-
     response.send(open_response)?;
 
-    let update = AddChannelBufferCollaborator {
+    let update = UpdateChannelBufferCollaborators {
         channel_id: channel_id.to_proto(),
-        collaborator: Some(proto::Collaborator {
-            user_id: session.user_id.to_proto(),
-            peer_id: Some(session.connection_id.into()),
-            replica_id,
-        }),
+        collaborators: collaborators.clone(),
     };
     channel_buffer_updated(
         session.connection_id,
@@ -2716,8 +2717,8 @@ async fn rejoin_channel_buffers(
         .rejoin_channel_buffers(&request.buffers, session.user_id, session.connection_id)
         .await?;
 
-    for buffer in &buffers {
-        let collaborators_to_notify = buffer
+    for rejoined_buffer in &buffers {
+        let collaborators_to_notify = rejoined_buffer
             .buffer
             .collaborators
             .iter()
@@ -2725,10 +2726,9 @@ async fn rejoin_channel_buffers(
         channel_buffer_updated(
             session.connection_id,
             collaborators_to_notify,
-            &proto::UpdateChannelBufferCollaborator {
-                channel_id: buffer.buffer.channel_id,
-                old_peer_id: Some(buffer.old_connection_id.into()),
-                new_peer_id: Some(session.connection_id.into()),
+            &proto::UpdateChannelBufferCollaborators {
+                channel_id: rejoined_buffer.buffer.channel_id,
+                collaborators: rejoined_buffer.buffer.collaborators.clone(),
             },
             &session.peer,
         );
@@ -2749,7 +2749,7 @@ async fn leave_channel_buffer(
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
 
-    let collaborators_to_notify = db
+    let left_buffer = db
         .leave_channel_buffer(channel_id, session.connection_id)
         .await?;
 
@@ -2757,10 +2757,10 @@ async fn leave_channel_buffer(
 
     channel_buffer_updated(
         session.connection_id,
-        collaborators_to_notify,
-        &proto::RemoveChannelBufferCollaborator {
+        left_buffer.connections,
+        &proto::UpdateChannelBufferCollaborators {
             channel_id: channel_id.to_proto(),
-            peer_id: Some(session.connection_id.into()),
+            collaborators: left_buffer.collaborators,
         },
         &session.peer,
     );
@@ -3235,13 +3235,13 @@ async fn leave_channel_buffers_for_session(session: &Session) -> Result<()> {
         .leave_channel_buffers(session.connection_id)
         .await?;
 
-    for (channel_id, connections) in left_channel_buffers {
+    for left_buffer in left_channel_buffers {
         channel_buffer_updated(
             session.connection_id,
-            connections,
-            &proto::RemoveChannelBufferCollaborator {
-                channel_id: channel_id.to_proto(),
-                peer_id: Some(session.connection_id.into()),
+            left_buffer.connections,
+            &proto::UpdateChannelBufferCollaborators {
+                channel_id: left_buffer.channel_id.to_proto(),
+                collaborators: left_buffer.collaborators,
             },
             &session.peer,
         );

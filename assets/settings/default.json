@@ -361,7 +361,7 @@
           ".venv",
           "venv"
         ],
-        // Can also be 'csh' and 'fish'
+        // Can also be 'csh', 'fish', and `nushell`
         "activate_script": "default"
       }
     }
@@ -379,24 +379,24 @@
   },
   // Settings specific to our elixir integration
   "elixir": {
-    // Set Zed to use the experimental Next LS LSP server.
+    // Change the LSP zed uses for elixir.
     // Note that changing this setting requires a restart of Zed
     // to take effect.
     //
     // May take 3 values:
-    //  1. Use the standard elixir-ls LSP server
-    //         "next": "off"
-    //  2. Use a bundled version of the next Next LS LSP server
-    //         "next": "on",
-    //  3. Use a local build of the next Next LS LSP server:
-    //         "next": {
+    //  1. Use the standard ElixirLS, this is the default
+    //         "lsp": "elixir_ls"
+    //  2. Use the experimental NextLs
+    //         "lsp": "next_ls",
+    //  3. Use a language server installed locally on your machine:
+    //         "lsp": {
     //           "local": {
     //             "path": "~/next-ls/bin/start",
     //             "arguments": ["--stdio"]
     //            }
     //          },
     //
-    "next": "off"
+    "lsp": "elixir_ls"
   },
   // Different settings for specific languages.
   "languages": {

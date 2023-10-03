@@ -134,12 +134,12 @@ async fn test_channel_buffers(db: &Arc<Database>) {
     let zed_collaborats = db.get_channel_buffer_collaborators(zed_id).await.unwrap();
     assert_eq!(zed_collaborats, &[a_id, b_id]);
 
-    let collaborators = db
+    let left_buffer = db
         .leave_channel_buffer(zed_id, connection_id_b)
         .await
         .unwrap();
 
-    assert_eq!(collaborators, &[connection_id_a],);
+    assert_eq!(left_buffer.connections, &[connection_id_a],);
 
     let cargo_id = db.create_root_channel("cargo", "2", a_id).await.unwrap();
     let _ = db

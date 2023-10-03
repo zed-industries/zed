@@ -115,13 +115,15 @@ pub fn check(_: &Check, cx: &mut AppContext) {
 
 fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) {
     if let Some(auto_updater) = AutoUpdater::get(cx) {
-        let server_url = &auto_updater.read(cx).server_url;
+        let auto_updater = auto_updater.read(cx);
+        let server_url = &auto_updater.server_url;
+        let current_version = auto_updater.current_version;
         let latest_release_url = if cx.has_global::<ReleaseChannel>()
             && *cx.global::<ReleaseChannel>() == ReleaseChannel::Preview
         {
-            format!("{server_url}/releases/preview/latest")
+            format!("{server_url}/releases/preview/{current_version}")
         } else {
-            format!("{server_url}/releases/stable/latest")
+            format!("{server_url}/releases/stable/{current_version}")
         };
         cx.platform().open_url(&latest_release_url);
     }

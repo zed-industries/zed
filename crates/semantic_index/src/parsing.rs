@@ -61,8 +61,9 @@ const CODE_CONTEXT_TEMPLATE: &str =
 const ENTIRE_FILE_TEMPLATE: &str =
     "The below snippet is from file '<path>'\n\n```<language>\n<item>\n```";
 const MARKDOWN_CONTEXT_TEMPLATE: &str = "The below file contents is from file '<path>'\n\n<item>";
-pub const PARSEABLE_ENTIRE_FILE_TYPES: &[&str] =
-    &["TOML", "YAML", "CSS", "HEEX", "ERB", "SVELTE", "HTML"];
+pub const PARSEABLE_ENTIRE_FILE_TYPES: &[&str] = &[
+    "TOML", "YAML", "CSS", "HEEX", "ERB", "SVELTE", "HTML", "Scheme",
+];
 
 pub struct CodeContextRetriever {
     pub parser: Parser,

@@ -4,6 +4,7 @@ use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::{env, io::Write, mem, path::PathBuf, sync::Arc, time::Duration};
+use sysinfo::{Pid, PidExt, ProcessExt, System, SystemExt};
 use tempfile::NamedTempFile;
 use util::http::HttpClient;
 use util::{channel::ReleaseChannel, TryFutureExt};
@@ -88,6 +89,16 @@ pub enum ClickhouseEvent {
         kind: AssistantKind,
         model: &'static str,
     },
+    Cpu {
+        usage_as_percent: f32,
+        core_count: u32,
+    },
+    Memory {
+        memory_in_bytes: u64,
+        virtual_memory_in_bytes: u64,
+        start_time_in_seconds: u64,
+        run_time_in_seconds: u64,
+    },
 }
 
 #[cfg(debug_assertions)]
@@ -136,7 +147,7 @@ impl Telemetry {
         Some(self.state.lock().log_file.as_ref()?.path().to_path_buf())
     }
 
-    pub fn start(self: &Arc<Self>, installation_id: Option<String>) {
+    pub fn start(self: &Arc<Self>, installation_id: Option<String>, cx: &mut AppContext) {
         let mut state = self.state.lock();
         state.installation_id = installation_id.map(|id| id.into());
         let has_clickhouse_events = !state.clickhouse_events_queue.is_empty();
@@ -145,6 +156,48 @@ impl Telemetry {
         if has_clickhouse_events {
             self.flush_clickhouse_events();
         }
+
+        let this = self.clone();
+        cx.spawn(|mut cx| async move {
+            let mut system = System::new_all();
+            system.refresh_all();
+
+            loop {
+                // Waiting some amount of time before the first query is important to get a reasonable value
+                // https://docs.rs/sysinfo/0.29.10/sysinfo/trait.ProcessExt.html#tymethod.cpu_usage
+                const DURATION_BETWEEN_SYSTEM_EVENTS: Duration = Duration::from_secs(60);
+                smol::Timer::after(DURATION_BETWEEN_SYSTEM_EVENTS).await;
+
+                let telemetry_settings = cx.update(|cx| *settings::get::<TelemetrySettings>(cx));
+
+                system.refresh_memory();
+                system.refresh_processes();
+
+                let current_process = Pid::from_u32(std::process::id());
+                let Some(process) = system.processes().get(&current_process) else {
+                    let process = current_process;
+                    log::error!("Failed to find own process {process:?} in system process table");
+                    // TODO: Fire an error telemetry event
+                    return;
+                };
+
+                let memory_event = ClickhouseEvent::Memory {
+                    memory_in_bytes: process.memory(),
+                    virtual_memory_in_bytes: process.virtual_memory(),
+                    start_time_in_seconds: process.start_time(),
+                    run_time_in_seconds: process.run_time(),
+                };
+
+                let cpu_event = ClickhouseEvent::Cpu {
+                    usage_as_percent: process.cpu_usage(),
+                    core_count: system.cpus().len() as u32,
+                };
+
+                this.report_clickhouse_event(memory_event, telemetry_settings);
+                this.report_clickhouse_event(cpu_event, telemetry_settings);
+            }
+        })
+        .detach();
     }
 
     pub fn set_authenticated_user_info(

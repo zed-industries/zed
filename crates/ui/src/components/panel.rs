@@ -105,16 +105,12 @@ impl<V: 'static> Panel<V> {
         let theme = theme(cx);
 
         let panel_base;
-        let current_width = if let Some(width) = self.width {
-            width
-        } else {
-            self.initial_width
-        };
+        let current_width = self.width.unwrap_or(self.initial_width);
 
         match self.current_side {
             PanelSide::Left => {
                 panel_base = v_stack()
-                    .overflow_y_scroll(self.scroll_state.clone())
+                    .flex_initial()
                     .h_full()
                     .w(current_width)
                     .fill(theme.middle.base.default.background)
@@ -123,20 +119,20 @@ impl<V: 'static> Panel<V> {
             }
             PanelSide::Right => {
                 panel_base = v_stack()
-                    .overflow_y_scroll(self.scroll_state.clone())
+                    .flex_initial()
                     .h_full()
                     .w(current_width)
                     .fill(theme.middle.base.default.background)
-                    .border_r()
+                    .border_l()
                     .border_color(theme.middle.base.default.border);
             }
             PanelSide::Bottom => {
                 panel_base = v_stack()
-                    .overflow_y_scroll(self.scroll_state.clone())
+                    .flex_initial()
                     .w_full()
                     .h(current_width)
                     .fill(theme.middle.base.default.background)
-                    .border_r()
+                    .border_t()
                     .border_color(theme.middle.base.default.border);
             }
         }
