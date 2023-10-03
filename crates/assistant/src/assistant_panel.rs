@@ -48,7 +48,7 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use theme::{
     components::{action_button::Button, ComponentExt},
@@ -3044,12 +3044,56 @@ impl InlineAssistant {
                 cx.emit(InlineAssistantEvent::RetrieveContextToggled {
                     retrieve_context: this.retrieve_context,
                 });
+
+                if this.retrieve_context {
+                    let context_status = this.retrieve_context_status(cx);
+                    if let Some(workspace) = this.workspace.upgrade(cx) {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.show_toast(Toast::new(0, context_status), cx)
+                        });
+                    }
+                }
+
                 cx.notify();
             })?;
 
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+    }
+
+    fn retrieve_context_status(&self, cx: &mut ViewContext<Self>) -> String {
+        let project = self.project.clone();
+        if let Some(semantic_index) = self.semantic_index.clone() {
+            let status = semantic_index.update(cx, |index, cx| index.status(&project));
+            return match status {
+                // This theoretically shouldnt be a valid code path
+                semantic_index::SemanticIndexStatus::NotAuthenticated => {
+                    "Not Authenticated!\nPlease ensure you have an `OPENAI_API_KEY` in your environment variables.".to_string()
+                }
+                semantic_index::SemanticIndexStatus::Indexed => {
+                    "Indexing for Context Retrieval Complete!".to_string()
+                }
+                semantic_index::SemanticIndexStatus::Indexing { remaining_files, rate_limit_expiry } => {
+
+                    let mut status = format!("Indexing for Context Retrieval...\nRemaining files to index: {remaining_files}");
+
+                    if let Some(rate_limit_expiry) = rate_limit_expiry {
+                        let remaining_seconds =
+                                rate_limit_expiry.duration_since(Instant::now());
+                        if remaining_seconds > Duration::from_secs(0) {
+                            writeln!(status, "Rate limit resets in {}s", remaining_seconds.as_secs()).unwrap();
+                        }
+                    }
+                    status
+                }
+                _ => {
+                    "Indexing for Context Retrieval...\nRemaining files to index: 48".to_string()
+                }
+            };
+        }
+
+        "".to_string()
     }
 
     fn toggle_include_conversation(
