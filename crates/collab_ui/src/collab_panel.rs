@@ -95,6 +95,11 @@ pub struct JoinChannelCall {
     pub channel_id: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct JoinChannelChat {
+    pub channel_id: u64,
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct StartMoveChannelFor {
     channel_id: ChannelId,
@@ -151,6 +156,7 @@ impl_actions!(
         ToggleCollapse,
         OpenChannelNotes,
         JoinChannelCall,
+        JoinChannelChat,
         LinkChannel,
         StartMoveChannelFor,
         StartLinkChannelFor,
@@ -198,6 +204,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(CollabPanel::collapse_selected_channel);
     cx.add_action(CollabPanel::expand_selected_channel);
     cx.add_action(CollabPanel::open_channel_notes);
+    cx.add_action(CollabPanel::join_channel_chat);
 
     cx.add_action(
         |panel: &mut CollabPanel, action: &ToggleSelectedIx, cx: &mut ViewContext<CollabPanel>| {
@@ -471,6 +478,12 @@ impl CollabPanel {
                             .iter()
                             .position(|entry| !matches!(entry, ListEntry::Header(_)));
                     }
+                } else if let editor::Event::Blurred = event {
+                    let query = this.filter_editor.read(cx).text(cx);
+                    if query.is_empty() {
+                        this.selection.take();
+                        this.update_entries(true, cx);
+                    }
                 }
             })
             .detach();
@@ -555,7 +568,7 @@ impl CollabPanel {
                                 &*channel,
                                 *depth,
                                 path.to_owned(),
-                                &theme.collab_panel,
+                                &theme,
                                 is_selected,
                                 ix,
                                 cx,
@@ -608,7 +621,7 @@ impl CollabPanel {
                             contact,
                             *calling,
                             &this.project,
-                            &theme.collab_panel,
+                            &theme,
                             is_selected,
                             cx,
                         ),
@@ -768,9 +781,16 @@ impl CollabPanel {
 
         let prev_selected_entry = self.selection.and_then(|ix| self.entries.get(ix).cloned());
         let old_entries = mem::take(&mut self.entries);
+        let mut scroll_to_top = false;
 
         if let Some(room) = ActiveCall::global(cx).read(cx).room() {
             self.entries.push(ListEntry::Header(Section::ActiveCall));
+            if !old_entries
+                .iter()
+                .any(|entry| matches!(entry, ListEntry::Header(Section::ActiveCall)))
+            {
+                scroll_to_top = true;
+            }
 
             if !self.collapsed_sections.contains(&Section::ActiveCall) {
                 let room = room.read(cx);
@@ -1138,44 +1158,49 @@ impl CollabPanel {
         }
 
         let old_scroll_top = self.list_state.logical_scroll_top();
+
         self.list_state.reset(self.entries.len());
 
-        // Attempt to maintain the same scroll position.
-        if let Some(old_top_entry) = old_entries.get(old_scroll_top.item_ix) {
-            let new_scroll_top = self
-                .entries
-                .iter()
-                .position(|entry| entry == old_top_entry)
-                .map(|item_ix| ListOffset {
-                    item_ix,
-                    offset_in_item: old_scroll_top.offset_in_item,
-                })
-                .or_else(|| {
-                    let entry_after_old_top = old_entries.get(old_scroll_top.item_ix + 1)?;
-                    let item_ix = self
-                        .entries
-                        .iter()
-                        .position(|entry| entry == entry_after_old_top)?;
-                    Some(ListOffset {
+        if scroll_to_top {
+            self.list_state.scroll_to(ListOffset::default());
+        } else {
+            // Attempt to maintain the same scroll position.
+            if let Some(old_top_entry) = old_entries.get(old_scroll_top.item_ix) {
+                let new_scroll_top = self
+                    .entries
+                    .iter()
+                    .position(|entry| entry == old_top_entry)
+                    .map(|item_ix| ListOffset {
                         item_ix,
-                        offset_in_item: 0.,
+                        offset_in_item: old_scroll_top.offset_in_item,
                     })
-                })
-                .or_else(|| {
-                    let entry_before_old_top =
-                        old_entries.get(old_scroll_top.item_ix.saturating_sub(1))?;
-                    let item_ix = self
-                        .entries
-                        .iter()
-                        .position(|entry| entry == entry_before_old_top)?;
-                    Some(ListOffset {
-                        item_ix,
-                        offset_in_item: 0.,
+                    .or_else(|| {
+                        let entry_after_old_top = old_entries.get(old_scroll_top.item_ix + 1)?;
+                        let item_ix = self
+                            .entries
+                            .iter()
+                            .position(|entry| entry == entry_after_old_top)?;
+                        Some(ListOffset {
+                            item_ix,
+                            offset_in_item: 0.,
+                        })
                     })
-                });
+                    .or_else(|| {
+                        let entry_before_old_top =
+                            old_entries.get(old_scroll_top.item_ix.saturating_sub(1))?;
+                        let item_ix = self
+                            .entries
+                            .iter()
+                            .position(|entry| entry == entry_before_old_top)?;
+                        Some(ListOffset {
+                            item_ix,
+                            offset_in_item: 0.,
+                        })
+                    });
 
-            self.list_state
-                .scroll_to(new_scroll_top.unwrap_or(old_scroll_top));
+                self.list_state
+                    .scroll_to(new_scroll_top.unwrap_or(old_scroll_top));
+            }
         }
 
         cx.notify();
@@ -1633,16 +1658,20 @@ impl CollabPanel {
         contact: &Contact,
         calling: bool,
         project: &ModelHandle<Project>,
-        theme: &theme::CollabPanel,
+        theme: &theme::Theme,
         is_selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
+        enum ContactTooltip {}
+
+        let collab_theme = &theme.collab_panel;
         let online = contact.online;
         let busy = contact.busy || calling;
         let user_id = contact.user.id;
         let github_login = contact.user.github_login.clone();
         let initial_project = project.clone();
-        let mut event_handler =
+
+        let event_handler =
             MouseEventHandler::new::<Contact, _>(contact.user.id as usize, cx, |state, cx| {
                 Flex::row()
                     .with_children(contact.user.avatar.clone().map(|avatar| {
@@ -1652,9 +1681,9 @@ impl CollabPanel {
                                     .collapsed()
                                     .contained()
                                     .with_style(if busy {
-                                        theme.contact_status_busy
+                                        collab_theme.contact_status_busy
                                     } else {
-                                        theme.contact_status_free
+                                        collab_theme.contact_status_free
                                     })
                                     .aligned(),
                             )
@@ -1664,7 +1693,7 @@ impl CollabPanel {
                         Stack::new()
                             .with_child(
                                 Image::from_data(avatar)
-                                    .with_style(theme.contact_avatar)
+                                    .with_style(collab_theme.contact_avatar)
                                     .aligned()
                                     .left(),
                             )
@@ -1673,58 +1702,94 @@ impl CollabPanel {
                     .with_child(
                         Label::new(
                             contact.user.github_login.clone(),
-                            theme.contact_username.text.clone(),
+                            collab_theme.contact_username.text.clone(),
                         )
                         .contained()
-                        .with_style(theme.contact_username.container)
+                        .with_style(collab_theme.contact_username.container)
                         .aligned()
                         .left()
                         .flex(1., true),
                     )
-                    .with_child(
-                        MouseEventHandler::new::<Cancel, _>(
-                            contact.user.id as usize,
-                            cx,
-                            |mouse_state, _| {
-                                let button_style = theme.contact_button.style_for(mouse_state);
-                                render_icon_button(button_style, "icons/x.svg")
-                                    .aligned()
-                                    .flex_float()
-                            },
+                    .with_children(if state.hovered() {
+                        Some(
+                            MouseEventHandler::new::<Cancel, _>(
+                                contact.user.id as usize,
+                                cx,
+                                |mouse_state, _| {
+                                    let button_style =
+                                        collab_theme.contact_button.style_for(mouse_state);
+                                    render_icon_button(button_style, "icons/x.svg")
+                                        .aligned()
+                                        .flex_float()
+                                },
+                            )
+                            .with_padding(Padding::uniform(2.))
+                            .with_cursor_style(CursorStyle::PointingHand)
+                            .on_click(MouseButton::Left, move |_, this, cx| {
+                                this.remove_contact(user_id, &github_login, cx);
+                            })
+                            .flex_float(),
                         )
-                        .with_padding(Padding::uniform(2.))
-                        .with_cursor_style(CursorStyle::PointingHand)
-                        .on_click(MouseButton::Left, move |_, this, cx| {
-                            this.remove_contact(user_id, &github_login, cx);
-                        })
-                        .flex_float(),
-                    )
+                    } else {
+                        None
+                    })
                     .with_children(if calling {
                         Some(
-                            Label::new("Calling", theme.calling_indicator.text.clone())
+                            Label::new("Calling", collab_theme.calling_indicator.text.clone())
                                 .contained()
-                                .with_style(theme.calling_indicator.container)
+                                .with_style(collab_theme.calling_indicator.container)
                                 .aligned(),
                         )
                     } else {
                         None
                     })
                     .constrained()
-                    .with_height(theme.row_height)
+                    .with_height(collab_theme.row_height)
                     .contained()
-                    .with_style(*theme.contact_row.in_state(is_selected).style_for(state))
-            })
-            .on_click(MouseButton::Left, move |_, this, cx| {
-                if online && !busy {
-                    this.call(user_id, Some(initial_project.clone()), cx);
-                }
+                    .with_style(
+                        *collab_theme
+                            .contact_row
+                            .in_state(is_selected)
+                            .style_for(state),
+                    )
             });
 
-        if online {
-            event_handler = event_handler.with_cursor_style(CursorStyle::PointingHand);
-        }
+        if online && !busy {
+            let room = ActiveCall::global(cx).read(cx).room();
+            let label = if room.is_some() {
+                format!("Invite {} to join call", contact.user.github_login)
+            } else {
+                format!("Call {}", contact.user.github_login)
+            };
 
-        event_handler.into_any()
+            event_handler
+                .on_click(MouseButton::Left, move |_, this, cx| {
+                    this.call(user_id, Some(initial_project.clone()), cx);
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .with_tooltip::<ContactTooltip>(
+                    contact.user.id as usize,
+                    label,
+                    None,
+                    theme.tooltip.clone(),
+                    cx,
+                )
+                .into_any()
+        } else {
+            event_handler
+                .with_tooltip::<ContactTooltip>(
+                    contact.user.id as usize,
+                    format!(
+                        "{} is {}",
+                        contact.user.github_login,
+                        if busy { "on a call" } else { "offline" }
+                    ),
+                    None,
+                    theme.tooltip.clone(),
+                    cx,
+                )
+                .into_any()
+        }
     }
 
     fn render_contact_placeholder(
@@ -1827,12 +1892,13 @@ impl CollabPanel {
         channel: &Channel,
         depth: usize,
         path: ChannelPath,
-        theme: &theme::CollabPanel,
+        theme: &theme::Theme,
         is_selected: bool,
         ix: usize,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
         let channel_id = channel.id;
+        let collab_theme = &theme.collab_panel;
         let has_children = self.channel_store.read(cx).has_children(channel_id);
         let other_selected =
             self.selected_channel().map(|channel| channel.0.id) == Some(channel.id);
@@ -1851,6 +1917,8 @@ impl CollabPanel {
         const FACEPILE_LIMIT: usize = 3;
 
         enum ChannelCall {}
+        enum IconTooltip {}
+        enum ChannelTooltip {}
 
         let mut is_dragged_over = false;
         if cx
@@ -1886,18 +1954,29 @@ impl CollabPanel {
             Flex::<Self>::row()
                 .with_child(
                     Svg::new("icons/hash.svg")
-                        .with_color(theme.channel_hash.color)
+                        .with_color(collab_theme.channel_hash.color)
                         .constrained()
-                        .with_width(theme.channel_hash.width)
+                        .with_width(collab_theme.channel_hash.width)
                         .aligned()
                         .left(),
                 )
                 .with_child(
-                    Label::new(channel.name.clone(), theme.channel_name.text.clone())
+                    Label::new(channel.name.clone(), collab_theme.channel_name.text.clone())
                         .contained()
-                        .with_style(theme.channel_name.container)
+                        .with_style(collab_theme.channel_name.container)
                         .aligned()
                         .left()
+                        .with_tooltip::<ChannelTooltip>(
+                            channel_id as usize,
+                            if is_active {
+                                "Open channel notes"
+                            } else {
+                                "Join channel"
+                            },
+                            None,
+                            theme.tooltip.clone(),
+                            cx,
+                        )
                         .flex(1., true),
                 )
                 .with_child(
@@ -1907,14 +1986,14 @@ impl CollabPanel {
                         if !participants.is_empty() {
                             let extra_count = participants.len().saturating_sub(FACEPILE_LIMIT);
 
-                            FacePile::new(theme.face_overlap)
+                            FacePile::new(collab_theme.face_overlap)
                                 .with_children(
                                     participants
                                         .iter()
                                         .filter_map(|user| {
                                             Some(
                                                 Image::from_data(user.avatar.clone()?)
-                                                    .with_style(theme.channel_avatar),
+                                                    .with_style(collab_theme.channel_avatar),
                                             )
                                         })
                                         .take(FACEPILE_LIMIT),
@@ -1922,24 +2001,48 @@ impl CollabPanel {
                                 .with_children((extra_count > 0).then(|| {
                                     Label::new(
                                         format!("+{}", extra_count),
-                                        theme.extra_participant_label.text.clone(),
+                                        collab_theme.extra_participant_label.text.clone(),
                                     )
                                     .contained()
-                                    .with_style(theme.extra_participant_label.container)
+                                    .with_style(collab_theme.extra_participant_label.container)
                                 }))
+                                .with_tooltip::<IconTooltip>(
+                                    channel_id as usize,
+                                    if is_active {
+                                        "Open Channel Notes"
+                                    } else {
+                                        "Join channel"
+                                    },
+                                    None,
+                                    theme.tooltip.clone(),
+                                    cx,
+                                )
                                 .into_any()
                         } else if row_hovered {
-                            Svg::new("icons/speaker-loud.svg")
-                                .with_color(theme.channel_hash.color)
+                            Svg::new("icons/file.svg")
+                                .with_color(collab_theme.channel_hash.color)
                                 .constrained()
-                                .with_width(theme.channel_hash.width)
+                                .with_width(collab_theme.channel_hash.width)
+                                .with_tooltip::<IconTooltip>(
+                                    channel_id as usize,
+                                    "Open channel notes",
+                                    None,
+                                    theme.tooltip.clone(),
+                                    cx,
+                                )
                                 .into_any()
                         } else {
                             Empty::new().into_any()
                         }
                     })
                     .on_click(MouseButton::Left, move |_, this, cx| {
-                        this.join_channel_call(channel_id, cx);
+                        let participants =
+                            this.channel_store.read(cx).channel_participants(channel_id);
+                        if is_active || participants.is_empty() {
+                            this.open_channel_notes(&OpenChannelNotes { channel_id }, cx);
+                        } else {
+                            this.join_channel(channel_id, cx);
+                        };
                     }),
                 )
                 .align_children_center()
@@ -1951,24 +2054,28 @@ impl CollabPanel {
                     }),
                 )
                 .with_id(ix)
-                .with_style(theme.disclosure.clone())
+                .with_style(collab_theme.disclosure.clone())
                 .element()
                 .constrained()
-                .with_height(theme.row_height)
+                .with_height(collab_theme.row_height)
                 .contained()
                 .with_style(select_state(
-                    theme
+                    collab_theme
                         .channel_row
                         .in_state(is_selected || is_active || is_dragged_over),
                 ))
                 .with_padding_left(
-                    theme.channel_row.default_style().padding.left
-                        + theme.channel_indent * depth as f32,
+                    collab_theme.channel_row.default_style().padding.left
+                        + collab_theme.channel_indent * depth as f32,
                 )
         })
         .on_click(MouseButton::Left, move |_, this, cx| {
             if this.drag_target_channel.take().is_none() {
-                this.join_channel_chat(channel_id, cx);
+                if is_active {
+                    this.open_channel_notes(&OpenChannelNotes { channel_id }, cx)
+                } else {
+                    this.join_channel(channel_id, cx)
+                }
             }
         })
         .on_click(MouseButton::Right, {
@@ -2392,6 +2499,13 @@ impl CollabPanel {
                 },
             ));
 
+            items.push(ContextMenuItem::action(
+                "Open Chat",
+                JoinChannelChat {
+                    channel_id: path.channel_id(),
+                },
+            ));
+
             if self.channel_store.read(cx).is_user_admin(path.channel_id()) {
                 let parent_id = path.parent_id();
 
@@ -2588,7 +2702,28 @@ impl CollabPanel {
                         }
                     }
                     ListEntry::Channel { channel, .. } => {
-                        self.join_channel_chat(channel.id, cx);
+                        let is_active = iife!({
+                            let call_channel = ActiveCall::global(cx)
+                                .read(cx)
+                                .room()?
+                                .read(cx)
+                                .channel_id()?;
+
+                            dbg!(call_channel, channel.id);
+                            Some(call_channel == channel.id)
+                        })
+                        .unwrap_or(false);
+                        dbg!(is_active);
+                        if is_active {
+                            self.open_channel_notes(
+                                &OpenChannelNotes {
+                                    channel_id: channel.id,
+                                },
+                                cx,
+                            )
+                        } else {
+                            self.join_channel(channel.id, cx)
+                        }
                     }
                     ListEntry::ContactPlaceholder => self.toggle_contact_finder(cx),
                     _ => {}
@@ -2991,13 +3126,58 @@ impl CollabPanel {
             .detach_and_log_err(cx);
     }
 
-    fn join_channel_call(&self, channel: u64, cx: &mut ViewContext<Self>) {
-        ActiveCall::global(cx)
-            .update(cx, |call, cx| call.join_channel(channel, cx))
-            .detach_and_log_err(cx);
+    fn join_channel(&self, channel_id: u64, cx: &mut ViewContext<Self>) {
+        let workspace = self.workspace.clone();
+        let window = cx.window();
+        let active_call = ActiveCall::global(cx);
+        cx.spawn(|_, mut cx| async move {
+            if active_call.read_with(&mut cx, |active_call, _| active_call.room().is_some()) {
+                let answer = window.prompt(
+                    PromptLevel::Warning,
+                    "Do you want to leave the current call?",
+                    &["Yes, Join Channel", "Cancel"],
+                    &mut cx,
+                );
+
+                if let Some(mut answer) = answer {
+                    if answer.next().await == Some(1) {
+                        return anyhow::Ok(());
+                    }
+                }
+            }
+
+            let room = active_call
+                .update(&mut cx, |call, cx| call.join_channel(channel_id, cx))
+                .await?;
+
+            let tasks = room.update(&mut cx, |room, cx| {
+                let Some(workspace) = workspace.upgrade(cx) else {
+                    return vec![];
+                };
+                let projects = room.projects_to_join();
+
+                if projects.is_empty() {
+                    ChannelView::open(channel_id, workspace, cx).detach();
+                    return vec![];
+                }
+                room.projects_to_join()
+                    .into_iter()
+                    .map(|(project_id, user_id)| {
+                        let app_state = workspace.read(cx).app_state().clone();
+                        workspace::join_remote_project(project_id, user_id, app_state, cx)
+                    })
+                    .collect()
+            });
+            for task in tasks {
+                task.await?;
+            }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
-    fn join_channel_chat(&mut self, channel_id: u64, cx: &mut ViewContext<Self>) {
+    fn join_channel_chat(&mut self, action: &JoinChannelChat, cx: &mut ViewContext<Self>) {
+        let channel_id = action.channel_id;
         if let Some(workspace) = self.workspace.upgrade(cx) {
             cx.app_context().defer(move |cx| {
                 workspace.update(cx, |workspace, cx| {
