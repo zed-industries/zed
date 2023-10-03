@@ -217,8 +217,8 @@ impl TextSystem {
 
     pub fn rasterize_glyph(
         &self,
-        glyph_id: &RasterizedGlyphId,
-    ) -> Result<(Bounds<DevicePixels>, Vec<u8>)> {
+        glyph_id: &RasterizeGlyphParams,
+    ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
         self.platform_text_system.rasterize_glyph(glyph_id)
     }
 }
@@ -380,7 +380,7 @@ pub struct ShapedGlyph {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct RasterizedGlyphId {
+pub struct RasterizeGlyphParams {
     pub(crate) font_id: FontId,
     pub(crate) glyph_id: GlyphId,
     pub(crate) font_size: Pixels,
@@ -388,9 +388,9 @@ pub struct RasterizedGlyphId {
     pub(crate) scale_factor: f32,
 }
 
-impl Eq for RasterizedGlyphId {}
+impl Eq for RasterizeGlyphParams {}
 
-impl Hash for RasterizedGlyphId {
+impl Hash for RasterizeGlyphParams {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.font_id.0.hash(state);
         self.glyph_id.0.hash(state);

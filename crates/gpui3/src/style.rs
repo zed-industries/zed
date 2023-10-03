@@ -182,6 +182,7 @@ impl Style {
     /// Paints the background of an element styled with this style.
     pub fn paint<V: 'static>(&self, order: u32, bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
         let rem_size = cx.rem_size();
+        let scale = cx.scale_factor();
 
         let background_color = self.fill.as_ref().and_then(Fill::color);
         if background_color.is_some() || self.is_border_visible() {
@@ -190,13 +191,19 @@ impl Style {
                 layer_id,
                 Quad {
                     order,
-                    bounds,
-                    clip_bounds: bounds, // todo!
-                    clip_corner_radii: self.corner_radii.map(|length| length.to_pixels(rem_size)),
+                    bounds: bounds.scale(scale),
+                    clip_bounds: bounds.scale(scale), // todo!
+                    clip_corner_radii: self
+                        .corner_radii
+                        .map(|length| length.to_pixels(rem_size).scale(scale)),
                     background: background_color.unwrap_or_default(),
                     border_color: self.border_color.unwrap_or_default(),
-                    corner_radii: self.corner_radii.map(|length| length.to_pixels(rem_size)),
-                    border_widths: self.border_widths.map(|length| length.to_pixels(rem_size)),
+                    corner_radii: self
+                        .corner_radii
+                        .map(|length| length.to_pixels(rem_size).scale(scale)),
+                    border_widths: self
+                        .border_widths
+                        .map(|length| length.to_pixels(rem_size).scale(scale)),
                 },
             );
         }

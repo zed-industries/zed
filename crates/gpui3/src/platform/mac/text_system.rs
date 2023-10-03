@@ -1,7 +1,7 @@
 use crate::{
     point, px, size, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontStyle,
-    FontWeight, GlyphId, Pixels, PlatformTextSystem, Point, RasterizedGlyphId, Result, ShapedGlyph,
-    ShapedLine, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
+    FontWeight, GlyphId, Pixels, PlatformTextSystem, Point, RasterizeGlyphParams, Result,
+    ShapedGlyph, ShapedLine, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
 };
 use anyhow::anyhow;
 use cocoa::appkit::{CGFloat, CGPoint};
@@ -136,8 +136,8 @@ impl PlatformTextSystem for MacTextSystem {
 
     fn rasterize_glyph(
         &self,
-        glyph_id: &RasterizedGlyphId,
-    ) -> Result<(Bounds<DevicePixels>, Vec<u8>)> {
+        glyph_id: &RasterizeGlyphParams,
+    ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
         self.0.read().rasterize_glyph(glyph_id)
     }
 
@@ -232,8 +232,8 @@ impl MacTextSystemState {
 
     fn rasterize_glyph(
         &self,
-        glyph_id: &RasterizedGlyphId,
-    ) -> Result<(Bounds<DevicePixels>, Vec<u8>)> {
+        glyph_id: &RasterizeGlyphParams,
+    ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
         let font = &self.fonts[glyph_id.font_id.0];
         let scale = Transform2F::from_scale(glyph_id.scale_factor);
         let glyph_bounds = font.raster_bounds(
@@ -252,18 +252,15 @@ impl MacTextSystemState {
                 glyph_id.subpixel_variant.x.min(1) as i32,
                 glyph_id.subpixel_variant.y.min(1) as i32,
             );
-            let cx_bounds = RectI::new(
-                glyph_bounds.origin(),
-                glyph_bounds.size() + subpixel_padding,
-            );
+            let bitmap_size = glyph_bounds.size() + subpixel_padding;
 
-            let mut bytes = vec![0; cx_bounds.width() as usize * cx_bounds.height() as usize];
+            let mut bytes = vec![0; bitmap_size.x() as usize * bitmap_size.y() as usize];
             let cx = CGContext::create_bitmap_context(
                 Some(bytes.as_mut_ptr() as *mut _),
-                cx_bounds.width() as usize,
-                cx_bounds.height() as usize,
+                bitmap_size.x() as usize,
+                bitmap_size.y() as usize,
                 8,
-                cx_bounds.width() as usize,
+                bitmap_size.x() as usize,
                 &CGColorSpace::create_device_gray(),
                 kCGImageAlphaOnly,
             );
@@ -298,7 +295,7 @@ impl MacTextSystemState {
                     cx,
                 );
 
-            Ok((cx_bounds.into(), bytes))
+            Ok((bitmap_size.into(), bytes))
         }
     }
 
@@ -511,14 +508,23 @@ impl From<RectF> for Bounds<f32> {
 impl From<RectI> for Bounds<DevicePixels> {
     fn from(rect: RectI) -> Self {
         Bounds {
-            origin: point(
-                DevicePixels(rect.origin_x() as u32),
-                DevicePixels(rect.origin_y() as u32),
-            ),
-            size: size(
-                DevicePixels(rect.width() as u32),
-                DevicePixels(rect.height() as u32),
-            ),
+            origin: point(DevicePixels(rect.origin_x()), DevicePixels(rect.origin_y())),
+            size: size(DevicePixels(rect.width()), DevicePixels(rect.height())),
+        }
+    }
+}
+
+impl From<Vector2I> for Size<DevicePixels> {
+    fn from(value: Vector2I) -> Self {
+        size(value.x().into(), value.y().into())
+    }
+}
+
+impl From<RectI> for Bounds<i32> {
+    fn from(rect: RectI) -> Self {
+        Bounds {
+            origin: point(rect.origin_x(), rect.origin_y()),
+            size: size(rect.width(), rect.height()),
         }
     }
 }

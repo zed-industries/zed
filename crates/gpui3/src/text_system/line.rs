@@ -157,35 +157,29 @@ impl Line {
 
                     if let Some((_underline_origin, _underline_style)) = finished_underline {
                         todo!()
-                        // cx.scene().insert(Underline {
-                        //     origin: underline_origin,
-                        //     width: glyph_origin.x - underline_origin.x,
-                        //     thickness: underline_style.thickness.into(),
-                        //     color: underline_style.color.unwrap(),
-                        //     squiggly: underline_style.squiggly,
-                        // });
                     }
 
                     if glyph.is_emoji {
                         todo!()
-                        // cx.scene().push_image_glyph(scene::ImageGlyph {
-                        //     font_id: run.font_id,
-                        //     font_size: self.layout.font_size,
-                        //     id: glyph.id,
-                        //     origin: glyph_origin,
-                        // });
                     } else {
-                        if let Some((tile, bounds)) = cx
+                        if let Some(tile) = cx
                             .rasterize_glyph(
                                 run.font_id,
                                 glyph.id,
                                 self.layout.font_size,
-                                cx.scale_factor(),
                                 glyph_origin,
+                                cx.scale_factor(),
                             )
                             .log_err()
                         {
                             let layer_id = cx.current_layer_id();
+
+                            let bounds = Bounds {
+                                origin: glyph_origin + todo!(),
+                                size: todo!(),
+                            };
+                            // cx.text_system().raster_bounds()
+
                             cx.scene().insert(
                                 layer_id,
                                 MonochromeSprite {

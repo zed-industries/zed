@@ -1,6 +1,6 @@
 use crate::{
     point, size, AtlasTextureId, DevicePixels, MetalAtlas, MonochromeSprite, Quad,
-    RasterizedGlyphId, Scene, Size,
+    RasterizeGlyphParams, Scene, Size,
 };
 use cocoa::{
     base::{NO, YES},
@@ -18,10 +18,11 @@ pub struct MetalRenderer {
     device: metal::Device,
     layer: metal::MetalLayer,
     command_queue: CommandQueue,
-    quad_pipeline_state: metal::RenderPipelineState,
+    quads_pipeline_state: metal::RenderPipelineState,
+    sprites_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     instances: metal::Buffer,
-    glyph_atlas: Arc<MetalAtlas<RasterizedGlyphId>>,
+    glyph_atlas: Arc<MetalAtlas<RasterizeGlyphParams>>,
 }
 
 impl MetalRenderer {
@@ -81,12 +82,21 @@ impl MetalRenderer {
             MTLResourceOptions::StorageModeManaged,
         );
 
-        let quad_pipeline_state = build_pipeline_state(
+        let quads_pipeline_state = build_pipeline_state(
             &device,
             &library,
-            "quad",
+            "quads",
             "quad_vertex",
             "quad_fragment",
+            PIXEL_FORMAT,
+        );
+
+        let sprites_pipeline_state = build_pipeline_state(
+            &device,
+            &library,
+            "sprites",
+            "monochrome_sprite_vertex",
+            "monochrome_sprite_fragment",
             PIXEL_FORMAT,
         );
 
@@ -104,7 +114,8 @@ impl MetalRenderer {
             device,
             layer,
             command_queue,
-            quad_pipeline_state,
+            quads_pipeline_state,
+            sprites_pipeline_state,
             unit_vertices,
             instances,
             glyph_atlas,
@@ -115,7 +126,7 @@ impl MetalRenderer {
         &*self.layer
     }
 
-    pub fn glyph_atlas(&self) -> &Arc<MetalAtlas<RasterizedGlyphId>> {
+    pub fn glyph_atlas(&self) -> &Arc<MetalAtlas<RasterizeGlyphParams>> {
         &self.glyph_atlas
     }
 
@@ -123,8 +134,8 @@ impl MetalRenderer {
         let layer = self.layer.clone();
         let viewport_size = layer.drawable_size();
         let viewport_size: Size<DevicePixels> = size(
-            (viewport_size.width.ceil() as u32).into(),
-            (viewport_size.height.ceil() as u32).into(),
+            (viewport_size.width.ceil() as i32).into(),
+            (viewport_size.height.ceil() as i32).into(),
         );
         let drawable = if let Some(drawable) = layer.next_drawable() {
             drawable
@@ -144,8 +155,8 @@ impl MetalRenderer {
         depth_texture_desc.set_pixel_format(metal::MTLPixelFormat::Depth32Float);
         depth_texture_desc.set_storage_mode(metal::MTLStorageMode::Private);
         depth_texture_desc.set_usage(metal::MTLTextureUsage::RenderTarget);
-        depth_texture_desc.set_width(u32::from(viewport_size.width) as u64);
-        depth_texture_desc.set_height(u32::from(viewport_size.height) as u64);
+        depth_texture_desc.set_width(i32::from(viewport_size.width) as u64);
+        depth_texture_desc.set_height(i32::from(viewport_size.height) as u64);
         let depth_texture = self.device.new_texture(&depth_texture_desc);
         let depth_attachment = render_pass_descriptor.depth_attachment().unwrap();
 
@@ -168,8 +179,8 @@ impl MetalRenderer {
         command_encoder.set_viewport(metal::MTLViewport {
             originX: 0.0,
             originY: 0.0,
-            width: u32::from(viewport_size.width) as f64,
-            height: u32::from(viewport_size.height) as f64,
+            width: i32::from(viewport_size.width) as f64,
+            height: i32::from(viewport_size.height) as f64,
             znear: 0.0,
             zfar: 1.0,
         });
@@ -226,7 +237,7 @@ impl MetalRenderer {
         }
         align_offset(offset);
 
-        command_encoder.set_render_pipeline_state(&self.quad_pipeline_state);
+        command_encoder.set_render_pipeline_state(&self.quads_pipeline_state);
         command_encoder.set_vertex_buffer(
             QuadInputIndex::Vertices as u64,
             Some(&self.unit_vertices),
@@ -273,12 +284,77 @@ impl MetalRenderer {
     fn draw_monochrome_sprites(
         &mut self,
         texture_id: AtlasTextureId,
-        monochrome: &[MonochromeSprite],
+        sprites: &[MonochromeSprite],
         offset: &mut usize,
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) {
-        // todo!()
+        // dbg!(sprites);
+
+        if sprites.is_empty() {
+            return;
+        }
+        align_offset(offset);
+
+        let texture = self.glyph_atlas.texture(texture_id);
+        let texture_size = size(
+            DevicePixels(texture.width() as i32),
+            DevicePixels(texture.height() as i32),
+        );
+        command_encoder.set_render_pipeline_state(&self.sprites_pipeline_state);
+        command_encoder.set_vertex_buffer(
+            MonochromeSpriteInputIndex::Vertices as u64,
+            Some(&self.unit_vertices),
+            0,
+        );
+        command_encoder.set_vertex_buffer(
+            MonochromeSpriteInputIndex::Sprites as u64,
+            Some(&self.instances),
+            *offset as u64,
+        );
+        command_encoder.set_vertex_bytes(
+            MonochromeSpriteInputIndex::ViewportSize as u64,
+            mem::size_of_val(&viewport_size) as u64,
+            &viewport_size as *const Size<DevicePixels> as *const _,
+        );
+        command_encoder.set_vertex_bytes(
+            MonochromeSpriteInputIndex::AtlasTextureSize as u64,
+            mem::size_of_val(&texture_size) as u64,
+            &texture_size as *const Size<DevicePixels> as *const _,
+        );
+        command_encoder.set_fragment_buffer(
+            MonochromeSpriteInputIndex::Sprites as u64,
+            Some(&self.instances),
+            *offset as u64,
+        );
+        command_encoder.set_fragment_texture(
+            MonochromeSpriteInputIndex::AtlasTexture as u64,
+            Some(&texture),
+        );
+
+        let sprite_bytes_len = mem::size_of::<MonochromeSprite>() * sprites.len();
+        let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
+        unsafe {
+            ptr::copy_nonoverlapping(
+                sprites.as_ptr() as *const u8,
+                buffer_contents,
+                sprite_bytes_len,
+            );
+        }
+
+        let next_offset = *offset + sprite_bytes_len;
+        assert!(
+            next_offset <= INSTANCE_BUFFER_SIZE,
+            "instance buffer exhausted"
+        );
+
+        command_encoder.draw_primitives_instanced(
+            metal::MTLPrimitiveType::Triangle,
+            0,
+            6,
+            sprites.len() as u64,
+        );
+        *offset = next_offset;
     }
 }
 
@@ -334,6 +410,6 @@ enum MonochromeSpriteInputIndex {
     Vertices = 0,
     Sprites = 1,
     ViewportSize = 2,
-    AtlasSize = 3,
+    AtlasTextureSize = 3,
     AtlasTexture = 4,
 }

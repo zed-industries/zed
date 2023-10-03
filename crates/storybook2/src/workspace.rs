@@ -4,7 +4,7 @@ use crate::{
     themes::rose_pine_dawn,
 };
 use gpui3::{
-    div, img, svg, view, Context, Element, ParentElement, RootView, StyleHelpers, View,
+    black, div, img, svg, view, Context, Element, ParentElement, RootView, StyleHelpers, View,
     ViewContext, WindowContext,
 };
 
@@ -29,6 +29,7 @@ impl Workspace {
         let theme = rose_pine_dawn();
         div()
             .font("Helvetica")
+            .text_color(black())
             .text_base()
             .size_full()
             .fill(theme.middle.positive.default.background)

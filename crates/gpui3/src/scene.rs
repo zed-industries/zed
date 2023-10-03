@@ -1,7 +1,7 @@
 use std::{iter::Peekable, mem};
 
 use super::{Bounds, Hsla, Pixels, Point};
-use crate::{AtlasTextureId, AtlasTile, Corners, Edges};
+use crate::{AtlasTextureId, AtlasTile, Corners, Edges, ScaledPixels};
 use collections::BTreeMap;
 use smallvec::SmallVec;
 
@@ -36,7 +36,6 @@ impl Scene {
         let primitive = primitive.into();
         match primitive {
             Primitive::Quad(mut quad) => {
-                quad.scale(self.scale_factor);
                 layer.quads.push(quad);
             }
             Primitive::Sprite(sprite) => {
@@ -187,17 +186,17 @@ pub(crate) enum PrimitiveBatch<'a> {
 #[repr(C)]
 pub struct Quad {
     pub order: u32,
-    pub bounds: Bounds<Pixels>,
-    pub clip_bounds: Bounds<Pixels>,
-    pub clip_corner_radii: Corners<Pixels>,
+    pub bounds: Bounds<ScaledPixels>,
+    pub clip_bounds: Bounds<ScaledPixels>,
+    pub clip_corner_radii: Corners<ScaledPixels>,
     pub background: Hsla,
     pub border_color: Hsla,
-    pub corner_radii: Corners<Pixels>,
-    pub border_widths: Edges<Pixels>,
+    pub corner_radii: Corners<ScaledPixels>,
+    pub border_widths: Edges<ScaledPixels>,
 }
 
 impl Quad {
-    pub fn vertices(&self) -> impl Iterator<Item = Point<Pixels>> {
+    pub fn vertices(&self) -> impl Iterator<Item = Point<ScaledPixels>> {
         let x1 = self.bounds.origin.x;
         let y1 = self.bounds.origin.y;
         let x2 = x1 + self.bounds.size.width;
@@ -209,14 +208,6 @@ impl Quad {
             Point::new(x1, y2),
         ]
         .into_iter()
-    }
-
-    pub fn scale(&mut self, factor: f32) {
-        self.bounds *= factor;
-        self.clip_bounds *= factor;
-        self.clip_corner_radii *= factor;
-        self.corner_radii *= factor;
-        self.border_widths *= factor;
     }
 }
 

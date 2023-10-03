@@ -28,6 +28,10 @@ impl<Key> MetalAtlas<Key> {
             tiles_by_key: Default::default(),
         }))
     }
+
+    pub(crate) fn texture(&self, id: AtlasTextureId) -> metal::Texture {
+        self.0.lock().textures[id.0 as usize].metal_texture.clone()
+    }
 }
 
 struct MetalAtlasState<Key> {
@@ -123,10 +127,10 @@ impl MetalAtlasTexture {
             bounds: allocation.rectangle.into(),
         };
         let region = metal::MTLRegion::new_2d(
-            u32::from(tile.bounds.origin.x) as u64,
-            u32::from(tile.bounds.origin.y) as u64,
-            u32::from(tile.bounds.size.width) as u64,
-            u32::from(tile.bounds.size.height) as u64,
+            tile.bounds.origin.x.into(),
+            tile.bounds.origin.y.into(),
+            tile.bounds.size.width.into(),
+            tile.bounds.size.height.into(),
         );
         self.metal_texture.replace_region(
             region,
@@ -149,15 +153,15 @@ impl MetalAtlasTexture {
 
 impl From<Size<DevicePixels>> for etagere::Size {
     fn from(size: Size<DevicePixels>) -> Self {
-        etagere::Size::new(u32::from(size.width) as i32, u32::from(size.width) as i32)
+        etagere::Size::new(size.width.into(), size.width.into())
     }
 }
 
 impl From<etagere::Point> for Point<DevicePixels> {
     fn from(value: etagere::Point) -> Self {
         Point {
-            x: DevicePixels::from(value.x as u32),
-            y: DevicePixels::from(value.y as u32),
+            x: DevicePixels::from(value.x),
+            y: DevicePixels::from(value.y),
         }
     }
 }
@@ -165,8 +169,8 @@ impl From<etagere::Point> for Point<DevicePixels> {
 impl From<etagere::Size> for Size<DevicePixels> {
     fn from(size: etagere::Size) -> Self {
         Size {
-            width: DevicePixels::from(size.width as u32),
-            height: DevicePixels::from(size.height as u32),
+            width: DevicePixels::from(size.width),
+            height: DevicePixels::from(size.height),
         }
     }
 }

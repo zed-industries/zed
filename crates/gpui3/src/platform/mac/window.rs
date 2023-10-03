@@ -3,8 +3,8 @@ use crate::{
     point, px, size, AnyWindowHandle, Bounds, Event, KeyDownEvent, Keystroke, MacScreen, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMovedEvent, MouseUpEvent, NSRectExt,
     Pixels, Platform, PlatformAtlas, PlatformDispatcher, PlatformInputHandler, PlatformScreen,
-    PlatformWindow, Point, RasterizedGlyphId, Scene, Size, Timer, WindowAppearance, WindowBounds,
-    WindowKind, WindowOptions, WindowPromptLevel,
+    PlatformWindow, Point, RasterizeGlyphParams, Scene, Size, Timer, WindowAppearance,
+    WindowBounds, WindowKind, WindowOptions, WindowPromptLevel,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -886,7 +886,7 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn glyph_atlas(&self) -> Arc<dyn PlatformAtlas<RasterizedGlyphId>> {
+    fn glyph_atlas(&self) -> Arc<dyn PlatformAtlas<RasterizeGlyphParams>> {
         self.0.lock().renderer.glyph_atlas().clone()
     }
 }

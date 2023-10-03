@@ -28,6 +28,15 @@ impl<T: Clone + Debug> Point<T> {
     }
 }
 
+impl Point<Pixels> {
+    pub fn scale(&self, factor: f32) -> Point<ScaledPixels> {
+        Point {
+            x: self.x.scale(factor),
+            y: self.y.scale(factor),
+        }
+    }
+}
+
 impl<T, Rhs> Mul<Rhs> for Point<T>
 where
     T: Mul<Rhs, Output = T> + Clone + Debug,
@@ -122,6 +131,15 @@ impl<T: Clone + Debug> Size<T> {
     }
 }
 
+impl Size<Pixels> {
+    pub fn scale(&self, factor: f32) -> Size<ScaledPixels> {
+        Size {
+            width: self.width.scale(factor),
+            height: self.height.scale(factor),
+        }
+    }
+}
+
 impl<T: Clone + Debug + Ord> Size<T> {
     pub fn max(&self, other: &Self) -> Self {
         Size {
@@ -207,7 +225,6 @@ pub struct Bounds<T: Clone + Debug> {
     pub size: Size<T>,
 }
 
-// Bounds<f32> * Pixels = Bounds<Pixels>
 impl<T, Rhs> Mul<Rhs> for Bounds<T>
 where
     T: Mul<Rhs, Output = Rhs> + Clone + Debug,
@@ -273,6 +290,15 @@ impl<T: Clone + Debug + PartialOrd + Add<T, Output = T>> Bounds<T> {
         Bounds {
             origin: self.origin.map(&f),
             size: self.size.map(f),
+        }
+    }
+}
+
+impl Bounds<Pixels> {
+    pub fn scale(&self, factor: f32) -> Bounds<ScaledPixels> {
+        Bounds {
+            origin: self.origin.scale(factor),
+            size: self.size.scale(factor),
         }
     }
 }
@@ -462,8 +488,8 @@ impl Pixels {
         Self(self.0.floor())
     }
 
-    pub fn to_device_pixels(&self, scale: f32) -> DevicePixels {
-        DevicePixels((self.0 * scale).ceil() as u32)
+    pub fn scale(&self, factor: f32) -> ScaledPixels {
+        ScaledPixels(self.0 * factor)
     }
 }
 
@@ -542,22 +568,22 @@ impl From<Pixels> for f64 {
     SubAssign,
 )]
 #[repr(transparent)]
-pub struct DevicePixels(pub(crate) u32);
+pub struct DevicePixels(pub(crate) i32);
 
 impl DevicePixels {
     pub fn to_bytes(&self, bytes_per_pixel: u8) -> u32 {
-        self.0 * bytes_per_pixel as u32
+        self.0 as u32 * bytes_per_pixel as u32
     }
 }
 
-impl From<DevicePixels> for u32 {
+impl From<DevicePixels> for i32 {
     fn from(device_pixels: DevicePixels) -> Self {
         device_pixels.0
     }
 }
 
-impl From<u32> for DevicePixels {
-    fn from(val: u32) -> Self {
+impl From<i32> for DevicePixels {
+    fn from(val: i32) -> Self {
         DevicePixels(val)
     }
 }
@@ -570,7 +596,25 @@ impl From<DevicePixels> for u64 {
 
 impl From<u64> for DevicePixels {
     fn from(val: u64) -> Self {
-        DevicePixels(val as u32)
+        DevicePixels(val as i32)
+    }
+}
+
+#[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd)]
+#[repr(transparent)]
+pub struct ScaledPixels(pub(crate) f32);
+
+impl Eq for ScaledPixels {}
+
+impl Debug for ScaledPixels {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} px (scaled)", self.0)
+    }
+}
+
+impl From<ScaledPixels> for DevicePixels {
+    fn from(scaled: ScaledPixels) -> Self {
+        DevicePixels(scaled.0.ceil() as i32)
     }
 }
 

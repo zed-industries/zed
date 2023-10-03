@@ -7,7 +7,7 @@ mod test;
 
 use crate::{
     AnyWindowHandle, Bounds, DevicePixels, Font, FontId, FontMetrics, GlyphId, Pixels, Point,
-    RasterizedGlyphId, Result, Scene, ShapedLine, SharedString, Size,
+    RasterizeGlyphParams, Result, Scene, ShapedLine, SharedString, Size,
 };
 use anyhow::anyhow;
 use async_task::Runnable;
@@ -147,7 +147,7 @@ pub trait PlatformWindow {
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
     fn draw(&self, scene: Scene);
 
-    fn glyph_atlas(&self) -> Arc<dyn PlatformAtlas<RasterizedGlyphId>>;
+    fn glyph_atlas(&self) -> Arc<dyn PlatformAtlas<RasterizeGlyphParams>>;
 }
 
 pub trait PlatformDispatcher: Send + Sync {
@@ -165,8 +165,8 @@ pub trait PlatformTextSystem: Send + Sync {
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId>;
     fn rasterize_glyph(
         &self,
-        glyph_id: &RasterizedGlyphId,
-    ) -> Result<(Bounds<DevicePixels>, Vec<u8>)>;
+        glyph_id: &RasterizeGlyphParams,
+    ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[(usize, FontId)]) -> ShapedLine;
     fn wrap_line(
         &self,
@@ -197,7 +197,7 @@ pub struct AtlasTile {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
-pub(crate) struct AtlasTextureId(pub(crate) u32);
+pub(crate) struct AtlasTextureId(pub(crate) u32); // We use u32 instead of usize for Metal Shader Language compatibility
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(C)]

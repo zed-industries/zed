@@ -1,9 +1,8 @@
 use crate::{
-    px, AnyView, AppContext, AtlasTile, AvailableSpace, Bounds, Context, DevicePixels, Effect,
-    Element, EntityId, FontId, GlyphId, Handle, LayoutId, MainThread, MainThreadOnly,
-    MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point, RasterizedGlyphId, Reference,
-    Scene, Size, StackContext, StackingOrder, Style, TaffyLayoutEngine, WeakHandle, WindowOptions,
-    SUBPIXEL_VARIANTS,
+    px, AnyView, AppContext, AtlasTile, AvailableSpace, Bounds, Context, Effect, Element, EntityId,
+    FontId, GlyphId, Handle, LayoutId, MainThread, MainThreadOnly, Pixels, PlatformAtlas,
+    PlatformWindow, Point, RasterizeGlyphParams, Reference, Scene, Size, StackContext,
+    StackingOrder, Style, TaffyLayoutEngine, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use futures::Future;
@@ -16,7 +15,7 @@ pub struct AnyWindow {}
 pub struct Window {
     handle: AnyWindowHandle,
     platform_window: MainThreadOnly<Box<dyn PlatformWindow>>,
-    glyph_atlas: Arc<dyn PlatformAtlas<RasterizedGlyphId>>,
+    glyph_atlas: Arc<dyn PlatformAtlas<RasterizeGlyphParams>>,
     rem_size: Pixels,
     content_size: Size<Pixels>,
     layout_engine: TaffyLayoutEngine,
@@ -171,39 +170,26 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         font_id: FontId,
         glyph_id: GlyphId,
         font_size: Pixels,
-        scale_factor: f32,
         target_position: Point<Pixels>,
-    ) -> Result<(AtlasTile, Bounds<Pixels>)> {
+        scale_factor: f32,
+    ) -> Result<AtlasTile> {
         let target_position = target_position * scale_factor;
         let subpixel_variant = Point {
             x: (target_position.x.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
             y: (target_position.y.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
         };
-        let rasterized_glyph_id = RasterizedGlyphId {
+        let rasterized_glyph_id = RasterizeGlyphParams {
             font_id,
             glyph_id,
             font_size,
             subpixel_variant,
             scale_factor,
         };
-        let mut offset = Default::default();
-        let tile = self
-            .window
+        self.window
             .glyph_atlas
             .get_or_insert_with(&rasterized_glyph_id, &mut || {
-                let (bounds, pixels) = self.text_system().rasterize_glyph(&rasterized_glyph_id)?;
-                offset = bounds.origin;
-                Ok((bounds.size, pixels))
-            })?;
-
-        // Align bounding box surrounding glyph to pixel grid
-        let mut origin = (target_position * scale_factor).map(|p| p.floor());
-        // Position glyph within bounding box
-        origin += offset.map(|o| px(u32::from(o) as f32));
-        let size = tile.bounds.size.map(|b| px(b.0 as f32));
-        let bounds = Bounds { origin, size };
-
-        Ok((tile, bounds))
+                self.text_system().rasterize_glyph(&rasterized_glyph_id)
+            })
     }
 
     pub(crate) fn draw(&mut self) -> Result<()> {
