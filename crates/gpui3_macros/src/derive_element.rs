@@ -27,21 +27,24 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
             fn layout(
                 &mut self,
                 state: &mut #state_type,
-                cx: &mut gpui3::ViewContext<V>,
+                cx: &mut gpui3::ViewContext<Self::State>,
             ) -> anyhow::Result<(gpui3::LayoutId, Self::FrameState)> {
-                let mut rendered_element = self.render(state, cx).into_element().into_any();
+                use gpui3::IntoAnyElement;
+
+                let mut rendered_element = self.render(cx).into_any();
                 let layout_id = rendered_element.layout(state, cx)?;
                 Ok((layout_id, rendered_element))
             }
 
             fn paint(
                 &mut self,
-                layout: &gpui3::Layout,
-                state: &mut #state_type,
+                layout: gpui3::Layout,
+                state: &mut Self::State,
                 rendered_element: &mut Self::FrameState,
-                cx: &mut gpui3::ViewContext<V>,
-            ) {
-                rendered_element.paint(layout.origin, state, cx);
+                cx: &mut gpui3::ViewContext<Self::State>,
+            ) -> anyhow::Result<()> {
+                // TODO: Where do we get the `offset` from?
+                rendered_element.paint(state, None, cx)
             }
         }
     };

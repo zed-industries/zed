@@ -1,4 +1,5 @@
-use crate::ui::Stack;
+use crate::ui::prelude::*;
+use crate::ui::{Panel, Stack};
 use crate::{
     collab_panel::{collab_panel, CollabPanel},
     theme::theme,
@@ -33,12 +34,7 @@ impl Workspace {
             .size_full()
             .v_stack()
             .fill(theme.lowest.base.default.background)
-            .child(
-                div()
-                    .size_full()
-                    .flex()
-                    .fill(theme.middle.positive.default.background),
-            )
+            .child(Panel::new(ScrollState::default()))
             .child(
                 div()
                     .size_full()
