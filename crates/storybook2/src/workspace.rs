@@ -4,8 +4,8 @@ use crate::{
     themes::rose_pine_dawn,
 };
 use gpui3::{
-    div, img, svg, view, white, Context, Element, ParentElement, RootView, StyleHelpers, View,
-    ViewContext, WindowContext,
+    black, div, img, svg, view, white, Context, Element, ParentElement, RootView, StyleHelpers,
+    View, ViewContext, WindowContext,
 };
 
 pub struct Workspace {
@@ -28,12 +28,12 @@ impl Workspace {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<State = Self> {
         let theme = rose_pine_dawn();
         div()
-            .font("Helvetica")
-            .text_color(white())
-            .text_base()
             .size_full()
-            .fill(theme.middle.base.default.background)
-            .child("Hello world")
+            .font("Helvetica")
+            .text_base()
+            .fill(white())
+            .text_color(black())
+            .child("Hey")
 
         // TODO: Implement style.
         //.size_full().fill(gpui3::hsla(0.83, 1., 0.5, 1.))

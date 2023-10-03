@@ -176,10 +176,10 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         color: Hsla,
     ) -> Result<()> {
         let scale_factor = self.scale_factor();
-        let origin = origin.scale(scale_factor);
+        let glyph_origin = origin.scale(scale_factor);
         let subpixel_variant = Point {
-            x: (origin.x.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
-            y: (origin.y.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
+            x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
+            y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
         };
         let params = GlyphRasterizationParams {
             font_id,
@@ -193,10 +193,12 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
         if !raster_bounds.is_zero() {
             let layer_id = self.current_layer_id();
+            let offset = raster_bounds.origin.map(Into::into);
             let bounds = Bounds {
-                origin: origin + raster_bounds.origin.map(Into::into),
+                origin: dbg!(dbg!(glyph_origin.map(|px| px.floor())) + dbg!(offset)),
                 size: raster_bounds.size.map(Into::into),
             };
+
             let tile = self
                 .window
                 .glyph_atlas

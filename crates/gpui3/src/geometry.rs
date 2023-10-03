@@ -484,10 +484,6 @@ impl Pixels {
         Self(self.0.round())
     }
 
-    pub fn floor(&self) -> Self {
-        Self(self.0.floor())
-    }
-
     pub fn scale(&self, factor: f32) -> ScaledPixels {
         ScaledPixels(self.0 * factor)
     }
@@ -603,6 +599,12 @@ impl From<u64> for DevicePixels {
 #[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd)]
 #[repr(transparent)]
 pub struct ScaledPixels(pub(crate) f32);
+
+impl ScaledPixels {
+    pub fn floor(&self) -> Self {
+        Self(self.0.floor())
+    }
+}
 
 impl Eq for ScaledPixels {}
 
