@@ -29,7 +29,7 @@ use std::{
     },
 };
 use util::http::FakeHttpClient;
-use workspace::Workspace;
+use workspace::{Workspace, WorkspaceStore};
 
 pub struct TestServer {
     pub app_state: Arc<AppState>,
@@ -204,13 +204,17 @@ impl TestServer {
 
         let fs = FakeFs::new(cx.background());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
+        let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
         let channel_store =
             cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
+        let mut language_registry = LanguageRegistry::test();
+        language_registry.set_executor(cx.background());
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
+            workspace_store,
             channel_store: channel_store.clone(),
-            languages: Arc::new(LanguageRegistry::test()),
+            languages: Arc::new(language_registry),
             fs: fs.clone(),
             build_window_options: |_, _, _| Default::default(),
             initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
@@ -536,15 +540,7 @@ impl TestClient {
         root_path: impl AsRef<Path>,
         cx: &mut TestAppContext,
     ) -> (ModelHandle<Project>, WorktreeId) {
-        let project = cx.update(|cx| {
-            Project::local(
-                self.client().clone(),
-                self.app_state.user_store.clone(),
-                self.app_state.languages.clone(),
-                self.app_state.fs.clone(),
-                cx,
-            )
-        });
+        let project = self.build_empty_local_project(cx);
         let (worktree, _) = project
             .update(cx, |p, cx| {
                 p.find_or_create_local_worktree(root_path, true, cx)
@@ -555,6 +551,18 @@ impl TestClient {
             .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
         (project, worktree.read_with(cx, |tree, _| tree.id()))
+    }
+
+    pub fn build_empty_local_project(&self, cx: &mut TestAppContext) -> ModelHandle<Project> {
+        cx.update(|cx| {
+            Project::local(
+                self.client().clone(),
+                self.app_state.user_store.clone(),
+                self.app_state.languages.clone(),
+                self.app_state.fs.clone(),
+                cx,
+            )
+        })
     }
 
     pub async fn build_remote_project(

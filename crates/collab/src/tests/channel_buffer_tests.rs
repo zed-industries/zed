@@ -4,14 +4,16 @@ use crate::{
 };
 use call::ActiveCall;
 use channel::Channel;
-use client::UserId;
+use client::ParticipantIndex;
+use client::{Collaborator, UserId};
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
+use editor::{Anchor, Editor, ToOffset};
 use futures::future;
-use gpui::{executor::Deterministic, ModelHandle, TestAppContext};
-use rpc::{proto, RECEIVE_TIMEOUT};
+use gpui::{executor::Deterministic, ModelHandle, TestAppContext, ViewContext};
+use rpc::{proto::PeerId, RECEIVE_TIMEOUT};
 use serde_json::json;
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 
 #[gpui::test]
 async fn test_core_channel_buffers(
@@ -100,7 +102,7 @@ async fn test_core_channel_buffers(
     channel_buffer_b.read_with(cx_b, |buffer, _| {
         assert_collaborators(
             &buffer.collaborators(),
-            &[client_b.user_id(), client_a.user_id()],
+            &[client_a.user_id(), client_b.user_id()],
         );
     });
 
@@ -120,10 +122,10 @@ async fn test_core_channel_buffers(
 }
 
 #[gpui::test]
-async fn test_channel_buffer_replica_ids(
+async fn test_channel_notes_participant_indices(
     deterministic: Arc<Deterministic>,
-    cx_a: &mut TestAppContext,
-    cx_b: &mut TestAppContext,
+    mut cx_a: &mut TestAppContext,
+    mut cx_b: &mut TestAppContext,
     cx_c: &mut TestAppContext,
 ) {
     deterministic.forbid_parking();
@@ -131,6 +133,13 @@ async fn test_channel_buffer_replica_ids(
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
     let client_c = server.create_client(cx_c, "user_c").await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+    cx_c.update(editor::init);
 
     let channel_id = server
         .make_channel(
@@ -141,140 +150,173 @@ async fn test_channel_buffer_replica_ids(
         )
         .await;
 
-    let active_call_a = cx_a.read(ActiveCall::global);
-    let active_call_b = cx_b.read(ActiveCall::global);
-    let active_call_c = cx_c.read(ActiveCall::global);
-
-    // Clients A and B join a channel.
-    active_call_a
-        .update(cx_a, |call, cx| call.join_channel(channel_id, cx))
-        .await
-        .unwrap();
-    active_call_b
-        .update(cx_b, |call, cx| call.join_channel(channel_id, cx))
-        .await
-        .unwrap();
-
-    // Clients A, B, and C join a channel buffer
-    // C first so that the replica IDs in the project and the channel buffer are different
-    let channel_buffer_c = client_c
-        .channel_store()
-        .update(cx_c, |store, cx| store.open_channel_buffer(channel_id, cx))
-        .await
-        .unwrap();
-    let channel_buffer_b = client_b
-        .channel_store()
-        .update(cx_b, |store, cx| store.open_channel_buffer(channel_id, cx))
-        .await
-        .unwrap();
-    let channel_buffer_a = client_a
-        .channel_store()
-        .update(cx_a, |store, cx| store.open_channel_buffer(channel_id, cx))
-        .await
-        .unwrap();
-
-    // Client B shares a project
-    client_b
+    client_a
         .fs()
-        .insert_tree("/dir", json!({ "file.txt": "contents" }))
+        .insert_tree("/root", json!({"file.txt": "123"}))
         .await;
-    let (project_b, _) = client_b.build_local_project("/dir", cx_b).await;
-    let shared_project_id = active_call_b
-        .update(cx_b, |call, cx| call.share_project(project_b.clone(), cx))
+    let (project_a, worktree_id_a) = client_a.build_local_project("/root", cx_a).await;
+    let project_b = client_b.build_empty_local_project(cx_b);
+    let project_c = client_c.build_empty_local_project(cx_c);
+    let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
+    let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
+    let workspace_c = client_c.build_workspace(&project_c, cx_c).root(cx_c);
+
+    // Clients A, B, and C open the channel notes
+    let channel_view_a = cx_a
+        .update(|cx| ChannelView::open(channel_id, workspace_a.clone(), cx))
+        .await
+        .unwrap();
+    let channel_view_b = cx_b
+        .update(|cx| ChannelView::open(channel_id, workspace_b.clone(), cx))
+        .await
+        .unwrap();
+    let channel_view_c = cx_c
+        .update(|cx| ChannelView::open(channel_id, workspace_c.clone(), cx))
         .await
         .unwrap();
 
-    // Client A joins the project
-    let project_a = client_a.build_remote_project(shared_project_id, cx_a).await;
+    // Clients A, B, and C all insert and select some text
+    channel_view_a.update(cx_a, |notes, cx| {
+        notes.editor.update(cx, |editor, cx| {
+            editor.insert("a", cx);
+            editor.change_selections(None, cx, |selections| {
+                selections.select_ranges(vec![0..1]);
+            });
+        });
+    });
     deterministic.run_until_parked();
-
-    // Client C is in a separate project.
-    client_c.fs().insert_tree("/dir", json!({})).await;
-    let (separate_project_c, _) = client_c.build_local_project("/dir", cx_c).await;
-
-    // Note that each user has a different replica id in the projects vs the
-    // channel buffer.
-    channel_buffer_a.read_with(cx_a, |channel_buffer, cx| {
-        assert_eq!(project_a.read(cx).replica_id(), 1);
-        assert_eq!(channel_buffer.buffer().read(cx).replica_id(), 2);
+    channel_view_b.update(cx_b, |notes, cx| {
+        notes.editor.update(cx, |editor, cx| {
+            editor.move_down(&Default::default(), cx);
+            editor.insert("b", cx);
+            editor.change_selections(None, cx, |selections| {
+                selections.select_ranges(vec![1..2]);
+            });
+        });
     });
-    channel_buffer_b.read_with(cx_b, |channel_buffer, cx| {
-        assert_eq!(project_b.read(cx).replica_id(), 0);
-        assert_eq!(channel_buffer.buffer().read(cx).replica_id(), 1);
-    });
-    channel_buffer_c.read_with(cx_c, |channel_buffer, cx| {
-        // C is not in the project
-        assert_eq!(channel_buffer.buffer().read(cx).replica_id(), 0);
-    });
-
-    let channel_window_a =
-        cx_a.add_window(|cx| ChannelView::new(project_a.clone(), channel_buffer_a.clone(), cx));
-    let channel_window_b =
-        cx_b.add_window(|cx| ChannelView::new(project_b.clone(), channel_buffer_b.clone(), cx));
-    let channel_window_c = cx_c.add_window(|cx| {
-        ChannelView::new(separate_project_c.clone(), channel_buffer_c.clone(), cx)
+    deterministic.run_until_parked();
+    channel_view_c.update(cx_c, |notes, cx| {
+        notes.editor.update(cx, |editor, cx| {
+            editor.move_down(&Default::default(), cx);
+            editor.insert("c", cx);
+            editor.change_selections(None, cx, |selections| {
+                selections.select_ranges(vec![2..3]);
+            });
+        });
     });
 
-    let channel_view_a = channel_window_a.root(cx_a);
-    let channel_view_b = channel_window_b.root(cx_b);
-    let channel_view_c = channel_window_c.root(cx_c);
-
-    // For clients A and B, the replica ids in the channel buffer are mapped
-    // so that they match the same users' replica ids in their shared project.
-    channel_view_a.read_with(cx_a, |view, cx| {
-        assert_eq!(
-            view.editor.read(cx).replica_id_map().unwrap(),
-            &[(1, 0), (2, 1)].into_iter().collect::<HashMap<_, _>>()
-        );
-    });
-    channel_view_b.read_with(cx_b, |view, cx| {
-        assert_eq!(
-            view.editor.read(cx).replica_id_map().unwrap(),
-            &[(1, 0), (2, 1)].into_iter().collect::<HashMap<u16, u16>>(),
-        )
+    // Client A sees clients B and C without assigned colors, because they aren't
+    // in a call together.
+    deterministic.run_until_parked();
+    channel_view_a.update(cx_a, |notes, cx| {
+        notes.editor.update(cx, |editor, cx| {
+            assert_remote_selections(editor, &[(None, 1..2), (None, 2..3)], cx);
+        });
     });
 
-    // Client C only sees themself, as they're not part of any shared project
-    channel_view_c.read_with(cx_c, |view, cx| {
-        assert_eq!(
-            view.editor.read(cx).replica_id_map().unwrap(),
-            &[(0, 0)].into_iter().collect::<HashMap<u16, u16>>(),
-        );
+    // Clients A and B join the same call.
+    for (call, cx) in [(&active_call_a, &mut cx_a), (&active_call_b, &mut cx_b)] {
+        call.update(*cx, |call, cx| call.join_channel(channel_id, cx))
+            .await
+            .unwrap();
+    }
+
+    // Clients A and B see each other with two different assigned colors. Client C
+    // still doesn't have a color.
+    deterministic.run_until_parked();
+    channel_view_a.update(cx_a, |notes, cx| {
+        notes.editor.update(cx, |editor, cx| {
+            assert_remote_selections(
+                editor,
+                &[(Some(ParticipantIndex(1)), 1..2), (None, 2..3)],
+                cx,
+            );
+        });
+    });
+    channel_view_b.update(cx_b, |notes, cx| {
+        notes.editor.update(cx, |editor, cx| {
+            assert_remote_selections(
+                editor,
+                &[(Some(ParticipantIndex(0)), 0..1), (None, 2..3)],
+                cx,
+            );
+        });
     });
 
-    // Client C joins the project that clients A and B are in.
-    active_call_c
-        .update(cx_c, |call, cx| call.join_channel(channel_id, cx))
+    // Client A shares a project, and client B joins.
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    let project_c = client_c.build_remote_project(shared_project_id, cx_c).await;
-    deterministic.run_until_parked();
-    project_c.read_with(cx_c, |project, _| {
-        assert_eq!(project.replica_id(), 2);
-    });
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
 
-    // For clients A and B, client C's replica id in the channel buffer is
-    // now mapped to their replica id in the shared project.
-    channel_view_a.read_with(cx_a, |view, cx| {
-        assert_eq!(
-            view.editor.read(cx).replica_id_map().unwrap(),
-            &[(1, 0), (2, 1), (0, 2)]
-                .into_iter()
-                .collect::<HashMap<_, _>>()
-        );
+    // Clients A and B open the same file.
+    let editor_a = workspace_a
+        .update(cx_a, |workspace, cx| {
+            workspace.open_path((worktree_id_a, "file.txt"), None, true, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    let editor_b = workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.open_path((worktree_id_a, "file.txt"), None, true, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    editor_a.update(cx_a, |editor, cx| {
+        editor.change_selections(None, cx, |selections| {
+            selections.select_ranges(vec![0..1]);
+        });
     });
-    channel_view_b.read_with(cx_b, |view, cx| {
-        assert_eq!(
-            view.editor.read(cx).replica_id_map().unwrap(),
-            &[(1, 0), (2, 1), (0, 2)]
-                .into_iter()
-                .collect::<HashMap<_, _>>(),
-        )
+    editor_b.update(cx_b, |editor, cx| {
+        editor.change_selections(None, cx, |selections| {
+            selections.select_ranges(vec![2..3]);
+        });
+    });
+    deterministic.run_until_parked();
+
+    // Clients A and B see each other with the same colors as in the channel notes.
+    editor_a.update(cx_a, |editor, cx| {
+        assert_remote_selections(editor, &[(Some(ParticipantIndex(1)), 2..3)], cx);
+    });
+    editor_b.update(cx_b, |editor, cx| {
+        assert_remote_selections(editor, &[(Some(ParticipantIndex(0)), 0..1)], cx);
     });
 }
 
+#[track_caller]
+fn assert_remote_selections(
+    editor: &mut Editor,
+    expected_selections: &[(Option<ParticipantIndex>, Range<usize>)],
+    cx: &mut ViewContext<Editor>,
+) {
+    let snapshot = editor.snapshot(cx);
+    let range = Anchor::min()..Anchor::max();
+    let remote_selections = snapshot
+        .remote_selections_in_range(&range, editor.collaboration_hub().unwrap(), cx)
+        .map(|s| {
+            let start = s.selection.start.to_offset(&snapshot.buffer_snapshot);
+            let end = s.selection.end.to_offset(&snapshot.buffer_snapshot);
+            (s.participant_index, start..end)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        remote_selections, expected_selections,
+        "incorrect remote selections"
+    );
+}
+
 #[gpui::test]
-async fn test_reopen_channel_buffer(deterministic: Arc<Deterministic>, cx_a: &mut TestAppContext) {
+async fn test_multiple_handles_to_channel_buffer(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+) {
     deterministic.forbid_parking();
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
@@ -565,26 +607,163 @@ async fn test_channel_buffers_and_server_restarts(
 
     channel_buffer_a.read_with(cx_a, |buffer_a, _| {
         channel_buffer_b.read_with(cx_b, |buffer_b, _| {
-            assert_eq!(
-                buffer_a
-                    .collaborators()
-                    .iter()
-                    .map(|c| c.user_id)
-                    .collect::<Vec<_>>(),
-                vec![client_a.user_id().unwrap(), client_b.user_id().unwrap()]
+            assert_collaborators(
+                buffer_a.collaborators(),
+                &[client_a.user_id(), client_b.user_id()],
             );
             assert_eq!(buffer_a.collaborators(), buffer_b.collaborators());
         });
     });
 }
 
+#[gpui::test(iterations = 10)]
+async fn test_following_to_channel_notes_without_a_shared_project(
+    deterministic: Arc<Deterministic>,
+    mut cx_a: &mut TestAppContext,
+    mut cx_b: &mut TestAppContext,
+    mut cx_c: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+    cx_c.update(editor::init);
+    cx_a.update(collab_ui::channel_view::init);
+    cx_b.update(collab_ui::channel_view::init);
+    cx_c.update(collab_ui::channel_view::init);
+
+    let channel_1_id = server
+        .make_channel(
+            "channel-1",
+            None,
+            (&client_a, cx_a),
+            &mut [(&client_b, cx_b), (&client_c, cx_c)],
+        )
+        .await;
+    let channel_2_id = server
+        .make_channel(
+            "channel-2",
+            None,
+            (&client_a, cx_a),
+            &mut [(&client_b, cx_b), (&client_c, cx_c)],
+        )
+        .await;
+
+    // Clients A, B, and C join a channel.
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+    let active_call_c = cx_c.read(ActiveCall::global);
+    for (call, cx) in [
+        (&active_call_a, &mut cx_a),
+        (&active_call_b, &mut cx_b),
+        (&active_call_c, &mut cx_c),
+    ] {
+        call.update(*cx, |call, cx| call.join_channel(channel_1_id, cx))
+            .await
+            .unwrap();
+    }
+    deterministic.run_until_parked();
+
+    // Clients A, B, and C all open their own unshared projects.
+    client_a.fs().insert_tree("/a", json!({})).await;
+    client_b.fs().insert_tree("/b", json!({})).await;
+    client_c.fs().insert_tree("/c", json!({})).await;
+    let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
+    let (project_b, _) = client_b.build_local_project("/b", cx_b).await;
+    let (project_c, _) = client_b.build_local_project("/c", cx_c).await;
+    let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
+    let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
+    let _workspace_c = client_c.build_workspace(&project_c, cx_c).root(cx_c);
+
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+
+    // Client A opens the notes for channel 1.
+    let channel_view_1_a = cx_a
+        .update(|cx| ChannelView::open(channel_1_id, workspace_a.clone(), cx))
+        .await
+        .unwrap();
+    channel_view_1_a.update(cx_a, |notes, cx| {
+        assert_eq!(notes.channel(cx).name, "channel-1");
+        notes.editor.update(cx, |editor, cx| {
+            editor.insert("Hello from A.", cx);
+            editor.change_selections(None, cx, |selections| {
+                selections.select_ranges(vec![3..4]);
+            });
+        });
+    });
+
+    // Client B follows client A.
+    workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.follow(client_a.peer_id().unwrap(), cx).unwrap()
+        })
+        .await
+        .unwrap();
+
+    // Client B is taken to the notes for channel 1, with the same
+    // text selected as client A.
+    deterministic.run_until_parked();
+    let channel_view_1_b = workspace_b.read_with(cx_b, |workspace, cx| {
+        assert_eq!(
+            workspace.leader_for_pane(workspace.active_pane()),
+            Some(client_a.peer_id().unwrap())
+        );
+        workspace
+            .active_item(cx)
+            .expect("no active item")
+            .downcast::<ChannelView>()
+            .expect("active item is not a channel view")
+    });
+    channel_view_1_b.read_with(cx_b, |notes, cx| {
+        assert_eq!(notes.channel(cx).name, "channel-1");
+        let editor = notes.editor.read(cx);
+        assert_eq!(editor.text(cx), "Hello from A.");
+        assert_eq!(editor.selections.ranges::<usize>(cx), &[3..4]);
+    });
+
+    // Client A opens the notes for channel 2.
+    let channel_view_2_a = cx_a
+        .update(|cx| ChannelView::open(channel_2_id, workspace_a.clone(), cx))
+        .await
+        .unwrap();
+    channel_view_2_a.read_with(cx_a, |notes, cx| {
+        assert_eq!(notes.channel(cx).name, "channel-2");
+    });
+
+    // Client B is taken to the notes for channel 2.
+    deterministic.run_until_parked();
+    let channel_view_2_b = workspace_b.read_with(cx_b, |workspace, cx| {
+        assert_eq!(
+            workspace.leader_for_pane(workspace.active_pane()),
+            Some(client_a.peer_id().unwrap())
+        );
+        workspace
+            .active_item(cx)
+            .expect("no active item")
+            .downcast::<ChannelView>()
+            .expect("active item is not a channel view")
+    });
+    channel_view_2_b.read_with(cx_b, |notes, cx| {
+        assert_eq!(notes.channel(cx).name, "channel-2");
+    });
+}
+
 #[track_caller]
-fn assert_collaborators(collaborators: &[proto::Collaborator], ids: &[Option<UserId>]) {
+fn assert_collaborators(collaborators: &HashMap<PeerId, Collaborator>, ids: &[Option<UserId>]) {
+    let mut user_ids = collaborators
+        .values()
+        .map(|collaborator| collaborator.user_id)
+        .collect::<Vec<_>>();
+    user_ids.sort();
     assert_eq!(
-        collaborators
-            .into_iter()
-            .map(|collaborator| collaborator.user_id)
-            .collect::<Vec<_>>(),
+        user_ids,
         ids.into_iter().map(|id| id.unwrap()).collect::<Vec<_>>()
     );
 }

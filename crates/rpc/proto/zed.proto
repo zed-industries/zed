@@ -23,154 +23,152 @@ message Envelope {
         CreateRoomResponse create_room_response = 10;
         JoinRoom join_room = 11;
         JoinRoomResponse join_room_response = 12;
-        RejoinRoom rejoin_room = 108;
-        RejoinRoomResponse rejoin_room_response = 109;
-        LeaveRoom leave_room = 13;
-        Call call = 14;
-        IncomingCall incoming_call = 15;
-        CallCanceled call_canceled = 16;
-        CancelCall cancel_call = 17;
-        DeclineCall decline_call = 18;
-        UpdateParticipantLocation update_participant_location = 19;
-        RoomUpdated room_updated = 20;
+        RejoinRoom rejoin_room = 13;
+        RejoinRoomResponse rejoin_room_response = 14;
+        LeaveRoom leave_room = 15;
+        Call call = 16;
+        IncomingCall incoming_call = 17;
+        CallCanceled call_canceled = 18;
+        CancelCall cancel_call = 19;
+        DeclineCall decline_call = 20;
+        UpdateParticipantLocation update_participant_location = 21;
+        RoomUpdated room_updated = 22;
 
-        ShareProject share_project = 21;
-        ShareProjectResponse share_project_response = 22;
-        UnshareProject unshare_project = 23;
-        JoinProject join_project = 24;
-        JoinProjectResponse join_project_response = 25;
-        LeaveProject leave_project = 26;
-        AddProjectCollaborator add_project_collaborator = 27;
-        UpdateProjectCollaborator update_project_collaborator = 110;
-        RemoveProjectCollaborator remove_project_collaborator = 28;
+        ShareProject share_project = 23;
+        ShareProjectResponse share_project_response = 24;
+        UnshareProject unshare_project = 25;
+        JoinProject join_project = 26;
+        JoinProjectResponse join_project_response = 27;
+        LeaveProject leave_project = 28;
+        AddProjectCollaborator add_project_collaborator = 29;
+        UpdateProjectCollaborator update_project_collaborator = 30;
+        RemoveProjectCollaborator remove_project_collaborator = 31;
 
-        GetDefinition get_definition = 29;
-        GetDefinitionResponse get_definition_response = 30;
-        GetTypeDefinition get_type_definition = 31;
-        GetTypeDefinitionResponse get_type_definition_response = 32;
-        GetReferences get_references = 33;
-        GetReferencesResponse get_references_response = 34;
-        GetDocumentHighlights get_document_highlights = 35;
-        GetDocumentHighlightsResponse get_document_highlights_response = 36;
-        GetProjectSymbols get_project_symbols = 37;
-        GetProjectSymbolsResponse get_project_symbols_response = 38;
-        OpenBufferForSymbol open_buffer_for_symbol = 39;
-        OpenBufferForSymbolResponse open_buffer_for_symbol_response = 40;
+        GetDefinition get_definition = 32;
+        GetDefinitionResponse get_definition_response = 33;
+        GetTypeDefinition get_type_definition = 34;
+        GetTypeDefinitionResponse get_type_definition_response = 35;
+        GetReferences get_references = 36;
+        GetReferencesResponse get_references_response = 37;
+        GetDocumentHighlights get_document_highlights = 38;
+        GetDocumentHighlightsResponse get_document_highlights_response = 39;
+        GetProjectSymbols get_project_symbols = 40;
+        GetProjectSymbolsResponse get_project_symbols_response = 41;
+        OpenBufferForSymbol open_buffer_for_symbol = 42;
+        OpenBufferForSymbolResponse open_buffer_for_symbol_response = 43;
 
-        UpdateProject update_project = 41;
-        UpdateWorktree update_worktree = 43;
+        UpdateProject update_project = 44;
+        UpdateWorktree update_worktree = 45;
 
-        CreateProjectEntry create_project_entry = 45;
-        RenameProjectEntry rename_project_entry = 46;
-        CopyProjectEntry copy_project_entry = 47;
-        DeleteProjectEntry delete_project_entry = 48;
-        ProjectEntryResponse project_entry_response = 49;
-        ExpandProjectEntry expand_project_entry = 114;
-        ExpandProjectEntryResponse expand_project_entry_response = 115;
+        CreateProjectEntry create_project_entry = 46;
+        RenameProjectEntry rename_project_entry = 47;
+        CopyProjectEntry copy_project_entry = 48;
+        DeleteProjectEntry delete_project_entry = 49;
+        ProjectEntryResponse project_entry_response = 50;
+        ExpandProjectEntry expand_project_entry = 51;
+        ExpandProjectEntryResponse expand_project_entry_response = 52;
 
-        UpdateDiagnosticSummary update_diagnostic_summary = 50;
-        StartLanguageServer start_language_server = 51;
-        UpdateLanguageServer update_language_server = 52;
+        UpdateDiagnosticSummary update_diagnostic_summary = 53;
+        StartLanguageServer start_language_server = 54;
+        UpdateLanguageServer update_language_server = 55;
 
-        OpenBufferById open_buffer_by_id = 53;
-        OpenBufferByPath open_buffer_by_path = 54;
-        OpenBufferResponse open_buffer_response = 55;
-        CreateBufferForPeer create_buffer_for_peer = 56;
-        UpdateBuffer update_buffer = 57;
-        UpdateBufferFile update_buffer_file = 58;
-        SaveBuffer save_buffer = 59;
-        BufferSaved buffer_saved = 60;
-        BufferReloaded buffer_reloaded = 61;
-        ReloadBuffers reload_buffers = 62;
-        ReloadBuffersResponse reload_buffers_response = 63;
-        SynchronizeBuffers synchronize_buffers = 200;
-        SynchronizeBuffersResponse synchronize_buffers_response = 201;
-        FormatBuffers format_buffers = 64;
-        FormatBuffersResponse format_buffers_response = 65;
-        GetCompletions get_completions = 66;
-        GetCompletionsResponse get_completions_response = 67;
-        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 68;
-        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 69;
-        GetCodeActions get_code_actions = 70;
-        GetCodeActionsResponse get_code_actions_response = 71;
-        GetHover get_hover = 72;
-        GetHoverResponse get_hover_response = 73;
-        ApplyCodeAction apply_code_action = 74;
-        ApplyCodeActionResponse apply_code_action_response = 75;
-        PrepareRename prepare_rename = 76;
-        PrepareRenameResponse prepare_rename_response = 77;
-        PerformRename perform_rename = 78;
-        PerformRenameResponse perform_rename_response = 79;
-        SearchProject search_project = 80;
-        SearchProjectResponse search_project_response = 81;
+        OpenBufferById open_buffer_by_id = 56;
+        OpenBufferByPath open_buffer_by_path = 57;
+        OpenBufferResponse open_buffer_response = 58;
+        CreateBufferForPeer create_buffer_for_peer = 59;
+        UpdateBuffer update_buffer = 60;
+        UpdateBufferFile update_buffer_file = 61;
+        SaveBuffer save_buffer = 62;
+        BufferSaved buffer_saved = 63;
+        BufferReloaded buffer_reloaded = 64;
+        ReloadBuffers reload_buffers = 65;
+        ReloadBuffersResponse reload_buffers_response = 66;
+        SynchronizeBuffers synchronize_buffers = 67;
+        SynchronizeBuffersResponse synchronize_buffers_response = 68;
+        FormatBuffers format_buffers = 69;
+        FormatBuffersResponse format_buffers_response = 70;
+        GetCompletions get_completions = 71;
+        GetCompletionsResponse get_completions_response = 72;
+        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 73;
+        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 74;
+        GetCodeActions get_code_actions = 75;
+        GetCodeActionsResponse get_code_actions_response = 76;
+        GetHover get_hover = 77;
+        GetHoverResponse get_hover_response = 78;
+        ApplyCodeAction apply_code_action = 79;
+        ApplyCodeActionResponse apply_code_action_response = 80;
+        PrepareRename prepare_rename = 81;
+        PrepareRenameResponse prepare_rename_response = 82;
+        PerformRename perform_rename = 83;
+        PerformRenameResponse perform_rename_response = 84;
+        SearchProject search_project = 85;
+        SearchProjectResponse search_project_response = 86;
 
-        UpdateContacts update_contacts = 92;
-        UpdateInviteInfo update_invite_info = 93;
-        ShowContacts show_contacts = 94;
+        UpdateContacts update_contacts = 87;
+        UpdateInviteInfo update_invite_info = 88;
+        ShowContacts show_contacts = 89;
 
-        GetUsers get_users = 95;
-        FuzzySearchUsers fuzzy_search_users = 96;
-        UsersResponse users_response = 97;
-        RequestContact request_contact = 98;
-        RespondToContactRequest respond_to_contact_request = 99;
-        RemoveContact remove_contact = 100;
+        GetUsers get_users = 90;
+        FuzzySearchUsers fuzzy_search_users = 91;
+        UsersResponse users_response = 92;
+        RequestContact request_contact = 93;
+        RespondToContactRequest respond_to_contact_request = 94;
+        RemoveContact remove_contact = 95;
 
-        Follow follow = 101;
-        FollowResponse follow_response = 102;
-        UpdateFollowers update_followers = 103;
-        Unfollow unfollow = 104;
-        GetPrivateUserInfo get_private_user_info = 105;
-        GetPrivateUserInfoResponse get_private_user_info_response = 106;
-        UpdateDiffBase update_diff_base = 107;
+        Follow follow = 96;
+        FollowResponse follow_response = 97;
+        UpdateFollowers update_followers = 98;
+        Unfollow unfollow = 99;
+        GetPrivateUserInfo get_private_user_info = 100;
+        GetPrivateUserInfoResponse get_private_user_info_response = 101;
+        UpdateDiffBase update_diff_base = 102;
 
-        OnTypeFormatting on_type_formatting = 111;
-        OnTypeFormattingResponse on_type_formatting_response = 112;
+        OnTypeFormatting on_type_formatting = 103;
+        OnTypeFormattingResponse on_type_formatting_response = 104;
 
-        UpdateWorktreeSettings update_worktree_settings = 113;
+        UpdateWorktreeSettings update_worktree_settings = 105;
 
-        InlayHints inlay_hints = 116;
-        InlayHintsResponse inlay_hints_response = 117;
-        ResolveInlayHint resolve_inlay_hint = 137;
-        ResolveInlayHintResponse resolve_inlay_hint_response = 138;
-        RefreshInlayHints refresh_inlay_hints = 118;
+        InlayHints inlay_hints = 106;
+        InlayHintsResponse inlay_hints_response = 107;
+        ResolveInlayHint resolve_inlay_hint = 108;
+        ResolveInlayHintResponse resolve_inlay_hint_response = 109;
+        RefreshInlayHints refresh_inlay_hints = 110;
 
-        CreateChannel create_channel = 119;
-        CreateChannelResponse create_channel_response = 120;
-        InviteChannelMember invite_channel_member = 121;
-        RemoveChannelMember remove_channel_member = 122;
-        RespondToChannelInvite respond_to_channel_invite = 123;
-        UpdateChannels update_channels = 124;
-        JoinChannel join_channel = 125;
-        DeleteChannel delete_channel = 126;
-        GetChannelMembers get_channel_members = 127;
-        GetChannelMembersResponse get_channel_members_response = 128;
-        SetChannelMemberAdmin set_channel_member_admin = 129;
-        RenameChannel rename_channel = 130;
-        RenameChannelResponse rename_channel_response = 154;
+        CreateChannel create_channel = 111;
+        CreateChannelResponse create_channel_response = 112;
+        InviteChannelMember invite_channel_member = 113;
+        RemoveChannelMember remove_channel_member = 114;
+        RespondToChannelInvite respond_to_channel_invite = 115;
+        UpdateChannels update_channels = 116;
+        JoinChannel join_channel = 117;
+        DeleteChannel delete_channel = 118;
+        GetChannelMembers get_channel_members = 119;
+        GetChannelMembersResponse get_channel_members_response = 120;
+        SetChannelMemberAdmin set_channel_member_admin = 121;
+        RenameChannel rename_channel = 122;
+        RenameChannelResponse rename_channel_response = 123;
 
-        JoinChannelBuffer join_channel_buffer = 131;
-        JoinChannelBufferResponse join_channel_buffer_response = 132;
-        UpdateChannelBuffer update_channel_buffer = 133;
-        LeaveChannelBuffer leave_channel_buffer = 134;
-        AddChannelBufferCollaborator add_channel_buffer_collaborator = 135;
-        RemoveChannelBufferCollaborator remove_channel_buffer_collaborator = 136;
-        UpdateChannelBufferCollaborator update_channel_buffer_collaborator = 139;
-        RejoinChannelBuffers rejoin_channel_buffers = 140;
-        RejoinChannelBuffersResponse rejoin_channel_buffers_response = 141;
+        JoinChannelBuffer join_channel_buffer = 124;
+        JoinChannelBufferResponse join_channel_buffer_response = 125;
+        UpdateChannelBuffer update_channel_buffer = 126;
+        LeaveChannelBuffer leave_channel_buffer = 127;
+        UpdateChannelBufferCollaborators update_channel_buffer_collaborators = 128;
+        RejoinChannelBuffers rejoin_channel_buffers = 129;
+        RejoinChannelBuffersResponse rejoin_channel_buffers_response = 130;
 
-        JoinChannelChat join_channel_chat = 142;
-        JoinChannelChatResponse join_channel_chat_response = 143;
-        LeaveChannelChat leave_channel_chat = 144;
-        SendChannelMessage send_channel_message = 145;
-        SendChannelMessageResponse send_channel_message_response = 146;
-        ChannelMessageSent channel_message_sent = 147;
-        GetChannelMessages get_channel_messages = 148;
-        GetChannelMessagesResponse get_channel_messages_response = 149;
-        RemoveChannelMessage remove_channel_message = 150;
+        JoinChannelChat join_channel_chat = 131;
+        JoinChannelChatResponse join_channel_chat_response = 132;
+        LeaveChannelChat leave_channel_chat = 133;
+        SendChannelMessage send_channel_message = 134;
+        SendChannelMessageResponse send_channel_message_response = 135;
+        ChannelMessageSent channel_message_sent = 136;
+        GetChannelMessages get_channel_messages = 137;
+        GetChannelMessagesResponse get_channel_messages_response = 138;
+        RemoveChannelMessage remove_channel_message = 139;
 
-        LinkChannel link_channel = 151;
-        UnlinkChannel unlink_channel = 152;
-        MoveChannel move_channel = 153; // Current max: 154
+        LinkChannel link_channel = 140;
+        UnlinkChannel unlink_channel = 141;
+        MoveChannel move_channel = 142;
     }
 }
 
@@ -258,6 +256,7 @@ message Participant {
     PeerId peer_id = 2;
     repeated ParticipantProject projects = 3;
     ParticipantLocation location = 4;
+    uint32 participant_index = 5;
 }
 
 message PendingParticipant {
@@ -440,20 +439,9 @@ message RemoveProjectCollaborator {
     PeerId peer_id = 2;
 }
 
-message AddChannelBufferCollaborator {
+message UpdateChannelBufferCollaborators {
     uint64 channel_id = 1;
-    Collaborator collaborator = 2;
-}
-
-message RemoveChannelBufferCollaborator {
-    uint64 channel_id = 1;
-    PeerId peer_id = 2;
-}
-
-message UpdateChannelBufferCollaborator {
-    uint64 channel_id = 1;
-    PeerId old_peer_id = 2;
-    PeerId new_peer_id = 3;
+    repeated Collaborator collaborators = 2;
 }
 
 message GetDefinition {
@@ -1213,8 +1201,9 @@ message UpdateDiagnostics {
 }
 
 message Follow {
-    uint64 project_id = 1;
-    PeerId leader_id = 2;
+    uint64 room_id = 1;
+    optional uint64 project_id = 2;
+    PeerId leader_id = 3;
 }
 
 message FollowResponse {
@@ -1223,18 +1212,20 @@ message FollowResponse {
 }
 
 message UpdateFollowers {
-    uint64 project_id = 1;
-    repeated PeerId follower_ids = 2;
+    uint64 room_id = 1;
+    optional uint64 project_id = 2;
+    repeated PeerId follower_ids = 3;
     oneof variant {
-        UpdateActiveView update_active_view = 3;
-        View create_view = 4;
-        UpdateView update_view = 5;
+        UpdateActiveView update_active_view = 4;
+        View create_view = 5;
+        UpdateView update_view = 6;
     }
 }
 
 message Unfollow {
-    uint64 project_id = 1;
-    PeerId leader_id = 2;
+    uint64 room_id = 1;
+    optional uint64 project_id = 2;
+    PeerId leader_id = 3;
 }
 
 message GetPrivateUserInfo {}

@@ -409,7 +409,7 @@ impl ChatPanel {
                 })
                 .on_click(MouseButton::Left, move |_, _, cx| {
                     if let Some(workspace) = workspace.upgrade(cx) {
-                        ChannelView::deploy(channel_id, workspace, cx);
+                        ChannelView::open(channel_id, workspace, cx).detach();
                     }
                 })
                 .with_tooltip::<OpenChannelNotes>(
@@ -546,7 +546,7 @@ impl ChatPanel {
         if let Some((chat, _)) = &self.active_chat {
             let channel_id = chat.read(cx).channel().id;
             if let Some(workspace) = self.workspace.upgrade(cx) {
-                ChannelView::deploy(channel_id, workspace, cx);
+                ChannelView::open(channel_id, workspace, cx).detach();
             }
         }
     }

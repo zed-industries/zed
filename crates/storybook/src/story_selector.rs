@@ -42,6 +42,7 @@ pub enum ComponentStory {
     CollabPanel,
     Facepile,
     Keybinding,
+    LanguageSelector,
     Palette,
     Panel,
     ProjectPanel,
@@ -69,6 +70,9 @@ impl ComponentStory {
             Self::CollabPanel => components::collab_panel::CollabPanelStory::default().into_any(),
             Self::Facepile => components::facepile::FacepileStory::default().into_any(),
             Self::Keybinding => components::keybinding::KeybindingStory::default().into_any(),
+            Self::LanguageSelector => {
+                components::language_selector::LanguageSelectorStory::default().into_any()
+            }
             Self::Palette => components::palette::PaletteStory::default().into_any(),
             Self::Panel => components::panel::PanelStory::default().into_any(),
             Self::ProjectPanel => {

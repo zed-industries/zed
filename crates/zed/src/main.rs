@@ -54,7 +54,7 @@ use welcome::{show_welcome_experience, FIRST_OPEN};
 
 use fs::RealFs;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
-use workspace::AppState;
+use workspace::{AppState, WorkspaceStore};
 use zed::{
     assets::Assets,
     build_window_options, handle_keymap_file_changes, initialize_workspace, languages, menus,
@@ -139,6 +139,7 @@ fn main() {
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
         let channel_store =
             cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
+        let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
         cx.set_global(client.clone());
 
@@ -176,7 +177,7 @@ fn main() {
         })
         .detach();
 
-        client.telemetry().start(installation_id);
+        client.telemetry().start(installation_id, cx);
 
         let app_state = Arc::new(AppState {
             languages,
@@ -187,6 +188,7 @@ fn main() {
             build_window_options,
             initialize_workspace,
             background_actions,
+            workspace_store,
         });
         cx.set_global(Arc::downgrade(&app_state));
 

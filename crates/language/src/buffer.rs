@@ -8,8 +8,8 @@ use crate::{
     language_settings::{language_settings, LanguageSettings},
     outline::OutlineItem,
     syntax_map::{
-        SyntaxLayerInfo, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxSnapshot,
-        ToTreeSitterPoint,
+        SyntaxLayerInfo, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatches,
+        SyntaxSnapshot, ToTreeSitterPoint,
     },
     CodeLabel, LanguageScope, Outline,
 };
@@ -2465,6 +2465,14 @@ impl BufferSnapshot {
             })
         }
         Some(items)
+    }
+
+    pub fn matches(
+        &self,
+        range: Range<usize>,
+        query: fn(&Grammar) -> Option<&tree_sitter::Query>,
+    ) -> SyntaxMapMatches {
+        self.syntax.matches(range, self, query)
     }
 
     /// Returns bracket range pairs overlapping or adjacent to `range`

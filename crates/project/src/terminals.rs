@@ -84,6 +84,7 @@ impl Project {
             terminal_settings::ActivateScript::Default => "activate",
             terminal_settings::ActivateScript::Csh => "activate.csh",
             terminal_settings::ActivateScript::Fish => "activate.fish",
+            terminal_settings::ActivateScript::Nushell => "activate.nu",
         };
 
         for virtual_environment_name in settings.directories {

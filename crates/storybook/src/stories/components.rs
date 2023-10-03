@@ -6,6 +6,7 @@ pub mod collab_panel;
 pub mod context_menu;
 pub mod facepile;
 pub mod keybinding;
+pub mod language_selector;
 pub mod palette;
 pub mod panel;
 pub mod project_panel;

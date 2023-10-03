@@ -11,7 +11,7 @@ mod project_tests;
 mod worktree_tests;
 
 use anyhow::{anyhow, Context, Result};
-use client::{proto, Client, TypedEnvelope, UserId, UserStore};
+use client::{proto, Client, Collaborator, TypedEnvelope, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use copilot::Copilot;
@@ -251,13 +251,6 @@ enum ProjectClientState {
         remote_id: u64,
         replica_id: ReplicaId,
     },
-}
-
-#[derive(Clone, Debug)]
-pub struct Collaborator {
-    pub peer_id: proto::PeerId,
-    pub replica_id: ReplicaId,
-    pub user_id: UserId,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -980,6 +973,10 @@ impl Project {
 
     pub fn collaborators(&self) -> &HashMap<proto::PeerId, Collaborator> {
         &self.collaborators
+    }
+
+    pub fn host(&self) -> Option<&Collaborator> {
+        self.collaborators.values().find(|c| c.replica_id == 0)
     }
 
     /// Collect all worktrees, including ones that don't appear in the project panel
@@ -2231,26 +2228,62 @@ impl Project {
                         .get_mut(&buffer.remote_id())
                         .and_then(|m| m.get_mut(&language_server.server_id()))?;
                     let previous_snapshot = buffer_snapshots.last()?;
-                    let next_version = previous_snapshot.version + 1;
 
-                    let content_changes = buffer
-                        .edits_since::<(PointUtf16, usize)>(previous_snapshot.snapshot.version())
-                        .map(|edit| {
-                            let edit_start = edit.new.start.0;
-                            let edit_end = edit_start + (edit.old.end.0 - edit.old.start.0);
-                            let new_text = next_snapshot
-                                .text_for_range(edit.new.start.1..edit.new.end.1)
-                                .collect();
-                            lsp::TextDocumentContentChangeEvent {
-                                range: Some(lsp::Range::new(
-                                    point_to_lsp(edit_start),
-                                    point_to_lsp(edit_end),
-                                )),
+                    let build_incremental_change = || {
+                        buffer
+                            .edits_since::<(PointUtf16, usize)>(
+                                previous_snapshot.snapshot.version(),
+                            )
+                            .map(|edit| {
+                                let edit_start = edit.new.start.0;
+                                let edit_end = edit_start + (edit.old.end.0 - edit.old.start.0);
+                                let new_text = next_snapshot
+                                    .text_for_range(edit.new.start.1..edit.new.end.1)
+                                    .collect();
+                                lsp::TextDocumentContentChangeEvent {
+                                    range: Some(lsp::Range::new(
+                                        point_to_lsp(edit_start),
+                                        point_to_lsp(edit_end),
+                                    )),
+                                    range_length: None,
+                                    text: new_text,
+                                }
+                            })
+                            .collect()
+                    };
+
+                    let document_sync_kind = language_server
+                        .capabilities()
+                        .text_document_sync
+                        .as_ref()
+                        .and_then(|sync| match sync {
+                            lsp::TextDocumentSyncCapability::Kind(kind) => Some(*kind),
+                            lsp::TextDocumentSyncCapability::Options(options) => options.change,
+                        });
+
+                    let content_changes: Vec<_> = match document_sync_kind {
+                        Some(lsp::TextDocumentSyncKind::FULL) => {
+                            vec![lsp::TextDocumentContentChangeEvent {
+                                range: None,
                                 range_length: None,
-                                text: new_text,
+                                text: next_snapshot.text(),
+                            }]
+                        }
+                        Some(lsp::TextDocumentSyncKind::INCREMENTAL) => build_incremental_change(),
+                        _ => {
+                            #[cfg(any(test, feature = "test-support"))]
+                            {
+                                build_incremental_change()
                             }
-                        })
-                        .collect();
+
+                            #[cfg(not(any(test, feature = "test-support")))]
+                            {
+                                continue;
+                            }
+                        }
+                    };
+
+                    let next_version = previous_snapshot.version + 1;
 
                     buffer_snapshots.push(LspBufferSnapshot {
                         version: next_version,
@@ -4928,8 +4961,16 @@ impl Project {
                     if abs_path.ends_with("/") {
                         fs.create_dir(&abs_path).await?;
                     } else {
-                        fs.create_file(&abs_path, op.options.map(Into::into).unwrap_or_default())
-                            .await?;
+                        fs.create_file(
+                            &abs_path,
+                            op.options
+                                .map(|options| fs::CreateOptions {
+                                    overwrite: options.overwrite.unwrap_or(false),
+                                    ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
+                                })
+                                .unwrap_or_default(),
+                        )
+                        .await?;
                     }
                 }
 
@@ -4945,7 +4986,12 @@ impl Project {
                     fs.rename(
                         &source_abs_path,
                         &target_abs_path,
-                        op.options.map(Into::into).unwrap_or_default(),
+                        op.options
+                            .map(|options| fs::RenameOptions {
+                                overwrite: options.overwrite.unwrap_or(false),
+                                ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
+                            })
+                            .unwrap_or_default(),
                     )
                     .await?;
                 }
@@ -4955,7 +5001,13 @@ impl Project {
                         .uri
                         .to_file_path()
                         .map_err(|_| anyhow!("can't convert URI to path"))?;
-                    let options = op.options.map(Into::into).unwrap_or_default();
+                    let options = op
+                        .options
+                        .map(|options| fs::RemoveOptions {
+                            recursive: options.recursive.unwrap_or(false),
+                            ignore_if_not_exists: options.ignore_if_not_exists.unwrap_or(false),
+                        })
+                        .unwrap_or_default();
                     if abs_path.ends_with("/") {
                         fs.remove_dir(&abs_path, options).await?;
                     } else {
@@ -8213,16 +8265,6 @@ impl Entity for Project {
             }
             .boxed(),
         )
-    }
-}
-
-impl Collaborator {
-    fn from_proto(message: proto::Collaborator) -> Result<Self> {
-        Ok(Self {
-            peer_id: message.peer_id.ok_or_else(|| anyhow!("invalid peer id"))?,
-            replica_id: message.replica_id as ReplicaId,
-            user_id: message.user_id as UserId,
-        })
     }
 }
 

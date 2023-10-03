@@ -2,6 +2,12 @@ use super::*;
 use prost::Message;
 use text::{EditOperation, UndoOperation};
 
+pub struct LeftChannelBuffer {
+    pub channel_id: ChannelId,
+    pub collaborators: Vec<proto::Collaborator>,
+    pub connections: Vec<ConnectionId>,
+}
+
 impl Database {
     pub async fn join_channel_buffer(
         &self,
@@ -204,23 +210,26 @@ impl Database {
         server_id: ServerId,
     ) -> Result<RefreshedChannelBuffer> {
         self.transaction(|tx| async move {
-            let collaborators = channel_buffer_collaborator::Entity::find()
+            let db_collaborators = channel_buffer_collaborator::Entity::find()
                 .filter(channel_buffer_collaborator::Column::ChannelId.eq(channel_id))
                 .all(&*tx)
                 .await?;
 
             let mut connection_ids = Vec::new();
-            let mut removed_collaborators = Vec::new();
+            let mut collaborators = Vec::new();
             let mut collaborator_ids_to_remove = Vec::new();
-            for collaborator in &collaborators {
-                if !collaborator.connection_lost && collaborator.connection_server_id == server_id {
-                    connection_ids.push(collaborator.connection());
+            for db_collaborator in &db_collaborators {
+                if !db_collaborator.connection_lost
+                    && db_collaborator.connection_server_id == server_id
+                {
+                    connection_ids.push(db_collaborator.connection());
+                    collaborators.push(proto::Collaborator {
+                        peer_id: Some(db_collaborator.connection().into()),
+                        replica_id: db_collaborator.replica_id.0 as u32,
+                        user_id: db_collaborator.user_id.to_proto(),
+                    })
                 } else {
-                    removed_collaborators.push(proto::RemoveChannelBufferCollaborator {
-                        channel_id: channel_id.to_proto(),
-                        peer_id: Some(collaborator.connection().into()),
-                    });
-                    collaborator_ids_to_remove.push(collaborator.id);
+                    collaborator_ids_to_remove.push(db_collaborator.id);
                 }
             }
 
@@ -231,7 +240,7 @@ impl Database {
 
             Ok(RefreshedChannelBuffer {
                 connection_ids,
-                removed_collaborators,
+                collaborators,
             })
         })
         .await
@@ -241,7 +250,7 @@ impl Database {
         &self,
         channel_id: ChannelId,
         connection: ConnectionId,
-    ) -> Result<Vec<ConnectionId>> {
+    ) -> Result<LeftChannelBuffer> {
         self.transaction(|tx| async move {
             self.leave_channel_buffer_internal(channel_id, connection, &*tx)
                 .await
@@ -275,7 +284,7 @@ impl Database {
     pub async fn leave_channel_buffers(
         &self,
         connection: ConnectionId,
-    ) -> Result<Vec<(ChannelId, Vec<ConnectionId>)>> {
+    ) -> Result<Vec<LeftChannelBuffer>> {
         self.transaction(|tx| async move {
             #[derive(Debug, Clone, Copy, EnumIter, DeriveColumn)]
             enum QueryChannelIds {
@@ -294,10 +303,10 @@ impl Database {
 
             let mut result = Vec::new();
             for channel_id in channel_ids {
-                let collaborators = self
+                let left_channel_buffer = self
                     .leave_channel_buffer_internal(channel_id, connection, &*tx)
                     .await?;
-                result.push((channel_id, collaborators));
+                result.push(left_channel_buffer);
             }
 
             Ok(result)
@@ -310,7 +319,7 @@ impl Database {
         channel_id: ChannelId,
         connection: ConnectionId,
         tx: &DatabaseTransaction,
-    ) -> Result<Vec<ConnectionId>> {
+    ) -> Result<LeftChannelBuffer> {
         let result = channel_buffer_collaborator::Entity::delete_many()
             .filter(
                 Condition::all()
@@ -327,6 +336,7 @@ impl Database {
             Err(anyhow!("not a collaborator on this project"))?;
         }
 
+        let mut collaborators = Vec::new();
         let mut connections = Vec::new();
         let mut rows = channel_buffer_collaborator::Entity::find()
             .filter(
@@ -336,19 +346,26 @@ impl Database {
             .await?;
         while let Some(row) = rows.next().await {
             let row = row?;
-            connections.push(ConnectionId {
-                id: row.connection_id as u32,
-                owner_id: row.connection_server_id.0 as u32,
+            let connection = row.connection();
+            connections.push(connection);
+            collaborators.push(proto::Collaborator {
+                peer_id: Some(connection.into()),
+                replica_id: row.replica_id.0 as u32,
+                user_id: row.user_id.to_proto(),
             });
         }
 
         drop(rows);
 
-        if connections.is_empty() {
+        if collaborators.is_empty() {
             self.snapshot_channel_buffer(channel_id, &tx).await?;
         }
 
-        Ok(connections)
+        Ok(LeftChannelBuffer {
+            channel_id,
+            collaborators,
+            connections,
+        })
     }
 
     pub async fn get_channel_buffer_collaborators(

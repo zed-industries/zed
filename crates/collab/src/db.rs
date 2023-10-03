@@ -510,7 +510,7 @@ pub struct RefreshedRoom {
 
 pub struct RefreshedChannelBuffer {
     pub connection_ids: Vec<ConnectionId>,
-    pub removed_collaborators: Vec<proto::RemoveChannelBufferCollaborator>,
+    pub collaborators: Vec<proto::Collaborator>,
 }
 
 pub struct Project {
