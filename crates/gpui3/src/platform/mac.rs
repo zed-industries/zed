@@ -6,6 +6,7 @@ mod metal_renderer;
 mod open_type;
 mod platform;
 mod screen;
+mod sprite;
 mod text_system;
 mod window;
 mod window_appearence;
@@ -32,6 +33,7 @@ use std::{
 pub use dispatcher::*;
 pub use platform::*;
 pub use screen::*;
+pub use sprite::*;
 pub use text_system::*;
 pub use window::*;
 

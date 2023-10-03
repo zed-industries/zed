@@ -198,3 +198,52 @@ float4 to_device_position(float2 pixel_position, float2 viewport_size) {
                     float2(-1., 1.),
                 0., 1.);
 }
+
+// struct SpriteFragmentInput {
+//     float4 position [[position]];
+//     float2 atlas_position;
+//     float4 color [[flat]];
+//     uchar compute_winding [[flat]];
+// };
+
+// vertex SpriteFragmentInput sprite_vertex(
+//     uint unit_vertex_id [[vertex_id]],
+//     uint sprite_id [[instance_id]],
+//     constant float2 *unit_vertices
+//     [[buffer(GPUISpriteVertexInputIndexVertices)]], constant GPUISprite
+//     *sprites [[buffer(GPUISpriteVertexInputIndexSprites)]], constant float2
+//     *viewport_size [[buffer(GPUISpriteVertexInputIndexViewportSize)]],
+//     constant float2 *atlas_size
+//     [[buffer(GPUISpriteVertexInputIndexAtlasSize)]]
+// ) {
+//     float2 unit_vertex = unit_vertices[unit_vertex_id];
+//     GPUISprite sprite = sprites[sprite_id];
+//     float2 position = unit_vertex * sprite.target_size + sprite.origin;
+//     float4 device_position = to_device_position(position, *viewport_size);
+//     float2 atlas_position = (unit_vertex * sprite.source_size +
+//     sprite.atlas_origin) / *atlas_size;
+
+//     return SpriteFragmentInput {
+//         device_position,
+//         atlas_position,
+//         coloru_to_colorf(sprite.color),
+//         sprite.compute_winding
+//     };
+// }
+
+// fragment float4 sprite_fragment(
+//     SpriteFragmentInput input [[stage_in]],
+//     texture2d<float> atlas [[ texture(GPUISpriteFragmentInputIndexAtlas) ]]
+// ) {
+//     constexpr sampler atlas_sampler(mag_filter::linear, min_filter::linear);
+//     float4 color = input.color;
+//     float4 sample = atlas.sample(atlas_sampler, input.atlas_position);
+//     float mask;
+//     if (input.compute_winding) {
+//         mask = 1. - abs(1. - fmod(sample.r, 2.));
+//     } else {
+//         mask = sample.a;
+//     }
+//     color.a *= mask;
+//     return color;
+// }

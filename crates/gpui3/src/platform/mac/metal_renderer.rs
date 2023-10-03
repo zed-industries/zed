@@ -1,4 +1,4 @@
-use crate::{point, size, DevicePixels, Quad, Scene, Size};
+use crate::{point, size, DevicePixels, MonochromeSprite, Quad, Scene, Size};
 use bytemuck::{Pod, Zeroable};
 use cocoa::{
     base::{NO, YES},
@@ -102,9 +102,7 @@ impl MetalRenderer {
         &*self.layer
     }
 
-    pub fn draw(&mut self, scene: &Scene) {
-        dbg!(scene);
-
+    pub fn draw(&mut self, scene: &mut Scene) {
         let layer = self.layer.clone();
         let viewport_size = layer.drawable_size();
         let viewport_size: Size<DevicePixels> = size(
@@ -159,21 +157,35 @@ impl MetalRenderer {
             zfar: 1.0,
         });
 
-        let mut buffer_offset = 0;
+        let mut instance_offset = 0;
         for layer in scene.layers() {
-            self.draw_quads(
-                &layer.quads,
-                &mut buffer_offset,
-                viewport_size,
-                command_encoder,
-            );
+            for batch in layer.batches() {
+                match batch {
+                    crate::PrimitiveBatch::Quads(quads) => {
+                        self.draw_quads(
+                            quads,
+                            &mut instance_offset,
+                            viewport_size,
+                            command_encoder,
+                        );
+                    }
+                    crate::PrimitiveBatch::Sprites(sprites) => {
+                        self.draw_monochrome_sprites(
+                            sprites,
+                            &mut instance_offset,
+                            viewport_size,
+                            command_encoder,
+                        );
+                    }
+                }
+            }
         }
 
         command_encoder.end_encoding();
 
         self.instances.did_modify_range(NSRange {
             location: 0,
-            length: buffer_offset as NSUInteger,
+            length: instance_offset as NSUInteger,
         });
 
         command_buffer.commit();
@@ -237,6 +249,16 @@ impl MetalRenderer {
             quads.len() as u64,
         );
         *offset = next_offset;
+    }
+
+    fn draw_monochrome_sprites(
+        &mut self,
+        monochrome: &[MonochromeSprite],
+        offset: &mut usize,
+        viewport_size: Size<DevicePixels>,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) {
+        todo!()
     }
 }
 

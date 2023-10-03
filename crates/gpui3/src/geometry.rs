@@ -31,10 +31,10 @@ impl<T: Clone + Debug> Point<T> {
 
 impl<T, Rhs> Mul<Rhs> for Point<T>
 where
-    T: Mul<Rhs, Output = Rhs> + Clone + Debug,
+    T: Mul<Rhs, Output = T> + Clone + Debug,
     Rhs: Clone + Debug,
 {
-    type Output = Point<Rhs>;
+    type Output = Point<T>;
 
     fn mul(self, rhs: Rhs) -> Self::Output {
         Point {
@@ -105,7 +105,7 @@ impl<T: Clone + Debug> Clone for Point<T> {
 unsafe impl<T: Clone + Debug + Zeroable + Pod> Zeroable for Point<T> {}
 unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Point<T> {}
 
-#[derive(Refineable, Default, Clone, Copy, Debug, PartialEq, Div)]
+#[derive(Refineable, Default, Clone, Copy, Debug, PartialEq, Div, Hash)]
 #[refineable(debug)]
 #[repr(C)]
 pub struct Size<T: Clone + Debug> {
@@ -125,6 +125,23 @@ impl<T: Clone + Debug> Size<T> {
         Size {
             width: f(self.width.clone()),
             height: f(self.height.clone()),
+        }
+    }
+}
+
+impl<T: Clone + Debug + Ord> Size<T> {
+    pub fn max(&self, other: &Self) -> Self {
+        Size {
+            width: if self.width >= other.width {
+                self.width.clone()
+            } else {
+                other.width.clone()
+            },
+            height: if self.height >= other.height {
+                self.height.clone()
+            } else {
+                other.height.clone()
+            },
         }
     }
 }
@@ -150,6 +167,8 @@ impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Size<T> {
         self.height = self.height.clone() * rhs;
     }
 }
+
+impl<T: Eq + Debug + Clone> Eq for Size<T> {}
 
 impl From<Size<Option<Pixels>>> for Size<Option<f32>> {
     fn from(val: Size<Option<Pixels>>) -> Self {
@@ -202,6 +221,7 @@ unsafe impl<T: Clone + Debug + Zeroable + Pod> Pod for Bounds<T> {}
 impl<T, Rhs> Mul<Rhs> for Bounds<T>
 where
     T: Mul<Rhs, Output = Rhs> + Clone + Debug,
+    Point<T>: Mul<Rhs, Output = Point<Rhs>>,
     Rhs: Clone + Debug,
 {
     type Output = Bounds<Rhs>;
@@ -522,10 +542,29 @@ impl From<Pixels> for f64 {
 }
 
 #[derive(
-    Clone, Copy, Debug, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd,
+    Add,
+    AddAssign,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Div,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Sub,
+    SubAssign,
 )]
 #[repr(transparent)]
 pub struct DevicePixels(pub(crate) u32);
+
+impl DevicePixels {
+    pub fn to_bytes(&self, bytes_per_pixel: u8) -> u32 {
+        self.0 * bytes_per_pixel as u32
+    }
+}
 
 unsafe impl bytemuck::Pod for DevicePixels {}
 unsafe impl bytemuck::Zeroable for DevicePixels {}
@@ -539,6 +578,18 @@ impl From<DevicePixels> for u32 {
 impl From<u32> for DevicePixels {
     fn from(val: u32) -> Self {
         DevicePixels(val)
+    }
+}
+
+impl From<DevicePixels> for u64 {
+    fn from(device_pixels: DevicePixels) -> Self {
+        device_pixels.0 as u64
+    }
+}
+
+impl From<u64> for DevicePixels {
+    fn from(val: u64) -> Self {
+        DevicePixels(val as u32)
     }
 }
 

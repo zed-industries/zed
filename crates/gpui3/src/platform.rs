@@ -6,8 +6,8 @@ mod mac;
 mod test;
 
 use crate::{
-    AnyWindowHandle, Bounds, Font, FontId, FontMetrics, GlyphId, LineLayout, Pixels, Point, Result,
-    Scene, SharedString, Size,
+    AnyWindowHandle, Bounds, DevicePixels, Font, FontId, FontMetrics, GlyphId, LineLayout,
+    MonochromeSprite, Pixels, Point, Result, Scene, SharedString, Size,
 };
 use anyhow::anyhow;
 use async_task::Runnable;
@@ -122,7 +122,7 @@ pub trait PlatformWindow {
     fn screen(&self) -> Rc<dyn PlatformScreen>;
     fn mouse_position(&self) -> Point<Pixels>;
     fn as_any_mut(&mut self) -> &mut dyn Any;
-    fn set_input_handler(&mut self, input_handler: Box<dyn InputHandler>);
+    fn set_input_handler(&mut self, input_handler: Box<dyn PlatformInputHandler>);
     fn prompt(
         &self,
         level: WindowPromptLevel,
@@ -180,7 +180,15 @@ pub trait PlatformTextSystem: Send + Sync {
     ) -> Vec<usize>;
 }
 
-pub trait InputHandler {
+pub trait PlatformSpriteSystem<Key> {
+    fn get_or_insert_with(
+        &self,
+        key: Key,
+        build: impl FnOnce() -> (Size<DevicePixels>, Vec<u8>),
+    ) -> MonochromeSprite;
+}
+
+pub trait PlatformInputHandler {
     fn selected_text_range(&self) -> Option<Range<usize>>;
     fn marked_text_range(&self) -> Option<Range<usize>>;
     fn text_for_range(&self, range_utf16: Range<usize>) -> Option<String>;

@@ -1,8 +1,8 @@
 use super::{ns_string, MetalRenderer, NSRange};
 use crate::{
-    point, px, size, AnyWindowHandle, Bounds, Event, InputHandler, KeyDownEvent, Keystroke,
-    MacScreen, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMovedEvent,
-    MouseUpEvent, NSRectExt, Pixels, Platform, PlatformDispatcher, PlatformScreen, PlatformWindow,
+    point, px, size, AnyWindowHandle, Bounds, Event, KeyDownEvent, Keystroke, MacScreen, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMovedEvent, MouseUpEvent, NSRectExt,
+    Pixels, Platform, PlatformDispatcher, PlatformInputHandler, PlatformScreen, PlatformWindow,
     Point, Scene, Size, Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions,
     WindowPromptLevel,
 };
@@ -292,7 +292,7 @@ struct MacWindowState {
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     appearance_changed_callback: Option<Box<dyn FnMut()>>,
-    input_handler: Option<Box<dyn InputHandler>>,
+    input_handler: Option<Box<dyn PlatformInputHandler>>,
     pending_key_down: Option<(KeyDownEvent, Option<InsertText>)>,
     last_key_equivalent: Option<KeyDownEvent>,
     synthetic_drag_counter: usize,
@@ -671,7 +671,7 @@ impl PlatformWindow for MacWindow {
         self
     }
 
-    fn set_input_handler(&mut self, input_handler: Box<dyn InputHandler>) {
+    fn set_input_handler(&mut self, input_handler: Box<dyn PlatformInputHandler>) {
         self.0.as_ref().lock().input_handler = Some(input_handler);
     }
 
@@ -1357,9 +1357,8 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
     unsafe {
         let window_state = get_window_state(this);
         let mut window_state = window_state.as_ref().lock();
-        if let Some(scene) = window_state.scene_to_render.take() {
-            dbg!("render", &scene);
-            window_state.renderer.draw(&scene);
+        if let Some(mut scene) = window_state.scene_to_render.take() {
+            window_state.renderer.draw(&mut scene);
         }
     }
 }
@@ -1580,7 +1579,7 @@ async fn synthetic_drag(
 
 fn with_input_handler<F, R>(window: &Object, f: F) -> Option<R>
 where
-    F: FnOnce(&mut dyn InputHandler) -> R,
+    F: FnOnce(&mut dyn PlatformInputHandler) -> R,
 {
     let window_state = unsafe { get_window_state(window) };
     let mut lock = window_state.as_ref().lock();

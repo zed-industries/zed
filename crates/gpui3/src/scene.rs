@@ -1,82 +1,201 @@
-use std::mem;
+use std::{iter::Peekable, mem};
 
 use super::{Bounds, Hsla, Pixels, Point};
-use crate::{Corners, Edges, FontId, GlyphId};
+use crate::{Corners, DevicePixels, Edges};
 use bytemuck::{Pod, Zeroable};
-use collections::BTreeMap;
 
 // Exported to metal
 pub type PointF = Point<f32>;
+pub type StackingOrder = SmallVec<[u32; 16]>;
 
 #[derive(Debug)]
 pub struct Scene {
-    layers: BTreeMap<u32, SceneLayer>,
-    pub(crate) scale_factor: f32,
-}
-
-#[derive(Default, Debug)]
-pub struct SceneLayer {
-    pub quads: Vec<Quad>,
-    pub symbol: Vec<Symbol>,
+    scale_factor: f32,
+    pub(crate) layers: BTreeMap<StackingOrder, SceneLayer>,
 }
 
 impl Scene {
     pub fn new(scale_factor: f32) -> Scene {
         Scene {
-            layers: Default::default(),
             scale_factor,
+            layers: BTreeMap::new(),
         }
     }
 
     pub fn take(&mut self) -> Scene {
         Scene {
-            layers: mem::take(&mut self.layers),
             scale_factor: self.scale_factor,
+            layers: mem::take(&mut self.layers),
         }
     }
 
-    pub fn insert(&mut self, primitive: impl Into<Primitive>) {
-        let mut primitive = primitive.into();
-        primitive.scale(self.scale_factor);
-        let layer = self.layers.entry(primitive.order()).or_default();
+    pub fn insert(&mut self, order: StackingOrder, primitive: impl Into<Primitive>) {
+        let layer = self.layers.entry(order).or_default();
+
+        let primitive = primitive.into();
         match primitive {
-            Primitive::Quad(quad) => layer.quads.push(quad),
-            Primitive::MonochromeGlyph(glyph) => layer.symbol.push(glyph),
+            Primitive::Quad(mut quad) => {
+                quad.scale(self.scale_factor);
+                layer.quads.push(quad);
+            }
+            Primitive::Sprite(mut sprite) => {
+                sprite.scale(self.scale_factor);
+                layer.sprites.push(sprite);
+            }
         }
     }
 
-    pub fn layers(&self) -> impl Iterator<Item = &SceneLayer> {
-        self.layers.values()
+    pub(crate) fn layers(&mut self) -> impl Iterator<Item = &mut SceneLayer> {
+        self.layers.values_mut()
     }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct SceneLayer {
+    pub quads: Vec<Quad>,
+    pub sprites: Vec<MonochromeSprite>,
+}
+
+impl SceneLayer {
+    pub fn batches(&mut self) -> impl Iterator<Item = PrimitiveBatch> {
+        self.quads.sort_unstable_by(|a, b| a.order.cmp(&b.order));
+        self.sprites.sort_unstable_by(|a, b| a.order.cmp(&b.order));
+
+        BatchIterator::new(
+            &self.quads,
+            self.quads.iter().peekable(),
+            &self.sprites,
+            self.sprites.iter().peekable(),
+        )
+    }
+}
+
+struct BatchIterator<'a, Q, S>
+where
+    Q: Iterator<Item = &'a Quad>,
+    S: Iterator<Item = &'a MonochromeSprite>,
+{
+    next_batch_kind: Option<PrimitiveKind>,
+    quads: &'a [Quad],
+    sprites: &'a [MonochromeSprite],
+    quads_start: usize,
+    sprites_start: usize,
+    quads_iter: Peekable<Q>,
+    sprites_iter: Peekable<S>,
+}
+
+impl<'a, Q: 'a, S: 'a> Iterator for BatchIterator<'a, Q, S>
+where
+    Q: Iterator<Item = &'a Quad>,
+    S: Iterator<Item = &'a MonochromeSprite>,
+{
+    type Item = PrimitiveBatch<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(batch_kind) = self.next_batch_kind.take() {
+            match batch_kind {
+                PrimitiveKind::Quad => {
+                    let max_order = self
+                        .next_order(Some(PrimitiveKind::Quad))
+                        .unwrap_or(u32::MAX);
+                    let quads_start = self.quads_start;
+                    let quads_end = quads_start
+                        + self
+                            .quads_iter
+                            .by_ref()
+                            .take_while(|quad| quad.order <= max_order)
+                            .count();
+                    self.quads_start = quads_end;
+                    Some(PrimitiveBatch::Quads(&self.quads[quads_start..quads_end]))
+                }
+                PrimitiveKind::Sprite => {
+                    let max_order = self
+                        .next_order(Some(PrimitiveKind::Sprite))
+                        .unwrap_or(u32::MAX);
+                    let sprites_start = self.sprites_start;
+                    let sprites_end = sprites_start
+                        + self
+                            .sprites_iter
+                            .by_ref()
+                            .take_while(|sprite| sprite.order <= max_order)
+                            .count();
+                    self.sprites_start = sprites_end;
+                    Some(PrimitiveBatch::Sprites(
+                        &self.sprites[sprites_start..sprites_end],
+                    ))
+                }
+            }
+        } else {
+            None
+        }
+    }
+}
+
+impl<'a, Q: 'a, S: 'a> BatchIterator<'a, Q, S>
+where
+    Q: Iterator<Item = &'a Quad>,
+    S: Iterator<Item = &'a MonochromeSprite>,
+{
+    fn new(
+        quads: &'a [Quad],
+        quads_iter: Peekable<Q>,
+        sprites: &'a [MonochromeSprite],
+        sprites_iter: Peekable<S>,
+    ) -> Self {
+        let mut this = Self {
+            quads,
+            quads_start: 0,
+            quads_iter,
+            sprites,
+            sprites_start: 0,
+            sprites_iter,
+            next_batch_kind: None,
+        };
+        this.next_order(None); // Called for its side effect of setting this.next_batch_kind
+        this
+    }
+
+    fn next_order(&mut self, exclude_kind: Option<PrimitiveKind>) -> Option<u32> {
+        let mut next_order = u32::MAX;
+
+        if exclude_kind != Some(PrimitiveKind::Quad) {
+            if let Some(next_quad) = self.quads_iter.peek() {
+                self.next_batch_kind = Some(PrimitiveKind::Quad);
+                next_order = next_quad.order;
+            }
+        }
+
+        if exclude_kind != Some(PrimitiveKind::Sprite) {
+            if let Some(next_sprite) = self.sprites_iter.peek() {
+                if next_sprite.order < next_order {
+                    self.next_batch_kind = Some(PrimitiveKind::Sprite);
+                    next_order = next_sprite.order;
+                }
+            }
+        }
+
+        (next_order < u32::MAX).then_some(next_order)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PrimitiveKind {
+    Quad,
+    Sprite,
 }
 
 #[derive(Clone, Debug)]
 pub enum Primitive {
     Quad(Quad),
-    MonochromeGlyph(Symbol),
+    Sprite(MonochromeSprite),
 }
 
-impl Primitive {
-    pub fn order(&self) -> u32 {
-        match self {
-            Primitive::Quad(quad) => quad.order,
-            Primitive::MonochromeGlyph(glyph) => glyph.order,
-        }
-    }
-
-    pub fn scale(&mut self, factor: f32) {
-        match self {
-            Primitive::Quad(quad) => {
-                quad.scale(factor);
-            }
-            Primitive::MonochromeGlyph(glyph) => {
-                glyph.scale(factor);
-            }
-        }
-    }
+pub enum PrimitiveBatch<'a> {
+    Quads(&'a [Quad]),
+    Sprites(&'a [MonochromeSprite]),
 }
 
-#[derive(Debug, Clone, Copy, Zeroable, Pod)]
+#[derive(Debug, Copy, Clone, Zeroable, Pod)]
 #[repr(C)]
 pub struct Quad {
     pub order: u32,
@@ -119,26 +238,32 @@ impl From<Quad> for Primitive {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Debug)]
 #[repr(C)]
-pub struct Symbol {
+pub struct MonochromeSprite {
     pub order: u32,
-    pub origin: Point<Pixels>,
-    pub font_id: FontId,
-    pub font_size: Pixels,
-    pub id: GlyphId,
-    pub color: Hsla,
+    pub bounds: Bounds<Pixels>,
+    pub atlas_id: AtlasId,
+    pub tile_id: TileId,
+    pub bounds_in_atlas: Bounds<DevicePixels>,
+    pub color: Option<Hsla>,
 }
 
-impl Symbol {
+impl MonochromeSprite {
     pub fn scale(&mut self, factor: f32) {
-        self.font_size *= factor;
-        self.origin *= factor;
+        self.bounds *= factor;
     }
 }
 
-impl From<Symbol> for Primitive {
-    fn from(glyph: Symbol) -> Self {
-        Primitive::MonochromeGlyph(glyph)
+impl From<MonochromeSprite> for Primitive {
+    fn from(sprite: MonochromeSprite) -> Self {
+        Primitive::Sprite(sprite)
     }
 }
+
+#[derive(Copy, Clone, Debug)]
+pub struct AtlasId(pub(crate) usize);
+
+use collections::BTreeMap;
+use etagere::AllocId as TileId;
+use smallvec::SmallVec;

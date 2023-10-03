@@ -1,7 +1,7 @@
 use crate::{
     px, AnyView, AppContext, AvailableSpace, Bounds, Context, Effect, Element, EntityId, Handle,
     LayoutId, MainThread, MainThreadOnly, Pixels, PlatformWindow, Point, Reference, Scene, Size,
-    StackContext, Style, TaffyLayoutEngine, WeakHandle, WindowOptions,
+    StackContext, StackingOrder, Style, TaffyLayoutEngine, WeakHandle, WindowOptions,
 };
 use anyhow::Result;
 use futures::Future;
@@ -19,7 +19,7 @@ pub struct Window {
     layout_engine: TaffyLayoutEngine,
     pub(crate) root_view: Option<AnyView<()>>,
     mouse_position: Point<Pixels>,
-    z_index_stack: SmallVec<[u32; 8]>,
+    current_stacking_order: StackingOrder,
     pub(crate) scene: Scene,
     pub(crate) dirty: bool,
 }
@@ -58,7 +58,7 @@ impl Window {
             layout_engine: TaffyLayoutEngine::new(),
             root_view: None,
             mouse_position,
-            z_index_stack: SmallVec::new(),
+            current_stacking_order: SmallVec::new(),
             scene: Scene::new(scale_factor),
             dirty: true,
         }
@@ -129,11 +129,15 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         &mut self.window.scene
     }
 
-    pub fn with_z_index<R>(&mut self, z_index: u32, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.window.z_index_stack.push(z_index);
+    pub fn stack<R>(&mut self, order: u32, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.window.current_stacking_order.push(order);
         let result = f(self);
-        self.window.z_index_stack.pop();
+        self.window.current_stacking_order.pop();
         result
+    }
+
+    pub fn current_stack_order(&self) -> StackingOrder {
+        self.window.current_stacking_order.clone()
     }
 
     pub fn run_on_main<R>(

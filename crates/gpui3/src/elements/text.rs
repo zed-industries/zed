@@ -3,7 +3,7 @@ use crate::{
 };
 use parking_lot::Mutex;
 use std::{marker::PhantomData, sync::Arc};
-use util::arc_cow::ArcCow;
+use util::{arc_cow::ArcCow, ResultExt};
 
 impl<S: 'static> IntoAnyElement<S> for ArcCow<'static, str> {
     fn into_any(self) -> AnyElement<S> {
