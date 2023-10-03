@@ -256,16 +256,6 @@ impl MacTextSystemState {
         params: &GlyphRasterizationParams,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
         let glyph_bounds = self.raster_bounds(params)?;
-
-        // let scale = Transform2F::from_scale(params.scale_factor);
-        // let glyph_bounds = font.raster_bounds(
-        //     params.glyph_id.into(),
-        //     params.font_size.into(),
-        //     scale,
-        //     HintingOptions::None,
-        //     font_kit::canvas::RasterizationOptions::GrayscaleAa,
-        // )?;
-
         if glyph_bounds.size.width.0 == 0 || glyph_bounds.size.height.0 == 0 {
             Err(anyhow!("glyph bounds are empty"))
         } else {
@@ -303,7 +293,6 @@ impl MacTextSystemState {
             let subpixel_shift = params
                 .subpixel_variant
                 .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32 / params.scale_factor);
-
             cx.set_allows_font_subpixel_positioning(true);
             cx.set_should_subpixel_position_fonts(true);
             cx.set_allows_font_subpixel_quantization(false);

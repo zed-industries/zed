@@ -59,10 +59,10 @@ where
                 .textures
                 .iter_mut()
                 .rev()
-                .find_map(|texture| texture.allocate(size, &bytes))
+                .find_map(|texture| texture.upload(size, &bytes))
                 .or_else(|| {
                     let texture = lock.push_texture(size);
-                    texture.allocate(size, &bytes)
+                    texture.upload(size, &bytes)
                 })
                 .ok_or_else(|| anyhow!("could not allocate in new texture"))?;
             lock.tiles_by_key.insert(key.clone(), tile.clone());
@@ -118,7 +118,8 @@ struct MetalAtlasTexture {
 }
 
 impl MetalAtlasTexture {
-    fn allocate(&mut self, size: Size<DevicePixels>, bytes: &[u8]) -> Option<AtlasTile> {
+    fn upload(&mut self, size: Size<DevicePixels>, bytes: &[u8]) -> Option<AtlasTile> {
+        dbg!(size);
         let size = size.into();
         let allocation = self.allocator.allocate(size)?;
         let tile = AtlasTile {
@@ -126,6 +127,9 @@ impl MetalAtlasTexture {
             tile_id: allocation.id.into(),
             bounds: allocation.rectangle.into(),
         };
+
+        // eprintln!("upload {:?}", tile.bounds);
+
         let region = metal::MTLRegion::new_2d(
             tile.bounds.origin.x.into(),
             tile.bounds.origin.y.into(),
@@ -153,7 +157,7 @@ impl MetalAtlasTexture {
 
 impl From<Size<DevicePixels>> for etagere::Size {
     fn from(size: Size<DevicePixels>) -> Self {
-        etagere::Size::new(size.width.into(), size.width.into())
+        etagere::Size::new(size.width.into(), size.height.into())
     }
 }
 

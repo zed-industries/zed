@@ -548,20 +548,7 @@ impl From<Pixels> for f64 {
 }
 
 #[derive(
-    Add,
-    AddAssign,
-    Clone,
-    Copy,
-    Debug,
-    Default,
-    Div,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    Sub,
-    SubAssign,
+    Add, AddAssign, Clone, Copy, Default, Div, Eq, Hash, Ord, PartialEq, PartialOrd, Sub, SubAssign,
 )]
 #[repr(transparent)]
 pub struct DevicePixels(pub(crate) i32);
@@ -569,6 +556,12 @@ pub struct DevicePixels(pub(crate) i32);
 impl DevicePixels {
     pub fn to_bytes(&self, bytes_per_pixel: u8) -> u32 {
         self.0 as u32 * bytes_per_pixel as u32
+    }
+}
+
+impl std::fmt::Debug for DevicePixels {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} px (device)", self.0)
     }
 }
 

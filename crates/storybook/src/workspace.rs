@@ -1,4 +1,4 @@
-use crate::{collab_panel::collab_panel, theme::theme};
+use crate::theme::theme;
 use gpui2::{
     black,
     elements::{div, div::ScrollState, img, svg},

@@ -1,8 +1,8 @@
 use crate::{
-    px, AnyView, AppContext, AtlasTile, AvailableSpace, Bounds, Context, Effect, Element, EntityId,
-    FontId, GlyphId, GlyphRasterizationParams, Handle, Hsla, IsZero, LayoutId, MainThread,
-    MainThreadOnly, MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point, Reference,
-    Scene, Size, StackContext, StackingOrder, Style, TaffyLayoutEngine, WeakHandle, WindowOptions,
+    px, AnyView, AppContext, AvailableSpace, Bounds, Context, Effect, Element, EntityId, FontId,
+    GlyphId, GlyphRasterizationParams, Handle, Hsla, IsZero, LayoutId, MainThread, MainThreadOnly,
+    MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point, Reference, Scene, Size,
+    StackContext, StackingOrder, Style, TaffyLayoutEngine, WeakHandle, WindowOptions,
     SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
@@ -194,8 +194,10 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         if !raster_bounds.is_zero() {
             let layer_id = self.current_layer_id();
             let offset = raster_bounds.origin.map(Into::into);
+            let glyph_origin = glyph_origin.map(|px| px.floor()) + offset;
+            // dbg!(glyph_origin);
             let bounds = Bounds {
-                origin: dbg!(dbg!(glyph_origin.map(|px| px.floor())) + dbg!(offset)),
+                origin: glyph_origin,
                 size: raster_bounds.size.map(Into::into),
             };
 
@@ -217,33 +219,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             );
         }
         Ok(())
-    }
-
-    pub fn rasterize_glyph(
-        &self,
-        font_id: FontId,
-        glyph_id: GlyphId,
-        font_size: Pixels,
-        target_position: Point<Pixels>,
-        scale_factor: f32,
-    ) -> Result<AtlasTile> {
-        let target_position = target_position * scale_factor;
-        let subpixel_variant = Point {
-            x: (target_position.x.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
-            y: (target_position.y.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
-        };
-        let rasterized_glyph_id = GlyphRasterizationParams {
-            font_id,
-            glyph_id,
-            font_size,
-            subpixel_variant,
-            scale_factor,
-        };
-        self.window
-            .glyph_atlas
-            .get_or_insert_with(&rasterized_glyph_id, &mut || {
-                self.text_system().rasterize_glyph(&rasterized_glyph_id)
-            })
     }
 
     pub(crate) fn draw(&mut self) -> Result<()> {
