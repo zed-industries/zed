@@ -781,9 +781,16 @@ impl CollabPanel {
 
         let prev_selected_entry = self.selection.and_then(|ix| self.entries.get(ix).cloned());
         let old_entries = mem::take(&mut self.entries);
+        let mut scroll_to_top = false;
 
         if let Some(room) = ActiveCall::global(cx).read(cx).room() {
             self.entries.push(ListEntry::Header(Section::ActiveCall));
+            if !old_entries
+                .iter()
+                .any(|entry| matches!(entry, ListEntry::Header(Section::ActiveCall)))
+            {
+                scroll_to_top = true;
+            }
 
             if !self.collapsed_sections.contains(&Section::ActiveCall) {
                 let room = room.read(cx);
@@ -1151,44 +1158,49 @@ impl CollabPanel {
         }
 
         let old_scroll_top = self.list_state.logical_scroll_top();
+
         self.list_state.reset(self.entries.len());
 
-        // Attempt to maintain the same scroll position.
-        if let Some(old_top_entry) = old_entries.get(old_scroll_top.item_ix) {
-            let new_scroll_top = self
-                .entries
-                .iter()
-                .position(|entry| entry == old_top_entry)
-                .map(|item_ix| ListOffset {
-                    item_ix,
-                    offset_in_item: old_scroll_top.offset_in_item,
-                })
-                .or_else(|| {
-                    let entry_after_old_top = old_entries.get(old_scroll_top.item_ix + 1)?;
-                    let item_ix = self
-                        .entries
-                        .iter()
-                        .position(|entry| entry == entry_after_old_top)?;
-                    Some(ListOffset {
+        if scroll_to_top {
+            self.list_state.scroll_to(ListOffset::default());
+        } else {
+            // Attempt to maintain the same scroll position.
+            if let Some(old_top_entry) = old_entries.get(old_scroll_top.item_ix) {
+                let new_scroll_top = self
+                    .entries
+                    .iter()
+                    .position(|entry| entry == old_top_entry)
+                    .map(|item_ix| ListOffset {
                         item_ix,
-                        offset_in_item: 0.,
+                        offset_in_item: old_scroll_top.offset_in_item,
                     })
-                })
-                .or_else(|| {
-                    let entry_before_old_top =
-                        old_entries.get(old_scroll_top.item_ix.saturating_sub(1))?;
-                    let item_ix = self
-                        .entries
-                        .iter()
-                        .position(|entry| entry == entry_before_old_top)?;
-                    Some(ListOffset {
-                        item_ix,
-                        offset_in_item: 0.,
+                    .or_else(|| {
+                        let entry_after_old_top = old_entries.get(old_scroll_top.item_ix + 1)?;
+                        let item_ix = self
+                            .entries
+                            .iter()
+                            .position(|entry| entry == entry_after_old_top)?;
+                        Some(ListOffset {
+                            item_ix,
+                            offset_in_item: 0.,
+                        })
                     })
-                });
+                    .or_else(|| {
+                        let entry_before_old_top =
+                            old_entries.get(old_scroll_top.item_ix.saturating_sub(1))?;
+                        let item_ix = self
+                            .entries
+                            .iter()
+                            .position(|entry| entry == entry_before_old_top)?;
+                        Some(ListOffset {
+                            item_ix,
+                            offset_in_item: 0.,
+                        })
+                    });
 
-            self.list_state
-                .scroll_to(new_scroll_top.unwrap_or(old_scroll_top));
+                self.list_state
+                    .scroll_to(new_scroll_top.unwrap_or(old_scroll_top));
+            }
         }
 
         cx.notify();
@@ -1989,7 +2001,7 @@ impl CollabPanel {
                         if is_active || participants.is_empty() {
                             this.open_channel_notes(&OpenChannelNotes { channel_id }, cx);
                         } else {
-                            this.join_channel_call(channel_id, cx);
+                            this.join_channel(channel_id, cx);
                         };
                     }),
                 )
@@ -2022,7 +2034,7 @@ impl CollabPanel {
                 if is_active {
                     this.open_channel_notes(&OpenChannelNotes { channel_id }, cx)
                 } else {
-                    this.join_channel_call(channel_id, cx)
+                    this.join_channel(channel_id, cx)
                 }
             }
         })
@@ -2670,7 +2682,7 @@ impl CollabPanel {
                                 cx,
                             )
                         } else {
-                            self.join_channel_call(channel.id, cx)
+                            self.join_channel(channel.id, cx)
                         }
                     }
                     ListEntry::ContactPlaceholder => self.toggle_contact_finder(cx),
@@ -3074,7 +3086,7 @@ impl CollabPanel {
             .detach_and_log_err(cx);
     }
 
-    fn join_channel_call(&self, channel_id: u64, cx: &mut ViewContext<Self>) {
+    fn join_channel(&self, channel_id: u64, cx: &mut ViewContext<Self>) {
         let join = ActiveCall::global(cx).update(cx, |call, cx| call.join_channel(channel_id, cx));
         let workspace = self.workspace.clone();
 
