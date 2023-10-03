@@ -5,7 +5,7 @@ use gpui2::geometry::{relative, rems, Size};
 
 use crate::{
     hello_world_rust_editor_with_status_example, prelude::*, random_players_with_call_status,
-    Livestream,
+    Label, Livestream, Toast, ToastOrigin,
 };
 use crate::{
     theme, v_stack, ChatMessage, ChatPanel, EditorPane, Pane, PaneGroup, Panel, PanelAllowedSides,
@@ -82,6 +82,7 @@ impl WorkspaceElement {
         );
 
         div()
+            .relative()
             .size_full()
             .flex()
             .flex_col()
@@ -169,5 +170,14 @@ impl WorkspaceElement {
                     ),
             )
             .child(StatusBar::new())
+            .child(Toast::new(
+                ToastOrigin::BottomRight,
+                |_, payload| {
+                    let theme = payload.downcast_ref::<Arc<Theme>>().unwrap();
+
+                    vec![Label::new("label").into_any()]
+                },
+                Box::new(theme.clone()),
+            ))
     }
 }

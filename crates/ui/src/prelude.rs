@@ -29,6 +29,26 @@ impl SystemColor {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct ThemeColor {
+    pub border: Hsla,
+    pub border_variant: Hsla,
+    /// The background color of an elevated surface, like a modal, tooltip or toast.
+    pub elevated_surface: Hsla,
+}
+
+impl ThemeColor {
+    pub fn new(cx: &WindowContext) -> Self {
+        let theme = theme(cx);
+
+        Self {
+            border: theme.lowest.base.default.border,
+            border_variant: theme.lowest.variant.default.border,
+            elevated_surface: theme.lowest.base.default.background,
+        }
+    }
+}
+
 #[derive(Default, PartialEq, EnumIter, Clone, Copy)]
 pub enum HighlightColor {
     #[default]
