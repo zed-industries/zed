@@ -2750,18 +2750,22 @@ impl View for InlineAssistant {
                             .element()
                             .aligned(),
                     )
-                    .with_child(
-                        Button::action(ToggleRetrieveContext)
-                            .with_tooltip("Retrieve Context", theme.tooltip.clone())
-                            .with_id(self.id)
-                            .with_contents(theme::components::svg::Svg::new(
-                                "icons/magnifying_glass.svg",
-                            ))
-                            .toggleable(self.retrieve_context)
-                            .with_style(theme.assistant.inline.retrieve_context.clone())
-                            .element()
-                            .aligned(),
-                    )
+                    .with_children(if SemanticIndex::enabled(cx) {
+                        Some(
+                            Button::action(ToggleRetrieveContext)
+                                .with_tooltip("Retrieve Context", theme.tooltip.clone())
+                                .with_id(self.id)
+                                .with_contents(theme::components::svg::Svg::new(
+                                    "icons/magnifying_glass.svg",
+                                ))
+                                .toggleable(self.retrieve_context)
+                                .with_style(theme.assistant.inline.retrieve_context.clone())
+                                .element()
+                                .aligned(),
+                        )
+                    } else {
+                        None
+                    })
                     .with_children(if let Some(error) = self.codegen.read(cx).error() {
                         Some(
                             Svg::new("icons/error.svg")

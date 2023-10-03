@@ -2,7 +2,6 @@ use crate::codegen::CodegenKind;
 use language::{BufferSnapshot, OffsetRangeExt, ToOffset};
 use std::cmp::{self, Reverse};
 use std::fmt::Write;
-use std::iter;
 use std::ops::Range;
 use tiktoken_rs::ChatCompletionRequestMessage;
 
