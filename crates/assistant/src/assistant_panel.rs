@@ -29,7 +29,7 @@ use gpui::{
     },
     fonts::HighlightStyle,
     geometry::vector::{vec2f, Vector2F},
-    platform::{CursorStyle, MouseButton},
+    platform::{CursorStyle, MouseButton, PromptLevel},
     Action, AnyElement, AppContext, AsyncAppContext, ClipboardItem, Element, Entity, ModelContext,
     ModelHandle, SizeConstraint, Subscription, Task, View, ViewContext, ViewHandle,
     WeakModelHandle, WeakViewHandle, WindowContext,
@@ -348,6 +348,8 @@ impl AssistantPanel {
                 self.workspace.clone(),
                 cx,
                 self.retrieve_context_in_next_inline_assist,
+                self.semantic_index.clone(),
+                project.clone(),
             );
             cx.focus_self();
             assistant
@@ -2751,6 +2753,9 @@ struct InlineAssistant {
     codegen: ModelHandle<Codegen>,
     _subscriptions: Vec<Subscription>,
     retrieve_context: bool,
+    semantic_index: Option<ModelHandle<SemanticIndex>>,
+    semantic_permissioned: Option<bool>,
+    project: ModelHandle<Project>,
 }
 
 impl Entity for InlineAssistant {
@@ -2876,6 +2881,8 @@ impl InlineAssistant {
         workspace: WeakViewHandle<Workspace>,
         cx: &mut ViewContext<Self>,
         retrieve_context: bool,
+        semantic_index: Option<ModelHandle<SemanticIndex>>,
+        project: ModelHandle<Project>,
     ) -> Self {
         let prompt_editor = cx.add_view(|cx| {
             let mut editor = Editor::single_line(
@@ -2908,7 +2915,24 @@ impl InlineAssistant {
             codegen,
             _subscriptions: subscriptions,
             retrieve_context,
+            semantic_permissioned: None,
+            semantic_index,
+            project,
         }
+    }
+
+    fn semantic_permissioned(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<bool>> {
+        if let Some(value) = self.semantic_permissioned {
+            return Task::ready(Ok(value));
+        }
+
+        let project = self.project.clone();
+        self.semantic_index
+            .as_mut()
+            .map(|semantic| {
+                semantic.update(cx, |this, cx| this.project_previously_indexed(&project, cx))
+            })
+            .unwrap_or(Task::ready(Ok(false)))
     }
 
     fn handle_prompt_editor_events(
@@ -2980,11 +3004,52 @@ impl InlineAssistant {
     }
 
     fn toggle_retrieve_context(&mut self, _: &ToggleRetrieveContext, cx: &mut ViewContext<Self>) {
-        self.retrieve_context = !self.retrieve_context;
-        cx.emit(InlineAssistantEvent::RetrieveContextToggled {
-            retrieve_context: self.retrieve_context,
-        });
-        cx.notify();
+        let semantic_permissioned = self.semantic_permissioned(cx);
+        let project = self.project.clone();
+        let project_name = project
+            .read(cx)
+            .worktree_root_names(cx)
+            .collect::<Vec<&str>>()
+            .join("/");
+        let is_plural = project_name.chars().filter(|letter| *letter == '/').count() > 0;
+        let prompt_text = format!("Would you like to index the '{}' project{} for context retrieval? This requires sending code to the OpenAI API", project_name,
+            if is_plural {
+                "s"
+            } else {""});
+
+        cx.spawn(|this, mut cx| async move {
+            // If Necessary prompt user
+            if !semantic_permissioned.await.unwrap_or(false) {
+                let mut answer = this.update(&mut cx, |_, cx| {
+                    cx.prompt(
+                        PromptLevel::Info,
+                        prompt_text.as_str(),
+                        &["Continue", "Cancel"],
+                    )
+                })?;
+
+                if answer.next().await == Some(0) {
+                    this.update(&mut cx, |this, _| {
+                        this.semantic_permissioned = Some(true);
+                    })?;
+                } else {
+                    return anyhow::Ok(());
+                }
+            }
+
+            // If permissioned, update context appropriately
+            this.update(&mut cx, |this, cx| {
+                this.retrieve_context = !this.retrieve_context;
+
+                cx.emit(InlineAssistantEvent::RetrieveContextToggled {
+                    retrieve_context: this.retrieve_context,
+                });
+                cx.notify();
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn toggle_include_conversation(
