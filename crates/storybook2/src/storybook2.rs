@@ -1,6 +1,6 @@
 #![allow(dead_code, unused_variables)]
 
-use gpui3::{Bounds, WindowBounds, WindowOptions};
+use gpui3::{px, size, Bounds, WindowBounds, WindowOptions};
 use log::LevelFilter;
 use simplelog::SimpleLogger;
 
@@ -23,11 +23,8 @@ fn main() {
         let window = cx.open_window(
             WindowOptions {
                 bounds: WindowBounds::Fixed(Bounds {
-                    size: gpui3::Size {
-                        width: 800_f32.into(),
-                        height: 600_f32.into(),
-                    },
-                    ..Default::default()
+                    origin: Default::default(),
+                    size: size(px(800.), px(600.)),
                 }),
                 ..Default::default()
             },

@@ -1,6 +1,6 @@
 use crate::{
     collab_panel::{collab_panel, CollabPanel},
-    theme::theme,
+    theme::{theme, themed},
     themes::rose_pine_dawn,
 };
 use gpui3::{
@@ -27,43 +27,31 @@ impl Workspace {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<State = Self> {
         let theme = rose_pine_dawn();
-        div()
-            .size_full()
-            .font("Helvetica")
-            .text_base()
-            .fill(white())
-            .text_color(black())
-            .child("The quick brown fox ran over the lazy dog.")
-
-        // TODO: Implement style.
-        //.size_full().fill(gpui3::hsla(0.83, 1., 0.5, 1.))
-
-        // themed(rose_pine_dawn(), cx, |cx| {
-        //     div()
-        //         .size_full()
-        //         .flex()
-        //         .flex_col()
-        //         .font("Zed Sans Extended")
-        //         .gap_0()
-        //         .justify_start()
-        //         .items_start()
-        //         .text_color(theme.lowest.base.default.foreground)
-        //         // .fill(theme.middle.base.default.background)
-        //         .fill(gpui3::hsla(0.83, 1., 0.5, 1.))
-        //         .child(titlebar(cx))
-        //         .child(
-        //             div()
-        //                 .flex_1()
-        //                 .w_full()
-        //                 .flex()
-        //                 .flex_row()
-        //                 .overflow_hidden()
-        //                 .child(self.left_panel.clone())
-        //                 .child(div().h_full().flex_1())
-        //                 .child(self.right_panel.clone()),
-        //         )
-        //         .child(statusbar::statusbar(cx))
-        // })
+        themed(rose_pine_dawn(), cx, |cx| {
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .font("Zed Sans Extended")
+                .gap_0()
+                .justify_start()
+                .items_start()
+                .text_color(theme.lowest.base.default.foreground)
+                .fill(theme.middle.base.default.background)
+                .child(titlebar(cx))
+                .child(
+                    div()
+                        .flex_1()
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .overflow_hidden()
+                        .child(self.left_panel.clone())
+                        .child(div().h_full().flex_1())
+                        .child(self.right_panel.clone()),
+                )
+                .child(statusbar::statusbar(cx))
+        })
     }
 }
 
