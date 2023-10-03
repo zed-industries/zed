@@ -6,8 +6,8 @@ mod mac;
 mod test;
 
 use crate::{
-    AnyWindowHandle, Bounds, DevicePixels, Font, FontId, FontMetrics, GlyphId, MonochromeSprite,
-    Pixels, Point, RasterizedGlyphId, Result, Scene, ShapedLine, SharedString, Size,
+    AnyWindowHandle, Bounds, DevicePixels, Font, FontId, FontMetrics, GlyphId, Pixels, Point,
+    RasterizedGlyphId, Result, Scene, ShapedLine, SharedString, Size,
 };
 use anyhow::anyhow;
 use async_task::Runnable;
@@ -165,13 +165,8 @@ pub trait PlatformTextSystem: Send + Sync {
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId>;
     fn rasterize_glyph(
         &self,
-        font_id: FontId,
-        font_size: f32,
-        glyph_id: GlyphId,
-        subpixel_shift: Point<Pixels>,
-        scale_factor: f32,
-        options: RasterizationOptions,
-    ) -> Option<(Bounds<u32>, Vec<u8>)>;
+        glyph_id: &RasterizedGlyphId,
+    ) -> Result<(Bounds<DevicePixels>, Vec<u8>)>;
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[(usize, FontId)]) -> ShapedLine;
     fn wrap_line(
         &self,
@@ -185,9 +180,9 @@ pub trait PlatformTextSystem: Send + Sync {
 pub trait PlatformAtlas<Key>: Send + Sync {
     fn get_or_insert_with(
         &self,
-        key: Key,
-        build: &dyn Fn() -> (Size<DevicePixels>, Vec<u8>),
-    ) -> AtlasTile;
+        key: &Key,
+        build: &mut dyn FnMut() -> Result<(Size<DevicePixels>, Vec<u8>)>,
+    ) -> Result<AtlasTile>;
 
     fn clear(&self);
 }

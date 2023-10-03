@@ -1,8 +1,9 @@
 use crate::{
-    px, AnyView, AppContext, AvailableSpace, Bounds, Context, Effect, Element, EntityId, FontId,
-    GlyphId, Handle, LayoutId, MainThread, MainThreadOnly, Pixels, PlatformAtlas, PlatformWindow,
-    Point, RasterizedGlyphId, Reference, Scene, Size, StackContext, StackingOrder, Style,
-    TaffyLayoutEngine, WeakHandle, WindowOptions,
+    px, AnyView, AppContext, AtlasTile, AvailableSpace, Bounds, Context, DevicePixels, Effect,
+    Element, EntityId, FontId, GlyphId, Handle, LayoutId, MainThread, MainThreadOnly,
+    MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point, RasterizedGlyphId, Reference,
+    Scene, Size, StackContext, StackingOrder, Style, TaffyLayoutEngine, WeakHandle, WindowOptions,
+    SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use futures::Future;
@@ -159,6 +160,39 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 })
             })
         })
+    }
+
+    pub fn rasterize_glyph(
+        &self,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+        scale_factor: f32,
+        target_position: Point<Pixels>,
+    ) -> Result<(AtlasTile, Point<DevicePixels>)> {
+        let target_position = target_position * scale_factor;
+        let subpixel_variant = Point {
+            x: (target_position.x.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
+            y: (target_position.y.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
+        };
+        let rasterized_glyph_id = RasterizedGlyphId {
+            font_id,
+            glyph_id,
+            font_size,
+            subpixel_variant,
+            scale_factor,
+        };
+        let mut offset = Default::default();
+        let tile = self
+            .window
+            .glyph_atlas
+            .get_or_insert_with(&rasterized_glyph_id, &mut || {
+                let (bounds, pixels) = self.text_system().rasterize_glyph(&rasterized_glyph_id)?;
+                offset = bounds.origin;
+                Ok((bounds.size, pixels))
+            })?;
+
+        Ok((tile, offset))
     }
 
     pub(crate) fn draw(&mut self) -> Result<()> {

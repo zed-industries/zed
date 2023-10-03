@@ -1,6 +1,6 @@
 use crate::{
-    black, point, px, Bounds, FontId, Hsla, Layout, Pixels, Point, RunStyle, ShapedBoundary,
-    ShapedLine, ShapedRun, UnderlineStyle, WindowContext,
+    black, point, px, Bounds, FontId, Hsla, Layout, Pixels, Point, RasterizedGlyphId, RunStyle,
+    ShapedBoundary, ShapedLine, ShapedRun, UnderlineStyle, WindowContext,
 };
 use anyhow::Result;
 use smallvec::SmallVec;

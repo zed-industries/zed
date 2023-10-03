@@ -11,7 +11,8 @@ use line_wrapper::*;
 pub use text_layout_cache::*;
 
 use crate::{
-    px, Bounds, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size, UnderlineStyle,
+    px, Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, RasterizationOptions,
+    Result, SharedString, Size, UnderlineStyle,
 };
 use collections::HashMap;
 use core::fmt;
@@ -29,6 +30,8 @@ pub struct FontId(pub usize);
 
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct FontFamilyId(pub usize);
+
+pub const SUBPIXEL_VARIANTS: u8 = 4;
 
 pub struct TextSystem {
     text_layout_cache: Arc<TextLayoutCache>,
@@ -212,6 +215,13 @@ impl TextSystem {
             text_system: self.clone(),
         })
     }
+
+    pub fn rasterize_glyph(
+        &self,
+        glyph_id: &RasterizedGlyphId,
+    ) -> Result<(Bounds<DevicePixels>, Vec<u8>)> {
+        self.platform_text_system.rasterize_glyph(glyph_id)
+    }
 }
 
 #[derive(Hash, Eq, PartialEq)]
@@ -370,11 +380,25 @@ pub struct ShapedGlyph {
     pub is_emoji: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RasterizedGlyphId {
-    font_id: FontId,
-    glyph_id: GlyphId,
-    font_size: Pixels,
+    pub(crate) font_id: FontId,
+    pub(crate) glyph_id: GlyphId,
+    pub(crate) font_size: Pixels,
+    pub(crate) subpixel_variant: Point<u8>,
+    pub(crate) scale_factor: f32,
+}
+
+impl Eq for RasterizedGlyphId {}
+
+impl Hash for RasterizedGlyphId {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.font_id.0.hash(state);
+        self.glyph_id.0.hash(state);
+        self.font_size.0.to_bits().hash(state);
+        self.subpixel_variant.hash(state);
+        self.scale_factor.to_bits().hash(state);
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]

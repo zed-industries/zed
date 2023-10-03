@@ -1,4 +1,5 @@
 use crate::{AtlasTextureId, AtlasTile, Bounds, DevicePixels, PlatformAtlas, Point, Size};
+use anyhow::{anyhow, Result};
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use etagere::BucketedAtlasAllocator;
@@ -38,28 +39,30 @@ struct MetalAtlasState<Key> {
 
 impl<Key> PlatformAtlas<Key> for MetalAtlas<Key>
 where
-    Key: Eq + Hash + Send,
+    Key: Clone + Eq + Hash + Send,
 {
     fn get_or_insert_with(
         &self,
-        key: Key,
-        build: &dyn Fn() -> (Size<DevicePixels>, Vec<u8>),
-    ) -> AtlasTile {
+        key: &Key,
+        build: &mut dyn FnMut() -> Result<(Size<DevicePixels>, Vec<u8>)>,
+    ) -> Result<AtlasTile> {
         let mut lock = self.0.lock();
-        if let Some(tile) = lock.tiles_by_key.get(&key) {
-            return tile.clone();
+        if let Some(tile) = lock.tiles_by_key.get(key) {
+            return Ok(tile.clone());
         } else {
-            let (size, bytes) = build();
-            lock.textures
+            let (size, bytes) = build()?;
+            let tile = lock
+                .textures
                 .iter_mut()
                 .rev()
                 .find_map(|texture| texture.allocate(size, &bytes))
-                .unwrap_or_else(|| {
+                .or_else(|| {
                     let texture = lock.push_texture(size);
-                    texture
-                        .allocate(size, &bytes)
-                        .expect("could not allocate a tile in new texture")
+                    texture.allocate(size, &bytes)
                 })
+                .ok_or_else(|| anyhow!("could not allocate in new texture"))?;
+            lock.tiles_by_key.insert(key.clone(), tile.clone());
+            Ok(tile)
         }
     }
 
