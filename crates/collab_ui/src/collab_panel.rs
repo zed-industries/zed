@@ -8,7 +8,7 @@ use crate::{
     panel_settings, CollaborationPanelSettings,
 };
 use anyhow::Result;
-use call::ActiveCall;
+use call::{participant, ActiveCall};
 use channel::{Channel, ChannelData, ChannelEvent, ChannelId, ChannelPath, ChannelStore};
 use channel_modal::ChannelModal;
 use client::{proto::PeerId, Client, Contact, User, UserStore};
@@ -1929,7 +1929,7 @@ impl CollabPanel {
                                 }))
                                 .into_any()
                         } else if row_hovered {
-                            Svg::new("icons/speaker-loud.svg")
+                            Svg::new("icons/file.svg")
                                 .with_color(theme.channel_hash.color)
                                 .constrained()
                                 .with_width(theme.channel_hash.width)
@@ -1939,7 +1939,11 @@ impl CollabPanel {
                         }
                     })
                     .on_click(MouseButton::Left, move |_, this, cx| {
-                        this.join_channel_call(channel_id, cx);
+                        if !is_active {
+                            this.join_channel_call(channel_id, cx);
+                        } else {
+                            this.open_channel_notes(&OpenChannelNotes { channel_id }, cx)
+                        }
                     }),
                 )
                 .align_children_center()
@@ -1968,6 +1972,12 @@ impl CollabPanel {
         })
         .on_click(MouseButton::Left, move |_, this, cx| {
             if this.drag_target_channel.take().is_none() {
+                if is_active {
+                    this.open_channel_notes(&OpenChannelNotes { channel_id }, cx)
+                } else {
+                    this.join_channel_call(channel_id, cx)
+                }
+
                 this.join_channel_chat(channel_id, cx);
             }
         })
@@ -2991,10 +3001,37 @@ impl CollabPanel {
             .detach_and_log_err(cx);
     }
 
-    fn join_channel_call(&self, channel: u64, cx: &mut ViewContext<Self>) {
-        ActiveCall::global(cx)
-            .update(cx, |call, cx| call.join_channel(channel, cx))
-            .detach_and_log_err(cx);
+    fn join_channel_call(&self, channel_id: u64, cx: &mut ViewContext<Self>) {
+        let join = ActiveCall::global(cx).update(cx, |call, cx| call.join_channel(channel_id, cx));
+        let workspace = self.workspace.clone();
+
+        cx.spawn(|_, mut cx| async move {
+            let room = join.await?;
+
+            let tasks = room.update(&mut cx, |room, cx| {
+                let Some(workspace) = workspace.upgrade(cx) else {
+                    return vec![];
+                };
+                let projects = room.projects_to_join();
+
+                if projects.is_empty() {
+                    ChannelView::open(channel_id, workspace, cx).detach();
+                    return vec![];
+                }
+                room.projects_to_join()
+                    .into_iter()
+                    .map(|(project_id, user_id)| {
+                        let app_state = workspace.read(cx).app_state().clone();
+                        workspace::join_remote_project(project_id, user_id, app_state, cx)
+                    })
+                    .collect()
+            });
+            for task in tasks {
+                task.await?;
+            }
+            Ok::<(), anyhow::Error>(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn join_channel_chat(&mut self, channel_id: u64, cx: &mut ViewContext<Self>) {

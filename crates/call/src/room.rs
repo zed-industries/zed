@@ -594,6 +594,33 @@ impl Room {
             .map_or(&[], |v| v.as_slice())
     }
 
+    /// projects_to_join returns a list of shared projects sorted such
+    /// that the most 'active' projects appear last.
+    pub fn projects_to_join(&self) -> Vec<(u64, u64)> {
+        let mut projects = HashMap::default();
+        let mut hosts = HashMap::default();
+        for participant in self.remote_participants.values() {
+            match participant.location {
+                ParticipantLocation::SharedProject { project_id } => {
+                    *projects.entry(project_id).or_insert(0) += 1;
+                }
+                ParticipantLocation::External | ParticipantLocation::UnsharedProject => {}
+            }
+            for project in &participant.projects {
+                *projects.entry(project.id).or_insert(0) += 1;
+                hosts.insert(project.id, participant.user.id);
+            }
+        }
+
+        let mut pairs: Vec<(u64, usize)> = projects.into_iter().collect();
+        pairs.sort_by_key(|(_, count)| 0 - *count as i32);
+
+        pairs
+            .into_iter()
+            .map(|(project_id, _)| (project_id, hosts[&project_id]))
+            .collect()
+    }
+
     async fn handle_room_updated(
         this: ModelHandle<Self>,
         envelope: TypedEnvelope<proto::RoomUpdated>,
