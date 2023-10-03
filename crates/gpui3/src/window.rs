@@ -1,8 +1,8 @@
 use crate::{
-    px, AnyView, AppContext, AvailableSpace, Bounds, Context, Effect, Element, EntityId, FontId,
-    GlyphId, GlyphRasterParams, Handle, Hsla, IsZero, LayoutId, MainThread, MainThreadOnly,
-    MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point, Reference, Scene, Size,
-    StackContext, StackingOrder, Style, TaffyLayoutEngine, WeakHandle, WindowOptions,
+    px, AnyView, AppContext, AvailableSpace, Bounds, Context, Corners, Effect, Element, EntityId,
+    FontId, GlyphId, GlyphRasterParams, Handle, Hsla, IsZero, LayerId, LayoutId, MainThread,
+    MainThreadOnly, MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point, Reference,
+    Scene, Size, StackContext, Style, TaffyLayoutEngine, WeakHandle, WindowOptions,
     SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
@@ -22,7 +22,8 @@ pub struct Window {
     layout_engine: TaffyLayoutEngine,
     pub(crate) root_view: Option<AnyView<()>>,
     mouse_position: Point<Pixels>,
-    current_layer_id: StackingOrder,
+    current_layer_id: LayerId,
+    content_mask_stack: Vec<ContentMask>,
     pub(crate) scene: Scene,
     pub(crate) dirty: bool,
 }
@@ -64,10 +65,17 @@ impl Window {
             root_view: None,
             mouse_position,
             current_layer_id: SmallVec::new(),
+            content_mask_stack: Vec::new(),
             scene: Scene::new(scale_factor),
             dirty: true,
         }
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct ContentMask {
+    bounds: Bounds<Pixels>,
+    corner_radii: Corners<Pixels>,
 }
 
 pub struct WindowContext<'a, 'w> {
@@ -145,8 +153,39 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         result
     }
 
-    pub fn current_layer_id(&self) -> StackingOrder {
+    pub fn clip<F, R>(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        corner_radii: Corners<Pixels>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let clip_mask = ContentMask {
+            bounds,
+            corner_radii,
+        };
+
+        self.window.content_mask_stack.push(clip_mask);
+        let result = f(self);
+        self.window.content_mask_stack.pop();
+        result
+    }
+
+    pub fn current_layer_id(&self) -> LayerId {
         self.window.current_layer_id.clone()
+    }
+
+    pub fn current_clipping_mask(&self) -> ContentMask {
+        self.window
+            .content_mask_stack
+            .last()
+            .cloned()
+            .unwrap_or_else(|| ContentMask {
+                bounds: Bounds {
+                    origin: Point::default(),
+                    size: self.window.content_size,
+                },
+                corner_radii: Default::default(),
+            })
     }
 
     pub fn run_on_main<R>(

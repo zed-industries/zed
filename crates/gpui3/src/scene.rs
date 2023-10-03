@@ -7,12 +7,12 @@ use smallvec::SmallVec;
 
 // Exported to metal
 pub type PointF = Point<f32>;
-pub type StackingOrder = SmallVec<[u32; 16]>;
+pub type LayerId = SmallVec<[u32; 16]>;
 
 #[derive(Debug)]
 pub struct Scene {
     pub(crate) scale_factor: f32,
-    pub(crate) layers: BTreeMap<StackingOrder, SceneLayer>,
+    pub(crate) layers: BTreeMap<LayerId, SceneLayer>,
 }
 
 impl Scene {
@@ -30,7 +30,7 @@ impl Scene {
         }
     }
 
-    pub fn insert(&mut self, stacking_order: StackingOrder, primitive: impl Into<Primitive>) {
+    pub fn insert(&mut self, stacking_order: LayerId, primitive: impl Into<Primitive>) {
         let layer = self.layers.entry(stacking_order).or_default();
 
         let primitive = primitive.into();

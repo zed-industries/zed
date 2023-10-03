@@ -4,8 +4,8 @@ use crate::{
     themes::rose_pine_dawn,
 };
 use gpui3::{
-    black, div, img, svg, view, white, Context, Element, ParentElement, RootView, StyleHelpers,
-    View, ViewContext, WindowContext,
+    div, img, svg, view, Context, Element, ParentElement, RootView, StyleHelpers, View,
+    ViewContext, WindowContext,
 };
 
 pub struct Workspace {
