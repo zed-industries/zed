@@ -155,6 +155,7 @@ message Envelope {
         UpdateChannelBufferCollaborators update_channel_buffer_collaborators = 128;
         RejoinChannelBuffers rejoin_channel_buffers = 129;
         RejoinChannelBuffersResponse rejoin_channel_buffers_response = 130;
+        AckBufferOperation ack_buffer_operation = 143;
 
         JoinChannelChat join_channel_chat = 131;
         JoinChannelChatResponse join_channel_chat_response = 132;
@@ -165,10 +166,11 @@ message Envelope {
         GetChannelMessages get_channel_messages = 137;
         GetChannelMessagesResponse get_channel_messages_response = 138;
         RemoveChannelMessage remove_channel_message = 139;
+        AckChannelMessage ack_channel_message = 144;
 
         LinkChannel link_channel = 140;
         UnlinkChannel unlink_channel = 141;
-        MoveChannel move_channel = 142;
+        MoveChannel move_channel = 142; // current max: 144
     }
 }
 
@@ -1062,6 +1064,11 @@ message RemoveChannelMessage {
     uint64 message_id = 2;
 }
 
+message AckChannelMessage {
+    uint64 channel_id = 1;
+    uint64 message_id = 2;
+}
+
 message SendChannelMessageResponse {
     ChannelMessage message = 1;
 }
@@ -1115,6 +1122,13 @@ message RejoinChannelBuffers {
 
 message RejoinChannelBuffersResponse {
     repeated RejoinedChannelBuffer buffers = 1;
+}
+
+message AckBufferOperation {
+    uint64 buffer_id = 1;
+    uint64 epoch = 2;
+    uint64 lamport_timestamp = 3;
+    uint64 replica_id = 4;
 }
 
 message JoinChannelBufferResponse {

@@ -271,6 +271,8 @@ messages!(
     (LeaveChannelBuffer, Background),
     (UpdateChannelBuffer, Foreground),
     (UpdateChannelBufferCollaborators, Foreground),
+    (AckBufferOperation, Background),
+    (AckChannelMessage, Background),
 );
 
 request_messages!(
@@ -406,7 +408,7 @@ entity_messages!(
     ChannelMessageSent,
     UpdateChannelBuffer,
     RemoveChannelMessage,
-    UpdateChannelBufferCollaborators
+    UpdateChannelBufferCollaborators,
 );
 
 const KIB: usize = 1024;
