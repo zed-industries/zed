@@ -621,7 +621,7 @@ impl CollabPanel {
                             contact,
                             *calling,
                             &this.project,
-                            &theme.collab_panel,
+                            &theme,
                             is_selected,
                             cx,
                         ),
@@ -1658,15 +1658,19 @@ impl CollabPanel {
         contact: &Contact,
         calling: bool,
         project: &ModelHandle<Project>,
-        theme: &theme::CollabPanel,
+        theme: &theme::Theme,
         is_selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
+        enum ContactTooltip {};
+
+        let collab_theme = &theme.collab_panel;
         let online = contact.online;
         let busy = contact.busy || calling;
         let user_id = contact.user.id;
         let github_login = contact.user.github_login.clone();
         let initial_project = project.clone();
+
         let mut event_handler =
             MouseEventHandler::new::<Contact, _>(contact.user.id as usize, cx, |state, cx| {
                 Flex::row()
@@ -1677,9 +1681,9 @@ impl CollabPanel {
                                     .collapsed()
                                     .contained()
                                     .with_style(if busy {
-                                        theme.contact_status_busy
+                                        collab_theme.contact_status_busy
                                     } else {
-                                        theme.contact_status_free
+                                        collab_theme.contact_status_free
                                     })
                                     .aligned(),
                             )
@@ -1689,7 +1693,7 @@ impl CollabPanel {
                         Stack::new()
                             .with_child(
                                 Image::from_data(avatar)
-                                    .with_style(theme.contact_avatar)
+                                    .with_style(collab_theme.contact_avatar)
                                     .aligned()
                                     .left(),
                             )
@@ -1698,58 +1702,94 @@ impl CollabPanel {
                     .with_child(
                         Label::new(
                             contact.user.github_login.clone(),
-                            theme.contact_username.text.clone(),
+                            collab_theme.contact_username.text.clone(),
                         )
                         .contained()
-                        .with_style(theme.contact_username.container)
+                        .with_style(collab_theme.contact_username.container)
                         .aligned()
                         .left()
                         .flex(1., true),
                     )
-                    .with_child(
-                        MouseEventHandler::new::<Cancel, _>(
-                            contact.user.id as usize,
-                            cx,
-                            |mouse_state, _| {
-                                let button_style = theme.contact_button.style_for(mouse_state);
-                                render_icon_button(button_style, "icons/x.svg")
-                                    .aligned()
-                                    .flex_float()
-                            },
+                    .with_children(if state.hovered() {
+                        Some(
+                            MouseEventHandler::new::<Cancel, _>(
+                                contact.user.id as usize,
+                                cx,
+                                |mouse_state, _| {
+                                    let button_style =
+                                        collab_theme.contact_button.style_for(mouse_state);
+                                    render_icon_button(button_style, "icons/x.svg")
+                                        .aligned()
+                                        .flex_float()
+                                },
+                            )
+                            .with_padding(Padding::uniform(2.))
+                            .with_cursor_style(CursorStyle::PointingHand)
+                            .on_click(MouseButton::Left, move |_, this, cx| {
+                                this.remove_contact(user_id, &github_login, cx);
+                            })
+                            .flex_float(),
                         )
-                        .with_padding(Padding::uniform(2.))
-                        .with_cursor_style(CursorStyle::PointingHand)
-                        .on_click(MouseButton::Left, move |_, this, cx| {
-                            this.remove_contact(user_id, &github_login, cx);
-                        })
-                        .flex_float(),
-                    )
+                    } else {
+                        None
+                    })
                     .with_children(if calling {
                         Some(
-                            Label::new("Calling", theme.calling_indicator.text.clone())
+                            Label::new("Calling", collab_theme.calling_indicator.text.clone())
                                 .contained()
-                                .with_style(theme.calling_indicator.container)
+                                .with_style(collab_theme.calling_indicator.container)
                                 .aligned(),
                         )
                     } else {
                         None
                     })
                     .constrained()
-                    .with_height(theme.row_height)
+                    .with_height(collab_theme.row_height)
                     .contained()
-                    .with_style(*theme.contact_row.in_state(is_selected).style_for(state))
-            })
-            .on_click(MouseButton::Left, move |_, this, cx| {
-                if online && !busy {
-                    this.call(user_id, Some(initial_project.clone()), cx);
-                }
+                    .with_style(
+                        *collab_theme
+                            .contact_row
+                            .in_state(is_selected)
+                            .style_for(state),
+                    )
             });
 
-        if online {
-            event_handler = event_handler.with_cursor_style(CursorStyle::PointingHand);
-        }
+        if online && !busy {
+            let room = ActiveCall::global(cx).read(cx).room();
+            let label = if room.is_some() {
+                format!("Invite {} to join call", contact.user.github_login)
+            } else {
+                format!("Call {}", contact.user.github_login)
+            };
 
-        event_handler.into_any()
+            event_handler
+                .on_click(MouseButton::Left, move |_, this, cx| {
+                    this.call(user_id, Some(initial_project.clone()), cx);
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .with_tooltip::<ContactTooltip>(
+                    contact.user.id as usize,
+                    label,
+                    None,
+                    theme.tooltip.clone(),
+                    cx,
+                )
+                .into_any()
+        } else {
+            event_handler
+                .with_tooltip::<ContactTooltip>(
+                    contact.user.id as usize,
+                    format!(
+                        "{} is {}",
+                        contact.user.github_login,
+                        if busy { "on a call" } else { "offline" }
+                    ),
+                    None,
+                    theme.tooltip.clone(),
+                    cx,
+                )
+                .into_any()
+        }
     }
 
     fn render_contact_placeholder(
