@@ -18,12 +18,12 @@ impl Database {
             let user_b_participant = Alias::new("user_b_participant");
             let mut db_contacts = contact::Entity::find()
                 .column_as(
-                    Expr::tbl(user_a_participant.clone(), room_participant::Column::Id)
+                    Expr::col((user_a_participant.clone(), room_participant::Column::Id))
                         .is_not_null(),
                     "user_a_busy",
                 )
                 .column_as(
-                    Expr::tbl(user_b_participant.clone(), room_participant::Column::Id)
+                    Expr::col((user_b_participant.clone(), room_participant::Column::Id))
                         .is_not_null(),
                     "user_b_busy",
                 )

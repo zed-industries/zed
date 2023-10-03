@@ -19,11 +19,12 @@ use rpc::{
     ConnectionId,
 };
 use sea_orm::{
-    entity::prelude::*, ActiveValue, Condition, ConnectionTrait, DatabaseConnection,
-    DatabaseTransaction, DbErr, FromQueryResult, IntoActiveModel, IsolationLevel, JoinType,
-    QueryOrder, QuerySelect, Statement, TransactionTrait,
+    entity::prelude::*,
+    sea_query::{Alias, Expr, OnConflict, Query},
+    ActiveValue, Condition, ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbErr,
+    FromQueryResult, IntoActiveModel, IsolationLevel, JoinType, QueryOrder, QuerySelect, Statement,
+    TransactionTrait,
 };
-use sea_query::{Alias, Expr, OnConflict, Query};
 use serde::{Deserialize, Serialize};
 use sqlx::{
     migrate::{Migrate, Migration, MigrationSource},
@@ -62,6 +63,7 @@ pub struct Database {
 // separate files in the `queries` folder.
 impl Database {
     pub async fn new(options: ConnectOptions, executor: Executor) -> Result<Self> {
+        sqlx::any::install_default_drivers();
         Ok(Self {
             options: options.clone(),
             pool: sea_orm::Database::connect(options).await?,

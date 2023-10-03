@@ -26,7 +26,7 @@ postage.workspace = true
 futures.workspace = true
 ordered-float.workspace = true
 smol.workspace = true
-rusqlite = { version = "0.27.0", features = ["blob", "array", "modern_sqlite"] }
+rusqlite.workspace = true
 log.workspace = true
 tree-sitter.workspace = true
 lazy_static.workspace = true

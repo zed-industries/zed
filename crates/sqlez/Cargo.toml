@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 anyhow.workspace = true
 indoc.workspace = true
-libsqlite3-sys = { version = "0.24", features = ["bundled"] }
+libsqlite3-sys = { version = "0.26", features = ["bundled"] }
 smol.workspace = true
 thread_local = "1.1.4"
 lazy_static.workspace = true

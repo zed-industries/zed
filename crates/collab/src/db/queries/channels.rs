@@ -1,7 +1,6 @@
+use super::*;
 use rpc::proto::ChannelEdge;
 use smallvec::SmallVec;
-
-use super::*;
 
 type ChannelDescendants = HashMap<ChannelId, SmallSet<ChannelId>>;
 
@@ -659,7 +658,7 @@ impl Database {
     ) -> Result<Vec<ChannelId>> {
         let paths = channel_path::Entity::find()
             .filter(channel_path::Column::ChannelId.eq(channel_id))
-            .order_by(channel_path::Column::IdPath, sea_query::Order::Desc)
+            .order_by(channel_path::Column::IdPath, sea_orm::Order::Desc)
             .all(tx)
             .await?;
         let mut channel_ids = Vec::new();
