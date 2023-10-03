@@ -60,10 +60,10 @@ use itertools::Itertools;
 pub use language::{char_kind, CharKind};
 use language::{
     language_settings::{self, all_language_settings, InlayHintSettings},
-    point_from_lsp, AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion,
-    CursorShape, Diagnostic, DiagnosticSeverity, File, IndentKind, IndentSize, Language,
-    LanguageServerName, OffsetRangeExt, OffsetUtf16, Point, Selection, SelectionGoal,
-    TransactionId,
+    point_from_lsp, prepare_completion_documentation, AutoindentMode, BracketPair, Buffer,
+    CodeAction, CodeLabel, Completion, CursorShape, Diagnostic, DiagnosticSeverity, Documentation,
+    File, IndentKind, IndentSize, Language, LanguageServerName, OffsetRangeExt, OffsetUtf16, Point,
+    Selection, SelectionGoal, TransactionId,
 };
 use link_go_to_definition::{
     hide_link_definition, show_link_definition, GoToDefinitionLink, InlayHighlight,
@@ -1075,21 +1075,37 @@ impl CompletionsMenu {
             })
             .map(|(ix, _)| ix);
 
+        let project = editor.project.clone();
         let completions = self.completions.clone();
         let matches = self.matches.clone();
         let selected_item = self.selected_item;
-
-        let alongside_docs_width = style.autocomplete.alongside_docs_width;
-        let alongside_docs_container_style = style.autocomplete.alongside_docs_container;
-        let outer_container_style = style.autocomplete.container;
 
         let list = UniformList::new(self.list.clone(), matches.len(), cx, {
             let style = style.clone();
             move |_, range, items, cx| {
                 let start_ix = range.start;
-                let completions = completions.read();
+                let mut completions = completions.write();
+
                 for (ix, mat) in matches[range].iter().enumerate() {
-                    let completion = &completions[mat.candidate_id];
+                    let completion = &mut completions[mat.candidate_id];
+
+                    if completion.documentation.is_none() {
+                        if let Some(lsp_docs) = &completion.lsp_completion.documentation {
+                            let project = project
+                                .as_ref()
+                                .expect("It is impossible have LSP servers without a project");
+
+                            let language_registry = project.read(cx).languages();
+
+                            completion.documentation = prepare_completion_documentation(
+                                lsp_docs,
+                                language_registry,
+                                None,
+                                &style.theme,
+                            );
+                        }
+                    }
+
                     let documentation = &completion.documentation;
                     let item_ix = start_ix + ix;
 
@@ -1121,9 +1137,7 @@ impl CompletionsMenu {
                                             ),
                                         );
 
-                                if let Some(language::Documentation::SingleLine(text)) =
-                                    documentation
-                                {
+                                if let Some(Documentation::SingleLine(text)) = documentation {
                                     Flex::row()
                                         .with_child(completion_label)
                                         .with_children((|| {
@@ -1209,11 +1223,11 @@ impl CompletionsMenu {
                 let documentation = &completion.documentation;
 
                 match documentation {
-                    Some(language::Documentation::MultiLinePlainText(text)) => {
+                    Some(Documentation::MultiLinePlainText(text)) => {
                         Some(Text::new(text.clone(), style.text.clone()))
                     }
 
-                    Some(language::Documentation::MultiLineMarkdown(parsed)) => {
+                    Some(Documentation::MultiLineMarkdown(parsed)) => {
                         Some(render_parsed_markdown(parsed, &style, cx))
                     }
 
@@ -1221,7 +1235,7 @@ impl CompletionsMenu {
                 }
             })
             .contained()
-            .with_style(outer_container_style)
+            .with_style(style.autocomplete.container)
             .into_any()
     }
 
