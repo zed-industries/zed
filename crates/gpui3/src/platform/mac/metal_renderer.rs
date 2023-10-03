@@ -49,7 +49,6 @@ const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shader
 const INSTANCE_BUFFER_SIZE: usize = 8192 * 1024; // This is an arbitrary decision. There's probably a more optimal value.
 
 pub struct MetalRenderer {
-    device: metal::Device,
     layer: metal::MetalLayer,
     command_queue: CommandQueue,
     quads_pipeline_state: metal::RenderPipelineState,
@@ -145,7 +144,6 @@ impl MetalRenderer {
         ));
 
         Self {
-            device,
             layer,
             command_queue,
             quads_pipeline_state,

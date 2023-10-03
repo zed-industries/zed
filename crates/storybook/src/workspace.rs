@@ -26,7 +26,7 @@ impl WorkspaceElement {
             .font("Helvetica")
             .text_base()
             .text_color(black())
-            .child("Hey");
+            .child("The quick brown fox ran over the lazy dog.");
 
         // div()
         //     .size_full()

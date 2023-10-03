@@ -33,13 +33,10 @@ impl Workspace {
             .text_base()
             .fill(white())
             .text_color(black())
-            .child("Hey")
+            .child("The quick brown fox ran over the lazy dog.")
 
         // TODO: Implement style.
         //.size_full().fill(gpui3::hsla(0.83, 1., 0.5, 1.))
-
-        // TODO: Debug font not font.
-        //.child("Is this thing on?")
 
         // themed(rose_pine_dawn(), cx, |cx| {
         //     div()

@@ -147,10 +147,10 @@ impl Atlas {
             bounds.size().y() as u64,
         );
         self.texture.replace_region(
-            dbg!(region),
+            region,
             0,
             bytes.as_ptr() as *const _,
-            dbg!((bounds.size().x() * self.bytes_per_pixel() as i32) as u64),
+            (bounds.size().x() * self.bytes_per_pixel() as i32) as u64,
         );
     }
 

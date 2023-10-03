@@ -633,7 +633,6 @@ impl Renderer {
                 // Snap sprite to pixel grid.
                 let origin = (glyph.origin * scale_factor).floor() + sprite.offset.to_f32();
 
-                dbg!(origin);
                 sprites_by_atlas
                     .entry(sprite.atlas_id)
                     .or_insert_with(Vec::new)

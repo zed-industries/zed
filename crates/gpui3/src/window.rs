@@ -192,14 +192,14 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         let raster_bounds = self.text_system().raster_bounds(&params)?;
         if !raster_bounds.is_zero() {
             let layer_id = self.current_layer_id();
-            let bounds = Bounds {
-                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
-                size: raster_bounds.size.map(Into::into),
-            };
             let tile = self
                 .window
                 .glyph_atlas
                 .get_or_insert_with(&params, &mut || self.text_system().rasterize_glyph(&params))?;
+            let bounds = Bounds {
+                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
+                size: tile.bounds.size.map(Into::into),
+            };
 
             self.window.scene.insert(
                 layer_id,
