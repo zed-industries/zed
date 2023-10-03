@@ -1,8 +1,10 @@
 use crate::codegen::CodegenKind;
 use language::{BufferSnapshot, OffsetRangeExt, ToOffset};
 use std::cmp;
+use std::fmt::Write;
+use std::iter;
 use std::ops::Range;
-use std::{fmt::Write, iter};
+use tiktoken_rs::ChatCompletionRequestMessage;
 
 fn summarize(buffer: &BufferSnapshot, selected_range: Range<impl ToOffset>) -> String {
     #[derive(Debug)]
@@ -122,69 +124,103 @@ pub fn generate_content_prompt(
     range: Range<impl ToOffset>,
     kind: CodegenKind,
     search_results: Vec<String>,
+    model: &str,
 ) -> String {
-    let mut prompt = String::new();
+    const MAXIMUM_SNIPPET_TOKEN_COUNT: usize = 500;
+
+    let mut prompts = Vec::new();
 
     // General Preamble
     if let Some(language_name) = language_name {
-        writeln!(prompt, "You're an expert {language_name} engineer.\n").unwrap();
+        prompts.push(format!("You're an expert {language_name} engineer.\n"));
     } else {
-        writeln!(prompt, "You're an expert engineer.\n").unwrap();
+        prompts.push("You're an expert engineer.\n".to_string());
     }
 
+    // Snippets
+    let mut snippet_position = prompts.len() - 1;
+
     let outline = summarize(buffer, range);
-    writeln!(
-        prompt,
-        "The file you are currently working on has the following outline:"
-    )
-    .unwrap();
+    prompts.push("The file you are currently working on has the following outline:".to_string());
     if let Some(language_name) = language_name {
         let language_name = language_name.to_lowercase();
-        writeln!(prompt, "```{language_name}\n{outline}\n```").unwrap();
+        prompts.push(format!("```{language_name}\n{outline}\n```"));
     } else {
-        writeln!(prompt, "```\n{outline}\n```").unwrap();
+        prompts.push(format!("```\n{outline}\n```"));
     }
 
     match kind {
         CodegenKind::Generate { position: _ } => {
-            writeln!(prompt, "In particular, the user's cursor is current on the '<|START|>' span in the above outline, with no text selected.").unwrap();
-            writeln!(
-                prompt,
-                "Assume the cursor is located where the `<|START|` marker is."
-            )
-            .unwrap();
-            writeln!(
-                prompt,
+            prompts.push("In particular, the user's cursor is currently on the '<|START|>' span in the above outline, with no text selected.".to_string());
+            prompts
+                .push("Assume the cursor is located where the `<|START|` marker is.".to_string());
+            prompts.push(
                 "Text can't be replaced, so assume your answer will be inserted at the cursor."
-            )
-            .unwrap();
-            writeln!(
-                prompt,
+                    .to_string(),
+            );
+            prompts.push(format!(
                 "Generate text based on the users prompt: {user_prompt}"
-            )
-            .unwrap();
+            ));
         }
         CodegenKind::Transform { range: _ } => {
-            writeln!(prompt, "In particular, the user has selected a section of the text between the '<|START|' and '|END|>' spans.").unwrap();
-            writeln!(
-                prompt,
+            prompts.push("In particular, the user has selected a section of the text between the '<|START|' and '|END|>' spans.".to_string());
+            prompts.push(format!(
                 "Modify the users code selected text based upon the users prompt: {user_prompt}"
-            )
-            .unwrap();
-            writeln!(
-                prompt,
-                "You MUST reply with only the adjusted code (within the '<|START|' and '|END|>' spans), not the entire file."
-            )
-            .unwrap();
+            ));
+            prompts.push("You MUST reply with only the adjusted code (within the '<|START|' and '|END|>' spans), not the entire file.".to_string());
         }
     }
 
     if let Some(language_name) = language_name {
-        writeln!(prompt, "Your answer MUST always be valid {language_name}").unwrap();
+        prompts.push(format!("Your answer MUST always be valid {language_name}"));
     }
-    writeln!(prompt, "Always wrap your response in a Markdown codeblock").unwrap();
-    writeln!(prompt, "Never make remarks about the output.").unwrap();
+    prompts.push("Always wrap your response in a Markdown codeblock".to_string());
+    prompts.push("Never make remarks about the output.".to_string());
 
+    let current_messages = [ChatCompletionRequestMessage {
+        role: "user".to_string(),
+        content: Some(prompts.join("\n")),
+        function_call: None,
+        name: None,
+    }];
+
+    let remaining_token_count = if let Ok(current_token_count) =
+        tiktoken_rs::num_tokens_from_messages(model, &current_messages)
+    {
+        let max_token_count = tiktoken_rs::model::get_context_size(model);
+        max_token_count - current_token_count
+    } else {
+        // If tiktoken fails to count token count, assume we have no space remaining.
+        0
+    };
+
+    // TODO:
+    //   - add repository name to snippet
+    //   - add file path
+    //   - add language
+    if let Ok(encoding) = tiktoken_rs::get_bpe_from_model(model) {
+        let template = "You are working inside a large repository, here are a few code snippets that may be useful";
+
+        for search_result in search_results {
+            let mut snippet_prompt = template.to_string();
+            writeln!(snippet_prompt, "```\n{search_result}\n```").unwrap();
+
+            let token_count = encoding
+                .encode_with_special_tokens(snippet_prompt.as_str())
+                .len();
+            if token_count <= remaining_token_count {
+                if token_count < MAXIMUM_SNIPPET_TOKEN_COUNT {
+                    prompts.insert(snippet_position, snippet_prompt);
+                    snippet_position += 1;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
+    let prompt = prompts.join("\n");
+    println!("PROMPT: {:?}", prompt);
     prompt
 }
 

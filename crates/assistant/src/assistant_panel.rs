@@ -437,8 +437,15 @@ impl AssistantPanel {
             InlineAssistantEvent::Confirmed {
                 prompt,
                 include_conversation,
+                retrieve_context,
             } => {
-                self.confirm_inline_assist(assist_id, prompt, *include_conversation, cx);
+                self.confirm_inline_assist(
+                    assist_id,
+                    prompt,
+                    *include_conversation,
+                    cx,
+                    *retrieve_context,
+                );
             }
             InlineAssistantEvent::Canceled => {
                 self.finish_inline_assist(assist_id, true, cx);
@@ -532,6 +539,7 @@ impl AssistantPanel {
         user_prompt: &str,
         include_conversation: bool,
         cx: &mut ViewContext<Self>,
+        retrieve_context: bool,
     ) {
         let conversation = if include_conversation {
             self.active_editor()
@@ -593,42 +601,49 @@ impl AssistantPanel {
         let codegen_kind = codegen.read(cx).kind().clone();
         let user_prompt = user_prompt.to_string();
 
-        let project = if let Some(workspace) = self.workspace.upgrade(cx) {
-            workspace.read(cx).project()
-        } else {
-            return;
-        };
+        let snippets = if retrieve_context {
+            let project = if let Some(workspace) = self.workspace.upgrade(cx) {
+                workspace.read(cx).project()
+            } else {
+                return;
+            };
 
-        let project = project.to_owned();
-        let search_results = if let Some(semantic_index) = self.semantic_index.clone() {
-            let search_results = semantic_index.update(cx, |this, cx| {
-                this.search_project(project, user_prompt.to_string(), 10, vec![], vec![], cx)
+            let project = project.to_owned();
+            let search_results = if let Some(semantic_index) = self.semantic_index.clone() {
+                let search_results = semantic_index.update(cx, |this, cx| {
+                    this.search_project(project, user_prompt.to_string(), 10, vec![], vec![], cx)
+                });
+
+                cx.background()
+                    .spawn(async move { search_results.await.unwrap_or_default() })
+            } else {
+                Task::ready(Vec::new())
+            };
+
+            let snippets = cx.spawn(|_, cx| async move {
+                let mut snippets = Vec::new();
+                for result in search_results.await {
+                    snippets.push(result.buffer.read_with(&cx, |buffer, _| {
+                        buffer
+                            .snapshot()
+                            .text_for_range(result.range)
+                            .collect::<String>()
+                    }));
+                }
+                snippets
             });
-
-            cx.background()
-                .spawn(async move { search_results.await.unwrap_or_default() })
+            snippets
         } else {
             Task::ready(Vec::new())
         };
 
-        let snippets = cx.spawn(|_, cx| async move {
-            let mut snippets = Vec::new();
-            for result in search_results.await {
-                snippets.push(result.buffer.read_with(&cx, |buffer, _| {
-                    buffer
-                        .snapshot()
-                        .text_for_range(result.range)
-                        .collect::<String>()
-                }));
-            }
-            snippets
-        });
+        let mut model = settings::get::<AssistantSettings>(cx)
+            .default_open_ai_model
+            .clone();
+        let model_name = model.full_name();
 
         let prompt = cx.background().spawn(async move {
             let snippets = snippets.await;
-            for snippet in &snippets {
-                println!("SNIPPET: \n{:?}", snippet);
-            }
 
             let language_name = language_name.as_deref();
             generate_content_prompt(
@@ -638,13 +653,11 @@ impl AssistantPanel {
                 range,
                 codegen_kind,
                 snippets,
+                model_name,
             )
         });
 
         let mut messages = Vec::new();
-        let mut model = settings::get::<AssistantSettings>(cx)
-            .default_open_ai_model
-            .clone();
         if let Some(conversation) = conversation {
             let conversation = conversation.read(cx);
             let buffer = conversation.buffer.read(cx);
@@ -1557,12 +1570,14 @@ impl Conversation {
                         Role::Assistant => "assistant".into(),
                         Role::System => "system".into(),
                     },
-                    content: self
-                        .buffer
-                        .read(cx)
-                        .text_for_range(message.offset_range)
-                        .collect(),
+                    content: Some(
+                        self.buffer
+                            .read(cx)
+                            .text_for_range(message.offset_range)
+                            .collect(),
+                    ),
                     name: None,
+                    function_call: None,
                 })
             })
             .collect::<Vec<_>>();
@@ -2681,6 +2696,7 @@ enum InlineAssistantEvent {
     Confirmed {
         prompt: String,
         include_conversation: bool,
+        retrieve_context: bool,
     },
     Canceled,
     Dismissed,
@@ -2922,6 +2938,7 @@ impl InlineAssistant {
             cx.emit(InlineAssistantEvent::Confirmed {
                 prompt,
                 include_conversation: self.include_conversation,
+                retrieve_context: self.retrieve_context,
             });
             self.confirmed = true;
             cx.notify();

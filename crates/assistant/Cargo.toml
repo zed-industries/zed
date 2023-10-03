@@ -38,7 +38,7 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 smol.workspace = true
-tiktoken-rs = "0.4"
+tiktoken-rs = "0.5"
 
 [dev-dependencies]
 editor = { path = "../editor", features = ["test-support"] }
