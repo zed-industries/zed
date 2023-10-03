@@ -1,10 +1,12 @@
 use crate::{
-    black, point, px, Bounds, FontId, Hsla, Layout, Pixels, Point, RasterizedGlyphId, RunStyle,
-    ShapedBoundary, ShapedLine, ShapedRun, UnderlineStyle, WindowContext,
+    black, point, px, Bounds, FontId, Hsla, Layout, MonochromeSprite, Pixels, Point,
+    RasterizedGlyphId, RunStyle, ShapedBoundary, ShapedLine, ShapedRun, UnderlineStyle,
+    WindowContext,
 };
 use anyhow::Result;
 use smallvec::SmallVec;
 use std::sync::Arc;
+use util::ResultExt;
 
 #[derive(Default, Debug, Clone)]
 pub struct Line {
@@ -174,7 +176,28 @@ impl Line {
                         //     origin: glyph_origin,
                         // });
                     } else {
-                        todo!()
+                        if let Some((tile, bounds)) = cx
+                            .rasterize_glyph(
+                                run.font_id,
+                                glyph.id,
+                                self.layout.font_size,
+                                cx.scale_factor(),
+                                glyph_origin,
+                            )
+                            .log_err()
+                        {
+                            let layer_id = cx.current_layer_id();
+                            cx.scene().insert(
+                                layer_id,
+                                MonochromeSprite {
+                                    order: layout.order,
+                                    bounds,
+                                    color,
+                                    tile,
+                                },
+                            );
+                        }
+
                         // cx.scene().insert(Symbol {
                         //     order: layout.order,
                         //     origin,

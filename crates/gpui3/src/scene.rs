@@ -10,7 +10,7 @@ pub type StackingOrder = SmallVec<[u32; 16]>;
 
 #[derive(Debug)]
 pub struct Scene {
-    scale_factor: f32,
+    pub(crate) scale_factor: f32,
     pub(crate) layers: BTreeMap<StackingOrder, SceneLayer>,
 }
 
@@ -29,8 +29,8 @@ impl Scene {
         }
     }
 
-    pub fn insert(&mut self, order: StackingOrder, primitive: impl Into<Primitive>) {
-        let layer = self.layers.entry(order).or_default();
+    pub fn insert(&mut self, stacking_order: StackingOrder, primitive: impl Into<Primitive>) {
+        let layer = self.layers.entry(stacking_order).or_default();
 
         let primitive = primitive.into();
         match primitive {

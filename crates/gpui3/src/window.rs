@@ -22,7 +22,7 @@ pub struct Window {
     layout_engine: TaffyLayoutEngine,
     pub(crate) root_view: Option<AnyView<()>>,
     mouse_position: Point<Pixels>,
-    current_stacking_order: StackingOrder,
+    current_layer_id: StackingOrder,
     pub(crate) scene: Scene,
     pub(crate) dirty: bool,
 }
@@ -63,7 +63,7 @@ impl Window {
             layout_engine: TaffyLayoutEngine::new(),
             root_view: None,
             mouse_position,
-            current_stacking_order: SmallVec::new(),
+            current_layer_id: SmallVec::new(),
             scene: Scene::new(scale_factor),
             dirty: true,
         }
@@ -122,6 +122,10 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             .map(Into::into)?)
     }
 
+    pub fn scale_factor(&self) -> f32 {
+        self.window.scene.scale_factor
+    }
+
     pub fn rem_size(&self) -> Pixels {
         self.window.rem_size
     }
@@ -135,14 +139,14 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 
     pub fn stack<R>(&mut self, order: u32, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.window.current_stacking_order.push(order);
+        self.window.current_layer_id.push(order);
         let result = f(self);
-        self.window.current_stacking_order.pop();
+        self.window.current_layer_id.pop();
         result
     }
 
-    pub fn current_stack_order(&self) -> StackingOrder {
-        self.window.current_stacking_order.clone()
+    pub fn current_layer_id(&self) -> StackingOrder {
+        self.window.current_layer_id.clone()
     }
 
     pub fn run_on_main<R>(
@@ -169,7 +173,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         font_size: Pixels,
         scale_factor: f32,
         target_position: Point<Pixels>,
-    ) -> Result<(AtlasTile, Point<DevicePixels>)> {
+    ) -> Result<(AtlasTile, Bounds<Pixels>)> {
         let target_position = target_position * scale_factor;
         let subpixel_variant = Point {
             x: (target_position.x.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
@@ -192,7 +196,14 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 Ok((bounds.size, pixels))
             })?;
 
-        Ok((tile, offset))
+        // Align bounding box surrounding glyph to pixel grid
+        let mut origin = (target_position * scale_factor).map(|p| p.floor());
+        // Position glyph within bounding box
+        origin += offset.map(|o| px(u32::from(o) as f32));
+        let size = tile.bounds_in_atlas.size.map(|b| px(b.0 as f32));
+        let bounds = Bounds { origin, size };
+
+        Ok((tile, bounds))
     }
 
     pub(crate) fn draw(&mut self) -> Result<()> {

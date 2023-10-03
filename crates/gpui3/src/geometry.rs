@@ -478,6 +478,10 @@ impl Pixels {
         Self(self.0.round())
     }
 
+    pub fn floor(&self) -> Self {
+        Self(self.0.floor())
+    }
+
     pub fn to_device_pixels(&self, scale: f32) -> DevicePixels {
         DevicePixels((self.0 * scale).ceil() as u32)
     }
