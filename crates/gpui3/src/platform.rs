@@ -192,12 +192,12 @@ pub trait PlatformAtlas<Key>: Send + Sync {
 pub struct AtlasTile {
     pub(crate) texture_id: AtlasTextureId,
     pub(crate) tile_id: TileId,
-    pub(crate) bounds_in_atlas: Bounds<DevicePixels>,
+    pub(crate) bounds: Bounds<DevicePixels>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
-pub(crate) struct AtlasTextureId(pub(crate) usize);
+pub(crate) struct AtlasTextureId(pub(crate) u32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(C)]

@@ -243,6 +243,8 @@ impl From<Quad> for Primitive {
 pub struct MonochromeSprite {
     pub order: u32,
     pub bounds: Bounds<Pixels>,
+    pub clip_bounds: Bounds<Pixels>,
+    pub clip_corner_radii: Corners<Pixels>,
     pub color: Hsla,
     pub tile: AtlasTile,
 }

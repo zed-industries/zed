@@ -45,11 +45,12 @@ fn generate_shader_bindings() -> PathBuf {
         "Pixels".into(),
         "PointF".into(),
         "Hsla".into(),
+        "Uniforms".into(),
+        "AtlasTile".into(),
         "Quad".into(),
         "QuadInputIndex".into(),
-        "QuadUniforms".into(),
-        "AtlasTile".into(),
         "MonochromeSprite".into(),
+        "MonochromeSpriteInputIndex".into(),
     ]);
     config.no_includes = true;
     config.enumeration.prefix_with_name = true;

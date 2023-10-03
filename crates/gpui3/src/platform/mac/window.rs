@@ -1,10 +1,10 @@
 use super::{ns_string, MetalRenderer, NSRange};
 use crate::{
-    point, px, size, AnyWindowHandle, Bounds, Event, KeyDownEvent, Keystroke, MacScreen,
-    MetalAtlas, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMovedEvent,
-    MouseUpEvent, NSRectExt, Pixels, Platform, PlatformAtlas, PlatformDispatcher,
-    PlatformInputHandler, PlatformScreen, PlatformWindow, Point, RasterizedGlyphId, Scene, Size,
-    Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions, WindowPromptLevel,
+    point, px, size, AnyWindowHandle, Bounds, Event, KeyDownEvent, Keystroke, MacScreen, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMovedEvent, MouseUpEvent, NSRectExt,
+    Pixels, Platform, PlatformAtlas, PlatformDispatcher, PlatformInputHandler, PlatformScreen,
+    PlatformWindow, Point, RasterizedGlyphId, Scene, Size, Timer, WindowAppearance, WindowBounds,
+    WindowKind, WindowOptions, WindowPromptLevel,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -20,7 +20,6 @@ use core_graphics::display::CGRect;
 use ctor::ctor;
 use foreign_types::ForeignTypeRef;
 use futures::channel::oneshot;
-use metal::{MTLPixelFormat, TextureDescriptor};
 use objc::{
     class,
     declare::ClassDecl,

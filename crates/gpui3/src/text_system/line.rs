@@ -1,7 +1,6 @@
 use crate::{
-    black, point, px, Bounds, FontId, Hsla, Layout, MonochromeSprite, Pixels, Point,
-    RasterizedGlyphId, RunStyle, ShapedBoundary, ShapedLine, ShapedRun, UnderlineStyle,
-    WindowContext,
+    black, point, px, Bounds, Corners, FontId, Hsla, Layout, MonochromeSprite, Pixels, Point,
+    RunStyle, ShapedBoundary, ShapedLine, ShapedRun, UnderlineStyle, WindowContext,
 };
 use anyhow::Result;
 use smallvec::SmallVec;
@@ -192,20 +191,13 @@ impl Line {
                                 MonochromeSprite {
                                     order: layout.order,
                                     bounds,
+                                    clip_bounds: bounds,
+                                    clip_corner_radii: Corners::default(),
                                     color,
                                     tile,
                                 },
                             );
                         }
-
-                        // cx.scene().insert(Symbol {
-                        //     order: layout.order,
-                        //     origin,
-                        //     font_id: run.font_id,
-                        //     font_size: self.layout.font_size,
-                        //     id: glyph.id,
-                        //     color,
-                        // });
                     }
                 }
 

@@ -4,69 +4,34 @@
 using namespace metal;
 
 float4 hsla_to_rgba(Hsla hsla);
-float4 to_device_position(float2 pixel_position, float2 viewport_size);
+float4 to_device_position(float2 unit_vertex, Bounds_Pixels bounds,
+                          Bounds_Pixels clip_bounds,
+                          constant Size_DevicePixels *viewport_size);
+float quad_sdf(float2 point, Bounds_Pixels bounds, Corners_Pixels corner_radii);
 
 struct QuadVertexOutput {
   float4 position [[position]];
-  float4 background_color;
-  float4 border_color;
-  uint quad_id;
+  float4 background_color [[flat]];
+  float4 border_color [[flat]];
+  uint quad_id [[flat]];
 };
 
-vertex QuadVertexOutput quad_vertex(
-    uint unit_vertex_id [[vertex_id]], uint quad_id [[instance_id]],
-    constant float2 *unit_vertices [[buffer(QuadInputIndex_Vertices)]],
-    constant Quad *quads [[buffer(QuadInputIndex_Quads)]],
-    constant QuadUniforms *uniforms [[buffer(QuadInputIndex_Uniforms)]]) {
+vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
+                                    uint quad_id [[instance_id]],
+                                    constant float2 *unit_vertices
+                                    [[buffer(QuadInputIndex_Vertices)]],
+                                    constant Quad *quads
+                                    [[buffer(QuadInputIndex_Quads)]],
+                                    constant Size_DevicePixels *viewport_size
+                                    [[buffer(QuadInputIndex_ViewportSize)]]) {
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Quad quad = quads[quad_id];
-  float2 position_2d =
-      unit_vertex * float2(quad.bounds.size.width, quad.bounds.size.height) +
-      float2(quad.bounds.origin.x, quad.bounds.origin.y);
-  position_2d.x = max(quad.clip_bounds.origin.x, position_2d.x);
-  position_2d.x = min(quad.clip_bounds.origin.x + quad.clip_bounds.size.width,
-                      position_2d.x);
-  position_2d.y = max(quad.clip_bounds.origin.y, position_2d.y);
-  position_2d.y = min(quad.clip_bounds.origin.y + quad.clip_bounds.size.height,
-                      position_2d.y);
-
-  float2 viewport_size = float2((float)uniforms->viewport_size.width,
-                                (float)uniforms->viewport_size.height);
-  float4 device_position = to_device_position(position_2d, viewport_size);
+  float4 device_position = to_device_position(unit_vertex, quad.bounds,
+                                              quad.clip_bounds, viewport_size);
   float4 background_color = hsla_to_rgba(quad.background);
   float4 border_color = hsla_to_rgba(quad.border_color);
   return QuadVertexOutput{device_position, background_color, border_color,
                           quad_id};
-}
-
-float quad_sdf(float2 point, Bounds_Pixels bounds,
-               Corners_Pixels corner_radii) {
-  float2 half_size = float2(bounds.size.width, bounds.size.height) / 2.;
-  float2 center = float2(bounds.origin.x, bounds.origin.y) + half_size;
-  float2 center_to_point = point - center;
-  float corner_radius;
-  if (center_to_point.x < 0.) {
-    if (center_to_point.y < 0.) {
-      corner_radius = corner_radii.top_left;
-    } else {
-      corner_radius = corner_radii.bottom_left;
-    }
-  } else {
-    if (center_to_point.y < 0.) {
-      corner_radius = corner_radii.top_right;
-    } else {
-      corner_radius = corner_radii.bottom_right;
-    }
-  }
-
-  float2 rounded_edge_to_point =
-      abs(center_to_point) - half_size + corner_radius;
-  float distance =
-      length(max(0., rounded_edge_to_point)) +
-      min(0., max(rounded_edge_to_point.x, rounded_edge_to_point.y)) -
-      corner_radius;
-
-  return distance;
 }
 
 fragment float4 quad_fragment(QuadVertexOutput input [[stage_in]],
@@ -145,6 +110,57 @@ fragment float4 quad_fragment(QuadVertexOutput input [[stage_in]],
                 saturate(0.5 - distance) * saturate(0.5 - clip_distance));
 }
 
+struct MonochromeSpriteVertexOutput {
+  float4 position [[position]];
+  float2 tile_position;
+  float4 color [[flat]];
+  uint sprite_id [[flat]];
+};
+
+vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
+    uint unit_vertex_id [[vertex_id]], uint sprite_id [[instance_id]],
+    constant float2 *unit_vertices
+    [[buffer(MonochromeSpriteInputIndex_Vertices)]],
+    constant MonochromeSprite *sprites
+    [[buffer(MonochromeSpriteInputIndex_Sprites)]],
+    constant Size_DevicePixels *viewport_size
+    [[buffer(MonochromeSpriteInputIndex_ViewportSize)]],
+    constant Size_DevicePixels *atlas_size
+    [[buffer(MonochromeSpriteInputIndex_AtlasSize)]]) {
+
+  float2 unit_vertex = unit_vertices[unit_vertex_id];
+  MonochromeSprite sprite = sprites[sprite_id];
+  float4 device_position = to_device_position(
+      unit_vertex, sprite.bounds, sprite.clip_bounds, viewport_size);
+
+  float2 tile_origin =
+      float2(sprite.tile.bounds.origin.x, sprite.tile.bounds.origin.y);
+  float2 tile_size =
+      float2(sprite.tile.bounds.size.width, sprite.tile.bounds.size.height);
+  float2 tile_position =
+      (tile_origin + unit_vertex * tile_size) /
+      float2((float)atlas_size->width, (float)atlas_size->height);
+  float4 color = hsla_to_rgba(sprite.color);
+  return MonochromeSpriteVertexOutput{device_position, tile_position, color,
+                                      sprite_id};
+}
+
+fragment float4 monochrome_sprite_fragment(
+    MonochromeSpriteVertexOutput input [[stage_in]],
+    constant MonochromeSprite *sprites
+    [[buffer(MonochromeSpriteInputIndex_Sprites)]],
+    texture2d<float> atlas
+    [[texture(MonochromeSpriteInputIndex_AtlasTexture)]]) {
+  MonochromeSprite sprite = sprites[input.sprite_id];
+  constexpr sampler atlas_sampler(mag_filter::linear, min_filter::linear);
+  float4 sample = atlas.sample(atlas_sampler, input.tile_position);
+  float clip_distance =
+      quad_sdf(input.position.xy, sprite.clip_bounds, sprite.clip_corner_radii);
+  float4 color = input.color;
+  color.a *= sample.a * saturate(0.5 - clip_distance);
+  return color;
+}
+
 float4 hsla_to_rgba(Hsla hsla) {
   float h = hsla.h * 6.0; // Now, it's an angle but scaled in [0, 6) range
   float s = hsla.s;
@@ -193,10 +209,52 @@ float4 hsla_to_rgba(Hsla hsla) {
   return rgba;
 }
 
-float4 to_device_position(float2 pixel_position, float2 viewport_size) {
-  return float4(pixel_position / viewport_size * float2(2., -2.) +
-                    float2(-1., 1.),
-                0., 1.);
+float4 to_device_position(float2 unit_vertex, Bounds_Pixels bounds,
+                          Bounds_Pixels clip_bounds,
+                          constant Size_DevicePixels *input_viewport_size) {
+  float2 position =
+      unit_vertex * float2(bounds.size.width, bounds.size.height) +
+      float2(bounds.origin.x, bounds.origin.y);
+  position.x = max(clip_bounds.origin.x, position.x);
+  position.x = min(clip_bounds.origin.x + clip_bounds.size.width, position.x);
+  position.y = max(clip_bounds.origin.y, position.y);
+  position.y = min(clip_bounds.origin.y + clip_bounds.size.height, position.y);
+
+  float2 viewport_size = float2((float)input_viewport_size->width,
+                                (float)input_viewport_size->height);
+  float2 device_position =
+      position / viewport_size * float2(2., -2.) + float2(-1., 1.);
+  return float4(device_position, 0., 1.);
+}
+
+float quad_sdf(float2 point, Bounds_Pixels bounds,
+               Corners_Pixels corner_radii) {
+  float2 half_size = float2(bounds.size.width, bounds.size.height) / 2.;
+  float2 center = float2(bounds.origin.x, bounds.origin.y) + half_size;
+  float2 center_to_point = point - center;
+  float corner_radius;
+  if (center_to_point.x < 0.) {
+    if (center_to_point.y < 0.) {
+      corner_radius = corner_radii.top_left;
+    } else {
+      corner_radius = corner_radii.bottom_left;
+    }
+  } else {
+    if (center_to_point.y < 0.) {
+      corner_radius = corner_radii.top_right;
+    } else {
+      corner_radius = corner_radii.bottom_right;
+    }
+  }
+
+  float2 rounded_edge_to_point =
+      abs(center_to_point) - half_size + corner_radius;
+  float distance =
+      length(max(0., rounded_edge_to_point)) +
+      min(0., max(rounded_edge_to_point.x, rounded_edge_to_point.y)) -
+      corner_radius;
+
+  return distance;
 }
 
 // struct SpriteFragmentInput {

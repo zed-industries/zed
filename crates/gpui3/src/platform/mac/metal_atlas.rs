@@ -98,7 +98,7 @@ impl<Key> MetalAtlasState<Key> {
         }
 
         let atlas_texture = MetalAtlasTexture {
-            id: AtlasTextureId(self.textures.len()),
+            id: AtlasTextureId(self.textures.len() as u32),
             allocator: etagere::BucketedAtlasAllocator::new(size.into()),
             metal_texture: AssertSend(metal_texture),
         };
@@ -120,24 +120,19 @@ impl MetalAtlasTexture {
         let tile = AtlasTile {
             texture_id: self.id,
             tile_id: allocation.id.into(),
-            bounds_in_atlas: allocation.rectangle.into(),
+            bounds: allocation.rectangle.into(),
         };
         let region = metal::MTLRegion::new_2d(
-            u32::from(tile.bounds_in_atlas.origin.x) as u64,
-            u32::from(tile.bounds_in_atlas.origin.y) as u64,
-            u32::from(tile.bounds_in_atlas.size.width) as u64,
-            u32::from(tile.bounds_in_atlas.size.height) as u64,
+            u32::from(tile.bounds.origin.x) as u64,
+            u32::from(tile.bounds.origin.y) as u64,
+            u32::from(tile.bounds.size.width) as u64,
+            u32::from(tile.bounds.size.height) as u64,
         );
         self.metal_texture.replace_region(
             region,
             0,
             bytes.as_ptr() as *const _,
-            u32::from(
-                tile.bounds_in_atlas
-                    .size
-                    .width
-                    .to_bytes(self.bytes_per_pixel()),
-            ) as u64,
+            u32::from(tile.bounds.size.width.to_bytes(self.bytes_per_pixel())) as u64,
         );
         Some(tile)
     }

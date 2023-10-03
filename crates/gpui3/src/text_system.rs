@@ -10,8 +10,8 @@ use line_wrapper::*;
 pub use text_layout_cache::*;
 
 use crate::{
-    px, Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, RasterizationOptions,
-    Result, SharedString, Size, UnderlineStyle,
+    px, Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
+    UnderlineStyle,
 };
 use collections::HashMap;
 use core::fmt;

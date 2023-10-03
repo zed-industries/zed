@@ -242,12 +242,11 @@ impl MetalRenderer {
             Some(&self.instances),
             *offset as u64,
         );
-        let quad_uniforms = QuadUniforms { viewport_size };
 
         command_encoder.set_vertex_bytes(
-            QuadInputIndex::Uniforms as u64,
-            mem::size_of_val(&quad_uniforms) as u64,
-            &quad_uniforms as *const QuadUniforms as *const _,
+            QuadInputIndex::ViewportSize as u64,
+            mem::size_of_val(&viewport_size) as u64,
+            &viewport_size as *const Size<DevicePixels> as *const _,
         );
 
         let quad_bytes_len = mem::size_of::<Quad>() * quads.len();
@@ -279,7 +278,7 @@ impl MetalRenderer {
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) {
-        todo!()
+        // todo!()
     }
 }
 
@@ -327,11 +326,14 @@ fn align_offset(offset: &mut usize) {
 enum QuadInputIndex {
     Vertices = 0,
     Quads = 1,
-    Uniforms = 2,
+    ViewportSize = 2,
 }
 
-#[derive(Debug, Clone, Copy)]
 #[repr(C)]
-pub(crate) struct QuadUniforms {
-    viewport_size: Size<DevicePixels>,
+enum MonochromeSpriteInputIndex {
+    Vertices = 0,
+    Sprites = 1,
+    ViewportSize = 2,
+    AtlasSize = 3,
+    AtlasTexture = 4,
 }

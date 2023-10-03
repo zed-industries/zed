@@ -200,7 +200,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         let mut origin = (target_position * scale_factor).map(|p| p.floor());
         // Position glyph within bounding box
         origin += offset.map(|o| px(u32::from(o) as f32));
-        let size = tile.bounds_in_atlas.size.map(|b| px(b.0 as f32));
+        let size = tile.bounds.size.map(|b| px(b.0 as f32));
         let bounds = Bounds { origin, size };
 
         Ok((tile, bounds))
