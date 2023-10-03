@@ -196,29 +196,23 @@ pub struct AtlasTile {
     pub(crate) bounds_in_atlas: Bounds<DevicePixels>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Zeroable, Pod)]
 #[repr(C)]
 pub(crate) struct AtlasTextureId(pub(crate) usize);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Zeroable, Pod)]
 #[repr(C)]
-pub(crate) struct TileId(pub(crate) etagere::AllocId);
+pub(crate) struct TileId(pub(crate) u32);
 
 impl From<etagere::AllocId> for TileId {
     fn from(id: etagere::AllocId) -> Self {
-        Self(id)
+        Self(id.serialize())
     }
 }
 
-impl Ord for TileId {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.0.serialize().cmp(&other.0.serialize())
-    }
-}
-
-impl PartialOrd for TileId {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
+impl From<TileId> for etagere::AllocId {
+    fn from(id: TileId) -> Self {
+        Self::deserialize(id.0)
     }
 }
 

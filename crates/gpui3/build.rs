@@ -48,6 +48,8 @@ fn generate_shader_bindings() -> PathBuf {
         "Quad".into(),
         "QuadInputIndex".into(),
         "QuadUniforms".into(),
+        "AtlasTile".into(),
+        "MonochromeSprite".into(),
     ]);
     config.no_includes = true;
     config.enumeration.prefix_with_name = true;
@@ -55,6 +57,7 @@ fn generate_shader_bindings() -> PathBuf {
         .with_src(crate_dir.join("src/scene.rs"))
         .with_src(crate_dir.join("src/geometry.rs"))
         .with_src(crate_dir.join("src/color.rs"))
+        .with_src(crate_dir.join("src/platform.rs"))
         .with_src(crate_dir.join("src/platform/mac/metal_renderer.rs"))
         .with_config(config)
         .generate()
