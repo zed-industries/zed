@@ -31,10 +31,11 @@ use gpui::{
     geometry::vector::{vec2f, Vector2F},
     platform::{CursorStyle, MouseButton},
     Action, AnyElement, AppContext, AsyncAppContext, ClipboardItem, Element, Entity, ModelContext,
-    ModelHandle, SizeConstraint, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
-    WindowContext,
+    ModelHandle, SizeConstraint, Subscription, Task, View, ViewContext, ViewHandle,
+    WeakModelHandle, WeakViewHandle, WindowContext,
 };
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset as _};
+use project::Project;
 use search::BufferSearchBar;
 use semantic_index::SemanticIndex;
 use settings::SettingsStore;
@@ -272,12 +273,19 @@ impl AssistantPanel {
             return;
         };
 
+        let project = workspace.project();
+
         this.update(cx, |assistant, cx| {
-            assistant.new_inline_assist(&active_editor, cx)
+            assistant.new_inline_assist(&active_editor, cx, project)
         });
     }
 
-    fn new_inline_assist(&mut self, editor: &ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
+    fn new_inline_assist(
+        &mut self,
+        editor: &ViewHandle<Editor>,
+        cx: &mut ViewContext<Self>,
+        project: &ModelHandle<Project>,
+    ) {
         let api_key = if let Some(api_key) = self.api_key.borrow().clone() {
             api_key
         } else {
@@ -307,6 +315,27 @@ impl AssistantPanel {
         let codegen = cx.add_model(|cx| {
             Codegen::new(editor.read(cx).buffer().clone(), codegen_kind, provider, cx)
         });
+
+        if let Some(semantic_index) = self.semantic_index.clone() {
+            let project = project.clone();
+            cx.spawn(|_, mut cx| async move {
+                let previously_indexed = semantic_index
+                    .update(&mut cx, |index, cx| {
+                        index.project_previously_indexed(&project, cx)
+                    })
+                    .await
+                    .unwrap_or(false);
+                if previously_indexed {
+                    let _ = semantic_index
+                        .update(&mut cx, |index, cx| {
+                            index.index_project(project.clone(), cx)
+                        })
+                        .await;
+                }
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
 
         let measurements = Rc::new(Cell::new(BlockMeasurements::default()));
         let inline_assistant = cx.add_view(|cx| {
@@ -359,6 +388,7 @@ impl AssistantPanel {
                 editor: editor.downgrade(),
                 inline_assistant: Some((block_id, inline_assistant.clone())),
                 codegen: codegen.clone(),
+                project: project.downgrade(),
                 _subscriptions: vec![
                     cx.subscribe(&inline_assistant, Self::handle_inline_assistant_event),
                     cx.subscribe(editor, {
@@ -561,6 +591,8 @@ impl AssistantPanel {
             return;
         };
 
+        let project = pending_assist.project.clone();
+
         self.inline_prompt_history
             .retain(|prompt| prompt != user_prompt);
         self.inline_prompt_history.push_back(user_prompt.into());
@@ -602,13 +634,10 @@ impl AssistantPanel {
         let user_prompt = user_prompt.to_string();
 
         let snippets = if retrieve_context {
-            let project = if let Some(workspace) = self.workspace.upgrade(cx) {
-                workspace.read(cx).project()
-            } else {
+            let Some(project) = project.upgrade(cx) else {
                 return;
             };
 
-            let project = project.to_owned();
             let search_results = if let Some(semantic_index) = self.semantic_index.clone() {
                 let search_results = semantic_index.update(cx, |this, cx| {
                     this.search_project(project, user_prompt.to_string(), 10, vec![], vec![], cx)
@@ -2864,6 +2893,7 @@ impl InlineAssistant {
             cx.observe(&codegen, Self::handle_codegen_changed),
             cx.subscribe(&prompt_editor, Self::handle_prompt_editor_events),
         ];
+
         Self {
             id,
             prompt_editor,
@@ -3019,6 +3049,7 @@ struct PendingInlineAssist {
     inline_assistant: Option<(BlockId, ViewHandle<InlineAssistant>)>,
     codegen: ModelHandle<Codegen>,
     _subscriptions: Vec<Subscription>,
+    project: WeakModelHandle<Project>,
 }
 
 fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {

@@ -24,6 +24,7 @@ util = { path = "../util" }
 uuid = { version = "1.1.2", features = ["v4"] }
 workspace = { path = "../workspace" }
 semantic_index = { path = "../semantic_index" }
+project = { path = "../project" }
 
 log.workspace = true
 anyhow.workspace = true
