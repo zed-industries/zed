@@ -1662,7 +1662,7 @@ impl CollabPanel {
         is_selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
-        enum ContactTooltip {};
+        enum ContactTooltip {}
 
         let collab_theme = &theme.collab_panel;
         let online = contact.online;
@@ -1671,7 +1671,7 @@ impl CollabPanel {
         let github_login = contact.user.github_login.clone();
         let initial_project = project.clone();
 
-        let mut event_handler =
+        let event_handler =
             MouseEventHandler::new::<Contact, _>(contact.user.id as usize, cx, |state, cx| {
                 Flex::row()
                     .with_children(contact.user.avatar.clone().map(|avatar| {
@@ -3127,11 +3127,28 @@ impl CollabPanel {
     }
 
     fn join_channel(&self, channel_id: u64, cx: &mut ViewContext<Self>) {
-        let join = ActiveCall::global(cx).update(cx, |call, cx| call.join_channel(channel_id, cx));
         let workspace = self.workspace.clone();
-
+        let window = cx.window();
+        let active_call = ActiveCall::global(cx);
         cx.spawn(|_, mut cx| async move {
-            let room = join.await?;
+            if active_call.read_with(&mut cx, |active_call, _| active_call.room().is_some()) {
+                let answer = window.prompt(
+                    PromptLevel::Warning,
+                    "Do you want to leave the current call?",
+                    &["Yes, Join Channel", "Cancel"],
+                    &mut cx,
+                );
+
+                if let Some(mut answer) = answer {
+                    if answer.next().await == Some(1) {
+                        return anyhow::Ok(());
+                    }
+                }
+            }
+
+            let room = active_call
+                .update(&mut cx, |call, cx| call.join_channel(channel_id, cx))
+                .await?;
 
             let tasks = room.update(&mut cx, |room, cx| {
                 let Some(workspace) = workspace.upgrade(cx) else {
@@ -3154,7 +3171,7 @@ impl CollabPanel {
             for task in tasks {
                 task.await?;
             }
-            Ok::<(), anyhow::Error>(())
+            anyhow::Ok(())
         })
         .detach_and_log_err(cx);
     }
