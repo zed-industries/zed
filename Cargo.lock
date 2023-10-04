@@ -7606,6 +7606,7 @@ dependencies = [
  "serde",
  "settings",
  "simplelog",
+ "smallvec",
  "strum",
  "theme",
  "util",

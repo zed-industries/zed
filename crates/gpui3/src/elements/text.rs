@@ -25,6 +25,18 @@ impl<V: 'static> IntoAnyElement<V> for &'static str {
     }
 }
 
+// TODO: Figure out how to pass `String` to `child` without this.
+// This impl doesn't exist in the `gpui2` crate.
+impl<S: 'static> IntoAnyElement<S> for String {
+    fn into_any(self) -> AnyElement<S> {
+        Text {
+            text: ArcCow::from(self),
+            state_type: PhantomData,
+        }
+        .into_any()
+    }
+}
+
 pub struct Text<S> {
     text: ArcCow<'static, str>,
     state_type: PhantomData<S>,

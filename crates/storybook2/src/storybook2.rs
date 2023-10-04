@@ -9,6 +9,9 @@ use workspace::workspace;
 
 mod assets;
 mod collab_panel;
+mod stories;
+mod story;
+mod story_selector;
 mod theme;
 mod themes;
 mod ui;

@@ -20,6 +20,7 @@ rust-embed.workspace = true
 serde.workspace = true
 settings = { path = "../settings" }
 simplelog = "0.9"
+smallvec.workspace = true
 strum = { version = "0.25.0", features = ["derive"] }
 theme = { path = "../theme" }
 util = { path = "../util" }
