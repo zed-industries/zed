@@ -225,6 +225,18 @@ impl AppContext {
         })
     }
 
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(&mut AppContext) -> Fut + Send + 'static) -> Task<R>
+    where
+        Fut: Future<Output = R> + Send + 'static,
+        R: Send + 'static,
+    {
+        let this = self.this.upgrade().unwrap();
+        self.executor.spawn(async move {
+            let future = f(&mut this.lock());
+            future.await
+        })
+    }
+
     pub fn text_system(&self) -> &Arc<TextSystem> {
         &self.text_system
     }

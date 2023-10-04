@@ -1,14 +1,14 @@
 use crate::{
-    image_cache::RenderImageParams, px, AnyView, AppContext, AvailableSpace, BorrowAppContext,
-    Bounds, Context, Corners, DevicePixels, Effect, Element, EntityId, FontId, GlyphId, Handle,
-    Hsla, ImageData, IsZero, LayerId, LayoutId, MainThread, MainThreadOnly, MonochromeSprite,
-    Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Reference, RenderGlyphParams,
-    RenderSvgParams, ScaledPixels, Scene, SharedString, Size, Style, TaffyLayoutEngine, Task,
-    WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
+    image_cache::RenderImageParams, px, AnyView, AppContext, AsyncContext, AvailableSpace,
+    BorrowAppContext, Bounds, Context, Corners, DevicePixels, Effect, Element, EntityId, FontId,
+    GlyphId, Handle, Hsla, ImageData, IsZero, LayerId, LayoutId, MainThread, MainThreadOnly,
+    MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Reference,
+    RenderGlyphParams, RenderSvgParams, ScaledPixels, Scene, SharedString, Size, Style,
+    TaffyLayoutEngine, Task, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use smallvec::SmallVec;
-use std::{any::TypeId, borrow::Cow, marker::PhantomData, mem, sync::Arc};
+use std::{any::TypeId, borrow::Cow, future::Future, marker::PhantomData, mem, sync::Arc};
 use util::ResultExt;
 
 pub struct AnyWindow {}
@@ -599,6 +599,20 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
             let handle = self.handle().upgrade(self).unwrap();
             self.window_cx.run_on_main(move |cx| handle.update(cx, f))
         }
+    }
+
+    pub fn spawn<Fut, R>(
+        &mut self,
+        f: impl FnOnce(&mut S, &mut ViewContext<'_, '_, S>) -> Fut + Send + 'static,
+    ) -> Task<Result<R>>
+    where
+        Fut: Future<Output = R> + Send + 'static,
+    {
+        let handle = self.handle();
+        todo!()
+        // self.window_cx.spawn(|cx| {
+        //     f
+        // })
     }
 
     pub(crate) fn erase_state<R>(&mut self, f: impl FnOnce(&mut ViewContext<()>) -> R) -> R {
