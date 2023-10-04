@@ -635,6 +635,8 @@ pub struct ChatPanel {
     pub channel_select: ChannelSelect,
     pub input_editor: FieldEditor,
     pub message: ChatMessage,
+    pub continuation_message: ChatMessage,
+    pub last_message_bottom_spacing: f32,
     pub pending_message: ChatMessage,
     pub sign_in_prompt: Interactive<TextStyle>,
     pub icon_button: Interactive<IconButton>,
