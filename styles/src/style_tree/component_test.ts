@@ -21,6 +21,7 @@ export default function contacts_panel(): any {
             ...text(theme.lowest, "sans", "base"),
             button: icon_button({ variant: "ghost" }),
             spacing: 4,
+            padding: 4,
         },
     }
 }
