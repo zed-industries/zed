@@ -4,19 +4,35 @@ use futures::StreamExt;
 pub use language::*;
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
+use serde_json::Value;
 use smol::fs::{self, File};
-use std::{any::Any, path::PathBuf, sync::Arc};
+use std::{
+    any::Any,
+    cell::OnceCell,
+    ffi::OsString,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use util::{
     fs::remove_matching,
     github::{latest_github_release, GitHubLspBinaryVersion},
     ResultExt,
 };
 
+pub struct VueLspVersion {
+    vue_version: String,
+    ts_version: String,
+}
+
 pub struct VueLspAdapter {
     node: Arc<dyn NodeRuntime>,
 }
 
 impl VueLspAdapter {
+    const SERVER_PATH: &'static str =
+        "node_modules/@vue/language-server/bin/vue-language-server.js";
+    // TODO: this can't be hardcoded, yet we have to figure out how to pass it in initialization_options.
+    const TYPESCRIPT_PATH: &'static str = "/Users/hiro/Library/Application Support/Zed/languages/vue-language-server/node_modules/typescript/lib"; //"node_modules/@vue/typescript/lib";
     pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
         Self { node }
     }
@@ -35,61 +51,48 @@ impl super::LspAdapter for VueLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release =
-            latest_github_release("vuejs/language-tools", false, delegate.http_client()).await?;
-        let version = GitHubLspBinaryVersion {
-            name: release.name,
-            url: release.zipball_url,
-        };
-        Ok(Box::new(version) as Box<_>)
+        Ok(Box::new(VueLspVersion {
+            vue_version: self
+                .node
+                .npm_package_latest_version("@vue/language-server")
+                .await?,
+            ts_version: self.node.npm_package_latest_version("typescript").await?,
+        }) as Box<_>)
     }
-
+    async fn initialization_options(&self) -> Option<Value> {
+        Some(serde_json::json!({
+            "typescript": {
+                "tsdk": Self::TYPESCRIPT_PATH//
+            }
+        }))
+    }
     async fn fetch_server_binary(
         &self,
         version: Box<dyn 'static + Send + Any>,
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
-        let zip_path = container_dir.join(format!("vuejs-language-tools {}.zip", version.name));
-        dbg!(&zip_path);
-        let version_dir = container_dir.join(format!("vuejs-language-tools-01a2e3e"));
-        dbg!(&version_dir);
-        let binary_path =
-            version_dir.join("packages/vue-language-server/bin/vue-language-server.js");
-        dbg!(&version_dir);
+        let version = version.downcast::<VueLspVersion>().unwrap();
+        let server_path = container_dir.join(Self::SERVER_PATH);
 
-        if fs::metadata(&binary_path).await.is_err() {
-            let mut response = delegate
-                .http_client()
-                .get(&version.url, Default::default(), true)
-                .await
-                .context("error downloading release")?;
-            let mut file = File::create(&zip_path).await?;
-            if !response.status().is_success() {
-                Err(anyhow!(
-                    "download failed with status {}",
-                    response.status().to_string()
-                ))?;
-            }
-            futures::io::copy(response.body_mut(), &mut file).await?;
-
-            let unzip_status = smol::process::Command::new("unzip")
-                .current_dir(&container_dir)
-                .arg(&zip_path)
-                .output()
-                .await?
-                .status;
-            if !unzip_status.success() {
-                Err(anyhow!("failed to unzip clangd archive"))?;
-            }
-
-            remove_matching(&container_dir, |entry| entry != version_dir).await;
+        if fs::metadata(&server_path).await.is_err() {
+            self.node
+                .npm_install_packages(
+                    &container_dir,
+                    &[("@vue/language-server", version.vue_version.as_str())],
+                )
+                .await?;
+            self.node
+                .npm_install_packages(
+                    &container_dir,
+                    &[("typescript", version.ts_version.as_str())],
+                )
+                .await?;
         }
-
+        assert!(fs::metadata(&server_path).await.is_ok());
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
-            arguments: vec![binary_path.into_os_string()],
+            arguments: vue_server_binary_arguments(&server_path),
         })
     }
 
@@ -131,30 +134,34 @@ impl super::LspAdapter for VueLspAdapter {
     }
 }
 
+fn vue_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
+    vec![server_path.into(), "--stdio".into()]
+}
+
 async fn get_cached_server_binary(
     container_dir: PathBuf,
     node: Arc<dyn NodeRuntime>,
 ) -> Option<LanguageServerBinary> {
     (|| async move {
-        let mut last_clangd_dir = None;
+        let mut last_version_dir = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {
             let entry = entry?;
             if entry.file_type().await?.is_dir() {
-                last_clangd_dir = Some(entry.path());
+                last_version_dir = Some(entry.path());
             }
         }
-        let clangd_dir = last_clangd_dir.ok_or_else(|| anyhow!("no cached binary"))?;
-        let clangd_bin = clangd_dir.join("packages/vue-language-server/bin/vue-language-server.js");
-        if clangd_bin.exists() {
+        let last_version_dir = last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
+        let server_path = last_version_dir.join(VueLspAdapter::SERVER_PATH);
+        if server_path.exists() {
             Ok(LanguageServerBinary {
                 path: node.binary_path().await?,
-                arguments: vec![clangd_bin.into_os_string()],
+                arguments: vue_server_binary_arguments(&server_path),
             })
         } else {
             Err(anyhow!(
-                "missing clangd binary in directory {:?}",
-                clangd_dir
+                "missing executable in directory {:?}",
+                last_version_dir
             ))
         }
     })()
