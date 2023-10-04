@@ -1,11 +1,14 @@
-use crate::{Element, Layout, LayoutId, Result, Style, StyleHelpers, Styled};
+use crate::{
+    Element, Layout, LayoutId, Result, SharedString, Style, StyleHelpers, Styled, ViewContext,
+};
+use futures::FutureExt;
 use refineable::RefinementCascade;
 use std::marker::PhantomData;
-use util::arc_cow::ArcCow;
+use util::ResultExt;
 
 pub struct Img<S> {
     style: RefinementCascade<Style>,
-    uri: Option<ArcCow<'static, str>>,
+    uri: Option<SharedString>,
     state_type: PhantomData<S>,
 }
 
@@ -18,7 +21,7 @@ pub fn img<S>() -> Img<S> {
 }
 
 impl<S> Img<S> {
-    pub fn uri(mut self, uri: impl Into<ArcCow<'static, str>>) -> Self {
+    pub fn uri(mut self, uri: impl Into<SharedString>) -> Self {
         self.uri = Some(uri.into());
         self
     }
@@ -31,7 +34,7 @@ impl<S: 'static> Element for Img<S> {
     fn layout(
         &mut self,
         _: &mut Self::State,
-        cx: &mut crate::ViewContext<Self::State>,
+        cx: &mut ViewContext<Self::State>,
     ) -> anyhow::Result<(LayoutId, Self::FrameState)>
     where
         Self: Sized,
@@ -46,7 +49,7 @@ impl<S: 'static> Element for Img<S> {
         layout: Layout,
         _: &mut Self::State,
         _: &mut Self::FrameState,
-        cx: &mut crate::ViewContext<Self::State>,
+        cx: &mut ViewContext<Self::State>,
     ) -> Result<()> {
         let style = self.computed_style();
         let order = layout.order;
@@ -54,36 +57,24 @@ impl<S: 'static> Element for Img<S> {
 
         style.paint(order, bounds, cx);
 
-        // if let Some(uri) = &self.uri {
-        //     let image_future = cx.image_cache.get(uri.clone());
-        //     if let Some(data) = image_future
-        //         .clone()
-        //         .now_or_never()
-        //         .and_then(ResultExt::log_err)
-        //     {
-        //         let rem_size = cx.rem_size();
-        //         cx.scene().push_image(scene::Image {
-        //             bounds,
-        //             border: gpui::Border {
-        //                 color: style.border_color.unwrap_or_default().into(),
-        //                 top: style.border_widths.top.to_pixels(rem_size),
-        //                 right: style.border_widths.right.to_pixels(rem_size),
-        //                 bottom: style.border_widths.bottom.to_pixels(rem_size),
-        //                 left: style.border_widths.left.to_pixels(rem_size),
-        //             },
-        //             corner_radii: style.corner_radii.to_gpui(bounds.size(), rem_size),
-        //             grayscale: false,
-        //             data,
-        //         })
-        //     } else {
-        //         cx.spawn(|this, mut cx| async move {
-        //             if image_future.await.log_err().is_some() {
-        //                 this.update(&mut cx, |_, cx| cx.notify()).ok();
-        //             }
-        //         })
-        //         .detach();
-        //     }
-        // }
+        if let Some(uri) = &self.uri {
+            let image_future = cx.image_cache.get(uri.clone());
+            if let Some(data) = image_future
+                .clone()
+                .now_or_never()
+                .and_then(ResultExt::log_err)
+            {
+                cx.paint_image(bounds, order, data, false)?;
+            } else {
+                log::warn!("image not loaded yet");
+                // cx.spawn(|this, mut cx| async move {
+                //     if image_future.await.log_err().is_some() {
+                //         this.update(&mut cx, |_, cx| cx.notify()).ok();
+                //     }
+                // })
+                // .detach();
+            }
+        }
         Ok(())
     }
 }

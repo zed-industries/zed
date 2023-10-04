@@ -5,6 +5,7 @@ mod mac;
 #[cfg(any(test, feature = "test"))]
 mod test;
 
+use crate::image_cache::RenderImageParams;
 use crate::{
     AnyWindowHandle, Bounds, DevicePixels, Font, FontId, FontMetrics, GlyphId, Pixels, Point,
     RenderGlyphParams, RenderSvgParams, Result, Scene, ShapedLine, SharedString, Size,
@@ -14,6 +15,7 @@ use async_task::Runnable;
 use futures::channel::oneshot;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::ffi::c_void;
 use std::hash::{Hash, Hasher};
 use std::{
@@ -179,6 +181,7 @@ pub trait PlatformTextSystem: Send + Sync {
 pub enum AtlasKey {
     Glyph(RenderGlyphParams),
     Svg(RenderSvgParams),
+    Image(RenderImageParams),
 }
 
 impl AtlasKey {
@@ -186,6 +189,7 @@ impl AtlasKey {
         match self {
             AtlasKey::Glyph(params) => !params.is_emoji,
             AtlasKey::Svg(_) => true,
+            AtlasKey::Image(_) => false,
         }
     }
 }
@@ -202,11 +206,17 @@ impl From<RenderSvgParams> for AtlasKey {
     }
 }
 
+impl From<RenderImageParams> for AtlasKey {
+    fn from(params: RenderImageParams) -> Self {
+        Self::Image(params)
+    }
+}
+
 pub trait PlatformAtlas: Send + Sync {
-    fn get_or_insert_with(
+    fn get_or_insert_with<'a>(
         &self,
         key: &AtlasKey,
-        build: &mut dyn FnMut() -> Result<(Size<DevicePixels>, Vec<u8>)>,
+        build: &mut dyn FnMut() -> Result<(Size<DevicePixels>, Cow<'a, [u8]>)>,
     ) -> Result<AtlasTile>;
 
     fn clear(&self);

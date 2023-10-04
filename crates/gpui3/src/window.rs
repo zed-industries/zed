@@ -1,14 +1,15 @@
 use crate::{
-    px, AnyView, AppContext, AvailableSpace, BorrowAppContext, Bounds, Context, Corners,
-    DevicePixels, Effect, Element, EntityId, FontId, GlyphId, Handle, Hsla, IsZero, LayerId,
-    LayoutId, MainThread, MainThreadOnly, MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow,
-    Point, PolychromeSprite, Reference, RenderGlyphParams, RenderSvgParams, ScaledPixels, Scene,
-    SharedString, Size, Style, TaffyLayoutEngine, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
+    image_cache::RenderImageParams, px, AnyView, AppContext, AvailableSpace, BorrowAppContext,
+    Bounds, Context, Corners, DevicePixels, Effect, Element, EntityId, FontId, GlyphId, Handle,
+    Hsla, ImageData, IsZero, LayerId, LayoutId, MainThread, MainThreadOnly, MonochromeSprite,
+    Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Reference, RenderGlyphParams,
+    RenderSvgParams, ScaledPixels, Scene, SharedString, Size, Style, TaffyLayoutEngine, WeakHandle,
+    WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use futures::Future;
 use smallvec::SmallVec;
-use std::{any::TypeId, marker::PhantomData, mem, sync::Arc};
+use std::{any::TypeId, borrow::Cow, marker::PhantomData, mem, sync::Arc};
 use util::ResultExt;
 
 pub struct AnyWindow {}
@@ -234,12 +235,13 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         let raster_bounds = self.text_system().raster_bounds(&params)?;
         if !raster_bounds.is_zero() {
             let layer_id = self.current_layer_id();
-            let tile = self
-                .window
-                .sprite_atlas
-                .get_or_insert_with(&params.clone().into(), &mut || {
-                    self.text_system().rasterize_glyph(&params)
-                })?;
+            let tile =
+                self.window
+                    .sprite_atlas
+                    .get_or_insert_with(&params.clone().into(), &mut || {
+                        let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
+                        Ok((size, Cow::Owned(bytes)))
+                    })?;
             let bounds = Bounds {
                 origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
@@ -283,12 +285,13 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         let raster_bounds = self.text_system().raster_bounds(&params)?;
         if !raster_bounds.is_zero() {
             let layer_id = self.current_layer_id();
-            let tile = self
-                .window
-                .sprite_atlas
-                .get_or_insert_with(&params.clone().into(), &mut || {
-                    self.text_system().rasterize_glyph(&params)
-                })?;
+            let tile =
+                self.window
+                    .sprite_atlas
+                    .get_or_insert_with(&params.clone().into(), &mut || {
+                        let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
+                        Ok((size, Cow::Owned(bytes)))
+                    })?;
             let bounds = Bounds {
                 origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
@@ -331,7 +334,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 .sprite_atlas
                 .get_or_insert_with(&params.clone().into(), &mut || {
                     let bytes = self.svg_renderer.render(&params)?;
-                    Ok((params.size, bytes))
+                    Ok((params.size, Cow::Owned(bytes)))
                 })?;
         let content_mask = self.content_mask().scale(scale_factor);
 
@@ -342,6 +345,39 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 bounds,
                 content_mask,
                 color,
+                tile,
+            },
+        );
+
+        Ok(())
+    }
+
+    pub fn paint_image(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        order: u32,
+        data: Arc<ImageData>,
+        grayscale: bool,
+    ) -> Result<()> {
+        let scale_factor = self.scale_factor();
+        let bounds = bounds.scale(scale_factor);
+        let params = RenderImageParams { image_id: data.id };
+
+        let layer_id = self.current_layer_id();
+        let tile = self
+            .window
+            .sprite_atlas
+            .get_or_insert_with(&params.clone().into(), &mut || {
+                Ok((data.size(), Cow::Borrowed(data.as_bytes())))
+            })?;
+        let content_mask = self.content_mask().scale(scale_factor);
+
+        self.window.scene.insert(
+            layer_id,
+            PolychromeSprite {
+                order,
+                bounds,
+                content_mask,
                 tile,
             },
         );

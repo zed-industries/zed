@@ -645,6 +645,10 @@ impl ScaledPixels {
     pub fn floor(&self) -> Self {
         Self(self.0.floor())
     }
+
+    pub fn ceil(&self) -> Self {
+        Self(self.0.ceil())
+    }
 }
 
 impl Eq for ScaledPixels {}

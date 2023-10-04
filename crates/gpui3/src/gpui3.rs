@@ -5,6 +5,7 @@ mod element;
 mod elements;
 mod executor;
 mod geometry;
+mod image_cache;
 mod platform;
 mod scene;
 mod style;

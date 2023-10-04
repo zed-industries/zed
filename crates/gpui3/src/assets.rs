@@ -3,7 +3,9 @@ use anyhow::anyhow;
 use image::{Bgra, ImageBuffer};
 use std::{
     borrow::Cow,
+    cmp::Ordering,
     fmt,
+    hash::{Hash, Hasher},
     sync::atomic::{AtomicUsize, Ordering::SeqCst},
 };
 
@@ -25,27 +27,26 @@ impl AssetSource for () {
     }
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct ImageId(usize);
+
 pub struct ImageData {
-    pub id: usize,
+    pub id: ImageId,
     data: ImageBuffer<Bgra<u8>, Vec<u8>>,
 }
 
 impl ImageData {
-    pub fn from_raw(size: Size<DevicePixels>, bytes: Vec<u8>) -> Self {
+    pub fn new(data: ImageBuffer<Bgra<u8>, Vec<u8>>) -> Self {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
         Self {
-            id: NEXT_ID.fetch_add(1, SeqCst),
-            data: ImageBuffer::from_raw(size.width.into(), size.height.into(), bytes).unwrap(),
+            id: ImageId(NEXT_ID.fetch_add(1, SeqCst)),
+            data,
         }
     }
 
     pub fn as_bytes(&self) -> &[u8] {
         &self.data
-    }
-
-    pub fn into_bytes(self) -> Vec<u8> {
-        self.data.into_raw()
     }
 
     pub fn size(&self) -> Size<DevicePixels> {

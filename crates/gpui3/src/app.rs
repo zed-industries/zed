@@ -8,9 +8,9 @@ pub use model_context::*;
 use refineable::Refineable;
 
 use crate::{
-    current_platform, run_on_main, spawn_on_main, AssetSource, Context, LayoutId, MainThread,
-    MainThreadOnly, Platform, PlatformDispatcher, RootView, SvgRenderer, TextStyle,
-    TextStyleRefinement, TextSystem, Window, WindowContext, WindowHandle, WindowId,
+    current_platform, image_cache::ImageCache, run_on_main, spawn_on_main, AssetSource, Context,
+    LayoutId, MainThread, MainThreadOnly, Platform, PlatformDispatcher, RootView, SvgRenderer,
+    TextStyle, TextStyleRefinement, TextSystem, Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, VecDeque};
@@ -23,24 +23,33 @@ use std::{
     mem,
     sync::{Arc, Weak},
 };
-use util::ResultExt;
+use util::{
+    http::{self, HttpClient},
+    ResultExt,
+};
 
 #[derive(Clone)]
 pub struct App(Arc<Mutex<MainThread<AppContext>>>);
 
 impl App {
     pub fn production(asset_source: Arc<dyn AssetSource>) -> Self {
-        Self::new(current_platform(), asset_source)
+        let http_client = http::client();
+        Self::new(current_platform(), asset_source, http_client)
     }
 
     #[cfg(any(test, feature = "test"))]
     pub fn test() -> Self {
         let platform = Arc::new(super::TestPlatform::new());
         let asset_source = Arc::new(());
-        Self::new(platform, asset_source)
+        let http_client = util::http::FakeHttpClient::with_404_response();
+        Self::new(platform, asset_source, http_client)
     }
 
-    fn new(platform: Arc<dyn Platform>, asset_source: Arc<dyn AssetSource>) -> Self {
+    fn new(
+        platform: Arc<dyn Platform>,
+        asset_source: Arc<dyn AssetSource>,
+        http_client: Arc<dyn HttpClient>,
+    ) -> Self {
         let dispatcher = platform.dispatcher();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
         let entities = EntityMap::new();
@@ -52,6 +61,7 @@ impl App {
                 dispatcher,
                 text_system,
                 svg_renderer: SvgRenderer::new(asset_source),
+                image_cache: ImageCache::new(http_client),
                 pending_updates: 0,
                 text_style_stack: Vec::new(),
                 state_stacks_by_type: HashMap::default(),
@@ -87,6 +97,7 @@ pub struct AppContext {
     text_system: Arc<TextSystem>,
     pending_updates: usize,
     pub(crate) svg_renderer: SvgRenderer,
+    pub(crate) image_cache: ImageCache,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) state_stacks_by_type: HashMap<TypeId, Vec<Box<dyn Any + Send + Sync>>>,
     pub(crate) unit_entity: Handle<()>,

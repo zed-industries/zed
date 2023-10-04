@@ -1,7 +1,7 @@
 use crate::theme::{theme, Theme};
 use gpui3::{
     div, img, svg, view, AppContext, ArcCow, Context, Element, IntoAnyElement, ParentElement,
-    ScrollState, StyleHelpers, View, ViewContext, WindowContext,
+    ScrollState, SharedString, StyleHelpers, View, ViewContext, WindowContext,
 };
 
 pub struct CollabPanel {
@@ -144,7 +144,7 @@ impl CollabPanel {
 
     fn list_item(
         &self,
-        avatar_uri: impl Into<ArcCow<'static, str>>,
+        avatar_uri: impl Into<SharedString>,
         label: impl IntoAnyElement<Self>,
         theme: &Theme,
     ) -> impl Element<State = Self> {

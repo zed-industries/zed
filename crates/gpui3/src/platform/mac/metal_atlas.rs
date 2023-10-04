@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::{
     AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels, PlatformAtlas, Point, Size,
 };
@@ -31,10 +33,10 @@ struct MetalAtlasState {
 }
 
 impl PlatformAtlas for MetalAtlas {
-    fn get_or_insert_with(
+    fn get_or_insert_with<'a>(
         &self,
         key: &AtlasKey,
-        build: &mut dyn FnMut() -> Result<(Size<DevicePixels>, Vec<u8>)>,
+        build: &mut dyn FnMut() -> Result<(Size<DevicePixels>, Cow<'a, [u8]>)>,
     ) -> Result<AtlasTile> {
         let mut lock = self.0.lock();
         if let Some(tile) = lock.tiles_by_key.get(key) {
