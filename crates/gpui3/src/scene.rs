@@ -276,6 +276,7 @@ pub struct PolychromeSprite {
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ScaledContentMask,
     pub tile: AtlasTile,
+    pub grayscale: bool,
 }
 
 impl Ord for PolychromeSprite {

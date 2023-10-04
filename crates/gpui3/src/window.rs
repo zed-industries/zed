@@ -305,6 +305,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                     bounds,
                     content_mask,
                     tile,
+                    grayscale: false,
                 },
             );
         }
@@ -379,6 +380,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 bounds,
                 content_mask,
                 tile,
+                grayscale,
             },
         );
 

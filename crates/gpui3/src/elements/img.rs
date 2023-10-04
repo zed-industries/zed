@@ -9,6 +9,7 @@ use util::ResultExt;
 pub struct Img<S> {
     style: RefinementCascade<Style>,
     uri: Option<SharedString>,
+    grayscale: bool,
     state_type: PhantomData<S>,
 }
 
@@ -16,6 +17,7 @@ pub fn img<S>() -> Img<S> {
     Img {
         style: RefinementCascade::default(),
         uri: None,
+        grayscale: false,
         state_type: PhantomData,
     }
 }
@@ -23,6 +25,11 @@ pub fn img<S>() -> Img<S> {
 impl<S> Img<S> {
     pub fn uri(mut self, uri: impl Into<SharedString>) -> Self {
         self.uri = Some(uri.into());
+        self
+    }
+
+    pub fn grayscale(mut self, grayscale: bool) -> Self {
+        self.grayscale = grayscale;
         self
     }
 }
@@ -64,7 +71,7 @@ impl<S: 'static> Element for Img<S> {
                 .now_or_never()
                 .and_then(ResultExt::log_err)
             {
-                cx.paint_image(bounds, order, data, false)?;
+                cx.paint_image(bounds, order, data, self.grayscale)?;
             } else {
                 log::warn!("image not loaded yet");
                 // cx.spawn(|this, mut cx| async move {

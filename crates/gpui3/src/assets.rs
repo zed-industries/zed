@@ -3,9 +3,8 @@ use anyhow::anyhow;
 use image::{Bgra, ImageBuffer};
 use std::{
     borrow::Cow,
-    cmp::Ordering,
     fmt,
-    hash::{Hash, Hasher},
+    hash::Hash,
     sync::atomic::{AtomicUsize, Ordering::SeqCst},
 };
 

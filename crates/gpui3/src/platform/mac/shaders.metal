@@ -191,6 +191,12 @@ fragment float4 polychrome_sprite_fragment(
   float clip_distance = quad_sdf(input.position.xy, sprite.content_mask.bounds,
                                  sprite.content_mask.corner_radii);
   float4 color = sample;
+  if (sprite.grayscale) {
+    float grayscale = 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
+    color.r = grayscale;
+    color.g = grayscale;
+    color.b = grayscale;
+  }
   color.a *= saturate(0.5 - clip_distance);
   return color;
 }
