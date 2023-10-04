@@ -44,6 +44,10 @@ impl ImageData {
         &self.data
     }
 
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.data.into_raw()
+    }
+
     pub fn size(&self) -> Size<DevicePixels> {
         let (width, height) = self.data.dimensions();
         size(width.into(), height.into())

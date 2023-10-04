@@ -7,7 +7,7 @@ mod test;
 
 use crate::{
     AnyWindowHandle, Bounds, DevicePixels, Font, FontId, FontMetrics, GlyphId, Pixels, Point,
-    RenderGlyphParams, Result, Scene, ShapedLine, SharedString, Size,
+    RenderGlyphParams, RenderSvgParams, Result, Scene, ShapedLine, SharedString, Size,
 };
 use anyhow::anyhow;
 use async_task::Runnable;
@@ -147,7 +147,7 @@ pub trait PlatformWindow {
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
     fn draw(&self, scene: Scene);
 
-    fn glyph_atlas(&self) -> Arc<dyn PlatformAtlas>;
+    fn monochrome_sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 }
 
 pub trait PlatformDispatcher: Send + Sync {
@@ -178,12 +178,18 @@ pub trait PlatformTextSystem: Send + Sync {
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub enum AtlasKey {
     Glyph(RenderGlyphParams),
-    // Svg(RenderSvgParams),
+    Svg(RenderSvgParams),
 }
 
 impl From<RenderGlyphParams> for AtlasKey {
     fn from(params: RenderGlyphParams) -> Self {
         Self::Glyph(params)
+    }
+}
+
+impl From<RenderSvgParams> for AtlasKey {
+    fn from(params: RenderSvgParams) -> Self {
+        Self::Svg(params)
     }
 }
 

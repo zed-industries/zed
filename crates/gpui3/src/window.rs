@@ -1,9 +1,9 @@
 use crate::{
-    px, AnyView, AppContext, AvailableSpace, BorrowAppContext, Bounds, Context, Corners, Effect,
-    Element, EntityId, FontId, GlyphId, Handle, Hsla, IsZero, LayerId, LayoutId, MainThread,
-    MainThreadOnly, MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point, Reference,
-    RenderGlyphParams, ScaledPixels, Scene, Size, Style, TaffyLayoutEngine, WeakHandle,
-    WindowOptions, SUBPIXEL_VARIANTS,
+    px, AnyView, AppContext, AvailableSpace, BorrowAppContext, Bounds, Context, Corners,
+    DevicePixels, Effect, Element, EntityId, FontId, GlyphId, Handle, Hsla, IsZero, LayerId,
+    LayoutId, MainThread, MainThreadOnly, MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow,
+    Point, Reference, RenderGlyphParams, RenderSvgParams, ScaledPixels, Scene, SharedString, Size,
+    Style, TaffyLayoutEngine, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use futures::Future;
@@ -16,7 +16,7 @@ pub struct AnyWindow {}
 pub struct Window {
     handle: AnyWindowHandle,
     platform_window: MainThreadOnly<Box<dyn PlatformWindow>>,
-    glyph_atlas: Arc<dyn PlatformAtlas>,
+    monochrome_sprite_atlas: Arc<dyn PlatformAtlas>,
     rem_size: Pixels,
     content_size: Size<Pixels>,
     layout_engine: TaffyLayoutEngine,
@@ -35,7 +35,7 @@ impl Window {
         cx: &mut MainThread<AppContext>,
     ) -> Self {
         let platform_window = cx.platform().open_window(handle, options);
-        let glyph_atlas = platform_window.glyph_atlas();
+        let monochrome_sprite_atlas = platform_window.monochrome_sprite_atlas();
         let mouse_position = platform_window.mouse_position();
         let content_size = platform_window.content_size();
         let scale_factor = platform_window.scale_factor();
@@ -58,7 +58,7 @@ impl Window {
         Window {
             handle,
             platform_window,
-            glyph_atlas,
+            monochrome_sprite_atlas,
             rem_size: px(16.),
             content_size,
             layout_engine: TaffyLayoutEngine::new(),
@@ -235,7 +235,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             let layer_id = self.current_layer_id();
             let tile = self
                 .window
-                .glyph_atlas
+                .monochrome_sprite_atlas
                 .get_or_insert_with(&params.clone().into(), &mut || {
                     self.text_system().rasterize_glyph(&params)
                 })?;
@@ -256,6 +256,47 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 },
             );
         }
+        Ok(())
+    }
+
+    pub fn paint_svg(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        order: u32,
+        path: SharedString,
+        color: Hsla,
+    ) -> Result<()> {
+        let scale_factor = self.scale_factor();
+        let bounds = bounds.scale(scale_factor);
+        // Render the SVG at twice the size to get a higher quality result.
+        let params = RenderSvgParams {
+            path,
+            size: bounds
+                .size
+                .map(|pixels| DevicePixels::from((pixels.0 * 2.).ceil() as i32)),
+        };
+
+        let layer_id = self.current_layer_id();
+        let tile = self.window.monochrome_sprite_atlas.get_or_insert_with(
+            &params.clone().into(),
+            &mut || {
+                let bytes = self.svg_renderer.render(&params)?;
+                Ok((params.size, bytes))
+            },
+        )?;
+        let content_mask = self.content_mask().scale(scale_factor);
+
+        self.window.scene.insert(
+            layer_id,
+            MonochromeSprite {
+                order,
+                bounds,
+                content_mask,
+                color,
+                tile,
+            },
+        );
+
         Ok(())
     }
 

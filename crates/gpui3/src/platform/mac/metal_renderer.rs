@@ -20,7 +20,7 @@ pub struct MetalRenderer {
     sprites_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     instances: metal::Buffer,
-    glyph_atlas: Arc<MetalAtlas>,
+    monochrome_sprite_atlas: Arc<MetalAtlas>,
 }
 
 impl MetalRenderer {
@@ -99,7 +99,7 @@ impl MetalRenderer {
         );
 
         let command_queue = device.new_command_queue();
-        let glyph_atlas = Arc::new(MetalAtlas::new(
+        let monochrome_sprite_atlas = Arc::new(MetalAtlas::new(
             Size {
                 width: DevicePixels(1024),
                 height: DevicePixels(768),
@@ -115,7 +115,7 @@ impl MetalRenderer {
             sprites_pipeline_state,
             unit_vertices,
             instances,
-            glyph_atlas,
+            monochrome_sprite_atlas,
         }
     }
 
@@ -123,8 +123,8 @@ impl MetalRenderer {
         &*self.layer
     }
 
-    pub fn glyph_atlas(&self) -> &Arc<MetalAtlas> {
-        &self.glyph_atlas
+    pub fn monochrome_sprite_atlas(&self) -> &Arc<MetalAtlas> {
+        &self.monochrome_sprite_atlas
     }
 
     pub fn draw(&mut self, scene: &mut Scene) {
@@ -277,7 +277,7 @@ impl MetalRenderer {
         }
         align_offset(offset);
 
-        let texture = self.glyph_atlas.texture(texture_id);
+        let texture = self.monochrome_sprite_atlas.texture(texture_id);
         let texture_size = size(
             DevicePixels(texture.width() as i32),
             DevicePixels(texture.height() as i32),

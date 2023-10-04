@@ -10,7 +10,7 @@ mod scene;
 mod style;
 mod style_helpers;
 mod styled;
-mod svg_library;
+mod svg_renderer;
 mod taffy;
 mod text_system;
 mod util;
@@ -26,7 +26,7 @@ pub use elements::*;
 pub use executor::*;
 pub use geometry::*;
 pub use gpui3_macros::*;
-pub use svg_library::*;
+pub use svg_renderer::*;
 
 pub use platform::*;
 pub use refineable::*;

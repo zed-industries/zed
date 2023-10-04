@@ -1,9 +1,13 @@
 #![allow(dead_code, unused_variables)]
 
+use assets::Assets;
 use gpui3::{px, size, Bounds, WindowBounds, WindowOptions};
 use log::LevelFilter;
 use simplelog::SimpleLogger;
+use std::sync::Arc;
+use workspace::workspace;
 
+mod assets;
 mod collab_panel;
 mod theme;
 mod themes;
@@ -19,7 +23,8 @@ fn main() {
 
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
-    gpui3::App::production().run(|cx| {
+    let asset_source = Arc::new(Assets);
+    gpui3::App::production(asset_source).run(|cx| {
         let window = cx.open_window(
             WindowOptions {
                 bounds: WindowBounds::Fixed(Bounds {
@@ -34,29 +39,6 @@ fn main() {
         cx.activate(true);
     });
 }
-
-use rust_embed::RustEmbed;
-use workspace::workspace;
-
-#[derive(RustEmbed)]
-#[folder = "../../assets"]
-#[include = "themes/**/*"]
-#[include = "fonts/**/*"]
-#[include = "icons/**/*"]
-#[exclude = "*.DS_Store"]
-pub struct Assets;
-
-// impl AssetSource for Assets {
-//     fn load(&self, path: &str) -> Result<std::borrow::Cow<[u8]>> {
-//         Self::get(path)
-//             .map(|f| f.data)
-//             .ok_or_else(|| anyhow!("could not find asset at path \"{}\"", path))
-//     }
-
-//     fn list(&self, path: &str) -> Vec<std::borrow::Cow<'static, str>> {
-//         Self::iter().filter(|p| p.starts_with(path)).collect()
-//     }
-// }
 
 // fn load_embedded_fonts(platform: &dyn gpui2::Platform) {
 //     let font_paths = Assets.list("fonts");
