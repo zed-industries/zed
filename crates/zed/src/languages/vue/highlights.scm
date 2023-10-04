@@ -1,7 +1,9 @@
 (attribute) @property
 (directive_attribute) @property
 (quoted_attribute_value) @string
-(interpolation) @embedded
+(interpolation) @punctuation.special
+(raw_text) @embedded
+
 
 (start_tag) @tag
 (end_tag) @tag
