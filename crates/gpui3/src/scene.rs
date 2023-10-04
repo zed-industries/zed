@@ -1,7 +1,7 @@
 use std::{iter::Peekable, mem};
 
 use super::{Bounds, Hsla, Point};
-use crate::{AtlasTextureId, AtlasTile, Corners, Edges, ScaledPixels};
+use crate::{AtlasTextureId, AtlasTile, Corners, Edges, ScaledContentMask, ScaledPixels};
 use collections::BTreeMap;
 use smallvec::SmallVec;
 
@@ -234,8 +234,7 @@ impl From<Quad> for Primitive {
 pub struct MonochromeSprite {
     pub order: u32,
     pub bounds: Bounds<ScaledPixels>,
-    pub clip_bounds: Bounds<ScaledPixels>,
-    pub clip_corner_radii: Corners<ScaledPixels>,
+    pub content_mask: ScaledContentMask,
     pub color: Hsla,
     pub tile: AtlasTile,
 }

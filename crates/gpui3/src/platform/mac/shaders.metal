@@ -4,10 +4,10 @@
 using namespace metal;
 
 float4 hsla_to_rgba(Hsla hsla);
-float4 to_device_position(float2 unit_vertex, Bounds_Pixels bounds,
-                          Bounds_Pixels clip_bounds,
+float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
+                          Bounds_ScaledPixels clip_bounds,
                           constant Size_DevicePixels *viewport_size);
-float quad_sdf(float2 point, Bounds_Pixels bounds, Corners_Pixels corner_radii);
+float quad_sdf(float2 point, Bounds_ScaledPixels bounds, Corners_ScaledPixels corner_radii);
 
 struct QuadVertexOutput {
   float4 position [[position]];
@@ -131,7 +131,7 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   MonochromeSprite sprite = sprites[sprite_id];
   float4 device_position = to_device_position(
-      unit_vertex, sprite.bounds, sprite.clip_bounds, viewport_size);
+      unit_vertex, sprite.bounds, sprite.content_mask.bounds, viewport_size);
 
   float2 tile_origin =
       float2(sprite.tile.bounds.origin.x, sprite.tile.bounds.origin.y);
@@ -157,7 +157,7 @@ fragment float4 monochrome_sprite_fragment(
   float4 sample =
       atlas_texture.sample(atlas_texture_sampler, input.tile_position);
   float clip_distance =
-      quad_sdf(input.position.xy, sprite.clip_bounds, sprite.clip_corner_radii);
+      quad_sdf(input.position.xy, sprite.content_mask.bounds, sprite.content_mask.corner_radii);
   float4 color = input.color;
   color.a *= sample.a * saturate(0.5 - clip_distance);
   return color;
@@ -211,8 +211,8 @@ float4 hsla_to_rgba(Hsla hsla) {
   return rgba;
 }
 
-float4 to_device_position(float2 unit_vertex, Bounds_Pixels bounds,
-                          Bounds_Pixels clip_bounds,
+float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
+                          Bounds_ScaledPixels clip_bounds,
                           constant Size_DevicePixels *input_viewport_size) {
   float2 position =
       unit_vertex * float2(bounds.size.width, bounds.size.height) +
@@ -229,8 +229,8 @@ float4 to_device_position(float2 unit_vertex, Bounds_Pixels bounds,
   return float4(device_position, 0., 1.);
 }
 
-float quad_sdf(float2 point, Bounds_Pixels bounds,
-               Corners_Pixels corner_radii) {
+float quad_sdf(float2 point, Bounds_ScaledPixels bounds,
+               Corners_ScaledPixels corner_radii) {
   float2 half_size = float2(bounds.size.width, bounds.size.height) / 2.;
   float2 center = float2(bounds.origin.x, bounds.origin.y) + half_size;
   float2 center_to_point = point - center;

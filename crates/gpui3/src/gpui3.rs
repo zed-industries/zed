@@ -84,16 +84,16 @@ impl<T> DerefMut for MainThread<T> {
     }
 }
 
-pub trait StackContext {
-    fn app(&mut self) -> &mut AppContext;
+pub trait BorrowAppContext {
+    fn app_mut(&mut self) -> &mut AppContext;
 
     fn with_text_style<F, R>(&mut self, style: TextStyleRefinement, f: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
     {
-        self.app().push_text_style(style);
+        self.app_mut().push_text_style(style);
         let result = f(self);
-        self.app().pop_text_style();
+        self.app_mut().pop_text_style();
         result
     }
 
@@ -101,9 +101,9 @@ pub trait StackContext {
     where
         F: FnOnce(&mut Self) -> R,
     {
-        self.app().push_state(state);
+        self.app_mut().push_state(state);
         let result = f(self);
-        self.app().pop_state::<T>();
+        self.app_mut().pop_state::<T>();
         result
     }
 }

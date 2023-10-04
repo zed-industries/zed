@@ -225,6 +225,20 @@ pub struct Bounds<T: Clone + Debug> {
     pub size: Size<T>,
 }
 
+impl<T: Clone + Debug + Sub<Output = T>> Bounds<T> {
+    pub fn from_corners(upper_left: Point<T>, lower_right: Point<T>) -> Self {
+        let origin = Point {
+            x: upper_left.x.clone(),
+            y: upper_left.y.clone(),
+        };
+        let size = Size {
+            width: lower_right.x - upper_left.x,
+            height: lower_right.y - upper_left.y,
+        };
+        Bounds { origin, size }
+    }
+}
+
 impl<T, Rhs> Mul<Rhs> for Bounds<T>
 where
     T: Mul<Rhs, Output = Rhs> + Clone + Debug,
@@ -416,6 +430,28 @@ pub struct Corners<T: Clone + Debug> {
     pub top_right: T,
     pub bottom_right: T,
     pub bottom_left: T,
+}
+
+impl Corners<AbsoluteLength> {
+    pub fn to_pixels(&self, rem_size: Pixels) -> Corners<Pixels> {
+        Corners {
+            top_left: self.top_left.to_pixels(rem_size),
+            top_right: self.top_right.to_pixels(rem_size),
+            bottom_right: self.bottom_right.to_pixels(rem_size),
+            bottom_left: self.bottom_left.to_pixels(rem_size),
+        }
+    }
+}
+
+impl Corners<Pixels> {
+    pub fn scale(&self, factor: f32) -> Corners<ScaledPixels> {
+        Corners {
+            top_left: self.top_left.scale(factor),
+            top_right: self.top_right.scale(factor),
+            bottom_right: self.bottom_right.scale(factor),
+            bottom_left: self.bottom_left.scale(factor),
+        }
+    }
 }
 
 impl<T: Clone + Debug> Corners<T> {

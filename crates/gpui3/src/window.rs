@@ -1,8 +1,8 @@
 use crate::{
-    px, AnyView, AppContext, AvailableSpace, Bounds, Context, Corners, Effect, Element, EntityId,
-    FontId, GlyphId, GlyphRasterParams, Handle, Hsla, IsZero, LayerId, LayoutId, MainThread,
-    MainThreadOnly, MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point, Reference,
-    Scene, Size, StackContext, Style, TaffyLayoutEngine, WeakHandle, WindowOptions,
+    px, AnyView, AppContext, AvailableSpace, BorrowAppContext, Bounds, Context, Corners, Effect,
+    Element, EntityId, FontId, GlyphId, GlyphRasterParams, Handle, Hsla, IsZero, LayerId, LayoutId,
+    MainThread, MainThreadOnly, MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point,
+    Reference, ScaledPixels, Scene, Size, Style, TaffyLayoutEngine, WeakHandle, WindowOptions,
     SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
@@ -74,8 +74,24 @@ impl Window {
 
 #[derive(Clone, Debug)]
 pub struct ContentMask {
-    bounds: Bounds<Pixels>,
-    corner_radii: Corners<Pixels>,
+    pub bounds: Bounds<Pixels>,
+    pub corner_radii: Corners<Pixels>,
+}
+
+impl ContentMask {
+    pub fn scale(&self, factor: f32) -> ScaledContentMask {
+        ScaledContentMask {
+            bounds: self.bounds.scale(factor),
+            corner_radii: self.corner_radii.scale(factor),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(C)]
+pub struct ScaledContentMask {
+    bounds: Bounds<ScaledPixels>,
+    corner_radii: Corners<ScaledPixels>,
 }
 
 pub struct WindowContext<'a, 'w> {
@@ -174,20 +190,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         self.window.current_layer_id.clone()
     }
 
-    pub fn current_clipping_mask(&self) -> ContentMask {
-        self.window
-            .content_mask_stack
-            .last()
-            .cloned()
-            .unwrap_or_else(|| ContentMask {
-                bounds: Bounds {
-                    origin: Point::default(),
-                    size: self.window.content_size,
-                },
-                corner_radii: Default::default(),
-            })
-    }
-
     pub fn run_on_main<R>(
         &self,
         f: impl FnOnce(&mut MainThread<WindowContext>) -> R + Send + 'static,
@@ -239,14 +241,14 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
+            let content_mask = self.content_mask().scale(scale_factor);
 
             self.window.scene.insert(
                 layer_id,
                 MonochromeSprite {
                     order,
                     bounds,
-                    clip_bounds: bounds,
-                    clip_corner_radii: Default::default(),
+                    content_mask,
                     color,
                     tile,
                 },
@@ -330,8 +332,60 @@ impl<'a, 'w> std::ops::DerefMut for WindowContext<'a, 'w> {
     }
 }
 
-impl<S> StackContext for ViewContext<'_, '_, S> {
-    fn app(&mut self) -> &mut AppContext {
+impl BorrowAppContext for WindowContext<'_, '_> {
+    fn app_mut(&mut self) -> &mut AppContext {
+        &mut *self.app
+    }
+}
+
+pub trait BorrowWindow: BorrowAppContext {
+    fn window(&self) -> &Window;
+    fn window_mut(&mut self) -> &mut Window;
+
+    fn with_content_mask<R>(&mut self, mask: ContentMask, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.window_mut().content_mask_stack.push(mask);
+        let result = f(self);
+        self.window_mut().content_mask_stack.pop();
+        result
+    }
+
+    fn content_mask(&self) -> ContentMask {
+        self.window()
+            .content_mask_stack
+            .last()
+            .cloned()
+            .unwrap_or_else(|| ContentMask {
+                bounds: Bounds {
+                    origin: Point::default(),
+                    size: self.window().content_size,
+                },
+                corner_radii: Default::default(),
+            })
+    }
+
+    fn rem_size(&self) -> Pixels {
+        self.window().rem_size
+    }
+}
+
+impl BorrowWindow for WindowContext<'_, '_> {
+    fn window(&self) -> &Window {
+        &*self.window
+    }
+
+    fn window_mut(&mut self) -> &mut Window {
+        &mut *self.window
+    }
+}
+
+pub struct ViewContext<'a, 'w, S> {
+    window_cx: WindowContext<'a, 'w>,
+    entity_type: PhantomData<S>,
+    entity_id: EntityId,
+}
+
+impl<S> BorrowAppContext for ViewContext<'_, '_, S> {
+    fn app_mut(&mut self) -> &mut AppContext {
         &mut *self.window_cx.app
     }
 
@@ -356,10 +410,14 @@ impl<S> StackContext for ViewContext<'_, '_, S> {
     }
 }
 
-pub struct ViewContext<'a, 'w, S> {
-    window_cx: WindowContext<'a, 'w>,
-    entity_type: PhantomData<S>,
-    entity_id: EntityId,
+impl<S> BorrowWindow for ViewContext<'_, '_, S> {
+    fn window(&self) -> &Window {
+        &self.window_cx.window
+    }
+
+    fn window_mut(&mut self) -> &mut Window {
+        &mut *self.window_cx.window
+    }
 }
 
 impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
