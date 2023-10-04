@@ -35,7 +35,17 @@ impl Workspace {
                 .size_full()
                 .v_stack()
                 .fill(theme.lowest.base.default.background)
-                .child(Panel::new(ScrollState::default()))
+                .child(Panel::new(
+                    ScrollState::default(),
+                    |_, _| {
+                        vec![div()
+                            .font("Courier")
+                            .text_color(gpui3::hsla(1., 1., 1., 1.))
+                            .child("Hello world")
+                            .into_any()]
+                    },
+                    Box::new(()),
+                ))
                 .child(
                     div()
                         .size_full()

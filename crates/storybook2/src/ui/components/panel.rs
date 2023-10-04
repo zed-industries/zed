@@ -48,15 +48,15 @@ pub struct Panel<S: 'static + Send + Sync> {
     allowed_sides: PanelAllowedSides,
     initial_width: AbsoluteLength,
     width: Option<AbsoluteLength>,
-    // children: HackyChildren<V>,
-    // payload: HackyChildrenPayload,
+    children: HackyChildren<S>,
+    payload: HackyChildrenPayload,
 }
 
 impl<S: 'static + Send + Sync> Panel<S> {
     pub fn new(
         scroll_state: ScrollState,
-        // children: HackyChildren<S>,
-        // payload: HackyChildrenPayload,
+        children: HackyChildren<S>,
+        payload: HackyChildrenPayload,
     ) -> Self {
         let token = token();
 
@@ -67,8 +67,8 @@ impl<S: 'static + Send + Sync> Panel<S> {
             allowed_sides: PanelAllowedSides::default(),
             initial_width: token.default_panel_size,
             width: None,
-            // children,
-            // payload,
+            children,
+            payload,
         }
     }
 
@@ -141,8 +141,6 @@ impl<S: 'static + Send + Sync> Panel<S> {
             }
         }
 
-        panel_base
-
-        // panel_base.children_any((self.children)(cx, self.payload.as_ref()))
+        panel_base.children_any((self.children)(cx, self.payload.as_ref()))
     }
 }

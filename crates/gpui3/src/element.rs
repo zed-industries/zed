@@ -39,6 +39,31 @@ pub trait ParentElement<S> {
             .extend(iter.into_iter().map(|item| item.into_any()));
         self
     }
+
+    // HACK: This is a temporary hack to get children working for the purposes
+    // of building UI on top of the current version of gpui2.
+    //
+    // We'll (hopefully) be moving away from this in the future.
+    fn children_any<I>(mut self, children: I) -> Self
+    where
+        I: IntoIterator<Item = AnyElement<S>>,
+        Self: Sized,
+    {
+        self.children_mut().extend(children.into_iter());
+        self
+    }
+
+    // HACK: This is a temporary hack to get children working for the purposes
+    // of building UI on top of the current version of gpui2.
+    //
+    // We'll (hopefully) be moving away from this in the future.
+    fn child_any(mut self, children: AnyElement<S>) -> Self
+    where
+        Self: Sized,
+    {
+        self.children_mut().push(children);
+        self
+    }
 }
 
 trait ElementObject<S> {
