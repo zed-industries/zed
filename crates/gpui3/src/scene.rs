@@ -275,6 +275,7 @@ pub struct PolychromeSprite {
     pub order: u32,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ScaledContentMask,
+    pub corner_radii: Corners<ScaledPixels>,
     pub tile: AtlasTile,
     pub grayscale: bool,
 }

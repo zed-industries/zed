@@ -27,8 +27,6 @@ pub use elements::*;
 pub use executor::*;
 pub use geometry::*;
 pub use gpui3_macros::*;
-pub use svg_renderer::*;
-
 pub use platform::*;
 pub use refineable::*;
 pub use scene::*;
@@ -37,12 +35,14 @@ pub use serde_json;
 pub use smallvec;
 pub use smol::Timer;
 use std::{
+    mem,
     ops::{Deref, DerefMut},
     sync::Arc,
 };
 pub use style::*;
 pub use style_helpers::*;
 pub use styled::*;
+pub use svg_renderer::*;
 use taffy::TaffyLayoutEngine;
 pub use taffy::{AvailableSpace, LayoutId};
 pub use text_system::*;
@@ -69,12 +69,6 @@ pub trait Context {
 #[repr(transparent)]
 pub struct MainThread<T>(T);
 
-impl<T> MainThread<T> {
-    fn new(value: T) -> Self {
-        Self(value)
-    }
-}
-
 impl<T> Deref for MainThread<T> {
     type Target = T;
 
@@ -86,6 +80,42 @@ impl<T> Deref for MainThread<T> {
 impl<T> DerefMut for MainThread<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+impl<C: Context> Context for MainThread<C> {
+    type EntityContext<'a, 'w, T: 'static + Send + Sync> = MainThread<C::EntityContext<'a, 'w, T>>;
+    type Result<T> = C::Result<T>;
+
+    fn entity<T: Send + Sync + 'static>(
+        &mut self,
+        build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
+    ) -> Self::Result<Handle<T>> {
+        self.0.entity(|cx| {
+            let cx = unsafe {
+                mem::transmute::<
+                    &mut C::EntityContext<'_, '_, T>,
+                    &mut MainThread<C::EntityContext<'_, '_, T>>,
+                >(cx)
+            };
+            build_entity(cx)
+        })
+    }
+
+    fn update_entity<T: Send + Sync + 'static, R>(
+        &mut self,
+        handle: &Handle<T>,
+        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
+    ) -> Self::Result<R> {
+        self.0.update_entity(handle, |entity, cx| {
+            let cx = unsafe {
+                mem::transmute::<
+                    &mut C::EntityContext<'_, '_, T>,
+                    &mut MainThread<C::EntityContext<'_, '_, T>>,
+                >(cx)
+            };
+            update(entity, cx)
+        })
     }
 }
 
@@ -190,14 +220,14 @@ impl<'a, T> DerefMut for Reference<'a, T> {
 }
 
 pub(crate) struct MainThreadOnly<T: ?Sized> {
-    dispatcher: Arc<dyn PlatformDispatcher>,
+    executor: Executor,
     value: Arc<T>,
 }
 
 impl<T: ?Sized> Clone for MainThreadOnly<T> {
     fn clone(&self) -> Self {
         Self {
-            dispatcher: self.dispatcher.clone(),
+            executor: self.executor.clone(),
             value: self.value.clone(),
         }
     }
@@ -206,12 +236,12 @@ impl<T: ?Sized> Clone for MainThreadOnly<T> {
 /// Allows a value to be accessed only on the main thread, allowing a non-`Send` type
 /// to become `Send`.
 impl<T: 'static + ?Sized> MainThreadOnly<T> {
-    pub(crate) fn new(value: Arc<T>, dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
-        Self { dispatcher, value }
+    pub(crate) fn new(value: Arc<T>, executor: Executor) -> Self {
+        Self { executor, value }
     }
 
     pub(crate) fn borrow_on_main_thread(&self) -> &T {
-        assert!(self.dispatcher.is_main_thread());
+        assert!(self.executor.is_main_thread());
         &self.value
     }
 }

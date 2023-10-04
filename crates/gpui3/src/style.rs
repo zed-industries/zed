@@ -202,7 +202,6 @@ impl Style {
         let min = current_mask.bounds.origin;
         let max = current_mask.bounds.lower_right();
 
-        let mask_corner_radii = Corners::default();
         let mask_bounds = match (
             self.overflow.x == Overflow::Visible,
             self.overflow.y == Overflow::Visible,
@@ -224,7 +223,6 @@ impl Style {
         };
         let mask = ContentMask {
             bounds: mask_bounds,
-            corner_radii: mask_corner_radii,
         };
 
         cx.with_content_mask(mask, f)

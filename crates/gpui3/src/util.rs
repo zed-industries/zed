@@ -1,18 +1,16 @@
-use smol::future::FutureExt;
-use std::{future::Future, time::Duration};
 pub use util::*;
 
-pub async fn timeout<F, T>(timeout: Duration, f: F) -> Result<T, ()>
-where
-    F: Future<Output = T>,
-{
-    let timer = async {
-        smol::Timer::after(timeout).await;
-        Err(())
-    };
-    let future = async move { Ok(f.await) };
-    timer.race(future).await
-}
+// pub async fn timeout<F, T>(timeout: Duration, f: F) -> Result<T, ()>
+// where
+//     F: Future<Output = T>,
+// {
+//     let timer = async {
+//         smol::Timer::after(timeout).await;
+//         Err(())
+//     };
+//     let future = async move { Ok(f.await) };
+//     timer.race(future).await
+// }
 
 #[cfg(any(test, feature = "test"))]
 pub struct CwdBacktrace<'a>(pub &'a backtrace::Backtrace);

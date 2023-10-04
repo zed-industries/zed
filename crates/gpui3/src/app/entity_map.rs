@@ -14,14 +14,6 @@ use std::{
 
 slotmap::new_key_type! { pub struct EntityId; }
 
-#[derive(Deref, DerefMut)]
-pub struct Lease<T> {
-    #[deref]
-    #[deref_mut]
-    entity: Box<T>,
-    pub id: EntityId,
-}
-
 pub(crate) struct EntityMap {
     ref_counts: Arc<RwLock<RefCounts>>,
     entities: Arc<Mutex<SecondaryMap<EntityId, Box<dyn Any + Send + Sync>>>>,
@@ -35,31 +27,38 @@ impl EntityMap {
         }
     }
 
+    /// Reserve a slot for an entity, which you can subsequently use with `insert`.
     pub fn reserve<T: 'static + Send + Sync>(&self) -> Slot<T> {
         let id = self.ref_counts.write().insert(1.into());
         Slot(Handle::new(id, Arc::downgrade(&self.ref_counts)))
     }
 
-    pub fn redeem<T: 'static + Any + Send + Sync>(&self, slot: Slot<T>, entity: T) -> Handle<T> {
+    /// Insert an entity into a slot obtained by calling `reserve`.
+    pub fn insert<T: 'static + Any + Send + Sync>(&self, slot: Slot<T>, entity: T) -> Handle<T> {
         let handle = slot.0;
         self.entities.lock().insert(handle.id, Box::new(entity));
         handle
     }
 
+    /// Move an entity to the stack.
     pub fn lease<T: 'static + Send + Sync>(&self, handle: &Handle<T>) -> Lease<T> {
         let id = handle.id;
-        let entity = self
-            .entities
-            .lock()
-            .remove(id)
-            .expect("Circular entity lease. Is the entity already being updated?")
-            .downcast::<T>()
-            .unwrap();
+        let entity = Some(
+            self.entities
+                .lock()
+                .remove(id)
+                .expect("Circular entity lease. Is the entity already being updated?")
+                .downcast::<T>()
+                .unwrap(),
+        );
         Lease { id, entity }
     }
 
-    pub fn end_lease<T: 'static + Send + Sync>(&mut self, lease: Lease<T>) {
-        self.entities.lock().insert(lease.id, lease.entity);
+    /// Return an entity after moving it to the stack.
+    pub fn end_lease<T: 'static + Send + Sync>(&mut self, mut lease: Lease<T>) {
+        self.entities
+            .lock()
+            .insert(lease.id, lease.entity.take().unwrap());
     }
 
     pub fn weak_handle<T: 'static + Send + Sync>(&self, id: EntityId) -> WeakHandle<T> {
@@ -68,6 +67,34 @@ impl EntityMap {
             entity_type: PhantomData,
             ref_counts: Arc::downgrade(&self.ref_counts),
         }
+    }
+}
+
+pub struct Lease<T> {
+    entity: Option<Box<T>>,
+    pub id: EntityId,
+}
+
+impl<T> core::ops::Deref for Lease<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.entity.as_ref().unwrap()
+    }
+}
+
+impl<T> core::ops::DerefMut for Lease<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.entity.as_mut().unwrap()
+    }
+}
+
+impl<T> Drop for Lease<T> {
+    fn drop(&mut self) {
+        assert!(
+            self.entity.is_none(),
+            "Leases must be ended with EntityMap::end_lease"
+        );
     }
 }
 

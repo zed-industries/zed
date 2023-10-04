@@ -8,9 +8,9 @@ pub use model_context::*;
 use refineable::Refineable;
 
 use crate::{
-    current_platform, image_cache::ImageCache, run_on_main, spawn_on_main, AssetSource, Context,
-    LayoutId, MainThread, MainThreadOnly, Platform, PlatformDispatcher, RootView, SvgRenderer,
-    TextStyle, TextStyleRefinement, TextSystem, Window, WindowContext, WindowHandle, WindowId,
+    current_platform, image_cache::ImageCache, AssetSource, Context, Executor, LayoutId,
+    MainThread, MainThreadOnly, Platform, RootView, SvgRenderer, Task, TextStyle,
+    TextStyleRefinement, TextSystem, Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, VecDeque};
@@ -29,7 +29,7 @@ use util::{
 };
 
 #[derive(Clone)]
-pub struct App(Arc<Mutex<MainThread<AppContext>>>);
+pub struct App(Arc<Mutex<AppContext>>);
 
 impl App {
     pub fn production(asset_source: Arc<dyn AssetSource>) -> Self {
@@ -50,15 +50,15 @@ impl App {
         asset_source: Arc<dyn AssetSource>,
         http_client: Arc<dyn HttpClient>,
     ) -> Self {
-        let dispatcher = platform.dispatcher();
+        let executor = platform.executor();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
         let entities = EntityMap::new();
-        let unit_entity = entities.redeem(entities.reserve(), ());
+        let unit_entity = entities.insert(entities.reserve(), ());
         Self(Arc::new_cyclic(|this| {
-            Mutex::new(MainThread::new(AppContext {
+            Mutex::new(AppContext {
                 this: this.clone(),
-                platform: MainThreadOnly::new(platform, dispatcher.clone()),
-                dispatcher,
+                platform: MainThreadOnly::new(platform, executor.clone()),
+                executor,
                 text_system,
                 svg_renderer: SvgRenderer::new(asset_source),
                 image_cache: ImageCache::new(http_client),
@@ -71,7 +71,7 @@ impl App {
                 pending_effects: Default::default(),
                 observers: Default::default(),
                 layout_id_buffer: Default::default(),
-            }))
+            })
         }))
     }
 
@@ -83,6 +83,7 @@ impl App {
         let platform = self.0.lock().platform.clone();
         platform.borrow_on_main_thread().run(Box::new(move || {
             let cx = &mut *this.0.lock();
+            let cx = unsafe { mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(cx) };
             on_finish_launching(cx);
         }));
     }
@@ -91,11 +92,11 @@ impl App {
 type Handlers = SmallVec<[Arc<dyn Fn(&mut AppContext) -> bool + Send + Sync + 'static>; 2]>;
 
 pub struct AppContext {
-    this: Weak<Mutex<MainThread<AppContext>>>,
+    this: Weak<Mutex<AppContext>>,
     platform: MainThreadOnly<dyn Platform>,
-    dispatcher: Arc<dyn PlatformDispatcher>,
     text_system: Arc<TextSystem>,
     pending_updates: usize,
+    pub(crate) executor: Executor,
     pub(crate) svg_renderer: SvgRenderer,
     pub(crate) image_cache: ImageCache,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
@@ -109,7 +110,7 @@ pub struct AppContext {
 }
 
 impl AppContext {
-    fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
+    pub(crate) fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
         self.pending_updates += 1;
         let result = update(self);
         if self.pending_updates == 1 {
@@ -144,6 +145,7 @@ impl AppContext {
     }
 
     fn flush_effects(&mut self) {
+        dbg!("flush effects");
         while let Some(effect) = self.pending_effects.pop_front() {
             match effect {
                 Effect::Notify(entity_id) => self.apply_notify_effect(entity_id),
@@ -180,19 +182,44 @@ impl AppContext {
         }
     }
 
-    pub fn to_async(&self) -> AsyncContext {
-        AsyncContext(unsafe { mem::transmute(self.this.clone()) })
+    pub fn to_async(&self) -> AsyncAppContext {
+        AsyncAppContext(unsafe { mem::transmute(self.this.clone()) })
+    }
+
+    pub fn executor(&self) -> &Executor {
+        &self.executor
     }
 
     pub fn run_on_main<R>(
-        &self,
+        &mut self,
         f: impl FnOnce(&mut MainThread<AppContext>) -> R + Send + 'static,
-    ) -> impl Future<Output = R>
+    ) -> Task<R>
     where
         R: Send + 'static,
     {
+        if self.executor.is_main_thread() {
+            Task::ready(f(unsafe {
+                mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(self)
+            }))
+        } else {
+            let this = self.this.upgrade().unwrap();
+            self.executor.run_on_main(move || {
+                let cx = &mut *this.lock();
+                cx.update(|cx| f(unsafe { mem::transmute::<&mut Self, &mut MainThread<Self>>(cx) }))
+            })
+        }
+    }
+
+    pub fn spawn_on_main<F, R>(
+        &self,
+        f: impl FnOnce(&mut MainThread<AppContext>) -> F + Send + 'static,
+    ) -> Task<R>
+    where
+        F: Future<Output = R> + Send + 'static,
+        R: Send + 'static,
+    {
         let this = self.this.upgrade().unwrap();
-        run_on_main(self.dispatcher.clone(), move || {
+        self.executor.spawn_on_main(move || {
             let cx = &mut *this.lock();
             cx.update(|cx| {
                 f(unsafe { mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(cx) })
@@ -200,20 +227,15 @@ impl AppContext {
         })
     }
 
-    pub fn spawn_on_main<F, R>(
-        &self,
-        f: impl FnOnce(&mut MainThread<AppContext>) -> F + Send + 'static,
-    ) -> impl Future<Output = R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut + Send + 'static) -> Task<R>
     where
-        F: Future<Output = R> + 'static,
+        Fut: Future<Output = R> + Send + 'static,
         R: Send + 'static,
     {
-        let this = self.this.upgrade().unwrap();
-        spawn_on_main(self.dispatcher.clone(), move || {
-            let cx = &mut *this.lock();
-            cx.update(|cx| {
-                f(unsafe { mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(cx) })
-            })
+        let cx = self.to_async();
+        self.executor.spawn(async move {
+            let future = f(cx);
+            future.await
         })
     }
 
@@ -278,9 +300,11 @@ impl Context for AppContext {
         &mut self,
         build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
     ) -> Handle<T> {
-        let slot = self.entities.reserve();
-        let entity = build_entity(&mut ModelContext::mutable(self, slot.id));
-        self.entities.redeem(slot, entity)
+        self.update(|cx| {
+            let slot = cx.entities.reserve();
+            let entity = build_entity(&mut ModelContext::mutable(cx, slot.id));
+            cx.entities.insert(slot, entity)
+        })
     }
 
     fn update_entity<T: Send + Sync + 'static, R>(
@@ -288,10 +312,12 @@ impl Context for AppContext {
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
     ) -> R {
-        let mut entity = self.entities.lease(handle);
-        let result = update(&mut *entity, &mut ModelContext::mutable(self, handle.id));
-        self.entities.end_lease(entity);
-        result
+        self.update(|cx| {
+            let mut entity = cx.entities.lease(handle);
+            let result = update(&mut entity, &mut ModelContext::mutable(cx, handle.id));
+            cx.entities.end_lease(entity);
+            result
+        })
     }
 }
 
@@ -307,7 +333,7 @@ impl MainThread<AppContext> {
     pub(crate) fn update_window<R>(
         &mut self,
         id: WindowId,
-        update: impl FnOnce(&mut WindowContext) -> R,
+        update: impl FnOnce(&mut MainThread<WindowContext>) -> R,
     ) -> Result<R> {
         self.0.update_window(id, |cx| {
             update(unsafe {

@@ -1,15 +1,14 @@
 use crate::{
-    image_cache::RenderImageParams, px, AnyView, AppContext, AvailableSpace, BorrowAppContext,
-    Bounds, Context, Corners, DevicePixels, Effect, Element, EntityId, FontId, GlyphId, Handle,
-    Hsla, ImageData, IsZero, LayerId, LayoutId, MainThread, MainThreadOnly, MonochromeSprite,
-    Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Reference, RenderGlyphParams,
-    RenderSvgParams, ScaledPixels, Scene, SharedString, Size, Style, TaffyLayoutEngine, WeakHandle,
-    WindowOptions, SUBPIXEL_VARIANTS,
+    image_cache::RenderImageParams, px, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
+    BorrowAppContext, Bounds, Context, Corners, DevicePixels, Effect, Element, EntityId, FontId,
+    GlyphId, Handle, Hsla, ImageData, IsZero, LayerId, LayoutId, MainThread, MainThreadOnly,
+    MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Reference,
+    RenderGlyphParams, RenderSvgParams, ScaledPixels, Scene, SharedString, Size, Style,
+    TaffyLayoutEngine, Task, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
-use futures::Future;
 use smallvec::SmallVec;
-use std::{any::TypeId, borrow::Cow, marker::PhantomData, mem, sync::Arc};
+use std::{any::TypeId, borrow::Cow, future::Future, marker::PhantomData, mem, sync::Arc};
 use util::ResultExt;
 
 pub struct AnyWindow {}
@@ -53,8 +52,7 @@ impl Window {
             }
         }));
 
-        let platform_window =
-            MainThreadOnly::new(Arc::new(platform_window), cx.platform().dispatcher());
+        let platform_window = MainThreadOnly::new(Arc::new(platform_window), cx.executor.clone());
 
         Window {
             handle,
@@ -76,15 +74,18 @@ impl Window {
 #[derive(Clone, Debug)]
 pub struct ContentMask {
     pub bounds: Bounds<Pixels>,
-    pub corner_radii: Corners<Pixels>,
 }
 
 impl ContentMask {
     pub fn scale(&self, factor: f32) -> ScaledContentMask {
         ScaledContentMask {
             bounds: self.bounds.scale(factor),
-            corner_radii: self.corner_radii.scale(factor),
         }
+    }
+
+    pub fn intersect(&self, other: &Self) -> Self {
+        let bounds = self.bounds.intersect(&other.bounds);
+        ContentMask { bounds }
     }
 }
 
@@ -92,7 +93,6 @@ impl ContentMask {
 #[repr(C)]
 pub struct ScaledContentMask {
     bounds: Bounds<ScaledPixels>,
-    corner_radii: Corners<ScaledPixels>,
 }
 
 pub struct WindowContext<'a, 'w> {
@@ -110,6 +110,43 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub fn notify(&mut self) {
         self.window.dirty = true;
+    }
+
+    pub fn run_on_main<R>(
+        &mut self,
+        f: impl FnOnce(&mut MainThread<WindowContext<'_, '_>>) -> R + Send + 'static,
+    ) -> Task<Result<R>>
+    where
+        R: Send + 'static,
+    {
+        if self.executor.is_main_thread() {
+            Task::ready(Ok(f(unsafe {
+                mem::transmute::<&mut Self, &mut MainThread<Self>>(self)
+            })))
+        } else {
+            let id = self.window.handle.id;
+            self.app.run_on_main(move |cx| cx.update_window(id, f))
+        }
+    }
+
+    pub fn to_async(&self) -> AsyncWindowContext {
+        AsyncWindowContext::new(self.app.to_async(), self.window.handle)
+    }
+
+    pub fn spawn<Fut, R>(
+        &mut self,
+        f: impl FnOnce(AnyWindowHandle, AsyncWindowContext) -> Fut + Send + 'static,
+    ) -> Task<R>
+    where
+        R: Send + 'static,
+        Fut: Future<Output = R> + Send + 'static,
+    {
+        let window = self.window.handle;
+        self.app.spawn(move |app| {
+            let cx = AsyncWindowContext::new(app, window);
+            let future = f(window, cx);
+            async move { future.await }
+        })
     }
 
     pub fn request_layout(
@@ -170,42 +207,8 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         result
     }
 
-    pub fn clip<F, R>(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        corner_radii: Corners<Pixels>,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
-        let clip_mask = ContentMask {
-            bounds,
-            corner_radii,
-        };
-
-        self.window.content_mask_stack.push(clip_mask);
-        let result = f(self);
-        self.window.content_mask_stack.pop();
-        result
-    }
-
     pub fn current_layer_id(&self) -> LayerId {
         self.window.current_layer_id.clone()
-    }
-
-    pub fn run_on_main<R>(
-        &self,
-        f: impl FnOnce(&mut MainThread<WindowContext>) -> R + Send + 'static,
-    ) -> impl Future<Output = Result<R>>
-    where
-        R: Send + 'static,
-    {
-        let id = self.window.handle.id;
-        self.app.run_on_main(move |cx| {
-            cx.update_window(id, |cx| {
-                f(unsafe {
-                    mem::transmute::<&mut WindowContext, &mut MainThread<WindowContext>>(cx)
-                })
-            })
-        })
     }
 
     pub fn paint_glyph(
@@ -303,6 +306,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 PolychromeSprite {
                     order,
                     bounds,
+                    corner_radii: Default::default(),
                     content_mask,
                     tile,
                     grayscale: false,
@@ -356,6 +360,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     pub fn paint_image(
         &mut self,
         bounds: Bounds<Pixels>,
+        corner_radii: Corners<Pixels>,
         order: u32,
         data: Arc<ImageData>,
         grayscale: bool,
@@ -372,6 +377,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 Ok((data.size(), Cow::Borrowed(data.as_bytes())))
             })?;
         let content_mask = self.content_mask().scale(scale_factor);
+        let corner_radii = corner_radii.scale(scale_factor);
 
         self.window.scene.insert(
             layer_id,
@@ -379,6 +385,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 order,
                 bounds,
                 content_mask,
+                corner_radii,
                 tile,
                 grayscale,
             },
@@ -389,7 +396,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub(crate) fn draw(&mut self) -> Result<()> {
         let unit_entity = self.unit_entity.clone();
-        self.update_entity(&unit_entity, |_, cx| {
+        self.update_entity(&unit_entity, |view, cx| {
             let mut root_view = cx.window.root_view.take().unwrap();
             let (root_layout_id, mut frame_state) = root_view.layout(&mut (), cx)?;
             let available_space = cx.window.content_size.map(Into::into);
@@ -403,14 +410,15 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             cx.window.root_view = Some(root_view);
             let scene = cx.window.scene.take();
 
-            let _ = cx.run_on_main(|cx| {
+            cx.run_on_main(view, |_, cx| {
                 cx.window
                     .platform_window
                     .borrow_on_main_thread()
                     .draw(scene);
-            });
+                cx.window.dirty = false;
+            })
+            .detach();
 
-            cx.window.dirty = false;
             Ok(())
         })
     }
@@ -430,7 +438,7 @@ impl Context for WindowContext<'_, '_> {
             &mut self.window,
             slot.id,
         ));
-        self.entities.redeem(slot, entity)
+        self.entities.insert(slot, entity)
     }
 
     fn update_entity<T: Send + Sync + 'static, R>(
@@ -473,6 +481,7 @@ pub trait BorrowWindow: BorrowAppContext {
     fn window_mut(&mut self) -> &mut Window;
 
     fn with_content_mask<R>(&mut self, mask: ContentMask, f: impl FnOnce(&mut Self) -> R) -> R {
+        let mask = mask.intersect(&self.content_mask());
         self.window_mut().content_mask_stack.push(mask);
         let result = f(self);
         self.window_mut().content_mask_stack.pop();
@@ -489,7 +498,6 @@ pub trait BorrowWindow: BorrowAppContext {
                     origin: Point::default(),
                     size: self.window().content_size,
                 },
-                corner_radii: Default::default(),
             })
     }
 
@@ -594,6 +602,38 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
             .app
             .pending_effects
             .push_back(Effect::Notify(self.entity_id));
+    }
+
+    pub fn run_on_main<R>(
+        &mut self,
+        view: &mut S,
+        f: impl FnOnce(&mut S, &mut MainThread<ViewContext<'_, '_, S>>) -> R + Send + 'static,
+    ) -> Task<Result<R>>
+    where
+        R: Send + 'static,
+    {
+        if self.executor.is_main_thread() {
+            let cx = unsafe { mem::transmute::<&mut Self, &mut MainThread<Self>>(self) };
+            Task::ready(Ok(f(view, cx)))
+        } else {
+            let handle = self.handle().upgrade(self).unwrap();
+            self.window_cx.run_on_main(move |cx| handle.update(cx, f))
+        }
+    }
+
+    pub fn spawn<Fut, R>(
+        &mut self,
+        f: impl FnOnce(WeakHandle<S>, AsyncWindowContext) -> Fut + Send + 'static,
+    ) -> Task<R>
+    where
+        R: Send + 'static,
+        Fut: Future<Output = R> + Send + 'static,
+    {
+        let handle = self.handle();
+        self.window_cx.spawn(move |_, cx| {
+            let result = f(handle, cx);
+            async move { result.await }
+        })
     }
 
     pub(crate) fn erase_state<R>(&mut self, f: impl FnOnce(&mut ViewContext<()>) -> R) -> R {
