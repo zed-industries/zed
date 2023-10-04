@@ -3165,10 +3165,17 @@ impl CollabPanel {
         let window = cx.window();
         let active_call = ActiveCall::global(cx);
         cx.spawn(|_, mut cx| async move {
-            if active_call.read_with(&mut cx, |active_call, _| active_call.room().is_some()) {
+            if active_call.read_with(&mut cx, |active_call, cx| {
+                if let Some(room) = active_call.room() {
+                    let room = room.read(cx);
+                    room.is_sharing_project() && room.remote_participants().len() > 0
+                } else {
+                    false
+                }
+            }) {
                 let answer = window.prompt(
                     PromptLevel::Warning,
-                    "Do you want to leave the current call?",
+                    "Leaving this call will unshare your current project.\nDo you want to switch channels?",
                     &["Yes, Join Channel", "Cancel"],
                     &mut cx,
                 );

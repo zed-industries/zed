@@ -104,6 +104,10 @@ impl Room {
         self.channel_id
     }
 
+    pub fn is_sharing_project(&self) -> bool {
+        !self.shared_projects.is_empty()
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn is_connected(&self) -> bool {
         if let Some(live_kit) = self.live_kit.as_ref() {
