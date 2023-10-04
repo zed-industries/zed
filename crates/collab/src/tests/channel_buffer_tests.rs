@@ -804,11 +804,13 @@ async fn test_channel_buffer_changes(
     assert!(has_buffer_changed);
 
     // Opening the buffer should clear the changed flag.
-    let channel_buffer_b = client_b
-        .channel_store()
-        .update(cx_b, |store, cx| store.open_channel_buffer(channel_id, cx))
+    let project_b = client_b.build_empty_local_project(cx_b);
+    let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
+    let channel_view_b = cx_b
+        .update(|cx| ChannelView::open(channel_id, workspace_b.clone(), cx))
         .await
         .unwrap();
+
     deterministic.run_until_parked();
 
     let has_buffer_changed = cx_b.read(|cx| {
@@ -840,8 +842,12 @@ async fn test_channel_buffer_changes(
     assert!(!has_buffer_changed);
 
     // Closing the buffer should re-enable change tracking
-    cx_b.update(|_| {
-        drop(channel_buffer_b);
+    cx_b.update(|cx| {
+        workspace_b.update(cx, |workspace, cx| {
+            workspace.close_all_items_and_panes(&Default::default(), cx)
+        });
+
+        drop(channel_view_b)
     });
 
     deterministic.run_until_parked();
