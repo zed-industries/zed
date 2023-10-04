@@ -1737,7 +1737,7 @@ mod tests {
     use settings::SettingsStore;
     use std::{
         collections::HashSet,
-        path::Path,
+        path::{Path, PathBuf},
         sync::atomic::{self, AtomicUsize},
     };
     use workspace::{pane, AppState};
@@ -2759,6 +2759,71 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_new_file_move(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background());
+        fs.as_fake().insert_tree("/root", json!({})).await;
+        let project = Project::test(fs, ["/root".as_ref()], cx).await;
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
+        let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
+
+        // Make a new buffer with no backing file
+        workspace.update(cx, |workspace, cx| {
+            Editor::new_file(workspace, &Default::default(), cx)
+        });
+
+        // "Save as"" the buffer, creating a new backing file for it
+        let task = workspace.update(cx, |workspace, cx| {
+            workspace.save_active_item(workspace::SaveIntent::Save, cx)
+        });
+
+        cx.foreground().run_until_parked();
+        cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/new")));
+        task.await.unwrap();
+
+        // Rename the file
+        select_path(&panel, "root/new", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v root", "      new  <== selected"]
+        );
+        panel.update(cx, |panel, cx| panel.rename(&Rename, cx));
+        panel.update(cx, |panel, cx| {
+            panel
+                .filename_editor
+                .update(cx, |editor, cx| editor.set_text("newer", cx));
+        });
+        panel
+            .update(cx, |panel, cx| panel.confirm(&Confirm, cx))
+            .unwrap()
+            .await
+            .unwrap();
+
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v root", "      newer  <== selected"]
+        );
+
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace.save_active_item(workspace::SaveIntent::Save, cx)
+            })
+            .await
+            .unwrap();
+
+        cx.foreground().run_until_parked();
+        // assert that saving the file doesn't restore "new"
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v root", "      newer  <== selected"]
+        );
+    }
+
     fn toggle_expand_dir(
         panel: &ViewHandle<ProjectPanel>,
         path: impl AsRef<Path>,
@@ -2862,6 +2927,7 @@ mod tests {
             editor::init_settings(cx);
             crate::init((), cx);
             workspace::init_settings(cx);
+            client::init_settings(cx);
             Project::init_settings(cx);
         });
     }
