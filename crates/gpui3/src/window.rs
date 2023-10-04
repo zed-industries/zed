@@ -86,6 +86,15 @@ impl ContentMask {
             corner_radii: self.corner_radii.scale(factor),
         }
     }
+
+    pub fn intersect(&self, other: &Self) -> Self {
+        let bounds = self.bounds.intersect(&other.bounds);
+        // todo!("intersect corner radii")
+        ContentMask {
+            bounds,
+            corner_radii: self.corner_radii,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -479,6 +488,7 @@ pub trait BorrowWindow: BorrowAppContext {
     fn window_mut(&mut self) -> &mut Window;
 
     fn with_content_mask<R>(&mut self, mask: ContentMask, f: impl FnOnce(&mut Self) -> R) -> R {
+        let mask = mask.intersect(&self.content_mask());
         self.window_mut().content_mask_stack.push(mask);
         let result = f(self);
         self.window_mut().content_mask_stack.pop();

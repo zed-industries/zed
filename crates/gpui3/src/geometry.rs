@@ -1,7 +1,10 @@
 use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, Mul, Sub, SubAssign};
 use refineable::Refineable;
-use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Sub, SubAssign};
+use std::{
+    cmp,
+    ops::{Add, AddAssign, Div, Mul, MulAssign, Sub, SubAssign},
+};
 
 #[derive(Refineable, Default, Add, AddAssign, Sub, SubAssign, Copy, Debug, PartialEq, Eq, Hash)]
 #[refineable(debug)]
@@ -84,7 +87,7 @@ impl<T: Clone + Debug + Div<S, Output = T>, S: Clone> Div<S> for Point<T> {
     }
 }
 
-impl<T: Clone + Debug + std::cmp::PartialOrd> Point<T> {
+impl<T: Clone + Debug + cmp::PartialOrd> Point<T> {
     pub fn max(&self, other: &Self) -> Self {
         Point {
             x: if self.x >= other.x {
@@ -93,6 +96,21 @@ impl<T: Clone + Debug + std::cmp::PartialOrd> Point<T> {
                 other.x.clone()
             },
             y: if self.y >= other.y {
+                self.y.clone()
+            } else {
+                other.y.clone()
+            },
+        }
+    }
+
+    pub fn min(&self, other: &Self) -> Self {
+        Point {
+            x: if self.x <= other.x {
+                self.x.clone()
+            } else {
+                other.x.clone()
+            },
+            y: if self.y <= other.y {
                 self.y.clone()
             } else {
                 other.y.clone()
@@ -236,6 +254,14 @@ impl<T: Clone + Debug + Sub<Output = T>> Bounds<T> {
             height: lower_right.y - upper_left.y,
         };
         Bounds { origin, size }
+    }
+}
+
+impl<T: Clone + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T>> Bounds<T> {
+    pub fn intersect(&self, other: &Self) -> Self {
+        let upper_left = self.origin.max(&other.origin);
+        let lower_right = self.lower_right().min(&other.lower_right());
+        Self::from_corners(upper_left, lower_right)
     }
 }
 
@@ -537,7 +563,7 @@ impl Mul<Pixels> for Pixels {
 impl Eq for Pixels {}
 
 impl Ord for Pixels {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
         self.0.partial_cmp(&other.0).unwrap()
     }
 }
