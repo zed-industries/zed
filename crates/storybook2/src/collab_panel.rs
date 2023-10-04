@@ -1,7 +1,7 @@
 use crate::theme::{theme, Theme};
 use gpui3::{
-    div, img, svg, view, AppContext, ArcCow, Context, Element, IntoAnyElement, ParentElement,
-    ScrollState, StyleHelpers, View, ViewContext, WindowContext,
+    div, img, svg, view, AppContext, Context, Element, IntoAnyElement, ParentElement, ScrollState,
+    SharedString, StyleHelpers, View, ViewContext, WindowContext,
 };
 
 pub struct CollabPanel {
@@ -30,7 +30,7 @@ impl CollabPanel {
             .h_full()
             .flex()
             .flex_col()
-            .font("Zed Sans Extended")
+            .font("Courier")
             .text_color(theme.middle.base.default.foreground)
             .border_color(theme.middle.base.default.border)
             .border()
@@ -51,7 +51,7 @@ impl CollabPanel {
                             //:: https://tailwindcss.com/docs/hover-focus-and-other-states#styling-based-on-parent-state
                             // .group()
                             // List Section Header
-                            .child(self.list_section_header("#CRDB", true, theme))
+                            .child(self.list_section_header("#CRDB 🗃️", true, theme))
                             // List Item Large
                             .child(self.list_item(
                                 "http://github.com/maxbrunsfeld.png?s=50",
@@ -144,7 +144,7 @@ impl CollabPanel {
 
     fn list_item(
         &self,
-        avatar_uri: impl Into<ArcCow<'static, str>>,
+        avatar_uri: impl Into<SharedString>,
         label: impl IntoAnyElement<Self>,
         theme: &Theme,
     ) -> impl Element<State = Self> {

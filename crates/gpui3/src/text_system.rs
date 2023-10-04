@@ -1,14 +1,17 @@
 mod font_features;
+mod line;
 mod line_wrapper;
 mod text_layout_cache;
 
 use anyhow::anyhow;
 pub use font_features::*;
+pub use line::*;
 use line_wrapper::*;
 pub use text_layout_cache::*;
 
 use crate::{
-    px, Bounds, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size, UnderlineStyle,
+    px, Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
+    UnderlineStyle,
 };
 use collections::HashMap;
 use core::fmt;
@@ -21,17 +24,19 @@ use std::{
 };
 
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
+#[repr(C)]
 pub struct FontId(pub usize);
 
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct FontFamilyId(pub usize);
 
+pub const SUBPIXEL_VARIANTS: u8 = 4;
+
 pub struct TextSystem {
     text_layout_cache: Arc<TextLayoutCache>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
     font_ids_by_font: RwLock<HashMap<Font, FontId>>,
-    fonts_by_font_id: RwLock<HashMap<FontId, Font>>,
-    font_metrics: RwLock<HashMap<Font, FontMetrics>>,
+    font_metrics: RwLock<HashMap<FontId, FontMetrics>>,
     wrapper_pool: Mutex<HashMap<FontIdWithSize, Vec<LineWrapper>>>,
     font_runs_pool: Mutex<Vec<Vec<(usize, FontId)>>>,
 }
@@ -43,7 +48,6 @@ impl TextSystem {
             platform_text_system,
             font_metrics: RwLock::new(HashMap::default()),
             font_ids_by_font: RwLock::new(HashMap::default()),
-            fonts_by_font_id: RwLock::new(HashMap::default()),
             wrapper_pool: Mutex::new(HashMap::default()),
             font_runs_pool: Default::default(),
         }
@@ -51,36 +55,25 @@ impl TextSystem {
 
     pub fn font_id(&self, font: &Font) -> Result<FontId> {
         let font_id = self.font_ids_by_font.read().get(font).copied();
-
         if let Some(font_id) = font_id {
             Ok(font_id)
         } else {
             let font_id = self.platform_text_system.font_id(font)?;
             self.font_ids_by_font.write().insert(font.clone(), font_id);
-            self.fonts_by_font_id.write().insert(font_id, font.clone());
             Ok(font_id)
         }
     }
 
-    pub fn with_font<T>(&self, font_id: FontId, f: impl FnOnce(&Self, &Font) -> T) -> Result<T> {
-        self.fonts_by_font_id
-            .read()
-            .get(&font_id)
-            .ok_or_else(|| anyhow!("font not found"))
-            .map(|font| f(self, font))
-    }
-
-    pub fn bounding_box(&self, font: &Font, font_size: Pixels) -> Result<Bounds<Pixels>> {
-        self.read_metrics(&font, |metrics| metrics.bounding_box(font_size))
+    pub fn bounding_box(&self, font_id: FontId, font_size: Pixels) -> Result<Bounds<Pixels>> {
+        self.read_metrics(font_id, |metrics| metrics.bounding_box(font_size))
     }
 
     pub fn typographic_bounds(
         &self,
-        font: &Font,
+        font_id: FontId,
         font_size: Pixels,
         character: char,
     ) -> Result<Bounds<Pixels>> {
-        let font_id = self.font_id(font)?;
         let glyph_id = self
             .platform_text_system
             .glyph_for_char(font_id, character)
@@ -88,65 +81,63 @@ impl TextSystem {
         let bounds = self
             .platform_text_system
             .typographic_bounds(font_id, glyph_id)?;
-        self.read_metrics(font, |metrics| {
+        self.read_metrics(font_id, |metrics| {
             (bounds / metrics.units_per_em as f32 * font_size.0).map(px)
         })
     }
 
-    pub fn advance(&self, font: &Font, font_size: Pixels, ch: char) -> Result<Size<Pixels>> {
-        let font_id = self.font_id(font)?;
+    pub fn advance(&self, font_id: FontId, font_size: Pixels, ch: char) -> Result<Size<Pixels>> {
         let glyph_id = self
             .platform_text_system
             .glyph_for_char(font_id, ch)
             .ok_or_else(|| anyhow!("glyph not found for character '{}'", ch))?;
-        let result =
-            self.platform_text_system.advance(font_id, glyph_id)? / self.units_per_em(font)? as f32;
+        let result = self.platform_text_system.advance(font_id, glyph_id)?
+            / self.units_per_em(font_id)? as f32;
 
         Ok(result * font_size)
     }
 
-    pub fn units_per_em(&self, font: &Font) -> Result<u32> {
-        self.read_metrics(font, |metrics| metrics.units_per_em as u32)
+    pub fn units_per_em(&self, font_id: FontId) -> Result<u32> {
+        self.read_metrics(font_id, |metrics| metrics.units_per_em as u32)
     }
 
-    pub fn cap_height(&self, font: &Font, font_size: Pixels) -> Result<Pixels> {
-        self.read_metrics(font, |metrics| metrics.cap_height(font_size))
+    pub fn cap_height(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
+        self.read_metrics(font_id, |metrics| metrics.cap_height(font_size))
     }
 
-    pub fn x_height(&self, font: &Font, font_size: Pixels) -> Result<Pixels> {
-        self.read_metrics(font, |metrics| metrics.x_height(font_size))
+    pub fn x_height(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
+        self.read_metrics(font_id, |metrics| metrics.x_height(font_size))
     }
 
-    pub fn ascent(&self, font: &Font, font_size: Pixels) -> Result<Pixels> {
-        self.read_metrics(font, |metrics| metrics.ascent(font_size))
+    pub fn ascent(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
+        self.read_metrics(font_id, |metrics| metrics.ascent(font_size))
     }
 
-    pub fn descent(&self, font: &Font, font_size: Pixels) -> Result<Pixels> {
-        self.read_metrics(font, |metrics| metrics.descent(font_size))
+    pub fn descent(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
+        self.read_metrics(font_id, |metrics| metrics.descent(font_size))
     }
 
     pub fn baseline_offset(
         &self,
-        font: &Font,
+        font_id: FontId,
         font_size: Pixels,
         line_height: Pixels,
     ) -> Result<Pixels> {
-        let ascent = self.ascent(font, font_size)?;
-        let descent = self.descent(font, font_size)?;
+        let ascent = self.ascent(font_id, font_size)?;
+        let descent = self.descent(font_id, font_size)?;
         let padding_top = (line_height - ascent - descent) / 2.;
         Ok(padding_top + ascent)
     }
 
-    fn read_metrics<T>(&self, font: &Font, read: impl FnOnce(&FontMetrics) -> T) -> Result<T> {
+    fn read_metrics<T>(&self, font_id: FontId, read: impl FnOnce(&FontMetrics) -> T) -> Result<T> {
         let lock = self.font_metrics.upgradable_read();
 
-        if let Some(metrics) = lock.get(font) {
+        if let Some(metrics) = lock.get(&font_id) {
             Ok(read(metrics))
         } else {
-            let font_id = self.platform_text_system.font_id(&font)?;
             let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
             let metrics = lock
-                .entry(font.clone())
+                .entry(font_id)
                 .or_insert_with(|| self.platform_text_system.font_metrics(font_id));
             Ok(read(metrics))
         }
@@ -160,28 +151,17 @@ impl TextSystem {
     ) -> Result<Line> {
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
 
-        dbg!("got font runs from pool");
         let mut last_font: Option<&Font> = None;
         for (len, style) in runs {
-            dbg!(len);
             if let Some(last_font) = last_font.as_ref() {
-                dbg!("a");
                 if **last_font == style.font {
-                    dbg!("b");
                     font_runs.last_mut().unwrap().0 += len;
-                    dbg!("c");
                     continue;
                 }
-                dbg!("d");
             }
-            dbg!("e");
             last_font = Some(&style.font);
-            dbg!("f");
             font_runs.push((*len, self.font_id(&style.font)?));
-            dbg!("g");
         }
-
-        dbg!("built font runs");
 
         let layout = self
             .text_layout_cache
@@ -219,6 +199,17 @@ impl TextSystem {
             wrapper: Some(wrapper),
             text_system: self.clone(),
         })
+    }
+
+    pub fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
+        self.platform_text_system.glyph_raster_bounds(params)
+    }
+
+    pub fn rasterize_glyph(
+        &self,
+        glyph_id: &RenderGlyphParams,
+    ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
+        self.platform_text_system.rasterize_glyph(glyph_id)
     }
 }
 
@@ -333,6 +324,7 @@ pub struct RunStyle {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[repr(C)]
 pub struct GlyphId(u32);
 
 impl From<GlyphId> for u32 {
@@ -353,28 +345,69 @@ impl From<u32> for GlyphId {
     }
 }
 
+#[derive(Default, Debug)]
+pub struct ShapedLine {
+    pub font_size: Pixels,
+    pub width: Pixels,
+    pub ascent: Pixels,
+    pub descent: Pixels,
+    pub runs: Vec<ShapedRun>,
+    pub len: usize,
+}
+
+#[derive(Debug)]
+pub struct ShapedRun {
+    pub font_id: FontId,
+    pub glyphs: Vec<ShapedGlyph>,
+}
+
 #[derive(Clone, Debug)]
-pub struct Glyph {
+pub struct ShapedGlyph {
     pub id: GlyphId,
     pub position: Point<Pixels>,
     pub index: usize,
     pub is_emoji: bool,
 }
 
-#[derive(Default, Debug)]
-pub struct LineLayout {
-    pub font_size: Pixels,
-    pub width: Pixels,
-    pub ascent: Pixels,
-    pub descent: Pixels,
-    pub runs: Vec<Run>,
-    pub len: usize,
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenderGlyphParams {
+    pub(crate) font_id: FontId,
+    pub(crate) glyph_id: GlyphId,
+    pub(crate) font_size: Pixels,
+    pub(crate) subpixel_variant: Point<u8>,
+    pub(crate) scale_factor: f32,
+    pub(crate) is_emoji: bool,
 }
 
-#[derive(Debug)]
-pub struct Run {
-    pub font_id: FontId,
-    pub glyphs: Vec<Glyph>,
+impl Eq for RenderGlyphParams {}
+
+impl Hash for RenderGlyphParams {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.font_id.0.hash(state);
+        self.glyph_id.0.hash(state);
+        self.font_size.0.to_bits().hash(state);
+        self.subpixel_variant.hash(state);
+        self.scale_factor.to_bits().hash(state);
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenderEmojiParams {
+    pub(crate) font_id: FontId,
+    pub(crate) glyph_id: GlyphId,
+    pub(crate) font_size: Pixels,
+    pub(crate) scale_factor: f32,
+}
+
+impl Eq for RenderEmojiParams {}
+
+impl Hash for RenderEmojiParams {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.font_id.0.hash(state);
+        self.glyph_id.0.hash(state);
+        self.font_size.0.to_bits().hash(state);
+        self.scale_factor.to_bits().hash(state);
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]

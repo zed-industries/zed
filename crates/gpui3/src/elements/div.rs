@@ -1,6 +1,6 @@
 use crate::{
     AnyElement, Bounds, Element, Layout, LayoutId, Overflow, ParentElement, Pixels, Point,
-    Refineable, RefinementCascade, Result, StackContext, Style, StyleHelpers, Styled, ViewContext,
+    Refineable, RefinementCascade, Result, Style, StyleHelpers, Styled, ViewContext,
 };
 use parking_lot::Mutex;
 use smallvec::SmallVec;
@@ -33,16 +33,9 @@ impl<S: 'static + Send + Sync> Element for Div<S> {
         cx: &mut ViewContext<S>,
     ) -> Result<(LayoutId, Self::FrameState)> {
         let style = self.computed_style();
-        let child_layout_ids = if let Some(text_style) = style.text_style(cx) {
-            cx.with_text_style(text_style.clone(), |cx| self.layout_children(view, cx))?
-        } else {
-            self.layout_children(view, cx)?
-        };
-
-        Ok((
-            cx.request_layout(style.into(), child_layout_ids.clone())?,
-            child_layout_ids,
-        ))
+        let child_layout_ids = style.apply_text_style(cx, |cx| self.layout_children(view, cx))?;
+        let layout_id = cx.request_layout(style.into(), child_layout_ids.clone())?;
+        Ok((layout_id, child_layout_ids))
     }
 
     fn paint(
@@ -56,20 +49,18 @@ impl<S: 'static + Send + Sync> Element for Div<S> {
 
         let style = self.computed_style();
         style.paint(order, bounds, cx);
-        let overflow = &style.overflow;
-        // // todo!("support only one dimension being hidden")
-        // if style.overflow.y != Overflow::Visible || style.overflow.x != Overflow::Visible {
-        //     cx.scene().push_layer(Some(bounds));
-        //     pop_layer = true;
-        // }
-        if let Some(text_style) = style.text_style(cx) {
-            cx.with_text_style(text_style.clone(), |cx| {
-                self.paint_children(overflow, state, cx)
-            })?;
-        } else {
-            self.paint_children(overflow, state, cx)?;
-        }
 
+        // // todo!("support only one dimension being hidden")
+        let overflow = &style.overflow;
+        // if style.overflow.y != Overflow::Visible || style.overflow.x != Overflow::Visible {
+        //     cx.clip(layout.bounds, style.corner_radii, || )
+        // }
+
+        style.apply_text_style(cx, |cx| {
+            style.apply_overflow(layout.bounds, cx, |cx| {
+                self.paint_children(overflow, state, cx)
+            })
+        })?;
         self.handle_scroll(order, bounds, style.overflow.clone(), child_layouts, cx);
 
         // todo!("enable inspector")

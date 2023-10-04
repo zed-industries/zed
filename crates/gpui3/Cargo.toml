@@ -55,7 +55,6 @@ usvg = { version = "0.14", features = [] }
 uuid = { version = "1.1.2", features = ["v4"] }
 waker-fn = "1.1.0"
 slotmap = "1.0.6"
-bytemuck = { version = "1.14.0", features = ["derive"] }
 schemars.workspace = true
 plane-split = "0.18.0"
 bitflags = "2.4.0"

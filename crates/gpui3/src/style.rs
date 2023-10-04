@@ -1,8 +1,8 @@
 use crate::{
-    phi, rems, AbsoluteLength, Bounds, Corners, CornersRefinement, DefiniteLength, Edges,
-    EdgesRefinement, Font, FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point,
-    PointRefinement, Quad, Rems, Result, RunStyle, SharedString, Size, SizeRefinement, ViewContext,
-    WindowContext,
+    phi, point, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners,
+    CornersRefinement, DefiniteLength, Edges, EdgesRefinement, Font, FontFeatures, FontStyle,
+    FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Quad, Rems, Result, RunStyle,
+    SharedString, Size, SizeRefinement, ViewContext, WindowContext,
 };
 use refineable::Refineable;
 pub use taffy::style::{
@@ -179,22 +179,84 @@ impl Style {
         }
     }
 
+    pub fn apply_text_style<C, F, R>(&self, cx: &mut C, f: F) -> R
+    where
+        C: BorrowAppContext,
+        F: FnOnce(&mut C) -> R,
+    {
+        if self.text.is_some() {
+            cx.with_text_style(self.text.clone(), f)
+        } else {
+            f(cx)
+        }
+    }
+
+    /// Apply overflow to content mask
+    pub fn apply_overflow<C, F, R>(&self, bounds: Bounds<Pixels>, cx: &mut C, f: F) -> R
+    where
+        C: BorrowWindow,
+        F: FnOnce(&mut C) -> R,
+    {
+        let current_mask = cx.content_mask();
+
+        let min = current_mask.bounds.origin;
+        let max = current_mask.bounds.lower_right();
+
+        let mask_corner_radii = Corners::default();
+        let mask_bounds = match (
+            self.overflow.x == Overflow::Visible,
+            self.overflow.y == Overflow::Visible,
+        ) {
+            // x and y both visible
+            (true, true) => return f(cx),
+            // x visible, y hidden
+            (true, false) => Bounds::from_corners(
+                point(min.x, bounds.origin.y),
+                point(max.x, bounds.lower_right().y),
+            ),
+            // x hidden, y visible
+            (false, true) => Bounds::from_corners(
+                point(bounds.origin.x, min.y),
+                point(bounds.lower_right().x, max.y),
+            ),
+            // both hidden
+            (false, false) => bounds,
+        };
+        let mask = ContentMask {
+            bounds: mask_bounds,
+            corner_radii: mask_corner_radii,
+        };
+
+        cx.with_content_mask(mask, f)
+    }
+
     /// Paints the background of an element styled with this style.
     pub fn paint<V: 'static>(&self, order: u32, bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
         let rem_size = cx.rem_size();
+        let scale = cx.scale_factor();
 
         let background_color = self.fill.as_ref().and_then(Fill::color);
         if background_color.is_some() || self.is_border_visible() {
-            cx.scene().insert(Quad {
-                order,
-                bounds,
-                clip_bounds: bounds, // todo!
-                clip_corner_radii: self.corner_radii.map(|length| length.to_pixels(rem_size)),
-                background: background_color.unwrap_or_default(),
-                border_color: self.border_color.unwrap_or_default(),
-                corner_radii: self.corner_radii.map(|length| length.to_pixels(rem_size)),
-                border_widths: self.border_widths.map(|length| length.to_pixels(rem_size)),
-            });
+            let layer_id = cx.current_layer_id();
+            cx.scene().insert(
+                layer_id,
+                Quad {
+                    order,
+                    bounds: bounds.scale(scale),
+                    clip_bounds: bounds.scale(scale), // todo!
+                    clip_corner_radii: self
+                        .corner_radii
+                        .map(|length| length.to_pixels(rem_size).scale(scale)),
+                    background: background_color.unwrap_or_default(),
+                    border_color: self.border_color.unwrap_or_default(),
+                    corner_radii: self
+                        .corner_radii
+                        .map(|length| length.to_pixels(rem_size).scale(scale)),
+                    border_widths: self
+                        .border_widths
+                        .map(|length| length.to_pixels(rem_size).scale(scale)),
+                },
+            );
         }
     }
 

@@ -1,8 +1,9 @@
 use crate::{
-    point, px, size, Bounds, Font, FontFeatures, FontId, FontMetrics, FontStyle, FontWeight, Glyph,
-    GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RasterizationOptions, Result, Run,
-    SharedString, Size,
+    point, px, size, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontStyle,
+    FontWeight, GlyphId, Pixels, PlatformTextSystem, Point, RenderGlyphParams, Result, ShapedGlyph,
+    ShapedLine, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
 };
+use anyhow::anyhow;
 use cocoa::appkit::{CGFloat, CGPoint};
 use collections::HashMap;
 use core_foundation::{
@@ -137,23 +138,15 @@ impl PlatformTextSystem for MacTextSystem {
         self.0.read().glyph_for_char(font_id, ch)
     }
 
+    fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
+        self.0.read().raster_bounds(params)
+    }
+
     fn rasterize_glyph(
         &self,
-        font_id: FontId,
-        font_size: f32,
-        glyph_id: GlyphId,
-        subpixel_shift: Point<Pixels>,
-        scale_factor: f32,
-        options: RasterizationOptions,
-    ) -> Option<(Bounds<u32>, Vec<u8>)> {
-        self.0.read().rasterize_glyph(
-            font_id,
-            font_size,
-            glyph_id,
-            subpixel_shift,
-            scale_factor,
-            options,
-        )
+        glyph_id: &RenderGlyphParams,
+    ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
+        self.0.read().rasterize_glyph(glyph_id)
     }
 
     fn layout_line(
@@ -161,7 +154,7 @@ impl PlatformTextSystem for MacTextSystem {
         text: &str,
         font_size: Pixels,
         font_runs: &[(usize, FontId)],
-    ) -> LineLayout {
+    ) -> ShapedLine {
         self.0.write().layout_line(text, font_size, font_runs)
     }
 
@@ -245,90 +238,91 @@ impl MacTextSystemState {
             })
     }
 
-    fn rasterize_glyph(
-        &self,
-        font_id: FontId,
-        font_size: f32,
-        glyph_id: GlyphId,
-        subpixel_shift: Point<Pixels>,
-        scale_factor: f32,
-        options: RasterizationOptions,
-    ) -> Option<(Bounds<u32>, Vec<u8>)> {
-        let font = &self.fonts[font_id.0];
-        let scale = Transform2F::from_scale(scale_factor);
-        let glyph_bounds = font
+    fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
+        let font = &self.fonts[params.font_id.0];
+        let scale = Transform2F::from_scale(params.scale_factor);
+        Ok(font
             .raster_bounds(
-                glyph_id.into(),
-                font_size,
+                params.glyph_id.into(),
+                params.font_size.into(),
                 scale,
                 HintingOptions::None,
                 font_kit::canvas::RasterizationOptions::GrayscaleAa,
-            )
-            .ok()?;
+            )?
+            .into())
+    }
 
-        if glyph_bounds.width() == 0 || glyph_bounds.height() == 0 {
-            None
+    fn rasterize_glyph(&self, params: &RenderGlyphParams) -> Result<(Size<DevicePixels>, Vec<u8>)> {
+        let glyph_bounds = self.raster_bounds(params)?;
+        if glyph_bounds.size.width.0 == 0 || glyph_bounds.size.height.0 == 0 {
+            Err(anyhow!("glyph bounds are empty"))
         } else {
-            // Make room for subpixel variants.
-            let subpixel_padding = subpixel_shift.map(|v| f32::from(v).ceil() as u32);
-            let cx_bounds = RectI::new(
-                glyph_bounds.origin(),
-                glyph_bounds.size() + Vector2I::from(subpixel_padding),
-            );
+            // Add an extra pixel when the subpixel variant isn't zero to make room for anti-aliasing.
+            let mut bitmap_size = glyph_bounds.size;
+            if params.subpixel_variant.x > 0 {
+                bitmap_size.width += DevicePixels(1);
+            }
+            if params.subpixel_variant.y > 0 {
+                bitmap_size.height += DevicePixels(1);
+            }
 
             let mut bytes;
             let cx;
-            match options {
-                RasterizationOptions::Alpha => {
-                    bytes = vec![0; cx_bounds.width() as usize * cx_bounds.height() as usize];
-                    cx = CGContext::create_bitmap_context(
-                        Some(bytes.as_mut_ptr() as *mut _),
-                        cx_bounds.width() as usize,
-                        cx_bounds.height() as usize,
-                        8,
-                        cx_bounds.width() as usize,
-                        &CGColorSpace::create_device_gray(),
-                        kCGImageAlphaOnly,
-                    );
-                }
-                RasterizationOptions::Bgra => {
-                    bytes = vec![0; cx_bounds.width() as usize * 4 * cx_bounds.height() as usize];
-                    cx = CGContext::create_bitmap_context(
-                        Some(bytes.as_mut_ptr() as *mut _),
-                        cx_bounds.width() as usize,
-                        cx_bounds.height() as usize,
-                        8,
-                        cx_bounds.width() as usize * 4,
-                        &CGColorSpace::create_device_rgb(),
-                        kCGImageAlphaPremultipliedLast,
-                    );
-                }
+            if params.is_emoji {
+                bytes = vec![0; bitmap_size.width.0 as usize * 4 * bitmap_size.height.0 as usize];
+                cx = CGContext::create_bitmap_context(
+                    Some(bytes.as_mut_ptr() as *mut _),
+                    bitmap_size.width.0 as usize,
+                    bitmap_size.height.0 as usize,
+                    8,
+                    bitmap_size.width.0 as usize * 4,
+                    &CGColorSpace::create_device_rgb(),
+                    kCGImageAlphaPremultipliedLast,
+                );
+            } else {
+                bytes = vec![0; bitmap_size.width.0 as usize * bitmap_size.height.0 as usize];
+                cx = CGContext::create_bitmap_context(
+                    Some(bytes.as_mut_ptr() as *mut _),
+                    bitmap_size.width.0 as usize,
+                    bitmap_size.height.0 as usize,
+                    8,
+                    bitmap_size.width.0 as usize,
+                    &CGColorSpace::create_device_gray(),
+                    kCGImageAlphaOnly,
+                );
             }
 
             // Move the origin to bottom left and account for scaling, this
             // makes drawing text consistent with the font-kit's raster_bounds.
             cx.translate(
-                -glyph_bounds.origin_x() as CGFloat,
-                (glyph_bounds.origin_y() + glyph_bounds.height()) as CGFloat,
+                -glyph_bounds.origin.x.0 as CGFloat,
+                (glyph_bounds.origin.y.0 + glyph_bounds.size.height.0) as CGFloat,
             );
-            cx.scale(scale_factor as CGFloat, scale_factor as CGFloat);
+            cx.scale(
+                params.scale_factor as CGFloat,
+                params.scale_factor as CGFloat,
+            );
 
+            let subpixel_shift = params
+                .subpixel_variant
+                .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
             cx.set_allows_font_subpixel_positioning(true);
             cx.set_should_subpixel_position_fonts(true);
             cx.set_allows_font_subpixel_quantization(false);
             cx.set_should_subpixel_quantize_fonts(false);
-            font.native_font()
-                .clone_with_font_size(font_size as CGFloat)
+            self.fonts[params.font_id.0]
+                .native_font()
+                .clone_with_font_size(f32::from(params.font_size) as CGFloat)
                 .draw_glyphs(
-                    &[u32::from(glyph_id) as CGGlyph],
+                    &[u32::from(params.glyph_id) as CGGlyph],
                     &[CGPoint::new(
-                        (f32::from(subpixel_shift.x) / scale_factor) as CGFloat,
-                        (f32::from(subpixel_shift.y) / scale_factor) as CGFloat,
+                        (subpixel_shift.x / params.scale_factor) as CGFloat,
+                        (subpixel_shift.y / params.scale_factor) as CGFloat,
                     )],
                     cx,
                 );
 
-            if let RasterizationOptions::Bgra = options {
+            if params.is_emoji {
                 // Convert from RGBA with premultiplied alpha to BGRA with straight alpha.
                 for pixel in bytes.chunks_exact_mut(4) {
                     pixel.swap(0, 2);
@@ -339,7 +333,7 @@ impl MacTextSystemState {
                 }
             }
 
-            Some((cx_bounds.into(), bytes))
+            Ok((bitmap_size.into(), bytes))
         }
     }
 
@@ -348,7 +342,7 @@ impl MacTextSystemState {
         text: &str,
         font_size: Pixels,
         font_runs: &[(usize, FontId)],
-    ) -> LineLayout {
+    ) -> ShapedLine {
         // Construct the attributed string, converting UTF8 ranges to UTF16 ranges.
         let mut string = CFMutableAttributedString::new();
         {
@@ -409,7 +403,7 @@ impl MacTextSystemState {
             {
                 let glyph_utf16_ix = usize::try_from(*glyph_utf16_ix).unwrap();
                 ix_converter.advance_to_utf16_ix(glyph_utf16_ix);
-                glyphs.push(Glyph {
+                glyphs.push(ShapedGlyph {
                     id: (*glyph_id).into(),
                     position: point(position.x as f32, position.y as f32).map(px),
                     index: ix_converter.utf8_ix,
@@ -417,11 +411,11 @@ impl MacTextSystemState {
                 });
             }
 
-            runs.push(Run { font_id, glyphs })
+            runs.push(ShapedRun { font_id, glyphs })
         }
 
         let typographic_bounds = line.get_typographic_bounds();
-        LineLayout {
+        ShapedLine {
             width: typographic_bounds.width.into(),
             ascent: typographic_bounds.ascent.into(),
             descent: typographic_bounds.descent.into(),
@@ -549,11 +543,26 @@ impl From<RectF> for Bounds<f32> {
     }
 }
 
-impl From<RectI> for Bounds<u32> {
+impl From<RectI> for Bounds<DevicePixels> {
     fn from(rect: RectI) -> Self {
         Bounds {
-            origin: point(rect.origin_x() as u32, rect.origin_y() as u32),
-            size: size(rect.width() as u32, rect.height() as u32),
+            origin: point(DevicePixels(rect.origin_x()), DevicePixels(rect.origin_y())),
+            size: size(DevicePixels(rect.width()), DevicePixels(rect.height())),
+        }
+    }
+}
+
+impl From<Vector2I> for Size<DevicePixels> {
+    fn from(value: Vector2I) -> Self {
+        size(value.x().into(), value.y().into())
+    }
+}
+
+impl From<RectI> for Bounds<i32> {
+    fn from(rect: RectI) -> Self {
+        Bounds {
+            origin: point(rect.origin_x(), rect.origin_y()),
+            size: size(rect.width(), rect.height()),
         }
     }
 }

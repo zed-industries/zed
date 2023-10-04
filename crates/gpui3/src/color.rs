@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 
-use bytemuck::{Pod, Zeroable};
 use serde::de::{self, Deserialize, Deserializer, Visitor};
 use std::fmt;
 use std::num::ParseIntError;
@@ -118,7 +117,7 @@ impl TryFrom<&'_ str> for Rgba {
     }
 }
 
-#[derive(Default, Copy, Clone, Debug, PartialEq, Zeroable, Pod)]
+#[derive(Default, Copy, Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct Hsla {
     pub h: f32,
@@ -143,6 +142,15 @@ pub fn black() -> Hsla {
         h: 0.,
         s: 0.,
         l: 0.,
+        a: 1.,
+    }
+}
+
+pub fn white() -> Hsla {
+    Hsla {
+        h: 0.,
+        s: 0.,
+        l: 1.,
         a: 1.,
     }
 }

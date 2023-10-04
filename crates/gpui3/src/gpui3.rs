@@ -1,14 +1,17 @@
 mod app;
+mod assets;
 mod color;
 mod element;
 mod elements;
 mod executor;
 mod geometry;
+mod image_cache;
 mod platform;
 mod scene;
 mod style;
 mod style_helpers;
 mod styled;
+mod svg_renderer;
 mod taffy;
 mod text_system;
 mod util;
@@ -17,12 +20,15 @@ mod window;
 
 pub use anyhow::Result;
 pub use app::*;
+pub use assets::*;
 pub use color::*;
 pub use element::*;
 pub use elements::*;
 pub use executor::*;
 pub use geometry::*;
 pub use gpui3_macros::*;
+pub use svg_renderer::*;
+
 pub use platform::*;
 pub use refineable::*;
 pub use scene::*;
@@ -83,16 +89,16 @@ impl<T> DerefMut for MainThread<T> {
     }
 }
 
-pub trait StackContext {
-    fn app(&mut self) -> &mut AppContext;
+pub trait BorrowAppContext {
+    fn app_mut(&mut self) -> &mut AppContext;
 
     fn with_text_style<F, R>(&mut self, style: TextStyleRefinement, f: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
     {
-        self.app().push_text_style(style);
+        self.app_mut().push_text_style(style);
         let result = f(self);
-        self.app().pop_text_style();
+        self.app_mut().pop_text_style();
         result
     }
 
@@ -100,9 +106,9 @@ pub trait StackContext {
     where
         F: FnOnce(&mut Self) -> R,
     {
-        self.app().push_state(state);
+        self.app_mut().push_state(state);
         let result = f(self);
-        self.app().pop_state::<T>();
+        self.app_mut().pop_state::<T>();
         result
     }
 }
@@ -141,6 +147,12 @@ impl AsRef<str> for SharedString {
 impl std::fmt::Debug for SharedString {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
+    }
+}
+
+impl std::fmt::Display for SharedString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.as_ref())
     }
 }
 

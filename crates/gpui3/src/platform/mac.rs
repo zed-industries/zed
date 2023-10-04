@@ -2,6 +2,7 @@
 ///! an origin at the bottom left of the main display.
 mod dispatcher;
 mod events;
+mod metal_atlas;
 mod metal_renderer;
 mod open_type;
 mod platform;
@@ -30,6 +31,7 @@ use std::{
 };
 
 pub use dispatcher::*;
+pub use metal_atlas::*;
 pub use platform::*;
 pub use screen::*;
 pub use text_system::*;

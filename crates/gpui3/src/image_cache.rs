@@ -1,6 +1,4 @@
-use std::sync::Arc;
-
-use crate::ImageData;
+use crate::{ImageData, ImageId, SharedString};
 use collections::HashMap;
 use futures::{
     future::{BoxFuture, Shared},
@@ -8,11 +6,14 @@ use futures::{
 };
 use image::ImageError;
 use parking_lot::Mutex;
+use std::sync::Arc;
 use thiserror::Error;
-use util::{
-    arc_cow::ArcCow,
-    http::{self, HttpClient},
-};
+use util::http::{self, HttpClient};
+
+#[derive(PartialEq, Eq, Hash, Clone)]
+pub struct RenderImageParams {
+    pub(crate) image_id: ImageId,
+}
 
 #[derive(Debug, Error, Clone)]
 pub enum Error {
@@ -43,7 +44,7 @@ impl From<ImageError> for Error {
 
 pub struct ImageCache {
     client: Arc<dyn HttpClient>,
-    images: Arc<Mutex<HashMap<ArcCow<'static, str>, FetchImageFuture>>>,
+    images: Arc<Mutex<HashMap<SharedString, FetchImageFuture>>>,
 }
 
 type FetchImageFuture = Shared<BoxFuture<'static, Result<Arc<ImageData>, Error>>>;
@@ -58,12 +59,12 @@ impl ImageCache {
 
     pub fn get(
         &self,
-        uri: impl Into<ArcCow<'static, str>>,
+        uri: impl Into<SharedString>,
     ) -> Shared<BoxFuture<'static, Result<Arc<ImageData>, Error>>> {
         let uri = uri.into();
         let mut images = self.images.lock();
 
-        match images.get(uri.as_ref()) {
+        match images.get(&uri) {
             Some(future) => future.clone(),
             None => {
                 let client = self.client.clone();
@@ -84,7 +85,7 @@ impl ImageCache {
                         let format = image::guess_format(&body)?;
                         let image =
                             image::load_from_memory_with_format(&body, format)?.into_bgra8();
-                        Ok(ImageData::new(image))
+                        Ok(Arc::new(ImageData::new(image)))
                     }
                 }
                 .boxed()

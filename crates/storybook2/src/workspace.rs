@@ -2,7 +2,7 @@ use crate::ui::prelude::*;
 use crate::ui::{Panel, Stack};
 use crate::{
     collab_panel::{collab_panel, CollabPanel},
-    theme::theme,
+    theme::{theme, themed},
     themes::rose_pine_dawn,
 };
 use gpui3::{
@@ -56,31 +56,17 @@ impl Workspace {
                     .fill(theme.middle.negative.default.background),
             )
 
-        // div()
-        //     .font("Helvetica")
-        //     .text_base()
-        //     .size_full()
-        //     .fill(theme.middle.positive.default.background)
-        //     .child("Hello world")
-
-        // TODO: Implement style.
-        //.size_full().fill(gpui3::hsla(0.83, 1., 0.5, 1.))
-
-        // TODO: Debug font not font.
-        //.child("Is this thing on?")
-
         // themed(rose_pine_dawn(), cx, |cx| {
         //     div()
         //         .size_full()
         //         .flex()
         //         .flex_col()
-        //         .font("Zed Sans Extended")
+        //         .font("Courier")
         //         .gap_0()
         //         .justify_start()
         //         .items_start()
         //         .text_color(theme.lowest.base.default.foreground)
-        //         // .fill(theme.middle.base.default.background)
-        //         .fill(gpui3::hsla(0.83, 1., 0.5, 1.))
+        //         .fill(theme.middle.base.default.background)
         //         .child(titlebar(cx))
         //         .child(
         //             div()

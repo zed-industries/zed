@@ -45,9 +45,14 @@ fn generate_shader_bindings() -> PathBuf {
         "Pixels".into(),
         "PointF".into(),
         "Hsla".into(),
-        "Quad".into(),
+        "ScaledContentMask".into(),
+        "Uniforms".into(),
+        "AtlasTile".into(),
         "QuadInputIndex".into(),
-        "QuadUniforms".into(),
+        "Quad".into(),
+        "SpriteInputIndex".into(),
+        "MonochromeSprite".into(),
+        "PolychromeSprite".into(),
     ]);
     config.no_includes = true;
     config.enumeration.prefix_with_name = true;
@@ -55,11 +60,14 @@ fn generate_shader_bindings() -> PathBuf {
         .with_src(crate_dir.join("src/scene.rs"))
         .with_src(crate_dir.join("src/geometry.rs"))
         .with_src(crate_dir.join("src/color.rs"))
+        .with_src(crate_dir.join("src/window.rs"))
+        .with_src(crate_dir.join("src/platform.rs"))
         .with_src(crate_dir.join("src/platform/mac/metal_renderer.rs"))
         .with_config(config)
         .generate()
         .expect("Unable to generate bindings")
         .write_to_file(&output_path);
+
     output_path
 }
 

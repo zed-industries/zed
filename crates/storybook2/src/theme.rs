@@ -1,4 +1,6 @@
-use gpui3::{Element, Hsla, Layout, LayoutId, Result, StackContext, ViewContext, WindowContext};
+use gpui3::{
+    BorrowAppContext, Element, Hsla, Layout, LayoutId, Result, ViewContext, WindowContext,
+};
 use serde::{de::Visitor, Deserialize, Deserializer};
 use std::{collections::HashMap, fmt};
 

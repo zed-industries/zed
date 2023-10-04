@@ -1,11 +1,15 @@
 use crate::{
-    px, AnyView, AppContext, AvailableSpace, Bounds, Context, Effect, Element, EntityId, Handle,
-    LayoutId, MainThread, MainThreadOnly, Pixels, PlatformWindow, Point, Reference, Scene, Size,
-    StackContext, Style, TaffyLayoutEngine, WeakHandle, WindowOptions,
+    image_cache::RenderImageParams, px, AnyView, AppContext, AvailableSpace, BorrowAppContext,
+    Bounds, Context, Corners, DevicePixels, Effect, Element, EntityId, FontId, GlyphId, Handle,
+    Hsla, ImageData, IsZero, LayerId, LayoutId, MainThread, MainThreadOnly, MonochromeSprite,
+    Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Reference, RenderGlyphParams,
+    RenderSvgParams, ScaledPixels, Scene, SharedString, Size, Style, TaffyLayoutEngine, WeakHandle,
+    WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use futures::Future;
-use std::{any::TypeId, marker::PhantomData, mem, sync::Arc};
+use smallvec::SmallVec;
+use std::{any::TypeId, borrow::Cow, marker::PhantomData, mem, sync::Arc};
 use util::ResultExt;
 
 pub struct AnyWindow {}
@@ -13,11 +17,14 @@ pub struct AnyWindow {}
 pub struct Window {
     handle: AnyWindowHandle,
     platform_window: MainThreadOnly<Box<dyn PlatformWindow>>,
+    sprite_atlas: Arc<dyn PlatformAtlas>,
     rem_size: Pixels,
     content_size: Size<Pixels>,
     layout_engine: TaffyLayoutEngine,
     pub(crate) root_view: Option<AnyView<()>>,
     mouse_position: Point<Pixels>,
+    current_layer_id: LayerId,
+    content_mask_stack: Vec<ContentMask>,
     pub(crate) scene: Scene,
     pub(crate) dirty: bool,
 }
@@ -29,6 +36,7 @@ impl Window {
         cx: &mut MainThread<AppContext>,
     ) -> Self {
         let platform_window = cx.platform().open_window(handle, options);
+        let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
         let content_size = platform_window.content_size();
         let scale_factor = platform_window.scale_factor();
@@ -51,15 +59,40 @@ impl Window {
         Window {
             handle,
             platform_window,
+            sprite_atlas,
             rem_size: px(16.),
             content_size,
             layout_engine: TaffyLayoutEngine::new(),
             root_view: None,
             mouse_position,
+            current_layer_id: SmallVec::new(),
+            content_mask_stack: Vec::new(),
             scene: Scene::new(scale_factor),
             dirty: true,
         }
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct ContentMask {
+    pub bounds: Bounds<Pixels>,
+    pub corner_radii: Corners<Pixels>,
+}
+
+impl ContentMask {
+    pub fn scale(&self, factor: f32) -> ScaledContentMask {
+        ScaledContentMask {
+            bounds: self.bounds.scale(factor),
+            corner_radii: self.corner_radii.scale(factor),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(C)]
+pub struct ScaledContentMask {
+    bounds: Bounds<ScaledPixels>,
+    corner_radii: Corners<ScaledPixels>,
 }
 
 pub struct WindowContext<'a, 'w> {
@@ -114,6 +147,10 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             .map(Into::into)?)
     }
 
+    pub fn scale_factor(&self) -> f32 {
+        self.window.scene.scale_factor
+    }
+
     pub fn rem_size(&self) -> Pixels {
         self.window.rem_size
     }
@@ -124,6 +161,34 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub fn scene(&mut self) -> &mut Scene {
         &mut self.window.scene
+    }
+
+    pub fn stack<R>(&mut self, order: u32, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.window.current_layer_id.push(order);
+        let result = f(self);
+        self.window.current_layer_id.pop();
+        result
+    }
+
+    pub fn clip<F, R>(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        corner_radii: Corners<Pixels>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let clip_mask = ContentMask {
+            bounds,
+            corner_radii,
+        };
+
+        self.window.content_mask_stack.push(clip_mask);
+        let result = f(self);
+        self.window.content_mask_stack.pop();
+        result
+    }
+
+    pub fn current_layer_id(&self) -> LayerId {
+        self.window.current_layer_id.clone()
     }
 
     pub fn run_on_main<R>(
@@ -143,6 +208,185 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         })
     }
 
+    pub fn paint_glyph(
+        &mut self,
+        origin: Point<Pixels>,
+        order: u32,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+        color: Hsla,
+    ) -> Result<()> {
+        let scale_factor = self.scale_factor();
+        let glyph_origin = origin.scale(scale_factor);
+        let subpixel_variant = Point {
+            x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
+            y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
+        };
+        let params = RenderGlyphParams {
+            font_id,
+            glyph_id,
+            font_size,
+            subpixel_variant,
+            scale_factor,
+            is_emoji: false,
+        };
+
+        let raster_bounds = self.text_system().raster_bounds(&params)?;
+        if !raster_bounds.is_zero() {
+            let layer_id = self.current_layer_id();
+            let tile =
+                self.window
+                    .sprite_atlas
+                    .get_or_insert_with(&params.clone().into(), &mut || {
+                        let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
+                        Ok((size, Cow::Owned(bytes)))
+                    })?;
+            let bounds = Bounds {
+                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
+                size: tile.bounds.size.map(Into::into),
+            };
+            let content_mask = self.content_mask().scale(scale_factor);
+
+            self.window.scene.insert(
+                layer_id,
+                MonochromeSprite {
+                    order,
+                    bounds,
+                    content_mask,
+                    color,
+                    tile,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    pub fn paint_emoji(
+        &mut self,
+        origin: Point<Pixels>,
+        order: u32,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+    ) -> Result<()> {
+        let scale_factor = self.scale_factor();
+        let glyph_origin = origin.scale(scale_factor);
+        let params = RenderGlyphParams {
+            font_id,
+            glyph_id,
+            font_size,
+            // We don't render emojis with subpixel variants.
+            subpixel_variant: Default::default(),
+            scale_factor,
+            is_emoji: true,
+        };
+
+        let raster_bounds = self.text_system().raster_bounds(&params)?;
+        if !raster_bounds.is_zero() {
+            let layer_id = self.current_layer_id();
+            let tile =
+                self.window
+                    .sprite_atlas
+                    .get_or_insert_with(&params.clone().into(), &mut || {
+                        let (size, bytes) = self.text_system().rasterize_glyph(&params)?;
+                        Ok((size, Cow::Owned(bytes)))
+                    })?;
+            let bounds = Bounds {
+                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
+                size: tile.bounds.size.map(Into::into),
+            };
+            let content_mask = self.content_mask().scale(scale_factor);
+
+            self.window.scene.insert(
+                layer_id,
+                PolychromeSprite {
+                    order,
+                    bounds,
+                    content_mask,
+                    tile,
+                    grayscale: false,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    pub fn paint_svg(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        order: u32,
+        path: SharedString,
+        color: Hsla,
+    ) -> Result<()> {
+        let scale_factor = self.scale_factor();
+        let bounds = bounds.scale(scale_factor);
+        // Render the SVG at twice the size to get a higher quality result.
+        let params = RenderSvgParams {
+            path,
+            size: bounds
+                .size
+                .map(|pixels| DevicePixels::from((pixels.0 * 2.).ceil() as i32)),
+        };
+
+        let layer_id = self.current_layer_id();
+        let tile =
+            self.window
+                .sprite_atlas
+                .get_or_insert_with(&params.clone().into(), &mut || {
+                    let bytes = self.svg_renderer.render(&params)?;
+                    Ok((params.size, Cow::Owned(bytes)))
+                })?;
+        let content_mask = self.content_mask().scale(scale_factor);
+
+        self.window.scene.insert(
+            layer_id,
+            MonochromeSprite {
+                order,
+                bounds,
+                content_mask,
+                color,
+                tile,
+            },
+        );
+
+        Ok(())
+    }
+
+    pub fn paint_image(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        order: u32,
+        data: Arc<ImageData>,
+        grayscale: bool,
+    ) -> Result<()> {
+        let scale_factor = self.scale_factor();
+        let bounds = bounds.scale(scale_factor);
+        let params = RenderImageParams { image_id: data.id };
+
+        let layer_id = self.current_layer_id();
+        let tile = self
+            .window
+            .sprite_atlas
+            .get_or_insert_with(&params.clone().into(), &mut || {
+                Ok((data.size(), Cow::Borrowed(data.as_bytes())))
+            })?;
+        let content_mask = self.content_mask().scale(scale_factor);
+
+        self.window.scene.insert(
+            layer_id,
+            PolychromeSprite {
+                order,
+                bounds,
+                content_mask,
+                tile,
+                grayscale,
+            },
+        );
+
+        Ok(())
+    }
+
     pub(crate) fn draw(&mut self) -> Result<()> {
         let unit_entity = self.unit_entity.clone();
         self.update_entity(&unit_entity, |_, cx| {
@@ -150,14 +394,10 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             let (root_layout_id, mut frame_state) = root_view.layout(&mut (), cx)?;
             let available_space = cx.window.content_size.map(Into::into);
 
-            dbg!("computing layout");
             cx.window
                 .layout_engine
                 .compute_layout(root_layout_id, available_space)?;
-            dbg!("asking for layout");
             let layout = cx.window.layout_engine.layout(root_layout_id)?;
-
-            dbg!("painting root view");
 
             root_view.paint(layout, &mut (), &mut frame_state, cx)?;
             cx.window.root_view = Some(root_view);
@@ -173,13 +413,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             cx.window.dirty = false;
             Ok(())
         })
-    }
-}
-
-impl MainThread<WindowContext<'_, '_>> {
-    // todo!("implement other methods that use platform window")
-    fn platform_window(&self) -> &dyn PlatformWindow {
-        self.window.platform_window.borrow_on_main_thread().as_ref()
     }
 }
 
@@ -229,8 +462,60 @@ impl<'a, 'w> std::ops::DerefMut for WindowContext<'a, 'w> {
     }
 }
 
-impl<S> StackContext for ViewContext<'_, '_, S> {
-    fn app(&mut self) -> &mut AppContext {
+impl BorrowAppContext for WindowContext<'_, '_> {
+    fn app_mut(&mut self) -> &mut AppContext {
+        &mut *self.app
+    }
+}
+
+pub trait BorrowWindow: BorrowAppContext {
+    fn window(&self) -> &Window;
+    fn window_mut(&mut self) -> &mut Window;
+
+    fn with_content_mask<R>(&mut self, mask: ContentMask, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.window_mut().content_mask_stack.push(mask);
+        let result = f(self);
+        self.window_mut().content_mask_stack.pop();
+        result
+    }
+
+    fn content_mask(&self) -> ContentMask {
+        self.window()
+            .content_mask_stack
+            .last()
+            .cloned()
+            .unwrap_or_else(|| ContentMask {
+                bounds: Bounds {
+                    origin: Point::default(),
+                    size: self.window().content_size,
+                },
+                corner_radii: Default::default(),
+            })
+    }
+
+    fn rem_size(&self) -> Pixels {
+        self.window().rem_size
+    }
+}
+
+impl BorrowWindow for WindowContext<'_, '_> {
+    fn window(&self) -> &Window {
+        &*self.window
+    }
+
+    fn window_mut(&mut self) -> &mut Window {
+        &mut *self.window
+    }
+}
+
+pub struct ViewContext<'a, 'w, S> {
+    window_cx: WindowContext<'a, 'w>,
+    entity_type: PhantomData<S>,
+    entity_id: EntityId,
+}
+
+impl<S> BorrowAppContext for ViewContext<'_, '_, S> {
+    fn app_mut(&mut self) -> &mut AppContext {
         &mut *self.window_cx.app
     }
 
@@ -255,10 +540,14 @@ impl<S> StackContext for ViewContext<'_, '_, S> {
     }
 }
 
-pub struct ViewContext<'a, 'w, S> {
-    window_cx: WindowContext<'a, 'w>,
-    entity_type: PhantomData<S>,
-    entity_id: EntityId,
+impl<S> BorrowWindow for ViewContext<'_, '_, S> {
+    fn window(&self) -> &Window {
+        &self.window_cx.window
+    }
+
+    fn window_mut(&mut self) -> &mut Window {
+        &mut *self.window_cx.window
+    }
 }
 
 impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {

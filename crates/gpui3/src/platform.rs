@@ -5,15 +5,17 @@ mod mac;
 #[cfg(any(test, feature = "test"))]
 mod test;
 
+use crate::image_cache::RenderImageParams;
 use crate::{
-    AnyWindowHandle, Bounds, Font, FontId, FontMetrics, GlyphId, LineLayout, Pixels, Point, Result,
-    Scene, SharedString, Size,
+    AnyWindowHandle, Bounds, DevicePixels, Font, FontId, FontMetrics, GlyphId, Pixels, Point,
+    RenderGlyphParams, RenderSvgParams, Result, Scene, ShapedLine, SharedString, Size,
 };
 use anyhow::anyhow;
 use async_task::Runnable;
 use futures::channel::oneshot;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::ffi::c_void;
 use std::hash::{Hash, Hasher};
 use std::{
@@ -122,7 +124,7 @@ pub trait PlatformWindow {
     fn screen(&self) -> Rc<dyn PlatformScreen>;
     fn mouse_position(&self) -> Point<Pixels>;
     fn as_any_mut(&mut self) -> &mut dyn Any;
-    fn set_input_handler(&mut self, input_handler: Box<dyn InputHandler>);
+    fn set_input_handler(&mut self, input_handler: Box<dyn PlatformInputHandler>);
     fn prompt(
         &self,
         level: WindowPromptLevel,
@@ -146,6 +148,8 @@ pub trait PlatformWindow {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
     fn draw(&self, scene: Scene);
+
+    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 }
 
 pub trait PlatformDispatcher: Send + Sync {
@@ -161,16 +165,9 @@ pub trait PlatformTextSystem: Send + Sync {
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>>;
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>>;
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId>;
-    fn rasterize_glyph(
-        &self,
-        font_id: FontId,
-        font_size: f32,
-        glyph_id: GlyphId,
-        subpixel_shift: Point<Pixels>,
-        scale_factor: f32,
-        options: RasterizationOptions,
-    ) -> Option<(Bounds<u32>, Vec<u8>)>;
-    fn layout_line(&self, text: &str, font_size: Pixels, runs: &[(usize, FontId)]) -> LineLayout;
+    fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>>;
+    fn rasterize_glyph(&self, params: &RenderGlyphParams) -> Result<(Size<DevicePixels>, Vec<u8>)>;
+    fn layout_line(&self, text: &str, font_size: Pixels, runs: &[(usize, FontId)]) -> ShapedLine;
     fn wrap_line(
         &self,
         text: &str,
@@ -180,7 +177,80 @@ pub trait PlatformTextSystem: Send + Sync {
     ) -> Vec<usize>;
 }
 
-pub trait InputHandler {
+#[derive(PartialEq, Eq, Hash, Clone)]
+pub enum AtlasKey {
+    Glyph(RenderGlyphParams),
+    Svg(RenderSvgParams),
+    Image(RenderImageParams),
+}
+
+impl AtlasKey {
+    pub fn is_monochrome(&self) -> bool {
+        match self {
+            AtlasKey::Glyph(params) => !params.is_emoji,
+            AtlasKey::Svg(_) => true,
+            AtlasKey::Image(_) => false,
+        }
+    }
+}
+
+impl From<RenderGlyphParams> for AtlasKey {
+    fn from(params: RenderGlyphParams) -> Self {
+        Self::Glyph(params)
+    }
+}
+
+impl From<RenderSvgParams> for AtlasKey {
+    fn from(params: RenderSvgParams) -> Self {
+        Self::Svg(params)
+    }
+}
+
+impl From<RenderImageParams> for AtlasKey {
+    fn from(params: RenderImageParams) -> Self {
+        Self::Image(params)
+    }
+}
+
+pub trait PlatformAtlas: Send + Sync {
+    fn get_or_insert_with<'a>(
+        &self,
+        key: &AtlasKey,
+        build: &mut dyn FnMut() -> Result<(Size<DevicePixels>, Cow<'a, [u8]>)>,
+    ) -> Result<AtlasTile>;
+
+    fn clear(&self);
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(C)]
+pub struct AtlasTile {
+    pub(crate) texture_id: AtlasTextureId,
+    pub(crate) tile_id: TileId,
+    pub(crate) bounds: Bounds<DevicePixels>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(C)]
+pub(crate) struct AtlasTextureId(pub(crate) u32); // We use u32 instead of usize for Metal Shader Language compatibility
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(C)]
+pub(crate) struct TileId(pub(crate) u32);
+
+impl From<etagere::AllocId> for TileId {
+    fn from(id: etagere::AllocId) -> Self {
+        Self(id.serialize())
+    }
+}
+
+impl From<TileId> for etagere::AllocId {
+    fn from(id: TileId) -> Self {
+        Self::deserialize(id.0)
+    }
+}
+
+pub trait PlatformInputHandler {
     fn selected_text_range(&self) -> Option<Range<usize>>;
     fn marked_text_range(&self) -> Option<Range<usize>>;
     fn text_for_range(&self, range_utf16: Range<usize>) -> Option<String>;
@@ -197,12 +267,6 @@ pub trait InputHandler {
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ScreenId(pub(crate) Uuid);
-
-#[derive(Copy, Clone, Debug)]
-pub enum RasterizationOptions {
-    Alpha,
-    Bgra,
-}
 
 #[derive(Debug)]
 pub struct WindowOptions {

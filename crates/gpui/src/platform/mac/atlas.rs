@@ -109,6 +109,7 @@ impl AtlasAllocator {
             };
             descriptor.set_width(size.x() as u64);
             descriptor.set_height(size.y() as u64);
+
             self.device.new_texture(&descriptor)
         } else {
             self.device.new_texture(&self.texture_descriptor)

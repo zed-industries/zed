@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     fmt::{self, Debug},
     sync::Arc,
 };
@@ -44,6 +45,15 @@ impl<T> From<Arc<T>> for ArcCow<'_, T> {
 impl From<String> for ArcCow<'_, str> {
     fn from(value: String) -> Self {
         Self::Owned(value.into())
+    }
+}
+
+impl<'a> From<Cow<'a, str>> for ArcCow<'a, str> {
+    fn from(value: Cow<'a, str>) -> Self {
+        match value {
+            Cow::Borrowed(borrowed) => Self::Borrowed(borrowed),
+            Cow::Owned(owned) => Self::Owned(owned.into()),
+        }
     }
 }
 
