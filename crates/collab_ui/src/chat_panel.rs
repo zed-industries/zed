@@ -2,7 +2,7 @@ use crate::{channel_view::ChannelView, ChatPanelSettings};
 use anyhow::Result;
 use call::ActiveCall;
 use channel::{ChannelChat, ChannelChatEvent, ChannelMessageId, ChannelStore};
-use client::{Client, UserStore};
+use client::Client;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt};
@@ -35,7 +35,6 @@ const CHAT_PANEL_KEY: &'static str = "ChatPanel";
 pub struct ChatPanel {
     client: Arc<Client>,
     channel_store: ModelHandle<ChannelStore>,
-    user_store: ModelHandle<UserStore>,
     active_chat: Option<(ModelHandle<ChannelChat>, Subscription)>,
     message_list: ListState<ChatPanel>,
     input_editor: ViewHandle<Editor>,
@@ -79,7 +78,6 @@ impl ChatPanel {
         let fs = workspace.app_state().fs.clone();
         let client = workspace.app_state().client.clone();
         let channel_store = workspace.app_state().channel_store.clone();
-        let user_store = workspace.app_state().user_store.clone();
 
         let input_editor = cx.add_view(|cx| {
             let mut editor = Editor::auto_height(
@@ -132,7 +130,7 @@ impl ChatPanel {
                 fs,
                 client,
                 channel_store,
-                user_store,
+
                 active_chat: Default::default(),
                 pending_serialization: Task::ready(None),
                 message_list,
@@ -331,12 +329,26 @@ impl ChatPanel {
     }
 
     fn render_message(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let message = self.active_chat.as_ref().unwrap().0.read(cx).message(ix);
+        let (message, is_continuation, is_last) = {
+            let active_chat = self.active_chat.as_ref().unwrap().0.read(cx);
+            let last_message = active_chat.message(ix.saturating_sub(1));
+            let this_message = active_chat.message(ix);
+            let is_continuation = last_message.id != this_message.id
+                && this_message.sender.id == last_message.sender.id;
+
+            (
+                active_chat.message(ix),
+                is_continuation,
+                active_chat.message_count() == ix + 1,
+            )
+        };
 
         let now = OffsetDateTime::now_utc();
         let theme = theme::current(cx);
         let style = if message.is_pending() {
             &theme.chat_panel.pending_message
+        } else if is_continuation {
+            &theme.chat_panel.continuation_message
         } else {
             &theme.chat_panel.message
         };
@@ -352,71 +364,103 @@ impl ChatPanel {
         enum DeleteMessage {}
 
         let body = message.body.clone();
-        Flex::column()
-            .with_child(
-                Flex::row()
-                    .with_child(
-                        message
-                            .sender
-                            .avatar
-                            .clone()
-                            .map(|avatar| {
-                                Image::from_data(avatar)
-                                    .with_style(theme.collab_panel.channel_avatar)
-                                    .into_any()
-                            })
-                            .unwrap_or_else(|| {
-                                Empty::new()
-                                    .constrained()
-                                    .with_width(
-                                        theme.collab_panel.channel_avatar.width.unwrap_or(12.),
-                                    )
-                                    .into_any()
-                            })
+        if is_continuation {
+            Flex::row()
+                .with_child(Text::new(body, style.body.clone()))
+                .with_children(message_id_to_remove.map(|id| {
+                    MouseEventHandler::new::<DeleteMessage, _>(id as usize, cx, |mouse_state, _| {
+                        let button_style = theme.chat_panel.icon_button.style_for(mouse_state);
+                        render_icon_button(button_style, "icons/x.svg")
+                            .aligned()
+                            .into_any()
+                    })
+                    .with_padding(Padding::uniform(2.))
+                    .with_cursor_style(CursorStyle::PointingHand)
+                    .on_click(MouseButton::Left, move |_, this, cx| {
+                        this.remove_message(id, cx);
+                    })
+                    .flex_float()
+                }))
+                .contained()
+                .with_style(style.container)
+                .with_margin_bottom(if is_last {
+                    theme.chat_panel.last_message_bottom_spacing
+                } else {
+                    0.
+                })
+                .into_any()
+        } else {
+            Flex::column()
+                .with_child(
+                    Flex::row()
+                        .with_child(
+                            message
+                                .sender
+                                .avatar
+                                .clone()
+                                .map(|avatar| {
+                                    Image::from_data(avatar)
+                                        .with_style(theme.collab_panel.channel_avatar)
+                                        .into_any()
+                                })
+                                .unwrap_or_else(|| {
+                                    Empty::new()
+                                        .constrained()
+                                        .with_width(
+                                            theme.collab_panel.channel_avatar.width.unwrap_or(12.),
+                                        )
+                                        .into_any()
+                                })
+                                .contained()
+                                .with_margin_right(4.),
+                        )
+                        .with_child(
+                            Label::new(
+                                message.sender.github_login.clone(),
+                                style.sender.text.clone(),
+                            )
                             .contained()
-                            .with_margin_right(4.),
-                    )
-                    .with_child(
-                        Label::new(
-                            message.sender.github_login.clone(),
-                            style.sender.text.clone(),
+                            .with_style(style.sender.container),
                         )
-                        .contained()
-                        .with_style(style.sender.container),
-                    )
-                    .with_child(
-                        Label::new(
-                            format_timestamp(message.timestamp, now, self.local_timezone),
-                            style.timestamp.text.clone(),
+                        .with_child(
+                            Label::new(
+                                format_timestamp(message.timestamp, now, self.local_timezone),
+                                style.timestamp.text.clone(),
+                            )
+                            .contained()
+                            .with_style(style.timestamp.container),
                         )
-                        .contained()
-                        .with_style(style.timestamp.container),
-                    )
-                    .with_children(message_id_to_remove.map(|id| {
-                        MouseEventHandler::new::<DeleteMessage, _>(
-                            id as usize,
-                            cx,
-                            |mouse_state, _| {
-                                let button_style =
-                                    theme.chat_panel.icon_button.style_for(mouse_state);
-                                render_icon_button(button_style, "icons/x.svg")
-                                    .aligned()
-                                    .into_any()
-                            },
-                        )
-                        .with_padding(Padding::uniform(2.))
-                        .with_cursor_style(CursorStyle::PointingHand)
-                        .on_click(MouseButton::Left, move |_, this, cx| {
-                            this.remove_message(id, cx);
-                        })
-                        .flex_float()
-                    }))
-                    .align_children_center(),
-            )
-            .with_child(Text::new(body, style.body.clone()))
-            .contained()
-            .with_style(style.container)
-            .into_any()
+                        .with_children(message_id_to_remove.map(|id| {
+                            MouseEventHandler::new::<DeleteMessage, _>(
+                                id as usize,
+                                cx,
+                                |mouse_state, _| {
+                                    let button_style =
+                                        theme.chat_panel.icon_button.style_for(mouse_state);
+                                    render_icon_button(button_style, "icons/x.svg")
+                                        .aligned()
+                                        .into_any()
+                                },
+                            )
+                            .with_padding(Padding::uniform(2.))
+                            .with_cursor_style(CursorStyle::PointingHand)
+                            .on_click(MouseButton::Left, move |_, this, cx| {
+                                this.remove_message(id, cx);
+                            })
+                            .flex_float()
+                        }))
+                        .align_children_center(),
+                )
+                .with_child(Text::new(body, style.body.clone()))
+                .contained()
+                .with_style(style.container)
+                .with_margin_bottom(if is_last {
+                    theme.chat_panel.last_message_bottom_spacing
+                } else {
+                    0.
+                })
+                .into_any()
+        }
     }
 
     fn render_input_box(&self, theme: &Arc<Theme>, cx: &AppContext) -> AnyElement<Self> {
