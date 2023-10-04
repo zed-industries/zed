@@ -3,8 +3,8 @@ mod connection_pool;
 use crate::{
     auth,
     db::{
-        self, ChannelId, ChannelsForUser, Database, MessageId, ProjectId, RoomId, ServerId, User,
-        UserId,
+        self, BufferId, ChannelId, ChannelsForUser, Database, MessageId, ProjectId, RoomId,
+        ServerId, User, UserId,
     },
     executor::Executor,
     AppState, Result,
@@ -275,7 +275,8 @@ impl Server {
             .add_message_handler(update_followers)
             .add_message_handler(update_diff_base)
             .add_request_handler(get_private_user_info)
-            .add_message_handler(acknowledge_channel_message);
+            .add_message_handler(acknowledge_channel_message)
+            .add_message_handler(acknowledge_buffer_version);
 
         Arc::new(server)
     }
@@ -2908,6 +2909,24 @@ async fn acknowledge_channel_message(
         .db()
         .await
         .observe_channel_message(channel_id, session.user_id, message_id)
+        .await?;
+    Ok(())
+}
+
+async fn acknowledge_buffer_version(
+    request: proto::AckBufferOperation,
+    session: Session,
+) -> Result<()> {
+    let buffer_id = BufferId::from_proto(request.buffer_id);
+    session
+        .db()
+        .await
+        .observe_buffer_version(
+            buffer_id,
+            session.user_id,
+            request.epoch as i32,
+            &request.version,
+        )
         .await?;
     Ok(())
 }

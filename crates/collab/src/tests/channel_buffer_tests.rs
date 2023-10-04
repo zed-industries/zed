@@ -3,7 +3,7 @@ use crate::{
     tests::TestServer,
 };
 use call::ActiveCall;
-use channel::Channel;
+use channel::{Channel, ACKNOWLEDGE_DEBOUNCE_INTERVAL};
 use client::ParticipantIndex;
 use client::{Collaborator, UserId};
 use collab_ui::channel_view::ChannelView;
@@ -800,7 +800,6 @@ async fn test_channel_buffer_changes(
             .has_channel_buffer_changed(channel_id)
             .unwrap()
     });
-
     assert!(has_buffer_changed);
 
     // Opening the buffer should clear the changed flag.
@@ -810,7 +809,6 @@ async fn test_channel_buffer_changes(
         .update(|cx| ChannelView::open(channel_id, workspace_b.clone(), cx))
         .await
         .unwrap();
-
     deterministic.run_until_parked();
 
     let has_buffer_changed = cx_b.read(|cx| {
@@ -820,10 +818,9 @@ async fn test_channel_buffer_changes(
             .has_channel_buffer_changed(channel_id)
             .unwrap()
     });
-
     assert!(!has_buffer_changed);
 
-    // Editing the channel while the buffer is open shuold not show that the buffer has changed.
+    // Editing the channel while the buffer is open should not show that the buffer has changed.
     channel_buffer_a.update(cx_a, |buffer, cx| {
         buffer.buffer().update(cx, |buffer, cx| {
             buffer.edit([(0..0, "2")], None, cx);
@@ -838,7 +835,20 @@ async fn test_channel_buffer_changes(
             .has_channel_buffer_changed(channel_id)
             .unwrap()
     });
+    assert!(!has_buffer_changed);
 
+    deterministic.advance_clock(ACKNOWLEDGE_DEBOUNCE_INTERVAL);
+
+    // Test that the server is tracking things correctly, and we retain our 'not changed'
+    // state across a disconnect
+    server.simulate_long_connection_interruption(client_b.peer_id().unwrap(), &deterministic);
+    let has_buffer_changed = cx_b.read(|cx| {
+        client_b
+            .channel_store()
+            .read(cx)
+            .has_channel_buffer_changed(channel_id)
+            .unwrap()
+    });
     assert!(!has_buffer_changed);
 
     // Closing the buffer should re-enable change tracking
@@ -866,7 +876,6 @@ async fn test_channel_buffer_changes(
             .has_channel_buffer_changed(channel_id)
             .unwrap()
     });
-
     assert!(has_buffer_changed);
 }
 

@@ -11,7 +11,7 @@ use rpc::{
 use std::{sync::Arc, time::Duration};
 use util::ResultExt;
 
-const ACKNOWLEDGE_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(250);
+pub const ACKNOWLEDGE_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(250);
 
 pub(crate) fn init(client: &Arc<Client>) {
     client.add_model_message_handler(ChannelBuffer::handle_update_channel_buffer);

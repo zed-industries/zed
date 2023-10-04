@@ -2760,11 +2760,9 @@ impl CollabPanel {
                                 .read(cx)
                                 .channel_id()?;
 
-                            dbg!(call_channel, channel.id);
                             Some(call_channel == channel.id)
                         })
                         .unwrap_or(false);
-                        dbg!(is_active);
                         if is_active {
                             self.open_channel_notes(
                                 &OpenChannelNotes {
