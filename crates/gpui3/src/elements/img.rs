@@ -1,6 +1,6 @@
 use crate::{
-    BorrowWindow, ContentMask, Element, IsZero, Layout, LayoutId, Result, SharedString, Style,
-    StyleHelpers, Styled, ViewContext,
+    BorrowWindow, Element, Layout, LayoutId, Result, SharedString, Style, StyleHelpers, Styled,
+    ViewContext,
 };
 use futures::FutureExt;
 use refineable::RefinementCascade;
@@ -73,17 +73,7 @@ impl<S: 'static> Element for Img<S> {
                 .and_then(ResultExt::log_err)
             {
                 let corner_radii = style.corner_radii.to_pixels(bounds, cx.rem_size());
-                if corner_radii.is_zero() {
-                    cx.paint_image(bounds, order, data, self.grayscale)?;
-                } else {
-                    cx.with_content_mask(
-                        ContentMask {
-                            bounds,
-                            corner_radii,
-                        },
-                        |cx| cx.paint_image(bounds, order, data, self.grayscale),
-                    )?;
-                }
+                cx.paint_image(bounds, corner_radii, order, data, self.grayscale)?;
             } else {
                 log::warn!("image not loaded yet");
                 // cx.spawn(|this, mut cx| async move {

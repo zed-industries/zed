@@ -106,11 +106,7 @@ fragment float4 quad_fragment(QuadVertexOutput input [[stage_in]],
     color = float4(premultiplied_output_rgb, output_alpha);
   }
 
-  float clip_distance =
-      quad_sdf(input.position.xy, quad.clip_bounds, quad.clip_corner_radii);
-  return color *
-         float4(1., 1., 1.,
-                saturate(0.5 - distance) * saturate(0.5 - clip_distance));
+  return color * float4(1., 1., 1., saturate(0.5 - distance));
 }
 
 struct MonochromeSpriteVertexOutput {
@@ -131,8 +127,9 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
 
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   MonochromeSprite sprite = sprites[sprite_id];
+  // Don't apply content mask at the vertex level because we don't have time to make sampling from the texture match the mask.
   float4 device_position = to_device_position(
-      unit_vertex, sprite.bounds, sprite.content_mask.bounds, viewport_size);
+      unit_vertex, sprite.bounds, sprite.bounds, viewport_size);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
   float4 color = hsla_to_rgba(sprite.color);
   return MonochromeSpriteVertexOutput{device_position, tile_position, color,
@@ -148,8 +145,11 @@ fragment float4 monochrome_sprite_fragment(
                                           min_filter::linear);
   float4 sample =
       atlas_texture.sample(atlas_texture_sampler, input.tile_position);
-  float clip_distance = quad_sdf(input.position.xy, sprite.content_mask.bounds,
-                                 sprite.content_mask.corner_radii);
+  float clip_distance = quad_sdf(
+      input.position.xy,
+      sprite.content_mask.bounds,
+      Corners_ScaledPixels { 0., 0., 0., 0. }
+  );
   float4 color = input.color;
   color.a *= sample.a * saturate(0.5 - clip_distance);
   return color;
@@ -172,8 +172,9 @@ vertex PolychromeSpriteVertexOutput polychrome_sprite_vertex(
 
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   PolychromeSprite sprite = sprites[sprite_id];
+  // Don't apply content mask at the vertex level because we don't have time to make sampling from the texture match the mask.
   float4 device_position = to_device_position(
-      unit_vertex, sprite.bounds, sprite.content_mask.bounds, viewport_size);
+      unit_vertex, sprite.bounds, sprite.bounds, viewport_size);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
   return PolychromeSpriteVertexOutput{device_position, tile_position,
                                       sprite_id};
@@ -188,8 +189,10 @@ fragment float4 polychrome_sprite_fragment(
                                           min_filter::linear);
   float4 sample =
       atlas_texture.sample(atlas_texture_sampler, input.tile_position);
-  float clip_distance = quad_sdf(input.position.xy, sprite.content_mask.bounds,
-                                 sprite.content_mask.corner_radii);
+  float quad_distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
+  float clip_distance = quad_sdf(input.position.xy, sprite.content_mask.bounds, Corners_ScaledPixels { 0., 0., 0., 0. });
+  float distance = max(quad_distance, clip_distance);
+
   float4 color = sample;
   if (sprite.grayscale) {
     float grayscale = 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
@@ -197,7 +200,7 @@ fragment float4 polychrome_sprite_fragment(
     color.g = grayscale;
     color.b = grayscale;
   }
-  color.a *= saturate(0.5 - clip_distance);
+  color.a *= saturate(0.5 - distance);
   return color;
 }
 

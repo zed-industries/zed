@@ -76,24 +76,18 @@ impl Window {
 #[derive(Clone, Debug)]
 pub struct ContentMask {
     pub bounds: Bounds<Pixels>,
-    pub corner_radii: Corners<Pixels>,
 }
 
 impl ContentMask {
     pub fn scale(&self, factor: f32) -> ScaledContentMask {
         ScaledContentMask {
             bounds: self.bounds.scale(factor),
-            corner_radii: self.corner_radii.scale(factor),
         }
     }
 
     pub fn intersect(&self, other: &Self) -> Self {
         let bounds = self.bounds.intersect(&other.bounds);
-        // todo!("intersect corner radii")
-        ContentMask {
-            bounds,
-            corner_radii: self.corner_radii,
-        }
+        ContentMask { bounds }
     }
 }
 
@@ -101,7 +95,6 @@ impl ContentMask {
 #[repr(C)]
 pub struct ScaledContentMask {
     bounds: Bounds<ScaledPixels>,
-    corner_radii: Corners<ScaledPixels>,
 }
 
 pub struct WindowContext<'a, 'w> {
@@ -199,23 +192,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         self.window.current_layer_id.push(order);
         let result = f(self);
         self.window.current_layer_id.pop();
-        result
-    }
-
-    pub fn clip<F, R>(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        corner_radii: Corners<Pixels>,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
-        let clip_mask = ContentMask {
-            bounds,
-            corner_radii,
-        };
-
-        self.window.content_mask_stack.push(clip_mask);
-        let result = f(self);
-        self.window.content_mask_stack.pop();
         result
     }
 
@@ -318,6 +294,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 PolychromeSprite {
                     order,
                     bounds,
+                    corner_radii: Default::default(),
                     content_mask,
                     tile,
                     grayscale: false,
@@ -371,6 +348,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     pub fn paint_image(
         &mut self,
         bounds: Bounds<Pixels>,
+        corner_radii: Corners<Pixels>,
         order: u32,
         data: Arc<ImageData>,
         grayscale: bool,
@@ -387,6 +365,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 Ok((data.size(), Cow::Borrowed(data.as_bytes())))
             })?;
         let content_mask = self.content_mask().scale(scale_factor);
+        let corner_radii = corner_radii.scale(scale_factor);
 
         self.window.scene.insert(
             layer_id,
@@ -394,6 +373,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 order,
                 bounds,
                 content_mask,
+                corner_radii,
                 tile,
                 grayscale,
             },
@@ -505,7 +485,6 @@ pub trait BorrowWindow: BorrowAppContext {
                     origin: Point::default(),
                     size: self.window().content_size,
                 },
-                corner_radii: Default::default(),
             })
     }
 
