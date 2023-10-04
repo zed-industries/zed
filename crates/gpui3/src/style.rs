@@ -202,7 +202,7 @@ impl Style {
         let min = current_mask.bounds.origin;
         let max = current_mask.bounds.lower_right();
 
-        let mask_corner_radii = Corners::default();
+        let mut mask_corner_radii = Corners::default();
         let mask_bounds = match (
             self.overflow.x == Overflow::Visible,
             self.overflow.y == Overflow::Visible,
@@ -220,7 +220,10 @@ impl Style {
                 point(bounds.lower_right().x, max.y),
             ),
             // both hidden
-            (false, false) => bounds,
+            (false, false) => {
+                mask_corner_radii = self.corner_radii.to_pixels(bounds, cx.rem_size());
+                bounds
+            }
         };
         let mask = ContentMask {
             bounds: mask_bounds,

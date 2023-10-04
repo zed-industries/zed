@@ -433,12 +433,13 @@ pub struct Corners<T: Clone + Debug> {
 }
 
 impl Corners<AbsoluteLength> {
-    pub fn to_pixels(&self, rem_size: Pixels) -> Corners<Pixels> {
+    pub fn to_pixels(&self, bounds: Bounds<Pixels>, rem_size: Pixels) -> Corners<Pixels> {
+        let max = bounds.size.width.max(bounds.size.height) / 2.;
         Corners {
-            top_left: self.top_left.to_pixels(rem_size),
-            top_right: self.top_right.to_pixels(rem_size),
-            bottom_right: self.bottom_right.to_pixels(rem_size),
-            bottom_left: self.bottom_left.to_pixels(rem_size),
+            top_left: self.top_left.to_pixels(rem_size).min(max),
+            top_right: self.top_right.to_pixels(rem_size).min(max),
+            bottom_right: self.bottom_right.to_pixels(rem_size).min(max),
+            bottom_left: self.bottom_left.to_pixels(rem_size).min(max),
         }
     }
 }
@@ -925,6 +926,15 @@ impl<T: IsZero + Debug + Clone> IsZero for Size<T> {
 
 impl<T: IsZero + Debug + Clone> IsZero for Bounds<T> {
     fn is_zero(&self) -> bool {
-        self.origin.is_zero() && self.size.is_zero()
+        self.size.is_zero()
+    }
+}
+
+impl<T: IsZero + Debug + Clone> IsZero for Corners<T> {
+    fn is_zero(&self) -> bool {
+        self.top_left.is_zero()
+            && self.top_right.is_zero()
+            && self.bottom_right.is_zero()
+            && self.bottom_left.is_zero()
     }
 }
