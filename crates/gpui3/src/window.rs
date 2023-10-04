@@ -7,7 +7,7 @@ use crate::{
     WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
-use futures::Future;
+use futures::{channel::oneshot, Future};
 use smallvec::SmallVec;
 use std::{any::TypeId, borrow::Cow, marker::PhantomData, mem, sync::Arc};
 use util::ResultExt;
@@ -112,6 +112,29 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         self.window.dirty = true;
     }
 
+    fn run_on_main<R>(
+        &mut self,
+        f: impl FnOnce(&mut MainThread<WindowContext<'_, '_>>) -> R + Send + 'static,
+    ) -> impl Future<Output = R>
+    where
+        R: Send + 'static,
+    {
+        let (tx, rx) = oneshot::channel();
+        if self.dispatcher.is_main_thread() {
+            let _ = tx.send(f(unsafe {
+                mem::transmute::<&mut Self, &mut MainThread<Self>>(self)
+            }));
+        } else {
+            let id = self.window.handle.id;
+            let _ = self.app.run_on_main(move |cx| {
+                cx.update_window(id, |cx| {
+                    let _ = tx.send(f(cx));
+                })
+            });
+        }
+        async move { rx.await.unwrap() }
+    }
+
     pub fn request_layout(
         &mut self,
         style: Style,
@@ -189,23 +212,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub fn current_layer_id(&self) -> LayerId {
         self.window.current_layer_id.clone()
-    }
-
-    pub fn run_on_main<R>(
-        &self,
-        f: impl FnOnce(&mut MainThread<WindowContext>) -> R + Send + 'static,
-    ) -> impl Future<Output = Result<R>>
-    where
-        R: Send + 'static,
-    {
-        let id = self.window.handle.id;
-        self.app.run_on_main(move |cx| {
-            cx.update_window(id, |cx| {
-                f(unsafe {
-                    mem::transmute::<&mut WindowContext, &mut MainThread<WindowContext>>(cx)
-                })
-            })
-        })
     }
 
     pub fn paint_glyph(
@@ -389,7 +395,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub(crate) fn draw(&mut self) -> Result<()> {
         let unit_entity = self.unit_entity.clone();
-        self.update_entity(&unit_entity, |_, cx| {
+        self.update_entity(&unit_entity, |view, cx| {
             let mut root_view = cx.window.root_view.take().unwrap();
             let (root_layout_id, mut frame_state) = root_view.layout(&mut (), cx)?;
             let available_space = cx.window.content_size.map(Into::into);
@@ -403,14 +409,14 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             cx.window.root_view = Some(root_view);
             let scene = cx.window.scene.take();
 
-            let _ = cx.run_on_main(|cx| {
+            let _ = cx.run_on_main(view, |_, cx| {
                 cx.window
                     .platform_window
                     .borrow_on_main_thread()
                     .draw(scene);
+                cx.window.dirty = false;
             });
 
-            cx.window.dirty = false;
             Ok(())
         })
     }
@@ -594,6 +600,29 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
             .app
             .pending_effects
             .push_back(Effect::Notify(self.entity_id));
+    }
+
+    pub fn run_on_main<R>(
+        &mut self,
+        view: &mut S,
+        f: impl FnOnce(&mut S, &mut MainThread<ViewContext<'_, '_, S>>) -> R + Send + 'static,
+    ) -> impl Future<Output = R>
+    where
+        R: Send + 'static,
+    {
+        let (tx, rx) = oneshot::channel();
+        if self.dispatcher.is_main_thread() {
+            let cx = unsafe { mem::transmute::<&mut Self, &mut MainThread<Self>>(self) };
+            let _ = tx.send(f(view, cx));
+        } else {
+            let handle = self.handle().upgrade(self).unwrap();
+            let _ = self.window_cx.run_on_main(move |cx| {
+                handle.update(cx, |view, cx| {
+                    let _ = tx.send(f(view, cx));
+                })
+            });
+        }
+        async move { rx.await.unwrap() }
     }
 
     pub(crate) fn erase_state<R>(&mut self, f: impl FnOnce(&mut ViewContext<()>) -> R) -> R {

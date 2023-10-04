@@ -37,6 +37,7 @@ pub use serde_json;
 pub use smallvec;
 pub use smol::Timer;
 use std::{
+    mem,
     ops::{Deref, DerefMut},
     sync::Arc,
 };
@@ -86,6 +87,42 @@ impl<T> Deref for MainThread<T> {
 impl<T> DerefMut for MainThread<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+impl<C: Context> Context for MainThread<C> {
+    type EntityContext<'a, 'w, T: 'static + Send + Sync> = MainThread<C::EntityContext<'a, 'w, T>>;
+    type Result<T> = C::Result<T>;
+
+    fn entity<T: Send + Sync + 'static>(
+        &mut self,
+        build_entity: impl FnOnce(&mut Self::EntityContext<'_, '_, T>) -> T,
+    ) -> Self::Result<Handle<T>> {
+        self.0.entity(|cx| {
+            let cx = unsafe {
+                mem::transmute::<
+                    &mut C::EntityContext<'_, '_, T>,
+                    &mut MainThread<C::EntityContext<'_, '_, T>>,
+                >(cx)
+            };
+            build_entity(cx)
+        })
+    }
+
+    fn update_entity<T: Send + Sync + 'static, R>(
+        &mut self,
+        handle: &Handle<T>,
+        update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
+    ) -> Self::Result<R> {
+        self.0.update_entity(handle, |entity, cx| {
+            let cx = unsafe {
+                mem::transmute::<
+                    &mut C::EntityContext<'_, '_, T>,
+                    &mut MainThread<C::EntityContext<'_, '_, T>>,
+                >(cx)
+            };
+            update(entity, cx)
+        })
     }
 }
 

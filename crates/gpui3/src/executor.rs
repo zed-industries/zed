@@ -27,7 +27,15 @@ where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static,
 {
-    spawn_on_main(dispatcher, move || async move { func() })
+    let (tx, rx) = oneshot::channel();
+    if dispatcher.is_main_thread() {
+        let _ = tx.send(func());
+    } else {
+        let _ = spawn_on_main(dispatcher, move || async move {
+            let _ = tx.send(func());
+        });
+    }
+    async move { rx.await.unwrap() }
 }
 
 /// Enqueues the given closure to be run on the application's event loop. The

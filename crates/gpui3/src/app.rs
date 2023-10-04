@@ -14,7 +14,7 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, VecDeque};
-use futures::Future;
+use futures::{channel::oneshot, Future};
 use parking_lot::Mutex;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
@@ -93,9 +93,9 @@ type Handlers = SmallVec<[Arc<dyn Fn(&mut AppContext) -> bool + Send + Sync + 's
 pub struct AppContext {
     this: Weak<Mutex<MainThread<AppContext>>>,
     platform: MainThreadOnly<dyn Platform>,
-    dispatcher: Arc<dyn PlatformDispatcher>,
     text_system: Arc<TextSystem>,
     pending_updates: usize,
+    pub(crate) dispatcher: Arc<dyn PlatformDispatcher>,
     pub(crate) svg_renderer: SvgRenderer,
     pub(crate) image_cache: ImageCache,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
@@ -185,19 +185,29 @@ impl AppContext {
     }
 
     pub fn run_on_main<R>(
-        &self,
+        &mut self,
         f: impl FnOnce(&mut MainThread<AppContext>) -> R + Send + 'static,
     ) -> impl Future<Output = R>
     where
         R: Send + 'static,
     {
-        let this = self.this.upgrade().unwrap();
-        run_on_main(self.dispatcher.clone(), move || {
-            let cx = &mut *this.lock();
-            cx.update(|cx| {
-                f(unsafe { mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(cx) })
-            })
-        })
+        let (tx, rx) = oneshot::channel();
+        if self.dispatcher.is_main_thread() {
+            let _ = tx.send(f(unsafe {
+                mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(self)
+            }));
+        } else {
+            let this = self.this.upgrade().unwrap();
+            let _ = run_on_main(self.dispatcher.clone(), move || {
+                let cx = &mut *this.lock();
+                cx.update(|cx| {
+                    let _ = tx.send(f(unsafe {
+                        mem::transmute::<&mut Self, &mut MainThread<Self>>(cx)
+                    }));
+                })
+            });
+        }
+        async move { rx.await.unwrap() }
     }
 
     pub fn spawn_on_main<F, R>(
@@ -307,7 +317,7 @@ impl MainThread<AppContext> {
     pub(crate) fn update_window<R>(
         &mut self,
         id: WindowId,
-        update: impl FnOnce(&mut WindowContext) -> R,
+        update: impl FnOnce(&mut MainThread<WindowContext>) -> R,
     ) -> Result<R> {
         self.0.update_window(id, |cx| {
             update(unsafe {
