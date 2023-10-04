@@ -592,6 +592,7 @@ impl CollabPanel {
                             *channel_id,
                             &theme.collab_panel,
                             is_selected,
+                            ix,
                             cx,
                         ),
                         ListEntry::ChannelInvite(channel) => Self::render_channel_invite(
@@ -1918,7 +1919,8 @@ impl CollabPanel {
 
         enum ChannelCall {}
         enum ChannelNote {}
-        enum IconTooltip {}
+        enum NotesTooltip {}
+        enum ChatTooltip {}
         enum ChannelTooltip {}
 
         let mut is_dragged_over = false;
@@ -1965,72 +1967,111 @@ impl CollabPanel {
                     let style = collab_theme
                         .channel_name
                         .in_state(channel.unseen_note_version.is_some());
-                    Label::new(channel.name.clone(), style.text.clone())
-                        .contained()
-                        .with_style(style.container)
-                        .aligned()
-                        .left()
-                        .with_tooltip::<ChannelTooltip>(
-                            channel_id as usize,
-                            if is_active {
-                                "Open channel notes"
-                            } else {
-                                "Join channel"
-                            },
-                            None,
-                            theme.tooltip.clone(),
-                            cx,
-                        )
-                        .flex(1., true)
-                })
-                .with_child(
-                    MouseEventHandler::new::<ChannelCall, _>(ix, cx, move |_, cx| {
-                        let participants =
-                            self.channel_store.read(cx).channel_participants(channel_id);
-                        if !participants.is_empty() {
-                            let extra_count = participants.len().saturating_sub(FACEPILE_LIMIT);
-
-                            FacePile::new(collab_theme.face_overlap)
-                                .with_children(
-                                    participants
-                                        .iter()
-                                        .filter_map(|user| {
-                                            Some(
-                                                Image::from_data(user.avatar.clone()?)
-                                                    .with_style(collab_theme.channel_avatar),
-                                            )
-                                        })
-                                        .take(FACEPILE_LIMIT),
-                                )
-                                .with_children((extra_count > 0).then(|| {
-                                    Label::new(
-                                        format!("+{}", extra_count),
-                                        collab_theme.extra_participant_label.text.clone(),
-                                    )
-                                    .contained()
-                                    .with_style(collab_theme.extra_participant_label.container)
-                                }))
-                                .with_tooltip::<IconTooltip>(
-                                    channel_id as usize,
+                    Flex::row()
+                        .with_child(
+                            Label::new(channel.name.clone(), style.text.clone())
+                                .contained()
+                                .with_style(style.container)
+                                .aligned()
+                                .left()
+                                .with_tooltip::<ChannelTooltip>(
+                                    ix,
                                     if is_active {
-                                        "Open Channel Notes"
+                                        "Open channel notes"
                                     } else {
                                         "Join channel"
                                     },
                                     None,
                                     theme.tooltip.clone(),
                                     cx,
-                                )
+                                ),
+                        )
+                        .with_children({
+                            let participants =
+                                self.channel_store.read(cx).channel_participants(channel_id);
+
+                            if !participants.is_empty() {
+                                let extra_count = participants.len().saturating_sub(FACEPILE_LIMIT);
+
+                                let result = FacePile::new(collab_theme.face_overlap)
+                                    .with_children(
+                                        participants
+                                            .iter()
+                                            .filter_map(|user| {
+                                                Some(
+                                                    Image::from_data(user.avatar.clone()?)
+                                                        .with_style(collab_theme.channel_avatar),
+                                                )
+                                            })
+                                            .take(FACEPILE_LIMIT),
+                                    )
+                                    .with_children((extra_count > 0).then(|| {
+                                        Label::new(
+                                            format!("+{}", extra_count),
+                                            collab_theme.extra_participant_label.text.clone(),
+                                        )
+                                        .contained()
+                                        .with_style(collab_theme.extra_participant_label.container)
+                                    }));
+
+                                Some(result)
+                            } else {
+                                None
+                            }
+                        })
+                        .with_spacing(8.)
+                        .align_children_center()
+                        .flex(1., true)
+                })
+                .with_child(
+                    MouseEventHandler::new::<ChannelNote, _>(ix, cx, move |_, _| {
+                        if channel.unseen_message_id.is_some() {
+                            Svg::new("icons/conversations.svg")
+                                .with_color(collab_theme.channel_note_active_color)
+                                .constrained()
+                                .with_width(collab_theme.channel_hash.width)
                                 .into_any()
                         } else if row_hovered {
-                            Svg::new("icons/file.svg")
+                            Svg::new("icons/conversations.svg")
                                 .with_color(collab_theme.channel_hash.color)
+                                .constrained()
+                                .with_width(collab_theme.channel_hash.width)
+                                .into_any()
+                        } else {
+                            Empty::new()
+                                .constrained()
+                                .with_width(collab_theme.channel_hash.width)
+                                .into_any()
+                        }
+                    })
+                    .on_click(MouseButton::Left, move |_, this, cx| {
+                        this.join_channel_chat(&JoinChannelChat { channel_id }, cx);
+                    })
+                    .with_tooltip::<ChatTooltip>(
+                        ix,
+                        "Open channel chat",
+                        None,
+                        theme.tooltip.clone(),
+                        cx,
+                    )
+                    .contained()
+                    .with_margin_right(4.),
+                )
+                .with_child(
+                    MouseEventHandler::new::<ChannelCall, _>(ix, cx, move |_, cx| {
+                        if row_hovered || channel.unseen_note_version.is_some() {
+                            Svg::new("icons/file.svg")
+                                .with_color(if channel.unseen_note_version.is_some() {
+                                    collab_theme.channel_note_active_color
+                                } else {
+                                    collab_theme.channel_hash.color
+                                })
                                 .constrained()
                                 .with_width(collab_theme.channel_hash.width)
                                 .contained()
                                 .with_margin_right(collab_theme.channel_hash.container.margin.left)
-                                .with_tooltip::<IconTooltip>(
-                                    channel_id as usize,
+                                .with_tooltip::<NotesTooltip>(
+                                    ix as usize,
                                     "Open channel notes",
                                     None,
                                     theme.tooltip.clone(),
@@ -2038,7 +2079,12 @@ impl CollabPanel {
                                 )
                                 .into_any()
                         } else {
-                            Empty::new().into_any()
+                            Empty::new()
+                                .constrained()
+                                .with_width(collab_theme.channel_hash.width)
+                                .contained()
+                                .with_margin_right(collab_theme.channel_hash.container.margin.left)
+                                .into_any()
                         }
                     })
                     .on_click(MouseButton::Left, move |_, this, cx| {
@@ -2049,34 +2095,6 @@ impl CollabPanel {
                         } else {
                             this.join_channel(channel_id, cx);
                         };
-                    }),
-                )
-                .with_child(
-                    MouseEventHandler::new::<ChannelNote, _>(ix, cx, move |_, cx| {
-                        let participants =
-                            self.channel_store.read(cx).channel_participants(channel_id);
-                        if participants.is_empty() {
-                            if channel.unseen_message_id.is_some() {
-                                Svg::new("icons/conversations.svg")
-                                    .with_color(collab_theme.channel_note_active_color)
-                                    .constrained()
-                                    .with_width(collab_theme.channel_hash.width)
-                                    .into_any()
-                            } else if row_hovered {
-                                Svg::new("icons/conversations.svg")
-                                    .with_color(collab_theme.channel_hash.color)
-                                    .constrained()
-                                    .with_width(collab_theme.channel_hash.width)
-                                    .into_any()
-                            } else {
-                                Empty::new().into_any()
-                            }
-                        } else {
-                            Empty::new().into_any()
-                        }
-                    })
-                    .on_click(MouseButton::Left, move |_, this, cx| {
-                        this.join_channel_chat(&JoinChannelChat { channel_id }, cx);
                     }),
                 )
                 .align_children_center()
@@ -2223,6 +2241,7 @@ impl CollabPanel {
         channel_id: ChannelId,
         theme: &theme::CollabPanel,
         is_selected: bool,
+        ix: usize,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement<Self> {
         enum ChannelNotes {}
@@ -2232,7 +2251,7 @@ impl CollabPanel {
             .or(theme.contact_avatar.height)
             .unwrap_or(0.);
 
-        MouseEventHandler::new::<ChannelNotes, _>(channel_id as usize, cx, |state, cx| {
+        MouseEventHandler::new::<ChannelNotes, _>(ix as usize, cx, |state, cx| {
             let tree_branch = *theme.tree_branch.in_state(is_selected).style_for(state);
             let row = theme.project_row.in_state(is_selected).style_for(state);
 
