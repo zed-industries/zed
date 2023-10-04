@@ -39,8 +39,9 @@ pub enum PanelSide {
 
 use std::collections::HashSet;
 
-// #[derive(Element)]
-pub struct Panel {
+#[derive(Element)]
+pub struct Panel<S: 'static + Send + Sync> {
+    state_type: PhantomData<S>,
     scroll_state: ScrollState,
     current_side: PanelSide,
     /// Defaults to PanelAllowedSides::LeftAndRight
@@ -51,7 +52,7 @@ pub struct Panel {
     // payload: HackyChildrenPayload,
 }
 
-impl Panel {
+impl<S: 'static + Send + Sync> Panel<S> {
     pub fn new(
         scroll_state: ScrollState,
         // children: HackyChildren<S>,
@@ -60,6 +61,7 @@ impl Panel {
         let token = token();
 
         Self {
+            state_type: PhantomData,
             scroll_state,
             current_side: PanelSide::default(),
             allowed_sides: PanelAllowedSides::default(),
@@ -99,7 +101,7 @@ impl Panel {
         self
     }
 
-    fn render<S: 'static + Send + Sync>(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
         let token = token();
         let theme = rose_pine_dawn();
 
@@ -112,7 +114,7 @@ impl Panel {
                     .flex_initial()
                     .h_full()
                     // .w(current_width)
-                    .w_4()
+                    .w_64()
                     .fill(theme.middle.base.default.background)
                     .border_r()
                     .border_color(theme.middle.base.default.border);
@@ -122,7 +124,7 @@ impl Panel {
                     .flex_initial()
                     .h_full()
                     // .w(current_width)
-                    .w_4()
+                    .w_64()
                     .fill(theme.middle.base.default.background)
                     .border_l()
                     .border_color(theme.middle.base.default.border);
@@ -132,7 +134,7 @@ impl Panel {
                     .flex_initial()
                     .w_full()
                     // .h(current_width)
-                    .h_4()
+                    .h_64()
                     .fill(theme.middle.base.default.background)
                     .border_t()
                     .border_color(theme.middle.base.default.border);
