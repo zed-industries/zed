@@ -39,7 +39,7 @@ pub enum PanelSide {
 
 use std::collections::HashSet;
 
-#[derive(Element)]
+// #[derive(Element)]
 pub struct Panel {
     scroll_state: ScrollState,
     current_side: PanelSide,

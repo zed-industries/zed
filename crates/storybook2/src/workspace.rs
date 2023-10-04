@@ -261,7 +261,7 @@ impl Titlebar {
                                 // .fill(theme.lowest.base.pressed.background)
                                 .child(
                                     svg()
-                                        .path("icons/radix/speaker-loud.svg")
+                                        .path("icons/speaker-loud.svg")
                                         .size_3p5()
                                         .fill(theme.lowest.base.default.foreground),
                                 ),
@@ -281,7 +281,7 @@ impl Titlebar {
                                 // .fill(theme.lowest.base.pressed.background)
                                 .child(
                                     svg()
-                                        .path("icons/radix/desktop.svg")
+                                        .path("icons/desktop.svg")
                                         .size_3p5()
                                         .fill(theme.lowest.base.default.foreground),
                                 ),
@@ -313,7 +313,7 @@ impl Titlebar {
                         )
                         .child(
                             svg()
-                                .path("icons/caret_down_8.svg")
+                                .path("icons/caret_down.svg")
                                 .w_2()
                                 .h_2()
                                 .fill(theme.lowest.variant.default.foreground),
