@@ -2107,13 +2107,7 @@ impl CollabPanel {
                         }
                     })
                     .on_click(MouseButton::Left, move |_, this, cx| {
-                        let participants =
-                            this.channel_store.read(cx).channel_participants(channel_id);
-                        if is_active || participants.is_empty() {
-                            this.open_channel_notes(&OpenChannelNotes { channel_id }, cx);
-                        } else {
-                            this.join_channel(channel_id, cx);
-                        };
+                        this.open_channel_notes(&OpenChannelNotes { channel_id }, cx);
                     }),
                 )
                 .align_children_center()
