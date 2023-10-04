@@ -48,9 +48,9 @@ use gpui::{
     impl_actions,
     keymap_matcher::KeymapContext,
     platform::{CursorStyle, MouseButton},
-    serde_json, text_layout, AnyElement, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem,
-    Element, Entity, ModelHandle, Subscription, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle, WindowContext,
+    serde_json, AnyElement, AnyViewHandle, AppContext, AsyncAppContext, ClipboardItem, Element,
+    Entity, ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -5953,11 +5953,14 @@ impl Editor {
     fn add_selection(&mut self, above: bool, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections.all::<Point>(cx);
+        let text_layout_details = TextLayoutDetails::new(self, cx);
         let mut state = self.add_selections_state.take().unwrap_or_else(|| {
             let oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
             let range = oldest_selection.display_range(&display_map).sorted();
-            let columns = cmp::min(range.start.column(), range.end.column())
-                ..cmp::max(range.start.column(), range.end.column());
+
+            let start_x = display_map.x_for_point(range.start, &text_layout_details);
+            let end_x = display_map.x_for_point(range.end, &text_layout_details);
+            let positions = start_x.min(end_x)..start_x.max(end_x);
 
             selections.clear();
             let mut stack = Vec::new();
@@ -5965,8 +5968,9 @@ impl Editor {
                 if let Some(selection) = self.selections.build_columnar_selection(
                     &display_map,
                     row,
-                    &columns,
+                    &positions,
                     oldest_selection.reversed,
+                    &text_layout_details,
                 ) {
                     stack.push(selection.id);
                     selections.push(selection);
@@ -5994,12 +5998,15 @@ impl Editor {
                     let range = selection.display_range(&display_map).sorted();
                     debug_assert_eq!(range.start.row(), range.end.row());
                     let mut row = range.start.row();
-                    let columns = if let SelectionGoal::ColumnRange { start, end } = selection.goal
+                    let positions = if let SelectionGoal::HorizontalRange { start, end } =
+                        selection.goal
                     {
                         start..end
                     } else {
-                        cmp::min(range.start.column(), range.end.column())
-                            ..cmp::max(range.start.column(), range.end.column())
+                        let start_x = display_map.x_for_point(range.start, &text_layout_details);
+                        let end_x = display_map.x_for_point(range.end, &text_layout_details);
+
+                        start_x.min(end_x)..start_x.max(end_x)
                     };
 
                     while row != end_row {
@@ -6012,8 +6019,9 @@ impl Editor {
                         if let Some(new_selection) = self.selections.build_columnar_selection(
                             &display_map,
                             row,
-                            &columns,
+                            &positions,
                             selection.reversed,
+                            &text_layout_details,
                         ) {
                             state.stack.push(new_selection.id);
                             if above {

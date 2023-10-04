@@ -22,7 +22,7 @@ use git::diff::DiffHunkStatus;
 use gpui::{
     color::Color,
     elements::*,
-    fonts::{HighlightStyle, TextStyle, Underline},
+    fonts::TextStyle,
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
@@ -37,8 +37,7 @@ use gpui::{
 use itertools::Itertools;
 use json::json;
 use language::{
-    language_settings::ShowWhitespaceSetting, Bias, CursorShape, DiagnosticSeverity, OffsetUtf16,
-    Selection,
+    language_settings::ShowWhitespaceSetting, Bias, CursorShape, OffsetUtf16, Selection,
 };
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},

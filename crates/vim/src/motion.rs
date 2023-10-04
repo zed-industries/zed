@@ -1,5 +1,3 @@
-use std::cmp;
-
 use editor::{
     char_kind,
     display_map::{DisplaySnapshot, FoldPoint, ToDisplayPoint},
@@ -371,13 +369,13 @@ impl Motion {
             Backspace => (backspace(map, point, times), SelectionGoal::None),
             Down {
                 display_lines: false,
-            } => down(map, point, goal, times),
+            } => up_down_buffer_rows(map, point, goal, times as isize, &text_layout_details),
             Down {
                 display_lines: true,
             } => down_display(map, point, goal, times, &text_layout_details),
             Up {
                 display_lines: false,
-            } => up(map, point, goal, times),
+            } => up_down_buffer_rows(map, point, goal, 0 - times as isize, &text_layout_details),
             Up {
                 display_lines: true,
             } => up_display(map, point, goal, times, &text_layout_details),
@@ -536,35 +534,86 @@ fn backspace(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> Di
     point
 }
 
-fn down(
+pub(crate) fn start_of_relative_buffer_row(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    times: isize,
+) -> DisplayPoint {
+    let start = map.display_point_to_fold_point(point, Bias::Left);
+    let target = start.row() as isize + times;
+    let new_row = (target.max(0) as u32).min(map.fold_snapshot.max_point().row());
+
+    map.clip_point(
+        map.fold_point_to_display_point(
+            map.fold_snapshot
+                .clip_point(FoldPoint::new(new_row, 0), Bias::Right),
+        ),
+        Bias::Right,
+    )
+}
+
+fn up_down_buffer_rows(
     map: &DisplaySnapshot,
     point: DisplayPoint,
     mut goal: SelectionGoal,
-    times: usize,
+    times: isize,
+    text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     let start = map.display_point_to_fold_point(point, Bias::Left);
+    let begin_folded_line = map.fold_point_to_display_point(
+        map.fold_snapshot
+            .clip_point(FoldPoint::new(start.row(), 0), Bias::Left),
+    );
+    let select_nth_wrapped_row = point.row() - begin_folded_line.row();
 
-    let goal_column = match goal {
-        SelectionGoal::Column(column) => column,
-        SelectionGoal::ColumnRange { end, .. } => end,
+    let (goal_wrap, goal_x) = match goal {
+        SelectionGoal::WrappedHorizontalPosition((row, x)) => (row, x),
+        SelectionGoal::WrappedHorizontalRange { end: (row, x), .. } => (row, x),
+        SelectionGoal::HorizontalRange { end, .. } => (select_nth_wrapped_row, end),
+        SelectionGoal::HorizontalPosition(x) => (select_nth_wrapped_row, x),
         _ => {
-            goal = SelectionGoal::Column(start.column());
-            start.column()
+            let x = map.x_for_point(point, text_layout_details);
+            goal = SelectionGoal::WrappedHorizontalPosition((select_nth_wrapped_row, x));
+            (select_nth_wrapped_row, x)
         }
     };
 
-    let new_row = cmp::min(
-        start.row() + times as u32,
-        map.fold_snapshot.max_point().row(),
-    );
-    let new_col = cmp::min(goal_column, map.fold_snapshot.line_len(new_row));
-    let point = map.fold_point_to_display_point(
+    let target = start.row() as isize + times;
+    let new_row = (target.max(0) as u32).min(map.fold_snapshot.max_point().row());
+
+    let mut begin_folded_line = map.fold_point_to_display_point(
         map.fold_snapshot
-            .clip_point(FoldPoint::new(new_row, new_col), Bias::Left),
+            .clip_point(FoldPoint::new(new_row, 0), Bias::Left),
     );
 
-    // clip twice to "clip at end of line"
-    (map.clip_point(point, Bias::Left), goal)
+    let mut i = 0;
+    while i < goal_wrap && begin_folded_line.row() < map.max_point().row() {
+        let next_folded_line = DisplayPoint::new(begin_folded_line.row() + 1, 0);
+        if map
+            .display_point_to_fold_point(next_folded_line, Bias::Right)
+            .row()
+            == new_row
+        {
+            i += 1;
+            begin_folded_line = next_folded_line;
+        } else {
+            break;
+        }
+    }
+
+    let new_col = if i == goal_wrap {
+        map.column_for_x(begin_folded_line.row(), goal_x, text_layout_details)
+    } else {
+        map.line_len(begin_folded_line.row())
+    };
+
+    (
+        map.clip_point(
+            DisplayPoint::new(begin_folded_line.row(), new_col),
+            Bias::Left,
+        ),
+        goal,
+    )
 }
 
 fn down_display(
@@ -579,33 +628,6 @@ fn down_display(
     }
 
     (point, goal)
-}
-
-pub(crate) fn up(
-    map: &DisplaySnapshot,
-    point: DisplayPoint,
-    mut goal: SelectionGoal,
-    times: usize,
-) -> (DisplayPoint, SelectionGoal) {
-    let start = map.display_point_to_fold_point(point, Bias::Left);
-
-    let goal_column = match goal {
-        SelectionGoal::Column(column) => column,
-        SelectionGoal::ColumnRange { end, .. } => end,
-        _ => {
-            goal = SelectionGoal::Column(start.column());
-            start.column()
-        }
-    };
-
-    let new_row = start.row().saturating_sub(times as u32);
-    let new_col = cmp::min(goal_column, map.fold_snapshot.line_len(new_row));
-    let point = map.fold_point_to_display_point(
-        map.fold_snapshot
-            .clip_point(FoldPoint::new(new_row, new_col), Bias::Left),
-    );
-
-    (map.clip_point(point, Bias::Left), goal)
 }
 
 fn up_display(
@@ -894,7 +916,7 @@ fn find_backward(
 }
 
 fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
-    let correct_line = down(map, point, SelectionGoal::None, times).0;
+    let correct_line = start_of_relative_buffer_row(map, point, times as isize);
     first_non_whitespace(map, false, correct_line)
 }
 
@@ -904,7 +926,7 @@ pub(crate) fn next_line_end(
     times: usize,
 ) -> DisplayPoint {
     if times > 1 {
-        point = down(map, point, SelectionGoal::None, times - 1).0;
+        point = start_of_relative_buffer_row(map, point, times as isize - 1);
     }
     end_of_line(map, false, point)
 }

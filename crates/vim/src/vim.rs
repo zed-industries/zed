@@ -581,7 +581,7 @@ impl Setting for VimModeSetting {
 fn local_selections_changed(newest: Selection<usize>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         if vim.enabled && vim.state().mode == Mode::Normal && !newest.is_empty() {
-            if matches!(newest.goal, SelectionGoal::ColumnRange { .. }) {
+            if matches!(newest.goal, SelectionGoal::HorizontalRange { .. }) {
                 vim.switch_mode(Mode::VisualBlock, false, cx);
             } else {
                 vim.switch_mode(Mode::Visual, false, cx)

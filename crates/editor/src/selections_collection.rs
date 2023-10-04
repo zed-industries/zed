@@ -1,6 +1,6 @@
 use std::{
     cell::Ref,
-    cmp, iter, mem,
+    iter, mem,
     ops::{Deref, DerefMut, Range, Sub},
     sync::Arc,
 };
@@ -13,6 +13,7 @@ use util::post_inc;
 
 use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
+    movement::TextLayoutDetails,
     Anchor, DisplayPoint, ExcerptId, MultiBuffer, MultiBufferSnapshot, SelectMode, ToOffset,
 };
 
@@ -305,23 +306,27 @@ impl SelectionsCollection {
         &mut self,
         display_map: &DisplaySnapshot,
         row: u32,
-        columns: &Range<u32>,
+        positions: &Range<f32>,
         reversed: bool,
+        text_layout_details: &TextLayoutDetails,
     ) -> Option<Selection<Point>> {
-        let is_empty = columns.start == columns.end;
+        let is_empty = positions.start == positions.end;
         let line_len = display_map.line_len(row);
-        if columns.start < line_len || (is_empty && columns.start == line_len) {
-            let start = DisplayPoint::new(row, columns.start);
-            let end = DisplayPoint::new(row, cmp::min(columns.end, line_len));
+
+        let start_col = display_map.column_for_x(row, positions.start, text_layout_details);
+        if start_col < line_len || (is_empty && start_col == line_len) {
+            let start = DisplayPoint::new(row, start_col);
+            let end_col = display_map.column_for_x(row, positions.end, text_layout_details);
+            let end = DisplayPoint::new(row, end_col);
 
             Some(Selection {
                 id: post_inc(&mut self.next_selection_id),
                 start: start.to_point(display_map),
                 end: end.to_point(display_map),
                 reversed,
-                goal: SelectionGoal::ColumnRange {
-                    start: columns.start,
-                    end: columns.end,
+                goal: SelectionGoal::HorizontalRange {
+                    start: positions.start,
+                    end: positions.end,
                 },
             })
         } else {

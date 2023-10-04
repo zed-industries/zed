@@ -15,7 +15,7 @@ use gpui::{
     color::Color,
     fonts::{FontId, HighlightStyle, Underline},
     text_layout::{Line, RunStyle},
-    AppContext, Entity, FontCache, ModelContext, ModelHandle, TextLayoutCache,
+    Entity, ModelContext, ModelHandle,
 };
 use inlay_map::InlayMap;
 use language::{
@@ -576,7 +576,6 @@ impl DisplaySnapshot {
 
         let range = display_row..display_row + 1;
         for chunk in self.highlighted_chunks(range, editor_style) {
-            dbg!(chunk.chunk);
             line.push_str(chunk.chunk);
 
             let text_style = if let Some(style) = chunk.style {
@@ -600,7 +599,6 @@ impl DisplaySnapshot {
             ));
         }
 
-        dbg!(&line, &editor_style.text.font_size, &styles);
         text_layout_cache.layout_str(&line, editor_style.text.font_size, &styles)
     }
 
@@ -621,49 +619,6 @@ impl DisplaySnapshot {
     ) -> u32 {
         let layout_line = self.layout_line_for_row(display_row, text_layout_details);
         layout_line.closest_index_for_x(x_coordinate) as u32
-    }
-
-    // column_for_x(row, x)
-
-    fn point(
-        &self,
-        display_point: DisplayPoint,
-        text_layout_cache: &TextLayoutCache,
-        editor_style: &EditorStyle,
-        cx: &AppContext,
-    ) -> f32 {
-        let mut styles = Vec::new();
-        let mut line = String::new();
-
-        let range = display_point.row()..display_point.row() + 1;
-        for chunk in self.highlighted_chunks(range, editor_style) {
-            dbg!(chunk.chunk);
-            line.push_str(chunk.chunk);
-
-            let text_style = if let Some(style) = chunk.style {
-                editor_style
-                    .text
-                    .clone()
-                    .highlight(style, cx.font_cache())
-                    .map(Cow::Owned)
-                    .unwrap_or_else(|_| Cow::Borrowed(&editor_style.text))
-            } else {
-                Cow::Borrowed(&editor_style.text)
-            };
-
-            styles.push((
-                chunk.chunk.len(),
-                RunStyle {
-                    font_id: text_style.font_id,
-                    color: text_style.color,
-                    underline: text_style.underline,
-                },
-            ));
-        }
-
-        dbg!(&line, &editor_style.text.font_size, &styles);
-        let layout_line = text_layout_cache.layout_str(&line, editor_style.text.font_size, &styles);
-        layout_line.x_for_index(display_point.column() as usize)
     }
 
     pub fn chars_at(
@@ -1374,7 +1329,6 @@ pub mod tests {
             );
 
             let x = snapshot.x_for_point(DisplayPoint::new(1, 10), &text_layout_details);
-            dbg!(x);
             assert_eq!(
                 movement::up(
                     &snapshot,
@@ -1401,7 +1355,6 @@ pub mod tests {
                     SelectionGoal::HorizontalPosition(x)
                 )
             );
-            dbg!("starting down...");
             assert_eq!(
                 movement::down(
                     &snapshot,

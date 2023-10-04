@@ -194,9 +194,7 @@ fn insert_after(_: &mut Workspace, _: &InsertAfter, cx: &mut ViewContext<Workspa
         vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.move_cursors_with(|map, cursor, goal| {
-                    (right(map, cursor, 1), SelectionGoal::None)
-                });
+                s.move_cursors_with(|map, cursor, _| (right(map, cursor, 1), SelectionGoal::None));
             });
         });
     });
@@ -219,7 +217,7 @@ fn insert_first_non_whitespace(
         vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.move_cursors_with(|map, cursor, goal| {
+                s.move_cursors_with(|map, cursor, _| {
                     (
                         first_non_whitespace(map, false, cursor),
                         SelectionGoal::None,
@@ -236,7 +234,7 @@ fn insert_end_of_line(_: &mut Workspace, _: &InsertEndOfLine, cx: &mut ViewConte
         vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.move_cursors_with(|map, cursor, goal| {
+                s.move_cursors_with(|map, cursor, _| {
                     (next_line_end(map, cursor, 1), SelectionGoal::None)
                 });
             });
@@ -267,7 +265,7 @@ fn insert_line_above(_: &mut Workspace, _: &InsertLineAbove, cx: &mut ViewContex
                 editor.edit_with_autoindent(edits, cx);
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.move_cursors_with(|map, cursor, _| {
-                        let previous_line = motion::up(map, cursor, SelectionGoal::None, 1).0;
+                        let previous_line = motion::start_of_relative_buffer_row(map, cursor, -1);
                         let insert_point = motion::end_of_line(map, false, previous_line);
                         (insert_point, SelectionGoal::None)
                     });
@@ -398,12 +396,26 @@ mod test {
 
     #[gpui::test]
     async fn test_j(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["j"]);
-        cx.assert_all(indoc! {"
-            ˇThe qˇuick broˇwn
-            ˇfox jumps"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+                    aaˇaa
+                    😃😃"
         })
         .await;
+        cx.simulate_shared_keystrokes(["j"]).await;
+        cx.assert_shared_state(indoc! {"
+                    aaaa
+                    😃ˇ😃"
+        })
+        .await;
+
+        for marked_position in cx.each_marked_position(indoc! {"
+                    ˇThe qˇuick broˇwn
+                    ˇfox jumps"
+        }) {
+            cx.assert_neovim_compatible(&marked_position, ["j"]).await;
+        }
     }
 
     #[gpui::test]

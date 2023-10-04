@@ -140,17 +140,21 @@ pub fn visual_block_motion(
         SelectionGoal,
     ) -> Option<(DisplayPoint, SelectionGoal)>,
 ) {
+    let text_layout_details = TextLayoutDetails::new(editor, cx);
     editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
         let map = &s.display_map();
         let mut head = s.newest_anchor().head().to_display_point(map);
         let mut tail = s.oldest_anchor().tail().to_display_point(map);
 
         let (start, end) = match s.newest_anchor().goal {
-            SelectionGoal::ColumnRange { start, end } if preserve_goal => (start, end),
-            SelectionGoal::Column(start) if preserve_goal => (start, start + 1),
-            _ => (tail.column(), head.column()),
+            SelectionGoal::HorizontalRange { start, end } if preserve_goal => (start, end),
+            SelectionGoal::HorizontalPosition(start) if preserve_goal => (start, start + 10.0),
+            _ => (
+                map.x_for_point(tail, &text_layout_details),
+                map.x_for_point(head, &text_layout_details),
+            ),
         };
-        let goal = SelectionGoal::ColumnRange { start, end };
+        let goal = SelectionGoal::HorizontalRange { start, end };
 
         let was_reversed = tail.column() > head.column();
         if !was_reversed && !preserve_goal {
@@ -172,21 +176,39 @@ pub fn visual_block_motion(
             head = movement::saturating_right(map, head)
         }
 
-        let columns = if is_reversed {
-            head.column()..tail.column()
+        let positions = if is_reversed {
+            map.x_for_point(head, &text_layout_details)..map.x_for_point(tail, &text_layout_details)
         } else if head.column() == tail.column() {
-            head.column()..(head.column() + 1)
+            map.x_for_point(head, &text_layout_details)
+                ..map.x_for_point(head, &text_layout_details) + 10.0
         } else {
-            tail.column()..head.column()
+            map.x_for_point(tail, &text_layout_details)..map.x_for_point(head, &text_layout_details)
         };
 
         let mut selections = Vec::new();
         let mut row = tail.row();
 
         loop {
-            let start = map.clip_point(DisplayPoint::new(row, columns.start), Bias::Left);
-            let end = map.clip_point(DisplayPoint::new(row, columns.end), Bias::Left);
-            if columns.start <= map.line_len(row) {
+            let start = map.clip_point(
+                DisplayPoint::new(
+                    row,
+                    map.column_for_x(row, positions.start, &text_layout_details),
+                ),
+                Bias::Left,
+            );
+            let end = map.clip_point(
+                DisplayPoint::new(
+                    row,
+                    map.column_for_x(row, positions.end, &text_layout_details),
+                ),
+                Bias::Left,
+            );
+            if positions.start
+                <= map.x_for_point(
+                    DisplayPoint::new(row, map.line_len(row)),
+                    &text_layout_details,
+                )
+            {
                 let selection = Selection {
                     id: s.new_selection_id(),
                     start: start.to_point(map),

@@ -1,6 +1,6 @@
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{char_kind, CharKind, Editor, EditorStyle, ToOffset, ToPoint};
-use gpui::{text_layout, FontCache, TextLayoutCache, WindowContext};
+use gpui::{FontCache, TextLayoutCache, WindowContext};
 use language::Point;
 use std::{ops::Range, sync::Arc};
 
@@ -105,7 +105,9 @@ pub fn up_by_rows(
 ) -> (DisplayPoint, SelectionGoal) {
     let mut goal_x = match goal {
         SelectionGoal::HorizontalPosition(x) => x,
+        SelectionGoal::WrappedHorizontalPosition((_, x)) => x,
         SelectionGoal::HorizontalRange { end, .. } => end,
+        SelectionGoal::WrappedHorizontalRange { end: (_, end), .. } => end,
         _ => map.x_for_point(start, text_layout_details),
     };
 
@@ -140,7 +142,9 @@ pub fn down_by_rows(
 ) -> (DisplayPoint, SelectionGoal) {
     let mut goal_x = match goal {
         SelectionGoal::HorizontalPosition(x) => x,
+        SelectionGoal::WrappedHorizontalPosition((_, x)) => x,
         SelectionGoal::HorizontalRange { end, .. } => end,
+        SelectionGoal::WrappedHorizontalRange { end: (_, end), .. } => end,
         _ => map.x_for_point(start, text_layout_details),
     };
 
