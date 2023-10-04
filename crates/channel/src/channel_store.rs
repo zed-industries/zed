@@ -43,6 +43,8 @@ pub type ChannelData = (Channel, ChannelPath);
 pub struct Channel {
     pub id: ChannelId,
     pub name: String,
+    pub unseen_note_version: Option<(u64, clock::Global)>,
+    pub unseen_message_id: Option<u64>,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
@@ -207,6 +209,64 @@ impl ChannelStore {
         )
     }
 
+    pub fn has_channel_buffer_changed(&self, channel_id: ChannelId) -> Option<bool> {
+        self.channel_index
+            .by_id()
+            .get(&channel_id)
+            .map(|channel| channel.unseen_note_version.is_some())
+    }
+
+    pub fn has_new_messages(&self, channel_id: ChannelId) -> Option<bool> {
+        self.channel_index
+            .by_id()
+            .get(&channel_id)
+            .map(|channel| channel.unseen_message_id.is_some())
+    }
+
+    pub fn notes_changed(
+        &mut self,
+        channel_id: ChannelId,
+        epoch: u64,
+        version: &clock::Global,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.channel_index.note_changed(channel_id, epoch, version);
+        cx.notify();
+    }
+
+    pub fn new_message(
+        &mut self,
+        channel_id: ChannelId,
+        message_id: u64,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.channel_index.new_message(channel_id, message_id);
+        cx.notify();
+    }
+
+    pub fn acknowledge_message_id(
+        &mut self,
+        channel_id: ChannelId,
+        message_id: u64,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.channel_index
+            .acknowledge_message_id(channel_id, message_id);
+        cx.notify();
+    }
+
+    pub fn acknowledge_notes_version(
+        &mut self,
+        channel_id: ChannelId,
+        epoch: u64,
+        version: &clock::Global,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.channel_index
+            .acknowledge_note_version(channel_id, epoch, version);
+        cx.notify();
+    }
+
     pub fn open_channel_chat(
         &mut self,
         channel_id: ChannelId,
@@ -214,10 +274,11 @@ impl ChannelStore {
     ) -> Task<Result<ModelHandle<ChannelChat>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
+        let this = cx.handle();
         self.open_channel_resource(
             channel_id,
             |this| &mut this.opened_chats,
-            |channel, cx| ChannelChat::new(channel, user_store, client, cx),
+            |channel, cx| ChannelChat::new(channel, this, user_store, client, cx),
             cx,
         )
     }
@@ -779,6 +840,8 @@ impl ChannelStore {
                     Arc::new(Channel {
                         id: channel.id,
                         name: channel.name,
+                        unseen_note_version: None,
+                        unseen_message_id: None,
                     }),
                 ),
             }
@@ -787,7 +850,9 @@ impl ChannelStore {
         let channels_changed = !payload.channels.is_empty()
             || !payload.delete_channels.is_empty()
             || !payload.insert_edge.is_empty()
-            || !payload.delete_edge.is_empty();
+            || !payload.delete_edge.is_empty()
+            || !payload.unseen_channel_messages.is_empty()
+            || !payload.unseen_channel_buffer_changes.is_empty();
 
         if channels_changed {
             if !payload.delete_channels.is_empty() {
@@ -812,6 +877,22 @@ impl ChannelStore {
             let mut index = self.channel_index.bulk_insert();
             for channel in payload.channels {
                 index.insert(channel)
+            }
+
+            for unseen_buffer_change in payload.unseen_channel_buffer_changes {
+                let version = language::proto::deserialize_version(&unseen_buffer_change.version);
+                index.note_changed(
+                    unseen_buffer_change.channel_id,
+                    unseen_buffer_change.epoch,
+                    &version,
+                );
+            }
+
+            for unseen_channel_message in payload.unseen_channel_messages {
+                index.new_messages(
+                    unseen_channel_message.channel_id,
+                    unseen_channel_message.message_id,
+                );
             }
 
             for edge in payload.insert_edge {

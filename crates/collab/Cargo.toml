@@ -42,14 +42,12 @@ rand.workspace = true
 reqwest = { version = "0.11", features = ["json"], optional = true }
 scrypt = "0.7"
 smallvec.workspace = true
-# Remove fork dependency when a version with https://github.com/SeaQL/sea-orm/pull/1283 is released.
-sea-orm = { git = "https://github.com/zed-industries/sea-orm", rev = "18f4c691085712ad014a51792af75a9044bacee6", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls"] }
-sea-query = "0.27"
+sea-orm = { version = "0.12.x", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls", "with-uuid"] }
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
 sha-1 = "0.9"
-sqlx = { version = "0.6", features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid", "any"] }
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid", "any"] }
 time.workspace = true
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.17"
@@ -59,6 +57,7 @@ toml.workspace = true
 tracing = "0.1.34"
 tracing-log = "0.1.3"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter", "json"] }
+uuid.workspace = true
 
 [dev-dependencies]
 audio = { path = "../audio" }
@@ -87,9 +86,9 @@ env_logger.workspace = true
 indoc.workspace = true
 util = { path = "../util" }
 lazy_static.workspace = true
-sea-orm = { git = "https://github.com/zed-industries/sea-orm", rev = "18f4c691085712ad014a51792af75a9044bacee6", features = ["sqlx-sqlite"] }
+sea-orm = { version = "0.12.x", features = ["sqlx-sqlite"] }
 serde_json.workspace = true
-sqlx = { version = "0.6", features = ["sqlite"] }
+sqlx = { version = "0.7", features = ["sqlite"] }
 unindent.workspace = true
 
 [features]

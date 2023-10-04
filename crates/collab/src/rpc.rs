@@ -3,8 +3,8 @@ mod connection_pool;
 use crate::{
     auth,
     db::{
-        self, ChannelId, ChannelsForUser, Database, MessageId, ProjectId, RoomId, ServerId, User,
-        UserId,
+        self, BufferId, ChannelId, ChannelsForUser, Database, MessageId, ProjectId, RoomId,
+        ServerId, User, UserId,
     },
     executor::Executor,
     AppState, Result,
@@ -274,7 +274,9 @@ impl Server {
             .add_message_handler(unfollow)
             .add_message_handler(update_followers)
             .add_message_handler(update_diff_base)
-            .add_request_handler(get_private_user_info);
+            .add_request_handler(get_private_user_info)
+            .add_message_handler(acknowledge_channel_message)
+            .add_message_handler(acknowledge_buffer_version);
 
         Arc::new(server)
     }
@@ -2568,6 +2570,8 @@ async fn respond_to_channel_invite(
                         name: channel.name,
                     }),
             );
+        update.unseen_channel_messages = result.channel_messages;
+        update.unseen_channel_buffer_changes = result.unseen_buffer_changes;
         update.insert_edge = result.channels.edges;
         update
             .channel_participants
@@ -2691,7 +2695,7 @@ async fn update_channel_buffer(
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
 
-    let collaborators = db
+    let (collaborators, non_collaborators, epoch, version) = db
         .update_channel_buffer(channel_id, session.user_id, &request.operations)
         .await?;
 
@@ -2704,6 +2708,29 @@ async fn update_channel_buffer(
         },
         &session.peer,
     );
+
+    let pool = &*session.connection_pool().await;
+
+    broadcast(
+        None,
+        non_collaborators
+            .iter()
+            .flat_map(|user_id| pool.user_connection_ids(*user_id)),
+        |peer_id| {
+            session.peer.send(
+                peer_id.into(),
+                proto::UpdateChannels {
+                    unseen_channel_buffer_changes: vec![proto::UnseenChannelBufferChange {
+                        channel_id: channel_id.to_proto(),
+                        epoch: epoch as u64,
+                        version: version.clone(),
+                    }],
+                    ..Default::default()
+                },
+            )
+        },
+    );
+
     Ok(())
 }
 
@@ -2799,7 +2826,7 @@ async fn send_channel_message(
         .ok_or_else(|| anyhow!("nonce can't be blank"))?;
 
     let channel_id = ChannelId::from_proto(request.channel_id);
-    let (message_id, connection_ids) = session
+    let (message_id, connection_ids, non_participants) = session
         .db()
         .await
         .create_channel_message(
@@ -2829,6 +2856,27 @@ async fn send_channel_message(
     response.send(proto::SendChannelMessageResponse {
         message: Some(message),
     })?;
+
+    let pool = &*session.connection_pool().await;
+    broadcast(
+        None,
+        non_participants
+            .iter()
+            .flat_map(|user_id| pool.user_connection_ids(*user_id)),
+        |peer_id| {
+            session.peer.send(
+                peer_id.into(),
+                proto::UpdateChannels {
+                    unseen_channel_messages: vec![proto::UnseenChannelMessage {
+                        channel_id: channel_id.to_proto(),
+                        message_id: message_id.to_proto(),
+                    }],
+                    ..Default::default()
+                },
+            )
+        },
+    );
+
     Ok(())
 }
 
@@ -2848,6 +2896,38 @@ async fn remove_channel_message(
         session.peer.send(connection, request.clone())
     });
     response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn acknowledge_channel_message(
+    request: proto::AckChannelMessage,
+    session: Session,
+) -> Result<()> {
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let message_id = MessageId::from_proto(request.message_id);
+    session
+        .db()
+        .await
+        .observe_channel_message(channel_id, session.user_id, message_id)
+        .await?;
+    Ok(())
+}
+
+async fn acknowledge_buffer_version(
+    request: proto::AckBufferOperation,
+    session: Session,
+) -> Result<()> {
+    let buffer_id = BufferId::from_proto(request.buffer_id);
+    session
+        .db()
+        .await
+        .observe_buffer_version(
+            buffer_id,
+            session.user_id,
+            request.epoch as i32,
+            &request.version,
+        )
+        .await?;
     Ok(())
 }
 
@@ -2986,6 +3066,8 @@ fn build_initial_channels_update(
         });
     }
 
+    update.unseen_channel_buffer_changes = channels.unseen_buffer_changes;
+    update.unseen_channel_messages = channels.channel_messages;
     update.insert_edge = channels.channels.edges;
 
     for (channel_id, participants) in channels.channel_participants {

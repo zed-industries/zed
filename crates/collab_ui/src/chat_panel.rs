@@ -42,6 +42,7 @@ pub struct ChatPanel {
     local_timezone: UtcOffset,
     fs: Arc<dyn Fs>,
     width: Option<f32>,
+    active: bool,
     pending_serialization: Task<Option<()>>,
     subscriptions: Vec<gpui::Subscription>,
     workspace: WeakViewHandle<Workspace>,
@@ -138,6 +139,7 @@ impl ChatPanel {
                 has_focus: false,
                 subscriptions: Vec::new(),
                 workspace: workspace_handle,
+                active: false,
                 width: None,
             };
 
@@ -154,9 +156,9 @@ impl ChatPanel {
                     }),
                 );
 
-            this.init_active_channel(cx);
+            this.update_channel_count(cx);
             cx.observe(&this.channel_store, |this, _, cx| {
-                this.init_active_channel(cx);
+                this.update_channel_count(cx)
             })
             .detach();
 
@@ -177,6 +179,10 @@ impl ChatPanel {
 
             this
         })
+    }
+
+    pub fn active_chat(&self) -> Option<ModelHandle<ChannelChat>> {
+        self.active_chat.as_ref().map(|(chat, _)| chat.clone())
     }
 
     pub fn load(
@@ -225,10 +231,8 @@ impl ChatPanel {
         );
     }
 
-    fn init_active_channel(&mut self, cx: &mut ViewContext<Self>) {
+    fn update_channel_count(&mut self, cx: &mut ViewContext<Self>) {
         let channel_count = self.channel_store.read(cx).channel_count();
-        self.message_list.reset(0);
-        self.active_chat = None;
         self.channel_select.update(cx, |select, cx| {
             select.set_item_count(channel_count, cx);
         });
@@ -247,6 +251,7 @@ impl ChatPanel {
             }
             let subscription = cx.subscribe(&chat, Self::channel_did_change);
             self.active_chat = Some((chat, subscription));
+            self.acknowledge_last_message(cx);
             self.channel_select.update(cx, |select, cx| {
                 if let Some(ix) = self.channel_store.read(cx).index_of_channel(id) {
                     select.set_selected_index(ix, cx);
@@ -268,9 +273,32 @@ impl ChatPanel {
                 new_count,
             } => {
                 self.message_list.splice(old_range.clone(), *new_count);
+                if self.active {
+                    self.acknowledge_last_message(cx);
+                }
+            }
+            ChannelChatEvent::NewMessage {
+                channel_id,
+                message_id,
+            } => {
+                if !self.active {
+                    self.channel_store.update(cx, |store, cx| {
+                        store.new_message(*channel_id, *message_id, cx)
+                    })
+                }
             }
         }
         cx.notify();
+    }
+
+    fn acknowledge_last_message(&mut self, cx: &mut ViewContext<'_, '_, ChatPanel>) {
+        if self.active {
+            if let Some((chat, _)) = &self.active_chat {
+                chat.update(cx, |chat, cx| {
+                    chat.acknowledge_last_message(cx);
+                });
+            }
+        }
     }
 
     fn render_channel(&self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
@@ -627,8 +655,12 @@ impl Panel for ChatPanel {
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        if active && !is_chat_feature_enabled(cx) {
-            cx.emit(Event::Dismissed);
+        self.active = active;
+        if active {
+            self.acknowledge_last_message(cx);
+            if !is_chat_feature_enabled(cx) {
+                cx.emit(Event::Dismissed);
+            }
         }
     }
 

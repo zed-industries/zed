@@ -39,7 +39,7 @@ impl TestDb {
             db.pool
                 .execute(sea_orm::Statement::from_string(
                     db.pool.get_database_backend(),
-                    sql.into(),
+                    sql,
                 ))
                 .await
                 .unwrap();
@@ -134,7 +134,7 @@ impl Drop for TestDb {
                 db.pool
                     .execute(sea_orm::Statement::from_string(
                         db.pool.get_database_backend(),
-                        query.into(),
+                        query,
                     ))
                     .await
                     .log_err();

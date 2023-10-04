@@ -93,9 +93,13 @@ impl Database {
                 .stream(&*tx)
                 .await?;
 
+            let mut max_id = None;
             let mut messages = Vec::new();
             while let Some(row) = rows.next().await {
                 let row = row?;
+
+                max_assign(&mut max_id, row.id);
+
                 let nonce = row.nonce.as_u64_pair();
                 messages.push(proto::ChannelMessage {
                     id: row.id.to_proto(),
@@ -107,6 +111,50 @@ impl Database {
                         lower_half: nonce.1,
                     }),
                 });
+            }
+            drop(rows);
+
+            if let Some(max_id) = max_id {
+                let has_older_message = observed_channel_messages::Entity::find()
+                    .filter(
+                        observed_channel_messages::Column::UserId
+                            .eq(user_id)
+                            .and(observed_channel_messages::Column::ChannelId.eq(channel_id))
+                            .and(observed_channel_messages::Column::ChannelMessageId.lt(max_id)),
+                    )
+                    .one(&*tx)
+                    .await?
+                    .is_some();
+
+                if has_older_message {
+                    observed_channel_messages::Entity::update(
+                        observed_channel_messages::ActiveModel {
+                            user_id: ActiveValue::Unchanged(user_id),
+                            channel_id: ActiveValue::Unchanged(channel_id),
+                            channel_message_id: ActiveValue::Set(max_id),
+                        },
+                    )
+                    .exec(&*tx)
+                    .await?;
+                } else {
+                    observed_channel_messages::Entity::insert(
+                        observed_channel_messages::ActiveModel {
+                            user_id: ActiveValue::Set(user_id),
+                            channel_id: ActiveValue::Set(channel_id),
+                            channel_message_id: ActiveValue::Set(max_id),
+                        },
+                    )
+                    .on_conflict(
+                        OnConflict::columns([
+                            observed_channel_messages::Column::UserId,
+                            observed_channel_messages::Column::ChannelId,
+                        ])
+                        .update_columns([observed_channel_messages::Column::ChannelMessageId])
+                        .to_owned(),
+                    )
+                    .exec(&*tx)
+                    .await?;
+                }
             }
 
             Ok(messages)
@@ -121,7 +169,7 @@ impl Database {
         body: &str,
         timestamp: OffsetDateTime,
         nonce: u128,
-    ) -> Result<(MessageId, Vec<ConnectionId>)> {
+    ) -> Result<(MessageId, Vec<ConnectionId>, Vec<UserId>)> {
         self.transaction(|tx| async move {
             let mut rows = channel_chat_participant::Entity::find()
                 .filter(channel_chat_participant::Column::ChannelId.eq(channel_id))
@@ -130,11 +178,13 @@ impl Database {
 
             let mut is_participant = false;
             let mut participant_connection_ids = Vec::new();
+            let mut participant_user_ids = Vec::new();
             while let Some(row) = rows.next().await {
                 let row = row?;
                 if row.user_id == user_id {
                     is_participant = true;
                 }
+                participant_user_ids.push(row.user_id);
                 participant_connection_ids.push(row.connection());
             }
             drop(rows);
@@ -167,9 +217,139 @@ impl Database {
                 ConnectionId,
             }
 
-            Ok((message.last_insert_id, participant_connection_ids))
+            // Observe this message for the sender
+            self.observe_channel_message_internal(
+                channel_id,
+                user_id,
+                message.last_insert_id,
+                &*tx,
+            )
+            .await?;
+
+            let mut channel_members = self.get_channel_members_internal(channel_id, &*tx).await?;
+            channel_members.retain(|member| !participant_user_ids.contains(member));
+
+            Ok((
+                message.last_insert_id,
+                participant_connection_ids,
+                channel_members,
+            ))
         })
         .await
+    }
+
+    pub async fn observe_channel_message(
+        &self,
+        channel_id: ChannelId,
+        user_id: UserId,
+        message_id: MessageId,
+    ) -> Result<()> {
+        self.transaction(|tx| async move {
+            self.observe_channel_message_internal(channel_id, user_id, message_id, &*tx)
+                .await?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn observe_channel_message_internal(
+        &self,
+        channel_id: ChannelId,
+        user_id: UserId,
+        message_id: MessageId,
+        tx: &DatabaseTransaction,
+    ) -> Result<()> {
+        observed_channel_messages::Entity::insert(observed_channel_messages::ActiveModel {
+            user_id: ActiveValue::Set(user_id),
+            channel_id: ActiveValue::Set(channel_id),
+            channel_message_id: ActiveValue::Set(message_id),
+        })
+        .on_conflict(
+            OnConflict::columns([
+                observed_channel_messages::Column::ChannelId,
+                observed_channel_messages::Column::UserId,
+            ])
+            .update_column(observed_channel_messages::Column::ChannelMessageId)
+            .action_cond_where(observed_channel_messages::Column::ChannelMessageId.lt(message_id))
+            .to_owned(),
+        )
+        // TODO: Try to upgrade SeaORM so we don't have to do this hack around their bug
+        .exec_without_returning(&*tx)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn unseen_channel_messages(
+        &self,
+        user_id: UserId,
+        channel_ids: &[ChannelId],
+        tx: &DatabaseTransaction,
+    ) -> Result<Vec<proto::UnseenChannelMessage>> {
+        let mut observed_messages_by_channel_id = HashMap::default();
+        let mut rows = observed_channel_messages::Entity::find()
+            .filter(observed_channel_messages::Column::UserId.eq(user_id))
+            .filter(observed_channel_messages::Column::ChannelId.is_in(channel_ids.iter().copied()))
+            .stream(&*tx)
+            .await?;
+
+        while let Some(row) = rows.next().await {
+            let row = row?;
+            observed_messages_by_channel_id.insert(row.channel_id, row);
+        }
+        drop(rows);
+        let mut values = String::new();
+        for id in channel_ids {
+            if !values.is_empty() {
+                values.push_str(", ");
+            }
+            write!(&mut values, "({})", id).unwrap();
+        }
+
+        if values.is_empty() {
+            return Ok(Default::default());
+        }
+
+        let sql = format!(
+            r#"
+            SELECT
+                *
+            FROM (
+                SELECT
+                    *,
+                    row_number() OVER (
+                        PARTITION BY channel_id
+                        ORDER BY id DESC
+                    ) as row_number
+                FROM channel_messages
+                WHERE
+                    channel_id in ({values})
+            ) AS messages
+            WHERE
+                row_number = 1
+            "#,
+        );
+
+        let stmt = Statement::from_string(self.pool.get_database_backend(), sql);
+        let last_messages = channel_message::Model::find_by_statement(stmt)
+            .all(&*tx)
+            .await?;
+
+        let mut changes = Vec::new();
+        for last_message in last_messages {
+            if let Some(observed_message) =
+                observed_messages_by_channel_id.get(&last_message.channel_id)
+            {
+                if observed_message.channel_message_id == last_message.id {
+                    continue;
+                }
+            }
+            changes.push(proto::UnseenChannelMessage {
+                channel_id: last_message.channel_id.to_proto(),
+                message_id: last_message.id.to_proto(),
+            });
+        }
+
+        Ok(changes)
     }
 
     pub async fn remove_channel_message(

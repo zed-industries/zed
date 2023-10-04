@@ -184,7 +184,7 @@ impl Database {
             Ok(user::Entity::find()
                 .from_raw_sql(Statement::from_sql_and_values(
                     self.pool.get_database_backend(),
-                    query.into(),
+                    query,
                     vec![like_string.into(), name_query.into(), limit.into()],
                 ))
                 .all(&*tx)

@@ -74,7 +74,32 @@ impl Database {
             .await?;
             collaborators.push(collaborator);
 
-            let (base_text, operations) = self.get_buffer_state(&buffer, &tx).await?;
+            let (base_text, operations, max_operation) =
+                self.get_buffer_state(&buffer, &tx).await?;
+
+            // Save the last observed operation
+            if let Some(op) = max_operation {
+                observed_buffer_edits::Entity::insert(observed_buffer_edits::ActiveModel {
+                    user_id: ActiveValue::Set(user_id),
+                    buffer_id: ActiveValue::Set(buffer.id),
+                    epoch: ActiveValue::Set(op.epoch),
+                    lamport_timestamp: ActiveValue::Set(op.lamport_timestamp),
+                    replica_id: ActiveValue::Set(op.replica_id),
+                })
+                .on_conflict(
+                    OnConflict::columns([
+                        observed_buffer_edits::Column::UserId,
+                        observed_buffer_edits::Column::BufferId,
+                    ])
+                    .update_columns([
+                        observed_buffer_edits::Column::Epoch,
+                        observed_buffer_edits::Column::LamportTimestamp,
+                    ])
+                    .to_owned(),
+                )
+                .exec(&*tx)
+                .await?;
+            }
 
             Ok(proto::JoinChannelBufferResponse {
                 buffer_id: buffer.id.to_proto(),
@@ -373,25 +398,33 @@ impl Database {
         channel_id: ChannelId,
     ) -> Result<Vec<UserId>> {
         self.transaction(|tx| async move {
-            #[derive(Debug, Clone, Copy, EnumIter, DeriveColumn)]
-            enum QueryUserIds {
-                UserId,
-            }
-
-            let users: Vec<UserId> = channel_buffer_collaborator::Entity::find()
-                .select_only()
-                .column(channel_buffer_collaborator::Column::UserId)
-                .filter(
-                    Condition::all()
-                        .add(channel_buffer_collaborator::Column::ChannelId.eq(channel_id)),
-                )
-                .into_values::<_, QueryUserIds>()
-                .all(&*tx)
-                .await?;
-
-            Ok(users)
+            self.get_channel_buffer_collaborators_internal(channel_id, &*tx)
+                .await
         })
         .await
+    }
+
+    async fn get_channel_buffer_collaborators_internal(
+        &self,
+        channel_id: ChannelId,
+        tx: &DatabaseTransaction,
+    ) -> Result<Vec<UserId>> {
+        #[derive(Debug, Clone, Copy, EnumIter, DeriveColumn)]
+        enum QueryUserIds {
+            UserId,
+        }
+
+        let users: Vec<UserId> = channel_buffer_collaborator::Entity::find()
+            .select_only()
+            .column(channel_buffer_collaborator::Column::UserId)
+            .filter(
+                Condition::all().add(channel_buffer_collaborator::Column::ChannelId.eq(channel_id)),
+            )
+            .into_values::<_, QueryUserIds>()
+            .all(&*tx)
+            .await?;
+
+        Ok(users)
     }
 
     pub async fn update_channel_buffer(
@@ -399,7 +432,12 @@ impl Database {
         channel_id: ChannelId,
         user: UserId,
         operations: &[proto::Operation],
-    ) -> Result<Vec<ConnectionId>> {
+    ) -> Result<(
+        Vec<ConnectionId>,
+        Vec<UserId>,
+        i32,
+        Vec<proto::VectorClockEntry>,
+    )> {
         self.transaction(move |tx| async move {
             self.check_user_is_channel_member(channel_id, user, &*tx)
                 .await?;
@@ -418,7 +456,38 @@ impl Database {
                 .iter()
                 .filter_map(|op| operation_to_storage(op, &buffer, serialization_version))
                 .collect::<Vec<_>>();
+
+            let mut channel_members;
+            let max_version;
+
             if !operations.is_empty() {
+                let max_operation = operations
+                    .iter()
+                    .max_by_key(|op| (op.lamport_timestamp.as_ref(), op.replica_id.as_ref()))
+                    .unwrap();
+
+                max_version = vec![proto::VectorClockEntry {
+                    replica_id: *max_operation.replica_id.as_ref() as u32,
+                    timestamp: *max_operation.lamport_timestamp.as_ref() as u32,
+                }];
+
+                // get current channel participants and save the max operation above
+                self.save_max_operation(
+                    user,
+                    buffer.id,
+                    buffer.epoch,
+                    *max_operation.replica_id.as_ref(),
+                    *max_operation.lamport_timestamp.as_ref(),
+                    &*tx,
+                )
+                .await?;
+
+                channel_members = self.get_channel_members_internal(channel_id, &*tx).await?;
+                let collaborators = self
+                    .get_channel_buffer_collaborators_internal(channel_id, &*tx)
+                    .await?;
+                channel_members.retain(|member| !collaborators.contains(member));
+
                 buffer_operation::Entity::insert_many(operations)
                     .on_conflict(
                         OnConflict::columns([
@@ -432,6 +501,9 @@ impl Database {
                     )
                     .exec(&*tx)
                     .await?;
+            } else {
+                channel_members = Vec::new();
+                max_version = Vec::new();
             }
 
             let mut connections = Vec::new();
@@ -450,9 +522,51 @@ impl Database {
                 });
             }
 
-            Ok(connections)
+            Ok((connections, channel_members, buffer.epoch, max_version))
         })
         .await
+    }
+
+    async fn save_max_operation(
+        &self,
+        user_id: UserId,
+        buffer_id: BufferId,
+        epoch: i32,
+        replica_id: i32,
+        lamport_timestamp: i32,
+        tx: &DatabaseTransaction,
+    ) -> Result<()> {
+        use observed_buffer_edits::Column;
+
+        observed_buffer_edits::Entity::insert(observed_buffer_edits::ActiveModel {
+            user_id: ActiveValue::Set(user_id),
+            buffer_id: ActiveValue::Set(buffer_id),
+            epoch: ActiveValue::Set(epoch),
+            replica_id: ActiveValue::Set(replica_id),
+            lamport_timestamp: ActiveValue::Set(lamport_timestamp),
+        })
+        .on_conflict(
+            OnConflict::columns([Column::UserId, Column::BufferId])
+                .update_columns([Column::Epoch, Column::LamportTimestamp, Column::ReplicaId])
+                .action_cond_where(
+                    Condition::any().add(Column::Epoch.lt(epoch)).add(
+                        Condition::all().add(Column::Epoch.eq(epoch)).add(
+                            Condition::any()
+                                .add(Column::LamportTimestamp.lt(lamport_timestamp))
+                                .add(
+                                    Column::LamportTimestamp
+                                        .eq(lamport_timestamp)
+                                        .and(Column::ReplicaId.lt(replica_id)),
+                                ),
+                        ),
+                    ),
+                )
+                .to_owned(),
+        )
+        .exec_without_returning(tx)
+        .await?;
+
+        Ok(())
     }
 
     async fn get_buffer_operation_serialization_version(
@@ -472,7 +586,7 @@ impl Database {
             .ok_or_else(|| anyhow!("missing buffer snapshot"))?)
     }
 
-    async fn get_channel_buffer(
+    pub async fn get_channel_buffer(
         &self,
         channel_id: ChannelId,
         tx: &DatabaseTransaction,
@@ -491,7 +605,11 @@ impl Database {
         &self,
         buffer: &buffer::Model,
         tx: &DatabaseTransaction,
-    ) -> Result<(String, Vec<proto::Operation>)> {
+    ) -> Result<(
+        String,
+        Vec<proto::Operation>,
+        Option<buffer_operation::Model>,
+    )> {
         let id = buffer.id;
         let (base_text, version) = if buffer.epoch > 0 {
             let snapshot = buffer_snapshot::Entity::find()
@@ -516,16 +634,28 @@ impl Database {
                     .eq(id)
                     .and(buffer_operation::Column::Epoch.eq(buffer.epoch)),
             )
+            .order_by_asc(buffer_operation::Column::LamportTimestamp)
+            .order_by_asc(buffer_operation::Column::ReplicaId)
             .stream(&*tx)
             .await?;
+
         let mut operations = Vec::new();
+        let mut last_row = None;
         while let Some(row) = rows.next().await {
+            let row = row?;
+            last_row = Some(buffer_operation::Model {
+                buffer_id: row.buffer_id,
+                epoch: row.epoch,
+                lamport_timestamp: row.lamport_timestamp,
+                replica_id: row.lamport_timestamp,
+                value: Default::default(),
+            });
             operations.push(proto::Operation {
-                variant: Some(operation_from_storage(row?, version)?),
-            })
+                variant: Some(operation_from_storage(row, version)?),
+            });
         }
 
-        Ok((base_text, operations))
+        Ok((base_text, operations, last_row))
     }
 
     async fn snapshot_channel_buffer(
@@ -534,7 +664,7 @@ impl Database {
         tx: &DatabaseTransaction,
     ) -> Result<()> {
         let buffer = self.get_channel_buffer(channel_id, tx).await?;
-        let (base_text, operations) = self.get_buffer_state(&buffer, tx).await?;
+        let (base_text, operations, _) = self.get_buffer_state(&buffer, tx).await?;
         if operations.is_empty() {
             return Ok(());
         }
@@ -566,6 +696,150 @@ impl Database {
         .await?;
 
         Ok(())
+    }
+
+    pub async fn observe_buffer_version(
+        &self,
+        buffer_id: BufferId,
+        user_id: UserId,
+        epoch: i32,
+        version: &[proto::VectorClockEntry],
+    ) -> Result<()> {
+        self.transaction(|tx| async move {
+            // For now, combine concurrent operations.
+            let Some(component) = version.iter().max_by_key(|version| version.timestamp) else {
+                return Ok(());
+            };
+            self.save_max_operation(
+                user_id,
+                buffer_id,
+                epoch,
+                component.replica_id as i32,
+                component.timestamp as i32,
+                &*tx,
+            )
+            .await?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn unseen_channel_buffer_changes(
+        &self,
+        user_id: UserId,
+        channel_ids: &[ChannelId],
+        tx: &DatabaseTransaction,
+    ) -> Result<Vec<proto::UnseenChannelBufferChange>> {
+        #[derive(Debug, Clone, Copy, EnumIter, DeriveColumn)]
+        enum QueryIds {
+            ChannelId,
+            Id,
+        }
+
+        let mut channel_ids_by_buffer_id = HashMap::default();
+        let mut rows = buffer::Entity::find()
+            .filter(buffer::Column::ChannelId.is_in(channel_ids.iter().copied()))
+            .stream(&*tx)
+            .await?;
+        while let Some(row) = rows.next().await {
+            let row = row?;
+            channel_ids_by_buffer_id.insert(row.id, row.channel_id);
+        }
+        drop(rows);
+
+        let mut observed_edits_by_buffer_id = HashMap::default();
+        let mut rows = observed_buffer_edits::Entity::find()
+            .filter(observed_buffer_edits::Column::UserId.eq(user_id))
+            .filter(
+                observed_buffer_edits::Column::BufferId
+                    .is_in(channel_ids_by_buffer_id.keys().copied()),
+            )
+            .stream(&*tx)
+            .await?;
+        while let Some(row) = rows.next().await {
+            let row = row?;
+            observed_edits_by_buffer_id.insert(row.buffer_id, row);
+        }
+        drop(rows);
+
+        let latest_operations = self
+            .get_latest_operations_for_buffers(channel_ids_by_buffer_id.keys().copied(), &*tx)
+            .await?;
+
+        let mut changes = Vec::default();
+        for latest in latest_operations {
+            if let Some(observed) = observed_edits_by_buffer_id.get(&latest.buffer_id) {
+                if (
+                    observed.epoch,
+                    observed.lamport_timestamp,
+                    observed.replica_id,
+                ) >= (latest.epoch, latest.lamport_timestamp, latest.replica_id)
+                {
+                    continue;
+                }
+            }
+
+            if let Some(channel_id) = channel_ids_by_buffer_id.get(&latest.buffer_id) {
+                changes.push(proto::UnseenChannelBufferChange {
+                    channel_id: channel_id.to_proto(),
+                    epoch: latest.epoch as u64,
+                    version: vec![proto::VectorClockEntry {
+                        replica_id: latest.replica_id as u32,
+                        timestamp: latest.lamport_timestamp as u32,
+                    }],
+                });
+            }
+        }
+
+        Ok(changes)
+    }
+
+    pub async fn get_latest_operations_for_buffers(
+        &self,
+        buffer_ids: impl IntoIterator<Item = BufferId>,
+        tx: &DatabaseTransaction,
+    ) -> Result<Vec<buffer_operation::Model>> {
+        let mut values = String::new();
+        for id in buffer_ids {
+            if !values.is_empty() {
+                values.push_str(", ");
+            }
+            write!(&mut values, "({})", id).unwrap();
+        }
+
+        if values.is_empty() {
+            return Ok(Vec::default());
+        }
+
+        let sql = format!(
+            r#"
+            SELECT
+                *
+            FROM
+            (
+                SELECT
+                    *,
+                    row_number() OVER (
+                        PARTITION BY buffer_id
+                        ORDER BY
+                            epoch DESC,
+                            lamport_timestamp DESC,
+                            replica_id DESC
+                    ) as row_number
+                FROM buffer_operations
+                WHERE
+                    buffer_id in ({values})
+            ) AS last_operations
+            WHERE
+                row_number = 1
+            "#,
+        );
+
+        let stmt = Statement::from_string(self.pool.get_database_backend(), sql);
+        Ok(buffer_operation::Entity::find()
+            .from_raw_sql(stmt)
+            .all(&*tx)
+            .await?)
     }
 }
 
