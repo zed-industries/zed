@@ -89,17 +89,14 @@ impl Database {
 
             let mut rows = channel_message::Entity::find()
                 .filter(condition)
+                .order_by_asc(channel_message::Column::Id)
                 .limit(count as u64)
                 .stream(&*tx)
                 .await?;
 
-            let mut max_id = None;
             let mut messages = Vec::new();
             while let Some(row) = rows.next().await {
                 let row = row?;
-
-                max_assign(&mut max_id, row.id);
-
                 let nonce = row.nonce.as_u64_pair();
                 messages.push(proto::ChannelMessage {
                     id: row.id.to_proto(),
@@ -113,50 +110,6 @@ impl Database {
                 });
             }
             drop(rows);
-
-            if let Some(max_id) = max_id {
-                let has_older_message = observed_channel_messages::Entity::find()
-                    .filter(
-                        observed_channel_messages::Column::UserId
-                            .eq(user_id)
-                            .and(observed_channel_messages::Column::ChannelId.eq(channel_id))
-                            .and(observed_channel_messages::Column::ChannelMessageId.lt(max_id)),
-                    )
-                    .one(&*tx)
-                    .await?
-                    .is_some();
-
-                if has_older_message {
-                    observed_channel_messages::Entity::update(
-                        observed_channel_messages::ActiveModel {
-                            user_id: ActiveValue::Unchanged(user_id),
-                            channel_id: ActiveValue::Unchanged(channel_id),
-                            channel_message_id: ActiveValue::Set(max_id),
-                        },
-                    )
-                    .exec(&*tx)
-                    .await?;
-                } else {
-                    observed_channel_messages::Entity::insert(
-                        observed_channel_messages::ActiveModel {
-                            user_id: ActiveValue::Set(user_id),
-                            channel_id: ActiveValue::Set(channel_id),
-                            channel_message_id: ActiveValue::Set(max_id),
-                        },
-                    )
-                    .on_conflict(
-                        OnConflict::columns([
-                            observed_channel_messages::Column::UserId,
-                            observed_channel_messages::Column::ChannelId,
-                        ])
-                        .update_columns([observed_channel_messages::Column::ChannelMessageId])
-                        .to_owned(),
-                    )
-                    .exec(&*tx)
-                    .await?;
-                }
-            }
-
             Ok(messages)
         })
         .await
