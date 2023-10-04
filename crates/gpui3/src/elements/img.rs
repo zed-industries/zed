@@ -75,12 +75,9 @@ impl<S: Send + Sync + 'static> Element for Img<S> {
                 let corner_radii = style.corner_radii.to_pixels(bounds, cx.rem_size());
                 cx.paint_image(bounds, corner_radii, order, data, self.grayscale)?;
             } else {
-                dbg!("not loaded");
                 cx.spawn(|view, mut cx| async move {
-                    dbg!("awaiting image future");
                     if image_future.await.log_err().is_some() {
                         view.update(&mut cx, |_, cx| {
-                            dbg!("image future loaded");
                             cx.notify();
                         })
                         .ok();

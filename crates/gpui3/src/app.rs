@@ -165,8 +165,6 @@ impl AppContext {
             })
             .collect::<Vec<_>>();
 
-        dbg!(&dirty_window_ids);
-
         for dirty_window_id in dirty_window_ids {
             self.update_window(dirty_window_id, |cx| cx.draw())
                 .unwrap()

@@ -109,7 +109,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 
     pub fn notify(&mut self) {
-        dbg!("ViewContext::notify");
         self.window.dirty = true;
     }
 
@@ -598,7 +597,6 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
     }
 
     pub fn notify(&mut self) {
-        dbg!("ViewContext::notify");
         self.window_cx.notify();
         self.window_cx
             .app
