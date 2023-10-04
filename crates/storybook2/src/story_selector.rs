@@ -12,6 +12,7 @@ use crate::ui::prelude::*;
 #[derive(Debug, PartialEq, Eq, Clone, Copy, strum::Display, EnumString, EnumIter)]
 #[strum(serialize_all = "snake_case")]
 pub enum ElementStory {
+    Icon,
     Label,
 }
 
@@ -20,6 +21,7 @@ impl ElementStory {
         use crate::stories::elements;
 
         match self {
+            Self::Icon => elements::icon::IconStory::new().into_any(),
             Self::Label => elements::label::LabelStory::new().into_any(),
         }
     }

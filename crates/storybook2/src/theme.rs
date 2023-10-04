@@ -1,8 +1,10 @@
+use std::sync::Arc;
+use std::{collections::HashMap, fmt};
+
 use gpui3::{
     BorrowAppContext, Element, Hsla, Layout, LayoutId, Result, ViewContext, WindowContext,
 };
 use serde::{de::Visitor, Deserialize, Deserializer};
-use std::{collections::HashMap, fmt};
 
 #[derive(Deserialize, Clone, Default, Debug)]
 pub struct Theme {
@@ -190,6 +192,6 @@ impl<E: Element> Element for Themed<E> {
 //         .clone()
 // }
 
-pub fn theme<'a>(cx: &'a WindowContext) -> &'a Theme {
-    cx.state()
+pub fn theme(cx: &WindowContext) -> Arc<Theme> {
+    Arc::new(cx.state::<Theme>().clone())
 }

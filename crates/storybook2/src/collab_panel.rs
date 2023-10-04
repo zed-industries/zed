@@ -51,12 +51,12 @@ impl CollabPanel {
                             //:: https://tailwindcss.com/docs/hover-focus-and-other-states#styling-based-on-parent-state
                             // .group()
                             // List Section Header
-                            .child(self.list_section_header("#CRDB 🗃️", true, theme))
+                            .child(self.list_section_header("#CRDB 🗃️", true, &theme))
                             // List Item Large
                             .child(self.list_item(
                                 "http://github.com/maxbrunsfeld.png?s=50",
                                 "maxbrunsfeld",
-                                theme,
+                                &theme,
                             )),
                     )
                     .child(
@@ -64,31 +64,31 @@ impl CollabPanel {
                             .py_2()
                             .flex()
                             .flex_col()
-                            .child(self.list_section_header("CHANNELS", true, theme)),
+                            .child(self.list_section_header("CHANNELS", true, &theme)),
                     )
                     .child(
                         div()
                             .py_2()
                             .flex()
                             .flex_col()
-                            .child(self.list_section_header("CONTACTS", true, theme))
+                            .child(self.list_section_header("CONTACTS", true, &theme))
                             .children(
                                 std::iter::repeat_with(|| {
                                     vec![
                                         self.list_item(
                                             "http://github.com/as-cii.png?s=50",
                                             "as-cii",
-                                            theme,
+                                            &theme,
                                         ),
                                         self.list_item(
                                             "http://github.com/nathansobo.png?s=50",
                                             "nathansobo",
-                                            theme,
+                                            &theme,
                                         ),
                                         self.list_item(
                                             "http://github.com/maxbrunsfeld.png?s=50",
                                             "maxbrunsfeld",
-                                            theme,
+                                            &theme,
                                         ),
                                     ]
                                 })
