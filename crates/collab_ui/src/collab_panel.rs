@@ -1937,6 +1937,8 @@ impl CollabPanel {
             is_dragged_over = true;
         }
 
+        let has_messages_notification = channel.unseen_message_id.is_some();
+
         MouseEventHandler::new::<Channel, _>(ix, cx, |state, cx| {
             let row_hovered = state.hovered();
 
@@ -2022,24 +2024,33 @@ impl CollabPanel {
                         .flex(1., true)
                 })
                 .with_child(
-                    MouseEventHandler::new::<ChannelNote, _>(ix, cx, move |_, _| {
+                    MouseEventHandler::new::<ChannelNote, _>(ix, cx, move |mouse_state, _| {
+                        let container_style = collab_theme
+                            .disclosure
+                            .button
+                            .style_for(mouse_state)
+                            .container;
+
                         if channel.unseen_message_id.is_some() {
                             Svg::new("icons/conversations.svg")
                                 .with_color(collab_theme.channel_note_active_color)
                                 .constrained()
                                 .with_width(collab_theme.channel_hash.width)
+                                .contained()
+                                .with_style(container_style)
+                                .with_uniform_padding(4.)
                                 .into_any()
                         } else if row_hovered {
                             Svg::new("icons/conversations.svg")
                                 .with_color(collab_theme.channel_hash.color)
                                 .constrained()
                                 .with_width(collab_theme.channel_hash.width)
+                                .contained()
+                                .with_style(container_style)
+                                .with_uniform_padding(4.)
                                 .into_any()
                         } else {
-                            Empty::new()
-                                .constrained()
-                                .with_width(collab_theme.channel_hash.width)
-                                .into_any()
+                            Empty::new().into_any()
                         }
                     })
                     .on_click(MouseButton::Left, move |_, this, cx| {
@@ -2056,7 +2067,12 @@ impl CollabPanel {
                     .with_margin_right(4.),
                 )
                 .with_child(
-                    MouseEventHandler::new::<ChannelCall, _>(ix, cx, move |_, cx| {
+                    MouseEventHandler::new::<ChannelCall, _>(ix, cx, move |mouse_state, cx| {
+                        let container_style = collab_theme
+                            .disclosure
+                            .button
+                            .style_for(mouse_state)
+                            .container;
                         if row_hovered || channel.unseen_note_version.is_some() {
                             Svg::new("icons/file.svg")
                                 .with_color(if channel.unseen_note_version.is_some() {
@@ -2067,6 +2083,8 @@ impl CollabPanel {
                                 .constrained()
                                 .with_width(collab_theme.channel_hash.width)
                                 .contained()
+                                .with_style(container_style)
+                                .with_uniform_padding(4.)
                                 .with_margin_right(collab_theme.channel_hash.container.margin.left)
                                 .with_tooltip::<NotesTooltip>(
                                     ix as usize,
@@ -2076,13 +2094,16 @@ impl CollabPanel {
                                     cx,
                                 )
                                 .into_any()
-                        } else {
+                        } else if has_messages_notification {
                             Empty::new()
                                 .constrained()
                                 .with_width(collab_theme.channel_hash.width)
                                 .contained()
+                                .with_uniform_padding(4.)
                                 .with_margin_right(collab_theme.channel_hash.container.margin.left)
                                 .into_any()
+                        } else {
+                            Empty::new().into_any()
                         }
                     })
                     .on_click(MouseButton::Left, move |_, this, cx| {

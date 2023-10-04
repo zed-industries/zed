@@ -87,7 +87,19 @@ export default function chat_panel(): any {
                 ...text(layer, "sans", "base", { weight: "bold" }),
             },
             timestamp: text(layer, "sans", "base", "disabled"),
-            margin: { bottom: SPACING }
+            margin: { top: SPACING }
+        },
+        last_message_bottom_spacing: SPACING,
+        continuation_message: {
+            body: text(layer, "sans", "base"),
+            sender: {
+                margin: {
+                    right: 8,
+                },
+                ...text(layer, "sans", "base", { weight: "bold" }),
+            },
+            timestamp: text(layer, "sans", "base", "disabled"),
+
         },
         pending_message: {
             body: text(layer, "sans", "base"),
