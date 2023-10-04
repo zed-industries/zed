@@ -6,11 +6,11 @@ use crate::ui::Label;
 use crate::story::Story;
 
 #[derive(Element)]
-pub struct LabelStory<S: 'static + Send + Sync> {
+pub struct LabelStory<S: 'static + Send + Sync + Clone> {
     state_type: PhantomData<S>,
 }
 
-impl<S: 'static + Send + Sync> LabelStory<S> {
+impl<S: 'static + Send + Sync + Clone> LabelStory<S> {
     pub fn new() -> Self {
         Self {
             state_type: PhantomData,

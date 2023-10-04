@@ -46,7 +46,7 @@ pub enum LabelSize {
 }
 
 #[derive(Element, Clone)]
-pub struct Label<S: 'static + Send + Sync> {
+pub struct Label<S: 'static + Send + Sync + Clone> {
     state_type: PhantomData<S>,
     label: String,
     color: LabelColor,
@@ -55,7 +55,7 @@ pub struct Label<S: 'static + Send + Sync> {
     strikethrough: bool,
 }
 
-impl<S: 'static + Send + Sync> Label<S> {
+impl<S: 'static + Send + Sync + Clone> Label<S> {
     pub fn new<L>(label: L) -> Self
     where
         L: Into<String>,

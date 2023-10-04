@@ -6,11 +6,11 @@ use crate::ui::{Label, Panel};
 use crate::story::Story;
 
 #[derive(Element)]
-pub struct PanelStory<S: 'static + Send + Sync> {
+pub struct PanelStory<S: 'static + Send + Sync + Clone> {
     state_type: PhantomData<S>,
 }
 
-impl<S: 'static + Send + Sync> PanelStory<S> {
+impl<S: 'static + Send + Sync + Clone> PanelStory<S> {
     pub fn new() -> Self {
         Self {
             state_type: PhantomData,

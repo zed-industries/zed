@@ -18,7 +18,7 @@ pub enum ElementStory {
 }
 
 impl ElementStory {
-    pub fn story<S: 'static + Send + Sync>(&self) -> AnyElement<S> {
+    pub fn story<S: 'static + Send + Sync + Clone>(&self) -> AnyElement<S> {
         use crate::stories::elements;
 
         match self {
@@ -36,7 +36,7 @@ pub enum ComponentStory {
 }
 
 impl ComponentStory {
-    pub fn story<S: 'static + Send + Sync>(&self) -> AnyElement<S> {
+    pub fn story<S: 'static + Send + Sync + Clone>(&self) -> AnyElement<S> {
         use crate::stories::components;
 
         match self {
@@ -81,7 +81,7 @@ impl FromStr for StorySelector {
 }
 
 impl StorySelector {
-    pub fn story<S: 'static + Send + Sync>(&self) -> AnyElement<S> {
+    pub fn story<S: 'static + Send + Sync + Clone>(&self) -> AnyElement<S> {
         match self {
             Self::Element(element_story) => element_story.story(),
             Self::Component(component_story) => component_story.story(),

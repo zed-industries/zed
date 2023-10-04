@@ -7,11 +7,11 @@ use crate::story_selector::{ComponentStory, ElementStory};
 use crate::ui::prelude::*;
 
 #[derive(Element)]
-pub struct KitchenSinkStory<S: 'static + Send + Sync> {
+pub struct KitchenSinkStory<S: 'static + Send + Sync + Clone> {
     state_type: PhantomData<S>,
 }
 
-impl<S: 'static + Send + Sync> KitchenSinkStory<S> {
+impl<S: 'static + Send + Sync + Clone> KitchenSinkStory<S> {
     pub fn new() -> Self {
         Self {
             state_type: PhantomData,
