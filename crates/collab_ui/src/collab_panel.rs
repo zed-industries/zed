@@ -3208,27 +3208,16 @@ impl CollabPanel {
                 .update(&mut cx, |call, cx| call.join_channel(channel_id, cx))
                 .await?;
 
-            let tasks = room.update(&mut cx, |room, cx| {
-                let Some(workspace) = workspace.upgrade(cx) else {
-                    return vec![];
-                };
-                let projects = room.projects_to_join();
-
-                if projects.is_empty() {
-                    ChannelView::open(channel_id, workspace, cx).detach();
-                    return vec![];
-                }
-                room.projects_to_join()
-                    .into_iter()
-                    .map(|(project_id, user_id)| {
-                        let app_state = workspace.read(cx).app_state().clone();
-                        workspace::join_remote_project(project_id, user_id, app_state, cx)
-                    })
-                    .collect()
+            let task = room.update(&mut cx, |room, cx| {
+                let workspace = workspace.upgrade(cx)?;
+                let (project, host) = room.most_active_project()?;
+                let app_state = workspace.read(cx).app_state().clone();
+                Some(workspace::join_remote_project(project, host, app_state, cx))
             });
-            for task in tasks {
+            if let Some(task) = task {
                 task.await?;
             }
+
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
