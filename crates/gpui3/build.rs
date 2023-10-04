@@ -19,6 +19,8 @@ fn generate_dispatch_bindings() {
     let bindings = bindgen::Builder::default()
         .header("src/platform/mac/dispatch.h")
         .allowlist_var("_dispatch_main_q")
+        .allowlist_var("DISPATCH_QUEUE_PRIORITY_DEFAULT")
+        .allowlist_function("dispatch_get_global_queue")
         .allowlist_function("dispatch_async_f")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         .layout_tests(false)

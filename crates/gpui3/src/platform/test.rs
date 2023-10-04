@@ -1,5 +1,5 @@
 use super::Platform;
-use crate::ScreenId;
+use crate::{Executor, ScreenId};
 
 pub struct TestPlatform;
 
@@ -11,7 +11,7 @@ impl TestPlatform {
 
 // todo!("implement out what our tests needed in GPUI 1")
 impl Platform for TestPlatform {
-    fn dispatcher(&self) -> std::sync::Arc<dyn crate::PlatformDispatcher> {
+    fn executor(&self) -> Executor {
         unimplemented!()
     }
 

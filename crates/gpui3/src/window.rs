@@ -53,8 +53,7 @@ impl Window {
             }
         }));
 
-        let platform_window =
-            MainThreadOnly::new(Arc::new(platform_window), cx.platform().dispatcher());
+        let platform_window = MainThreadOnly::new(Arc::new(platform_window), cx.executor.clone());
 
         Window {
             handle,
@@ -122,7 +121,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         R: Send + 'static,
     {
         let (tx, rx) = oneshot::channel();
-        if self.dispatcher.is_main_thread() {
+        if self.executor.is_main_thread() {
             let _ = tx.send(f(unsafe {
                 mem::transmute::<&mut Self, &mut MainThread<Self>>(self)
             }));
@@ -600,7 +599,7 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
         R: Send + 'static,
     {
         let (tx, rx) = oneshot::channel();
-        if self.dispatcher.is_main_thread() {
+        if self.executor.is_main_thread() {
             let cx = unsafe { mem::transmute::<&mut Self, &mut MainThread<Self>>(self) };
             let _ = tx.send(f(view, cx));
         } else {

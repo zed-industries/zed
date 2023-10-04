@@ -227,14 +227,14 @@ impl<'a, T> DerefMut for Reference<'a, T> {
 }
 
 pub(crate) struct MainThreadOnly<T: ?Sized> {
-    dispatcher: Arc<dyn PlatformDispatcher>,
+    executor: Executor,
     value: Arc<T>,
 }
 
 impl<T: ?Sized> Clone for MainThreadOnly<T> {
     fn clone(&self) -> Self {
         Self {
-            dispatcher: self.dispatcher.clone(),
+            executor: self.executor.clone(),
             value: self.value.clone(),
         }
     }
@@ -243,12 +243,12 @@ impl<T: ?Sized> Clone for MainThreadOnly<T> {
 /// Allows a value to be accessed only on the main thread, allowing a non-`Send` type
 /// to become `Send`.
 impl<T: 'static + ?Sized> MainThreadOnly<T> {
-    pub(crate) fn new(value: Arc<T>, dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
-        Self { dispatcher, value }
+    pub(crate) fn new(value: Arc<T>, executor: Executor) -> Self {
+        Self { executor, value }
     }
 
     pub(crate) fn borrow_on_main_thread(&self) -> &T {
-        assert!(self.dispatcher.is_main_thread());
+        assert!(self.executor.is_main_thread());
         &self.value
     }
 }

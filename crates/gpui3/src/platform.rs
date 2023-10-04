@@ -7,8 +7,8 @@ mod test;
 
 use crate::image_cache::RenderImageParams;
 use crate::{
-    AnyWindowHandle, Bounds, DevicePixels, Font, FontId, FontMetrics, GlyphId, Pixels, Point,
-    RenderGlyphParams, RenderSvgParams, Result, Scene, ShapedLine, SharedString, Size,
+    AnyWindowHandle, Bounds, DevicePixels, Executor, Font, FontId, FontMetrics, GlyphId, Pixels,
+    Point, RenderGlyphParams, RenderSvgParams, Result, Scene, ShapedLine, SharedString, Size,
 };
 use anyhow::anyhow;
 use async_task::Runnable;
@@ -43,7 +43,7 @@ pub(crate) fn current_platform() -> Arc<dyn Platform> {
 }
 
 pub trait Platform: 'static {
-    fn dispatcher(&self) -> Arc<dyn PlatformDispatcher>;
+    fn executor(&self) -> Executor;
     fn text_system(&self) -> Arc<dyn PlatformTextSystem>;
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>);
@@ -154,7 +154,8 @@ pub trait PlatformWindow {
 
 pub trait PlatformDispatcher: Send + Sync {
     fn is_main_thread(&self) -> bool;
-    fn run_on_main_thread(&self, task: Runnable);
+    fn dispatch(&self, task: Runnable);
+    fn dispatch_on_main_thread(&self, task: Runnable);
 }
 
 pub trait PlatformTextSystem: Send + Sync {

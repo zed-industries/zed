@@ -25,7 +25,17 @@ impl PlatformDispatcher for MacDispatcher {
         is_main_thread == YES
     }
 
-    fn run_on_main_thread(&self, runnable: Runnable) {
+    fn dispatch(&self, runnable: Runnable) {
+        unsafe {
+            dispatch_async_f(
+                dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT.try_into().unwrap(), 0),
+                runnable.into_raw() as *mut c_void,
+                Some(trampoline),
+            );
+        }
+    }
+
+    fn dispatch_on_main_thread(&self, runnable: Runnable) {
         unsafe {
             dispatch_async_f(
                 dispatch_get_main_queue(),
@@ -33,10 +43,31 @@ impl PlatformDispatcher for MacDispatcher {
                 Some(trampoline),
             );
         }
-
-        extern "C" fn trampoline(runnable: *mut c_void) {
-            let task = unsafe { Runnable::from_raw(runnable as *mut ()) };
-            task.run();
-        }
     }
 }
+
+extern "C" fn trampoline(runnable: *mut c_void) {
+    let task = unsafe { Runnable::from_raw(runnable as *mut ()) };
+    task.run();
+}
+
+// #include <dispatch/dispatch.h>
+
+// int main(void) {
+
+//     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+//         // Do some lengthy background work here...
+//         printf("Background Work\n");
+
+//         dispatch_async(dispatch_get_main_queue(), ^{
+//             // Once done, update your UI on the main queue here.
+//             printf("UI Updated\n");
+
+//         });
+//     });
+
+//     sleep(3);  // prevent the program from terminating immediately
+
+//     return 0;
+// }
+// ```

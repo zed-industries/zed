@@ -8,9 +8,9 @@ pub use model_context::*;
 use refineable::Refineable;
 
 use crate::{
-    current_platform, image_cache::ImageCache, run_on_main, spawn_on_main, AssetSource, Context,
-    LayoutId, MainThread, MainThreadOnly, Platform, PlatformDispatcher, RootView, SvgRenderer,
-    TextStyle, TextStyleRefinement, TextSystem, Window, WindowContext, WindowHandle, WindowId,
+    current_platform, image_cache::ImageCache, AssetSource, Context, Executor, LayoutId,
+    MainThread, MainThreadOnly, Platform, RootView, SvgRenderer, Task, TextStyle,
+    TextStyleRefinement, TextSystem, Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, VecDeque};
@@ -50,15 +50,15 @@ impl App {
         asset_source: Arc<dyn AssetSource>,
         http_client: Arc<dyn HttpClient>,
     ) -> Self {
-        let dispatcher = platform.dispatcher();
+        let executor = platform.executor();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
         let entities = EntityMap::new();
         let unit_entity = entities.redeem(entities.reserve(), ());
         Self(Arc::new_cyclic(|this| {
             Mutex::new(MainThread::new(AppContext {
                 this: this.clone(),
-                platform: MainThreadOnly::new(platform, dispatcher.clone()),
-                dispatcher,
+                platform: MainThreadOnly::new(platform, executor.clone()),
+                executor,
                 text_system,
                 svg_renderer: SvgRenderer::new(asset_source),
                 image_cache: ImageCache::new(http_client),
@@ -95,7 +95,7 @@ pub struct AppContext {
     platform: MainThreadOnly<dyn Platform>,
     text_system: Arc<TextSystem>,
     pending_updates: usize,
-    pub(crate) dispatcher: Arc<dyn PlatformDispatcher>,
+    pub(crate) executor: Executor,
     pub(crate) svg_renderer: SvgRenderer,
     pub(crate) image_cache: ImageCache,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
@@ -184,6 +184,10 @@ impl AppContext {
         AsyncContext(unsafe { mem::transmute(self.this.clone()) })
     }
 
+    pub fn executor(&self) -> &Executor {
+        &self.executor
+    }
+
     pub fn run_on_main<R>(
         &mut self,
         f: impl FnOnce(&mut MainThread<AppContext>) -> R + Send + 'static,
@@ -192,20 +196,22 @@ impl AppContext {
         R: Send + 'static,
     {
         let (tx, rx) = oneshot::channel();
-        if self.dispatcher.is_main_thread() {
+        if self.executor.is_main_thread() {
             let _ = tx.send(f(unsafe {
                 mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(self)
             }));
         } else {
             let this = self.this.upgrade().unwrap();
-            let _ = run_on_main(self.dispatcher.clone(), move || {
-                let cx = &mut *this.lock();
-                cx.update(|cx| {
-                    let _ = tx.send(f(unsafe {
-                        mem::transmute::<&mut Self, &mut MainThread<Self>>(cx)
-                    }));
+            self.executor
+                .run_on_main(move || {
+                    let cx = &mut *this.lock();
+                    cx.update(|cx| {
+                        let _ = tx.send(f(unsafe {
+                            mem::transmute::<&mut Self, &mut MainThread<Self>>(cx)
+                        }));
+                    })
                 })
-            });
+                .detach();
         }
         async move { rx.await.unwrap() }
     }
@@ -213,13 +219,13 @@ impl AppContext {
     pub fn spawn_on_main<F, R>(
         &self,
         f: impl FnOnce(&mut MainThread<AppContext>) -> F + Send + 'static,
-    ) -> impl Future<Output = R>
+    ) -> Task<R>
     where
         F: Future<Output = R> + 'static,
         R: Send + 'static,
     {
         let this = self.this.upgrade().unwrap();
-        spawn_on_main(self.dispatcher.clone(), move || {
+        self.executor.spawn_on_main(move || {
             let cx = &mut *this.lock();
             cx.update(|cx| {
                 f(unsafe { mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(cx) })

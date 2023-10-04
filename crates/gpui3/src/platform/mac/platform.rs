@@ -1,8 +1,8 @@
 use super::BoolExt;
 use crate::{
-    AnyWindowHandle, ClipboardItem, CursorStyle, Event, MacDispatcher, MacScreen, MacTextSystem,
-    MacWindow, PathPromptOptions, Platform, PlatformScreen, PlatformTextSystem, PlatformWindow,
-    Result, ScreenId, SemanticVersion, WindowOptions,
+    AnyWindowHandle, ClipboardItem, CursorStyle, Event, Executor, MacDispatcher, MacScreen,
+    MacTextSystem, MacWindow, PathPromptOptions, Platform, PlatformScreen, PlatformTextSystem,
+    PlatformWindow, Result, ScreenId, SemanticVersion, WindowOptions,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -142,7 +142,7 @@ unsafe fn build_classes() {
 pub struct MacPlatform(Mutex<MacPlatformState>);
 
 pub struct MacPlatformState {
-    dispatcher: Arc<MacDispatcher>,
+    executor: Executor,
     text_system: Arc<MacTextSystem>,
     pasteboard: id,
     text_hash_pasteboard_type: id,
@@ -163,7 +163,7 @@ pub struct MacPlatformState {
 impl MacPlatform {
     pub fn new() -> Self {
         Self(Mutex::new(MacPlatformState {
-            dispatcher: Arc::new(MacDispatcher),
+            executor: Executor::new(Arc::new(MacDispatcher)),
             text_system: Arc::new(MacTextSystem::new()),
             pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },
             text_hash_pasteboard_type: unsafe { ns_string("zed-text-hash") },
@@ -343,8 +343,8 @@ impl MacPlatform {
 }
 
 impl Platform for MacPlatform {
-    fn dispatcher(&self) -> Arc<dyn crate::PlatformDispatcher> {
-        Arc::new(MacDispatcher)
+    fn executor(&self) -> Executor {
+        self.0.lock().executor.clone()
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
@@ -479,7 +479,7 @@ impl Platform for MacPlatform {
         handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow> {
-        Box::new(MacWindow::open(handle, options, self))
+        Box::new(MacWindow::open(handle, options, self.executor()))
     }
 
     fn open_url(&self, url: &str) {
@@ -566,17 +566,20 @@ impl Platform for MacPlatform {
     fn reveal_path(&self, path: &Path) {
         unsafe {
             let path = path.to_path_buf();
-            let dispatcher = self.0.lock().dispatcher.clone();
-            let _ = crate::spawn_on_main_local(dispatcher, async move {
-                let full_path = ns_string(path.to_str().unwrap_or(""));
-                let root_full_path = ns_string("");
-                let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
-                let _: BOOL = msg_send![
-                    workspace,
-                    selectFile: full_path
-                    inFileViewerRootedAtPath: root_full_path
-                ];
-            });
+            self.0
+                .lock()
+                .executor
+                .spawn_on_main_local(async move {
+                    let full_path = ns_string(path.to_str().unwrap_or(""));
+                    let root_full_path = ns_string("");
+                    let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+                    let _: BOOL = msg_send![
+                        workspace,
+                        selectFile: full_path
+                        inFileViewerRootedAtPath: root_full_path
+                    ];
+                })
+                .detach();
         }
     }
 

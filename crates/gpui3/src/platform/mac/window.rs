@@ -1,10 +1,10 @@
 use super::{ns_string, MetalRenderer, NSRange};
 use crate::{
-    point, px, size, AnyWindowHandle, Bounds, Event, KeyDownEvent, Keystroke, MacScreen, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMovedEvent, MouseUpEvent, NSRectExt,
-    Pixels, Platform, PlatformAtlas, PlatformDispatcher, PlatformInputHandler, PlatformScreen,
-    PlatformWindow, Point, Scene, Size, Timer, WindowAppearance, WindowBounds, WindowKind,
-    WindowOptions, WindowPromptLevel,
+    point, px, size, AnyWindowHandle, Bounds, Event, Executor, KeyDownEvent, Keystroke, MacScreen,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMovedEvent, MouseUpEvent,
+    NSRectExt, Pixels, PlatformAtlas, PlatformInputHandler, PlatformScreen, PlatformWindow, Point,
+    Scene, Size, Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions,
+    WindowPromptLevel,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -279,7 +279,7 @@ struct InsertText {
 
 struct MacWindowState {
     handle: AnyWindowHandle,
-    dispatcher: Arc<dyn PlatformDispatcher>,
+    executor: Executor,
     native_window: id,
     renderer: MetalRenderer,
     scene_to_render: Option<Scene>,
@@ -415,7 +415,7 @@ unsafe impl Send for MacWindowState {}
 pub struct MacWindow(Arc<Mutex<MacWindowState>>);
 
 impl MacWindow {
-    pub fn open(handle: AnyWindowHandle, options: WindowOptions, platform: &dyn Platform) -> Self {
+    pub fn open(handle: AnyWindowHandle, options: WindowOptions, executor: Executor) -> Self {
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
 
@@ -479,7 +479,7 @@ impl MacWindow {
 
             let window = Self(Arc::new(Mutex::new(MacWindowState {
                 handle,
-                dispatcher: platform.dispatcher(),
+                executor,
                 native_window,
                 renderer: MetalRenderer::new(true),
                 scene_to_render: None,
@@ -616,12 +616,12 @@ impl MacWindow {
 impl Drop for MacWindow {
     fn drop(&mut self) {
         let this = self.0.clone();
-        let dispatcher = self.0.lock().dispatcher.clone();
-        let _ = crate::spawn_on_main(dispatcher, || async move {
-            unsafe {
+        let executor = self.0.lock().executor.clone();
+        executor
+            .run_on_main(move || unsafe {
                 this.lock().native_window.close();
-            }
-        });
+            })
+            .detach();
     }
 }
 
@@ -739,14 +739,16 @@ impl PlatformWindow for MacWindow {
             });
             let block = block.copy();
             let native_window = self.0.lock().native_window;
-            let dispatcher = self.0.lock().dispatcher.clone();
-            let _ = crate::spawn_on_main_local(dispatcher, async move {
-                let _: () = msg_send![
-                    alert,
-                    beginSheetModalForWindow: native_window
-                    completionHandler: block
-                ];
-            });
+            let executor = self.0.lock().executor.clone();
+            executor
+                .spawn_on_main_local(async move {
+                    let _: () = msg_send![
+                        alert,
+                        beginSheetModalForWindow: native_window
+                        completionHandler: block
+                    ];
+                })
+                .detach();
 
             done_rx
         }
@@ -754,12 +756,14 @@ impl PlatformWindow for MacWindow {
 
     fn activate(&self) {
         let window = self.0.lock().native_window;
-        let dispatcher = self.0.lock().dispatcher.clone();
-        let _ = crate::spawn_on_main_local(dispatcher.clone(), async move {
-            unsafe {
-                let _: () = msg_send![window, makeKeyAndOrderFront: nil];
-            }
-        });
+        let executor = self.0.lock().executor.clone();
+        executor
+            .spawn_on_main_local(async move {
+                unsafe {
+                    let _: () = msg_send![window, makeKeyAndOrderFront: nil];
+                }
+            })
+            .detach();
     }
 
     fn set_title(&mut self, title: &str) {
@@ -802,23 +806,25 @@ impl PlatformWindow for MacWindow {
     fn zoom(&self) {
         let this = self.0.lock();
         let window = this.native_window;
-        let dispatcher = this.dispatcher.clone();
-        let _ = crate::spawn_on_main_local(dispatcher, async move {
-            unsafe {
-                window.zoom_(nil);
-            }
-        });
+        this.executor
+            .spawn_on_main_local(async move {
+                unsafe {
+                    window.zoom_(nil);
+                }
+            })
+            .detach();
     }
 
     fn toggle_full_screen(&self) {
         let this = self.0.lock();
         let window = this.native_window;
-        let dispatcher = this.dispatcher.clone();
-        let _ = crate::spawn_on_main_local(dispatcher, async move {
-            unsafe {
-                window.toggleFullScreen_(nil);
-            }
-        });
+        this.executor
+            .spawn_on_main_local(async move {
+                unsafe {
+                    window.toggleFullScreen_(nil);
+                }
+            })
+            .detach();
     }
 
     fn on_event(&self, callback: Box<dyn FnMut(Event) -> bool>) {
@@ -1114,15 +1120,14 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                 },
             ) => {
                 lock.synthetic_drag_counter += 1;
-                let dispatcher = lock.dispatcher.clone();
-                let _ = crate::spawn_on_main_local(
-                    dispatcher,
-                    synthetic_drag(
+                let executor = lock.executor.clone();
+                executor
+                    .spawn_on_main_local(synthetic_drag(
                         weak_window_state,
                         lock.synthetic_drag_counter,
                         event.clone(),
-                    ),
-                );
+                    ))
+                    .detach();
             }
 
             Event::MouseMoved(_) if !(is_active || lock.kind == WindowKind::PopUp) => return,
@@ -1241,16 +1246,18 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
         }
     }
 
-    let dispatcher = lock.dispatcher.clone();
+    let executor = lock.executor.clone();
     drop(lock);
-    let _ = crate::spawn_on_main_local(dispatcher, async move {
-        let mut lock = window_state.as_ref().lock();
-        if let Some(mut callback) = lock.activate_callback.take() {
-            drop(lock);
-            callback(is_active);
-            window_state.lock().activate_callback = Some(callback);
-        };
-    });
+    executor
+        .spawn_on_main_local(async move {
+            let mut lock = window_state.as_ref().lock();
+            if let Some(mut callback) = lock.activate_callback.take() {
+                drop(lock);
+                callback(is_active);
+                window_state.lock().activate_callback = Some(callback);
+            };
+        })
+        .detach();
 }
 
 extern "C" fn window_should_close(this: &Object, _: Sel, _: id) -> BOOL {
