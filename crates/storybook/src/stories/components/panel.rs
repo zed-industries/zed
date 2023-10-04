@@ -14,9 +14,10 @@ impl PanelStory {
             .child(Panel::new(
                 ScrollState::default(),
                 |_, _| {
-                    (0..100)
-                        .map(|ix| Label::new(format!("Item {}", ix + 1)).into_any())
-                        .collect()
+                    vec![div()
+                        .overflow_y_scroll(ScrollState::default())
+                        .children((0..100).map(|ix| Label::new(format!("Item {}", ix + 1))))
+                        .into_any()]
                 },
                 Box::new(()),
             ))

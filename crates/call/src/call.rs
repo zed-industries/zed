@@ -291,10 +291,10 @@ impl ActiveCall {
         &mut self,
         channel_id: u64,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
+    ) -> Task<Result<ModelHandle<Room>>> {
         if let Some(room) = self.room().cloned() {
             if room.read(cx).channel_id() == Some(channel_id) {
-                return Task::ready(Ok(()));
+                return Task::ready(Ok(room));
             } else {
                 room.update(cx, |room, cx| room.clear_state(cx));
             }
@@ -309,7 +309,7 @@ impl ActiveCall {
             this.update(&mut cx, |this, cx| {
                 this.report_call_event("join channel", cx)
             });
-            Ok(())
+            Ok(room)
         })
     }
 

@@ -595,6 +595,10 @@ impl UserStore {
         self.load_users(proto::FuzzySearchUsers { query }, cx)
     }
 
+    pub fn get_cached_user(&self, user_id: u64) -> Option<Arc<User>> {
+        self.users.get(&user_id).cloned()
+    }
+
     pub fn get_user(
         &mut self,
         user_id: u64,

@@ -305,6 +305,11 @@ async fn test_code_context_retrieval_rust() {
                 todo!();
             }
         }
+
+        #[derive(Clone)]
+        struct D {
+            name: String
+        }
     "
     .unindent();
 
@@ -360,6 +365,15 @@ async fn test_code_context_retrieval_rust() {
                 }"
                 .unindent(),
                 text.find("fn function_2").unwrap(),
+            ),
+            (
+                "
+                #[derive(Clone)]
+                struct D {
+                    name: String
+                }"
+                .unindent(),
+                text.find("struct D").unwrap(),
             ),
         ],
     );
@@ -1422,6 +1436,9 @@ fn rust_lang() -> Arc<Language> {
                         name: (_) @name)
                 ] @item
             )
+
+            (attribute_item) @collapse
+            (use_declaration) @collapse
             "#,
         )
         .unwrap(),

@@ -65,7 +65,7 @@ impl PlayerCallStatus {
     }
 }
 
-#[derive(Clone)]
+#[derive(PartialEq, Clone)]
 pub struct Player {
     index: usize,
     avatar_src: String,
@@ -73,6 +73,7 @@ pub struct Player {
     status: PlayerStatus,
 }
 
+#[derive(Clone)]
 pub struct PlayerWithCallStatus {
     player: Player,
     call_status: PlayerCallStatus,

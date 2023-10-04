@@ -11,7 +11,7 @@ impl FacepileStory {
         let players = static_players();
 
         Story::container(cx)
-            .child(Story::title_for::<_, ui::Facepile>(cx))
+            .child(Story::title_for::<_, Facepile>(cx))
             .child(Story::label(cx, "Default"))
             .child(
                 div()

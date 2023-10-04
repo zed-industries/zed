@@ -112,6 +112,7 @@ serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
 serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
 smallvec = { version = "1.6", features = ["union"] }
 smol = { version = "1.2" }
+sysinfo = "0.29.10"
 tempdir = { version = "0.3.7" }
 thiserror = { version = "1.0.29" }
 time = { version = "0.3", features = ["serde", "serde-well-known"] }

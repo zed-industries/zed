@@ -2520,18 +2520,12 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn toggle_follow(
+    fn start_following(
         &mut self,
         leader_id: PeerId,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let pane = self.active_pane().clone();
-
-        if let Some(prev_leader_id) = self.unfollow(&pane, cx) {
-            if leader_id == prev_leader_id {
-                return None;
-            }
-        }
 
         self.last_leaders_by_pane
             .insert(pane.downgrade(), leader_id);
@@ -2603,9 +2597,64 @@ impl Workspace {
             None
         };
 
-        next_leader_id
-            .or_else(|| collaborators.keys().copied().next())
-            .and_then(|leader_id| self.toggle_follow(leader_id, cx))
+        let pane = self.active_pane.clone();
+        let Some(leader_id) = next_leader_id.or_else(|| collaborators.keys().copied().next())
+        else {
+            return None;
+        };
+        if Some(leader_id) == self.unfollow(&pane, cx) {
+            return None;
+        }
+        self.follow(leader_id, cx)
+    }
+
+    pub fn follow(
+        &mut self,
+        leader_id: PeerId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let room = ActiveCall::global(cx).read(cx).room()?.read(cx);
+        let project = self.project.read(cx);
+
+        let Some(remote_participant) = room.remote_participant_for_peer_id(leader_id) else {
+            return None;
+        };
+
+        let other_project_id = match remote_participant.location {
+            call::ParticipantLocation::External => None,
+            call::ParticipantLocation::UnsharedProject => None,
+            call::ParticipantLocation::SharedProject { project_id } => {
+                if Some(project_id) == project.remote_id() {
+                    None
+                } else {
+                    Some(project_id)
+                }
+            }
+        };
+
+        // if they are active in another project, follow there.
+        if let Some(project_id) = other_project_id {
+            let app_state = self.app_state.clone();
+            return Some(crate::join_remote_project(
+                project_id,
+                remote_participant.user.id,
+                app_state,
+                cx,
+            ));
+        }
+
+        // if you're already following, find the right pane and focus it.
+        for (existing_leader_id, states_by_pane) in &mut self.follower_states_by_leader {
+            if leader_id == *existing_leader_id {
+                for (pane, _) in states_by_pane {
+                    cx.focus(pane);
+                    return None;
+                }
+            }
+        }
+
+        // Otherwise, follow.
+        self.start_following(leader_id, cx)
     }
 
     pub fn unfollow(
@@ -4197,21 +4246,20 @@ pub fn join_remote_project(
     cx: &mut AppContext,
 ) -> Task<Result<()>> {
     cx.spawn(|mut cx| async move {
-        let existing_workspace = cx
-            .windows()
-            .into_iter()
-            .find_map(|window| {
-                window.downcast::<Workspace>().and_then(|window| {
-                    window.read_root_with(&cx, |workspace, cx| {
+        let windows = cx.windows();
+        let existing_workspace = windows.into_iter().find_map(|window| {
+            window.downcast::<Workspace>().and_then(|window| {
+                window
+                    .read_root_with(&cx, |workspace, cx| {
                         if workspace.project().read(cx).remote_id() == Some(project_id) {
                             Some(cx.handle().downgrade())
                         } else {
                             None
                         }
                     })
-                })
+                    .unwrap_or(None)
             })
-            .flatten();
+        });
 
         let workspace = if let Some(existing_workspace) = existing_workspace {
             existing_workspace
@@ -4276,11 +4324,9 @@ pub fn join_remote_project(
                     });
 
                 if let Some(follow_peer_id) = follow_peer_id {
-                    if !workspace.is_being_followed(follow_peer_id) {
-                        workspace
-                            .toggle_follow(follow_peer_id, cx)
-                            .map(|follow| follow.detach_and_log_err(cx));
-                    }
+                    workspace
+                        .follow(follow_peer_id, cx)
+                        .map(|follow| follow.detach_and_log_err(cx));
                 }
             }
         })?;

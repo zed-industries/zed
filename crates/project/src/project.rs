@@ -975,6 +975,10 @@ impl Project {
         &self.collaborators
     }
 
+    pub fn host(&self) -> Option<&Collaborator> {
+        self.collaborators.values().find(|c| c.replica_id == 0)
+    }
+
     /// Collect all worktrees, including ones that don't appear in the project panel
     pub fn worktrees<'a>(
         &'a self,
@@ -4957,8 +4961,16 @@ impl Project {
                     if abs_path.ends_with("/") {
                         fs.create_dir(&abs_path).await?;
                     } else {
-                        fs.create_file(&abs_path, op.options.map(Into::into).unwrap_or_default())
-                            .await?;
+                        fs.create_file(
+                            &abs_path,
+                            op.options
+                                .map(|options| fs::CreateOptions {
+                                    overwrite: options.overwrite.unwrap_or(false),
+                                    ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
+                                })
+                                .unwrap_or_default(),
+                        )
+                        .await?;
                     }
                 }
 
@@ -4974,7 +4986,12 @@ impl Project {
                     fs.rename(
                         &source_abs_path,
                         &target_abs_path,
-                        op.options.map(Into::into).unwrap_or_default(),
+                        op.options
+                            .map(|options| fs::RenameOptions {
+                                overwrite: options.overwrite.unwrap_or(false),
+                                ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
+                            })
+                            .unwrap_or_default(),
                     )
                     .await?;
                 }
@@ -4984,7 +5001,13 @@ impl Project {
                         .uri
                         .to_file_path()
                         .map_err(|_| anyhow!("can't convert URI to path"))?;
-                    let options = op.options.map(Into::into).unwrap_or_default();
+                    let options = op
+                        .options
+                        .map(|options| fs::RemoveOptions {
+                            recursive: options.recursive.unwrap_or(false),
+                            ignore_if_not_exists: options.ignore_if_not_exists.unwrap_or(false),
+                        })
+                        .unwrap_or_default();
                     if abs_path.ends_with("/") {
                         fs.remove_dir(&abs_path, options).await?;
                     } else {
