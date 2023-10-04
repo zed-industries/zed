@@ -38,8 +38,11 @@ impl Scene {
             Primitive::Quad(quad) => {
                 layer.quads.push(quad);
             }
-            Primitive::Sprite(sprite) => {
-                layer.sprites.push(sprite);
+            Primitive::MonochromeSprite(sprite) => {
+                layer.monochrome_sprites.push(sprite);
+            }
+            Primitive::PolychromeSprite(sprite) => {
+                layer.polychrome_sprites.push(sprite);
             }
         }
     }
@@ -52,19 +55,20 @@ impl Scene {
 #[derive(Debug, Default)]
 pub(crate) struct SceneLayer {
     pub quads: Vec<Quad>,
-    pub sprites: Vec<MonochromeSprite>,
+    pub monochrome_sprites: Vec<MonochromeSprite>,
+    pub polychrome_sprites: Vec<PolychromeSprite>,
 }
 
 impl SceneLayer {
     pub fn batches(&mut self) -> impl Iterator<Item = PrimitiveBatch> {
         self.quads.sort_unstable();
-        self.sprites.sort_unstable();
+        self.monochrome_sprites.sort_unstable();
 
         BatchIterator::new(
             &self.quads,
             self.quads.iter().peekable(),
-            &self.sprites,
-            self.sprites.iter().peekable(),
+            &self.monochrome_sprites,
+            self.monochrome_sprites.iter().peekable(),
         )
     }
 }
@@ -131,7 +135,7 @@ where
                         })
                         .count();
                 self.sprites_start = sprites_end;
-                Some(PrimitiveBatch::Sprites {
+                Some(PrimitiveBatch::MonochromeSprites {
                     texture_id,
                     sprites: &self.sprites[sprites_start..sprites_end],
                 })
@@ -171,14 +175,19 @@ pub enum PrimitiveKind {
 #[derive(Clone, Debug)]
 pub enum Primitive {
     Quad(Quad),
-    Sprite(MonochromeSprite),
+    MonochromeSprite(MonochromeSprite),
+    PolychromeSprite(PolychromeSprite),
 }
 
 pub(crate) enum PrimitiveBatch<'a> {
     Quads(&'a [Quad]),
-    Sprites {
+    MonochromeSprites {
         texture_id: AtlasTextureId,
         sprites: &'a [MonochromeSprite],
+    },
+    PolychromeSprites {
+        texture_id: AtlasTextureId,
+        sprites: &'a [PolychromeSprite],
     },
 }
 
@@ -256,7 +265,37 @@ impl PartialOrd for MonochromeSprite {
 
 impl From<MonochromeSprite> for Primitive {
     fn from(sprite: MonochromeSprite) -> Self {
-        Primitive::Sprite(sprite)
+        Primitive::MonochromeSprite(sprite)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[repr(C)]
+pub struct PolychromeSprite {
+    pub order: u32,
+    pub bounds: Bounds<ScaledPixels>,
+    pub content_mask: ScaledContentMask,
+    pub tile: AtlasTile,
+}
+
+impl Ord for PolychromeSprite {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match self.order.cmp(&other.order) {
+            std::cmp::Ordering::Equal => self.tile.tile_id.cmp(&other.tile.tile_id),
+            order => order,
+        }
+    }
+}
+
+impl PartialOrd for PolychromeSprite {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl From<PolychromeSprite> for Primitive {
+    fn from(sprite: PolychromeSprite) -> Self {
+        Primitive::PolychromeSprite(sprite)
     }
 }
 

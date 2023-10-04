@@ -148,6 +148,7 @@ pub trait PlatformWindow {
     fn draw(&self, scene: Scene);
 
     fn monochrome_sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+    fn polychrome_sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 }
 
 pub trait PlatformDispatcher: Send + Sync {

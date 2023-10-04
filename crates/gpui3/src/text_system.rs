@@ -404,6 +404,25 @@ impl Hash for RenderGlyphParams {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenderEmojiParams {
+    pub(crate) font_id: FontId,
+    pub(crate) glyph_id: GlyphId,
+    pub(crate) font_size: Pixels,
+    pub(crate) scale_factor: f32,
+}
+
+impl Eq for RenderEmojiParams {}
+
+impl Hash for RenderEmojiParams {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.font_id.0.hash(state);
+        self.glyph_id.0.hash(state);
+        self.font_size.0.to_bits().hash(state);
+        self.scale_factor.to_bits().hash(state);
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct Font {
     pub family: SharedString,

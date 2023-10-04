@@ -159,7 +159,13 @@ impl Line {
                     }
 
                     if glyph.is_emoji {
-                        todo!()
+                        cx.paint_emoji(
+                            glyph_origin,
+                            layout.order,
+                            run.font_id,
+                            glyph.id,
+                            self.layout.font_size,
+                        )?;
                     } else {
                         cx.paint_glyph(
                             glyph_origin,
