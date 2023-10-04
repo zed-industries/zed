@@ -181,6 +181,10 @@ impl ChatPanel {
         })
     }
 
+    pub fn active_chat(&self) -> Option<ModelHandle<ChannelChat>> {
+        self.active_chat.as_ref().map(|(chat, _)| chat.clone())
+    }
+
     pub fn load(
         workspace: WeakViewHandle<Workspace>,
         cx: AsyncAppContext,

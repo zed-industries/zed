@@ -1964,9 +1964,7 @@ impl CollabPanel {
                         .left(),
                 )
                 .with_child({
-                    let style = collab_theme
-                        .channel_name
-                        .in_state(channel.unseen_note_version.is_some());
+                    let style = collab_theme.channel_name.inactive_state();
                     Flex::row()
                         .with_child(
                             Label::new(channel.name.clone(), style.text.clone())

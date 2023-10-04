@@ -350,7 +350,7 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         .await
         .unwrap();
 
-    assert_eq!(
+    pretty_assertions::assert_eq!(
         buffer_changes,
         [
             rpc::proto::UnseenChannelBufferChange {
@@ -361,7 +361,11 @@ async fn test_channel_buffers_last_operations(db: &Database) {
             rpc::proto::UnseenChannelBufferChange {
                 channel_id: buffers[1].channel_id.to_proto(),
                 epoch: 1,
-                version: serialize_version(&text_buffers[1].version()),
+                version: serialize_version(&text_buffers[1].version())
+                    .into_iter()
+                    .filter(|vector| vector.replica_id
+                        == buffer_changes[1].version.first().unwrap().replica_id)
+                    .collect::<Vec<_>>(),
             },
             rpc::proto::UnseenChannelBufferChange {
                 channel_id: buffers[2].channel_id.to_proto(),

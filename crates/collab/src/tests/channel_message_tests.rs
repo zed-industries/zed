@@ -1,7 +1,9 @@
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 use channel::{ChannelChat, ChannelMessageId};
+use collab_ui::chat_panel::ChatPanel;
 use gpui::{executor::Deterministic, BorrowAppContext, ModelHandle, TestAppContext};
 use std::sync::Arc;
+use workspace::dock::Panel;
 
 #[gpui::test]
 async fn test_basic_channel_messages(
@@ -244,6 +246,15 @@ async fn test_channel_message_changes(
         )
         .await;
 
+    let other_channel_id = server
+        .make_channel(
+            "other-channel",
+            None,
+            (&client_a, cx_a),
+            &mut [(&client_b, cx_b)],
+        )
+        .await;
+
     // Client A sends a message, client B should see that there is a new message.
     let channel_chat_a = client_a
         .channel_store()
@@ -269,11 +280,21 @@ async fn test_channel_message_changes(
     assert!(b_has_messages);
 
     // Opening the chat should clear the changed flag.
-    let channel_chat_b = client_b
-        .channel_store()
-        .update(cx_b, |store, cx| store.open_channel_chat(channel_id, cx))
+    cx_b.update(|cx| {
+        collab_ui::init(&client_b.app_state, cx);
+    });
+    let project_b = client_b.build_empty_local_project(cx_b);
+    let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
+    let chat_panel_b = workspace_b.update(cx_b, |workspace, cx| ChatPanel::new(workspace, cx));
+    chat_panel_b
+        .update(cx_b, |chat_panel, cx| {
+            chat_panel.set_active(true, cx);
+            chat_panel.select_channel(channel_id, cx)
+        })
         .await
         .unwrap();
+
+    deterministic.run_until_parked();
 
     let b_has_messages = cx_b.read_with(|cx| {
         client_b
@@ -304,10 +325,7 @@ async fn test_channel_message_changes(
     assert!(!b_has_messages);
 
     // Closing the chat should re-enable change tracking
-
-    cx_b.update(|_| {
-        drop(channel_chat_b);
-    });
+    todo!();
 
     deterministic.run_until_parked();
 
