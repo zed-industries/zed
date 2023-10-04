@@ -241,7 +241,7 @@ impl Titlebar {
                                 // .fill(theme.lowest.base.pressed.background)
                                 .child(
                                     svg()
-                                        .path("icons/microphone.svg")
+                                        .path("icons/mic.svg")
                                         .size_3p5()
                                         .fill(theme.lowest.base.default.foreground),
                                 ),
