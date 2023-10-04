@@ -30,57 +30,57 @@ impl Workspace {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<State = Self> {
         let theme = rose_pine_dawn();
 
-        div()
-            .size_full()
-            .v_stack()
-            .fill(theme.lowest.base.default.background)
-            .child(Panel::new(ScrollState::default()))
-            .child(
-                div()
-                    .size_full()
-                    .h_stack()
-                    .gap_3()
-                    .children((0..4).map(|i| {
-                        div().size_full().flex().fill(gpui3::hsla(
-                            0. + (i as f32 / 7.),
-                            0. + (i as f32 / 5.),
-                            0.5,
-                            1.,
-                        ))
-                    })),
-            )
-            .child(
-                div()
-                    .size_full()
-                    .flex()
-                    .fill(theme.middle.negative.default.background),
-            )
+        // div()
+        //     .size_full()
+        //     .v_stack()
+        //     .fill(theme.lowest.base.default.background)
+        //     .child(Panel::new(ScrollState::default()))
+        //     .child(
+        //         div()
+        //             .size_full()
+        //             .h_stack()
+        //             .gap_3()
+        //             .children((0..4).map(|i| {
+        //                 div().size_full().flex().fill(gpui3::hsla(
+        //                     0. + (i as f32 / 7.),
+        //                     0. + (i as f32 / 5.),
+        //                     0.5,
+        //                     1.,
+        //                 ))
+        //             })),
+        //     )
+        //     .child(
+        //         div()
+        //             .size_full()
+        //             .flex()
+        //             .fill(theme.middle.negative.default.background),
+        //     )
 
-        // themed(rose_pine_dawn(), cx, |cx| {
-        //     div()
-        //         .size_full()
-        //         .flex()
-        //         .flex_col()
-        //         .font("Courier")
-        //         .gap_0()
-        //         .justify_start()
-        //         .items_start()
-        //         .text_color(theme.lowest.base.default.foreground)
-        //         .fill(theme.middle.base.default.background)
-        //         .child(titlebar(cx))
-        //         .child(
-        //             div()
-        //                 .flex_1()
-        //                 .w_full()
-        //                 .flex()
-        //                 .flex_row()
-        //                 .overflow_hidden()
-        //                 .child(self.left_panel.clone())
-        //                 .child(div().h_full().flex_1())
-        //                 .child(self.right_panel.clone()),
-        //         )
-        //         .child(statusbar::statusbar(cx))
-        // })
+        themed(rose_pine_dawn(), cx, |cx| {
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .font("Courier")
+                .gap_0()
+                .justify_start()
+                .items_start()
+                .text_color(theme.lowest.base.default.foreground)
+                .fill(theme.middle.base.default.background)
+                .child(titlebar(cx))
+                .child(
+                    div()
+                        .flex_1()
+                        .w_full()
+                        .flex()
+                        .flex_row()
+                        .overflow_hidden()
+                        .child(self.left_panel.clone())
+                        .child(div().h_full().flex_1())
+                        .child(self.right_panel.clone()),
+                )
+                .child(statusbar::statusbar(cx))
+        })
     }
 }
 
