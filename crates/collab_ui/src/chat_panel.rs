@@ -2,7 +2,7 @@ use crate::{channel_view::ChannelView, ChatPanelSettings};
 use anyhow::Result;
 use call::ActiveCall;
 use channel::{ChannelChat, ChannelChatEvent, ChannelMessageId, ChannelStore};
-use client::Client;
+use client::{Client, UserStore};
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt};
@@ -35,6 +35,7 @@ const CHAT_PANEL_KEY: &'static str = "ChatPanel";
 pub struct ChatPanel {
     client: Arc<Client>,
     channel_store: ModelHandle<ChannelStore>,
+    user_store: ModelHandle<UserStore>,
     active_chat: Option<(ModelHandle<ChannelChat>, Subscription)>,
     message_list: ListState<ChatPanel>,
     input_editor: ViewHandle<Editor>,
@@ -78,6 +79,7 @@ impl ChatPanel {
         let fs = workspace.app_state().fs.clone();
         let client = workspace.app_state().client.clone();
         let channel_store = workspace.app_state().channel_store.clone();
+        let user_store = workspace.app_state().user_store.clone();
 
         let input_editor = cx.add_view(|cx| {
             let mut editor = Editor::auto_height(
@@ -130,6 +132,7 @@ impl ChatPanel {
                 fs,
                 client,
                 channel_store,
+                user_store,
                 active_chat: Default::default(),
                 pending_serialization: Task::ready(None),
                 message_list,
@@ -353,6 +356,27 @@ impl ChatPanel {
             .with_child(
                 Flex::row()
                     .with_child(
+                        message
+                            .sender
+                            .avatar
+                            .clone()
+                            .map(|avatar| {
+                                Image::from_data(avatar)
+                                    .with_style(theme.collab_panel.channel_avatar)
+                                    .into_any()
+                            })
+                            .unwrap_or_else(|| {
+                                Empty::new()
+                                    .constrained()
+                                    .with_width(
+                                        theme.collab_panel.channel_avatar.width.unwrap_or(12.),
+                                    )
+                                    .into_any()
+                            })
+                            .contained()
+                            .with_margin_right(4.),
+                    )
+                    .with_child(
                         Label::new(
                             message.sender.github_login.clone(),
                             style.sender.text.clone(),
@@ -386,7 +410,8 @@ impl ChatPanel {
                             this.remove_message(id, cx);
                         })
                         .flex_float()
-                    })),
+                    }))
+                    .align_children_center(),
             )
             .with_child(Text::new(body, style.body.clone()))
             .contained()
