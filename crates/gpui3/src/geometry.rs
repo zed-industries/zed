@@ -182,10 +182,10 @@ impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Size<T> {
 impl<T: Eq + Debug + Clone> Eq for Size<T> {}
 
 impl From<Size<Option<Pixels>>> for Size<Option<f32>> {
-    fn from(val: Size<Option<Pixels>>) -> Self {
+    fn from(size: Size<Option<Pixels>>) -> Self {
         Size {
-            width: val.width.map(|p| p.0 as f32),
-            height: val.height.map(|p| p.0 as f32),
+            width: size.width.map(|p| p.0 as f32),
+            height: size.height.map(|p| p.0 as f32),
         }
     }
 }
@@ -548,14 +548,14 @@ impl std::hash::Hash for Pixels {
 }
 
 impl From<f64> for Pixels {
-    fn from(val: f64) -> Self {
-        Pixels(val as f32)
+    fn from(pixels: f64) -> Self {
+        Pixels(pixels as f32)
     }
 }
 
 impl From<f32> for Pixels {
-    fn from(val: f32) -> Self {
-        Pixels(val)
+    fn from(pixels: f32) -> Self {
+        Pixels(pixels)
     }
 }
 
@@ -608,8 +608,20 @@ impl From<DevicePixels> for i32 {
 }
 
 impl From<i32> for DevicePixels {
-    fn from(val: i32) -> Self {
-        DevicePixels(val)
+    fn from(device_pixels: i32) -> Self {
+        DevicePixels(device_pixels)
+    }
+}
+
+impl From<u32> for DevicePixels {
+    fn from(device_pixels: u32) -> Self {
+        DevicePixels(device_pixels as i32)
+    }
+}
+
+impl From<DevicePixels> for u32 {
+    fn from(device_pixels: DevicePixels) -> Self {
+        device_pixels.0 as u32
     }
 }
 
@@ -620,8 +632,8 @@ impl From<DevicePixels> for u64 {
 }
 
 impl From<u64> for DevicePixels {
-    fn from(val: u64) -> Self {
-        DevicePixels(val as i32)
+    fn from(device_pixels: u64) -> Self {
+        DevicePixels(device_pixels as i32)
     }
 }
 
@@ -903,7 +915,7 @@ impl<T: IsZero + Debug + Clone> IsZero for Point<T> {
 
 impl<T: IsZero + Debug + Clone> IsZero for Size<T> {
     fn is_zero(&self) -> bool {
-        self.width.is_zero() && self.height.is_zero()
+        self.width.is_zero() || self.height.is_zero()
     }
 }
 

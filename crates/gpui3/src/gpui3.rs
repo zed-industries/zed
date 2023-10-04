@@ -1,4 +1,5 @@
 mod app;
+mod assets;
 mod color;
 mod element;
 mod elements;
@@ -9,6 +10,7 @@ mod scene;
 mod style;
 mod style_helpers;
 mod styled;
+mod svg_library;
 mod taffy;
 mod text_system;
 mod util;
@@ -17,12 +19,14 @@ mod window;
 
 pub use anyhow::Result;
 pub use app::*;
+pub use assets::*;
 pub use color::*;
 pub use element::*;
 pub use elements::*;
 pub use executor::*;
 pub use geometry::*;
 pub use gpui3_macros::*;
+pub use svg_library::*;
 
 pub use platform::*;
 pub use refineable::*;
@@ -142,6 +146,12 @@ impl AsRef<str> for SharedString {
 impl std::fmt::Debug for SharedString {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
+    }
+}
+
+impl std::fmt::Display for SharedString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.as_ref())
     }
 }
 
