@@ -76,14 +76,13 @@ impl Executor {
     /// closure returns a future which will be run to completion on the main thread.
     pub fn spawn_on_main<F, R>(&self, func: impl FnOnce() -> F + Send + 'static) -> Task<R>
     where
-        F: Future<Output = R> + 'static,
+        F: Future<Output = R> + Send + 'static,
         R: Send + 'static,
     {
         let dispatcher = self.dispatcher.clone();
-        let (runnable, task) =
-            async_task::spawn_local(async move { func().await }, move |runnable| {
-                dispatcher.dispatch_on_main_thread(runnable)
-            });
+        let (runnable, task) = async_task::spawn(async move { func().await }, move |runnable| {
+            dispatcher.dispatch_on_main_thread(runnable)
+        });
         runnable.schedule();
         Task::Spawned(task)
     }

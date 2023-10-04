@@ -69,12 +69,6 @@ pub trait Context {
 #[repr(transparent)]
 pub struct MainThread<T>(T);
 
-impl<T> MainThread<T> {
-    fn new(value: T) -> Self {
-        Self(value)
-    }
-}
-
 impl<T> Deref for MainThread<T> {
     type Target = T;
 
