@@ -32,7 +32,7 @@ impl Workspace {
                 .size_full()
                 .flex()
                 .flex_col()
-                .font("Zed Sans Extended")
+                .font("Courier")
                 .gap_0()
                 .justify_start()
                 .items_start()

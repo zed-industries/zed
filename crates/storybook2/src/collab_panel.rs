@@ -30,7 +30,7 @@ impl CollabPanel {
             .h_full()
             .flex()
             .flex_col()
-            .font("Zed Sans Extended")
+            .font("Courier")
             .text_color(theme.middle.base.default.foreground)
             .border_color(theme.middle.base.default.border)
             .border()

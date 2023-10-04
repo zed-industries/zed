@@ -46,11 +46,11 @@ impl<S: 'static> Element for Text<S> {
             .line_height
             .to_pixels(font_size.into(), cx.rem_size());
         let text = self.text.clone();
-        let paint_state = Arc::new(Mutex::new(None));
+        let frame_state = Arc::new(Mutex::new(None));
 
         let rem_size = cx.rem_size();
         let layout_id = cx.request_measured_layout(Default::default(), rem_size, {
-            let frame_state = paint_state.clone();
+            let frame_state = frame_state.clone();
             move |_, _| {
                 let Some(line_layout) = text_system
                     .layout_line(
@@ -77,7 +77,7 @@ impl<S: 'static> Element for Text<S> {
             }
         });
 
-        Ok((layout_id?, paint_state))
+        Ok((layout_id?, frame_state))
     }
 
     fn paint<'a>(
