@@ -7,7 +7,7 @@ pub use crate::{
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
     language_settings::{language_settings, LanguageSettings},
-    markdown,
+    markdown::parse_markdown,
     outline::OutlineItem,
     syntax_map::{
         SyntaxLayerInfo, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatches,
@@ -145,7 +145,7 @@ pub struct Diagnostic {
     pub is_unnecessary: bool,
 }
 
-pub fn prepare_completion_documentation(
+pub async fn prepare_completion_documentation(
     documentation: &lsp::Documentation,
     language_registry: &Arc<LanguageRegistry>,
     language: Option<Arc<Language>>,
@@ -170,7 +170,7 @@ pub fn prepare_completion_documentation(
             }
 
             lsp::MarkupKind::Markdown => {
-                let parsed = markdown::parse_markdown(value, language_registry, language, style);
+                let parsed = parse_markdown(value, language_registry, language, style).await;
                 Some(Documentation::MultiLineMarkdown(parsed))
             }
         },

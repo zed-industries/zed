@@ -1018,7 +1018,6 @@ impl CompletionsMenu {
             return;
         }
 
-        // TODO: Do on background
         cx.spawn(|this, mut cx| async move {
             let request = server.request::<lsp::request::ResolveCompletionItem>(completion);
             let Some(completion_item) = request.await.log_err() else {
@@ -1031,7 +1030,8 @@ impl CompletionsMenu {
                     &language_registry,
                     None, // TODO: Try to reasonably work out which language the completion is for
                     &style,
-                );
+                )
+                .await;
 
                 let mut completions = completions.write();
                 let completion = &mut completions[index];
@@ -1084,30 +1084,46 @@ impl CompletionsMenu {
             let style = style.clone();
             move |_, range, items, cx| {
                 let start_ix = range.start;
-                let mut completions = completions.write();
+                let completions_guard = completions.read();
 
                 for (ix, mat) in matches[range].iter().enumerate() {
-                    let completion = &mut completions[mat.candidate_id];
+                    let item_ix = start_ix + ix;
+                    let candidate_id = mat.candidate_id;
+                    let completion = &completions_guard[candidate_id];
 
-                    if completion.documentation.is_none() {
+                    if item_ix == selected_item && completion.documentation.is_none() {
                         if let Some(lsp_docs) = &completion.lsp_completion.documentation {
                             let project = project
                                 .as_ref()
                                 .expect("It is impossible have LSP servers without a project");
 
-                            let language_registry = project.read(cx).languages();
+                            let lsp_docs = lsp_docs.clone();
+                            let lsp_docs = lsp_docs.clone();
+                            let language_registry = project.read(cx).languages().clone();
+                            let style = style.theme.clone();
+                            let completions = completions.clone();
 
-                            completion.documentation = prepare_completion_documentation(
-                                lsp_docs,
-                                language_registry,
-                                None,
-                                &style.theme,
-                            );
+                            cx.spawn(|this, mut cx| async move {
+                                let documentation = prepare_completion_documentation(
+                                    &lsp_docs,
+                                    &language_registry,
+                                    None,
+                                    &style,
+                                )
+                                .await;
+
+                                this.update(&mut cx, |_, cx| {
+                                    let mut completions = completions.write();
+                                    completions[candidate_id].documentation = documentation;
+                                    drop(completions);
+                                    cx.notify();
+                                })
+                            })
+                            .detach();
                         }
                     }
 
                     let documentation = &completion.documentation;
-                    let item_ix = start_ix + ix;
 
                     items.push(
                         MouseEventHandler::new::<CompletionTag, _>(

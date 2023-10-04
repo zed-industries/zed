@@ -2,7 +2,6 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use crate::{Language, LanguageRegistry};
-use futures::FutureExt;
 use gpui::fonts::{HighlightStyle, Underline, Weight};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 
@@ -20,7 +19,7 @@ pub struct ParsedRegion {
     pub link_url: Option<String>,
 }
 
-pub fn parse_markdown(
+pub async fn parse_markdown(
     markdown: &str,
     language_registry: &Arc<LanguageRegistry>,
     language: Option<Arc<Language>>,
@@ -40,7 +39,8 @@ pub fn parse_markdown(
         &mut highlights,
         &mut region_ranges,
         &mut regions,
-    );
+    )
+    .await;
 
     ParsedMarkdown {
         text,
@@ -50,7 +50,7 @@ pub fn parse_markdown(
     }
 }
 
-pub fn parse_markdown_block(
+pub async fn parse_markdown_block(
     markdown: &str,
     language_registry: &Arc<LanguageRegistry>,
     language: Option<Arc<Language>>,
@@ -143,8 +143,8 @@ pub fn parse_markdown_block(
                     current_language = if let CodeBlockKind::Fenced(language) = kind {
                         language_registry
                             .language_for_name(language.as_ref())
-                            .now_or_never()
-                            .and_then(Result::ok)
+                            .await
+                            .ok()
                     } else {
                         language.clone()
                     }

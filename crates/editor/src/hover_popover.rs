@@ -7,7 +7,7 @@ use crate::{
 use futures::FutureExt;
 use gpui::{
     actions,
-    elements::{Flex, MouseEventHandler, Padding, ParentElement, Text},
+    elements::{Empty, Flex, MouseEventHandler, Padding, ParentElement, Text},
     fonts::HighlightStyle,
     platform::{CursorStyle, MouseButton},
     AnyElement, AppContext, CursorRegion, Element, ModelHandle, MouseRegion, Task, ViewContext,
@@ -128,7 +128,7 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
                     symbol_range: DocumentRange::Inlay(inlay_hover.range),
                     blocks: vec![inlay_hover.tooltip],
                     language: None,
-                    rendered_content: None,
+                    parsed_content: None,
                 };
 
                 this.update(&mut cx, |this, cx| {
@@ -332,7 +332,7 @@ fn show_hover(
                     symbol_range: DocumentRange::Text(range),
                     blocks: hover_result.contents,
                     language: hover_result.language,
-                    rendered_content: None,
+                    parsed_content: None,
                 })
             });
 
@@ -363,12 +363,12 @@ fn show_hover(
     editor.hover_state.info_task = Some(task);
 }
 
-fn render_blocks(
+async fn render_blocks(
     theme_id: usize,
     blocks: &[HoverBlock],
     language_registry: &Arc<LanguageRegistry>,
     language: Option<Arc<Language>>,
-    style: &EditorStyle,
+    style: &theme::Editor,
 ) -> ParsedInfo {
     let mut text = String::new();
     let mut highlights = Vec::new();
@@ -382,16 +382,19 @@ fn render_blocks(
                 text.push_str(&block.text);
             }
 
-            HoverBlockKind::Markdown => markdown::parse_markdown_block(
-                &block.text,
-                language_registry,
-                language.clone(),
-                style,
-                &mut text,
-                &mut highlights,
-                &mut region_ranges,
-                &mut regions,
-            ),
+            HoverBlockKind::Markdown => {
+                markdown::parse_markdown_block(
+                    &block.text,
+                    language_registry,
+                    language.clone(),
+                    style,
+                    &mut text,
+                    &mut highlights,
+                    &mut region_ranges,
+                    &mut regions,
+                )
+                .await
+            }
 
             HoverBlockKind::Code { language } => {
                 if let Some(language) = language_registry
@@ -482,7 +485,7 @@ pub struct InfoPopover {
     symbol_range: DocumentRange,
     pub blocks: Vec<HoverBlock>,
     language: Option<Arc<Language>>,
-    rendered_content: Option<ParsedInfo>,
+    parsed_content: Option<ParsedInfo>,
 }
 
 #[derive(Debug, Clone)]
@@ -500,63 +503,87 @@ impl InfoPopover {
         style: &EditorStyle,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement<Editor> {
-        if let Some(rendered) = &self.rendered_content {
-            if rendered.theme_id != style.theme_id {
-                self.rendered_content = None;
+        if let Some(parsed) = &self.parsed_content {
+            if parsed.theme_id != style.theme_id {
+                self.parsed_content = None;
             }
         }
 
-        let rendered_content = self.rendered_content.get_or_insert_with(|| {
-            render_blocks(
-                style.theme_id,
-                &self.blocks,
-                self.project.read(cx).languages(),
-                self.language.clone(),
-                style,
-            )
-        });
+        let rendered = if let Some(parsed) = &self.parsed_content {
+            let view_id = cx.view_id();
+            let regions = parsed.regions.clone();
+            let code_span_background_color = style.document_highlight_read_background;
+
+            let mut region_id = 0;
+
+            Text::new(parsed.text.clone(), style.text.clone())
+                .with_highlights(parsed.highlights.clone())
+                .with_custom_runs(parsed.region_ranges.clone(), move |ix, bounds, scene, _| {
+                    region_id += 1;
+                    let region = regions[ix].clone();
+
+                    if let Some(url) = region.link_url {
+                        scene.push_cursor_region(CursorRegion {
+                            bounds,
+                            style: CursorStyle::PointingHand,
+                        });
+                        scene.push_mouse_region(
+                            MouseRegion::new::<Self>(view_id, region_id, bounds)
+                                .on_click::<Editor, _>(MouseButton::Left, move |_, _, cx| {
+                                    cx.platform().open_url(&url)
+                                }),
+                        );
+                    }
+
+                    if region.code {
+                        scene.push_quad(gpui::Quad {
+                            bounds,
+                            background: Some(code_span_background_color),
+                            border: Default::default(),
+                            corner_radii: (2.0).into(),
+                        });
+                    }
+                })
+                .with_soft_wrap(true)
+                .into_any()
+        } else {
+            let theme_id = style.theme_id;
+            let language_registry = self.project.read(cx).languages().clone();
+            let blocks = self.blocks.clone();
+            let language = self.language.clone();
+            let style = style.theme.clone();
+            cx.spawn(|this, mut cx| async move {
+                let blocks =
+                    render_blocks(theme_id, &blocks, &language_registry, language, &style).await;
+                _ = this.update(&mut cx, |_, cx| cx.notify());
+                blocks
+            })
+            .detach();
+
+            Empty::new().into_any()
+        };
+
+        // let rendered_content = self.parsed_content.get_or_insert_with(|| {
+        //     let language_registry = self.project.read(cx).languages().clone();
+        //     cx.spawn(|this, mut cx| async move {
+        //         let blocks = render_blocks(
+        //             style.theme_id,
+        //             &self.blocks,
+        //             &language_registry,
+        //             self.language.clone(),
+        //             style,
+        //         )
+        //         .await;
+        //         this.update(&mut cx, |_, cx| cx.notify());
+        //         blocks
+        //     })
+        //     .shared()
+        // });
 
         MouseEventHandler::new::<InfoPopover, _>(0, cx, |_, cx| {
-            let mut region_id = 0;
-            let view_id = cx.view_id();
-
-            let code_span_background_color = style.document_highlight_read_background;
-            let regions = rendered_content.regions.clone();
             Flex::column()
                 .scrollable::<HoverBlock>(1, None, cx)
-                .with_child(
-                    Text::new(rendered_content.text.clone(), style.text.clone())
-                        .with_highlights(rendered_content.highlights.clone())
-                        .with_custom_runs(
-                            rendered_content.region_ranges.clone(),
-                            move |ix, bounds, scene, _| {
-                                region_id += 1;
-                                let region = regions[ix].clone();
-                                if let Some(url) = region.link_url {
-                                    scene.push_cursor_region(CursorRegion {
-                                        bounds,
-                                        style: CursorStyle::PointingHand,
-                                    });
-                                    scene.push_mouse_region(
-                                        MouseRegion::new::<Self>(view_id, region_id, bounds)
-                                            .on_click::<Editor, _>(
-                                                MouseButton::Left,
-                                                move |_, _, cx| cx.platform().open_url(&url),
-                                            ),
-                                    );
-                                }
-                                if region.code {
-                                    scene.push_quad(gpui::Quad {
-                                        bounds,
-                                        background: Some(code_span_background_color),
-                                        border: Default::default(),
-                                        corner_radii: (2.0).into(),
-                                    });
-                                }
-                            },
-                        )
-                        .with_soft_wrap(true),
-                )
+                .with_child(rendered)
                 .contained()
                 .with_style(style.hover_popover.container)
         })
@@ -877,7 +904,8 @@ mod tests {
             );
 
             let style = editor.style(cx);
-            let rendered = render_blocks(0, &blocks, &Default::default(), None, &style);
+            let rendered =
+                smol::block_on(render_blocks(0, &blocks, &Default::default(), None, &style));
             assert_eq!(
                 rendered.text,
                 code_str.trim(),
@@ -1069,7 +1097,8 @@ mod tests {
                 expected_styles,
             } in &rows[0..]
             {
-                let rendered = render_blocks(0, &blocks, &Default::default(), None, &style);
+                let rendered =
+                    smol::block_on(render_blocks(0, &blocks, &Default::default(), None, &style));
 
                 let (expected_text, ranges) = marked_text_ranges(expected_marked_text, false);
                 let expected_highlights = ranges
@@ -1339,7 +1368,7 @@ mod tests {
             );
             assert_eq!(
                 popover
-                    .rendered_content
+                    .parsed_content
                     .as_ref()
                     .expect("should have label text for new type hint")
                     .text,
@@ -1403,7 +1432,7 @@ mod tests {
             );
             assert_eq!(
                 popover
-                    .rendered_content
+                    .parsed_content
                     .as_ref()
                     .expect("should have label text for struct hint")
                     .text,
