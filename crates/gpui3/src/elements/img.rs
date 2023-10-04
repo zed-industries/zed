@@ -76,10 +76,13 @@ impl<S: 'static> Element for Img<S> {
                 cx.paint_image(bounds, corner_radii, order, data, self.grayscale)?;
             } else {
                 log::warn!("image not loaded yet");
+                cx.spawn(|cx| async move {
+                    if image_future.await.log_err().is_some() {
+                        // this.update(&mut cx, |_, cx| cx.notify()).ok();
+                    }
+                })
+                .detach()
                 // cx.spawn(|this, mut cx| async move {
-                //     if image_future.await.log_err().is_some() {
-                //         this.update(&mut cx, |_, cx| cx.notify()).ok();
-                //     }
                 // })
                 // .detach();
             }

@@ -1,10 +1,10 @@
 use crate::{
-    image_cache::RenderImageParams, px, AnyView, AppContext, AsyncContext, AvailableSpace,
-    BorrowAppContext, Bounds, Context, Corners, DevicePixels, Effect, Element, EntityId, FontId,
-    GlyphId, Handle, Hsla, ImageData, IsZero, LayerId, LayoutId, MainThread, MainThreadOnly,
-    MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Reference,
-    RenderGlyphParams, RenderSvgParams, ScaledPixels, Scene, SharedString, Size, Style,
-    TaffyLayoutEngine, Task, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
+    image_cache::RenderImageParams, px, AnyView, AppContext, AvailableSpace, BorrowAppContext,
+    Bounds, Context, Corners, DevicePixels, Effect, Element, EntityId, FontId, GlyphId, Handle,
+    Hsla, ImageData, IsZero, LayerId, LayoutId, MainThread, MainThreadOnly, MonochromeSprite,
+    Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Reference, RenderGlyphParams,
+    RenderSvgParams, ScaledPixels, Scene, SharedString, Size, Style, TaffyLayoutEngine, Task,
+    WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use smallvec::SmallVec;
@@ -112,7 +112,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         self.window.dirty = true;
     }
 
-    fn run_on_main<R>(
+    pub fn run_on_main<R>(
         &mut self,
         f: impl FnOnce(&mut MainThread<WindowContext<'_, '_>>) -> R + Send + 'static,
     ) -> Task<Result<R>>
@@ -127,6 +127,36 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             let id = self.window.handle.id;
             self.app.run_on_main(move |cx| cx.update_window(id, f))
         }
+    }
+
+    pub fn spawn<Fut, R>(
+        &mut self,
+        f: impl FnOnce(&mut WindowContext<'_, '_>) -> Fut + Send + 'static,
+    ) -> Task<Result<R>>
+    where
+        R: Send + 'static,
+        Fut: Future<Output = R> + Send + 'static,
+    {
+        let id = self.window.handle.id;
+        self.app.spawn(move |cx| {
+            let future = cx.update_window(id, f);
+            async move { Ok(future?.await) }
+        })
+    }
+
+    pub fn try_spawn<Fut, R>(
+        &mut self,
+        f: impl FnOnce(&mut WindowContext<'_, '_>) -> Fut + Send + 'static,
+    ) -> Task<Result<R>>
+    where
+        R: Send + 'static,
+        Fut: Future<Output = Result<R>> + Send + 'static,
+    {
+        let id = self.window.handle.id;
+        self.app.spawn(move |cx| {
+            let future = cx.update_window(id, f);
+            async move { future?.await }
+        })
     }
 
     pub fn request_layout(
@@ -606,13 +636,14 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
         f: impl FnOnce(&mut S, &mut ViewContext<'_, '_, S>) -> Fut + Send + 'static,
     ) -> Task<Result<R>>
     where
+        R: Send + 'static,
         Fut: Future<Output = R> + Send + 'static,
     {
         let handle = self.handle();
-        todo!()
-        // self.window_cx.spawn(|cx| {
-        //     f
-        // })
+        self.window_cx.try_spawn(move |cx| {
+            let result = handle.update(cx, f);
+            async move { Ok(result?.await) }
+        })
     }
 
     pub(crate) fn erase_state<R>(&mut self, f: impl FnOnce(&mut ViewContext<()>) -> R) -> R {

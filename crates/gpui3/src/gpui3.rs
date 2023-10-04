@@ -27,8 +27,6 @@ pub use elements::*;
 pub use executor::*;
 pub use geometry::*;
 pub use gpui3_macros::*;
-pub use svg_renderer::*;
-
 pub use platform::*;
 pub use refineable::*;
 pub use scene::*;
@@ -44,6 +42,7 @@ use std::{
 pub use style::*;
 pub use style_helpers::*;
 pub use styled::*;
+pub use svg_renderer::*;
 use taffy::TaffyLayoutEngine;
 pub use taffy::{AvailableSpace, LayoutId};
 pub use text_system::*;
