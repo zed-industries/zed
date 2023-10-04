@@ -5,26 +5,15 @@ use anyhow::{anyhow, Result};
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use etagere::BucketedAtlasAllocator;
-use foreign_types::ForeignType;
-use metal::{Device, TextureDescriptor};
-use objc::{msg_send, sel, sel_impl};
+use metal::Device;
 use parking_lot::Mutex;
 
 pub struct MetalAtlas(Mutex<MetalAtlasState>);
 
 impl MetalAtlas {
-    pub fn new(
-        size: Size<DevicePixels>,
-        pixel_format: metal::MTLPixelFormat,
-        device: Device,
-    ) -> Self {
-        let texture_descriptor = metal::TextureDescriptor::new();
-        texture_descriptor.set_pixel_format(pixel_format);
-        texture_descriptor.set_width(size.width.into());
-        texture_descriptor.set_height(size.height.into());
+    pub fn new(device: Device) -> Self {
         MetalAtlas(Mutex::new(MetalAtlasState {
             device: AssertSend(device),
-            texture_descriptor: AssertSend(texture_descriptor),
             textures: Default::default(),
             tiles_by_key: Default::default(),
         }))
@@ -37,7 +26,6 @@ impl MetalAtlas {
 
 struct MetalAtlasState {
     device: AssertSend<Device>,
-    texture_descriptor: AssertSend<TextureDescriptor>,
     textures: Vec<MetalAtlasTexture>,
     tiles_by_key: HashMap<AtlasKey, AtlasTile>,
 }
@@ -57,9 +45,15 @@ impl PlatformAtlas for MetalAtlas {
                 .textures
                 .iter_mut()
                 .rev()
-                .find_map(|texture| texture.upload(size, &bytes))
+                .find_map(|texture| {
+                    if texture.monochrome == key.is_monochrome() {
+                        texture.upload(size, &bytes)
+                    } else {
+                        None
+                    }
+                })
                 .or_else(|| {
-                    let texture = lock.push_texture(size);
+                    let texture = lock.push_texture(size, key.is_monochrome());
                     texture.upload(size, &bytes)
                 })
                 .ok_or_else(|| anyhow!("could not allocate in new texture"))?;
@@ -74,35 +68,32 @@ impl PlatformAtlas for MetalAtlas {
 }
 
 impl MetalAtlasState {
-    fn push_texture(&mut self, min_size: Size<DevicePixels>) -> &mut MetalAtlasTexture {
-        let default_atlas_size = Size {
-            width: self.texture_descriptor.width().into(),
-            height: self.texture_descriptor.height().into(),
+    fn push_texture(
+        &mut self,
+        min_size: Size<DevicePixels>,
+        monochrome: bool,
+    ) -> &mut MetalAtlasTexture {
+        const DEFAULT_ATLAS_SIZE: Size<DevicePixels> = Size {
+            width: DevicePixels(1024),
+            height: DevicePixels(1024),
         };
-        let size;
-        let metal_texture;
 
-        if min_size.width > default_atlas_size.width || min_size.height > default_atlas_size.height
-        {
-            let descriptor = unsafe {
-                let descriptor_ptr: *mut metal::MTLTextureDescriptor =
-                    msg_send![*self.texture_descriptor, copy];
-                metal::TextureDescriptor::from_ptr(descriptor_ptr)
-            };
-            descriptor.set_width(min_size.width.into());
-            descriptor.set_height(min_size.height.into());
-            descriptor.set_pixel_format(metal::MTLPixelFormat::Depth32Float);
-            size = min_size;
-            metal_texture = self.device.new_texture(&descriptor);
+        let size = min_size.max(&DEFAULT_ATLAS_SIZE);
+        let texture_descriptor = metal::TextureDescriptor::new();
+        texture_descriptor.set_width(size.width.into());
+        texture_descriptor.set_height(size.height.into());
+        if monochrome {
+            texture_descriptor.set_pixel_format(metal::MTLPixelFormat::A8Unorm);
         } else {
-            size = default_atlas_size;
-            metal_texture = self.device.new_texture(&self.texture_descriptor);
+            texture_descriptor.set_pixel_format(metal::MTLPixelFormat::BGRA8Unorm);
         }
+        let metal_texture = self.device.new_texture(&texture_descriptor);
 
         let atlas_texture = MetalAtlasTexture {
             id: AtlasTextureId(self.textures.len() as u32),
             allocator: etagere::BucketedAtlasAllocator::new(size.into()),
             metal_texture: AssertSend(metal_texture),
+            monochrome,
         };
         self.textures.push(atlas_texture);
         self.textures.last_mut().unwrap()
@@ -113,6 +104,7 @@ struct MetalAtlasTexture {
     id: AtlasTextureId,
     allocator: BucketedAtlasAllocator,
     metal_texture: AssertSend<metal::Texture>,
+    monochrome: bool,
 }
 
 impl MetalAtlasTexture {

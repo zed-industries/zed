@@ -7,7 +7,10 @@ float4 hsla_to_rgba(Hsla hsla);
 float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
                           Bounds_ScaledPixels clip_bounds,
                           constant Size_DevicePixels *viewport_size);
-float quad_sdf(float2 point, Bounds_ScaledPixels bounds, Corners_ScaledPixels corner_radii);
+float2 to_tile_position(float2 unit_vertex, AtlasTile tile,
+                        constant Size_DevicePixels *atlas_size);
+float quad_sdf(float2 point, Bounds_ScaledPixels bounds,
+               Corners_ScaledPixels corner_radii);
 
 struct QuadVertexOutput {
   float4 position [[position]];
@@ -119,27 +122,18 @@ struct MonochromeSpriteVertexOutput {
 
 vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
     uint unit_vertex_id [[vertex_id]], uint sprite_id [[instance_id]],
-    constant float2 *unit_vertices
-    [[buffer(MonochromeSpriteInputIndex_Vertices)]],
-    constant MonochromeSprite *sprites
-    [[buffer(MonochromeSpriteInputIndex_Sprites)]],
+    constant float2 *unit_vertices [[buffer(SpriteInputIndex_Vertices)]],
+    constant MonochromeSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
     constant Size_DevicePixels *viewport_size
-    [[buffer(MonochromeSpriteInputIndex_ViewportSize)]],
+    [[buffer(SpriteInputIndex_ViewportSize)]],
     constant Size_DevicePixels *atlas_size
-    [[buffer(MonochromeSpriteInputIndex_AtlasTextureSize)]]) {
+    [[buffer(SpriteInputIndex_AtlasTextureSize)]]) {
 
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   MonochromeSprite sprite = sprites[sprite_id];
   float4 device_position = to_device_position(
       unit_vertex, sprite.bounds, sprite.content_mask.bounds, viewport_size);
-
-  float2 tile_origin =
-      float2(sprite.tile.bounds.origin.x, sprite.tile.bounds.origin.y);
-  float2 tile_size =
-      float2(sprite.tile.bounds.size.width, sprite.tile.bounds.size.height);
-  float2 tile_position =
-      (tile_origin + unit_vertex * tile_size) /
-      float2((float)atlas_size->width, (float)atlas_size->height);
+  float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
   float4 color = hsla_to_rgba(sprite.color);
   return MonochromeSpriteVertexOutput{device_position, tile_position, color,
                                       sprite_id};
@@ -147,19 +141,57 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
 
 fragment float4 monochrome_sprite_fragment(
     MonochromeSpriteVertexOutput input [[stage_in]],
-    constant MonochromeSprite *sprites
-    [[buffer(MonochromeSpriteInputIndex_Sprites)]],
-    texture2d<float> atlas_texture
-    [[texture(MonochromeSpriteInputIndex_AtlasTexture)]]) {
+    constant MonochromeSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
+    texture2d<float> atlas_texture [[texture(SpriteInputIndex_AtlasTexture)]]) {
   MonochromeSprite sprite = sprites[input.sprite_id];
   constexpr sampler atlas_texture_sampler(mag_filter::linear,
                                           min_filter::linear);
   float4 sample =
       atlas_texture.sample(atlas_texture_sampler, input.tile_position);
-  float clip_distance =
-      quad_sdf(input.position.xy, sprite.content_mask.bounds, sprite.content_mask.corner_radii);
+  float clip_distance = quad_sdf(input.position.xy, sprite.content_mask.bounds,
+                                 sprite.content_mask.corner_radii);
   float4 color = input.color;
   color.a *= sample.a * saturate(0.5 - clip_distance);
+  return color;
+}
+
+struct PolychromeSpriteVertexOutput {
+  float4 position [[position]];
+  float2 tile_position;
+  uint sprite_id [[flat]];
+};
+
+vertex PolychromeSpriteVertexOutput polychrome_sprite_vertex(
+    uint unit_vertex_id [[vertex_id]], uint sprite_id [[instance_id]],
+    constant float2 *unit_vertices [[buffer(SpriteInputIndex_Vertices)]],
+    constant PolychromeSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
+    constant Size_DevicePixels *viewport_size
+    [[buffer(SpriteInputIndex_ViewportSize)]],
+    constant Size_DevicePixels *atlas_size
+    [[buffer(SpriteInputIndex_AtlasTextureSize)]]) {
+
+  float2 unit_vertex = unit_vertices[unit_vertex_id];
+  PolychromeSprite sprite = sprites[sprite_id];
+  float4 device_position = to_device_position(
+      unit_vertex, sprite.bounds, sprite.content_mask.bounds, viewport_size);
+  float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
+  return PolychromeSpriteVertexOutput{device_position, tile_position,
+                                      sprite_id};
+}
+
+fragment float4 polychrome_sprite_fragment(
+    PolychromeSpriteVertexOutput input [[stage_in]],
+    constant PolychromeSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
+    texture2d<float> atlas_texture [[texture(SpriteInputIndex_AtlasTexture)]]) {
+  PolychromeSprite sprite = sprites[input.sprite_id];
+  constexpr sampler atlas_texture_sampler(mag_filter::linear,
+                                          min_filter::linear);
+  float4 sample =
+      atlas_texture.sample(atlas_texture_sampler, input.tile_position);
+  float clip_distance = quad_sdf(input.position.xy, sprite.content_mask.bounds,
+                                 sprite.content_mask.corner_radii);
+  float4 color = sample;
+  color.a *= saturate(0.5 - clip_distance);
   return color;
 }
 
@@ -227,6 +259,14 @@ float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
   float2 device_position =
       position / viewport_size * float2(2., -2.) + float2(-1., 1.);
   return float4(device_position, 0., 1.);
+}
+
+float2 to_tile_position(float2 unit_vertex, AtlasTile tile,
+                        constant Size_DevicePixels *atlas_size) {
+  float2 tile_origin = float2(tile.bounds.origin.x, tile.bounds.origin.y);
+  float2 tile_size = float2(tile.bounds.size.width, tile.bounds.size.height);
+  return (tile_origin + unit_vertex * tile_size) /
+         float2((float)atlas_size->width, (float)atlas_size->height);
 }
 
 float quad_sdf(float2 point, Bounds_ScaledPixels bounds,

@@ -886,12 +886,8 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn monochrome_sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
-        self.0.lock().renderer.monochrome_sprite_atlas().clone()
-    }
-
-    fn polychrome_sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
-        self.0.lock().renderer.polychrome_sprite_atlas().clone()
+    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+        self.0.lock().renderer.sprite_atlas().clone()
     }
 }
 

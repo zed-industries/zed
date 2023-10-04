@@ -147,8 +147,7 @@ pub trait PlatformWindow {
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
     fn draw(&self, scene: Scene);
 
-    fn monochrome_sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
-    fn polychrome_sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 }
 
 pub trait PlatformDispatcher: Send + Sync {
@@ -180,6 +179,15 @@ pub trait PlatformTextSystem: Send + Sync {
 pub enum AtlasKey {
     Glyph(RenderGlyphParams),
     Svg(RenderSvgParams),
+}
+
+impl AtlasKey {
+    pub fn is_monochrome(&self) -> bool {
+        match self {
+            AtlasKey::Glyph(params) => !params.is_emoji,
+            AtlasKey::Svg(_) => true,
+        }
+    }
 }
 
 impl From<RenderGlyphParams> for AtlasKey {
@@ -249,12 +257,6 @@ pub trait PlatformInputHandler {
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ScreenId(pub(crate) Uuid);
-
-#[derive(Copy, Clone, Debug)]
-pub enum RasterizationOptions {
-    Alpha,
-    Bgra,
-}
 
 #[derive(Debug)]
 pub struct WindowOptions {

@@ -12,7 +12,11 @@ use core_foundation::{
     base::{CFRange, TCFType},
     string::CFString,
 };
-use core_graphics::{base::CGGlyph, color_space::CGColorSpace, context::CGContext};
+use core_graphics::{
+    base::{kCGImageAlphaPremultipliedLast, CGGlyph},
+    color_space::CGColorSpace,
+    context::CGContext,
+};
 use core_text::{font::CTFont, line::CTLine, string_attributes::kCTFontAttributeName};
 use font_kit::{
     font::Font as FontKitFont,
@@ -262,16 +266,31 @@ impl MacTextSystemState {
                 bitmap_size.height += DevicePixels(1);
             }
 
-            let mut bytes = vec![0; bitmap_size.width.0 as usize * bitmap_size.height.0 as usize];
-            let cx = CGContext::create_bitmap_context(
-                Some(bytes.as_mut_ptr() as *mut _),
-                bitmap_size.width.0 as usize,
-                bitmap_size.height.0 as usize,
-                8,
-                bitmap_size.width.0 as usize,
-                &CGColorSpace::create_device_gray(),
-                kCGImageAlphaOnly,
-            );
+            let mut bytes;
+            let cx;
+            if params.is_emoji {
+                bytes = vec![0; bitmap_size.width.0 as usize * 4 * bitmap_size.height.0 as usize];
+                cx = CGContext::create_bitmap_context(
+                    Some(bytes.as_mut_ptr() as *mut _),
+                    bitmap_size.width.0 as usize,
+                    bitmap_size.height.0 as usize,
+                    8,
+                    bitmap_size.width.0 as usize * 4,
+                    &CGColorSpace::create_device_rgb(),
+                    kCGImageAlphaPremultipliedLast,
+                );
+            } else {
+                bytes = vec![0; bitmap_size.width.0 as usize * bitmap_size.height.0 as usize];
+                cx = CGContext::create_bitmap_context(
+                    Some(bytes.as_mut_ptr() as *mut _),
+                    bitmap_size.width.0 as usize,
+                    bitmap_size.height.0 as usize,
+                    8,
+                    bitmap_size.width.0 as usize,
+                    &CGColorSpace::create_device_gray(),
+                    kCGImageAlphaOnly,
+                );
+            }
 
             // Move the origin to bottom left and account for scaling, this
             // makes drawing text consistent with the font-kit's raster_bounds.
@@ -302,6 +321,17 @@ impl MacTextSystemState {
                     )],
                     cx,
                 );
+
+            if params.is_emoji {
+                // Convert from RGBA with premultiplied alpha to BGRA with straight alpha.
+                for pixel in bytes.chunks_exact_mut(4) {
+                    pixel.swap(0, 2);
+                    let a = pixel[3] as f32 / 255.;
+                    pixel[0] = (pixel[0] as f32 / a) as u8;
+                    pixel[1] = (pixel[1] as f32 / a) as u8;
+                    pixel[2] = (pixel[2] as f32 / a) as u8;
+                }
+            }
 
             Ok((bitmap_size.into(), bytes))
         }

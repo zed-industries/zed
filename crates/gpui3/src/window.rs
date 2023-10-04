@@ -16,8 +16,7 @@ pub struct AnyWindow {}
 pub struct Window {
     handle: AnyWindowHandle,
     platform_window: MainThreadOnly<Box<dyn PlatformWindow>>,
-    monochrome_sprite_atlas: Arc<dyn PlatformAtlas>,
-    polychrome_sprite_atlas: Arc<dyn PlatformAtlas>,
+    sprite_atlas: Arc<dyn PlatformAtlas>,
     rem_size: Pixels,
     content_size: Size<Pixels>,
     layout_engine: TaffyLayoutEngine,
@@ -36,8 +35,7 @@ impl Window {
         cx: &mut MainThread<AppContext>,
     ) -> Self {
         let platform_window = cx.platform().open_window(handle, options);
-        let monochrome_sprite_atlas = platform_window.monochrome_sprite_atlas();
-        let polychrome_sprite_atlas = platform_window.polychrome_sprite_atlas();
+        let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
         let content_size = platform_window.content_size();
         let scale_factor = platform_window.scale_factor();
@@ -60,8 +58,7 @@ impl Window {
         Window {
             handle,
             platform_window,
-            monochrome_sprite_atlas,
-            polychrome_sprite_atlas,
+            sprite_atlas,
             rem_size: px(16.),
             content_size,
             layout_engine: TaffyLayoutEngine::new(),
@@ -231,6 +228,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             font_size,
             subpixel_variant,
             scale_factor,
+            is_emoji: false,
         };
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
@@ -238,7 +236,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             let layer_id = self.current_layer_id();
             let tile = self
                 .window
-                .monochrome_sprite_atlas
+                .sprite_atlas
                 .get_or_insert_with(&params.clone().into(), &mut || {
                     self.text_system().rasterize_glyph(&params)
                 })?;
@@ -255,6 +253,54 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                     bounds,
                     content_mask,
                     color,
+                    tile,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    pub fn paint_emoji(
+        &mut self,
+        origin: Point<Pixels>,
+        order: u32,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+    ) -> Result<()> {
+        let scale_factor = self.scale_factor();
+        let glyph_origin = origin.scale(scale_factor);
+        let params = RenderGlyphParams {
+            font_id,
+            glyph_id,
+            font_size,
+            // We don't render emojis with subpixel variants.
+            subpixel_variant: Default::default(),
+            scale_factor,
+            is_emoji: true,
+        };
+
+        let raster_bounds = self.text_system().raster_bounds(&params)?;
+        if !raster_bounds.is_zero() {
+            let layer_id = self.current_layer_id();
+            let tile = self
+                .window
+                .sprite_atlas
+                .get_or_insert_with(&params.clone().into(), &mut || {
+                    self.text_system().rasterize_glyph(&params)
+                })?;
+            let bounds = Bounds {
+                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
+                size: tile.bounds.size.map(Into::into),
+            };
+            let content_mask = self.content_mask().scale(scale_factor);
+
+            self.window.scene.insert(
+                layer_id,
+                PolychromeSprite {
+                    order,
+                    bounds,
+                    content_mask,
                     tile,
                 },
             );
@@ -280,13 +326,13 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         };
 
         let layer_id = self.current_layer_id();
-        let tile = self.window.monochrome_sprite_atlas.get_or_insert_with(
-            &params.clone().into(),
-            &mut || {
-                let bytes = self.svg_renderer.render(&params)?;
-                Ok((params.size, bytes))
-            },
-        )?;
+        let tile =
+            self.window
+                .sprite_atlas
+                .get_or_insert_with(&params.clone().into(), &mut || {
+                    let bytes = self.svg_renderer.render(&params)?;
+                    Ok((params.size, bytes))
+                })?;
         let content_mask = self.content_mask().scale(scale_factor);
 
         self.window.scene.insert(
@@ -300,52 +346,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             },
         );
 
-        Ok(())
-    }
-
-    pub fn paint_emoji(
-        &mut self,
-        origin: Point<Pixels>,
-        order: u32,
-        font_id: FontId,
-        glyph_id: GlyphId,
-        font_size: Pixels,
-    ) -> Result<()> {
-        let scale_factor = self.scale_factor();
-        let glyph_origin = origin.scale(scale_factor);
-        let params = RenderGlyphParams {
-            font_id,
-            glyph_id,
-            font_size,
-            subpixel_variant: Default::default(),
-            scale_factor,
-        };
-
-        let raster_bounds = self.text_system().raster_bounds(&params)?;
-        if !raster_bounds.is_zero() {
-            let layer_id = self.current_layer_id();
-            let tile = self
-                .window
-                .polychrome_sprite_atlas
-                .get_or_insert_with(&params.clone().into(), &mut || {
-                    self.text_system().rasterize_glyph(&params)
-                })?;
-            let bounds = Bounds {
-                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
-                size: tile.bounds.size.map(Into::into),
-            };
-            let content_mask = self.content_mask().scale(scale_factor);
-
-            self.window.scene.insert(
-                layer_id,
-                PolychromeSprite {
-                    order,
-                    bounds,
-                    content_mask,
-                    tile,
-                },
-            );
-        }
         Ok(())
     }
 

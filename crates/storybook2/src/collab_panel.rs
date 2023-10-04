@@ -51,7 +51,7 @@ impl CollabPanel {
                             //:: https://tailwindcss.com/docs/hover-focus-and-other-states#styling-based-on-parent-state
                             // .group()
                             // List Section Header
-                            .child(self.list_section_header("#CRDB", true, theme))
+                            .child(self.list_section_header("#CRDB 🗃️", true, theme))
                             // List Item Large
                             .child(self.list_item(
                                 "http://github.com/maxbrunsfeld.png?s=50",

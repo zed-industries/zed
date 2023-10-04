@@ -36,8 +36,7 @@ pub struct TextSystem {
     text_layout_cache: Arc<TextLayoutCache>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
     font_ids_by_font: RwLock<HashMap<Font, FontId>>,
-    fonts_by_font_id: RwLock<HashMap<FontId, Font>>,
-    font_metrics: RwLock<HashMap<Font, FontMetrics>>,
+    font_metrics: RwLock<HashMap<FontId, FontMetrics>>,
     wrapper_pool: Mutex<HashMap<FontIdWithSize, Vec<LineWrapper>>>,
     font_runs_pool: Mutex<Vec<Vec<(usize, FontId)>>>,
 }
@@ -49,7 +48,6 @@ impl TextSystem {
             platform_text_system,
             font_metrics: RwLock::new(HashMap::default()),
             font_ids_by_font: RwLock::new(HashMap::default()),
-            fonts_by_font_id: RwLock::new(HashMap::default()),
             wrapper_pool: Mutex::new(HashMap::default()),
             font_runs_pool: Default::default(),
         }
@@ -62,30 +60,20 @@ impl TextSystem {
         } else {
             let font_id = self.platform_text_system.font_id(font)?;
             self.font_ids_by_font.write().insert(font.clone(), font_id);
-            self.fonts_by_font_id.write().insert(font_id, font.clone());
             Ok(font_id)
         }
     }
 
-    pub fn with_font<T>(&self, font_id: FontId, f: impl FnOnce(&Self, &Font) -> T) -> Result<T> {
-        self.fonts_by_font_id
-            .read()
-            .get(&font_id)
-            .ok_or_else(|| anyhow!("font not found"))
-            .map(|font| f(self, font))
-    }
-
-    pub fn bounding_box(&self, font: &Font, font_size: Pixels) -> Result<Bounds<Pixels>> {
-        self.read_metrics(&font, |metrics| metrics.bounding_box(font_size))
+    pub fn bounding_box(&self, font_id: FontId, font_size: Pixels) -> Result<Bounds<Pixels>> {
+        self.read_metrics(font_id, |metrics| metrics.bounding_box(font_size))
     }
 
     pub fn typographic_bounds(
         &self,
-        font: &Font,
+        font_id: FontId,
         font_size: Pixels,
         character: char,
     ) -> Result<Bounds<Pixels>> {
-        let font_id = self.font_id(font)?;
         let glyph_id = self
             .platform_text_system
             .glyph_for_char(font_id, character)
@@ -93,65 +81,63 @@ impl TextSystem {
         let bounds = self
             .platform_text_system
             .typographic_bounds(font_id, glyph_id)?;
-        self.read_metrics(font, |metrics| {
+        self.read_metrics(font_id, |metrics| {
             (bounds / metrics.units_per_em as f32 * font_size.0).map(px)
         })
     }
 
-    pub fn advance(&self, font: &Font, font_size: Pixels, ch: char) -> Result<Size<Pixels>> {
-        let font_id = self.font_id(font)?;
+    pub fn advance(&self, font_id: FontId, font_size: Pixels, ch: char) -> Result<Size<Pixels>> {
         let glyph_id = self
             .platform_text_system
             .glyph_for_char(font_id, ch)
             .ok_or_else(|| anyhow!("glyph not found for character '{}'", ch))?;
-        let result =
-            self.platform_text_system.advance(font_id, glyph_id)? / self.units_per_em(font)? as f32;
+        let result = self.platform_text_system.advance(font_id, glyph_id)?
+            / self.units_per_em(font_id)? as f32;
 
         Ok(result * font_size)
     }
 
-    pub fn units_per_em(&self, font: &Font) -> Result<u32> {
-        self.read_metrics(font, |metrics| metrics.units_per_em as u32)
+    pub fn units_per_em(&self, font_id: FontId) -> Result<u32> {
+        self.read_metrics(font_id, |metrics| metrics.units_per_em as u32)
     }
 
-    pub fn cap_height(&self, font: &Font, font_size: Pixels) -> Result<Pixels> {
-        self.read_metrics(font, |metrics| metrics.cap_height(font_size))
+    pub fn cap_height(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
+        self.read_metrics(font_id, |metrics| metrics.cap_height(font_size))
     }
 
-    pub fn x_height(&self, font: &Font, font_size: Pixels) -> Result<Pixels> {
-        self.read_metrics(font, |metrics| metrics.x_height(font_size))
+    pub fn x_height(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
+        self.read_metrics(font_id, |metrics| metrics.x_height(font_size))
     }
 
-    pub fn ascent(&self, font: &Font, font_size: Pixels) -> Result<Pixels> {
-        self.read_metrics(font, |metrics| metrics.ascent(font_size))
+    pub fn ascent(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
+        self.read_metrics(font_id, |metrics| metrics.ascent(font_size))
     }
 
-    pub fn descent(&self, font: &Font, font_size: Pixels) -> Result<Pixels> {
-        self.read_metrics(font, |metrics| metrics.descent(font_size))
+    pub fn descent(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
+        self.read_metrics(font_id, |metrics| metrics.descent(font_size))
     }
 
     pub fn baseline_offset(
         &self,
-        font: &Font,
+        font_id: FontId,
         font_size: Pixels,
         line_height: Pixels,
     ) -> Result<Pixels> {
-        let ascent = self.ascent(font, font_size)?;
-        let descent = self.descent(font, font_size)?;
+        let ascent = self.ascent(font_id, font_size)?;
+        let descent = self.descent(font_id, font_size)?;
         let padding_top = (line_height - ascent - descent) / 2.;
         Ok(padding_top + ascent)
     }
 
-    fn read_metrics<T>(&self, font: &Font, read: impl FnOnce(&FontMetrics) -> T) -> Result<T> {
+    fn read_metrics<T>(&self, font_id: FontId, read: impl FnOnce(&FontMetrics) -> T) -> Result<T> {
         let lock = self.font_metrics.upgradable_read();
 
-        if let Some(metrics) = lock.get(font) {
+        if let Some(metrics) = lock.get(&font_id) {
             Ok(read(metrics))
         } else {
-            let font_id = self.platform_text_system.font_id(&font)?;
             let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
             let metrics = lock
-                .entry(font.clone())
+                .entry(font_id)
                 .or_insert_with(|| self.platform_text_system.font_metrics(font_id));
             Ok(read(metrics))
         }
@@ -390,6 +376,7 @@ pub struct RenderGlyphParams {
     pub(crate) font_size: Pixels,
     pub(crate) subpixel_variant: Point<u8>,
     pub(crate) scale_factor: f32,
+    pub(crate) is_emoji: bool,
 }
 
 impl Eq for RenderGlyphParams {}

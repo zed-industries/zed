@@ -1,4 +1,4 @@
-use std::{iter::Peekable, mem};
+use std::{iter::Peekable, mem, slice};
 
 use super::{Bounds, Hsla, Point};
 use crate::{AtlasTextureId, AtlasTile, Corners, Edges, ScaledContentMask, ScaledPixels};
@@ -63,42 +63,46 @@ impl SceneLayer {
     pub fn batches(&mut self) -> impl Iterator<Item = PrimitiveBatch> {
         self.quads.sort_unstable();
         self.monochrome_sprites.sort_unstable();
-
-        BatchIterator::new(
-            &self.quads,
-            self.quads.iter().peekable(),
-            &self.monochrome_sprites,
-            self.monochrome_sprites.iter().peekable(),
-        )
+        self.polychrome_sprites.sort_unstable();
+        BatchIterator {
+            quads: &self.quads,
+            quads_start: 0,
+            quads_iter: self.quads.iter().peekable(),
+            monochrome_sprites: &self.monochrome_sprites,
+            monochrome_sprites_start: 0,
+            monochrome_sprites_iter: self.monochrome_sprites.iter().peekable(),
+            polychrome_sprites: &self.polychrome_sprites,
+            polychrome_sprites_start: 0,
+            polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
+        }
     }
 }
 
-struct BatchIterator<'a, Q, S>
-where
-    Q: Iterator<Item = &'a Quad>,
-    S: Iterator<Item = &'a MonochromeSprite>,
-{
+struct BatchIterator<'a> {
     quads: &'a [Quad],
-    sprites: &'a [MonochromeSprite],
     quads_start: usize,
-    sprites_start: usize,
-    quads_iter: Peekable<Q>,
-    sprites_iter: Peekable<S>,
+    quads_iter: Peekable<slice::Iter<'a, Quad>>,
+    monochrome_sprites: &'a [MonochromeSprite],
+    monochrome_sprites_start: usize,
+    monochrome_sprites_iter: Peekable<slice::Iter<'a, MonochromeSprite>>,
+    polychrome_sprites: &'a [PolychromeSprite],
+    polychrome_sprites_start: usize,
+    polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
 }
 
-impl<'a, Q: 'a, S: 'a> Iterator for BatchIterator<'a, Q, S>
-where
-    Q: Iterator<Item = &'a Quad>,
-    S: Iterator<Item = &'a MonochromeSprite>,
-{
+impl<'a> Iterator for BatchIterator<'a> {
     type Item = PrimitiveBatch<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut kinds_and_orders = [
             (PrimitiveKind::Quad, self.quads_iter.peek().map(|q| q.order)),
             (
-                PrimitiveKind::Sprite,
-                self.sprites_iter.peek().map(|s| s.order),
+                PrimitiveKind::MonochromeSprite,
+                self.monochrome_sprites_iter.peek().map(|s| s.order),
+            ),
+            (
+                PrimitiveKind::PolychromeSprite,
+                self.polychrome_sprites_iter.peek().map(|s| s.order),
             ),
         ];
         kinds_and_orders.sort_by_key(|(_, order)| order.unwrap_or(u32::MAX));
@@ -123,45 +127,40 @@ where
                 self.quads_start = quads_end;
                 Some(PrimitiveBatch::Quads(&self.quads[quads_start..quads_end]))
             }
-            PrimitiveKind::Sprite => {
-                let texture_id = self.sprites_iter.peek().unwrap().tile.texture_id;
-                let sprites_start = self.sprites_start;
+            PrimitiveKind::MonochromeSprite => {
+                let texture_id = self.monochrome_sprites_iter.peek().unwrap().tile.texture_id;
+                let sprites_start = self.monochrome_sprites_start;
                 let sprites_end = sprites_start
                     + self
-                        .sprites_iter
+                        .monochrome_sprites_iter
                         .by_ref()
                         .take_while(|sprite| {
                             sprite.order <= max_order && sprite.tile.texture_id == texture_id
                         })
                         .count();
-                self.sprites_start = sprites_end;
+                self.monochrome_sprites_start = sprites_end;
                 Some(PrimitiveBatch::MonochromeSprites {
                     texture_id,
-                    sprites: &self.sprites[sprites_start..sprites_end],
+                    sprites: &self.monochrome_sprites[sprites_start..sprites_end],
                 })
             }
-        }
-    }
-}
-
-impl<'a, Q: 'a, S: 'a> BatchIterator<'a, Q, S>
-where
-    Q: Iterator<Item = &'a Quad>,
-    S: Iterator<Item = &'a MonochromeSprite>,
-{
-    fn new(
-        quads: &'a [Quad],
-        quads_iter: Peekable<Q>,
-        sprites: &'a [MonochromeSprite],
-        sprites_iter: Peekable<S>,
-    ) -> Self {
-        Self {
-            quads,
-            quads_start: 0,
-            quads_iter,
-            sprites,
-            sprites_start: 0,
-            sprites_iter,
+            PrimitiveKind::PolychromeSprite => {
+                let texture_id = self.polychrome_sprites_iter.peek().unwrap().tile.texture_id;
+                let sprites_start = self.polychrome_sprites_start;
+                let sprites_end = sprites_start
+                    + self
+                        .polychrome_sprites_iter
+                        .by_ref()
+                        .take_while(|sprite| {
+                            sprite.order <= max_order && sprite.tile.texture_id == texture_id
+                        })
+                        .count();
+                self.polychrome_sprites_start = sprites_end;
+                Some(PrimitiveBatch::PolychromeSprites {
+                    texture_id,
+                    sprites: &self.polychrome_sprites[sprites_start..sprites_end],
+                })
+            }
         }
     }
 }
@@ -169,7 +168,8 @@ where
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PrimitiveKind {
     Quad,
-    Sprite,
+    MonochromeSprite,
+    PolychromeSprite,
 }
 
 #[derive(Clone, Debug)]

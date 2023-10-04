@@ -48,10 +48,11 @@ fn generate_shader_bindings() -> PathBuf {
         "ScaledContentMask".into(),
         "Uniforms".into(),
         "AtlasTile".into(),
-        "Quad".into(),
         "QuadInputIndex".into(),
+        "Quad".into(),
+        "SpriteInputIndex".into(),
         "MonochromeSprite".into(),
-        "MonochromeSpriteInputIndex".into(),
+        "PolychromeSprite".into(),
     ]);
     config.no_includes = true;
     config.enumeration.prefix_with_name = true;
