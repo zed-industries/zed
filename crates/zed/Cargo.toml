@@ -87,7 +87,7 @@ ctor = "0.1.20"
 env_logger.workspace = true
 futures.workspace = true
 ignore = "0.4"
-image.workspace = true
+image = "0.23"
 indexmap = "1.6.2"
 isahc.workspace = true
 lazy_static.workspace = true
@@ -138,6 +138,7 @@ tree-sitter-yaml.workspace = true
 tree-sitter-lua.workspace = true
 tree-sitter-nix.workspace = true
 tree-sitter-nu.workspace = true
+tree-sitter-vue.workspace = true
 
 url = "2.2"
 urlencoding = "2.1.2"
