@@ -463,20 +463,20 @@ impl Database {
         }
 
         let channel_ids = graph.channels.iter().map(|c| c.id).collect::<Vec<_>>();
-        let channels_with_changed_notes = self
-            .channels_with_changed_notes(user_id, &channel_ids, &*tx)
+        let channel_buffer_changes = self
+            .unseen_channel_buffer_changes(user_id, &channel_ids, &*tx)
             .await?;
 
-        let channels_with_new_messages = self
-            .channels_with_new_messages(user_id, &channel_ids, &*tx)
+        let unseen_messages = self
+            .unseen_channel_messages(user_id, &channel_ids, &*tx)
             .await?;
 
         Ok(ChannelsForUser {
             channels: graph,
             channel_participants,
             channels_with_admin_privileges,
-            channels_with_changed_notes,
-            channels_with_new_messages,
+            unseen_buffer_changes: channel_buffer_changes,
+            channel_messages: unseen_messages,
         })
     }
 

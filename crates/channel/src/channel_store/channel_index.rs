@@ -39,16 +39,37 @@ impl ChannelIndex {
         }
     }
 
-    pub fn clear_note_changed(&mut self, channel_id: ChannelId) {
+    pub fn acknowledge_note_version(
+        &mut self,
+        channel_id: ChannelId,
+        epoch: u64,
+        version: &clock::Global,
+    ) {
         if let Some(channel) = self.channels_by_id.get_mut(&channel_id) {
-            Arc::make_mut(channel).has_note_changed = false;
+            let channel = Arc::make_mut(channel);
+            if let Some((unseen_epoch, unseen_version)) = &channel.unseen_note_version {
+                if epoch > *unseen_epoch
+                    || epoch == *unseen_epoch && version.observed_all(unseen_version)
+                {
+                    channel.unseen_note_version = None;
+                }
+            }
         }
     }
 
-    pub fn clear_message_changed(&mut self, channel_id: ChannelId) {
+    pub fn acknowledge_message_id(&mut self, channel_id: ChannelId, message_id: u64) {
         if let Some(channel) = self.channels_by_id.get_mut(&channel_id) {
-            Arc::make_mut(channel).has_new_messages = false;
+            let channel = Arc::make_mut(channel);
+            if let Some(unseen_message_id) = channel.unseen_message_id {
+                if message_id >= unseen_message_id {
+                    channel.unseen_message_id = None;
+                }
+            }
         }
+    }
+
+    pub fn note_changed(&mut self, channel_id: ChannelId, epoch: u64, version: &clock::Global) {
+        insert_note_changed(&mut self.channels_by_id, channel_id, epoch, version);
     }
 }
 
@@ -88,15 +109,14 @@ impl<'a> ChannelPathsInsertGuard<'a> {
         }
     }
 
-    pub fn note_changed(&mut self, channel_id: ChannelId) {
-        if let Some(channel) = self.channels_by_id.get_mut(&channel_id) {
-            Arc::make_mut(channel).has_note_changed = true;
-        }
+    pub fn note_changed(&mut self, channel_id: ChannelId, epoch: u64, version: &clock::Global) {
+        insert_note_changed(&mut self.channels_by_id, channel_id, epoch, &version);
     }
 
-    pub fn new_messages(&mut self, channel_id: ChannelId) {
+    pub fn new_messages(&mut self, channel_id: ChannelId, message_id: u64) {
         if let Some(channel) = self.channels_by_id.get_mut(&channel_id) {
-            Arc::make_mut(channel).has_new_messages = true;
+            let unseen_message_id = Arc::make_mut(channel).unseen_message_id.get_or_insert(0);
+            *unseen_message_id = message_id.max(*unseen_message_id);
         }
     }
 
@@ -109,8 +129,8 @@ impl<'a> ChannelPathsInsertGuard<'a> {
                 Arc::new(Channel {
                     id: channel_proto.id,
                     name: channel_proto.name,
-                    has_note_changed: false,
-                    has_new_messages: false,
+                    unseen_note_version: None,
+                    unseen_message_id: None,
                 }),
             );
             self.insert_root(channel_proto.id);
@@ -185,4 +205,22 @@ fn channel_path_sorting_key<'a>(
 ) -> impl 'a + Iterator<Item = Option<&'a str>> {
     path.iter()
         .map(|id| Some(channels_by_id.get(id)?.name.as_str()))
+}
+
+fn insert_note_changed(
+    channels_by_id: &mut BTreeMap<ChannelId, Arc<Channel>>,
+    channel_id: u64,
+    epoch: u64,
+    version: &clock::Global,
+) {
+    if let Some(channel) = channels_by_id.get_mut(&channel_id) {
+        let unseen_version = Arc::make_mut(channel)
+            .unseen_note_version
+            .get_or_insert((0, clock::Global::new()));
+        if epoch > unseen_version.0 {
+            *unseen_version = (epoch, version.clone());
+        } else {
+            unseen_version.1.join(&version);
+        }
+    }
 }

@@ -274,7 +274,8 @@ impl Server {
             .add_message_handler(unfollow)
             .add_message_handler(update_followers)
             .add_message_handler(update_diff_base)
-            .add_request_handler(get_private_user_info);
+            .add_request_handler(get_private_user_info)
+            .add_message_handler(acknowledge_channel_message);
 
         Arc::new(server)
     }
@@ -2568,16 +2569,8 @@ async fn respond_to_channel_invite(
                         name: channel.name,
                     }),
             );
-        update.notes_changed = result
-            .channels_with_changed_notes
-            .iter()
-            .map(|id| id.to_proto())
-            .collect();
-        update.new_messages = result
-            .channels_with_new_messages
-            .iter()
-            .map(|id| id.to_proto())
-            .collect();
+        update.unseen_channel_messages = result.channel_messages;
+        update.unseen_channel_buffer_changes = result.unseen_buffer_changes;
         update.insert_edge = result.channels.edges;
         update
             .channel_participants
@@ -2701,7 +2694,7 @@ async fn update_channel_buffer(
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
 
-    let (collaborators, non_collaborators) = db
+    let (collaborators, non_collaborators, epoch, version) = db
         .update_channel_buffer(channel_id, session.user_id, &request.operations)
         .await?;
 
@@ -2726,7 +2719,11 @@ async fn update_channel_buffer(
             session.peer.send(
                 peer_id.into(),
                 proto::UpdateChannels {
-                    notes_changed: vec![channel_id.to_proto()],
+                    unseen_channel_buffer_changes: vec![proto::UnseenChannelBufferChange {
+                        channel_id: channel_id.to_proto(),
+                        epoch: epoch as u64,
+                        version: version.clone(),
+                    }],
                     ..Default::default()
                 },
             )
@@ -2859,9 +2856,7 @@ async fn send_channel_message(
         message: Some(message),
     })?;
 
-    dbg!(&non_participants);
     let pool = &*session.connection_pool().await;
-
     broadcast(
         None,
         non_participants
@@ -2871,7 +2866,10 @@ async fn send_channel_message(
             session.peer.send(
                 peer_id.into(),
                 proto::UpdateChannels {
-                    new_messages: vec![channel_id.to_proto()],
+                    unseen_channel_messages: vec![proto::UnseenChannelMessage {
+                        channel_id: channel_id.to_proto(),
+                        message_id: message_id.to_proto(),
+                    }],
                     ..Default::default()
                 },
             )
@@ -2897,6 +2895,20 @@ async fn remove_channel_message(
         session.peer.send(connection, request.clone())
     });
     response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn acknowledge_channel_message(
+    request: proto::AckChannelMessage,
+    session: Session,
+) -> Result<()> {
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let message_id = MessageId::from_proto(request.message_id);
+    session
+        .db()
+        .await
+        .observe_channel_message(channel_id, session.user_id, message_id)
+        .await?;
     Ok(())
 }
 
@@ -3035,18 +3047,8 @@ fn build_initial_channels_update(
         });
     }
 
-    update.notes_changed = channels
-        .channels_with_changed_notes
-        .iter()
-        .map(|channel_id| channel_id.to_proto())
-        .collect();
-
-    update.new_messages = channels
-        .channels_with_new_messages
-        .iter()
-        .map(|channel_id| channel_id.to_proto())
-        .collect();
-
+    update.unseen_channel_buffer_changes = channels.unseen_buffer_changes;
+    update.unseen_channel_messages = channels.channel_messages;
     update.insert_edge = channels.channels.edges;
 
     for (channel_id, participants) in channels.channel_participants {

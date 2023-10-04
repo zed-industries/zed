@@ -144,25 +144,32 @@ async fn test_channel_message_new_notification(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    let _ = db
+    let (fourth_message, _, _) = db
         .create_channel_message(channel_2, user, "2_1", OffsetDateTime::now_utc(), 4)
         .await
         .unwrap();
 
     // Check that observer has new messages
-    let channels_with_new_messages = db
+    let unseen_messages = db
         .transaction(|tx| async move {
-            db.channels_with_new_messages(observer, &[channel_1, channel_2], &*tx)
+            db.unseen_channel_messages(observer, &[channel_1, channel_2], &*tx)
                 .await
         })
         .await
         .unwrap();
 
     assert_eq!(
-        channels_with_new_messages,
-        [channel_1, channel_2]
-            .into_iter()
-            .collect::<collections::HashSet<_>>()
+        unseen_messages,
+        [
+            rpc::proto::UnseenChannelMessage {
+                channel_id: channel_1.to_proto(),
+                message_id: third_message.to_proto(),
+            },
+            rpc::proto::UnseenChannelMessage {
+                channel_id: channel_2.to_proto(),
+                message_id: fourth_message.to_proto(),
+            },
+        ]
     );
 
     // Observe the second message
@@ -171,18 +178,25 @@ async fn test_channel_message_new_notification(db: &Arc<Database>) {
         .unwrap();
 
     // Make sure the observer still has a new message
-    let channels_with_new_messages = db
+    let unseen_messages = db
         .transaction(|tx| async move {
-            db.channels_with_new_messages(observer, &[channel_1, channel_2], &*tx)
+            db.unseen_channel_messages(observer, &[channel_1, channel_2], &*tx)
                 .await
         })
         .await
         .unwrap();
     assert_eq!(
-        channels_with_new_messages,
-        [channel_1, channel_2]
-            .into_iter()
-            .collect::<collections::HashSet<_>>()
+        unseen_messages,
+        [
+            rpc::proto::UnseenChannelMessage {
+                channel_id: channel_1.to_proto(),
+                message_id: third_message.to_proto(),
+            },
+            rpc::proto::UnseenChannelMessage {
+                channel_id: channel_2.to_proto(),
+                message_id: fourth_message.to_proto(),
+            },
+        ]
     );
 
     // Observe the third message,
@@ -191,16 +205,20 @@ async fn test_channel_message_new_notification(db: &Arc<Database>) {
         .unwrap();
 
     // Make sure the observer does not have a new method
-    let channels_with_new_messages = db
+    let unseen_messages = db
         .transaction(|tx| async move {
-            db.channels_with_new_messages(observer, &[channel_1, channel_2], &*tx)
+            db.unseen_channel_messages(observer, &[channel_1, channel_2], &*tx)
                 .await
         })
         .await
         .unwrap();
+
     assert_eq!(
-        channels_with_new_messages,
-        [channel_2].into_iter().collect::<collections::HashSet<_>>()
+        unseen_messages,
+        [rpc::proto::UnseenChannelMessage {
+            channel_id: channel_2.to_proto(),
+            message_id: fourth_message.to_proto(),
+        }]
     );
 
     // Observe the second message again, should not regress our observed state
@@ -208,16 +226,19 @@ async fn test_channel_message_new_notification(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    // Make sure the observer does not have a new method
-    let channels_with_new_messages = db
+    // Make sure the observer does not have a new message
+    let unseen_messages = db
         .transaction(|tx| async move {
-            db.channels_with_new_messages(observer, &[channel_1, channel_2], &*tx)
+            db.unseen_channel_messages(observer, &[channel_1, channel_2], &*tx)
                 .await
         })
         .await
         .unwrap();
     assert_eq!(
-        channels_with_new_messages,
-        [channel_2].into_iter().collect::<collections::HashSet<_>>()
+        unseen_messages,
+        [rpc::proto::UnseenChannelMessage {
+            channel_id: channel_2.to_proto(),
+            message_id: fourth_message.to_proto(),
+        }]
     );
 }

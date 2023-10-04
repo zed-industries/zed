@@ -1217,6 +1217,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "clock",
  "collections",
  "db",
  "feature_flags",
@@ -1530,6 +1531,7 @@ dependencies = [
  "tracing-subscriber",
  "unindent",
  "util",
+ "uuid 1.4.1",
  "workspace",
 ]
 

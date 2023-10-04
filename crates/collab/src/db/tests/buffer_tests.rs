@@ -235,7 +235,7 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         .transaction(|tx| {
             let buffers = &buffers;
             async move {
-                db.get_last_operations_for_buffers([buffers[0].id, buffers[2].id], &*tx)
+                db.get_latest_operations_for_buffers([buffers[0].id, buffers[2].id], &*tx)
                     .await
             }
         })
@@ -299,7 +299,7 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         .transaction(|tx| {
             let buffers = &buffers;
             async move {
-                db.get_last_operations_for_buffers([buffers[1].id, buffers[2].id], &*tx)
+                db.get_latest_operations_for_buffers([buffers[1].id, buffers[2].id], &*tx)
                     .await
             }
         })
@@ -317,7 +317,7 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         .transaction(|tx| {
             let buffers = &buffers;
             async move {
-                db.get_last_operations_for_buffers([buffers[0].id, buffers[1].id], &*tx)
+                db.get_latest_operations_for_buffers([buffers[0].id, buffers[1].id], &*tx)
                     .await
             }
         })
@@ -331,11 +331,11 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         ],
     );
 
-    let changed_channels = db
+    let buffer_changes = db
         .transaction(|tx| {
             let buffers = &buffers;
             async move {
-                db.channels_with_changed_notes(
+                db.unseen_channel_buffer_changes(
                     observer_id,
                     &[
                         buffers[0].channel_id,
@@ -349,31 +349,42 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         })
         .await
         .unwrap();
+
     assert_eq!(
-        changed_channels,
+        buffer_changes,
         [
-            buffers[0].channel_id,
-            buffers[1].channel_id,
-            buffers[2].channel_id,
+            rpc::proto::UnseenChannelBufferChange {
+                channel_id: buffers[0].channel_id.to_proto(),
+                epoch: 0,
+                version: serialize_version(&text_buffers[0].version()),
+            },
+            rpc::proto::UnseenChannelBufferChange {
+                channel_id: buffers[1].channel_id.to_proto(),
+                epoch: 1,
+                version: serialize_version(&text_buffers[1].version()),
+            },
+            rpc::proto::UnseenChannelBufferChange {
+                channel_id: buffers[2].channel_id.to_proto(),
+                epoch: 0,
+                version: serialize_version(&text_buffers[2].version()),
+            },
         ]
-        .into_iter()
-        .collect::<HashSet<_>>()
     );
 
     db.observe_buffer_version(
         buffers[1].id,
         observer_id,
         1,
-        &serialize_version(&text_buffers[1].version()),
+        serialize_version(&text_buffers[1].version()).as_slice(),
     )
     .await
     .unwrap();
 
-    let changed_channels = db
+    let buffer_changes = db
         .transaction(|tx| {
             let buffers = &buffers;
             async move {
-                db.channels_with_changed_notes(
+                db.unseen_channel_buffer_changes(
                     observer_id,
                     &[
                         buffers[0].channel_id,
@@ -387,11 +398,21 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         })
         .await
         .unwrap();
+
     assert_eq!(
-        changed_channels,
-        [buffers[0].channel_id, buffers[2].channel_id,]
-            .into_iter()
-            .collect::<HashSet<_>>()
+        buffer_changes,
+        [
+            rpc::proto::UnseenChannelBufferChange {
+                channel_id: buffers[0].channel_id.to_proto(),
+                epoch: 0,
+                version: serialize_version(&text_buffers[0].version()),
+            },
+            rpc::proto::UnseenChannelBufferChange {
+                channel_id: buffers[2].channel_id.to_proto(),
+                epoch: 0,
+                version: serialize_version(&text_buffers[2].version()),
+            },
+        ]
     );
 
     // Observe an earlier version of the buffer.
@@ -407,11 +428,11 @@ async fn test_channel_buffers_last_operations(db: &Database) {
     .await
     .unwrap();
 
-    let changed_channels = db
+    let buffer_changes = db
         .transaction(|tx| {
             let buffers = &buffers;
             async move {
-                db.channels_with_changed_notes(
+                db.unseen_channel_buffer_changes(
                     observer_id,
                     &[
                         buffers[0].channel_id,
@@ -425,11 +446,21 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         })
         .await
         .unwrap();
+
     assert_eq!(
-        changed_channels,
-        [buffers[0].channel_id, buffers[2].channel_id,]
-            .into_iter()
-            .collect::<HashSet<_>>()
+        buffer_changes,
+        [
+            rpc::proto::UnseenChannelBufferChange {
+                channel_id: buffers[0].channel_id.to_proto(),
+                epoch: 0,
+                version: serialize_version(&text_buffers[0].version()),
+            },
+            rpc::proto::UnseenChannelBufferChange {
+                channel_id: buffers[2].channel_id.to_proto(),
+                epoch: 0,
+                version: serialize_version(&text_buffers[2].version()),
+            },
+        ]
     );
 }
 

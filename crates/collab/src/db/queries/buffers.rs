@@ -432,7 +432,12 @@ impl Database {
         channel_id: ChannelId,
         user: UserId,
         operations: &[proto::Operation],
-    ) -> Result<(Vec<ConnectionId>, Vec<UserId>)> {
+    ) -> Result<(
+        Vec<ConnectionId>,
+        Vec<UserId>,
+        i32,
+        Vec<proto::VectorClockEntry>,
+    )> {
         self.transaction(move |tx| async move {
             self.check_user_is_channel_member(channel_id, user, &*tx)
                 .await?;
@@ -453,12 +458,18 @@ impl Database {
                 .collect::<Vec<_>>();
 
             let mut channel_members;
+            let max_version;
 
             if !operations.is_empty() {
                 let max_operation = operations
                     .iter()
                     .max_by_key(|op| (op.lamport_timestamp.as_ref(), op.replica_id.as_ref()))
                     .unwrap();
+
+                max_version = vec![proto::VectorClockEntry {
+                    replica_id: *max_operation.replica_id.as_ref() as u32,
+                    timestamp: *max_operation.lamport_timestamp.as_ref() as u32,
+                }];
 
                 // get current channel participants and save the max operation above
                 self.save_max_operation(
@@ -492,6 +503,7 @@ impl Database {
                     .await?;
             } else {
                 channel_members = Vec::new();
+                max_version = Vec::new();
             }
 
             let mut connections = Vec::new();
@@ -510,7 +522,7 @@ impl Database {
                 });
             }
 
-            Ok((connections, channel_members))
+            Ok((connections, channel_members, buffer.epoch, max_version))
         })
         .await
     }
@@ -712,12 +724,12 @@ impl Database {
         .await
     }
 
-    pub async fn channels_with_changed_notes(
+    pub async fn unseen_channel_buffer_changes(
         &self,
         user_id: UserId,
         channel_ids: &[ChannelId],
         tx: &DatabaseTransaction,
-    ) -> Result<HashSet<ChannelId>> {
+    ) -> Result<Vec<proto::UnseenChannelBufferChange>> {
         #[derive(Debug, Clone, Copy, EnumIter, DeriveColumn)]
         enum QueryIds {
             ChannelId,
@@ -750,37 +762,45 @@ impl Database {
         }
         drop(rows);
 
-        let last_operations = self
-            .get_last_operations_for_buffers(channel_ids_by_buffer_id.keys().copied(), &*tx)
+        let latest_operations = self
+            .get_latest_operations_for_buffers(channel_ids_by_buffer_id.keys().copied(), &*tx)
             .await?;
 
-        let mut channels_with_new_changes = HashSet::default();
-        for last_operation in last_operations {
-            if let Some(observed_edit) = observed_edits_by_buffer_id.get(&last_operation.buffer_id)
-            {
-                if observed_edit.epoch == last_operation.epoch
-                    && observed_edit.lamport_timestamp == last_operation.lamport_timestamp
-                    && observed_edit.replica_id == last_operation.replica_id
+        let mut changes = Vec::default();
+        for latest in latest_operations {
+            if let Some(observed) = observed_edits_by_buffer_id.get(&latest.buffer_id) {
+                if (
+                    observed.epoch,
+                    observed.lamport_timestamp,
+                    observed.replica_id,
+                ) >= (latest.epoch, latest.lamport_timestamp, latest.replica_id)
                 {
                     continue;
                 }
             }
 
-            if let Some(channel_id) = channel_ids_by_buffer_id.get(&last_operation.buffer_id) {
-                channels_with_new_changes.insert(*channel_id);
+            if let Some(channel_id) = channel_ids_by_buffer_id.get(&latest.buffer_id) {
+                changes.push(proto::UnseenChannelBufferChange {
+                    channel_id: channel_id.to_proto(),
+                    epoch: latest.epoch as u64,
+                    version: vec![proto::VectorClockEntry {
+                        replica_id: latest.replica_id as u32,
+                        timestamp: latest.lamport_timestamp as u32,
+                    }],
+                });
             }
         }
 
-        Ok(channels_with_new_changes)
+        Ok(changes)
     }
 
-    pub async fn get_last_operations_for_buffers(
+    pub async fn get_latest_operations_for_buffers(
         &self,
-        channel_ids: impl IntoIterator<Item = BufferId>,
+        buffer_ids: impl IntoIterator<Item = BufferId>,
         tx: &DatabaseTransaction,
     ) -> Result<Vec<buffer_operation::Model>> {
         let mut values = String::new();
-        for id in channel_ids {
+        for id in buffer_ids {
             if !values.is_empty() {
                 values.push_str(", ");
             }
@@ -795,13 +815,10 @@ impl Database {
             r#"
             SELECT
                 *
-            FROM (
+            FROM
+            (
                 SELECT
-                    buffer_id,
-                    epoch,
-                    lamport_timestamp,
-                    replica_id,
-                    value,
+                    *,
                     row_number() OVER (
                         PARTITION BY buffer_id
                         ORDER BY
@@ -812,17 +829,17 @@ impl Database {
                 FROM buffer_operations
                 WHERE
                     buffer_id in ({values})
-            ) AS operations
+            ) AS last_operations
             WHERE
                 row_number = 1
             "#,
         );
 
         let stmt = Statement::from_string(self.pool.get_database_backend(), sql);
-        let operations = buffer_operation::Model::find_by_statement(stmt)
+        Ok(buffer_operation::Entity::find()
+            .from_raw_sql(stmt)
             .all(&*tx)
-            .await?;
-        Ok(operations)
+            .await?)
     }
 }
 

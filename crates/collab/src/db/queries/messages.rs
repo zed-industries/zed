@@ -279,12 +279,12 @@ impl Database {
         Ok(())
     }
 
-    pub async fn channels_with_new_messages(
+    pub async fn unseen_channel_messages(
         &self,
         user_id: UserId,
         channel_ids: &[ChannelId],
         tx: &DatabaseTransaction,
-    ) -> Result<collections::HashSet<ChannelId>> {
+    ) -> Result<Vec<proto::UnseenChannelMessage>> {
         let mut observed_messages_by_channel_id = HashMap::default();
         let mut rows = observed_channel_messages::Entity::find()
             .filter(observed_channel_messages::Column::UserId.eq(user_id))
@@ -334,7 +334,7 @@ impl Database {
             .all(&*tx)
             .await?;
 
-        let mut channels_with_new_changes = HashSet::default();
+        let mut changes = Vec::new();
         for last_message in last_messages {
             if let Some(observed_message) =
                 observed_messages_by_channel_id.get(&last_message.channel_id)
@@ -343,10 +343,13 @@ impl Database {
                     continue;
                 }
             }
-            channels_with_new_changes.insert(last_message.channel_id);
+            changes.push(proto::UnseenChannelMessage {
+                channel_id: last_message.channel_id.to_proto(),
+                message_id: last_message.id.to_proto(),
+            });
         }
 
-        Ok(channels_with_new_changes)
+        Ok(changes)
     }
 
     pub async fn remove_channel_message(

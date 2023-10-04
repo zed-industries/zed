@@ -151,12 +151,12 @@ impl TestServer {
 
         Arc::get_mut(&mut client)
             .unwrap()
-            .set_id(user_id.0 as usize)
+            .set_id(user_id.to_proto())
             .override_authenticate(move |cx| {
                 cx.spawn(|_| async move {
                     let access_token = "the-token".to_string();
                     Ok(Credentials {
-                        user_id: user_id.0 as u64,
+                        user_id: user_id.to_proto(),
                         access_token,
                     })
                 })

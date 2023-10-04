@@ -1821,7 +1821,7 @@ impl CollabPanel {
                         channel.name.clone(),
                         theme
                             .channel_name
-                            .in_state(channel.has_new_messages)
+                            .in_state(channel.unseen_message_id.is_some())
                             .text
                             .clone(),
                     )
@@ -1880,7 +1880,7 @@ impl CollabPanel {
                         let participants =
                             self.channel_store.read(cx).channel_participants(channel_id);
                         if participants.is_empty() {
-                            if channel.has_note_changed {
+                            if channel.unseen_note_version.is_some() {
                                 Svg::new("icons/terminal.svg")
                                     .with_color(theme.channel_note_active_color)
                                     .constrained()

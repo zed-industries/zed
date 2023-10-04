@@ -957,8 +957,19 @@ message UpdateChannels {
     repeated uint64 remove_channel_invitations = 6;
     repeated ChannelParticipants channel_participants = 7;
     repeated ChannelPermission channel_permissions = 8;
-    repeated uint64 notes_changed = 9;
-    repeated uint64 new_messages = 10;
+    repeated UnseenChannelMessage unseen_channel_messages = 9;
+    repeated UnseenChannelBufferChange unseen_channel_buffer_changes = 10;
+}
+
+message UnseenChannelMessage {
+    uint64 channel_id = 1;
+    uint64 message_id = 2;
+}
+
+message UnseenChannelBufferChange {
+    uint64 channel_id = 1;
+    uint64 epoch = 2;
+    repeated VectorClockEntry version = 3;
 }
 
 message ChannelEdge {
@@ -1127,8 +1138,7 @@ message RejoinChannelBuffersResponse {
 message AckBufferOperation {
     uint64 buffer_id = 1;
     uint64 epoch = 2;
-    uint64 lamport_timestamp = 3;
-    uint64 replica_id = 4;
+    repeated VectorClockEntry version = 3;
 }
 
 message JoinChannelBufferResponse {
