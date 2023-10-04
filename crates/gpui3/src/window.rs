@@ -3,11 +3,10 @@ use crate::{
     Bounds, Context, Corners, DevicePixels, Effect, Element, EntityId, FontId, GlyphId, Handle,
     Hsla, ImageData, IsZero, LayerId, LayoutId, MainThread, MainThreadOnly, MonochromeSprite,
     Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Reference, RenderGlyphParams,
-    RenderSvgParams, ScaledPixels, Scene, SharedString, Size, Style, TaffyLayoutEngine, WeakHandle,
-    WindowOptions, SUBPIXEL_VARIANTS,
+    RenderSvgParams, ScaledPixels, Scene, SharedString, Size, Style, TaffyLayoutEngine, Task,
+    WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
-use futures::{channel::oneshot, Future};
 use smallvec::SmallVec;
 use std::{any::TypeId, borrow::Cow, marker::PhantomData, mem, sync::Arc};
 use util::ResultExt;
@@ -116,24 +115,18 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     fn run_on_main<R>(
         &mut self,
         f: impl FnOnce(&mut MainThread<WindowContext<'_, '_>>) -> R + Send + 'static,
-    ) -> impl Future<Output = R>
+    ) -> Task<Result<R>>
     where
         R: Send + 'static,
     {
-        let (tx, rx) = oneshot::channel();
         if self.executor.is_main_thread() {
-            let _ = tx.send(f(unsafe {
+            Task::ready(Ok(f(unsafe {
                 mem::transmute::<&mut Self, &mut MainThread<Self>>(self)
-            }));
+            })))
         } else {
             let id = self.window.handle.id;
-            let _ = self.app.run_on_main(move |cx| {
-                cx.update_window(id, |cx| {
-                    let _ = tx.send(f(cx));
-                })
-            });
+            self.app.run_on_main(move |cx| cx.update_window(id, f))
         }
-        async move { rx.await.unwrap() }
     }
 
     pub fn request_layout(
@@ -397,13 +390,14 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             cx.window.root_view = Some(root_view);
             let scene = cx.window.scene.take();
 
-            let _ = cx.run_on_main(view, |_, cx| {
+            cx.run_on_main(view, |_, cx| {
                 cx.window
                     .platform_window
                     .borrow_on_main_thread()
                     .draw(scene);
                 cx.window.dirty = false;
-            });
+            })
+            .detach();
 
             Ok(())
         })
@@ -594,23 +588,17 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
         &mut self,
         view: &mut S,
         f: impl FnOnce(&mut S, &mut MainThread<ViewContext<'_, '_, S>>) -> R + Send + 'static,
-    ) -> impl Future<Output = R>
+    ) -> Task<Result<R>>
     where
         R: Send + 'static,
     {
-        let (tx, rx) = oneshot::channel();
         if self.executor.is_main_thread() {
             let cx = unsafe { mem::transmute::<&mut Self, &mut MainThread<Self>>(self) };
-            let _ = tx.send(f(view, cx));
+            Task::ready(Ok(f(view, cx)))
         } else {
             let handle = self.handle().upgrade(self).unwrap();
-            let _ = self.window_cx.run_on_main(move |cx| {
-                handle.update(cx, |view, cx| {
-                    let _ = tx.send(f(view, cx));
-                })
-            });
+            self.window_cx.run_on_main(move |cx| handle.update(cx, f))
         }
-        async move { rx.await.unwrap() }
     }
 
     pub(crate) fn erase_state<R>(&mut self, f: impl FnOnce(&mut ViewContext<()>) -> R) -> R {

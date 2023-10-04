@@ -14,7 +14,7 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, VecDeque};
-use futures::{channel::oneshot, Future};
+use futures::Future;
 use parking_lot::Mutex;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
@@ -191,29 +191,21 @@ impl AppContext {
     pub fn run_on_main<R>(
         &mut self,
         f: impl FnOnce(&mut MainThread<AppContext>) -> R + Send + 'static,
-    ) -> impl Future<Output = R>
+    ) -> Task<R>
     where
         R: Send + 'static,
     {
-        let (tx, rx) = oneshot::channel();
         if self.executor.is_main_thread() {
-            let _ = tx.send(f(unsafe {
+            Task::ready(f(unsafe {
                 mem::transmute::<&mut AppContext, &mut MainThread<AppContext>>(self)
-            }));
+            }))
         } else {
             let this = self.this.upgrade().unwrap();
-            self.executor
-                .run_on_main(move || {
-                    let cx = &mut *this.lock();
-                    cx.update(|cx| {
-                        let _ = tx.send(f(unsafe {
-                            mem::transmute::<&mut Self, &mut MainThread<Self>>(cx)
-                        }));
-                    })
-                })
-                .detach();
+            self.executor.run_on_main(move || {
+                let cx = &mut *this.lock();
+                cx.update(|cx| f(unsafe { mem::transmute::<&mut Self, &mut MainThread<Self>>(cx) }))
+            })
         }
-        async move { rx.await.unwrap() }
     }
 
     pub fn spawn_on_main<F, R>(
