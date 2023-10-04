@@ -111,16 +111,16 @@ impl<S: 'static + Send + Sync + Clone> ListHeader<S> {
             .flex_1()
             .w_full()
             .fill(background_color)
-            // .when(self.state == InteractionState::Focused, |this| {
-            //     this.border()
-            //         .border_color(theme.lowest.accent.default.border)
-            // })
+            .when(self.state == InteractionState::Focused, |this| {
+                this.border()
+                    .border_color(theme.lowest.accent.default.border)
+            })
             .relative()
             .py_1()
             .child(
                 div()
                     .h_6()
-                    // .when(self.variant == ListItemVariant::Inset, |this| this.px_2())
+                    .when(self.variant == ListItemVariant::Inset, |this| this.px_2())
                     .flex()
                     .flex_1()
                     .w_full()
@@ -178,7 +178,7 @@ impl<S: 'static + Send + Sync + Clone> ListSubHeader<S> {
         h_stack().flex_1().w_full().relative().py_1().child(
             div()
                 .h_6()
-                // .when(self.variant == ListItemVariant::Inset, |this| this.px_2())
+                .when(self.variant == ListItemVariant::Inset, |this| this.px_2())
                 .flex()
                 .flex_1()
                 .w_full()
@@ -412,15 +412,15 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
 
         div()
             .fill(background_color)
-            // .when(self.state == InteractionState::Focused, |this| {
-            //     this.border()
-            //         .border_color(theme.lowest.accent.default.border)
-            // })
+            .when(self.state == InteractionState::Focused, |this| {
+                this.border()
+                    .border_color(theme.lowest.accent.default.border)
+            })
             .relative()
             .py_1()
             .child(
                 sized_item
-                    // .when(self.variant == ListItemVariant::Inset, |this| this.px_2())
+                    .when(self.variant == ListItemVariant::Inset, |this| this.px_2())
                     // .ml(rems(0.75 * self.indent_level as f32))
                     .children((0..self.indent_level).map(|_| {
                         div()
