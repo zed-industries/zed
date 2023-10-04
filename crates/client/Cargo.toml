@@ -37,7 +37,7 @@ smol.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tiny_http = "0.8"
-uuid = { version = "1.1.2", features = ["v4"] }
+uuid.workspace = true
 url = "2.2"
 serde.workspace = true
 serde_derive.workspace = true

@@ -51,7 +51,7 @@ serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
 smallvec.workspace = true
-uuid = { version = "1.1.2", features = ["v4"] }
+uuid.workspace = true
 
 [dev-dependencies]
 call = { path = "../call", features = ["test-support"] }

@@ -13,4 +13,4 @@ thread_local = "1.1.4"
 lazy_static.workspace = true
 parking_lot.workspace = true
 futures.workspace = true
-uuid = { version = "1.1.2", features = ["v4"] }
+uuid.workspace = true
