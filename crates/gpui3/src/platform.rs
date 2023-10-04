@@ -6,8 +6,8 @@ mod mac;
 mod test;
 
 use crate::{
-    AnyWindowHandle, Bounds, DevicePixels, Font, FontId, FontMetrics, GlyphId, GlyphRasterParams,
-    Pixels, Point, Result, Scene, ShapedLine, SharedString, Size,
+    AnyWindowHandle, Bounds, DevicePixels, Font, FontId, FontMetrics, GlyphId, Pixels, Point,
+    RenderGlyphParams, Result, Scene, ShapedLine, SharedString, Size,
 };
 use anyhow::anyhow;
 use async_task::Runnable;
@@ -147,7 +147,7 @@ pub trait PlatformWindow {
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
     fn draw(&self, scene: Scene);
 
-    fn glyph_atlas(&self) -> Arc<dyn PlatformAtlas<GlyphRasterParams>>;
+    fn glyph_atlas(&self) -> Arc<dyn PlatformAtlas>;
 }
 
 pub trait PlatformDispatcher: Send + Sync {
@@ -163,8 +163,8 @@ pub trait PlatformTextSystem: Send + Sync {
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>>;
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>>;
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId>;
-    fn glyph_raster_bounds(&self, params: &GlyphRasterParams) -> Result<Bounds<DevicePixels>>;
-    fn rasterize_glyph(&self, params: &GlyphRasterParams) -> Result<(Size<DevicePixels>, Vec<u8>)>;
+    fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>>;
+    fn rasterize_glyph(&self, params: &RenderGlyphParams) -> Result<(Size<DevicePixels>, Vec<u8>)>;
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[(usize, FontId)]) -> ShapedLine;
     fn wrap_line(
         &self,
@@ -175,10 +175,22 @@ pub trait PlatformTextSystem: Send + Sync {
     ) -> Vec<usize>;
 }
 
-pub trait PlatformAtlas<Key>: Send + Sync {
+#[derive(PartialEq, Eq, Hash, Clone)]
+pub enum AtlasKey {
+    Glyph(RenderGlyphParams),
+    // Svg(RenderSvgParams),
+}
+
+impl From<RenderGlyphParams> for AtlasKey {
+    fn from(params: RenderGlyphParams) -> Self {
+        Self::Glyph(params)
+    }
+}
+
+pub trait PlatformAtlas: Send + Sync {
     fn get_or_insert_with(
         &self,
-        key: &Key,
+        key: &AtlasKey,
         build: &mut dyn FnMut() -> Result<(Size<DevicePixels>, Vec<u8>)>,
     ) -> Result<AtlasTile>;
 

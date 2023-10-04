@@ -1,6 +1,5 @@
 use crate::{
-    point, size, AtlasTextureId, DevicePixels, GlyphRasterParams, MetalAtlas, MonochromeSprite,
-    Quad, Scene, Size,
+    point, size, AtlasTextureId, DevicePixels, MetalAtlas, MonochromeSprite, Quad, Scene, Size,
 };
 use cocoa::{
     base::{NO, YES},
@@ -21,7 +20,7 @@ pub struct MetalRenderer {
     sprites_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     instances: metal::Buffer,
-    glyph_atlas: Arc<MetalAtlas<GlyphRasterParams>>,
+    glyph_atlas: Arc<MetalAtlas>,
 }
 
 impl MetalRenderer {
@@ -124,7 +123,7 @@ impl MetalRenderer {
         &*self.layer
     }
 
-    pub fn glyph_atlas(&self) -> &Arc<MetalAtlas<GlyphRasterParams>> {
+    pub fn glyph_atlas(&self) -> &Arc<MetalAtlas> {
         &self.glyph_atlas
     }
 

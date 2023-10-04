@@ -1,4 +1,6 @@
-use crate::{AtlasTextureId, AtlasTile, Bounds, DevicePixels, PlatformAtlas, Point, Size};
+use crate::{
+    AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels, PlatformAtlas, Point, Size,
+};
 use anyhow::{anyhow, Result};
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
@@ -7,11 +9,10 @@ use foreign_types::ForeignType;
 use metal::{Device, TextureDescriptor};
 use objc::{msg_send, sel, sel_impl};
 use parking_lot::Mutex;
-use std::hash::Hash;
 
-pub struct MetalAtlas<Key>(Mutex<MetalAtlasState<Key>>);
+pub struct MetalAtlas(Mutex<MetalAtlasState>);
 
-impl<Key> MetalAtlas<Key> {
+impl MetalAtlas {
     pub fn new(
         size: Size<DevicePixels>,
         pixel_format: metal::MTLPixelFormat,
@@ -34,20 +35,17 @@ impl<Key> MetalAtlas<Key> {
     }
 }
 
-struct MetalAtlasState<Key> {
+struct MetalAtlasState {
     device: AssertSend<Device>,
     texture_descriptor: AssertSend<TextureDescriptor>,
     textures: Vec<MetalAtlasTexture>,
-    tiles_by_key: HashMap<Key, AtlasTile>,
+    tiles_by_key: HashMap<AtlasKey, AtlasTile>,
 }
 
-impl<Key> PlatformAtlas<Key> for MetalAtlas<Key>
-where
-    Key: Clone + Eq + Hash + Send,
-{
+impl PlatformAtlas for MetalAtlas {
     fn get_or_insert_with(
         &self,
-        key: &Key,
+        key: &AtlasKey,
         build: &mut dyn FnMut() -> Result<(Size<DevicePixels>, Vec<u8>)>,
     ) -> Result<AtlasTile> {
         let mut lock = self.0.lock();
@@ -75,7 +73,7 @@ where
     }
 }
 
-impl<Key> MetalAtlasState<Key> {
+impl MetalAtlasState {
     fn push_texture(&mut self, min_size: Size<DevicePixels>) -> &mut MetalAtlasTexture {
         let default_atlas_size = Size {
             width: self.texture_descriptor.width().into(),

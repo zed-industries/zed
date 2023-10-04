@@ -1,9 +1,9 @@
 use crate::{
     px, AnyView, AppContext, AvailableSpace, BorrowAppContext, Bounds, Context, Corners, Effect,
-    Element, EntityId, FontId, GlyphId, GlyphRasterParams, Handle, Hsla, IsZero, LayerId, LayoutId,
-    MainThread, MainThreadOnly, MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point,
-    Reference, ScaledPixels, Scene, Size, Style, TaffyLayoutEngine, WeakHandle, WindowOptions,
-    SUBPIXEL_VARIANTS,
+    Element, EntityId, FontId, GlyphId, Handle, Hsla, IsZero, LayerId, LayoutId, MainThread,
+    MainThreadOnly, MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point, Reference,
+    RenderGlyphParams, ScaledPixels, Scene, Size, Style, TaffyLayoutEngine, WeakHandle,
+    WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use futures::Future;
@@ -16,7 +16,7 @@ pub struct AnyWindow {}
 pub struct Window {
     handle: AnyWindowHandle,
     platform_window: MainThreadOnly<Box<dyn PlatformWindow>>,
-    glyph_atlas: Arc<dyn PlatformAtlas<GlyphRasterParams>>,
+    glyph_atlas: Arc<dyn PlatformAtlas>,
     rem_size: Pixels,
     content_size: Size<Pixels>,
     layout_engine: TaffyLayoutEngine,
@@ -222,7 +222,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
             y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
         };
-        let params = GlyphRasterParams {
+        let params = RenderGlyphParams {
             font_id,
             glyph_id,
             font_size,
@@ -236,7 +236,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             let tile = self
                 .window
                 .glyph_atlas
-                .get_or_insert_with(&params, &mut || self.text_system().rasterize_glyph(&params))?;
+                .get_or_insert_with(&params.clone().into(), &mut || {
+                    self.text_system().rasterize_glyph(&params)
+                })?;
             let bounds = Bounds {
                 origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),

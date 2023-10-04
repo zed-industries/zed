@@ -1,6 +1,6 @@
 use crate::{
     point, px, size, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontStyle,
-    FontWeight, GlyphId, GlyphRasterParams, Pixels, PlatformTextSystem, Point, Result, ShapedGlyph,
+    FontWeight, GlyphId, Pixels, PlatformTextSystem, Point, RenderGlyphParams, Result, ShapedGlyph,
     ShapedLine, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
 };
 use anyhow::anyhow;
@@ -134,13 +134,13 @@ impl PlatformTextSystem for MacTextSystem {
         self.0.read().glyph_for_char(font_id, ch)
     }
 
-    fn glyph_raster_bounds(&self, params: &GlyphRasterParams) -> Result<Bounds<DevicePixels>> {
+    fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         self.0.read().raster_bounds(params)
     }
 
     fn rasterize_glyph(
         &self,
-        glyph_id: &GlyphRasterParams,
+        glyph_id: &RenderGlyphParams,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
         self.0.read().rasterize_glyph(glyph_id)
     }
@@ -234,7 +234,7 @@ impl MacTextSystemState {
             })
     }
 
-    fn raster_bounds(&self, params: &GlyphRasterParams) -> Result<Bounds<DevicePixels>> {
+    fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let font = &self.fonts[params.font_id.0];
         let scale = Transform2F::from_scale(params.scale_factor);
         Ok(font
@@ -248,7 +248,7 @@ impl MacTextSystemState {
             .into())
     }
 
-    fn rasterize_glyph(&self, params: &GlyphRasterParams) -> Result<(Size<DevicePixels>, Vec<u8>)> {
+    fn rasterize_glyph(&self, params: &RenderGlyphParams) -> Result<(Size<DevicePixels>, Vec<u8>)> {
         let glyph_bounds = self.raster_bounds(params)?;
         if glyph_bounds.size.width.0 == 0 || glyph_bounds.size.height.0 == 0 {
             Err(anyhow!("glyph bounds are empty"))

@@ -215,13 +215,13 @@ impl TextSystem {
         })
     }
 
-    pub fn raster_bounds(&self, params: &GlyphRasterParams) -> Result<Bounds<DevicePixels>> {
+    pub fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         self.platform_text_system.glyph_raster_bounds(params)
     }
 
     pub fn rasterize_glyph(
         &self,
-        glyph_id: &GlyphRasterParams,
+        glyph_id: &RenderGlyphParams,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
         self.platform_text_system.rasterize_glyph(glyph_id)
     }
@@ -384,7 +384,7 @@ pub struct ShapedGlyph {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct GlyphRasterParams {
+pub struct RenderGlyphParams {
     pub(crate) font_id: FontId,
     pub(crate) glyph_id: GlyphId,
     pub(crate) font_size: Pixels,
@@ -392,9 +392,9 @@ pub struct GlyphRasterParams {
     pub(crate) scale_factor: f32,
 }
 
-impl Eq for GlyphRasterParams {}
+impl Eq for RenderGlyphParams {}
 
-impl Hash for GlyphRasterParams {
+impl Hash for RenderGlyphParams {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.font_id.0.hash(state);
         self.glyph_id.0.hash(state);
