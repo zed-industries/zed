@@ -71,6 +71,10 @@ impl ChannelIndex {
     pub fn note_changed(&mut self, channel_id: ChannelId, epoch: u64, version: &clock::Global) {
         insert_note_changed(&mut self.channels_by_id, channel_id, epoch, version);
     }
+
+    pub fn new_message(&mut self, channel_id: ChannelId, message_id: u64) {
+        insert_new_message(&mut self.channels_by_id, channel_id, message_id)
+    }
 }
 
 impl Deref for ChannelIndex {
@@ -114,10 +118,7 @@ impl<'a> ChannelPathsInsertGuard<'a> {
     }
 
     pub fn new_messages(&mut self, channel_id: ChannelId, message_id: u64) {
-        if let Some(channel) = self.channels_by_id.get_mut(&channel_id) {
-            let unseen_message_id = Arc::make_mut(channel).unseen_message_id.get_or_insert(0);
-            *unseen_message_id = message_id.max(*unseen_message_id);
-        }
+        insert_new_message(&mut self.channels_by_id, channel_id, message_id)
     }
 
     pub fn insert(&mut self, channel_proto: proto::Channel) {
@@ -222,5 +223,16 @@ fn insert_note_changed(
         } else {
             unseen_version.1.join(&version);
         }
+    }
+}
+
+fn insert_new_message(
+    channels_by_id: &mut BTreeMap<ChannelId, Arc<Channel>>,
+    channel_id: u64,
+    message_id: u64,
+) {
+    if let Some(channel) = channels_by_id.get_mut(&channel_id) {
+        let unseen_message_id = Arc::make_mut(channel).unseen_message_id.get_or_insert(0);
+        *unseen_message_id = message_id.max(*unseen_message_id);
     }
 }

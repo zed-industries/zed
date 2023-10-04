@@ -1,4 +1,4 @@
-use crate::{Channel, ChannelStore};
+use crate::{Channel, ChannelId, ChannelStore};
 use anyhow::{anyhow, Result};
 use client::{
     proto,
@@ -56,6 +56,10 @@ pub enum ChannelChatEvent {
     MessagesUpdated {
         old_range: Range<usize>,
         new_count: usize,
+    },
+    NewMessage {
+        channel_id: ChannelId,
+        message_id: u64,
     },
 }
 
@@ -338,10 +342,15 @@ impl ChannelChat {
             .payload
             .message
             .ok_or_else(|| anyhow!("empty message"))?;
+        let message_id = message.id;
 
         let message = ChannelMessage::from_proto(message, &user_store, &mut cx).await?;
         this.update(&mut cx, |this, cx| {
-            this.insert_messages(SumTree::from_item(message, &()), cx)
+            this.insert_messages(SumTree::from_item(message, &()), cx);
+            cx.emit(ChannelChatEvent::NewMessage {
+                channel_id: this.channel.id,
+                message_id,
+            })
         });
 
         Ok(())
@@ -413,6 +422,7 @@ impl ChannelChat {
                 old_range: start_ix..end_ix,
                 new_count,
             });
+
             cx.notify();
         }
     }

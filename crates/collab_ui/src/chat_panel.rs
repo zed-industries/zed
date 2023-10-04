@@ -273,7 +273,19 @@ impl ChatPanel {
                 new_count,
             } => {
                 self.message_list.splice(old_range.clone(), *new_count);
-                self.acknowledge_last_message(cx);
+                if self.active {
+                    self.acknowledge_last_message(cx);
+                }
+            }
+            ChannelChatEvent::NewMessage {
+                channel_id,
+                message_id,
+            } => {
+                if !self.active {
+                    self.channel_store.update(cx, |store, cx| {
+                        store.new_message(*channel_id, *message_id, cx)
+                    })
+                }
             }
         }
         cx.notify();

@@ -246,15 +246,6 @@ async fn test_channel_message_changes(
         )
         .await;
 
-    let other_channel_id = server
-        .make_channel(
-            "other-channel",
-            None,
-            (&client_a, cx_a),
-            &mut [(&client_b, cx_b)],
-        )
-        .await;
-
     // Client A sends a message, client B should see that there is a new message.
     let channel_chat_a = client_a
         .channel_store()
@@ -324,15 +315,38 @@ async fn test_channel_message_changes(
 
     assert!(!b_has_messages);
 
-    // Closing the chat should re-enable change tracking
-    todo!();
+    // Sending a message while the chat is closed should change the flag.
+    chat_panel_b.update(cx_b, |chat_panel, cx| {
+        chat_panel.set_active(false, cx);
+    });
 
-    deterministic.run_until_parked();
-
+    // Sending a message while the chat is open should not change the flag.
     channel_chat_a
         .update(cx_a, |c, cx| c.send_message("three".into(), cx).unwrap())
         .await
         .unwrap();
+
+    deterministic.run_until_parked();
+
+    let b_has_messages = cx_b.read_with(|cx| {
+        client_b
+            .channel_store()
+            .read(cx)
+            .has_new_messages(channel_id)
+            .unwrap()
+    });
+
+    assert!(b_has_messages);
+
+    // Closing the chat should re-enable change tracking
+    cx_b.update(|_| drop(chat_panel_b));
+
+    channel_chat_a
+        .update(cx_a, |c, cx| c.send_message("four".into(), cx).unwrap())
+        .await
+        .unwrap();
+
+    deterministic.run_until_parked();
 
     let b_has_messages = cx_b.read_with(|cx| {
         client_b

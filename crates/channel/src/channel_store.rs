@@ -234,6 +234,16 @@ impl ChannelStore {
         cx.notify();
     }
 
+    pub fn new_message(
+        &mut self,
+        channel_id: ChannelId,
+        message_id: u64,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.channel_index.new_message(channel_id, message_id);
+        cx.notify();
+    }
+
     pub fn acknowledge_message_id(
         &mut self,
         channel_id: ChannelId,
