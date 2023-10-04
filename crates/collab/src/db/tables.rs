@@ -12,6 +12,8 @@ pub mod contact;
 pub mod feature_flag;
 pub mod follower;
 pub mod language_server;
+pub mod notification;
+pub mod notification_kind;
 pub mod observed_buffer_edits;
 pub mod observed_channel_messages;
 pub mod project;

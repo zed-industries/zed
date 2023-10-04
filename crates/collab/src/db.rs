@@ -20,7 +20,7 @@ use rpc::{
 };
 use sea_orm::{
     entity::prelude::*,
-    sea_query::{Alias, Expr, OnConflict, Query},
+    sea_query::{Alias, Expr, OnConflict},
     ActiveValue, Condition, ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbErr,
     FromQueryResult, IntoActiveModel, IsolationLevel, JoinType, QueryOrder, QuerySelect, Statement,
     TransactionTrait,

@@ -170,7 +170,9 @@ message Envelope {
 
         LinkChannel link_channel = 140;
         UnlinkChannel unlink_channel = 141;
-        MoveChannel move_channel = 142; // current max: 144
+        MoveChannel move_channel = 142;
+
+        AddNotifications add_notification = 145; // Current max
     }
 }
 
@@ -1556,4 +1558,41 @@ message UpdateDiffBase {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
     optional string diff_base = 3;
+}
+
+message AddNotifications {
+    repeated Notification notifications = 1;
+    repeated User users = 2;
+    repeated Channel channels = 3;
+    repeated ChannelMessage messages = 4;
+}
+
+message Notification {
+    uint32 kind = 1;
+    uint64 timestamp = 2;
+    bool is_read = 3;
+    optional uint64 entity_id_1 = 4;
+    optional uint64 entity_id_2 = 5;
+    optional uint64 entity_id_3 = 6;
+
+    // oneof variant {
+    //     ContactRequest contact_request = 3;
+    //     ChannelInvitation channel_invitation = 4;
+    //     ChatMessageMention chat_message_mention = 5;
+    // };
+
+    // message ContactRequest {
+    //     uint64 requester_id = 1;
+    // }
+
+    // message ChannelInvitation {
+    //     uint64 inviter_id = 1;
+    //     uint64 channel_id = 2;
+    // }
+
+    // message ChatMessageMention {
+    //     uint64 sender_id = 1;
+    //     uint64 channel_id = 2;
+    //     uint64 message_id = 3;
+    // }
 }
