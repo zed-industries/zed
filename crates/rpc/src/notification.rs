@@ -34,7 +34,13 @@ pub enum NotificationEntityKind {
 }
 
 impl Notification {
-    pub fn from_fields(kind: NotificationKind, entity_ids: [Option<u64>; 3]) -> Option<Self> {
+    /// Load this notification from its generic representation, which is
+    /// used to represent it in the database, and in the wire protocol.
+    ///
+    /// The order in which a given notification type's fields are listed must
+    /// match the order they're listed in the `to_parts` method, and it must
+    /// not change, because they're stored in that order in the database.
+    pub fn from_parts(kind: NotificationKind, entity_ids: [Option<u64>; 3]) -> Option<Self> {
         use NotificationKind::*;
 
         Some(match kind {
@@ -53,7 +59,17 @@ impl Notification {
         })
     }
 
-    pub fn to_fields(&self) -> (NotificationKind, [Option<(u64, NotificationEntityKind)>; 3]) {
+    /// Convert this notification into its generic representation, which is
+    /// used to represent it in the database, and in the wire protocol.
+    ///
+    /// The order in which a given notification type's fields are listed must
+    /// match the order they're listed in the `from_parts` method, and it must
+    /// not change, because they're stored in that order in the database.
+    ///
+    /// Along with each field, provide the kind of entity that the field refers
+    /// to. This is used to load the associated entities for a batch of
+    /// notifications from the database.
+    pub fn to_parts(&self) -> (NotificationKind, [Option<(u64, NotificationEntityKind)>; 3]) {
         use NotificationKind::*;
 
         match self {

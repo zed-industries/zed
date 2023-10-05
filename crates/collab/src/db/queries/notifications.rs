@@ -42,7 +42,7 @@ impl Database {
                 let Some(kind) = NotificationKind::from_i32(row.kind) else {
                     continue;
                 };
-                let Some(notification) = Notification::from_fields(
+                let Some(notification) = Notification::from_parts(
                     kind,
                     [
                         row.entity_id_1.map(|id| id as u64),
@@ -54,7 +54,7 @@ impl Database {
                 };
 
                 // Gather the ids of all associated entities.
-                let (_, associated_entities) = notification.to_fields();
+                let (_, associated_entities) = notification.to_parts();
                 for entity in associated_entities {
                     let Some((id, kind)) = entity else {
                         break;
@@ -124,7 +124,7 @@ impl Database {
         notification: Notification,
         tx: &DatabaseTransaction,
     ) -> Result<()> {
-        let (kind, associated_entities) = notification.to_fields();
+        let (kind, associated_entities) = notification.to_parts();
         notification::ActiveModel {
             recipient_id: ActiveValue::Set(recipient_id),
             kind: ActiveValue::Set(kind as i32),
