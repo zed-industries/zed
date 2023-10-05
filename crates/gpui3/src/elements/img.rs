@@ -77,9 +77,7 @@ impl<S: Send + Sync + 'static> Element for Img<S> {
             } else {
                 cx.spawn(|_, mut cx| async move {
                     if image_future.await.log_err().is_some() {
-                        cx.on_next_frame(|cx| {
-                            cx.notify();
-                        });
+                        cx.on_next_frame(|cx| cx.notify());
                     }
                 })
                 .detach()

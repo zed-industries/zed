@@ -131,8 +131,6 @@ impl MetalRenderer {
     }
 
     pub fn draw(&mut self, scene: &mut Scene) {
-        dbg!("draw scene");
-
         let layer = self.layer.clone();
         let viewport_size = layer.drawable_size();
         let viewport_size: Size<DevicePixels> = size(

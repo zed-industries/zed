@@ -1,7 +1,6 @@
 mod app;
 mod assets;
 mod color;
-mod display_linker;
 mod element;
 mod elements;
 mod executor;
@@ -23,7 +22,6 @@ pub use anyhow::Result;
 pub use app::*;
 pub use assets::*;
 pub use color::*;
-pub use display_linker::*;
 pub use element::*;
 pub use elements::*;
 pub use executor::*;

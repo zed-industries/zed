@@ -144,11 +144,42 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 
     pub fn on_next_frame(&mut self, f: impl FnOnce(&mut WindowContext) + Send + 'static) {
-        let cx = self.to_async();
+        let f = Box::new(f);
         let display_id = self.window.display_id;
-        self.display_linker.on_next_frame(display_id, move |_, _| {
-            cx.update(f).ok();
-        });
+        let async_cx = self.to_async();
+        let app_cx = self.app_mut();
+        match app_cx.next_frame_callbacks.entry(display_id) {
+            collections::hash_map::Entry::Occupied(mut entry) => {
+                if entry.get().is_empty() {
+                    app_cx.display_linker.start(display_id);
+                }
+                entry.get_mut().push(f);
+            }
+            collections::hash_map::Entry::Vacant(entry) => {
+                app_cx.display_linker.set_output_callback(
+                    display_id,
+                    Box::new(move |_current_time, _output_time| {
+                        let _ = async_cx.update(|cx| {
+                            let callbacks = cx
+                                .next_frame_callbacks
+                                .get_mut(&display_id)
+                                .unwrap()
+                                .drain(..)
+                                .collect::<Vec<_>>();
+                            for callback in callbacks {
+                                callback(cx);
+                            }
+
+                            if cx.next_frame_callbacks.get(&display_id).unwrap().is_empty() {
+                                cx.display_linker.stop(display_id);
+                            }
+                        });
+                    }),
+                );
+                app_cx.display_linker.start(display_id);
+                entry.insert(vec![f]);
+            }
+        }
     }
 
     pub fn spawn<Fut, R>(
@@ -590,11 +621,9 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
     }
 
     pub fn on_next_frame(&mut self, f: impl FnOnce(&mut S, &mut ViewContext<S>) + Send + 'static) {
-        let mut cx = self.to_async();
         let entity = self.handle();
-        let display_id = self.window.display_id;
-        self.display_linker.on_next_frame(display_id, move |_, _| {
-            entity.update(&mut cx, f).ok();
+        self.window_cx.on_next_frame(move |cx| {
+            entity.update(cx, f).ok();
         });
     }
 

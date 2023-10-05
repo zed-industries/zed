@@ -8,9 +8,9 @@ pub use model_context::*;
 use refineable::Refineable;
 
 use crate::{
-    current_platform, image_cache::ImageCache, AssetSource, Context, DisplayLinker, Executor,
-    LayoutId, MainThread, MainThreadOnly, Platform, RootView, SvgRenderer, Task, TextStyle,
-    TextStyleRefinement, TextSystem, Window, WindowContext, WindowHandle, WindowId,
+    current_platform, image_cache::ImageCache, AssetSource, Context, DisplayId, Executor, LayoutId,
+    MainThread, MainThreadOnly, Platform, PlatformDisplayLinker, RootView, SvgRenderer, Task,
+    TextStyle, TextStyleRefinement, TextSystem, Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, VecDeque};
@@ -56,13 +56,14 @@ impl App {
         Self(Arc::new_cyclic(|this| {
             Mutex::new(AppContext {
                 this: this.clone(),
-                display_linker: Arc::new(DisplayLinker::new(platform.display_linker())),
                 text_system: Arc::new(TextSystem::new(platform.text_system())),
+                pending_updates: 0,
+                display_linker: platform.display_linker(),
+                next_frame_callbacks: Default::default(),
                 platform: MainThreadOnly::new(platform, executor.clone()),
                 executor,
                 svg_renderer: SvgRenderer::new(asset_source),
                 image_cache: ImageCache::new(http_client),
-                pending_updates: 0,
                 text_style_stack: Vec::new(),
                 state_stacks_by_type: HashMap::default(),
                 unit_entity,
@@ -90,14 +91,16 @@ impl App {
 }
 
 type Handlers = SmallVec<[Arc<dyn Fn(&mut AppContext) -> bool + Send + Sync + 'static>; 2]>;
+type FrameCallback = Box<dyn FnOnce(&mut WindowContext) + Send>;
 
 pub struct AppContext {
     this: Weak<Mutex<AppContext>>,
     platform: MainThreadOnly<dyn Platform>,
     text_system: Arc<TextSystem>,
     pending_updates: usize,
+    pub(crate) display_linker: Arc<dyn PlatformDisplayLinker>,
+    pub(crate) next_frame_callbacks: HashMap<DisplayId, Vec<FrameCallback>>,
     pub(crate) executor: Executor,
-    pub(crate) display_linker: Arc<DisplayLinker>,
     pub(crate) svg_renderer: SvgRenderer,
     pub(crate) image_cache: ImageCache,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
@@ -146,7 +149,6 @@ impl AppContext {
     }
 
     fn flush_effects(&mut self) {
-        dbg!("flush effects");
         while let Some(effect) = self.pending_effects.pop_front() {
             match effect {
                 Effect::Notify(entity_id) => self.apply_notify_effect(entity_id),
