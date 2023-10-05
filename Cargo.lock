@@ -1563,6 +1563,7 @@ dependencies = [
  "postage",
  "project",
  "recent_projects",
+ "rich_text",
  "schemars",
  "serde",
  "serde_derive",
@@ -2405,6 +2406,7 @@ dependencies = [
  "project",
  "pulldown-cmark",
  "rand 0.8.5",
+ "rich_text",
  "rpc",
  "schemars",
  "serde",
@@ -6240,6 +6242,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20ec2d3e3fc7a92ced357df9cebd5a10b6fb2aa1ee797bf7e9ce2f17dffc8f59"
 dependencies = [
  "bytemuck",
+]
+
+[[package]]
+name = "rich_text"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "futures 0.3.28",
+ "gpui",
+ "language",
+ "lazy_static",
+ "pulldown-cmark",
+ "smallvec",
+ "smol",
+ "sum_tree",
+ "theme",
+ "util",
 ]
 
 [[package]]

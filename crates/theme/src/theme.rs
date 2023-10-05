@@ -634,6 +634,8 @@ pub struct ChatPanel {
     pub list: ContainerStyle,
     pub channel_select: ChannelSelect,
     pub input_editor: FieldEditor,
+    pub avatar: AvatarStyle,
+    pub avatar_container: ContainerStyle,
     pub message: ChatMessage,
     pub continuation_message: ChatMessage,
     pub last_message_bottom_spacing: f32,
@@ -645,7 +647,7 @@ pub struct ChatPanel {
 #[derive(Deserialize, Default, JsonSchema)]
 pub struct ChatMessage {
     #[serde(flatten)]
-    pub container: ContainerStyle,
+    pub container: Interactive<ContainerStyle>,
     pub body: TextStyle,
     pub sender: ContainedText,
     pub timestamp: ContainedText,
