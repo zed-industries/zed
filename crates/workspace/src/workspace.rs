@@ -573,6 +573,7 @@ pub struct Workspace {
     panes_by_item: HashMap<usize, WeakViewHandle<Pane>>,
     active_pane: ViewHandle<Pane>,
     last_active_center_pane: Option<WeakViewHandle<Pane>>,
+    last_active_view_id: Option<proto::ViewId>,
     status_bar: ViewHandle<StatusBar>,
     titlebar_item: Option<AnyViewHandle>,
     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
@@ -786,6 +787,7 @@ impl Workspace {
             panes_by_item: Default::default(),
             active_pane: center_pane.clone(),
             last_active_center_pane: Some(center_pane.downgrade()),
+            last_active_view_id: None,
             status_bar,
             titlebar_item: None,
             notifications: Default::default(),
@@ -2862,6 +2864,7 @@ impl Workspace {
 
         cx.notify();
 
+        self.last_active_view_id = active_view_id.clone();
         proto::FollowResponse {
             active_view_id,
             views: self
@@ -3028,7 +3031,7 @@ impl Workspace {
         Ok(())
     }
 
-    fn update_active_view_for_followers(&self, cx: &AppContext) {
+    fn update_active_view_for_followers(&mut self, cx: &AppContext) {
         let mut is_project_item = true;
         let mut update = proto::UpdateActiveView::default();
         if self.active_pane.read(cx).has_focus() {
@@ -3046,11 +3049,14 @@ impl Workspace {
             }
         }
 
-        self.update_followers(
-            is_project_item,
-            proto::update_followers::Variant::UpdateActiveView(update),
-            cx,
-        );
+        if update.id != self.last_active_view_id {
+            self.last_active_view_id = update.id.clone();
+            self.update_followers(
+                is_project_item,
+                proto::update_followers::Variant::UpdateActiveView(update),
+                cx,
+            );
+        }
     }
 
     fn update_followers(
