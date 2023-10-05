@@ -104,6 +104,10 @@ impl Room {
         self.channel_id
     }
 
+    pub fn is_sharing_project(&self) -> bool {
+        !self.shared_projects.is_empty()
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn is_connected(&self) -> bool {
         if let Some(live_kit) = self.live_kit.as_ref() {
@@ -592,6 +596,31 @@ impl Room {
         self.follows_by_leader_id_project_id
             .get(&(leader_id, project_id))
             .map_or(&[], |v| v.as_slice())
+    }
+
+    /// Returns the most 'active' projects, defined as most people in the project
+    pub fn most_active_project(&self) -> Option<(u64, u64)> {
+        let mut projects = HashMap::default();
+        let mut hosts = HashMap::default();
+        for participant in self.remote_participants.values() {
+            match participant.location {
+                ParticipantLocation::SharedProject { project_id } => {
+                    *projects.entry(project_id).or_insert(0) += 1;
+                }
+                ParticipantLocation::External | ParticipantLocation::UnsharedProject => {}
+            }
+            for project in &participant.projects {
+                *projects.entry(project.id).or_insert(0) += 1;
+                hosts.insert(project.id, participant.user.id);
+            }
+        }
+
+        let mut pairs: Vec<(u64, usize)> = projects.into_iter().collect();
+        pairs.sort_by_key(|(_, count)| *count as i32);
+
+        pairs
+            .first()
+            .map(|(project_id, _)| (*project_id, hosts[&project_id]))
     }
 
     async fn handle_room_updated(

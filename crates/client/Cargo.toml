@@ -41,8 +41,8 @@ tempfile = "3"
 thiserror.workspace = true
 time.workspace = true
 tiny_http = "0.8"
+uuid.workspace = true
 url = "2.2"
-uuid = { version = "1.1.2", features = ["v4"] }
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }

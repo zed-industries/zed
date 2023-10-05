@@ -1,4 +1,4 @@
-use crate::Channel;
+use crate::{Channel, ChannelId, ChannelStore};
 use anyhow::{anyhow, Result};
 use client::{
     proto,
@@ -16,7 +16,9 @@ use util::{post_inc, ResultExt as _, TryFutureExt};
 pub struct ChannelChat {
     channel: Arc<Channel>,
     messages: SumTree<ChannelMessage>,
+    channel_store: ModelHandle<ChannelStore>,
     loaded_all_messages: bool,
+    last_acknowledged_id: Option<u64>,
     next_pending_message_id: usize,
     user_store: ModelHandle<UserStore>,
     rpc: Arc<Client>,
@@ -55,6 +57,10 @@ pub enum ChannelChatEvent {
         old_range: Range<usize>,
         new_count: usize,
     },
+    NewMessage {
+        channel_id: ChannelId,
+        message_id: u64,
+    },
 }
 
 pub fn init(client: &Arc<Client>) {
@@ -77,6 +83,7 @@ impl Entity for ChannelChat {
 impl ChannelChat {
     pub async fn new(
         channel: Arc<Channel>,
+        channel_store: ModelHandle<ChannelStore>,
         user_store: ModelHandle<UserStore>,
         client: Arc<Client>,
         mut cx: AsyncAppContext,
@@ -94,11 +101,13 @@ impl ChannelChat {
             let mut this = Self {
                 channel,
                 user_store,
+                channel_store,
                 rpc: client,
                 outgoing_messages_lock: Default::default(),
                 messages: Default::default(),
                 loaded_all_messages,
                 next_pending_message_id: 0,
+                last_acknowledged_id: None,
                 rng: StdRng::from_entropy(),
                 _subscription: subscription.set_model(&cx.handle(), &mut cx.to_async()),
             };
@@ -219,6 +228,26 @@ impl ChannelChat {
         false
     }
 
+    pub fn acknowledge_last_message(&mut self, cx: &mut ModelContext<Self>) {
+        if let ChannelMessageId::Saved(latest_message_id) = self.messages.summary().max_id {
+            if self
+                .last_acknowledged_id
+                .map_or(true, |acknowledged_id| acknowledged_id < latest_message_id)
+            {
+                self.rpc
+                    .send(proto::AckChannelMessage {
+                        channel_id: self.channel.id,
+                        message_id: latest_message_id,
+                    })
+                    .ok();
+                self.last_acknowledged_id = Some(latest_message_id);
+                self.channel_store.update(cx, |store, cx| {
+                    store.acknowledge_message_id(self.channel.id, latest_message_id, cx);
+                });
+            }
+        }
+    }
+
     pub fn rejoin(&mut self, cx: &mut ModelContext<Self>) {
         let user_store = self.user_store.clone();
         let rpc = self.rpc.clone();
@@ -313,10 +342,15 @@ impl ChannelChat {
             .payload
             .message
             .ok_or_else(|| anyhow!("empty message"))?;
+        let message_id = message.id;
 
         let message = ChannelMessage::from_proto(message, &user_store, &mut cx).await?;
         this.update(&mut cx, |this, cx| {
-            this.insert_messages(SumTree::from_item(message, &()), cx)
+            this.insert_messages(SumTree::from_item(message, &()), cx);
+            cx.emit(ChannelChatEvent::NewMessage {
+                channel_id: this.channel.id,
+                message_id,
+            })
         });
 
         Ok(())
@@ -388,6 +422,7 @@ impl ChannelChat {
                 old_range: start_ix..end_ix,
                 new_count,
             });
+
             cx.notify();
         }
     }

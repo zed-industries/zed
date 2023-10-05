@@ -53,7 +53,7 @@ thiserror.workspace = true
 time.workspace = true
 tiny-skia = "0.5"
 usvg = { version = "0.14", features = [] }
-uuid = { version = "1.1.2", features = ["v4"] }
+uuid.workspace = true
 waker-fn = "1.1.0"
 
 [build-dependencies]

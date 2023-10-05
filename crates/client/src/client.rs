@@ -34,7 +34,7 @@ use std::{
     future::Future,
     marker::PhantomData,
     path::PathBuf,
-    sync::{Arc, Weak},
+    sync::{atomic::AtomicU64, Arc, Weak},
     time::{Duration, Instant},
 };
 use telemetry::Telemetry;
@@ -105,7 +105,7 @@ pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
 }
 
 pub struct Client {
-    id: usize,
+    id: AtomicU64,
     peer: Arc<Peer>,
     http: Arc<dyn HttpClient>,
     telemetry: Arc<Telemetry>,
@@ -374,7 +374,7 @@ impl settings::Setting for TelemetrySettings {
 impl Client {
     pub fn new(http: Arc<dyn HttpClient>, cx: &AppContext) -> Arc<Self> {
         Arc::new(Self {
-            id: 0,
+            id: AtomicU64::new(0),
             peer: Peer::new(0),
             telemetry: Telemetry::new(http.clone(), cx),
             http,
@@ -387,17 +387,16 @@ impl Client {
         })
     }
 
-    pub fn id(&self) -> usize {
-        self.id
+    pub fn id(&self) -> u64 {
+        self.id.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     pub fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http.clone()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_id(&mut self, id: usize) -> &Self {
-        self.id = id;
+    pub fn set_id(&self, id: u64) -> &Self {
+        self.id.store(id, std::sync::atomic::Ordering::SeqCst);
         self
     }
 
@@ -454,7 +453,7 @@ impl Client {
     }
 
     fn set_status(self: &Arc<Self>, status: Status, cx: &AsyncAppContext) {
-        log::info!("set status on client {}: {:?}", self.id, status);
+        log::info!("set status on client {}: {:?}", self.id(), status);
         let mut state = self.state.write();
         *state.status.0.borrow_mut() = status;
 
@@ -805,6 +804,7 @@ impl Client {
             }
         }
         let credentials = credentials.unwrap();
+        self.set_id(credentials.user_id);
 
         if was_disconnected {
             self.set_status(Status::Connecting, cx);
@@ -1221,7 +1221,7 @@ impl Client {
     }
 
     pub fn send<T: EnvelopedMessage>(&self, message: T) -> Result<()> {
-        log::debug!("rpc send. client_id:{}, name:{}", self.id, T::NAME);
+        log::debug!("rpc send. client_id:{}, name:{}", self.id(), T::NAME);
         self.peer.send(self.connection_id()?, message)
     }
 
@@ -1237,7 +1237,7 @@ impl Client {
         &self,
         request: T,
     ) -> impl Future<Output = Result<TypedEnvelope<T::Response>>> {
-        let client_id = self.id;
+        let client_id = self.id();
         log::debug!(
             "rpc request start. client_id:{}. name:{}",
             client_id,
@@ -1258,7 +1258,7 @@ impl Client {
     }
 
     fn respond<T: RequestMessage>(&self, receipt: Receipt<T>, response: T::Response) -> Result<()> {
-        log::debug!("rpc respond. client_id:{}. name:{}", self.id, T::NAME);
+        log::debug!("rpc respond. client_id:{}. name:{}", self.id(), T::NAME);
         self.peer.respond(receipt, response)
     }
 
@@ -1267,7 +1267,7 @@ impl Client {
         receipt: Receipt<T>,
         error: proto::Error,
     ) -> Result<()> {
-        log::debug!("rpc respond. client_id:{}. name:{}", self.id, T::NAME);
+        log::debug!("rpc respond. client_id:{}. name:{}", self.id(), T::NAME);
         self.peer.respond_with_error(receipt, error)
     }
 
@@ -1336,7 +1336,7 @@ impl Client {
 
         if let Some(handler) = handler {
             let future = handler(subscriber, message, &self, cx.clone());
-            let client_id = self.id;
+            let client_id = self.id();
             log::debug!(
                 "rpc message received. client_id:{}, sender_id:{:?}, type:{}",
                 client_id,

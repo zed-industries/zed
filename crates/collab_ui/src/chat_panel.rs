@@ -42,6 +42,7 @@ pub struct ChatPanel {
     local_timezone: UtcOffset,
     fs: Arc<dyn Fs>,
     width: Option<f32>,
+    active: bool,
     pending_serialization: Task<Option<()>>,
     subscriptions: Vec<gpui::Subscription>,
     workspace: WeakViewHandle<Workspace>,
@@ -129,6 +130,7 @@ impl ChatPanel {
                 fs,
                 client,
                 channel_store,
+
                 active_chat: Default::default(),
                 pending_serialization: Task::ready(None),
                 message_list,
@@ -138,6 +140,7 @@ impl ChatPanel {
                 has_focus: false,
                 subscriptions: Vec::new(),
                 workspace: workspace_handle,
+                active: false,
                 width: None,
             };
 
@@ -154,9 +157,9 @@ impl ChatPanel {
                     }),
                 );
 
-            this.init_active_channel(cx);
+            this.update_channel_count(cx);
             cx.observe(&this.channel_store, |this, _, cx| {
-                this.init_active_channel(cx);
+                this.update_channel_count(cx)
             })
             .detach();
 
@@ -177,6 +180,10 @@ impl ChatPanel {
 
             this
         })
+    }
+
+    pub fn active_chat(&self) -> Option<ModelHandle<ChannelChat>> {
+        self.active_chat.as_ref().map(|(chat, _)| chat.clone())
     }
 
     pub fn load(
@@ -225,10 +232,8 @@ impl ChatPanel {
         );
     }
 
-    fn init_active_channel(&mut self, cx: &mut ViewContext<Self>) {
+    fn update_channel_count(&mut self, cx: &mut ViewContext<Self>) {
         let channel_count = self.channel_store.read(cx).channel_count();
-        self.message_list.reset(0);
-        self.active_chat = None;
         self.channel_select.update(cx, |select, cx| {
             select.set_item_count(channel_count, cx);
         });
@@ -247,6 +252,7 @@ impl ChatPanel {
             }
             let subscription = cx.subscribe(&chat, Self::channel_did_change);
             self.active_chat = Some((chat, subscription));
+            self.acknowledge_last_message(cx);
             self.channel_select.update(cx, |select, cx| {
                 if let Some(ix) = self.channel_store.read(cx).index_of_channel(id) {
                     select.set_selected_index(ix, cx);
@@ -268,9 +274,32 @@ impl ChatPanel {
                 new_count,
             } => {
                 self.message_list.splice(old_range.clone(), *new_count);
+                if self.active {
+                    self.acknowledge_last_message(cx);
+                }
+            }
+            ChannelChatEvent::NewMessage {
+                channel_id,
+                message_id,
+            } => {
+                if !self.active {
+                    self.channel_store.update(cx, |store, cx| {
+                        store.new_message(*channel_id, *message_id, cx)
+                    })
+                }
             }
         }
         cx.notify();
+    }
+
+    fn acknowledge_last_message(&mut self, cx: &mut ViewContext<'_, '_, ChatPanel>) {
+        if self.active {
+            if let Some((chat, _)) = &self.active_chat {
+                chat.update(cx, |chat, cx| {
+                    chat.acknowledge_last_message(cx);
+                });
+            }
+        }
     }
 
     fn render_channel(&self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
@@ -300,12 +329,26 @@ impl ChatPanel {
     }
 
     fn render_message(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let message = self.active_chat.as_ref().unwrap().0.read(cx).message(ix);
+        let (message, is_continuation, is_last) = {
+            let active_chat = self.active_chat.as_ref().unwrap().0.read(cx);
+            let last_message = active_chat.message(ix.saturating_sub(1));
+            let this_message = active_chat.message(ix);
+            let is_continuation = last_message.id != this_message.id
+                && this_message.sender.id == last_message.sender.id;
+
+            (
+                active_chat.message(ix),
+                is_continuation,
+                active_chat.message_count() == ix + 1,
+            )
+        };
 
         let now = OffsetDateTime::now_utc();
         let theme = theme::current(cx);
         let style = if message.is_pending() {
             &theme.chat_panel.pending_message
+        } else if is_continuation {
+            &theme.chat_panel.continuation_message
         } else {
             &theme.chat_panel.message
         };
@@ -321,49 +364,103 @@ impl ChatPanel {
         enum DeleteMessage {}
 
         let body = message.body.clone();
-        Flex::column()
-            .with_child(
-                Flex::row()
-                    .with_child(
-                        Label::new(
-                            message.sender.github_login.clone(),
-                            style.sender.text.clone(),
+        if is_continuation {
+            Flex::row()
+                .with_child(Text::new(body, style.body.clone()))
+                .with_children(message_id_to_remove.map(|id| {
+                    MouseEventHandler::new::<DeleteMessage, _>(id as usize, cx, |mouse_state, _| {
+                        let button_style = theme.chat_panel.icon_button.style_for(mouse_state);
+                        render_icon_button(button_style, "icons/x.svg")
+                            .aligned()
+                            .into_any()
+                    })
+                    .with_padding(Padding::uniform(2.))
+                    .with_cursor_style(CursorStyle::PointingHand)
+                    .on_click(MouseButton::Left, move |_, this, cx| {
+                        this.remove_message(id, cx);
+                    })
+                    .flex_float()
+                }))
+                .contained()
+                .with_style(style.container)
+                .with_margin_bottom(if is_last {
+                    theme.chat_panel.last_message_bottom_spacing
+                } else {
+                    0.
+                })
+                .into_any()
+        } else {
+            Flex::column()
+                .with_child(
+                    Flex::row()
+                        .with_child(
+                            message
+                                .sender
+                                .avatar
+                                .clone()
+                                .map(|avatar| {
+                                    Image::from_data(avatar)
+                                        .with_style(theme.collab_panel.channel_avatar)
+                                        .into_any()
+                                })
+                                .unwrap_or_else(|| {
+                                    Empty::new()
+                                        .constrained()
+                                        .with_width(
+                                            theme.collab_panel.channel_avatar.width.unwrap_or(12.),
+                                        )
+                                        .into_any()
+                                })
+                                .contained()
+                                .with_margin_right(4.),
                         )
-                        .contained()
-                        .with_style(style.sender.container),
-                    )
-                    .with_child(
-                        Label::new(
-                            format_timestamp(message.timestamp, now, self.local_timezone),
-                            style.timestamp.text.clone(),
+                        .with_child(
+                            Label::new(
+                                message.sender.github_login.clone(),
+                                style.sender.text.clone(),
+                            )
+                            .contained()
+                            .with_style(style.sender.container),
                         )
-                        .contained()
-                        .with_style(style.timestamp.container),
-                    )
-                    .with_children(message_id_to_remove.map(|id| {
-                        MouseEventHandler::new::<DeleteMessage, _>(
-                            id as usize,
-                            cx,
-                            |mouse_state, _| {
-                                let button_style =
-                                    theme.chat_panel.icon_button.style_for(mouse_state);
-                                render_icon_button(button_style, "icons/x.svg")
-                                    .aligned()
-                                    .into_any()
-                            },
+                        .with_child(
+                            Label::new(
+                                format_timestamp(message.timestamp, now, self.local_timezone),
+                                style.timestamp.text.clone(),
+                            )
+                            .contained()
+                            .with_style(style.timestamp.container),
                         )
-                        .with_padding(Padding::uniform(2.))
-                        .with_cursor_style(CursorStyle::PointingHand)
-                        .on_click(MouseButton::Left, move |_, this, cx| {
-                            this.remove_message(id, cx);
-                        })
-                        .flex_float()
-                    })),
-            )
-            .with_child(Text::new(body, style.body.clone()))
-            .contained()
-            .with_style(style.container)
-            .into_any()
+                        .with_children(message_id_to_remove.map(|id| {
+                            MouseEventHandler::new::<DeleteMessage, _>(
+                                id as usize,
+                                cx,
+                                |mouse_state, _| {
+                                    let button_style =
+                                        theme.chat_panel.icon_button.style_for(mouse_state);
+                                    render_icon_button(button_style, "icons/x.svg")
+                                        .aligned()
+                                        .into_any()
+                                },
+                            )
+                            .with_padding(Padding::uniform(2.))
+                            .with_cursor_style(CursorStyle::PointingHand)
+                            .on_click(MouseButton::Left, move |_, this, cx| {
+                                this.remove_message(id, cx);
+                            })
+                            .flex_float()
+                        }))
+                        .align_children_center(),
+                )
+                .with_child(Text::new(body, style.body.clone()))
+                .contained()
+                .with_style(style.container)
+                .with_margin_bottom(if is_last {
+                    theme.chat_panel.last_message_bottom_spacing
+                } else {
+                    0.
+                })
+                .into_any()
+        }
     }
 
     fn render_input_box(&self, theme: &Arc<Theme>, cx: &AppContext) -> AnyElement<Self> {
@@ -627,8 +724,12 @@ impl Panel for ChatPanel {
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        if active && !is_chat_feature_enabled(cx) {
-            cx.emit(Event::Dismissed);
+        self.active = active;
+        if active {
+            self.acknowledge_last_message(cx);
+            if !is_chat_feature_enabled(cx) {
+                cx.emit(Event::Dismissed);
+            }
         }
     }
 
