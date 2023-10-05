@@ -157,7 +157,7 @@ pub trait PlatformDispatcher: Send + Sync {
 }
 
 pub trait PlatformDisplayLink {
-    fn set_output_callback(&mut self, callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp)>);
+    // fn set_output_callback(&mut self, callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp)>);
     fn start(&mut self);
     fn stop(&mut self);
 }

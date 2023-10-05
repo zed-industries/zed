@@ -1,7 +1,6 @@
-use crate::{point, size, Bounds, DisplayId, GlobalPixels, MacDisplayLink, PlatformDisplay};
-
+use crate::{point, size, Bounds, DisplayId, GlobalPixels, PlatformDisplay};
 use core_graphics::{
-    display::{CGDirectDisplayID, CGGetActiveDisplayList},
+    display::{CGDirectDisplayID, CGDisplayBounds, CGGetActiveDisplayList},
     geometry::{CGPoint, CGRect, CGSize},
 };
 use std::any::Any;
@@ -49,13 +48,14 @@ impl MacDisplay {
 /// Conversely, in GPUI's coordinate system, the origin is placed at the top left of the primary
 /// screen, with the Y axis pointing downwards.
 pub(crate) fn display_bounds_from_native(rect: CGRect) -> Bounds<GlobalPixels> {
-    let primary_screen_height = MacDisplay::primary().bounds().size.height;
+    let primary_screen_size = unsafe { CGDisplayBounds(MacDisplay::primary().id().0) }.size;
+
     Bounds {
         origin: point(
             GlobalPixels(rect.origin.x as f32),
-            primary_screen_height
-                - GlobalPixels(rect.origin.y as f32)
-                - GlobalPixels(rect.size.height as f32),
+            GlobalPixels(
+                primary_screen_size.height as f32 - rect.origin.y as f32 - rect.size.height as f32,
+            ),
         ),
         size: size(
             GlobalPixels(rect.size.width as f32),
@@ -94,33 +94,13 @@ impl PlatformDisplay for MacDisplay {
 
     fn bounds(&self) -> Bounds<GlobalPixels> {
         unsafe {
-            use core_graphics::display::*;
-
-            let display_id = self.0;
-            // The `CGDisplayBounds` function gets the display bounds
-            // for this display. The bounds are returned as a CGRect
-            // and specify the display's location and size in
-            // pixel units, in the global coordinate space.
-            // // The global coordinate space is a coordinate system used by macOS. In this
-            // coordinate space, the origin {0, 0} represents the top-left corner of the primary
-            // display, and the positive X and Y axes extend from the origin to the right and downward,
-            // respectively, towards the bottom-right corner of the primary display. For any display
-            // connected to the system, the global coordinate space identifies the position and size
-            // of the display with respect to the primary display.
-
-            // The coordinates in this coordinate space are typically in the form of a CGRect,
-            // which represents the rectangle bounding the display in terms of pixels. The CGRect
-            // holds the origin for the rect's bottom-left corner and a CGSize, which
-            // represent width and height.
-
-            // With respect to the above `bounds` function in `PlatformDisplay` trait implementation,
-            // this coordinate space is used to fetch a display ID's CGRect and position of origin, and size.
-            let native_bounds = CGDisplayBounds(display_id);
+            let native_bounds = CGDisplayBounds(self.0);
             display_bounds_from_native(native_bounds)
         }
     }
 
     fn link(&self) -> Box<dyn crate::PlatformDisplayLink> {
-        Box::new(unsafe { MacDisplayLink::new(self.0) })
+        unimplemented!()
+        // Box::new(unsafe { MacDisplayLink::new(self.0) })
     }
 }

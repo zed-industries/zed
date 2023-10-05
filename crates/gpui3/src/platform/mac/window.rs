@@ -456,9 +456,9 @@ impl MacWindow {
                 let screen = cocoa::foundation::NSArray::objectAtIndex(screens, i);
                 let device_description = NSScreen::deviceDescription(screen);
                 let screen_number_key: id = NSString::alloc(nil).init_str("NSScreenNumber");
-                let screen_number =
-                    NSDictionary::objectForKey_(device_description, screen_number_key);
-                if (*(screen_number as *const u32)) == display.id().0 {
+                let screen_number = device_description.objectForKey_(screen_number_key);
+                let screen_number: NSUInteger = msg_send![screen_number, unsignedIntegerValue];
+                if screen_number as u32 == display.id().0 {
                     target_screen = screen;
                     break;
                 }

@@ -2,7 +2,7 @@
 ///! an origin at the bottom left of the main display.
 mod dispatcher;
 mod display;
-mod display_link;
+// mod display_link;
 mod events;
 mod metal_atlas;
 mod metal_renderer;
@@ -33,7 +33,7 @@ use std::{
 
 pub use dispatcher::*;
 pub use display::*;
-pub use display_link::*;
+// pub use display_link::*;
 pub use metal_atlas::*;
 pub use platform::*;
 pub use text_system::*;
