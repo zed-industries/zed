@@ -38,6 +38,9 @@ impl Scene {
             Primitive::Quad(quad) => {
                 layer.quads.push(quad);
             }
+            Primitive::Shadow(shadow) => {
+                layer.shadows.push(shadow);
+            }
             Primitive::MonochromeSprite(sprite) => {
                 layer.monochrome_sprites.push(sprite);
             }
@@ -55,6 +58,7 @@ impl Scene {
 #[derive(Debug, Default)]
 pub(crate) struct SceneLayer {
     pub quads: Vec<Quad>,
+    pub shadows: Vec<Shadow>,
     pub monochrome_sprites: Vec<MonochromeSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
 }
@@ -68,6 +72,9 @@ impl SceneLayer {
             quads: &self.quads,
             quads_start: 0,
             quads_iter: self.quads.iter().peekable(),
+            shadows: &self.shadows,
+            shadows_start: 0,
+            shadows_iter: self.shadows.iter().peekable(),
             monochrome_sprites: &self.monochrome_sprites,
             monochrome_sprites_start: 0,
             monochrome_sprites_iter: self.monochrome_sprites.iter().peekable(),
@@ -82,6 +89,9 @@ struct BatchIterator<'a> {
     quads: &'a [Quad],
     quads_start: usize,
     quads_iter: Peekable<slice::Iter<'a, Quad>>,
+    shadows: &'a [Shadow],
+    shadows_start: usize,
+    shadows_iter: Peekable<slice::Iter<'a, Shadow>>,
     monochrome_sprites: &'a [MonochromeSprite],
     monochrome_sprites_start: usize,
     monochrome_sprites_iter: Peekable<slice::Iter<'a, MonochromeSprite>>,
@@ -96,6 +106,10 @@ impl<'a> Iterator for BatchIterator<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let mut kinds_and_orders = [
             (PrimitiveKind::Quad, self.quads_iter.peek().map(|q| q.order)),
+            (
+                PrimitiveKind::Shadow,
+                self.shadows_iter.peek().map(|s| s.order),
+            ),
             (
                 PrimitiveKind::MonochromeSprite,
                 self.monochrome_sprites_iter.peek().map(|s| s.order),
@@ -126,6 +140,19 @@ impl<'a> Iterator for BatchIterator<'a> {
                         .count();
                 self.quads_start = quads_end;
                 Some(PrimitiveBatch::Quads(&self.quads[quads_start..quads_end]))
+            }
+            PrimitiveKind::Shadow => {
+                let shadows_start = self.shadows_start;
+                let shadows_end = shadows_start
+                    + self
+                        .shadows_iter
+                        .by_ref()
+                        .take_while(|shadow| shadow.order <= max_order)
+                        .count();
+                self.shadows_start = shadows_end;
+                Some(PrimitiveBatch::Shadows(
+                    &self.shadows[shadows_start..shadows_end],
+                ))
             }
             PrimitiveKind::MonochromeSprite => {
                 let texture_id = self.monochrome_sprites_iter.peek().unwrap().tile.texture_id;
@@ -168,6 +195,7 @@ impl<'a> Iterator for BatchIterator<'a> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PrimitiveKind {
     Quad,
+    Shadow,
     MonochromeSprite,
     PolychromeSprite,
 }
@@ -175,12 +203,15 @@ pub enum PrimitiveKind {
 #[derive(Clone, Debug)]
 pub enum Primitive {
     Quad(Quad),
+    Shadow(Shadow),
     MonochromeSprite(MonochromeSprite),
     PolychromeSprite(PolychromeSprite),
 }
 
+#[derive(Debug)]
 pub(crate) enum PrimitiveBatch<'a> {
     Quads(&'a [Quad]),
+    Shadows(&'a [Shadow]),
     MonochromeSprites {
         texture_id: AtlasTextureId,
         sprites: &'a [MonochromeSprite],
@@ -218,6 +249,36 @@ impl PartialOrd for Quad {
 impl From<Quad> for Primitive {
     fn from(quad: Quad) -> Self {
         Primitive::Quad(quad)
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+#[repr(C)]
+pub struct Shadow {
+    pub order: u32,
+    pub bounds: Bounds<ScaledPixels>,
+    pub corner_radii: Corners<ScaledPixels>,
+    pub content_mask: ScaledContentMask,
+    pub color: Hsla,
+    pub blur_radius: ScaledPixels,
+    pub spread_radius: ScaledPixels,
+}
+
+impl Ord for Shadow {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.order.cmp(&other.order)
+    }
+}
+
+impl PartialOrd for Shadow {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl From<Shadow> for Primitive {
+    fn from(shadow: Shadow) -> Self {
+        Primitive::Shadow(shadow)
     }
 }
 

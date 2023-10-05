@@ -11,6 +11,9 @@ float2 to_tile_position(float2 unit_vertex, AtlasTile tile,
                         constant Size_DevicePixels *atlas_size);
 float quad_sdf(float2 point, Bounds_ScaledPixels bounds,
                Corners_ScaledPixels corner_radii);
+float gaussian(float x, float sigma);
+float2 erf(float2 x);
+float blur_along_x(float x, float y, float sigma, float corner, float2 half_size);
 
 struct QuadVertexOutput {
   float4 position [[position]];
@@ -108,6 +111,91 @@ fragment float4 quad_fragment(QuadVertexOutput input [[stage_in]],
   }
 
   return color * float4(1., 1., 1., saturate(0.5 - distance));
+}
+
+struct ShadowVertexOutput {
+  float4 position [[position]];
+  float4 color [[flat]];
+  uint shadow_id [[flat]];
+};
+
+vertex ShadowVertexOutput shadow_vertex(
+    uint unit_vertex_id [[vertex_id]],
+    uint shadow_id [[instance_id]],
+    constant float2 *unit_vertices [[buffer(ShadowInputIndex_Vertices)]],
+    constant Shadow *shadows [[buffer(ShadowInputIndex_Shadows)]],
+    constant Size_DevicePixels *viewport_size [[buffer(ShadowInputIndex_ViewportSize)]]
+) {
+    float2 unit_vertex = unit_vertices[unit_vertex_id];
+    Shadow shadow = shadows[shadow_id];
+
+    float margin = (3. * shadow.blur_radius) + shadow.spread_radius;
+    // Set the bounds of the shadow and adjust its size based on the shadow's spread radius
+    // to achieve the spreading effect
+    Bounds_ScaledPixels bounds = shadow.bounds;
+    bounds.origin.x -= margin;
+    bounds.origin.y -= margin;
+    bounds.size.width += 2. * margin;
+    bounds.size.height += 2. * margin;
+
+    float4 device_position = to_device_position(unit_vertex, bounds, bounds, viewport_size);
+    float4 color = hsla_to_rgba(shadow.color);
+
+    return ShadowVertexOutput {
+        device_position,
+        color,
+        shadow_id,
+    };
+}
+
+fragment float4 shadow_fragment(
+    ShadowVertexOutput input [[stage_in]],
+    constant Shadow *shadows [[buffer(ShadowInputIndex_Shadows)]]
+) {
+    Shadow shadow = shadows[input.shadow_id];
+
+    float2 origin = float2(
+        shadow.bounds.origin.x - shadow.spread_radius,
+        shadow.bounds.origin.y - shadow.spread_radius
+    );
+    float2 size = float2(
+        shadow.bounds.size.width + shadow.spread_radius * 2.,
+        shadow.bounds.size.height + shadow.spread_radius * 2.
+    );
+    float2 half_size = size / 2.;
+    float2 center = origin + half_size;
+    float2 point = input.position.xy - center;
+    float corner_radius;
+    if (point.x < 0.) {
+        if (point.y < 0.) {
+            corner_radius = shadow.corner_radii.top_left;
+        } else {
+            corner_radius = shadow.corner_radii.bottom_left;
+        }
+    } else {
+        if (point.y < 0.) {
+            corner_radius = shadow.corner_radii.top_right;
+        } else {
+            corner_radius = shadow.corner_radii.bottom_right;
+        }
+    }
+
+    // The signal is only non-zero in a limited range, so don't waste samples
+    float low = point.y - half_size.y;
+    float high = point.y + half_size.y;
+    float start = clamp(-3. * shadow.blur_radius, low, high);
+    float end = clamp(3. * shadow.blur_radius, low, high);
+
+    // Accumulate samples (we can get away with surprisingly few samples)
+    float step = (end - start) / 4.;
+    float y = start + step * 0.5;
+    float alpha = 0.;
+    for (int i = 0; i < 4; i++) {
+        alpha += blur_along_x(point.x, point.y - y, shadow.blur_radius, corner_radius, half_size) * gaussian(y, shadow.blur_radius) * step;
+        y += step;
+    }
+
+    return input.color * float4(1., 1., 1., alpha);
 }
 
 struct MonochromeSpriteVertexOutput {
@@ -307,4 +395,25 @@ float quad_sdf(float2 point, Bounds_ScaledPixels bounds,
       corner_radius;
 
   return distance;
+}
+
+// A standard gaussian function, used for weighting samples
+float gaussian(float x, float sigma) {
+    return exp(-(x * x) / (2. * sigma * sigma)) / (sqrt(2. * M_PI_F) * sigma);
+}
+
+// This approximates the error function, needed for the gaussian integral
+float2 erf(float2 x) {
+    float2 s = sign(x);
+    float2 a = abs(x);
+    x = 1. + (0.278393 + (0.230389 + 0.078108 * (a * a)) * a) * a;
+    x *= x;
+    return s - s / (x * x);
+}
+
+float blur_along_x(float x, float y, float sigma, float corner, float2 half_size) {
+    float delta = min(half_size.y - corner - abs(y), 0.);
+    float curved = half_size.x - corner + sqrt(max(0., corner * corner - delta * delta));
+    float2 integral = 0.5 + 0.5 * erf((x + float2(-curved, curved)) * (sqrt(0.5) / sigma));
+    return integral.y - integral.x;
 }

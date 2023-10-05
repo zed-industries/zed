@@ -1,6 +1,7 @@
 use crate::{
-    self as gpui3, relative, rems, AlignItems, Display, Fill, FlexDirection, Hsla, JustifyContent,
-    Length, Position, SharedString, Style, StyleRefinement, Styled, TextStyleRefinement,
+    self as gpui3, hsla, point, px, relative, rems, AlignItems, BoxShadow, Display, Fill,
+    FlexDirection, Hsla, JustifyContent, Length, Position, SharedString, Style, StyleRefinement,
+    Styled, TextStyleRefinement,
 };
 
 pub trait StyleHelpers: Styled<Style = Style> {
@@ -210,6 +211,58 @@ pub trait StyleHelpers: Styled<Style = Style> {
         Self: Sized,
     {
         self.declared_style().border_color = Some(border_color.into());
+        self
+    }
+
+    fn shadow(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self
+    }
+
+    fn shadow_sm(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().box_shadow = Some(BoxShadow {
+            color: hsla(0., 0., 0., 1.),
+            offset: point(px(0.), px(0.)),
+            blur_radius: px(1.),
+            spread_radius: px(0.),
+        });
+        self
+    }
+
+    fn shadow_md(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        todo!();
+        self
+    }
+
+    fn shadow_lg(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        todo!();
+        self
+    }
+
+    fn shadow_xl(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        todo!();
+        self
+    }
+
+    fn shadow_2xl(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        todo!();
         self
     }
 

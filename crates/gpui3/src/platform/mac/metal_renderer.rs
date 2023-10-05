@@ -1,6 +1,6 @@
 use crate::{
     point, size, AtlasTextureId, DevicePixels, MetalAtlas, MonochromeSprite, PolychromeSprite,
-    Quad, Scene, Size,
+    Quad, Scene, Shadow, Size,
 };
 use cocoa::{
     base::{NO, YES},
@@ -18,6 +18,7 @@ pub struct MetalRenderer {
     layer: metal::MetalLayer,
     command_queue: CommandQueue,
     quads_pipeline_state: metal::RenderPipelineState,
+    shadows_pipeline_state: metal::RenderPipelineState,
     monochrome_sprites_pipeline_state: metal::RenderPipelineState,
     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
@@ -90,6 +91,14 @@ impl MetalRenderer {
             "quad_fragment",
             PIXEL_FORMAT,
         );
+        let shadows_pipeline_state = build_pipeline_state(
+            &device,
+            &library,
+            "shadows",
+            "shadow_vertex",
+            "shadow_fragment",
+            PIXEL_FORMAT,
+        );
         let monochrome_sprites_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -114,6 +123,7 @@ impl MetalRenderer {
             layer,
             command_queue,
             quads_pipeline_state,
+            shadows_pipeline_state,
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
             unit_vertices,
@@ -178,6 +188,14 @@ impl MetalRenderer {
                     crate::PrimitiveBatch::Quads(quads) => {
                         self.draw_quads(
                             quads,
+                            &mut instance_offset,
+                            viewport_size,
+                            command_encoder,
+                        );
+                    }
+                    crate::PrimitiveBatch::Shadows(shadows) => {
+                        self.draw_shadows(
+                            shadows,
                             &mut instance_offset,
                             viewport_size,
                             command_encoder,
@@ -275,6 +293,66 @@ impl MetalRenderer {
             0,
             6,
             quads.len() as u64,
+        );
+        *offset = next_offset;
+    }
+
+    fn draw_shadows(
+        &mut self,
+        shadows: &[Shadow],
+        offset: &mut usize,
+        viewport_size: Size<DevicePixels>,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) {
+        if shadows.is_empty() {
+            return;
+        }
+        align_offset(offset);
+
+        command_encoder.set_render_pipeline_state(&self.shadows_pipeline_state);
+        command_encoder.set_vertex_buffer(
+            ShadowInputIndex::Vertices as u64,
+            Some(&self.unit_vertices),
+            0,
+        );
+        command_encoder.set_vertex_buffer(
+            ShadowInputIndex::Shadows as u64,
+            Some(&self.instances),
+            *offset as u64,
+        );
+        command_encoder.set_fragment_buffer(
+            ShadowInputIndex::Shadows as u64,
+            Some(&self.instances),
+            *offset as u64,
+        );
+
+        command_encoder.set_vertex_bytes(
+            ShadowInputIndex::ViewportSize as u64,
+            mem::size_of_val(&viewport_size) as u64,
+            &viewport_size as *const Size<DevicePixels> as *const _,
+        );
+
+        let shadow_bytes_len = mem::size_of::<Shadow>() * shadows.len();
+        let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
+        unsafe {
+            ptr::copy_nonoverlapping(
+                shadows.as_ptr() as *const u8,
+                buffer_contents,
+                shadow_bytes_len,
+            );
+        }
+
+        let next_offset = *offset + shadow_bytes_len;
+        assert!(
+            next_offset <= INSTANCE_BUFFER_SIZE,
+            "instance buffer exhausted"
+        );
+
+        command_encoder.draw_primitives_instanced(
+            metal::MTLPrimitiveType::Triangle,
+            0,
+            6,
+            shadows.len() as u64,
         );
         *offset = next_offset;
     }
@@ -466,6 +544,13 @@ fn align_offset(offset: &mut usize) {
 enum QuadInputIndex {
     Vertices = 0,
     Quads = 1,
+    ViewportSize = 2,
+}
+
+#[repr(C)]
+enum ShadowInputIndex {
+    Vertices = 0,
+    Shadows = 1,
     ViewportSize = 2,
 }
 

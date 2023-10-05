@@ -168,7 +168,8 @@ impl CollabPanel {
                             .uri(avatar_uri)
                             .size_3p5()
                             .rounded_full()
-                            .fill(theme.middle.positive.default.foreground),
+                            .fill(theme.middle.positive.default.foreground)
+                            .shadow_sm(),
                     )
                     .child(label),
             )

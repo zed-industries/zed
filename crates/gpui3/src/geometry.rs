@@ -469,6 +469,17 @@ impl Edges<AbsoluteLength> {
     }
 }
 
+impl Edges<Pixels> {
+    pub fn scale(&self, factor: f32) -> Edges<ScaledPixels> {
+        Edges {
+            top: self.top.scale(factor),
+            right: self.right.scale(factor),
+            bottom: self.bottom.scale(factor),
+            left: self.left.scale(factor),
+        }
+    }
+}
+
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
 #[refineable(debug)]
 #[repr(C)]
@@ -480,8 +491,8 @@ pub struct Corners<T: Clone + Debug> {
 }
 
 impl Corners<AbsoluteLength> {
-    pub fn to_pixels(&self, bounds: Bounds<Pixels>, rem_size: Pixels) -> Corners<Pixels> {
-        let max = bounds.size.width.max(bounds.size.height) / 2.;
+    pub fn to_pixels(&self, size: Size<Pixels>, rem_size: Pixels) -> Corners<Pixels> {
+        let max = size.width.max(size.height) / 2.;
         Corners {
             top_left: self.top_left.to_pixels(rem_size).min(max),
             top_right: self.top_right.to_pixels(rem_size).min(max),

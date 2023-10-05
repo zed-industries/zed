@@ -1,7 +1,7 @@
 use crate::{
     phi, point, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners,
     CornersRefinement, DefiniteLength, Edges, EdgesRefinement, Font, FontFeatures, FontStyle,
-    FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Quad, Rems, Result, RunStyle,
+    FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Quad, Rems, Result, RunStyle, Shadow,
     SharedString, Size, SizeRefinement, ViewContext, WindowContext,
 };
 use refineable::Refineable;
@@ -89,8 +89,19 @@ pub struct Style {
     #[refineable]
     pub corner_radii: Corners<AbsoluteLength>,
 
+    /// Box Shadow of the element
+    pub box_shadow: Option<BoxShadow>,
+
     /// TEXT
     pub text: TextStyleRefinement,
+}
+
+#[derive(Clone, Debug)]
+pub struct BoxShadow {
+    pub color: Hsla,
+    pub offset: Point<Pixels>,
+    pub blur_radius: Pixels,
+    pub spread_radius: Pixels,
 }
 
 #[derive(Refineable, Clone, Debug)]
@@ -233,6 +244,28 @@ impl Style {
         let rem_size = cx.rem_size();
         let scale = cx.scale_factor();
 
+        if let Some(shadow) = self.box_shadow.as_ref() {
+            let layer_id = cx.current_layer_id();
+            let content_mask = cx.content_mask();
+            let mut shadow_bounds = bounds;
+            shadow_bounds.origin += shadow.offset;
+            cx.scene().insert(
+                layer_id,
+                Shadow {
+                    order,
+                    bounds: shadow_bounds.scale(scale),
+                    content_mask: content_mask.scale(scale),
+                    corner_radii: self
+                        .corner_radii
+                        .to_pixels(bounds.size, rem_size)
+                        .scale(scale),
+                    color: shadow.color,
+                    blur_radius: shadow.blur_radius.scale(scale),
+                    spread_radius: shadow.spread_radius.scale(scale),
+                },
+            );
+        }
+
         let background_color = self.fill.as_ref().and_then(Fill::color);
         if background_color.is_some() || self.is_border_visible() {
             let layer_id = cx.current_layer_id();
@@ -247,10 +280,9 @@ impl Style {
                     border_color: self.border_color.unwrap_or_default(),
                     corner_radii: self
                         .corner_radii
-                        .map(|length| length.to_pixels(rem_size).scale(scale)),
-                    border_widths: self
-                        .border_widths
-                        .map(|length| length.to_pixels(rem_size).scale(scale)),
+                        .to_pixels(bounds.size, rem_size)
+                        .scale(scale),
+                    border_widths: self.border_widths.to_pixels(rem_size).scale(scale),
                 },
             );
         }
@@ -296,6 +328,7 @@ impl Default for Style {
             fill: None,
             border_color: None,
             corner_radii: Corners::default(),
+            box_shadow: None,
             text: TextStyleRefinement::default(),
         }
     }

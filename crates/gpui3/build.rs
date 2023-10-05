@@ -52,6 +52,8 @@ fn generate_shader_bindings() -> PathBuf {
         "AtlasTile".into(),
         "QuadInputIndex".into(),
         "Quad".into(),
+        "ShadowInputIndex".into(),
+        "Shadow".into(),
         "SpriteInputIndex".into(),
         "MonochromeSprite".into(),
         "PolychromeSprite".into(),
