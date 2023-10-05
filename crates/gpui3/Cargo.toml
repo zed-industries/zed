@@ -7,7 +7,7 @@ description = "The next version of Zed's GPU-accelerated UI framework"
 publish = false
 
 [features]
-test = ["backtrace", "dhat", "env_logger", "collections/test-support"]
+test = ["backtrace", "dhat", "env_logger", "collections/test-support", "util/test-support"]
 
 [lib]
 path = "src/gpui3.rs"
@@ -66,6 +66,7 @@ dhat = "0.3"
 env_logger.workspace = true
 png = "0.16"
 simplelog = "0.9"
+util = { path = "../util", features = ["test-support"] }
 
 [build-dependencies]
 bindgen = "0.65.1"

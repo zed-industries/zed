@@ -48,17 +48,14 @@ impl<S: 'static + Send + Sync> Element for Div<S> {
         let Layout { order, bounds } = layout;
 
         let style = self.computed_style();
-        style.paint(order, bounds, cx);
+        cx.stack(0, |cx| style.paint(order, bounds, cx));
 
-        // // todo!("support only one dimension being hidden")
         let overflow = &style.overflow;
-        // if style.overflow.y != Overflow::Visible || style.overflow.x != Overflow::Visible {
-        //     cx.clip(layout.bounds, style.corner_radii, || )
-        // }
-
         style.apply_text_style(cx, |cx| {
-            style.apply_overflow(layout.bounds, cx, |cx| {
-                self.paint_children(overflow, state, cx)
+            cx.stack(1, |cx| {
+                style.apply_overflow(layout.bounds, cx, |cx| {
+                    self.paint_children(overflow, state, cx)
+                })
             })
         })?;
         self.handle_scroll(order, bounds, style.overflow.clone(), child_layouts, cx);

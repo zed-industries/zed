@@ -2,7 +2,7 @@ use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, Mul, Sub, SubAssign};
 use refineable::Refineable;
 use std::{
-    cmp,
+    cmp, fmt,
     ops::{Add, AddAssign, Div, Mul, MulAssign, Sub, SubAssign},
 };
 
@@ -128,7 +128,7 @@ impl<T: Clone + Debug> Clone for Point<T> {
     }
 }
 
-#[derive(Refineable, Default, Clone, Copy, Debug, PartialEq, Div, Hash)]
+#[derive(Refineable, Default, Clone, Copy, PartialEq, Div, Hash)]
 #[refineable(debug)]
 #[repr(C)]
 pub struct Size<T: Clone + Debug> {
@@ -199,14 +199,11 @@ impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Size<T> {
 
 impl<T: Eq + Debug + Clone> Eq for Size<T> {}
 
-// impl From<Size<Option<Pixels>>> for Size<Option<f32>> {
-//     fn from(size: Size<Option<Pixels>>) -> Self {
-//         Size {
-//             width: size.width.map(|p| p.0 as f32),
-//             height: size.height.map(|p| p.0 as f32),
-//         }
-//     }
-// }
+impl<T: Clone + Debug> Debug for Size<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Size {{ {:?} × {:?} }}", self.width, self.height)
+    }
+}
 
 impl From<Size<Pixels>> for Size<GlobalPixels> {
     fn from(size: Size<Pixels>) -> Self {
@@ -342,6 +339,13 @@ impl<T: Clone + Debug + Add<T, Output = T>> Bounds<T> {
     pub fn lower_right(&self) -> Point<T> {
         Point {
             x: self.origin.x.clone() + self.size.width.clone(),
+            y: self.origin.y.clone() + self.size.height.clone(),
+        }
+    }
+
+    pub fn lower_left(&self) -> Point<T> {
+        Point {
+            x: self.origin.x.clone(),
             y: self.origin.y.clone() + self.size.height.clone(),
         }
     }
@@ -627,7 +631,7 @@ impl From<f32> for Pixels {
 }
 
 impl Debug for Pixels {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} px", self.0)
     }
 }
@@ -662,8 +666,8 @@ impl DevicePixels {
     }
 }
 
-impl std::fmt::Debug for DevicePixels {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for DevicePixels {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} px (device)", self.0)
     }
 }
@@ -721,7 +725,7 @@ impl ScaledPixels {
 impl Eq for ScaledPixels {}
 
 impl Debug for ScaledPixels {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} px (scaled)", self.0)
     }
 }
@@ -738,12 +742,18 @@ impl From<DevicePixels> for ScaledPixels {
     }
 }
 
+impl From<ScaledPixels> for f64 {
+    fn from(scaled_pixels: ScaledPixels) -> Self {
+        scaled_pixels.0 as f64
+    }
+}
+
 #[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd)]
 #[repr(transparent)]
 pub struct GlobalPixels(pub(crate) f32);
 
 impl Debug for GlobalPixels {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} px (global coordinate space)", self.0)
     }
 }
@@ -772,7 +782,7 @@ impl Mul<Pixels> for Rems {
 }
 
 impl Debug for Rems {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} rem", self.0)
     }
 }
@@ -840,7 +850,7 @@ impl DefiniteLength {
 }
 
 impl Debug for DefiniteLength {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             DefiniteLength::Absolute(length) => Debug::fmt(length, f),
             DefiniteLength::Fraction(fract) => write!(f, "{}%", (fract * 100.0) as i32),
@@ -880,7 +890,7 @@ pub enum Length {
 }
 
 impl Debug for Length {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Length::Definite(definite_length) => write!(f, "{:?}", definite_length),
             Length::Auto => write!(f, "auto"),

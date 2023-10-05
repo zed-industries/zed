@@ -182,49 +182,42 @@ impl MetalRenderer {
         });
 
         let mut instance_offset = 0;
-        for layer in scene.layers() {
-            for batch in layer.batches() {
-                match batch {
-                    crate::PrimitiveBatch::Quads(quads) => {
-                        self.draw_quads(
-                            quads,
-                            &mut instance_offset,
-                            viewport_size,
-                            command_encoder,
-                        );
-                    }
-                    crate::PrimitiveBatch::Shadows(shadows) => {
-                        self.draw_shadows(
-                            shadows,
-                            &mut instance_offset,
-                            viewport_size,
-                            command_encoder,
-                        );
-                    }
-                    crate::PrimitiveBatch::MonochromeSprites {
+        for batch in scene.batches() {
+            match batch {
+                crate::PrimitiveBatch::Quads(quads) => {
+                    self.draw_quads(quads, &mut instance_offset, viewport_size, command_encoder);
+                }
+                crate::PrimitiveBatch::Shadows(shadows) => {
+                    self.draw_shadows(
+                        shadows,
+                        &mut instance_offset,
+                        viewport_size,
+                        command_encoder,
+                    );
+                }
+                crate::PrimitiveBatch::MonochromeSprites {
+                    texture_id,
+                    sprites,
+                } => {
+                    self.draw_monochrome_sprites(
                         texture_id,
                         sprites,
-                    } => {
-                        self.draw_monochrome_sprites(
-                            texture_id,
-                            sprites,
-                            &mut instance_offset,
-                            viewport_size,
-                            command_encoder,
-                        );
-                    }
-                    crate::PrimitiveBatch::PolychromeSprites {
+                        &mut instance_offset,
+                        viewport_size,
+                        command_encoder,
+                    );
+                }
+                crate::PrimitiveBatch::PolychromeSprites {
+                    texture_id,
+                    sprites,
+                } => {
+                    self.draw_polychrome_sprites(
                         texture_id,
                         sprites,
-                    } => {
-                        self.draw_polychrome_sprites(
-                            texture_id,
-                            sprites,
-                            &mut instance_offset,
-                            viewport_size,
-                            command_encoder,
-                        );
-                    }
+                        &mut instance_offset,
+                        viewport_size,
+                        command_encoder,
+                    );
                 }
             }
         }

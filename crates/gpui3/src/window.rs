@@ -1,11 +1,10 @@
 use crate::{
     image_cache::RenderImageParams, px, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
     BorrowAppContext, Bounds, Context, Corners, DevicePixels, DisplayId, Effect, Element, EntityId,
-    FontId, GlyphId, Handle, Hsla, ImageData, IsZero, LayerId, LayoutId, MainThread,
-    MainThreadOnly, MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point,
-    PolychromeSprite, Reference, RenderGlyphParams, RenderSvgParams, ScaledPixels, Scene,
-    SharedString, Size, Style, TaffyLayoutEngine, Task, WeakHandle, WindowOptions,
-    SUBPIXEL_VARIANTS,
+    FontId, GlyphId, Handle, Hsla, ImageData, IsZero, LayoutId, MainThread, MainThreadOnly,
+    MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Reference,
+    RenderGlyphParams, RenderSvgParams, ScaledPixels, Scene, SharedString, Size, StackingOrder,
+    Style, TaffyLayoutEngine, Task, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use smallvec::SmallVec;
@@ -24,7 +23,7 @@ pub struct Window {
     layout_engine: TaffyLayoutEngine,
     pub(crate) root_view: Option<AnyView<()>>,
     mouse_position: Point<Pixels>,
-    current_layer_id: LayerId,
+    current_stacking_order: StackingOrder,
     content_mask_stack: Vec<ContentMask>,
     pub(crate) scene: Scene,
     pub(crate) dirty: bool,
@@ -73,7 +72,7 @@ impl Window {
             layout_engine: TaffyLayoutEngine::new(),
             root_view: None,
             mouse_position,
-            current_layer_id: SmallVec::new(),
+            current_stacking_order: SmallVec::new(),
             content_mask_stack: Vec::new(),
             scene: Scene::new(scale_factor),
             dirty: true,
@@ -99,7 +98,7 @@ impl ContentMask {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
 #[repr(C)]
 pub struct ScaledContentMask {
     bounds: Bounds<ScaledPixels>,
@@ -250,14 +249,14 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 
     pub fn stack<R>(&mut self, order: u32, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.window.current_layer_id.push(order);
+        self.window.current_stacking_order.push(order);
         let result = f(self);
-        self.window.current_layer_id.pop();
+        self.window.current_stacking_order.pop();
         result
     }
 
-    pub fn current_layer_id(&self) -> LayerId {
-        self.window.current_layer_id.clone()
+    pub fn current_stacking_order(&self) -> StackingOrder {
+        self.window.current_stacking_order.clone()
     }
 
     pub fn paint_glyph(
@@ -286,7 +285,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
         if !raster_bounds.is_zero() {
-            let layer_id = self.current_layer_id();
+            let layer_id = self.current_stacking_order();
             let tile =
                 self.window
                     .sprite_atlas
@@ -336,7 +335,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
         if !raster_bounds.is_zero() {
-            let layer_id = self.current_layer_id();
+            let layer_id = self.current_stacking_order();
             let tile =
                 self.window
                     .sprite_atlas
@@ -382,7 +381,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 .map(|pixels| DevicePixels::from((pixels.0 * 2.).ceil() as i32)),
         };
 
-        let layer_id = self.current_layer_id();
+        let layer_id = self.current_stacking_order();
         let tile =
             self.window
                 .sprite_atlas
@@ -418,7 +417,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         let bounds = bounds.scale(scale_factor);
         let params = RenderImageParams { image_id: data.id };
 
-        let layer_id = self.current_layer_id();
+        let order = self.current_stacking_order();
         let tile = self
             .window
             .sprite_atlas
@@ -429,9 +428,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         let corner_radii = corner_radii.scale(scale_factor);
 
         self.window.scene.insert(
-            layer_id,
+            order,
             PolychromeSprite {
-                order,
+                order: 0, // Used in in Scene::batches. 0 has no meaning.
                 bounds,
                 content_mask,
                 corner_radii,
@@ -618,6 +617,13 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
 
     pub fn handle(&self) -> WeakHandle<S> {
         self.entities.weak_handle(self.entity_id)
+    }
+
+    pub fn stack<R>(&mut self, order: u32, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.window.current_stacking_order.push(order);
+        let result = f(self);
+        self.window.current_stacking_order.pop();
+        result
     }
 
     pub fn on_next_frame(&mut self, f: impl FnOnce(&mut S, &mut ViewContext<S>) + Send + 'static) {

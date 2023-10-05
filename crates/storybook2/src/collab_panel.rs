@@ -92,7 +92,7 @@ impl CollabPanel {
                                         ),
                                     ]
                                 })
-                                .take(10)
+                                .take(5)
                                 .flatten(),
                             ),
                     ),
@@ -168,7 +168,7 @@ impl CollabPanel {
                             .uri(avatar_uri)
                             .size_3p5()
                             .rounded_full()
-                            // .fill(theme.middle.positive.default.foreground)
+                            .fill(theme.middle.positive.default.foreground)
                             .shadow_md(),
                     )
                     .child(label),

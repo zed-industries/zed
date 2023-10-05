@@ -246,46 +246,50 @@ impl Style {
         let scale = cx.scale_factor();
 
         for shadow in &self.box_shadow {
-            let layer_id = cx.current_layer_id();
             let content_mask = cx.content_mask();
             let mut shadow_bounds = bounds;
             shadow_bounds.origin += shadow.offset;
             shadow_bounds.dilate(shadow.spread_radius);
-            cx.scene().insert(
-                layer_id,
-                Shadow {
-                    order,
-                    bounds: shadow_bounds.scale(scale),
-                    content_mask: content_mask.scale(scale),
-                    corner_radii: self
-                        .corner_radii
-                        .to_pixels(shadow_bounds.size, rem_size)
-                        .scale(scale),
-                    color: shadow.color,
-                    blur_radius: shadow.blur_radius.scale(scale),
-                },
-            );
+            cx.stack(0, |cx| {
+                let layer_id = cx.current_stacking_order();
+                cx.scene().insert(
+                    layer_id,
+                    Shadow {
+                        order: 0,
+                        bounds: shadow_bounds.scale(scale),
+                        content_mask: content_mask.scale(scale),
+                        corner_radii: self
+                            .corner_radii
+                            .to_pixels(shadow_bounds.size, rem_size)
+                            .scale(scale),
+                        color: shadow.color,
+                        blur_radius: shadow.blur_radius.scale(scale),
+                    },
+                );
+            })
         }
 
         let background_color = self.fill.as_ref().and_then(Fill::color);
         if background_color.is_some() || self.is_border_visible() {
-            let layer_id = cx.current_layer_id();
             let content_mask = cx.content_mask();
-            cx.scene().insert(
-                layer_id,
-                Quad {
+            cx.stack(1, |cx| {
+                let order = cx.current_stacking_order();
+                cx.scene().insert(
                     order,
-                    bounds: bounds.scale(scale),
-                    content_mask: content_mask.scale(scale),
-                    background: background_color.unwrap_or_default(),
-                    border_color: self.border_color.unwrap_or_default(),
-                    corner_radii: self
-                        .corner_radii
-                        .to_pixels(bounds.size, rem_size)
-                        .scale(scale),
-                    border_widths: self.border_widths.to_pixels(rem_size).scale(scale),
-                },
-            );
+                    Quad {
+                        order: 0,
+                        bounds: bounds.scale(scale),
+                        content_mask: content_mask.scale(scale),
+                        background: background_color.unwrap_or_default(),
+                        border_color: self.border_color.unwrap_or_default(),
+                        corner_radii: self
+                            .corner_radii
+                            .to_pixels(bounds.size, rem_size)
+                            .scale(scale),
+                        border_widths: self.border_widths.to_pixels(rem_size).scale(scale),
+                    },
+                );
+            });
         }
     }
 

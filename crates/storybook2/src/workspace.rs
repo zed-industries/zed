@@ -26,8 +26,8 @@ impl Workspace {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<State = Self> {
-        let theme = rose_pine_dawn();
         themed(rose_pine_dawn(), cx, |cx| {
+            let theme = theme(cx);
             div()
                 .size_full()
                 .flex()

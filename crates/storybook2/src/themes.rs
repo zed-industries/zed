@@ -1,3 +1,3 @@
-mod rose_pine_dawn;
+mod rose_pine;
 
-pub use rose_pine_dawn::*;
+pub use rose_pine::*;
