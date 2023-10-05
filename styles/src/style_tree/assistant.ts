@@ -80,7 +80,21 @@ export default function assistant(): any {
             },
             pending_edit_background: background(theme.highest, "positive"),
             context_status: {
-                ...text(theme.highest, "mono", "disabled", { size: "sm" }),
+                error_icon: {
+                    margin: { left: 8, right: 8 },
+                    color: foreground(theme.highest, "negative"),
+                    width: 12,
+                },
+                in_progress_icon: {
+                    margin: { left: 8, right: 8 },
+                    color: foreground(theme.highest, "warning"),
+                    width: 12,
+                },
+                complete_icon: {
+                    margin: { left: 8, right: 8 },
+                    color: foreground(theme.highest, "positive"),
+                    width: 12,
+                }
             },
             retrieve_context: toggleable({
                 base: interactive({
@@ -94,6 +108,7 @@ export default function assistant(): any {
                         border: {
                             width: 1., color: background(theme.highest, "on")
                         },
+                        margin: { left: 2 },
                         padding: {
                             left: 4,
                             right: 4,

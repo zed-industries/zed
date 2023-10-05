@@ -52,7 +52,7 @@ use std::{
 };
 use theme::{
     components::{action_button::Button, ComponentExt},
-    AssistantStyle,
+    AssistantStyle, Icon,
 };
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -2857,10 +2857,7 @@ impl View for InlineAssistant {
             .with_children(if self.retrieve_context {
                 Some(
                     Flex::row()
-                        .with_child(Label::new(
-                            self.retrieve_context_status(cx),
-                            theme.assistant.inline.context_status.text.clone(),
-                        ))
+                        .with_children(self.retrieve_context_status(cx))
                         .flex(1., true)
                         .aligned(),
                 )
@@ -3110,39 +3107,148 @@ impl InlineAssistant {
         anyhow::Ok(())
     }
 
-    fn retrieve_context_status(&self, cx: &mut ViewContext<Self>) -> String {
+    fn retrieve_context_status(
+        &self,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<AnyElement<InlineAssistant>> {
+        enum ContextStatusIcon {}
         let project = self.project.clone();
-        if let Some(semantic_index) = self.semantic_index.clone() {
-            let status = semantic_index.update(cx, |index, cx| index.status(&project));
-            return match status {
-                // This theoretically shouldnt be a valid code path
-                semantic_index::SemanticIndexStatus::NotAuthenticated => {
-                    "Not Authenticated!\nPlease ensure you have an `OPENAI_API_KEY` in your environment variables.".to_string()
-                }
-                semantic_index::SemanticIndexStatus::Indexed => {
-                    "Indexing Complete!".to_string()
-                }
-                semantic_index::SemanticIndexStatus::Indexing { remaining_files, rate_limit_expiry } => {
+        if let Some(semantic_index) = SemanticIndex::global(cx) {
+            let status = semantic_index.update(cx, |index, _| index.status(&project));
+            let theme = theme::current(cx);
+            match status {
+                SemanticIndexStatus::NotAuthenticated {} => Some(
+                    Svg::new("icons/error.svg")
+                        .with_color(theme.assistant.error_icon.color)
+                        .constrained()
+                        .with_width(theme.assistant.error_icon.width)
+                        .contained()
+                        .with_style(theme.assistant.error_icon.container)
+                        .with_tooltip::<ContextStatusIcon>(
+                            self.id,
+                            "Not Authenticated. Please ensure you have a valid 'OPENAI_API_KEY' in your environment variables.",
+                            None,
+                            theme.tooltip.clone(),
+                            cx,
+                        )
+                        .aligned()
+                        .into_any(),
+                ),
+                SemanticIndexStatus::NotIndexed {} => Some(
+                    Svg::new("icons/error.svg")
+                        .with_color(theme.assistant.inline.context_status.error_icon.color)
+                        .constrained()
+                        .with_width(theme.assistant.inline.context_status.error_icon.width)
+                        .contained()
+                        .with_style(theme.assistant.inline.context_status.error_icon.container)
+                        .with_tooltip::<ContextStatusIcon>(
+                            self.id,
+                            "Not Indexed",
+                            None,
+                            theme.tooltip.clone(),
+                            cx,
+                        )
+                        .aligned()
+                        .into_any(),
+                ),
+                SemanticIndexStatus::Indexing {
+                    remaining_files,
+                    rate_limit_expiry,
+                } => {
 
-                    let mut status = format!("Remaining files to index for Context Retrieval: {remaining_files}");
+                    let mut status_text = if remaining_files == 0 {
+                        "Indexing...".to_string()
+                    } else {
+                        format!("Remaining files to index: {remaining_files}")
+                    };
 
                     if let Some(rate_limit_expiry) = rate_limit_expiry {
-                        let remaining_seconds =
-                                rate_limit_expiry.duration_since(Instant::now());
-                        if remaining_seconds > Duration::from_secs(0) {
-                            write!(status, " (rate limit resets in {}s)", remaining_seconds.as_secs()).unwrap();
+                        let remaining_seconds = rate_limit_expiry.duration_since(Instant::now());
+                        if remaining_seconds > Duration::from_secs(0) && remaining_files > 0 {
+                            write!(
+                                status_text,
+                                " (rate limit expires in {}s)",
+                                remaining_seconds.as_secs()
+                            )
+                            .unwrap();
                         }
                     }
-                    status
+                    Some(
+                        Svg::new("icons/bolt.svg")
+                            .with_color(theme.assistant.inline.context_status.in_progress_icon.color)
+                            .constrained()
+                            .with_width(theme.assistant.inline.context_status.in_progress_icon.width)
+                            .contained()
+                            .with_style(theme.assistant.inline.context_status.in_progress_icon.container)
+                            .with_tooltip::<ContextStatusIcon>(
+                                self.id,
+                                status_text,
+                                None,
+                                theme.tooltip.clone(),
+                                cx,
+                            )
+                            .aligned()
+                            .into_any(),
+                    )
                 }
-                semantic_index::SemanticIndexStatus::NotIndexed => {
-                    "Not Indexed for Context Retrieval".to_string()
-                }
-            };
+                SemanticIndexStatus::Indexed {} => Some(
+                    Svg::new("icons/circle_check.svg")
+                        .with_color(theme.assistant.inline.context_status.complete_icon.color)
+                        .constrained()
+                        .with_width(theme.assistant.inline.context_status.complete_icon.width)
+                        .contained()
+                        .with_style(theme.assistant.inline.context_status.complete_icon.container)
+                        .with_tooltip::<ContextStatusIcon>(
+                            self.id,
+                            "Indexing Complete",
+                            None,
+                            theme.tooltip.clone(),
+                            cx,
+                        )
+                        .aligned()
+                        .into_any(),
+                ),
+            }
+        } else {
+            None
         }
-
-        "".to_string()
     }
+
+    // fn retrieve_context_status(&self, cx: &mut ViewContext<Self>) -> String {
+    //     let project = self.project.clone();
+    //     if let Some(semantic_index) = self.semantic_index.clone() {
+    //         let status = semantic_index.update(cx, |index, cx| index.status(&project));
+    //         return match status {
+    //             // This theoretically shouldnt be a valid code path
+    //             // As the inline assistant cant be launched without an API key
+    //             // We keep it here for safety
+    //             semantic_index::SemanticIndexStatus::NotAuthenticated => {
+    //                 "Not Authenticated!\nPlease ensure you have an `OPENAI_API_KEY` in your environment variables.".to_string()
+    //             }
+    //             semantic_index::SemanticIndexStatus::Indexed => {
+    //                 "Indexing Complete!".to_string()
+    //             }
+    //             semantic_index::SemanticIndexStatus::Indexing { remaining_files, rate_limit_expiry } => {
+
+    //                 let mut status = format!("Remaining files to index for Context Retrieval: {remaining_files}");
+
+    //                 if let Some(rate_limit_expiry) = rate_limit_expiry {
+    //                     let remaining_seconds =
+    //                             rate_limit_expiry.duration_since(Instant::now());
+    //                     if remaining_seconds > Duration::from_secs(0) {
+    //                         write!(status, " (rate limit resets in {}s)", remaining_seconds.as_secs()).unwrap();
+    //                     }
+    //                 }
+    //                 status
+    //             }
+    //             semantic_index::SemanticIndexStatus::NotIndexed => {
+    //                 "Not Indexed for Context Retrieval".to_string()
+    //             }
+    //         };
+    //     }
+
+    //     "".to_string()
+    // }
 
     fn toggle_include_conversation(
         &mut self,
