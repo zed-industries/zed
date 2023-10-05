@@ -138,7 +138,7 @@ vertex ShadowVertexOutput shadow_vertex(
     bounds.size.width += 2. * margin;
     bounds.size.height += 2. * margin;
 
-    float4 device_position = to_device_position(unit_vertex, bounds, bounds, viewport_size);
+    float4 device_position = to_device_position(unit_vertex, bounds, shadow.content_mask.bounds, viewport_size);
     float4 color = hsla_to_rgba(shadow.color);
 
     return ShadowVertexOutput {

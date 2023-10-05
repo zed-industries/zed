@@ -72,7 +72,7 @@ impl<S: Send + Sync + 'static> Element for Img<S> {
                 .now_or_never()
                 .and_then(ResultExt::log_err)
             {
-                let corner_radii = style.corner_radii.to_pixels(bounds, cx.rem_size());
+                let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
                 cx.paint_image(bounds, corner_radii, order, data, self.grayscale)?;
             } else {
                 cx.spawn(|_, mut cx| async move {
