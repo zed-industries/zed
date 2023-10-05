@@ -43,6 +43,7 @@ pub enum ComponentStory {
     Facepile,
     Keybinding,
     LanguageSelector,
+    MultiBuffer,
     Palette,
     Panel,
     ProjectPanel,
@@ -73,6 +74,7 @@ impl ComponentStory {
             Self::LanguageSelector => {
                 components::language_selector::LanguageSelectorStory::default().into_any()
             }
+            Self::MultiBuffer => components::multi_buffer::MultiBufferStory::default().into_any(),
             Self::Palette => components::palette::PaletteStory::default().into_any(),
             Self::Panel => components::panel::PanelStory::default().into_any(),
             Self::ProjectPanel => {
