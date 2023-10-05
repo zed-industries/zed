@@ -4154,6 +4154,88 @@ pub async fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
     DB.last_workspace().await.log_err().flatten()
 }
 
+pub fn join_channel(
+    channel_id: u64,
+    app_state: Arc<AppState>,
+    requesting_window: Option<WindowHandle<Workspace>>,
+    cx: &mut AppContext,
+) -> Task<Result<()>> {
+    let active_call = ActiveCall::global(cx);
+    cx.spawn(|mut cx| async move {
+        let should_prompt = active_call.read_with(&mut cx, |active_call, cx| {
+            let Some(room) = active_call.room().map( |room| room.read(cx) ) else {
+                return false
+            };
+
+            room.is_sharing_project() && room.remote_participants().len() > 0 &&
+            room.channel_id() != Some(channel_id)
+        });
+
+        if should_prompt {
+            if let Some(workspace) = requesting_window {
+                if let Some(window) = workspace.update(&mut cx, |cx| {
+                    cx.window()
+                }) {
+                    let answer = window.prompt(
+                        PromptLevel::Warning,
+                        "Leaving this call will unshare your current project.\nDo you want to switch channels?",
+                        &["Yes, Join Channel", "Cancel"],
+                        &mut cx,
+                    );
+
+                    if let Some(mut answer) = answer {
+                        if answer.next().await == Some(1) {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+
+        let room = active_call.update(&mut cx, |active_call, cx| {
+            active_call.join_channel(channel_id, cx)
+        }).await?;
+
+        let task = room.update(&mut cx, |room, cx| {
+            if let Some((project, host)) = room.most_active_project() {
+                return Some(join_remote_project(project, host, app_state.clone(), cx))
+            }
+
+            None
+        });
+        if let Some(task) = task {
+            task.await?;
+            return anyhow::Ok(());
+        }
+
+        if requesting_window.is_some() {
+            return anyhow::Ok(());
+        }
+
+        // find an existing workspace to focus and show call controls
+        for window in cx.windows() {
+            let found = window.update(&mut cx, |cx| {
+                let is_workspace = cx.root_view().clone().downcast::<Workspace>().is_some();
+                if is_workspace {
+                    cx.activate_window();
+                }
+                is_workspace
+            });
+
+            if found.unwrap_or(false) {
+                return anyhow::Ok(())
+            }
+        }
+
+        // no open workspaces
+        cx.update(|cx| {
+        Workspace::new_local(vec![], app_state.clone(), requesting_window, cx)
+        }).await;
+
+        return anyhow::Ok(());
+    })
+}
+
 #[allow(clippy::type_complexity)]
 pub fn open_paths(
     abs_paths: &[PathBuf],

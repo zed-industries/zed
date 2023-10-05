@@ -17,15 +17,14 @@ lazy_static! {
         _ => panic!("invalid release channel {}", *RELEASE_CHANNEL_NAME),
     };
 
-    static ref URL_SCHEME: Url = Url::parse(match RELEASE_CHANNEL_NAME.as_str() {
+    pub static ref URL_SCHEME_PREFIX: String = match RELEASE_CHANNEL_NAME.as_str() {
         "dev" => "zed-dev:/",
         "preview" => "zed-preview:/",
         "stable" => "zed:/",
-        // NOTE: this must be kept in sync with ./script/bundle and https://zed.dev.
+        // NOTE: this must be kept in sync with osx_url_schemes in Cargo.toml and with https://zed.dev.
         _ => unreachable!(),
-    })
-    .unwrap();
-    static ref LINK_PREFIX: Url = Url::parse(match RELEASE_CHANNEL_NAME.as_str() {
+    }.to_string();
+    pub static ref LINK_PREFIX: Url = Url::parse(match RELEASE_CHANNEL_NAME.as_str() {
         "dev" => "http://localhost:3000/dev/",
         "preview" => "https://zed.dev/preview/",
         "stable" => "https://zed.dev/",
@@ -58,13 +57,5 @@ impl ReleaseChannel {
             ReleaseChannel::Preview => "preview",
             ReleaseChannel::Stable => "stable",
         }
-    }
-
-    pub fn url_scheme(&self) -> &'static Url {
-        &URL_SCHEME
-    }
-
-    pub fn link_prefix(&self) -> &'static Url {
-        &LINK_PREFIX
     }
 }

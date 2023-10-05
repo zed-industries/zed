@@ -1969,18 +1969,21 @@ impl CollabPanel {
                     let style = collab_theme.channel_name.inactive_state();
                     Flex::row()
                         .with_child(
-                            Label::new(channel.name.clone(), style.text.clone())
-                                .contained()
-                                .with_style(style.container)
-                                .aligned()
-                                .left()
-                                .with_tooltip::<ChannelTooltip>(
-                                    ix,
-                                    "Join channel",
-                                    None,
-                                    theme.tooltip.clone(),
-                                    cx,
-                                ),
+                            Label::new(
+                                channel.name.clone().to_owned() + channel_id.to_string().as_str(),
+                                style.text.clone(),
+                            )
+                            .contained()
+                            .with_style(style.container)
+                            .aligned()
+                            .left()
+                            .with_tooltip::<ChannelTooltip>(
+                                ix,
+                                "Join channel",
+                                None,
+                                theme.tooltip.clone(),
+                                cx,
+                            ),
                         )
                         .with_children({
                             let participants =
@@ -3187,49 +3190,19 @@ impl CollabPanel {
     }
 
     fn join_channel(&self, channel_id: u64, cx: &mut ViewContext<Self>) {
-        let workspace = self.workspace.clone();
-        let window = cx.window();
-        let active_call = ActiveCall::global(cx);
-        cx.spawn(|_, mut cx| async move {
-            if active_call.read_with(&mut cx, |active_call, cx| {
-                if let Some(room) = active_call.room() {
-                    let room = room.read(cx);
-                    room.is_sharing_project() && room.remote_participants().len() > 0
-                } else {
-                    false
-                }
-            }) {
-                let answer = window.prompt(
-                    PromptLevel::Warning,
-                    "Leaving this call will unshare your current project.\nDo you want to switch channels?",
-                    &["Yes, Join Channel", "Cancel"],
-                    &mut cx,
-                );
-
-                if let Some(mut answer) = answer {
-                    if answer.next().await == Some(1) {
-                        return anyhow::Ok(());
-                    }
-                }
-            }
-
-            let room = active_call
-                .update(&mut cx, |call, cx| call.join_channel(channel_id, cx))
-                .await?;
-
-            let task = room.update(&mut cx, |room, cx| {
-                let workspace = workspace.upgrade(cx)?;
-                let (project, host) = room.most_active_project()?;
-                let app_state = workspace.read(cx).app_state().clone();
-                Some(workspace::join_remote_project(project, host, app_state, cx))
-            });
-            if let Some(task) = task {
-                task.await?;
-            }
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+        let Some(workspace) = self.workspace.upgrade(cx) else {
+            return;
+        };
+        let Some(handle) = cx.window().downcast::<Workspace>() else {
+            return;
+        };
+        workspace::join_channel(
+            channel_id,
+            workspace.read(cx).app_state().clone(),
+            Some(handle),
+            cx,
+        )
+        .detach_and_log_err(cx)
     }
 
     fn join_channel_chat(&mut self, action: &JoinChannelChat, cx: &mut ViewContext<Self>) {

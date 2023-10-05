@@ -45,7 +45,7 @@ use std::{
 };
 use sum_tree::Bias;
 use util::{
-    channel::ReleaseChannel,
+    channel::{ReleaseChannel, URL_SCHEME_PREFIX},
     http::{self, HttpClient},
     paths::PathLikeWithPosition,
 };
@@ -60,6 +60,10 @@ use zed::{
     build_window_options, handle_keymap_file_changes, initialize_workspace, languages, menus,
     only_instance::{ensure_only_instance, IsOnlyInstance},
 };
+
+use crate::open_url::{OpenListener, OpenRequest};
+
+mod open_url;
 
 fn main() {
     let http = http::client();
@@ -92,29 +96,20 @@ fn main() {
         })
     };
 
-    let (cli_connections_tx, mut cli_connections_rx) = mpsc::unbounded();
-    let cli_connections_tx = Arc::new(cli_connections_tx);
-    let (open_paths_tx, mut open_paths_rx) = mpsc::unbounded();
-    let open_paths_tx = Arc::new(open_paths_tx);
-    let urls_callback_triggered = Arc::new(AtomicBool::new(false));
-
-    let callback_cli_connections_tx = Arc::clone(&cli_connections_tx);
-    let callback_open_paths_tx = Arc::clone(&open_paths_tx);
-    let callback_urls_callback_triggered = Arc::clone(&urls_callback_triggered);
-    app.on_open_urls(move |urls, _| {
-        callback_urls_callback_triggered.store(true, Ordering::Release);
-        open_urls(urls, &callback_cli_connections_tx, &callback_open_paths_tx);
-    })
-    .on_reopen(move |cx| {
-        if cx.has_global::<Weak<AppState>>() {
-            if let Some(app_state) = cx.global::<Weak<AppState>>().upgrade() {
-                workspace::open_new(&app_state, cx, |workspace, cx| {
-                    Editor::new_file(workspace, &Default::default(), cx)
-                })
-                .detach();
+    let (listener, mut open_rx) = OpenListener::new();
+    let listener = Arc::new(listener);
+    let callback_listener = listener.clone();
+    app.on_open_urls(move |urls, _| callback_listener.open_urls(urls))
+        .on_reopen(move |cx| {
+            if cx.has_global::<Weak<AppState>>() {
+                if let Some(app_state) = cx.global::<Weak<AppState>>().upgrade() {
+                    workspace::open_new(&app_state, cx, |workspace, cx| {
+                        Editor::new_file(workspace, &Default::default(), cx)
+                    })
+                    .detach();
+                }
             }
-        }
-    });
+        });
 
     app.run(move |cx| {
         cx.set_global(*RELEASE_CHANNEL);
@@ -226,41 +221,52 @@ fn main() {
             // TODO Development mode that forces the CLI mode usually runs Zed binary as is instead
             // of an *app, hence gets no specific callbacks run. Emulate them here, if needed.
             if std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_some()
-                && !urls_callback_triggered.load(Ordering::Acquire)
+                && !listener.triggered.load(Ordering::Acquire)
             {
-                open_urls(collect_url_args(), &cli_connections_tx, &open_paths_tx)
+                listener.open_urls(collect_url_args())
             }
 
-            if let Ok(Some(connection)) = cli_connections_rx.try_next() {
-                cx.spawn(|cx| handle_cli_connection(connection, app_state.clone(), cx))
-                    .detach();
-            } else if let Ok(Some(paths)) = open_paths_rx.try_next() {
-                cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
-                    .detach();
-            } else {
-                cx.spawn({
-                    let app_state = app_state.clone();
-                    |cx| async move { restore_or_create_workspace(&app_state, cx).await }
-                })
-                .detach()
-            }
-
-            cx.spawn(|cx| {
-                let app_state = app_state.clone();
-                async move {
-                    while let Some(connection) = cli_connections_rx.next().await {
-                        handle_cli_connection(connection, app_state.clone(), cx.clone()).await;
-                    }
+            match open_rx.try_next() {
+                Ok(Some(OpenRequest::Paths { paths })) => {
+                    cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
+                        .detach();
                 }
-            })
-            .detach();
+                Ok(Some(OpenRequest::CliConnection { connection })) => {
+                    cx.spawn(|cx| handle_cli_connection(connection, app_state.clone(), cx))
+                        .detach();
+                }
+                Ok(Some(OpenRequest::JoinChannel { channel_id })) => cx
+                    .update(|cx| workspace::join_channel(channel_id, app_state.clone(), None, cx))
+                    .detach(),
+                Ok(None) | Err(_) => cx
+                    .spawn({
+                        let app_state = app_state.clone();
+                        |cx| async move { restore_or_create_workspace(&app_state, cx).await }
+                    })
+                    .detach(),
+            }
 
             cx.spawn(|mut cx| {
                 let app_state = app_state.clone();
                 async move {
-                    while let Some(paths) = open_paths_rx.next().await {
-                        cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
-                            .detach();
+                    while let Some(request) = open_rx.next().await {
+                        match request {
+                            OpenRequest::Paths { paths } => {
+                                cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
+                                    .detach();
+                            }
+                            OpenRequest::CliConnection { connection } => {
+                                cx.spawn(|cx| {
+                                    handle_cli_connection(connection, app_state.clone(), cx)
+                                })
+                                .detach();
+                            }
+                            OpenRequest::JoinChannel { channel_id } => cx
+                                .update(|cx| {
+                                    workspace::join_channel(channel_id, app_state.clone(), None, cx)
+                                })
+                                .detach(),
+                        }
                     }
                 }
             })
@@ -294,37 +300,6 @@ async fn installation_id() -> Result<String> {
             .await?;
 
         Ok(installation_id)
-    }
-}
-
-fn open_urls(
-    urls: Vec<String>,
-    cli_connections_tx: &mpsc::UnboundedSender<(
-        mpsc::Receiver<CliRequest>,
-        IpcSender<CliResponse>,
-    )>,
-    open_paths_tx: &mpsc::UnboundedSender<Vec<PathBuf>>,
-) {
-    if let Some(server_name) = urls.first().and_then(|url| url.strip_prefix("zed-cli://")) {
-        if let Some(cli_connection) = connect_to_cli(server_name).log_err() {
-            cli_connections_tx
-                .unbounded_send(cli_connection)
-                .map_err(|_| anyhow!("no listener for cli connections"))
-                .log_err();
-        };
-    } else {
-        let paths: Vec<_> = urls
-            .iter()
-            .flat_map(|url| url.strip_prefix("file://"))
-            .map(|url| {
-                let decoded = urlencoding::decode_binary(url.as_bytes());
-                PathBuf::from(OsStr::from_bytes(decoded.as_ref()))
-            })
-            .collect();
-        open_paths_tx
-            .unbounded_send(paths)
-            .map_err(|_| anyhow!("no listener for open urls requests"))
-            .log_err();
     }
 }
 
