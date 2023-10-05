@@ -4,6 +4,11 @@
 (interpolation) @punctuation.special
 (raw_text) @embedded
 
+((tag_name) @type
+ (#match? @type "^[A-Z]"))
+
+((attribute_name) @keyword
+ (#match? @keyword "-"))
 
 (start_tag) @tag
 (end_tag) @tag
