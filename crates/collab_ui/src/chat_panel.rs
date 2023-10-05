@@ -398,12 +398,16 @@ impl ChatPanel {
 
         if is_continuation {
             Flex::row()
-                .with_child(MarkdownElement::new(
-                    markdown.clone(),
-                    style.body.clone(),
-                    theme.editor.syntax.clone(),
-                    theme.editor.document_highlight_read_background,
-                ))
+                .with_child(
+                    Flex::column()
+                        .with_child(MarkdownElement::new(
+                            markdown.clone(),
+                            style.body.clone(),
+                            theme.editor.syntax.clone(),
+                            theme.editor.document_highlight_read_background,
+                        ))
+                        .flex(1., true),
+                )
                 .with_children(message_id_to_remove.map(|id| {
                     MouseEventHandler::new::<DeleteMessage, _>(id as usize, cx, |mouse_state, _| {
                         let button_style = theme.chat_panel.icon_button.style_for(mouse_state);
@@ -418,13 +422,6 @@ impl ChatPanel {
                     })
                     .flex_float()
                 }))
-                .contained()
-                .with_style(style.container)
-                .with_margin_bottom(if is_last {
-                    theme.chat_panel.last_message_bottom_spacing
-                } else {
-                    0.
-                })
                 .into_any()
         } else {
             Flex::column()
