@@ -93,19 +93,17 @@ impl<V: 'static> Palette<V> {
                                     .fill(theme.lowest.base.hovered.background)
                                     .active()
                                     .fill(theme.lowest.base.pressed.background)
-                                    .child(
-                                        PaletteItem::new(item.label)
-                                            .keybinding(item.keybinding.clone()),
-                                    )
+                                    .child(item.clone())
                             })),
                     ),
             )
     }
 }
 
-#[derive(Element)]
+#[derive(Element, Clone)]
 pub struct PaletteItem {
     pub label: &'static str,
+    pub sublabel: Option<&'static str>,
     pub keybinding: Option<Keybinding>,
 }
 
@@ -113,12 +111,18 @@ impl PaletteItem {
     pub fn new(label: &'static str) -> Self {
         Self {
             label,
+            sublabel: None,
             keybinding: None,
         }
     }
 
     pub fn label(mut self, label: &'static str) -> Self {
         self.label = label;
+        self
+    }
+
+    pub fn sublabel<L: Into<Option<&'static str>>>(mut self, sublabel: L) -> Self {
+        self.sublabel = sublabel.into();
         self
     }
 
@@ -138,7 +142,11 @@ impl PaletteItem {
             .flex_row()
             .grow()
             .justify_between()
-            .child(Label::new(self.label))
+            .child(
+                v_stack()
+                    .child(Label::new(self.label))
+                    .children(self.sublabel.map(|sublabel| Label::new(sublabel))),
+            )
             .children(self.keybinding.clone())
     }
 }
