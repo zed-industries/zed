@@ -31,9 +31,7 @@ impl<V: 'static> MultiBuffer<V> {
                             .flex()
                             .items_center()
                             .justify_between()
-                            .h_8()
-                            .px_4()
-                            .py_2()
+                            .p_4()
                             .fill(theme.lowest.base.default.background)
                             .child(Label::new("main.rs").size(LabelSize::Small))
                             .child(IconElement::new(Icon::ArrowUpRight).size(IconSize::Small)),
