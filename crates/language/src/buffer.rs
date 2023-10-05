@@ -149,7 +149,6 @@ pub async fn prepare_completion_documentation(
     documentation: &lsp::Documentation,
     language_registry: &Arc<LanguageRegistry>,
     language: Option<Arc<Language>>,
-    style: &theme::Editor,
 ) -> Option<Documentation> {
     match documentation {
         lsp::Documentation::String(text) => {
@@ -170,7 +169,7 @@ pub async fn prepare_completion_documentation(
             }
 
             lsp::MarkupKind::Markdown => {
-                let parsed = parse_markdown(value, language_registry, language, style).await;
+                let parsed = parse_markdown(value, language_registry, language).await;
                 Some(Documentation::MultiLineMarkdown(parsed))
             }
         },

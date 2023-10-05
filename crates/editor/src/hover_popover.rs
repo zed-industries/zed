@@ -8,13 +8,11 @@ use futures::FutureExt;
 use gpui::{
     actions,
     elements::{Empty, Flex, MouseEventHandler, Padding, ParentElement, Text},
-    fonts::HighlightStyle,
     platform::{CursorStyle, MouseButton},
-    AnyElement, AppContext, CursorRegion, Element, ModelHandle, MouseRegion, Task, ViewContext,
+    AnyElement, AppContext, Element, ModelHandle, Task, ViewContext,
 };
 use language::{
-    markdown::{self, ParsedRegion},
-    Bias, DiagnosticEntry, DiagnosticSeverity, Language, LanguageRegistry,
+    markdown, Bias, DiagnosticEntry, DiagnosticSeverity, Language, LanguageRegistry, ParsedMarkdown,
 };
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart, Project};
 use std::{ops::Range, sync::Arc, time::Duration};
@@ -363,13 +361,11 @@ fn show_hover(
     editor.hover_state.info_task = Some(task);
 }
 
-async fn render_blocks(
-    theme_id: usize,
+async fn parse_blocks(
     blocks: &[HoverBlock],
     language_registry: &Arc<LanguageRegistry>,
     language: Option<Arc<Language>>,
-    style: &theme::Editor,
-) -> ParsedInfo {
+) -> markdown::ParsedMarkdown {
     let mut text = String::new();
     let mut highlights = Vec::new();
     let mut region_ranges = Vec::new();
@@ -387,7 +383,6 @@ async fn render_blocks(
                     &block.text,
                     language_registry,
                     language.clone(),
-                    style,
                     &mut text,
                     &mut highlights,
                     &mut region_ranges,
@@ -402,13 +397,7 @@ async fn render_blocks(
                     .now_or_never()
                     .and_then(Result::ok)
                 {
-                    markdown::highlight_code(
-                        &mut text,
-                        &mut highlights,
-                        &block.text,
-                        &language,
-                        style,
-                    );
+                    markdown::highlight_code(&mut text, &mut highlights, &block.text, &language);
                 } else {
                     text.push_str(&block.text);
                 }
@@ -416,8 +405,7 @@ async fn render_blocks(
         }
     }
 
-    ParsedInfo {
-        theme_id,
+    ParsedMarkdown {
         text: text.trim().to_string(),
         highlights,
         region_ranges,
@@ -485,16 +473,7 @@ pub struct InfoPopover {
     symbol_range: DocumentRange,
     pub blocks: Vec<HoverBlock>,
     language: Option<Arc<Language>>,
-    parsed_content: Option<ParsedInfo>,
-}
-
-#[derive(Debug, Clone)]
-struct ParsedInfo {
-    theme_id: usize,
-    text: String,
-    highlights: Vec<(Range<usize>, HighlightStyle)>,
-    region_ranges: Vec<Range<usize>>,
-    regions: Vec<ParsedRegion>,
+    parsed_content: Option<ParsedMarkdown>,
 }
 
 impl InfoPopover {
@@ -503,58 +482,14 @@ impl InfoPopover {
         style: &EditorStyle,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement<Editor> {
-        if let Some(parsed) = &self.parsed_content {
-            if parsed.theme_id != style.theme_id {
-                self.parsed_content = None;
-            }
-        }
-
         let rendered = if let Some(parsed) = &self.parsed_content {
-            let view_id = cx.view_id();
-            let regions = parsed.regions.clone();
-            let code_span_background_color = style.document_highlight_read_background;
-
-            let mut region_id = 0;
-
-            Text::new(parsed.text.clone(), style.text.clone())
-                .with_highlights(parsed.highlights.clone())
-                .with_custom_runs(parsed.region_ranges.clone(), move |ix, bounds, scene, _| {
-                    region_id += 1;
-                    let region = regions[ix].clone();
-
-                    if let Some(url) = region.link_url {
-                        scene.push_cursor_region(CursorRegion {
-                            bounds,
-                            style: CursorStyle::PointingHand,
-                        });
-                        scene.push_mouse_region(
-                            MouseRegion::new::<Self>(view_id, region_id, bounds)
-                                .on_click::<Editor, _>(MouseButton::Left, move |_, _, cx| {
-                                    cx.platform().open_url(&url)
-                                }),
-                        );
-                    }
-
-                    if region.code {
-                        scene.push_quad(gpui::Quad {
-                            bounds,
-                            background: Some(code_span_background_color),
-                            border: Default::default(),
-                            corner_radii: (2.0).into(),
-                        });
-                    }
-                })
-                .with_soft_wrap(true)
-                .into_any()
+            crate::render_parsed_markdown(parsed, style, cx).into_any()
         } else {
-            let theme_id = style.theme_id;
             let language_registry = self.project.read(cx).languages().clone();
             let blocks = self.blocks.clone();
             let language = self.language.clone();
-            let style = style.theme.clone();
             cx.spawn(|this, mut cx| async move {
-                let blocks =
-                    render_blocks(theme_id, &blocks, &language_registry, language, &style).await;
+                let blocks = parse_blocks(&blocks, &language_registry, language).await;
                 _ = this.update(&mut cx, |_, cx| cx.notify());
                 blocks
             })
@@ -562,23 +497,6 @@ impl InfoPopover {
 
             Empty::new().into_any()
         };
-
-        // let rendered_content = self.parsed_content.get_or_insert_with(|| {
-        //     let language_registry = self.project.read(cx).languages().clone();
-        //     cx.spawn(|this, mut cx| async move {
-        //         let blocks = render_blocks(
-        //             style.theme_id,
-        //             &self.blocks,
-        //             &language_registry,
-        //             self.language.clone(),
-        //             style,
-        //         )
-        //         .await;
-        //         this.update(&mut cx, |_, cx| cx.notify());
-        //         blocks
-        //     })
-        //     .shared()
-        // });
 
         MouseEventHandler::new::<InfoPopover, _>(0, cx, |_, cx| {
             Flex::column()
@@ -678,9 +596,12 @@ mod tests {
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use collections::BTreeSet;
-    use gpui::fonts::{Underline, Weight};
+    use gpui::fonts::Weight;
     use indoc::indoc;
-    use language::{language_settings::InlayHintSettings, Diagnostic, DiagnosticSet};
+    use language::{
+        language_settings::InlayHintSettings, markdown::MarkdownHighlightStyle, Diagnostic,
+        DiagnosticSet,
+    };
     use lsp::LanguageServerId;
     use project::{HoverBlock, HoverBlockKind};
     use smol::stream::StreamExt;
@@ -893,7 +814,7 @@ mod tests {
         .await;
 
         cx.condition(|editor, _| editor.hover_state.visible()).await;
-        cx.editor(|editor, cx| {
+        cx.editor(|editor, _| {
             let blocks = editor.hover_state.info_popover.clone().unwrap().blocks;
             assert_eq!(
                 blocks,
@@ -903,9 +824,7 @@ mod tests {
                 }],
             );
 
-            let style = editor.style(cx);
-            let rendered =
-                smol::block_on(render_blocks(0, &blocks, &Default::default(), None, &style));
+            let rendered = smol::block_on(parse_blocks(&blocks, &Default::default(), None));
             assert_eq!(
                 rendered.text,
                 code_str.trim(),
@@ -984,16 +903,17 @@ mod tests {
 
     #[gpui::test]
     fn test_render_blocks(cx: &mut gpui::TestAppContext) {
+        use markdown::MarkdownHighlight;
+
         init_test(cx, |_| {});
 
         cx.add_window(|cx| {
             let editor = Editor::single_line(None, cx);
-            let style = editor.style(cx);
 
             struct Row {
                 blocks: Vec<HoverBlock>,
                 expected_marked_text: String,
-                expected_styles: Vec<HighlightStyle>,
+                expected_styles: Vec<MarkdownHighlight>,
             }
 
             let rows = &[
@@ -1004,10 +924,10 @@ mod tests {
                         kind: HoverBlockKind::Markdown,
                     }],
                     expected_marked_text: "one «two» three".to_string(),
-                    expected_styles: vec![HighlightStyle {
-                        weight: Some(Weight::BOLD),
+                    expected_styles: vec![MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        weight: Weight::BOLD,
                         ..Default::default()
-                    }],
+                    })],
                 },
                 // Links
                 Row {
@@ -1016,13 +936,10 @@ mod tests {
                         kind: HoverBlockKind::Markdown,
                     }],
                     expected_marked_text: "one «two» three".to_string(),
-                    expected_styles: vec![HighlightStyle {
-                        underline: Some(Underline {
-                            thickness: 1.0.into(),
-                            ..Default::default()
-                        }),
+                    expected_styles: vec![MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        underline: true,
                         ..Default::default()
-                    }],
+                    })],
                 },
                 // Lists
                 Row {
@@ -1047,13 +964,10 @@ mod tests {
                           - «c»
                           - d"
                     .unindent(),
-                    expected_styles: vec![HighlightStyle {
-                        underline: Some(Underline {
-                            thickness: 1.0.into(),
-                            ..Default::default()
-                        }),
+                    expected_styles: vec![MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        underline: true,
                         ..Default::default()
-                    }],
+                    })],
                 },
                 // Multi-paragraph list items
                 Row {
@@ -1081,13 +995,10 @@ mod tests {
                           - ten
                         - six"
                         .unindent(),
-                    expected_styles: vec![HighlightStyle {
-                        underline: Some(Underline {
-                            thickness: 1.0.into(),
-                            ..Default::default()
-                        }),
+                    expected_styles: vec![MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        underline: true,
                         ..Default::default()
-                    }],
+                    })],
                 },
             ];
 
@@ -1097,8 +1008,7 @@ mod tests {
                 expected_styles,
             } in &rows[0..]
             {
-                let rendered =
-                    smol::block_on(render_blocks(0, &blocks, &Default::default(), None, &style));
+                let rendered = smol::block_on(parse_blocks(&blocks, &Default::default(), None));
 
                 let (expected_text, ranges) = marked_text_ranges(expected_marked_text, false);
                 let expected_highlights = ranges

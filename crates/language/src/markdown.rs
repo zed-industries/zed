@@ -1,16 +1,29 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::{Language, LanguageRegistry};
-use gpui::fonts::{HighlightStyle, Underline, Weight};
+use crate::{HighlightId, Language, LanguageRegistry};
+use gpui::fonts::Weight;
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 
 #[derive(Debug, Clone)]
 pub struct ParsedMarkdown {
     pub text: String,
-    pub highlights: Vec<(Range<usize>, HighlightStyle)>,
+    pub highlights: Vec<(Range<usize>, MarkdownHighlight)>,
     pub region_ranges: Vec<Range<usize>>,
     pub regions: Vec<ParsedRegion>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MarkdownHighlight {
+    Style(MarkdownHighlightStyle),
+    Code(HighlightId),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MarkdownHighlightStyle {
+    pub italic: bool,
+    pub underline: bool,
+    pub weight: Weight,
 }
 
 #[derive(Debug, Clone)]
@@ -23,7 +36,6 @@ pub async fn parse_markdown(
     markdown: &str,
     language_registry: &Arc<LanguageRegistry>,
     language: Option<Arc<Language>>,
-    style: &theme::Editor,
 ) -> ParsedMarkdown {
     let mut text = String::new();
     let mut highlights = Vec::new();
@@ -34,7 +46,6 @@ pub async fn parse_markdown(
         markdown,
         language_registry,
         language,
-        style,
         &mut text,
         &mut highlights,
         &mut region_ranges,
@@ -54,9 +65,8 @@ pub async fn parse_markdown_block(
     markdown: &str,
     language_registry: &Arc<LanguageRegistry>,
     language: Option<Arc<Language>>,
-    style: &theme::Editor,
     text: &mut String,
-    highlights: &mut Vec<(Range<usize>, HighlightStyle)>,
+    highlights: &mut Vec<(Range<usize>, MarkdownHighlight)>,
     region_ranges: &mut Vec<Range<usize>>,
     regions: &mut Vec<ParsedRegion>,
 ) {
@@ -71,16 +81,16 @@ pub async fn parse_markdown_block(
         match event {
             Event::Text(t) => {
                 if let Some(language) = &current_language {
-                    highlight_code(text, highlights, t.as_ref(), language, style);
+                    highlight_code(text, highlights, t.as_ref(), language);
                 } else {
                     text.push_str(t.as_ref());
 
-                    let mut style = HighlightStyle::default();
+                    let mut style = MarkdownHighlightStyle::default();
                     if bold_depth > 0 {
-                        style.weight = Some(Weight::BOLD);
+                        style.weight = Weight::BOLD;
                     }
                     if italic_depth > 0 {
-                        style.italic = Some(true);
+                        style.italic = true;
                     }
                     if let Some(link_url) = link_url.clone() {
                         region_ranges.push(prev_len..text.len());
@@ -88,22 +98,22 @@ pub async fn parse_markdown_block(
                             link_url: Some(link_url),
                             code: false,
                         });
-                        style.underline = Some(Underline {
-                            thickness: 1.0.into(),
-                            ..Default::default()
-                        });
+                        style.underline = true;
                     }
 
-                    if style != HighlightStyle::default() {
+                    if style != MarkdownHighlightStyle::default() {
                         let mut new_highlight = true;
-                        if let Some((last_range, last_style)) = highlights.last_mut() {
+                        if let Some((last_range, MarkdownHighlight::Style(last_style))) =
+                            highlights.last_mut()
+                        {
                             if last_range.end == prev_len && last_style == &style {
                                 last_range.end = text.len();
                                 new_highlight = false;
                             }
                         }
                         if new_highlight {
-                            highlights.push((prev_len..text.len(), style));
+                            let range = prev_len..text.len();
+                            highlights.push((range, MarkdownHighlight::Style(style)));
                         }
                     }
                 }
@@ -115,13 +125,10 @@ pub async fn parse_markdown_block(
                 if link_url.is_some() {
                     highlights.push((
                         prev_len..text.len(),
-                        HighlightStyle {
-                            underline: Some(Underline {
-                                thickness: 1.0.into(),
-                                ..Default::default()
-                            }),
+                        MarkdownHighlight::Style(MarkdownHighlightStyle {
+                            underline: true,
                             ..Default::default()
-                        },
+                        }),
                     ));
                 }
                 regions.push(ParsedRegion {
@@ -204,17 +211,15 @@ pub async fn parse_markdown_block(
 
 pub fn highlight_code(
     text: &mut String,
-    highlights: &mut Vec<(Range<usize>, HighlightStyle)>,
+    highlights: &mut Vec<(Range<usize>, MarkdownHighlight)>,
     content: &str,
     language: &Arc<Language>,
-    style: &theme::Editor,
 ) {
     let prev_len = text.len();
     text.push_str(content);
     for (range, highlight_id) in language.highlight_text(&content.into(), 0..content.len()) {
-        if let Some(style) = highlight_id.style(&style.syntax) {
-            highlights.push((prev_len + range.start..prev_len + range.end, style));
-        }
+        let highlight = MarkdownHighlight::Code(highlight_id);
+        highlights.push((prev_len + range.start..prev_len + range.end, highlight));
     }
 }
 
