@@ -199,11 +199,20 @@ impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Size<T> {
 
 impl<T: Eq + Debug + Clone> Eq for Size<T> {}
 
-impl From<Size<Option<Pixels>>> for Size<Option<f32>> {
-    fn from(size: Size<Option<Pixels>>) -> Self {
+// impl From<Size<Option<Pixels>>> for Size<Option<f32>> {
+//     fn from(size: Size<Option<Pixels>>) -> Self {
+//         Size {
+//             width: size.width.map(|p| p.0 as f32),
+//             height: size.height.map(|p| p.0 as f32),
+//         }
+//     }
+// }
+
+impl From<Size<Pixels>> for Size<GlobalPixels> {
+    fn from(size: Size<Pixels>) -> Self {
         Size {
-            width: size.width.map(|p| p.0 as f32),
-            height: size.height.map(|p| p.0 as f32),
+            width: GlobalPixels(size.width.0),
+            height: GlobalPixels(size.height.0),
         }
     }
 }
@@ -254,6 +263,18 @@ impl<T: Clone + Debug + Sub<Output = T>> Bounds<T> {
             height: lower_right.y - upper_left.y,
         };
         Bounds { origin, size }
+    }
+}
+
+impl<T: Clone + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T>> Bounds<T> {
+    pub fn intersects(&self, other: &Bounds<T>) -> bool {
+        let my_lower_right = self.lower_right();
+        let their_lower_right = other.lower_right();
+
+        self.origin.x < their_lower_right.x
+            && my_lower_right.x > other.origin.x
+            && self.origin.y < their_lower_right.y
+            && my_lower_right.y > other.origin.y
     }
 }
 
@@ -698,6 +719,28 @@ impl From<DevicePixels> for ScaledPixels {
     }
 }
 
+#[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd)]
+#[repr(transparent)]
+pub struct GlobalPixels(pub(crate) f32);
+
+impl Debug for GlobalPixels {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} px (global coordinate space)", self.0)
+    }
+}
+
+impl From<GlobalPixels> for f64 {
+    fn from(global_pixels: GlobalPixels) -> Self {
+        global_pixels.0 as f64
+    }
+}
+
+impl From<f64> for GlobalPixels {
+    fn from(global_pixels: f64) -> Self {
+        GlobalPixels(global_pixels as f32)
+    }
+}
+
 #[derive(Clone, Copy, Default, Add, Sub, Mul, Div)]
 pub struct Rems(f32);
 
@@ -962,5 +1005,44 @@ impl<T: IsZero + Debug + Clone> IsZero for Corners<T> {
             && self.top_right.is_zero()
             && self.bottom_right.is_zero()
             && self.bottom_left.is_zero()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bounds_intersects() {
+        let bounds1 = Bounds {
+            origin: Point { x: 0.0, y: 0.0 },
+            size: Size {
+                width: 5.0,
+                height: 5.0,
+            },
+        };
+        let bounds2 = Bounds {
+            origin: Point { x: 4.0, y: 4.0 },
+            size: Size {
+                width: 5.0,
+                height: 5.0,
+            },
+        };
+        let bounds3 = Bounds {
+            origin: Point { x: 10.0, y: 10.0 },
+            size: Size {
+                width: 5.0,
+                height: 5.0,
+            },
+        };
+
+        // Test Case 1: Intersecting bounds
+        assert_eq!(bounds1.intersects(&bounds2), true);
+
+        // Test Case 2: Non-Intersecting bounds
+        assert_eq!(bounds1.intersects(&bounds3), false);
+
+        // Test Case 3: Bounds intersecting with themselves
+        assert_eq!(bounds1.intersects(&bounds1), true);
     }
 }

@@ -1,10 +1,10 @@
-use super::{ns_string, MetalRenderer, NSRange};
+use super::{display_bounds_from_native, ns_string, MacDisplay, MetalRenderer, NSRange};
 use crate::{
-    point, px, size, AnyWindowHandle, Bounds, Event, Executor, KeyDownEvent, Keystroke, MacScreen,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMovedEvent, MouseUpEvent,
-    NSRectExt, Pixels, PlatformAtlas, PlatformInputHandler, PlatformScreen, PlatformWindow, Point,
-    Scene, Size, Timer, WindowAppearance, WindowBounds, WindowKind, WindowOptions,
-    WindowPromptLevel,
+    display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, Event, Executor,
+    GlobalPixels, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMovedEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInputHandler, PlatformWindow, Point, Scene, Size, Timer, WindowAppearance,
+    WindowBounds, WindowKind, WindowOptions, WindowPromptLevel,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -14,7 +14,9 @@ use cocoa::{
         NSWindowStyleMask, NSWindowTitleVisibility,
     },
     base::{id, nil},
-    foundation::{NSAutoreleasePool, NSInteger, NSPoint, NSRect, NSSize, NSString, NSUInteger},
+    foundation::{
+        NSAutoreleasePool, NSDictionary, NSInteger, NSPoint, NSRect, NSSize, NSString, NSUInteger,
+    },
 };
 use core_graphics::display::CGRect;
 use ctor::ctor;
@@ -365,7 +367,7 @@ impl MacWindowState {
             }
 
             let frame = self.frame();
-            let screen_size = self.native_window.screen().visibleFrame().size();
+            let screen_size = self.native_window.screen().visibleFrame().into();
             if frame.size == screen_size {
                 WindowBounds::Maximized
             } else {
@@ -374,10 +376,10 @@ impl MacWindowState {
         }
     }
 
-    fn frame(&self) -> Bounds<Pixels> {
+    fn frame(&self) -> Bounds<GlobalPixels> {
         unsafe {
             let frame = NSWindow::frame(self.native_window);
-            MacScreen::screen_bounds_from_native(frame)
+            display_bounds_from_native(mem::transmute::<NSRect, CGRect>(frame))
         }
     }
 
@@ -441,15 +443,33 @@ impl MacWindow {
                     msg_send![PANEL_CLASS, alloc]
                 }
             };
+
+            let display = options
+                .display_id
+                .and_then(|display_id| MacDisplay::all().find(|display| display.id() == display_id))
+                .unwrap_or_else(|| MacDisplay::primary());
+
+            let mut target_screen = nil;
+            let screens = NSScreen::screens(nil);
+            let count: u64 = cocoa::foundation::NSArray::count(screens);
+            for i in 0..count {
+                let screen = cocoa::foundation::NSArray::objectAtIndex(screens, i);
+                let device_description = NSScreen::deviceDescription(screen);
+                let screen_number_key: id = NSString::alloc(nil).init_str("NSScreenNumber");
+                let screen_number =
+                    NSDictionary::objectForKey_(device_description, screen_number_key);
+                if (*(screen_number as *const u32)) == display.id().0 {
+                    target_screen = screen;
+                    break;
+                }
+            }
+
             let native_window = native_window.initWithContentRect_styleMask_backing_defer_screen_(
                 NSRect::new(NSPoint::new(0., 0.), NSSize::new(1024., 768.)),
                 style_mask,
                 NSBackingStoreBuffered,
                 NO,
-                options
-                    .screen
-                    .map(|screen| MacScreen::from_handle(screen).native_screen)
-                    .unwrap_or(nil),
+                target_screen,
             );
             assert!(!native_window.is_null());
 
@@ -462,13 +482,13 @@ impl MacWindow {
                     native_window.setFrame_display_(screen.visibleFrame(), YES);
                 }
                 WindowBounds::Fixed(bounds) => {
-                    let bounds = MacScreen::screen_bounds_to_native(bounds);
-                    let screen_bounds = screen.visibleFrame();
-                    if bounds.intersects(screen_bounds) {
-                        native_window.setFrame_display_(bounds, YES);
+                    let display_bounds = display.bounds();
+                    let frame = if bounds.intersects(&display_bounds) {
+                        display_bounds_to_native(bounds)
                     } else {
-                        native_window.setFrame_display_(screen_bounds, YES);
-                    }
+                        display_bounds_to_native(display_bounds)
+                    };
+                    native_window.setFrame_display_(mem::transmute::<CGRect, NSRect>(frame), YES);
                 }
             }
 
@@ -649,11 +669,18 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn screen(&self) -> Rc<dyn PlatformScreen> {
+    fn display(&self) -> Rc<dyn PlatformDisplay> {
         unsafe {
-            Rc::new(MacScreen {
-                native_screen: self.0.as_ref().lock().native_window.screen(),
-            })
+            let screen = self.0.lock().native_window.screen();
+            let device_description: id = msg_send![screen, deviceDescription];
+            let screen_number: id = NSDictionary::valueForKey_(
+                device_description,
+                NSString::alloc(nil).init_str("NSScreenNumber"),
+            );
+
+            let screen_number: u32 = msg_send![screen_number, unsignedIntValue];
+
+            Rc::new(MacDisplay(screen_number))
         }
     }
 

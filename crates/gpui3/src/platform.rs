@@ -5,10 +5,10 @@ mod mac;
 #[cfg(any(test, feature = "test"))]
 mod test;
 
-use crate::image_cache::RenderImageParams;
 use crate::{
-    AnyWindowHandle, Bounds, DevicePixels, Executor, Font, FontId, FontMetrics, GlyphId, Pixels,
-    Point, RenderGlyphParams, RenderSvgParams, Result, Scene, ShapedLine, SharedString, Size,
+    AnyWindowHandle, Bounds, DevicePixels, Executor, Font, FontId, FontMetrics, GlobalPixels,
+    GlyphId, Pixels, Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Result, Scene,
+    ShapedLine, SharedString, Size,
 };
 use anyhow::anyhow;
 use async_task::Runnable;
@@ -16,7 +16,6 @@ use futures::channel::oneshot;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
-use std::ffi::c_void;
 use std::hash::{Hash, Hasher};
 use std::{
     any::Any,
@@ -27,7 +26,6 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use uuid::Uuid;
 
 pub use events::*;
 pub use keystroke::*;
@@ -54,8 +52,8 @@ pub trait Platform: 'static {
     fn hide_other_apps(&self);
     fn unhide_other_apps(&self);
 
-    fn screens(&self) -> Vec<Rc<dyn PlatformScreen>>;
-    fn screen_by_id(&self, id: ScreenId) -> Option<Rc<dyn PlatformScreen>>;
+    fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
+    fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
     fn main_window(&self) -> Option<AnyWindowHandle>;
     fn open_window(
         &self,
@@ -97,23 +95,23 @@ pub trait Platform: 'static {
     fn delete_credentials(&self, url: &str) -> Result<()>;
 }
 
-pub trait PlatformScreen: Debug {
-    fn id(&self) -> Option<ScreenId>;
-    fn handle(&self) -> PlatformScreenHandle;
+pub trait PlatformDisplay: Debug {
+    fn id(&self) -> DisplayId;
     fn as_any(&self) -> &dyn Any;
-    fn bounds(&self) -> Bounds<Pixels>;
-    fn content_bounds(&self) -> Bounds<Pixels>;
+    fn bounds(&self) -> Bounds<GlobalPixels>;
+    fn link(&self) -> Box<dyn PlatformDisplayLink>;
 }
 
-pub struct PlatformScreenHandle(pub *mut c_void);
+#[derive(PartialEq, Eq, Hash, Copy, Clone)]
+pub struct DisplayId(pub(crate) u32);
 
-impl Debug for PlatformScreenHandle {
+impl Debug for DisplayId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "PlatformScreenHandle({:p})", self.0)
+        write!(f, "DisplayId({})", self.0)
     }
 }
 
-unsafe impl Send for PlatformScreenHandle {}
+unsafe impl Send for DisplayId {}
 
 pub trait PlatformWindow {
     fn bounds(&self) -> WindowBounds;
@@ -121,7 +119,7 @@ pub trait PlatformWindow {
     fn scale_factor(&self) -> f32;
     fn titlebar_height(&self) -> Pixels;
     fn appearance(&self) -> WindowAppearance;
-    fn screen(&self) -> Rc<dyn PlatformScreen>;
+    fn display(&self) -> Rc<dyn PlatformDisplay>;
     fn mouse_position(&self) -> Point<Pixels>;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn set_input_handler(&mut self, input_handler: Box<dyn PlatformInputHandler>);
@@ -156,6 +154,12 @@ pub trait PlatformDispatcher: Send + Sync {
     fn is_main_thread(&self) -> bool;
     fn dispatch(&self, task: Runnable);
     fn dispatch_on_main_thread(&self, task: Runnable);
+}
+
+pub trait PlatformDisplayLink {
+    fn set_output_callback(&mut self, callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp)>);
+    fn start(&mut self);
+    fn stop(&mut self);
 }
 
 pub trait PlatformTextSystem: Send + Sync {
@@ -266,9 +270,6 @@ pub trait PlatformInputHandler {
     fn bounds_for_range(&self, range_utf16: Range<usize>) -> Option<Bounds<f32>>;
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct ScreenId(pub(crate) Uuid);
-
 #[derive(Debug)]
 pub struct WindowOptions {
     pub bounds: WindowBounds,
@@ -278,7 +279,7 @@ pub struct WindowOptions {
     pub show: bool,
     pub kind: WindowKind,
     pub is_movable: bool,
-    pub screen: Option<PlatformScreenHandle>,
+    pub display_id: Option<DisplayId>,
 }
 
 impl Default for WindowOptions {
@@ -295,7 +296,7 @@ impl Default for WindowOptions {
             show: true,
             kind: WindowKind::Normal,
             is_movable: true,
-            screen: None,
+            display_id: None,
         }
     }
 }
@@ -332,7 +333,7 @@ pub enum WindowBounds {
     Fullscreen,
     #[default]
     Maximized,
-    Fixed(Bounds<Pixels>),
+    Fixed(Bounds<GlobalPixels>),
 }
 
 #[derive(Copy, Clone, Debug)]

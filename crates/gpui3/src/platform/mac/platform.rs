@@ -1,8 +1,8 @@
 use super::BoolExt;
 use crate::{
-    AnyWindowHandle, ClipboardItem, CursorStyle, Event, Executor, MacDispatcher, MacScreen,
-    MacTextSystem, MacWindow, PathPromptOptions, Platform, PlatformScreen, PlatformTextSystem,
-    PlatformWindow, Result, ScreenId, SemanticVersion, WindowOptions,
+    AnyWindowHandle, ClipboardItem, CursorStyle, DisplayId, Event, Executor, MacDispatcher,
+    MacDisplay, MacTextSystem, MacWindow, PathPromptOptions, Platform, PlatformDisplay,
+    PlatformTextSystem, PlatformWindow, Result, SemanticVersion, WindowOptions,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -455,20 +455,20 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn screens(&self) -> Vec<Rc<dyn PlatformScreen>> {
-        MacScreen::all()
+    fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
+        MacDisplay::all()
             .into_iter()
             .map(|screen| Rc::new(screen) as Rc<_>)
             .collect()
     }
 
-    fn screen_by_id(&self, id: ScreenId) -> Option<Rc<dyn PlatformScreen>> {
-        MacScreen::find_by_id(id).map(|screen| Rc::new(screen) as Rc<_>)
-    }
-
     // fn add_status_item(&self, _handle: AnyWindowHandle) -> Box<dyn platform::Window> {
     //     Box::new(StatusItem::add(self.fonts()))
     // }
+
+    fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
+        MacDisplay::find_by_id(id).map(|screen| Rc::new(screen) as Rc<_>)
+    }
 
     fn main_window(&self) -> Option<AnyWindowHandle> {
         MacWindow::main_window()
@@ -736,6 +736,32 @@ impl Platform for MacPlatform {
         }
     }
 
+    // fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn Action)>) {
+    //     self.0.lock().menu_command = Some(callback);
+    // }
+
+    // fn on_will_open_menu(&self, callback: Box<dyn FnMut()>) {
+    //     self.0.lock().will_open_menu = Some(callback);
+    // }
+
+    // fn on_validate_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
+    //     self.0.lock().validate_menu_command = Some(callback);
+    // }
+
+    // fn set_menus(&self, menus: Vec<Menu>, keystroke_matcher: &KeymapMatcher) {
+    //     unsafe {
+    //         let app: id = msg_send![APP_CLASS, sharedApplication];
+    //         let mut state = self.0.lock();
+    //         let actions = &mut state.menu_actions;
+    //         app.setMainMenu_(self.create_menu_bar(
+    //             menus,
+    //             app.delegate(),
+    //             actions,
+    //             keystroke_matcher,
+    //         ));
+    //     }
+    // }
+
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         let state = self.0.lock();
         unsafe {
@@ -772,32 +798,6 @@ impl Platform for MacPlatform {
             }
         }
     }
-
-    // fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn Action)>) {
-    //     self.0.lock().menu_command = Some(callback);
-    // }
-
-    // fn on_will_open_menu(&self, callback: Box<dyn FnMut()>) {
-    //     self.0.lock().will_open_menu = Some(callback);
-    // }
-
-    // fn on_validate_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
-    //     self.0.lock().validate_menu_command = Some(callback);
-    // }
-
-    // fn set_menus(&self, menus: Vec<Menu>, keystroke_matcher: &KeymapMatcher) {
-    //     unsafe {
-    //         let app: id = msg_send![APP_CLASS, sharedApplication];
-    //         let mut state = self.0.lock();
-    //         let actions = &mut state.menu_actions;
-    //         app.setMainMenu_(self.create_menu_bar(
-    //             menus,
-    //             app.delegate(),
-    //             actions,
-    //             keystroke_matcher,
-    //         ));
-    //     }
-    // }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Result<()> {
         let url = CFString::from(url);

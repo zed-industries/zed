@@ -1,17 +1,18 @@
 ///! Macos screen have a y axis that goings up from the bottom of the screen and
 ///! an origin at the bottom left of the main display.
 mod dispatcher;
+mod display;
+mod display_link;
 mod events;
 mod metal_atlas;
 mod metal_renderer;
 mod open_type;
 mod platform;
-mod screen;
 mod text_system;
 mod window;
 mod window_appearence;
 
-use crate::{px, size, Pixels, Size};
+use crate::{px, size, GlobalPixels, Pixels, Size};
 use anyhow::anyhow;
 use cocoa::{
     base::{id, nil},
@@ -31,9 +32,10 @@ use std::{
 };
 
 pub use dispatcher::*;
+pub use display::*;
+pub use display_link::*;
 pub use metal_atlas::*;
 pub use platform::*;
-pub use screen::*;
 pub use text_system::*;
 pub use window::*;
 
@@ -119,22 +121,32 @@ pub trait NSRectExt {
     fn intersects(&self, other: Self) -> bool;
 }
 
-impl NSRectExt for NSRect {
-    fn size(&self) -> Size<Pixels> {
-        size(px(self.size.width as f32), px(self.size.height as f32))
-    }
-
-    fn intersects(&self, other: Self) -> bool {
-        self.size.width > 0.
-            && self.size.height > 0.
-            && other.size.width > 0.
-            && other.size.height > 0.
-            && self.origin.x <= other.origin.x + other.size.width
-            && self.origin.x + self.size.width >= other.origin.x
-            && self.origin.y <= other.origin.y + other.size.height
-            && self.origin.y + self.size.height >= other.origin.y
+impl From<NSRect> for Size<Pixels> {
+    fn from(rect: NSRect) -> Self {
+        let NSSize { width, height } = rect.size;
+        size(width.into(), height.into())
     }
 }
+
+impl From<NSRect> for Size<GlobalPixels> {
+    fn from(rect: NSRect) -> Self {
+        let NSSize { width, height } = rect.size;
+        size(width.into(), height.into())
+    }
+}
+
+// impl NSRectExt for NSRect {
+//     fn intersects(&self, other: Self) -> bool {
+//         self.size.width > 0.
+//             && self.size.height > 0.
+//             && other.size.width > 0.
+//             && other.size.height > 0.
+//             && self.origin.x <= other.origin.x + other.size.width
+//             && self.origin.x + self.size.width >= other.origin.x
+//             && self.origin.y <= other.origin.y + other.size.height
+//             && self.origin.y + self.size.height >= other.origin.y
+//     }
+// }
 
 // todo!
 #[allow(unused)]

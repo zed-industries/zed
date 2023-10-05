@@ -29,7 +29,7 @@ fn main() {
             WindowOptions {
                 bounds: WindowBounds::Fixed(Bounds {
                     origin: Default::default(),
-                    size: size(px(800.), px(600.)),
+                    size: size(px(800.), px(600.)).into(),
                 }),
                 ..Default::default()
             },
