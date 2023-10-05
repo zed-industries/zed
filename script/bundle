@@ -16,7 +16,7 @@ Usage: ${0##*/} [options] [bundle_name]
 Build the application bundle.
 
 Options:
-  -d    Compile in debug mode and print the app bundle's path.
+  -d    Compile in debug mode (doesn't currently work without -l)
   -l    Compile for local architecture only and copy bundle to /Applications.
   -o    Open the resulting DMG or the app itself in local mode.
   -f    Overwrite the local app bundle if it exists.
@@ -92,7 +92,7 @@ sed \
     Cargo.toml
 
 if [ "$local_only" = true ]; then
-    app_path=$(cargo bundle ${build_flag} --select-workspace-root | xargs)
+    app_path=$(cargo bundle ${build_flag} --target "$local_target_triple" --select-workspace-root | xargs)
 else
     app_path=$(cargo bundle ${build_flag} --target x86_64-apple-darwin --select-workspace-root | xargs)
 fi
