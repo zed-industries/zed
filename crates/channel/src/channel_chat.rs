@@ -36,7 +36,7 @@ pub struct ChannelMessage {
     pub nonce: u128,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ChannelMessageId {
     Saved(u64),
     Pending(usize),

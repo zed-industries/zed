@@ -1976,11 +1976,7 @@ impl CollabPanel {
                                 .left()
                                 .with_tooltip::<ChannelTooltip>(
                                     ix,
-                                    if is_active {
-                                        "Open channel notes"
-                                    } else {
-                                        "Join channel"
-                                    },
+                                    "Join channel",
                                     None,
                                     theme.tooltip.clone(),
                                     cx,
