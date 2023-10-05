@@ -32,12 +32,10 @@ use std::{
     ffi::OsStr,
     fs::OpenOptions,
     io::{IsTerminal, Write as _},
-    os::unix::prelude::OsStrExt,
     panic,
     path::{Path, PathBuf},
-    str,
     sync::{
-        atomic::{AtomicBool, AtomicU32, Ordering},
+        atomic::{AtomicU32, Ordering},
         Arc, Weak,
     },
     thread,
@@ -45,7 +43,7 @@ use std::{
 };
 use sum_tree::Bias;
 use util::{
-    channel::{ReleaseChannel, URL_SCHEME_PREFIX},
+    channel::ReleaseChannel,
     http::{self, HttpClient},
     paths::PathLikeWithPosition,
 };

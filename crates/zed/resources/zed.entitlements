@@ -10,14 +10,8 @@
 	<true/>
 	<key>com.apple.security.device.camera</key>
 	<true/>
-	<key>com.apple.security.personal-information.addressbook</key>
-	<true/>
-	<key>com.apple.security.personal-information.calendars</key>
-	<true/>
-	<key>com.apple.security.personal-information.location</key>
-	<true/>
-	<key>com.apple.security.personal-information.photos-library</key>
-	<true/>
+	<key>com.apple.security.keychain-access-groups</key>
+	<array><string>MQ55VZLNZQ.dev.zed.Shared</string></array>
 	<!-- <key>com.apple.security.cs.disable-library-validation</key>
 	<true/> -->
 </dict>

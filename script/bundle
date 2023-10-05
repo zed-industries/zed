@@ -5,6 +5,7 @@ set -e
 build_flag="--release"
 target_dir="release"
 open_result=false
+local_arch=false
 local_only=false
 overwrite_local_app=false
 bundle_name=""
@@ -16,8 +17,8 @@ Usage: ${0##*/} [options] [bundle_name]
 Build the application bundle.
 
 Options:
-  -d    Compile in debug mode (doesn't currently work without -l)
-  -l    Compile for local architecture only and copy bundle to /Applications.
+  -d    Compile in debug mode
+  -l    Compile for local architecture and copy bundle to /Applications, implies -d.
   -o    Open the resulting DMG or the app itself in local mode.
   -f    Overwrite the local app bundle if it exists.
   -h    Display this help and exit.
@@ -32,10 +33,20 @@ do
     case "${flag}" in
         o) open_result=true;;
         d)
+            export CARGO_INCREMENTAL=true
+            export CARGO_BUNDLE_SKIP_BUILD=true
             build_flag="";
+            local_arch=true
             target_dir="debug"
             ;;
-        l) local_only=true;;
+        l)
+            export CARGO_INCREMENTAL=true
+            export CARGO_BUNDLE_SKIP_BUILD=true
+            build_flag=""
+            local_arch=true
+            local_only=true
+            target_dir="debug"
+            ;;
         f) overwrite_local_app=true;;
         h)
            help_info
@@ -67,7 +78,7 @@ version_info=$(rustc --version --verbose)
 host_line=$(echo "$version_info" | grep host)
 local_target_triple=${host_line#*: }
 
-if [ "$local_only" = true ]; then
+if [ "$local_arch" = true ]; then
     echo "Building for local target only."
     cargo build ${build_flag} --package zed
     cargo build ${build_flag} --package cli
@@ -91,8 +102,8 @@ sed \
     "s/package.metadata.bundle-${channel}/package.metadata.bundle/" \
     Cargo.toml
 
-if [ "$local_only" = true ]; then
-    app_path=$(cargo bundle ${build_flag} --target "$local_target_triple" --select-workspace-root | xargs)
+if [ "$local_arch" = true ]; then
+    app_path=$(cargo bundle ${build_flag} --select-workspace-root | xargs)
 else
     app_path=$(cargo bundle ${build_flag} --target x86_64-apple-darwin --select-workspace-root | xargs)
 fi
@@ -101,7 +112,7 @@ mv Cargo.toml.backup Cargo.toml
 popd
 echo "Bundled ${app_path}"
 
-if [ "$local_only" = false ]; then
+if [ "$local_arch" = false ]; then
     echo "Creating fat binaries"
     lipo \
         -create \
@@ -136,7 +147,7 @@ else
     codesign --force --deep --entitlements crates/zed/resources/zed.entitlements --sign - "${app_path}" -v
 fi
 
-if [ "$target_dir" = "debug" ]; then
+if [[ "$target_dir" = "debug" && "$local_only" = false ]]; then
     if [ "$open_result" = true ]; then
         open "$app_path"
     else

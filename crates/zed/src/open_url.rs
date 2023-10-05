@@ -9,7 +9,7 @@ use std::{path::PathBuf, sync::atomic::AtomicBool};
 use util::channel::URL_SCHEME_PREFIX;
 use util::ResultExt;
 
-use crate::{connect_to_cli, handle_cli_connection};
+use crate::connect_to_cli;
 
 pub enum OpenRequest {
     Paths {
