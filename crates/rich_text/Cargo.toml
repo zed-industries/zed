@@ -1,11 +1,11 @@
 [package]
-name = "markdown_element"
+name = "rich_text"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [lib]
-path = "src/markdown_element.rs"
+path = "src/rich_text.rs"
 doctest = false
 
 [features]

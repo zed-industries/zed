@@ -17,9 +17,9 @@ use gpui::{
     View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
-use markdown_element::{MarkdownData, MarkdownElement};
 use menu::Confirm;
 use project::Fs;
+use rich_text::RichText;
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
 use std::sync::Arc;
@@ -50,7 +50,7 @@ pub struct ChatPanel {
     subscriptions: Vec<gpui::Subscription>,
     workspace: WeakViewHandle<Workspace>,
     has_focus: bool,
-    markdown_data: HashMap<ChannelMessageId, Arc<MarkdownData>>,
+    markdown_data: HashMap<ChannelMessageId, RichText>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -370,12 +370,10 @@ impl ChatPanel {
         };
 
         let is_pending = message.is_pending();
-        let markdown = self.markdown_data.entry(message.id).or_insert_with(|| {
-            Arc::new(markdown_element::render_markdown(
-                message.body,
-                &self.languages,
-            ))
-        });
+        let text = self
+            .markdown_data
+            .entry(message.id)
+            .or_insert_with(|| rich_text::render_markdown(message.body, &self.languages, None));
 
         let now = OffsetDateTime::now_utc();
         let theme = theme::current(cx);
@@ -401,11 +399,11 @@ impl ChatPanel {
             if is_continuation {
                 Flex::row()
                     .with_child(
-                        MarkdownElement::new(
-                            markdown.clone(),
-                            style.body.clone(),
+                        text.element(
                             theme.editor.syntax.clone(),
+                            style.body.clone(),
                             theme.editor.document_highlight_read_background,
+                            cx,
                         )
                         .flex(1., true),
                     )
@@ -457,11 +455,11 @@ impl ChatPanel {
                     .with_child(
                         Flex::row()
                             .with_child(
-                                MarkdownElement::new(
-                                    markdown.clone(),
-                                    style.body.clone(),
+                                text.element(
                                     theme.editor.syntax.clone(),
+                                    style.body.clone(),
                                     theme.editor.document_highlight_read_background,
+                                    cx,
                                 )
                                 .flex(1., true),
                             )

@@ -37,7 +37,7 @@ fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 menu = { path = "../menu" }
-markdown_element = { path = "../markdown_element" }
+rich_text = { path = "../rich_text" }
 picker = { path = "../picker" }
 project = { path = "../project" }
 recent_projects = {path = "../recent_projects"}
