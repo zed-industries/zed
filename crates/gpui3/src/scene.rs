@@ -204,22 +204,6 @@ pub struct Quad {
     pub border_widths: Edges<ScaledPixels>,
 }
 
-impl Quad {
-    pub fn vertices(&self) -> impl Iterator<Item = Point<ScaledPixels>> {
-        let x1 = self.bounds.origin.x;
-        let y1 = self.bounds.origin.y;
-        let x2 = x1 + self.bounds.size.width;
-        let y2 = y1 + self.bounds.size.height;
-        [
-            Point::new(x1, y1),
-            Point::new(x2, y1),
-            Point::new(x2, y2),
-            Point::new(x1, y2),
-        ]
-        .into_iter()
-    }
-}
-
 impl Ord for Quad {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.order.cmp(&other.order)
