@@ -5,6 +5,7 @@ use crate::{
     SharedString, Size, SizeRefinement, ViewContext, WindowContext,
 };
 use refineable::Refineable;
+use smallvec::SmallVec;
 pub use taffy::style::{
     AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap, JustifyContent,
     Overflow, Position,
@@ -90,7 +91,7 @@ pub struct Style {
     pub corner_radii: Corners<AbsoluteLength>,
 
     /// Box Shadow of the element
-    pub box_shadow: Option<BoxShadow>,
+    pub box_shadow: SmallVec<[BoxShadow; 2]>,
 
     /// TEXT
     pub text: TextStyleRefinement,
@@ -244,7 +245,7 @@ impl Style {
         let rem_size = cx.rem_size();
         let scale = cx.scale_factor();
 
-        if let Some(shadow) = self.box_shadow.as_ref() {
+        for shadow in &self.box_shadow {
             let layer_id = cx.current_layer_id();
             let content_mask = cx.content_mask();
             let mut shadow_bounds = bounds;
@@ -328,7 +329,7 @@ impl Default for Style {
             fill: None,
             border_color: None,
             corner_radii: Corners::default(),
-            box_shadow: None,
+            box_shadow: Default::default(),
             text: TextStyleRefinement::default(),
         }
     }

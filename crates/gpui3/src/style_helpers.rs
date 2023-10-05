@@ -3,6 +3,7 @@ use crate::{
     FlexDirection, Hsla, JustifyContent, Length, Position, SharedString, Style, StyleRefinement,
     Styled, TextStyleRefinement,
 };
+use smallvec::smallvec;
 
 pub trait StyleHelpers: Styled<Style = Style> {
     gpui3_macros::style_helpers!();
@@ -218,6 +219,28 @@ pub trait StyleHelpers: Styled<Style = Style> {
     where
         Self: Sized,
     {
+        self.declared_style().box_shadow = Some(smallvec![
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.1),
+                offset: point(px(0.), px(1.)),
+                blur_radius: px(3.),
+                spread_radius: px(0.),
+            },
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.1),
+                offset: point(px(0.), px(1.)),
+                blur_radius: px(2.),
+                spread_radius: px(-1.),
+            }
+        ]);
+        self
+    }
+
+    fn shadow_none(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.declared_style().box_shadow = Some(Default::default());
         self
     }
 
@@ -225,12 +248,12 @@ pub trait StyleHelpers: Styled<Style = Style> {
     where
         Self: Sized,
     {
-        self.declared_style().box_shadow = Some(BoxShadow {
-            color: hsla(0., 0., 0., 1.),
+        self.declared_style().box_shadow = Some(smallvec![BoxShadow {
+            color: hsla(0., 0., 0., 0.05),
             offset: point(px(0.), px(1.)),
             blur_radius: px(2.),
             spread_radius: px(0.),
-        });
+        }]);
         self
     }
 
@@ -238,7 +261,20 @@ pub trait StyleHelpers: Styled<Style = Style> {
     where
         Self: Sized,
     {
-        todo!();
+        self.declared_style().box_shadow = Some(smallvec![
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.1),
+                offset: point(px(0.), px(4.)),
+                blur_radius: px(6.),
+                spread_radius: px(-1.),
+            },
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.1),
+                offset: point(px(0.), px(2.)),
+                blur_radius: px(4.),
+                spread_radius: px(-2.),
+            }
+        ]);
         self
     }
 
@@ -246,7 +282,20 @@ pub trait StyleHelpers: Styled<Style = Style> {
     where
         Self: Sized,
     {
-        todo!();
+        self.declared_style().box_shadow = Some(smallvec![
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.1),
+                offset: point(px(0.), px(10.)),
+                blur_radius: px(15.),
+                spread_radius: px(-3.),
+            },
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.1),
+                offset: point(px(0.), px(4.)),
+                blur_radius: px(6.),
+                spread_radius: px(-4.),
+            }
+        ]);
         self
     }
 
@@ -254,7 +303,20 @@ pub trait StyleHelpers: Styled<Style = Style> {
     where
         Self: Sized,
     {
-        todo!();
+        self.declared_style().box_shadow = Some(smallvec![
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.1),
+                offset: point(px(0.), px(20.)),
+                blur_radius: px(25.),
+                spread_radius: px(-5.),
+            },
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.1),
+                offset: point(px(0.), px(8.)),
+                blur_radius: px(10.),
+                spread_radius: px(-6.),
+            }
+        ]);
         self
     }
 
@@ -262,7 +324,12 @@ pub trait StyleHelpers: Styled<Style = Style> {
     where
         Self: Sized,
     {
-        todo!();
+        self.declared_style().box_shadow = Some(smallvec![BoxShadow {
+            color: hsla(0., 0., 0., 0.25),
+            offset: point(px(0.), px(25.)),
+            blur_radius: px(50.),
+            spread_radius: px(-12.),
+        }]);
         self
     }
 
