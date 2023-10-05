@@ -1,4 +1,8 @@
-use std::ffi::c_void;
+use std::{
+    ffi::c_void,
+    mem,
+    sync::{Arc, Weak},
+};
 
 use crate::{DisplayId, PlatformDisplayLinker};
 use collections::HashMap;
@@ -10,8 +14,8 @@ pub struct MacDisplayLinker {
 }
 
 struct MacDisplayLink {
-    output_callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp)>,
     system_link: sys::DisplayLink,
+    _output_callback: Arc<OutputCallback>,
 }
 
 unsafe impl Send for MacDisplayLink {}
@@ -24,33 +28,29 @@ impl MacDisplayLinker {
     }
 }
 
+type OutputCallback = Mutex<Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp)>>;
+
 impl PlatformDisplayLinker for MacDisplayLinker {
     fn set_output_callback(
         &self,
         display_id: DisplayId,
-        mut output_callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp)>,
+        output_callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp)>,
     ) {
         if let Some(mut system_link) = unsafe { sys::DisplayLink::on_display(display_id.0) } {
-            unsafe {
-                system_link.set_output_callback(
-                    trampoline,
-                    output_callback.as_mut() as *mut dyn FnMut(_, _) as *mut c_void,
-                )
-            }
+            let callback = Arc::new(Mutex::new(output_callback));
+            let weak_callback_ptr: *const OutputCallback = Arc::downgrade(&callback).into_raw();
+            unsafe { system_link.set_output_callback(trampoline, weak_callback_ptr as *mut c_void) }
 
-            let previous = self.links.lock().insert(
+            self.links.lock().insert(
                 display_id,
                 MacDisplayLink {
-                    output_callback,
+                    _output_callback: callback,
                     system_link,
                 },
             );
-            assert!(
-                previous.is_none(),
-                "You can currently only set an output callback once per display."
-            )
         } else {
-            return log::warn!("DisplayLink could not be obtained for {:?}", display_id);
+            log::warn!("DisplayLink could not be obtained for {:?}", display_id);
+            return;
         }
     }
 
@@ -81,11 +81,15 @@ unsafe extern "C" fn trampoline(
     output_time: *const sys::CVTimeStamp,
     _flags_in: i64,
     _flags_out: *mut i64,
-    context: *mut c_void,
+    user_data: *mut c_void,
 ) -> i32 {
-    let output_callback = &mut (*(context as *mut MacDisplayLink)).output_callback;
     if let Some((current_time, output_time)) = current_time.as_ref().zip(output_time.as_ref()) {
-        output_callback(&current_time, &output_time);
+        let output_callback: Weak<OutputCallback> =
+            Weak::from_raw(user_data as *mut OutputCallback);
+        if let Some(output_callback) = output_callback.upgrade() {
+            (output_callback.lock())(current_time, output_time)
+        }
+        mem::forget(output_callback);
     }
     0
 }

@@ -146,7 +146,6 @@ impl AppContext {
     }
 
     fn flush_effects(&mut self) {
-        dbg!("flush effects");
         while let Some(effect) = self.pending_effects.pop_front() {
             match effect {
                 Effect::Notify(entity_id) => self.apply_notify_effect(entity_id),
@@ -364,11 +363,6 @@ impl MainThread<AppContext> {
             let root_view = build_root_view(&mut WindowContext::mutable(cx, &mut window));
             window.root_view.replace(root_view.into_any());
             cx.windows.get_mut(id).unwrap().replace(window);
-
-            cx.display_linker.on_next_frame(display_id, |_, _| {
-                dbg!("next frame");
-            });
-
             handle
         })
     }

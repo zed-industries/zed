@@ -28,7 +28,7 @@ impl DisplayLinker {
         match self.next_frame_callbacks.lock().entry(display_id) {
             collections::hash_map::Entry::Occupied(mut entry) => {
                 if entry.get().is_empty() {
-                    self.platform_linker.start(display_id)
+                    self.platform_linker.start(display_id);
                 }
                 entry.get_mut().push(callback)
             }
@@ -48,6 +48,7 @@ impl DisplayLinker {
                         // platform_linker.stop(display_id);
                     }),
                 );
+                self.platform_linker.start(display_id);
                 entry.insert(vec![callback]);
             }
         }
