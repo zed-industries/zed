@@ -75,12 +75,11 @@ impl<S: Send + Sync + 'static> Element for Img<S> {
                 let corner_radii = style.corner_radii.to_pixels(bounds, cx.rem_size());
                 cx.paint_image(bounds, corner_radii, order, data, self.grayscale)?;
             } else {
-                cx.spawn(|view, mut cx| async move {
+                cx.spawn(|_, mut cx| async move {
                     if image_future.await.log_err().is_some() {
-                        view.update(&mut cx, |_, cx| {
+                        cx.on_next_frame(|cx| {
                             cx.notify();
-                        })
-                        .ok();
+                        });
                     }
                 })
                 .detach()

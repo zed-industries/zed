@@ -146,6 +146,7 @@ impl AppContext {
     }
 
     fn flush_effects(&mut self) {
+        dbg!("flush effects");
         while let Some(effect) = self.pending_effects.pop_front() {
             match effect {
                 Effect::Notify(entity_id) => self.apply_notify_effect(entity_id),

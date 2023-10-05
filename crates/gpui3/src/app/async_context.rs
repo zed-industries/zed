@@ -67,6 +67,12 @@ impl AsyncWindowContext {
     pub fn update<R>(&self, update: impl FnOnce(&mut WindowContext) -> R) -> Result<R> {
         self.app.update_window(self.window, update)
     }
+
+    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut WindowContext) + Send + 'static) {
+        self.app
+            .update_window(self.window, |cx| cx.on_next_frame(f))
+            .ok();
+    }
 }
 
 impl Context for AsyncWindowContext {
