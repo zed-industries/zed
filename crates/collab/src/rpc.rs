@@ -1906,13 +1906,10 @@ async fn follow(
         .check_room_participants(room_id, leader_id, session.connection_id)
         .await?;
 
-    let mut response_payload = session
+    let response_payload = session
         .peer
         .forward_request(session.connection_id, leader_id, request)
         .await?;
-    response_payload
-        .views
-        .retain(|view| view.leader_id != Some(follower_id.into()));
     response.send(response_payload)?;
 
     if let Some(project_id) = project_id {
@@ -1973,14 +1970,17 @@ async fn update_followers(request: proto::UpdateFollowers, session: Session) -> 
             .await?
     };
 
-    let leader_id = request.variant.as_ref().and_then(|variant| match variant {
-        proto::update_followers::Variant::CreateView(payload) => payload.leader_id,
+    // For now, don't send view update messages back to that view's current leader.
+    let connection_id_to_omit = request.variant.as_ref().and_then(|variant| match variant {
         proto::update_followers::Variant::UpdateView(payload) => payload.leader_id,
-        proto::update_followers::Variant::UpdateActiveView(payload) => payload.leader_id,
+        _ => None,
     });
+
     for follower_peer_id in request.follower_ids.iter().copied() {
         let follower_connection_id = follower_peer_id.into();
-        if Some(follower_peer_id) != leader_id && connection_ids.contains(&follower_connection_id) {
+        if Some(follower_peer_id) != connection_id_to_omit
+            && connection_ids.contains(&follower_connection_id)
+        {
             session.peer.forward_send(
                 session.connection_id,
                 follower_connection_id,
