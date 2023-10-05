@@ -51,6 +51,7 @@ pub enum ComponentStory {
     Tab,
     TabBar,
     Terminal,
+    ThemeSelector,
     TitleBar,
     Toolbar,
     TrafficLights,
@@ -84,6 +85,9 @@ impl ComponentStory {
             Self::Tab => components::tab::TabStory::default().into_any(),
             Self::TabBar => components::tab_bar::TabBarStory::default().into_any(),
             Self::Terminal => components::terminal::TerminalStory::default().into_any(),
+            Self::ThemeSelector => {
+                components::theme_selector::ThemeSelectorStory::default().into_any()
+            }
             Self::TitleBar => components::title_bar::TitleBarStory::default().into_any(),
             Self::Toolbar => components::toolbar::ToolbarStory::default().into_any(),
             Self::TrafficLights => {

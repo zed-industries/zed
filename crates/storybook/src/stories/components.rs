@@ -15,6 +15,7 @@ pub mod status_bar;
 pub mod tab;
 pub mod tab_bar;
 pub mod terminal;
+pub mod theme_selector;
 pub mod title_bar;
 pub mod toolbar;
 pub mod traffic_lights;
