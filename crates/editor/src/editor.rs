@@ -2454,7 +2454,13 @@ impl Editor {
             let snapshot = this.buffer.read(cx).read(cx);
             let new_selections = resolve_multiple::<usize, _>(new_anchor_selections, &snapshot)
                 .zip(new_selection_deltas)
-                .map(|(selection, delta)| selection.map(|e| e + delta))
+                .map(|(selection, delta)| Selection {
+                    id: selection.id,
+                    start: selection.start + delta,
+                    end: selection.end + delta,
+                    reversed: selection.reversed,
+                    goal: SelectionGoal::None,
+                })
                 .collect::<Vec<_>>();
 
             let mut i = 0;
