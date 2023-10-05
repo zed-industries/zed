@@ -290,7 +290,7 @@ impl EmbeddingProvider for OpenAIEmbeddings {
 
         let mut request_number = 0;
         let mut rate_limiting = false;
-        let mut request_timeout: u64 = 15;
+        let mut request_timeout: u64 = 30;
         let mut response: Response<AsyncBody>;
         while request_number < MAX_RETRIES {
             response = self

@@ -24,10 +24,10 @@ use futures::StreamExt;
 use gpui::{
     actions,
     elements::{
-        ChildView, Component, Empty, Flex, Label, MouseEventHandler, ParentElement, SafeStylable,
-        Stack, Svg, Text, UniformList, UniformListState,
+        ChildView, Component, Empty, Flex, Label, LabelStyle, MouseEventHandler, ParentElement,
+        SafeStylable, Stack, Svg, Text, UniformList, UniformListState,
     },
-    fonts::HighlightStyle,
+    fonts::{HighlightStyle, TextStyle},
     geometry::vector::{vec2f, Vector2F},
     platform::{CursorStyle, MouseButton, PromptLevel},
     Action, AnyElement, AppContext, AsyncAppContext, ClipboardItem, Element, Entity, ModelContext,
@@ -37,7 +37,7 @@ use gpui::{
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset as _};
 use project::Project;
 use search::BufferSearchBar;
-use semantic_index::SemanticIndex;
+use semantic_index::{SemanticIndex, SemanticIndexStatus};
 use settings::SettingsStore;
 use std::{
     cell::{Cell, RefCell},
@@ -2756,6 +2756,7 @@ struct InlineAssistant {
     semantic_index: Option<ModelHandle<SemanticIndex>>,
     semantic_permissioned: Option<bool>,
     project: ModelHandle<Project>,
+    maintain_rate_limit: Option<Task<()>>,
 }
 
 impl Entity for InlineAssistant {
@@ -2772,67 +2773,65 @@ impl View for InlineAssistant {
         let theme = theme::current(cx);
 
         Flex::row()
-            .with_child(
-                Flex::row()
-                    .with_child(
-                        Button::action(ToggleIncludeConversation)
-                            .with_tooltip("Include Conversation", theme.tooltip.clone())
+            .with_children([Flex::row()
+                .with_child(
+                    Button::action(ToggleIncludeConversation)
+                        .with_tooltip("Include Conversation", theme.tooltip.clone())
+                        .with_id(self.id)
+                        .with_contents(theme::components::svg::Svg::new("icons/ai.svg"))
+                        .toggleable(self.include_conversation)
+                        .with_style(theme.assistant.inline.include_conversation.clone())
+                        .element()
+                        .aligned(),
+                )
+                .with_children(if SemanticIndex::enabled(cx) {
+                    Some(
+                        Button::action(ToggleRetrieveContext)
+                            .with_tooltip("Retrieve Context", theme.tooltip.clone())
                             .with_id(self.id)
-                            .with_contents(theme::components::svg::Svg::new("icons/ai.svg"))
-                            .toggleable(self.include_conversation)
-                            .with_style(theme.assistant.inline.include_conversation.clone())
+                            .with_contents(theme::components::svg::Svg::new(
+                                "icons/magnifying_glass.svg",
+                            ))
+                            .toggleable(self.retrieve_context)
+                            .with_style(theme.assistant.inline.retrieve_context.clone())
                             .element()
                             .aligned(),
                     )
-                    .with_children(if SemanticIndex::enabled(cx) {
-                        Some(
-                            Button::action(ToggleRetrieveContext)
-                                .with_tooltip("Retrieve Context", theme.tooltip.clone())
-                                .with_id(self.id)
-                                .with_contents(theme::components::svg::Svg::new(
-                                    "icons/magnifying_glass.svg",
-                                ))
-                                .toggleable(self.retrieve_context)
-                                .with_style(theme.assistant.inline.retrieve_context.clone())
-                                .element()
-                                .aligned(),
-                        )
-                    } else {
-                        None
-                    })
-                    .with_children(if let Some(error) = self.codegen.read(cx).error() {
-                        Some(
-                            Svg::new("icons/error.svg")
-                                .with_color(theme.assistant.error_icon.color)
-                                .constrained()
-                                .with_width(theme.assistant.error_icon.width)
-                                .contained()
-                                .with_style(theme.assistant.error_icon.container)
-                                .with_tooltip::<ErrorIcon>(
-                                    self.id,
-                                    error.to_string(),
-                                    None,
-                                    theme.tooltip.clone(),
-                                    cx,
-                                )
-                                .aligned(),
-                        )
-                    } else {
-                        None
-                    })
-                    .aligned()
-                    .constrained()
-                    .dynamically({
-                        let measurements = self.measurements.clone();
-                        move |constraint, _, _| {
-                            let measurements = measurements.get();
-                            SizeConstraint {
-                                min: vec2f(measurements.gutter_width, constraint.min.y()),
-                                max: vec2f(measurements.gutter_width, constraint.max.y()),
-                            }
+                } else {
+                    None
+                })
+                .with_children(if let Some(error) = self.codegen.read(cx).error() {
+                    Some(
+                        Svg::new("icons/error.svg")
+                            .with_color(theme.assistant.error_icon.color)
+                            .constrained()
+                            .with_width(theme.assistant.error_icon.width)
+                            .contained()
+                            .with_style(theme.assistant.error_icon.container)
+                            .with_tooltip::<ErrorIcon>(
+                                self.id,
+                                error.to_string(),
+                                None,
+                                theme.tooltip.clone(),
+                                cx,
+                            )
+                            .aligned(),
+                    )
+                } else {
+                    None
+                })
+                .aligned()
+                .constrained()
+                .dynamically({
+                    let measurements = self.measurements.clone();
+                    move |constraint, _, _| {
+                        let measurements = measurements.get();
+                        SizeConstraint {
+                            min: vec2f(measurements.gutter_width, constraint.min.y()),
+                            max: vec2f(measurements.gutter_width, constraint.max.y()),
                         }
-                    }),
-            )
+                    }
+                })])
             .with_child(Empty::new().constrained().dynamically({
                 let measurements = self.measurements.clone();
                 move |constraint, _, _| {
@@ -2855,6 +2854,19 @@ impl View for InlineAssistant {
                     .left()
                     .flex(1., true),
             )
+            .with_children(if self.retrieve_context {
+                Some(
+                    Flex::row()
+                        .with_child(Label::new(
+                            self.retrieve_context_status(cx),
+                            theme.assistant.inline.context_status.text.clone(),
+                        ))
+                        .flex(1., true)
+                        .aligned(),
+                )
+            } else {
+                None
+            })
             .contained()
             .with_style(theme.assistant.inline.container)
             .into_any()
@@ -2896,10 +2908,14 @@ impl InlineAssistant {
             editor.set_placeholder_text(placeholder, cx);
             editor
         });
-        let subscriptions = vec![
+        let mut subscriptions = vec![
             cx.observe(&codegen, Self::handle_codegen_changed),
             cx.subscribe(&prompt_editor, Self::handle_prompt_editor_events),
         ];
+
+        if let Some(semantic_index) = semantic_index.clone() {
+            subscriptions.push(cx.observe(&semantic_index, Self::semantic_index_changed));
+        }
 
         Self {
             id,
@@ -2918,6 +2934,7 @@ impl InlineAssistant {
             semantic_permissioned: None,
             semantic_index,
             project,
+            maintain_rate_limit: None,
         }
     }
 
@@ -2944,6 +2961,34 @@ impl InlineAssistant {
         if let editor::Event::Edited = event {
             self.pending_prompt = self.prompt_editor.read(cx).text(cx);
             cx.notify();
+        }
+    }
+
+    fn semantic_index_changed(
+        &mut self,
+        semantic_index: ModelHandle<SemanticIndex>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let project = self.project.clone();
+        let status = semantic_index.read(cx).status(&project);
+        match status {
+            SemanticIndexStatus::Indexing {
+                rate_limit_expiry: Some(_),
+                ..
+            } => {
+                if self.maintain_rate_limit.is_none() {
+                    self.maintain_rate_limit = Some(cx.spawn(|this, mut cx| async move {
+                        loop {
+                            cx.background().timer(Duration::from_secs(1)).await;
+                            this.update(&mut cx, |_, cx| cx.notify()).log_err();
+                        }
+                    }));
+                }
+                return;
+            }
+            _ => {
+                self.maintain_rate_limit = None;
+            }
         }
     }
 
@@ -3044,22 +3089,25 @@ impl InlineAssistant {
                 cx.emit(InlineAssistantEvent::RetrieveContextToggled {
                     retrieve_context: this.retrieve_context,
                 });
-
-                if this.retrieve_context {
-                    let context_status = this.retrieve_context_status(cx);
-                    if let Some(workspace) = this.workspace.upgrade(cx) {
-                        workspace.update(cx, |workspace, cx| {
-                            workspace.show_toast(Toast::new(0, context_status), cx)
-                        });
-                    }
-                }
-
+                this.index_project(project, cx).log_err();
                 cx.notify();
             })?;
 
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+    }
+
+    fn index_project(
+        &self,
+        project: ModelHandle<Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> anyhow::Result<()> {
+        if let Some(semantic_index) = self.semantic_index.clone() {
+            let _ = semantic_index.update(cx, |index, cx| index.index_project(project, cx));
+        }
+
+        anyhow::Ok(())
     }
 
     fn retrieve_context_status(&self, cx: &mut ViewContext<Self>) -> String {
@@ -3072,23 +3120,23 @@ impl InlineAssistant {
                     "Not Authenticated!\nPlease ensure you have an `OPENAI_API_KEY` in your environment variables.".to_string()
                 }
                 semantic_index::SemanticIndexStatus::Indexed => {
-                    "Indexing for Context Retrieval Complete!".to_string()
+                    "Indexing Complete!".to_string()
                 }
                 semantic_index::SemanticIndexStatus::Indexing { remaining_files, rate_limit_expiry } => {
 
-                    let mut status = format!("Indexing for Context Retrieval...\nRemaining files to index: {remaining_files}");
+                    let mut status = format!("Remaining files to index for Context Retrieval: {remaining_files}");
 
                     if let Some(rate_limit_expiry) = rate_limit_expiry {
                         let remaining_seconds =
                                 rate_limit_expiry.duration_since(Instant::now());
                         if remaining_seconds > Duration::from_secs(0) {
-                            writeln!(status, "Rate limit resets in {}s", remaining_seconds.as_secs()).unwrap();
+                            write!(status, " (rate limit resets in {}s)", remaining_seconds.as_secs()).unwrap();
                         }
                     }
                     status
                 }
-                _ => {
-                    "Indexing for Context Retrieval...\nRemaining files to index: 48".to_string()
+                semantic_index::SemanticIndexStatus::NotIndexed => {
+                    "Not Indexed for Context Retrieval".to_string()
                 }
             };
         }

@@ -1191,6 +1191,7 @@ pub struct InlineAssistantStyle {
     pub pending_edit_background: Color,
     pub include_conversation: ToggleIconButtonStyle,
     pub retrieve_context: ToggleIconButtonStyle,
+    pub context_status: ContainedText,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]

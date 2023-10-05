@@ -79,6 +79,9 @@ export default function assistant(): any {
                 },
             },
             pending_edit_background: background(theme.highest, "positive"),
+            context_status: {
+                ...text(theme.highest, "mono", "disabled", { size: "sm" }),
+            },
             retrieve_context: toggleable({
                 base: interactive({
                     base: {
