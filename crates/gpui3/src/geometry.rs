@@ -276,6 +276,14 @@ impl<T: Clone + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T>> Bound
             && self.origin.y < their_lower_right.y
             && my_lower_right.y > other.origin.y
     }
+
+    pub fn dilate(&mut self, amount: T) {
+        self.origin.x = self.origin.x.clone() - amount.clone();
+        self.origin.y = self.origin.y.clone() - amount.clone();
+        let double_amount = amount.clone() + amount;
+        self.size.width = self.size.width.clone() + double_amount.clone();
+        self.size.height = self.size.height.clone() + double_amount;
+    }
 }
 
 impl<T: Clone + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T>> Bounds<T> {

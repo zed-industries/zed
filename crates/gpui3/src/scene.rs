@@ -261,7 +261,6 @@ pub struct Shadow {
     pub content_mask: ScaledContentMask,
     pub color: Hsla,
     pub blur_radius: ScaledPixels,
-    pub spread_radius: ScaledPixels,
 }
 
 impl Ord for Shadow {

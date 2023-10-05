@@ -13,7 +13,8 @@ float quad_sdf(float2 point, Bounds_ScaledPixels bounds,
                Corners_ScaledPixels corner_radii);
 float gaussian(float x, float sigma);
 float2 erf(float2 x);
-float blur_along_x(float x, float y, float sigma, float corner, float2 half_size);
+float blur_along_x(float x, float y, float sigma, float corner,
+                   float2 half_size);
 
 struct QuadVertexOutput {
   float4 position [[position]];
@@ -32,9 +33,8 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
                                     [[buffer(QuadInputIndex_ViewportSize)]]) {
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Quad quad = quads[quad_id];
-  float4 device_position = to_device_position(unit_vertex, quad.bounds,
-                                              quad.content_mask.bounds,
-                                              viewport_size);
+  float4 device_position = to_device_position(
+      unit_vertex, quad.bounds, quad.content_mask.bounds, viewport_size);
   float4 background_color = hsla_to_rgba(quad.background);
   float4 border_color = hsla_to_rgba(quad.border_color);
   return QuadVertexOutput{device_position, background_color, border_color,
@@ -120,82 +120,77 @@ struct ShadowVertexOutput {
 };
 
 vertex ShadowVertexOutput shadow_vertex(
-    uint unit_vertex_id [[vertex_id]],
-    uint shadow_id [[instance_id]],
+    uint unit_vertex_id [[vertex_id]], uint shadow_id [[instance_id]],
     constant float2 *unit_vertices [[buffer(ShadowInputIndex_Vertices)]],
     constant Shadow *shadows [[buffer(ShadowInputIndex_Shadows)]],
-    constant Size_DevicePixels *viewport_size [[buffer(ShadowInputIndex_ViewportSize)]]
-) {
-    float2 unit_vertex = unit_vertices[unit_vertex_id];
-    Shadow shadow = shadows[shadow_id];
+    constant Size_DevicePixels *viewport_size
+    [[buffer(ShadowInputIndex_ViewportSize)]]) {
+  float2 unit_vertex = unit_vertices[unit_vertex_id];
+  Shadow shadow = shadows[shadow_id];
 
-    float margin = (3. * shadow.blur_radius) + shadow.spread_radius;
-    // Set the bounds of the shadow and adjust its size based on the shadow's spread radius
-    // to achieve the spreading effect
-    Bounds_ScaledPixels bounds = shadow.bounds;
-    bounds.origin.x -= margin;
-    bounds.origin.y -= margin;
-    bounds.size.width += 2. * margin;
-    bounds.size.height += 2. * margin;
+  float margin = 3. * shadow.blur_radius;
+  // Set the bounds of the shadow and adjust its size based on the shadow's
+  // spread radius to achieve the spreading effect
+  Bounds_ScaledPixels bounds = shadow.bounds;
+  bounds.origin.x -= margin;
+  bounds.origin.y -= margin;
+  bounds.size.width += 2. * margin;
+  bounds.size.height += 2. * margin;
 
-    float4 device_position = to_device_position(unit_vertex, bounds, shadow.content_mask.bounds, viewport_size);
-    float4 color = hsla_to_rgba(shadow.color);
+  float4 device_position = to_device_position(
+      unit_vertex, bounds, shadow.content_mask.bounds, viewport_size);
+  float4 color = hsla_to_rgba(shadow.color);
 
-    return ShadowVertexOutput {
-        device_position,
-        color,
-        shadow_id,
-    };
+  return ShadowVertexOutput{
+      device_position,
+      color,
+      shadow_id,
+  };
 }
 
-fragment float4 shadow_fragment(
-    ShadowVertexOutput input [[stage_in]],
-    constant Shadow *shadows [[buffer(ShadowInputIndex_Shadows)]]
-) {
-    Shadow shadow = shadows[input.shadow_id];
+fragment float4 shadow_fragment(ShadowVertexOutput input [[stage_in]],
+                                constant Shadow *shadows
+                                [[buffer(ShadowInputIndex_Shadows)]]) {
+  Shadow shadow = shadows[input.shadow_id];
 
-    float2 origin = float2(
-        shadow.bounds.origin.x - shadow.spread_radius,
-        shadow.bounds.origin.y - shadow.spread_radius
-    );
-    float2 size = float2(
-        shadow.bounds.size.width + shadow.spread_radius * 2.,
-        shadow.bounds.size.height + shadow.spread_radius * 2.
-    );
-    float2 half_size = size / 2.;
-    float2 center = origin + half_size;
-    float2 point = input.position.xy - center;
-    float corner_radius;
-    if (point.x < 0.) {
-        if (point.y < 0.) {
-            corner_radius = shadow.corner_radii.top_left;
-        } else {
-            corner_radius = shadow.corner_radii.bottom_left;
-        }
+  float2 origin = float2(shadow.bounds.origin.x, shadow.bounds.origin.y);
+  float2 size = float2(shadow.bounds.size.width, shadow.bounds.size.height);
+  float2 half_size = size / 2.;
+  float2 center = origin + half_size;
+  float2 point = input.position.xy - center;
+  float corner_radius;
+  if (point.x < 0.) {
+    if (point.y < 0.) {
+      corner_radius = shadow.corner_radii.top_left;
     } else {
-        if (point.y < 0.) {
-            corner_radius = shadow.corner_radii.top_right;
-        } else {
-            corner_radius = shadow.corner_radii.bottom_right;
-        }
+      corner_radius = shadow.corner_radii.bottom_left;
     }
-
-    // The signal is only non-zero in a limited range, so don't waste samples
-    float low = point.y - half_size.y;
-    float high = point.y + half_size.y;
-    float start = clamp(-3. * shadow.blur_radius, low, high);
-    float end = clamp(3. * shadow.blur_radius, low, high);
-
-    // Accumulate samples (we can get away with surprisingly few samples)
-    float step = (end - start) / 4.;
-    float y = start + step * 0.5;
-    float alpha = 0.;
-    for (int i = 0; i < 4; i++) {
-        alpha += blur_along_x(point.x, point.y - y, shadow.blur_radius, corner_radius, half_size) * gaussian(y, shadow.blur_radius) * step;
-        y += step;
+  } else {
+    if (point.y < 0.) {
+      corner_radius = shadow.corner_radii.top_right;
+    } else {
+      corner_radius = shadow.corner_radii.bottom_right;
     }
+  }
 
-    return input.color * float4(1., 1., 1., alpha);
+  // The signal is only non-zero in a limited range, so don't waste samples
+  float low = point.y - half_size.y;
+  float high = point.y + half_size.y;
+  float start = clamp(-3. * shadow.blur_radius, low, high);
+  float end = clamp(3. * shadow.blur_radius, low, high);
+
+  // Accumulate samples (we can get away with surprisingly few samples)
+  float step = (end - start) / 4.;
+  float y = start + step * 0.5;
+  float alpha = 0.;
+  for (int i = 0; i < 4; i++) {
+    alpha += blur_along_x(point.x, point.y - y, shadow.blur_radius,
+                          corner_radius, half_size) *
+             gaussian(y, shadow.blur_radius) * step;
+    y += step;
+  }
+
+  return input.color * float4(1., 1., 1., alpha);
 }
 
 struct MonochromeSpriteVertexOutput {
@@ -216,9 +211,10 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
 
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   MonochromeSprite sprite = sprites[sprite_id];
-  // Don't apply content mask at the vertex level because we don't have time to make sampling from the texture match the mask.
-  float4 device_position = to_device_position(
-      unit_vertex, sprite.bounds, sprite.bounds, viewport_size);
+  // Don't apply content mask at the vertex level because we don't have time to
+  // make sampling from the texture match the mask.
+  float4 device_position = to_device_position(unit_vertex, sprite.bounds,
+                                              sprite.bounds, viewport_size);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
   float4 color = hsla_to_rgba(sprite.color);
   return MonochromeSpriteVertexOutput{device_position, tile_position, color,
@@ -234,11 +230,8 @@ fragment float4 monochrome_sprite_fragment(
                                           min_filter::linear);
   float4 sample =
       atlas_texture.sample(atlas_texture_sampler, input.tile_position);
-  float clip_distance = quad_sdf(
-      input.position.xy,
-      sprite.content_mask.bounds,
-      Corners_ScaledPixels { 0., 0., 0., 0. }
-  );
+  float clip_distance = quad_sdf(input.position.xy, sprite.content_mask.bounds,
+                                 Corners_ScaledPixels{0., 0., 0., 0.});
   float4 color = input.color;
   color.a *= sample.a * saturate(0.5 - clip_distance);
   return color;
@@ -261,9 +254,10 @@ vertex PolychromeSpriteVertexOutput polychrome_sprite_vertex(
 
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   PolychromeSprite sprite = sprites[sprite_id];
-  // Don't apply content mask at the vertex level because we don't have time to make sampling from the texture match the mask.
-  float4 device_position = to_device_position(
-      unit_vertex, sprite.bounds, sprite.bounds, viewport_size);
+  // Don't apply content mask at the vertex level because we don't have time to
+  // make sampling from the texture match the mask.
+  float4 device_position = to_device_position(unit_vertex, sprite.bounds,
+                                              sprite.bounds, viewport_size);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
   return PolychromeSpriteVertexOutput{device_position, tile_position,
                                       sprite_id};
@@ -278,8 +272,10 @@ fragment float4 polychrome_sprite_fragment(
                                           min_filter::linear);
   float4 sample =
       atlas_texture.sample(atlas_texture_sampler, input.tile_position);
-  float quad_distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
-  float clip_distance = quad_sdf(input.position.xy, sprite.content_mask.bounds, Corners_ScaledPixels { 0., 0., 0., 0. });
+  float quad_distance =
+      quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
+  float clip_distance = quad_sdf(input.position.xy, sprite.content_mask.bounds,
+                                 Corners_ScaledPixels{0., 0., 0., 0.});
   float distance = max(quad_distance, clip_distance);
 
   float4 color = sample;
@@ -399,21 +395,24 @@ float quad_sdf(float2 point, Bounds_ScaledPixels bounds,
 
 // A standard gaussian function, used for weighting samples
 float gaussian(float x, float sigma) {
-    return exp(-(x * x) / (2. * sigma * sigma)) / (sqrt(2. * M_PI_F) * sigma);
+  return exp(-(x * x) / (2. * sigma * sigma)) / (sqrt(2. * M_PI_F) * sigma);
 }
 
 // This approximates the error function, needed for the gaussian integral
 float2 erf(float2 x) {
-    float2 s = sign(x);
-    float2 a = abs(x);
-    x = 1. + (0.278393 + (0.230389 + 0.078108 * (a * a)) * a) * a;
-    x *= x;
-    return s - s / (x * x);
+  float2 s = sign(x);
+  float2 a = abs(x);
+  x = 1. + (0.278393 + (0.230389 + 0.078108 * (a * a)) * a) * a;
+  x *= x;
+  return s - s / (x * x);
 }
 
-float blur_along_x(float x, float y, float sigma, float corner, float2 half_size) {
-    float delta = min(half_size.y - corner - abs(y), 0.);
-    float curved = half_size.x - corner + sqrt(max(0., corner * corner - delta * delta));
-    float2 integral = 0.5 + 0.5 * erf((x + float2(-curved, curved)) * (sqrt(0.5) / sigma));
-    return integral.y - integral.x;
+float blur_along_x(float x, float y, float sigma, float corner,
+                   float2 half_size) {
+  float delta = min(half_size.y - corner - abs(y), 0.);
+  float curved =
+      half_size.x - corner + sqrt(max(0., corner * corner - delta * delta));
+  float2 integral =
+      0.5 + 0.5 * erf((x + float2(-curved, curved)) * (sqrt(0.5) / sigma));
+  return integral.y - integral.x;
 }

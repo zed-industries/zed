@@ -250,6 +250,7 @@ impl Style {
             let content_mask = cx.content_mask();
             let mut shadow_bounds = bounds;
             shadow_bounds.origin += shadow.offset;
+            shadow_bounds.dilate(shadow.spread_radius);
             cx.scene().insert(
                 layer_id,
                 Shadow {
@@ -258,11 +259,10 @@ impl Style {
                     content_mask: content_mask.scale(scale),
                     corner_radii: self
                         .corner_radii
-                        .to_pixels(bounds.size, rem_size)
+                        .to_pixels(shadow_bounds.size, rem_size)
                         .scale(scale),
                     color: shadow.color,
                     blur_radius: shadow.blur_radius.scale(scale),
-                    spread_radius: shadow.spread_radius.scale(scale),
                 },
             );
         }
