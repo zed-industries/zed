@@ -8,6 +8,7 @@ use sysinfo::{Pid, PidExt, ProcessExt, System, SystemExt};
 use tempfile::NamedTempFile;
 use util::http::HttpClient;
 use util::{channel::ReleaseChannel, TryFutureExt};
+use uuid::Uuid;
 
 pub struct Telemetry {
     http_client: Arc<dyn HttpClient>,
@@ -18,7 +19,8 @@ pub struct Telemetry {
 #[derive(Default)]
 struct TelemetryState {
     metrics_id: Option<Arc<str>>,      // Per logged-in user
-    installation_id: Option<Arc<str>>, // Per app installation
+    installation_id: Option<Arc<str>>, // Per app installation (different for dev, preview, and stable)
+    session_id: String,                // Per app launch
     app_version: Option<Arc<str>>,
     release_channel: Option<&'static str>,
     os_name: &'static str,
@@ -41,6 +43,7 @@ lazy_static! {
 struct ClickhouseEventRequestBody {
     token: &'static str,
     installation_id: Option<Arc<str>>,
+    session_id: String,
     is_staff: Option<bool>,
     app_version: Option<Arc<str>>,
     os_name: &'static str,
@@ -131,6 +134,7 @@ impl Telemetry {
                 release_channel,
                 installation_id: None,
                 metrics_id: None,
+                session_id: Uuid::new_v4().to_string(),
                 clickhouse_events_queue: Default::default(),
                 flush_clickhouse_events_task: Default::default(),
                 log_file: None,
@@ -285,6 +289,7 @@ impl Telemetry {
                             &ClickhouseEventRequestBody {
                                 token: ZED_SECRET_CLIENT_TOKEN,
                                 installation_id: state.installation_id.clone(),
+                                session_id: state.session_id.clone(),
                                 is_staff: state.is_staff.clone(),
                                 app_version: state.app_version.clone(),
                                 os_name: state.os_name,
