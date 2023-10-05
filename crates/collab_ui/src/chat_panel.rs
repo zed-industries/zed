@@ -3,6 +3,7 @@ use anyhow::Result;
 use call::ActiveCall;
 use channel::{ChannelChat, ChannelChatEvent, ChannelMessageId, ChannelStore};
 use client::Client;
+use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt};
@@ -15,7 +16,8 @@ use gpui::{
     AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelHandle, Subscription, Task, View,
     ViewContext, ViewHandle, WeakViewHandle,
 };
-use language::language_settings::SoftWrap;
+use language::{language_settings::SoftWrap, LanguageRegistry};
+use markdown_element::{MarkdownData, MarkdownElement};
 use menu::Confirm;
 use project::Fs;
 use serde::{Deserialize, Serialize};
@@ -35,6 +37,7 @@ const CHAT_PANEL_KEY: &'static str = "ChatPanel";
 pub struct ChatPanel {
     client: Arc<Client>,
     channel_store: ModelHandle<ChannelStore>,
+    languages: Arc<LanguageRegistry>,
     active_chat: Option<(ModelHandle<ChannelChat>, Subscription)>,
     message_list: ListState<ChatPanel>,
     input_editor: ViewHandle<Editor>,
@@ -47,6 +50,7 @@ pub struct ChatPanel {
     subscriptions: Vec<gpui::Subscription>,
     workspace: WeakViewHandle<Workspace>,
     has_focus: bool,
+    markdown_data: HashMap<ChannelMessageId, Arc<MarkdownData>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -78,6 +82,7 @@ impl ChatPanel {
         let fs = workspace.app_state().fs.clone();
         let client = workspace.app_state().client.clone();
         let channel_store = workspace.app_state().channel_store.clone();
+        let languages = workspace.app_state().languages.clone();
 
         let input_editor = cx.add_view(|cx| {
             let mut editor = Editor::auto_height(
@@ -130,6 +135,7 @@ impl ChatPanel {
                 fs,
                 client,
                 channel_store,
+                languages,
 
                 active_chat: Default::default(),
                 pending_serialization: Task::ready(None),
@@ -142,6 +148,7 @@ impl ChatPanel {
                 workspace: workspace_handle,
                 active: false,
                 width: None,
+                markdown_data: Default::default(),
             };
 
             let mut old_dock_position = this.position(cx);
@@ -177,6 +184,25 @@ impl ChatPanel {
                 }
             })
             .detach();
+
+            let markdown = this.languages.language_for_name("Markdown");
+            cx.spawn(|this, mut cx| async move {
+                let markdown = markdown.await?;
+
+                this.update(&mut cx, |this, cx| {
+                    this.input_editor.update(cx, |editor, cx| {
+                        editor.buffer().update(cx, |multi_buffer, cx| {
+                            multi_buffer
+                                .as_singleton()
+                                .unwrap()
+                                .update(cx, |buffer, cx| buffer.set_language(Some(markdown), cx))
+                        })
+                    })
+                })?;
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
 
             this
         })
@@ -328,7 +354,7 @@ impl ChatPanel {
         messages.flex(1., true).into_any()
     }
 
-    fn render_message(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+    fn render_message(&mut self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let (message, is_continuation, is_last) = {
             let active_chat = self.active_chat.as_ref().unwrap().0.read(cx);
             let last_message = active_chat.message(ix.saturating_sub(1));
@@ -342,6 +368,13 @@ impl ChatPanel {
                 active_chat.message_count() == ix + 1,
             )
         };
+
+        let markdown = self.markdown_data.entry(message.id).or_insert_with(|| {
+            Arc::new(markdown_element::render_markdown(
+                message.body.clone(),
+                &self.languages,
+            ))
+        });
 
         let now = OffsetDateTime::now_utc();
         let theme = theme::current(cx);
@@ -363,10 +396,14 @@ impl ChatPanel {
 
         enum DeleteMessage {}
 
-        let body = message.body.clone();
         if is_continuation {
             Flex::row()
-                .with_child(Text::new(body, style.body.clone()))
+                .with_child(MarkdownElement::new(
+                    markdown.clone(),
+                    style.body.clone(),
+                    theme.editor.syntax.clone(),
+                    theme.editor.document_highlight_read_background,
+                ))
                 .with_children(message_id_to_remove.map(|id| {
                     MouseEventHandler::new::<DeleteMessage, _>(id as usize, cx, |mouse_state, _| {
                         let button_style = theme.chat_panel.icon_button.style_for(mouse_state);
@@ -451,7 +488,12 @@ impl ChatPanel {
                         }))
                         .align_children_center(),
                 )
-                .with_child(Text::new(body, style.body.clone()))
+                .with_child(MarkdownElement::new(
+                    markdown.clone(),
+                    style.body.clone(),
+                    theme.editor.syntax.clone(),
+                    theme.editor.document_highlight_read_background,
+                ))
                 .contained()
                 .with_style(style.container)
                 .with_margin_bottom(if is_last {
@@ -634,6 +676,7 @@ impl ChatPanel {
         cx.spawn(|this, mut cx| async move {
             let chat = open_chat.await?;
             this.update(&mut cx, |this, cx| {
+                this.markdown_data = Default::default();
                 this.set_active_chat(chat, cx);
             })
         })
