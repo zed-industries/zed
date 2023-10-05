@@ -236,15 +236,13 @@ impl Style {
         let background_color = self.fill.as_ref().and_then(Fill::color);
         if background_color.is_some() || self.is_border_visible() {
             let layer_id = cx.current_layer_id();
+            let content_mask = cx.content_mask();
             cx.scene().insert(
                 layer_id,
                 Quad {
                     order,
                     bounds: bounds.scale(scale),
-                    clip_bounds: bounds.scale(scale), // todo!
-                    clip_corner_radii: self
-                        .corner_radii
-                        .map(|length| length.to_pixels(rem_size).scale(scale)),
+                    content_mask: content_mask.scale(scale),
                     background: background_color.unwrap_or_default(),
                     border_color: self.border_color.unwrap_or_default(),
                     corner_radii: self

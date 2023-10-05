@@ -30,7 +30,8 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Quad quad = quads[quad_id];
   float4 device_position = to_device_position(unit_vertex, quad.bounds,
-                                              quad.clip_bounds, viewport_size);
+                                              quad.content_mask.bounds,
+                                              viewport_size);
   float4 background_color = hsla_to_rgba(quad.background);
   float4 border_color = hsla_to_rgba(quad.border_color);
   return QuadVertexOutput{device_position, background_color, border_color,

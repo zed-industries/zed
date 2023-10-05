@@ -191,13 +191,12 @@ pub(crate) enum PrimitiveBatch<'a> {
     },
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 #[repr(C)]
 pub struct Quad {
     pub order: u32,
     pub bounds: Bounds<ScaledPixels>,
-    pub clip_bounds: Bounds<ScaledPixels>,
-    pub clip_corner_radii: Corners<ScaledPixels>,
+    pub content_mask: ScaledContentMask,
     pub background: Hsla,
     pub border_color: Hsla,
     pub corner_radii: Corners<ScaledPixels>,
