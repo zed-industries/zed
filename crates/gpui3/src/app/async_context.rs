@@ -60,8 +60,12 @@ pub struct AsyncWindowContext {
 }
 
 impl AsyncWindowContext {
-    pub fn new(app: AsyncAppContext, window: AnyWindowHandle) -> Self {
+    pub(crate) fn new(app: AsyncAppContext, window: AnyWindowHandle) -> Self {
         Self { app, window }
+    }
+
+    pub fn update<R>(&self, update: impl FnOnce(&mut WindowContext) -> R) -> Result<R> {
+        self.app.update_window(self.window, update)
     }
 }
 

@@ -143,6 +143,14 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         AsyncWindowContext::new(self.app.to_async(), self.window.handle)
     }
 
+    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut WindowContext) + Send + 'static) {
+        let cx = self.to_async();
+        let display_id = self.window.display_id;
+        self.display_linker.on_next_frame(display_id, move |_, _| {
+            cx.update(f).ok();
+        });
+    }
+
     pub fn spawn<Fut, R>(
         &mut self,
         f: impl FnOnce(AnyWindowHandle, AsyncWindowContext) -> Fut + Send + 'static,
@@ -579,6 +587,15 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
 
     pub fn handle(&self) -> WeakHandle<S> {
         self.entities.weak_handle(self.entity_id)
+    }
+
+    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut S, &mut ViewContext<S>) + Send + 'static) {
+        let mut cx = self.to_async();
+        let entity = self.handle();
+        let display_id = self.window.display_id;
+        self.display_linker.on_next_frame(display_id, move |_, _| {
+            entity.update(&mut cx, f).ok();
+        });
     }
 
     pub fn observe<E: Send + Sync + 'static>(

@@ -359,7 +359,6 @@ impl MainThread<AppContext> {
             let id = cx.windows.insert(None);
             let handle = WindowHandle::new(id);
             let mut window = Window::new(handle.into(), options, cx);
-            let display_id = window.display_id;
             let root_view = build_root_view(&mut WindowContext::mutable(cx, &mut window));
             window.root_view.replace(root_view.into_any());
             cx.windows.get_mut(id).unwrap().replace(window);
