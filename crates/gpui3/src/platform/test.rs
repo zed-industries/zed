@@ -15,6 +15,10 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
+    fn display_linker(&self) -> std::sync::Arc<dyn crate::PlatformDisplayLinker> {
+        unimplemented!()
+    }
+
     fn text_system(&self) -> std::sync::Arc<dyn crate::PlatformTextSystem> {
         unimplemented!()
     }

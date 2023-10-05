@@ -98,9 +98,4 @@ impl PlatformDisplay for MacDisplay {
             display_bounds_from_native(native_bounds)
         }
     }
-
-    fn link(&self) -> Box<dyn crate::PlatformDisplayLink> {
-        unimplemented!()
-        // Box::new(unsafe { MacDisplayLink::new(self.0) })
-    }
 }

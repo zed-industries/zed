@@ -42,6 +42,7 @@ pub(crate) fn current_platform() -> Arc<dyn Platform> {
 
 pub trait Platform: 'static {
     fn executor(&self) -> Executor;
+    fn display_linker(&self) -> Arc<dyn PlatformDisplayLinker>;
     fn text_system(&self) -> Arc<dyn PlatformTextSystem>;
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>);
@@ -99,7 +100,6 @@ pub trait PlatformDisplay: Debug {
     fn id(&self) -> DisplayId;
     fn as_any(&self) -> &dyn Any;
     fn bounds(&self) -> Bounds<GlobalPixels>;
-    fn link(&self) -> Box<dyn PlatformDisplayLink>;
 }
 
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]
@@ -156,10 +156,14 @@ pub trait PlatformDispatcher: Send + Sync {
     fn dispatch_on_main_thread(&self, task: Runnable);
 }
 
-pub trait PlatformDisplayLink {
-    // fn set_output_callback(&mut self, callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp)>);
-    fn start(&mut self);
-    fn stop(&mut self);
+pub trait PlatformDisplayLinker: Send + Sync {
+    fn set_output_callback(
+        &self,
+        display_id: DisplayId,
+        callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp)>,
+    );
+    fn start(&self, display_id: DisplayId);
+    fn stop(&self, display_id: DisplayId);
 }
 
 pub trait PlatformTextSystem: Send + Sync {

@@ -8,8 +8,8 @@ pub use model_context::*;
 use refineable::Refineable;
 
 use crate::{
-    current_platform, image_cache::ImageCache, AssetSource, Context, Executor, LayoutId,
-    MainThread, MainThreadOnly, Platform, RootView, SvgRenderer, Task, TextStyle,
+    current_platform, image_cache::ImageCache, AssetSource, Context, DisplayLinker, Executor,
+    LayoutId, MainThread, MainThreadOnly, Platform, RootView, SvgRenderer, Task, TextStyle,
     TextStyleRefinement, TextSystem, Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
@@ -51,15 +51,15 @@ impl App {
         http_client: Arc<dyn HttpClient>,
     ) -> Self {
         let executor = platform.executor();
-        let text_system = Arc::new(TextSystem::new(platform.text_system()));
         let entities = EntityMap::new();
         let unit_entity = entities.insert(entities.reserve(), ());
         Self(Arc::new_cyclic(|this| {
             Mutex::new(AppContext {
                 this: this.clone(),
+                display_linker: Arc::new(DisplayLinker::new(platform.display_linker())),
+                text_system: Arc::new(TextSystem::new(platform.text_system())),
                 platform: MainThreadOnly::new(platform, executor.clone()),
                 executor,
-                text_system,
                 svg_renderer: SvgRenderer::new(asset_source),
                 image_cache: ImageCache::new(http_client),
                 pending_updates: 0,
@@ -97,6 +97,7 @@ pub struct AppContext {
     text_system: Arc<TextSystem>,
     pending_updates: usize,
     pub(crate) executor: Executor,
+    pub(crate) display_linker: Arc<DisplayLinker>,
     pub(crate) svg_renderer: SvgRenderer,
     pub(crate) image_cache: ImageCache,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
@@ -359,9 +360,15 @@ impl MainThread<AppContext> {
             let id = cx.windows.insert(None);
             let handle = WindowHandle::new(id);
             let mut window = Window::new(handle.into(), options, cx);
+            let display_id = window.display_id;
             let root_view = build_root_view(&mut WindowContext::mutable(cx, &mut window));
             window.root_view.replace(root_view.into_any());
             cx.windows.get_mut(id).unwrap().replace(window);
+
+            cx.display_linker.on_next_frame(display_id, |_, _| {
+                dbg!("next frame");
+            });
+
             handle
         })
     }

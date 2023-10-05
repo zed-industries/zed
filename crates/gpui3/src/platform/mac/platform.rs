@@ -1,8 +1,9 @@
 use super::BoolExt;
 use crate::{
     AnyWindowHandle, ClipboardItem, CursorStyle, DisplayId, Event, Executor, MacDispatcher,
-    MacDisplay, MacTextSystem, MacWindow, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformTextSystem, PlatformWindow, Result, SemanticVersion, WindowOptions,
+    MacDisplay, MacDisplayLinker, MacTextSystem, MacWindow, PathPromptOptions, Platform,
+    PlatformDisplay, PlatformDisplayLinker, PlatformTextSystem, PlatformWindow, Result,
+    SemanticVersion, WindowOptions,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -345,6 +346,10 @@ impl MacPlatform {
 impl Platform for MacPlatform {
     fn executor(&self) -> Executor {
         self.0.lock().executor.clone()
+    }
+
+    fn display_linker(&self) -> Arc<dyn PlatformDisplayLinker> {
+        Arc::new(MacDisplayLinker::new())
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {

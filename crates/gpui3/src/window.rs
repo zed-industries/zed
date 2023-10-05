@@ -1,10 +1,11 @@
 use crate::{
     image_cache::RenderImageParams, px, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
-    BorrowAppContext, Bounds, Context, Corners, DevicePixels, Effect, Element, EntityId, FontId,
-    GlyphId, Handle, Hsla, ImageData, IsZero, LayerId, LayoutId, MainThread, MainThreadOnly,
-    MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Reference,
-    RenderGlyphParams, RenderSvgParams, ScaledPixels, Scene, SharedString, Size, Style,
-    TaffyLayoutEngine, Task, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
+    BorrowAppContext, Bounds, Context, Corners, DevicePixels, DisplayId, Effect, Element, EntityId,
+    FontId, GlyphId, Handle, Hsla, ImageData, IsZero, LayerId, LayoutId, MainThread,
+    MainThreadOnly, MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point,
+    PolychromeSprite, Reference, RenderGlyphParams, RenderSvgParams, ScaledPixels, Scene,
+    SharedString, Size, Style, TaffyLayoutEngine, Task, WeakHandle, WindowOptions,
+    SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use smallvec::SmallVec;
@@ -16,6 +17,7 @@ pub struct AnyWindow {}
 pub struct Window {
     handle: AnyWindowHandle,
     platform_window: MainThreadOnly<Box<dyn PlatformWindow>>,
+    pub(crate) display_id: DisplayId, // todo!("make private again?")
     sprite_atlas: Arc<dyn PlatformAtlas>,
     rem_size: Pixels,
     content_size: Size<Pixels>,
@@ -35,6 +37,7 @@ impl Window {
         cx: &mut MainThread<AppContext>,
     ) -> Self {
         let platform_window = cx.platform().open_window(handle, options);
+        let display_id = platform_window.display().id();
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
         let content_size = platform_window.content_size();
@@ -46,6 +49,12 @@ impl Window {
                 cx.update_window(handle, |cx| {
                     cx.window.scene = Scene::new(scale_factor);
                     cx.window.content_size = content_size;
+                    cx.window.display_id = cx
+                        .window
+                        .platform_window
+                        .borrow_on_main_thread()
+                        .display()
+                        .id();
                     cx.window.dirty = true;
                 })
                 .log_err();
@@ -57,6 +66,7 @@ impl Window {
         Window {
             handle,
             platform_window,
+            display_id,
             sprite_atlas,
             rem_size: px(16.),
             content_size,

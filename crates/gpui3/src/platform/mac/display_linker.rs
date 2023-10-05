@@ -1,41 +1,77 @@
-use crate::PlatformDisplayLink;
 use std::ffi::c_void;
 
+use crate::{DisplayId, PlatformDisplayLinker};
+use collections::HashMap;
+use parking_lot::Mutex;
 pub use sys::CVTimeStamp as VideoTimestamp;
 
-pub struct MacDisplayLink {
-    sys_link: sys::DisplayLink,
-    output_callback: Option<Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp)>>,
+pub struct MacDisplayLinker {
+    links: Mutex<HashMap<DisplayId, MacDisplayLink>>,
 }
 
-impl MacDisplayLink {
-    pub unsafe fn new(display_id: u32) -> Self {
-        Self {
-            sys_link: sys::DisplayLink::on_display(display_id).unwrap(),
-            output_callback: None,
+struct MacDisplayLink {
+    output_callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp)>,
+    system_link: sys::DisplayLink,
+}
+
+unsafe impl Send for MacDisplayLink {}
+
+impl MacDisplayLinker {
+    pub fn new() -> Self {
+        MacDisplayLinker {
+            links: Default::default(),
         }
     }
 }
 
-impl PlatformDisplayLink for MacDisplayLink {
-    fn set_output_callback(&mut self, callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp)>) {
-        unsafe {
-            self.sys_link.set_output_callback(
-                trampoline,
-                self.output_callback.as_mut().unwrap()
-                    as *mut dyn FnMut(&VideoTimestamp, &VideoTimestamp)
-                    as *mut c_void,
+impl PlatformDisplayLinker for MacDisplayLinker {
+    fn set_output_callback(
+        &self,
+        display_id: DisplayId,
+        mut output_callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp)>,
+    ) {
+        if let Some(mut system_link) = unsafe { sys::DisplayLink::on_display(display_id.0) } {
+            unsafe {
+                system_link.set_output_callback(
+                    trampoline,
+                    output_callback.as_mut() as *mut dyn FnMut(_, _) as *mut c_void,
+                )
+            }
+
+            let previous = self.links.lock().insert(
+                display_id,
+                MacDisplayLink {
+                    output_callback,
+                    system_link,
+                },
             );
+            assert!(
+                previous.is_none(),
+                "You can currently only set an output callback once per display."
+            )
+        } else {
+            return log::warn!("DisplayLink could not be obtained for {:?}", display_id);
         }
-        self.output_callback = Some(callback);
     }
 
-    fn start(&mut self) {
-        unsafe { self.sys_link.start() }
+    fn start(&self, display_id: DisplayId) {
+        if let Some(link) = self.links.lock().get_mut(&display_id) {
+            unsafe {
+                link.system_link.start();
+            }
+        } else {
+            log::warn!("No DisplayLink callback registered for {:?}", display_id)
+        }
     }
 
-    fn stop(&mut self) {
-        unsafe { self.sys_link.stop() }
+    fn stop(&self, display_id: DisplayId) {
+        if let Some(link) = self.links.lock().get_mut(&display_id) {
+            unsafe {
+                link.system_link.stop();
+            }
+        } else {
+            log::warn!("No DisplayLink callback registered for {:?}", display_id)
+        }
     }
 }
 
@@ -48,11 +84,8 @@ unsafe extern "C" fn trampoline(
     context: *mut c_void,
 ) -> i32 {
     let output_callback = &mut (*(context as *mut MacDisplayLink)).output_callback;
-    if let Some(callback) = output_callback {
-        if let Some((current_time, output_time)) = current_time.as_ref().zip(output_time.as_ref()) {
-            // convert sys::CVTimeStamp to VideoTimestamp
-            callback(&current_time, &output_time);
-        }
+    if let Some((current_time, output_time)) = current_time.as_ref().zip(output_time.as_ref()) {
+        output_callback(&current_time, &output_time);
     }
     0
 }
@@ -61,9 +94,8 @@ mod sys {
     //! Derived from display-link crate under the fololwing license:
     //! https://github.com/BrainiumLLC/display-link/blob/master/LICENSE-MIT
     //! Apple docs: [CVDisplayLink](https://developer.apple.com/documentation/corevideo/cvdisplaylinkoutputcallback?language=objc)
-    #![allow(dead_code)]
+    #![allow(dead_code, non_upper_case_globals)]
 
-    pub use cocoa::quartzcore::CVTimeStamp;
     use foreign_types::{foreign_type, ForeignType};
     use std::{
         ffi::c_void,
@@ -89,6 +121,64 @@ mod sys {
                 .finish()
         }
     }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct CVTimeStamp {
+        pub version: u32,
+        pub video_time_scale: i32,
+        pub video_time: i64,
+        pub host_time: u64,
+        pub rate_scalar: f64,
+        pub video_refresh_period: i64,
+        pub smpte_time: CVSMPTETime,
+        pub flags: u64,
+        pub reserved: u64,
+    }
+
+    pub type CVTimeStampFlags = u64;
+
+    pub const kCVTimeStampVideoTimeValid: CVTimeStampFlags = 1 << 0;
+    pub const kCVTimeStampHostTimeValid: CVTimeStampFlags = 1 << 1;
+    pub const kCVTimeStampSMPTETimeValid: CVTimeStampFlags = 1 << 2;
+    pub const kCVTimeStampVideoRefreshPeriodValid: CVTimeStampFlags = 1 << 3;
+    pub const kCVTimeStampRateScalarValid: CVTimeStampFlags = 1 << 4;
+    pub const kCVTimeStampTopField: CVTimeStampFlags = 1 << 16;
+    pub const kCVTimeStampBottomField: CVTimeStampFlags = 1 << 17;
+    pub const kCVTimeStampVideoHostTimeValid: CVTimeStampFlags =
+        kCVTimeStampVideoTimeValid | kCVTimeStampHostTimeValid;
+    pub const kCVTimeStampIsInterlaced: CVTimeStampFlags =
+        kCVTimeStampTopField | kCVTimeStampBottomField;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct CVSMPTETime {
+        pub subframes: i16,
+        pub subframe_divisor: i16,
+        pub counter: u32,
+        pub time_type: u32,
+        pub flags: u32,
+        pub hours: i16,
+        pub minutes: i16,
+        pub seconds: i16,
+        pub frames: i16,
+    }
+
+    pub type CVSMPTETimeType = u32;
+
+    pub const kCVSMPTETimeType24: CVSMPTETimeType = 0;
+    pub const kCVSMPTETimeType25: CVSMPTETimeType = 1;
+    pub const kCVSMPTETimeType30Drop: CVSMPTETimeType = 2;
+    pub const kCVSMPTETimeType30: CVSMPTETimeType = 3;
+    pub const kCVSMPTETimeType2997: CVSMPTETimeType = 4;
+    pub const kCVSMPTETimeType2997Drop: CVSMPTETimeType = 5;
+    pub const kCVSMPTETimeType60: CVSMPTETimeType = 6;
+    pub const kCVSMPTETimeType5994: CVSMPTETimeType = 7;
+
+    pub type CVSMPTETimeFlags = u32;
+
+    pub const kCVSMPTETimeValid: CVSMPTETimeFlags = 1 << 0;
+    pub const kCVSMPTETimeRunning: CVSMPTETimeFlags = 1 << 1;
 
     pub type CVDisplayLinkOutputCallback = unsafe extern "C" fn(
         display_link_out: *mut CVDisplayLink,
