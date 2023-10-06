@@ -14,6 +14,7 @@ use ui::prelude::*;
 pub enum ElementStory {
     Avatar,
     Icon,
+    Input,
     Label,
 }
 
@@ -24,6 +25,7 @@ impl ElementStory {
         match self {
             Self::Avatar => elements::avatar::AvatarStory::new().into_any(),
             Self::Icon => elements::icon::IconStory::new().into_any(),
+            Self::Input => elements::input::InputStory::new().into_any(),
             Self::Label => elements::label::LabelStory::new().into_any(),
         }
     }
@@ -35,6 +37,7 @@ pub enum ComponentStory {
     AssistantPanel,
     Buffer,
     Panel,
+    ProjectPanel,
 }
 
 impl ComponentStory {
@@ -47,6 +50,7 @@ impl ComponentStory {
             }
             Self::Buffer => components::buffer::BufferStory::new().into_any(),
             Self::Panel => components::panel::PanelStory::new().into_any(),
+            Self::ProjectPanel => components::project_panel::ProjectPanelStory::new().into_any(),
         }
     }
 }
