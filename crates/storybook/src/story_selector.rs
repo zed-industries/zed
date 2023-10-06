@@ -42,13 +42,17 @@ pub enum ComponentStory {
     CollabPanel,
     Facepile,
     Keybinding,
+    LanguageSelector,
+    MultiBuffer,
     Palette,
     Panel,
     ProjectPanel,
+    RecentProjects,
     StatusBar,
     Tab,
     TabBar,
     Terminal,
+    ThemeSelector,
     TitleBar,
     Toolbar,
     TrafficLights,
@@ -69,15 +73,25 @@ impl ComponentStory {
             Self::CollabPanel => components::collab_panel::CollabPanelStory::default().into_any(),
             Self::Facepile => components::facepile::FacepileStory::default().into_any(),
             Self::Keybinding => components::keybinding::KeybindingStory::default().into_any(),
+            Self::LanguageSelector => {
+                components::language_selector::LanguageSelectorStory::default().into_any()
+            }
+            Self::MultiBuffer => components::multi_buffer::MultiBufferStory::default().into_any(),
             Self::Palette => components::palette::PaletteStory::default().into_any(),
             Self::Panel => components::panel::PanelStory::default().into_any(),
             Self::ProjectPanel => {
                 components::project_panel::ProjectPanelStory::default().into_any()
             }
+            Self::RecentProjects => {
+                components::recent_projects::RecentProjectsStory::default().into_any()
+            }
             Self::StatusBar => components::status_bar::StatusBarStory::default().into_any(),
             Self::Tab => components::tab::TabStory::default().into_any(),
             Self::TabBar => components::tab_bar::TabBarStory::default().into_any(),
             Self::Terminal => components::terminal::TerminalStory::default().into_any(),
+            Self::ThemeSelector => {
+                components::theme_selector::ThemeSelectorStory::default().into_any()
+            }
             Self::TitleBar => components::title_bar::TitleBarStory::default().into_any(),
             Self::Toolbar => components::toolbar::ToolbarStory::default().into_any(),
             Self::TrafficLights => {
