@@ -1082,7 +1082,6 @@ dependencies = [
  "anyhow",
  "async-broadcast",
  "audio",
- "channel",
  "client",
  "collections",
  "fs",
