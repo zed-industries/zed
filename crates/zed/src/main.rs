@@ -479,7 +479,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
                 line: location.line(),
             }),
             app_version: app_version.clone(),
-            release_channel: RELEASE_CHANNEL.dev_name().into(),
+            release_channel: RELEASE_CHANNEL.display_name().into(),
             os_name: platform.os_name().into(),
             os_version: platform
                 .os_version()
