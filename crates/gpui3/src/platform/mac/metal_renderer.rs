@@ -1,6 +1,6 @@
 use crate::{
     point, size, AtlasTextureId, DevicePixels, MetalAtlas, MonochromeSprite, PolychromeSprite,
-    Quad, Scene, Size,
+    PrimitiveBatch, Quad, Scene, Shadow, Size, Underline,
 };
 use cocoa::{
     base::{NO, YES},
@@ -17,7 +17,9 @@ const INSTANCE_BUFFER_SIZE: usize = 8192 * 1024; // This is an arbitrary decisio
 pub struct MetalRenderer {
     layer: metal::MetalLayer,
     command_queue: CommandQueue,
+    shadows_pipeline_state: metal::RenderPipelineState,
     quads_pipeline_state: metal::RenderPipelineState,
+    underlines_pipeline_state: metal::RenderPipelineState,
     monochrome_sprites_pipeline_state: metal::RenderPipelineState,
     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
@@ -82,12 +84,28 @@ impl MetalRenderer {
             MTLResourceOptions::StorageModeManaged,
         );
 
+        let shadows_pipeline_state = build_pipeline_state(
+            &device,
+            &library,
+            "shadows",
+            "shadow_vertex",
+            "shadow_fragment",
+            PIXEL_FORMAT,
+        );
         let quads_pipeline_state = build_pipeline_state(
             &device,
             &library,
             "quads",
             "quad_vertex",
             "quad_fragment",
+            PIXEL_FORMAT,
+        );
+        let underlines_pipeline_state = build_pipeline_state(
+            &device,
+            &library,
+            "underlines",
+            "underline_vertex",
+            "underline_fragment",
             PIXEL_FORMAT,
         );
         let monochrome_sprites_pipeline_state = build_pipeline_state(
@@ -113,7 +131,9 @@ impl MetalRenderer {
         Self {
             layer,
             command_queue,
+            shadows_pipeline_state,
             quads_pipeline_state,
+            underlines_pipeline_state,
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
             unit_vertices,
@@ -131,8 +151,6 @@ impl MetalRenderer {
     }
 
     pub fn draw(&mut self, scene: &mut Scene) {
-        dbg!("draw scene");
-
         let layer = self.layer.clone();
         let viewport_size = layer.drawable_size();
         let viewport_size: Size<DevicePixels> = size(
@@ -174,41 +192,50 @@ impl MetalRenderer {
         });
 
         let mut instance_offset = 0;
-        for layer in scene.layers() {
-            for batch in layer.batches() {
-                match batch {
-                    crate::PrimitiveBatch::Quads(quads) => {
-                        self.draw_quads(
-                            quads,
-                            &mut instance_offset,
-                            viewport_size,
-                            command_encoder,
-                        );
-                    }
-                    crate::PrimitiveBatch::MonochromeSprites {
+        for batch in scene.batches() {
+            match batch {
+                PrimitiveBatch::Shadows(shadows) => {
+                    self.draw_shadows(
+                        shadows,
+                        &mut instance_offset,
+                        viewport_size,
+                        command_encoder,
+                    );
+                }
+                PrimitiveBatch::Quads(quads) => {
+                    self.draw_quads(quads, &mut instance_offset, viewport_size, command_encoder);
+                }
+                PrimitiveBatch::Underlines(underlines) => {
+                    self.draw_underlines(
+                        underlines,
+                        &mut instance_offset,
+                        viewport_size,
+                        command_encoder,
+                    );
+                }
+                PrimitiveBatch::MonochromeSprites {
+                    texture_id,
+                    sprites,
+                } => {
+                    self.draw_monochrome_sprites(
                         texture_id,
                         sprites,
-                    } => {
-                        self.draw_monochrome_sprites(
-                            texture_id,
-                            sprites,
-                            &mut instance_offset,
-                            viewport_size,
-                            command_encoder,
-                        );
-                    }
-                    crate::PrimitiveBatch::PolychromeSprites {
+                        &mut instance_offset,
+                        viewport_size,
+                        command_encoder,
+                    );
+                }
+                PrimitiveBatch::PolychromeSprites {
+                    texture_id,
+                    sprites,
+                } => {
+                    self.draw_polychrome_sprites(
                         texture_id,
                         sprites,
-                    } => {
-                        self.draw_polychrome_sprites(
-                            texture_id,
-                            sprites,
-                            &mut instance_offset,
-                            viewport_size,
-                            command_encoder,
-                        );
-                    }
+                        &mut instance_offset,
+                        viewport_size,
+                        command_encoder,
+                    );
                 }
             }
         }
@@ -223,6 +250,66 @@ impl MetalRenderer {
         command_buffer.commit();
         command_buffer.wait_until_completed();
         drawable.present();
+    }
+
+    fn draw_shadows(
+        &mut self,
+        shadows: &[Shadow],
+        offset: &mut usize,
+        viewport_size: Size<DevicePixels>,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) {
+        if shadows.is_empty() {
+            return;
+        }
+        align_offset(offset);
+
+        command_encoder.set_render_pipeline_state(&self.shadows_pipeline_state);
+        command_encoder.set_vertex_buffer(
+            ShadowInputIndex::Vertices as u64,
+            Some(&self.unit_vertices),
+            0,
+        );
+        command_encoder.set_vertex_buffer(
+            ShadowInputIndex::Shadows as u64,
+            Some(&self.instances),
+            *offset as u64,
+        );
+        command_encoder.set_fragment_buffer(
+            ShadowInputIndex::Shadows as u64,
+            Some(&self.instances),
+            *offset as u64,
+        );
+
+        command_encoder.set_vertex_bytes(
+            ShadowInputIndex::ViewportSize as u64,
+            mem::size_of_val(&viewport_size) as u64,
+            &viewport_size as *const Size<DevicePixels> as *const _,
+        );
+
+        let shadow_bytes_len = mem::size_of::<Shadow>() * shadows.len();
+        let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
+        unsafe {
+            ptr::copy_nonoverlapping(
+                shadows.as_ptr() as *const u8,
+                buffer_contents,
+                shadow_bytes_len,
+            );
+        }
+
+        let next_offset = *offset + shadow_bytes_len;
+        assert!(
+            next_offset <= INSTANCE_BUFFER_SIZE,
+            "instance buffer exhausted"
+        );
+
+        command_encoder.draw_primitives_instanced(
+            metal::MTLPrimitiveType::Triangle,
+            0,
+            6,
+            shadows.len() as u64,
+        );
+        *offset = next_offset;
     }
 
     fn draw_quads(
@@ -277,6 +364,66 @@ impl MetalRenderer {
             0,
             6,
             quads.len() as u64,
+        );
+        *offset = next_offset;
+    }
+
+    fn draw_underlines(
+        &mut self,
+        underlines: &[Underline],
+        offset: &mut usize,
+        viewport_size: Size<DevicePixels>,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) {
+        if underlines.is_empty() {
+            return;
+        }
+        align_offset(offset);
+
+        command_encoder.set_render_pipeline_state(&self.underlines_pipeline_state);
+        command_encoder.set_vertex_buffer(
+            UnderlineInputIndex::Vertices as u64,
+            Some(&self.unit_vertices),
+            0,
+        );
+        command_encoder.set_vertex_buffer(
+            UnderlineInputIndex::Underlines as u64,
+            Some(&self.instances),
+            *offset as u64,
+        );
+        command_encoder.set_fragment_buffer(
+            UnderlineInputIndex::Underlines as u64,
+            Some(&self.instances),
+            *offset as u64,
+        );
+
+        command_encoder.set_vertex_bytes(
+            UnderlineInputIndex::ViewportSize as u64,
+            mem::size_of_val(&viewport_size) as u64,
+            &viewport_size as *const Size<DevicePixels> as *const _,
+        );
+
+        let quad_bytes_len = mem::size_of::<Underline>() * underlines.len();
+        let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
+        unsafe {
+            ptr::copy_nonoverlapping(
+                underlines.as_ptr() as *const u8,
+                buffer_contents,
+                quad_bytes_len,
+            );
+        }
+
+        let next_offset = *offset + quad_bytes_len;
+        assert!(
+            next_offset <= INSTANCE_BUFFER_SIZE,
+            "instance buffer exhausted"
+        );
+
+        command_encoder.draw_primitives_instanced(
+            metal::MTLPrimitiveType::Triangle,
+            0,
+            6,
+            underlines.len() as u64,
         );
         *offset = next_offset;
     }
@@ -465,9 +612,23 @@ fn align_offset(offset: &mut usize) {
 }
 
 #[repr(C)]
+enum ShadowInputIndex {
+    Vertices = 0,
+    Shadows = 1,
+    ViewportSize = 2,
+}
+
+#[repr(C)]
 enum QuadInputIndex {
     Vertices = 0,
     Quads = 1,
+    ViewportSize = 2,
+}
+
+#[repr(C)]
+enum UnderlineInputIndex {
+    Vertices = 0,
+    Underlines = 1,
     ViewportSize = 2,
 }
 

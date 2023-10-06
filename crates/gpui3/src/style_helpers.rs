@@ -1,9 +1,11 @@
 use crate::{
-    self as gpui3, relative, rems, AlignItems, Display, Fill, FlexDirection, Hsla, JustifyContent,
-    Length, Position, SharedString, Style, StyleRefinement, Styled, TextStyleRefinement,
+    self as gpui3, hsla, point, px, relative, rems, AlignItems, BoxShadow, Display, Fill,
+    FlexDirection, Hsla, JustifyContent, Length, Position, SharedString, Style, StyleRefinement,
+    Styled, TextStyleRefinement,
 };
+use smallvec::smallvec;
 
-pub trait StyleHelpers: Sized + Styled<Style = Style> {
+pub trait StyleHelpers: Styled<Style = Style> {
     gpui3_macros::style_helpers!();
 
     fn h(mut self, height: Length) -> Self {
@@ -147,6 +149,103 @@ pub trait StyleHelpers: Sized + Styled<Style = Style> {
         self
     }
 
+    fn shadow(mut self) -> Self {
+        self.declared_style().box_shadow = Some(smallvec![
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.1),
+                offset: point(px(0.), px(1.)),
+                blur_radius: px(3.),
+                spread_radius: px(0.),
+            },
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.1),
+                offset: point(px(0.), px(1.)),
+                blur_radius: px(2.),
+                spread_radius: px(-1.),
+            }
+        ]);
+        self
+    }
+
+    fn shadow_none(mut self) -> Self {
+        self.declared_style().box_shadow = Some(Default::default());
+        self
+    }
+
+    fn shadow_sm(mut self) -> Self {
+        self.declared_style().box_shadow = Some(smallvec![BoxShadow {
+            color: hsla(0., 0., 0., 0.05),
+            offset: point(px(0.), px(1.)),
+            blur_radius: px(2.),
+            spread_radius: px(0.),
+        }]);
+        self
+    }
+
+    fn shadow_md(mut self) -> Self {
+        self.declared_style().box_shadow = Some(smallvec![
+            BoxShadow {
+                color: hsla(0.5, 0., 0., 1.0),
+                offset: point(px(0.), px(4.)),
+                blur_radius: px(6.),
+                spread_radius: px(-1.),
+            },
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.1),
+                offset: point(px(0.), px(2.)),
+                blur_radius: px(4.),
+                spread_radius: px(-2.),
+            }
+        ]);
+        self
+    }
+
+    fn shadow_lg(mut self) -> Self {
+        self.declared_style().box_shadow = Some(smallvec![
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.1),
+                offset: point(px(0.), px(10.)),
+                blur_radius: px(15.),
+                spread_radius: px(-3.),
+            },
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.1),
+                offset: point(px(0.), px(4.)),
+                blur_radius: px(6.),
+                spread_radius: px(-4.),
+            }
+        ]);
+        self
+    }
+
+    fn shadow_xl(mut self) -> Self {
+        self.declared_style().box_shadow = Some(smallvec![
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.1),
+                offset: point(px(0.), px(20.)),
+                blur_radius: px(25.),
+                spread_radius: px(-5.),
+            },
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.1),
+                offset: point(px(0.), px(8.)),
+                blur_radius: px(10.),
+                spread_radius: px(-6.),
+            }
+        ]);
+        self
+    }
+
+    fn shadow_2xl(mut self) -> Self {
+        self.declared_style().box_shadow = Some(smallvec![BoxShadow {
+            color: hsla(0., 0., 0., 0.25),
+            offset: point(px(0.), px(25.)),
+            blur_radius: px(50.),
+            spread_radius: px(-12.),
+        }]);
+        self
+    }
+
     fn text_style(&mut self) -> &mut Option<TextStyleRefinement> {
         let style: &mut StyleRefinement = self.declared_style();
         &mut style.text
@@ -203,6 +302,69 @@ pub trait StyleHelpers: Sized + Styled<Style = Style> {
         self.text_style()
             .get_or_insert_with(Default::default)
             .font_size = Some(rems(1.875));
+        self
+    }
+
+    fn text_decoration_none(mut self) -> Self {
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .underline = None;
+        self
+    }
+
+    fn text_decoration_color(mut self, color: impl Into<Hsla>) -> Self {
+        let style = self.text_style().get_or_insert_with(Default::default);
+        let underline = style.underline.get_or_insert_with(Default::default);
+        underline.color = Some(color.into());
+        self
+    }
+
+    fn text_decoration_solid(mut self) -> Self {
+        let style = self.text_style().get_or_insert_with(Default::default);
+        let underline = style.underline.get_or_insert_with(Default::default);
+        underline.wavy = false;
+        self
+    }
+
+    fn text_decoration_wavy(mut self) -> Self {
+        let style = self.text_style().get_or_insert_with(Default::default);
+        let underline = style.underline.get_or_insert_with(Default::default);
+        underline.wavy = true;
+        self
+    }
+
+    fn text_decoration_0(mut self) -> Self {
+        let style = self.text_style().get_or_insert_with(Default::default);
+        let underline = style.underline.get_or_insert_with(Default::default);
+        underline.thickness = px(0.);
+        self
+    }
+
+    fn text_decoration_1(mut self) -> Self {
+        let style = self.text_style().get_or_insert_with(Default::default);
+        let underline = style.underline.get_or_insert_with(Default::default);
+        underline.thickness = px(1.);
+        self
+    }
+
+    fn text_decoration_2(mut self) -> Self {
+        let style = self.text_style().get_or_insert_with(Default::default);
+        let underline = style.underline.get_or_insert_with(Default::default);
+        underline.thickness = px(2.);
+        self
+    }
+
+    fn text_decoration_4(mut self) -> Self {
+        let style = self.text_style().get_or_insert_with(Default::default);
+        let underline = style.underline.get_or_insert_with(Default::default);
+        underline.thickness = px(4.);
+        self
+    }
+
+    fn text_decoration_8(mut self) -> Self {
+        let style = self.text_style().get_or_insert_with(Default::default);
+        let underline = style.underline.get_or_insert_with(Default::default);
+        underline.thickness = px(8.);
         self
     }
 

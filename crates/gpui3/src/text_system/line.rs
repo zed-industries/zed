@@ -1,6 +1,6 @@
 use crate::{
-    black, point, px, Bounds, FontId, Hsla, Layout, Pixels, Point, RunStyle, ShapedBoundary,
-    ShapedLine, ShapedRun, UnderlineStyle, WindowContext,
+    black, point, px, Bounds, FontId, Hsla, Pixels, Point, RunStyle, ShapedBoundary, ShapedLine,
+    ShapedRun, UnderlineStyle, WindowContext,
 };
 use anyhow::Result;
 use smallvec::SmallVec;
@@ -90,15 +90,14 @@ impl Line {
         }
     }
 
-    // todo!
     pub fn paint(
         &self,
-        layout: &Layout,
-        visible_bounds: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
+        visible_bounds: Bounds<Pixels>, // todo!("use clipping")
         line_height: Pixels,
         cx: &mut WindowContext,
     ) -> Result<()> {
-        let origin = layout.bounds.origin;
+        let origin = bounds.origin;
         let padding_top = (line_height - self.layout.ascent - self.layout.descent) / 2.;
         let baseline_offset = point(px(0.), padding_top + self.layout.ascent);
 
@@ -135,9 +134,11 @@ impl Line {
                                     origin.y + baseline_offset.y + (self.layout.descent * 0.618),
                                 ),
                                 UnderlineStyle {
-                                    color: style_run.underline.color,
+                                    color: Some(
+                                        style_run.underline.color.unwrap_or(style_run.color),
+                                    ),
                                     thickness: style_run.underline.thickness,
-                                    squiggly: style_run.underline.squiggly,
+                                    wavy: style_run.underline.wavy,
                                 },
                             ));
                         }
@@ -154,22 +155,19 @@ impl Line {
                     continue;
                 }
 
-                if let Some((_underline_origin, _underline_style)) = finished_underline {
-                    todo!()
+                if let Some((underline_origin, underline_style)) = finished_underline {
+                    cx.paint_underline(
+                        underline_origin,
+                        glyph_origin.x - underline_origin.x,
+                        &underline_style,
+                    )?;
                 }
 
                 if glyph.is_emoji {
-                    cx.paint_emoji(
-                        glyph_origin,
-                        layout.order,
-                        run.font_id,
-                        glyph.id,
-                        self.layout.font_size,
-                    )?;
+                    cx.paint_emoji(glyph_origin, run.font_id, glyph.id, self.layout.font_size)?;
                 } else {
                     cx.paint_glyph(
                         glyph_origin,
-                        layout.order,
                         run.font_id,
                         glyph.id,
                         self.layout.font_size,
@@ -179,15 +177,13 @@ impl Line {
             }
         }
 
-        if let Some((_underline_start, _underline_style)) = underline.take() {
-            let _line_end_x = origin.x + self.layout.width;
-            // cx.scene().push_underline(Underline {
-            //     origin: underline_start,
-            //     width: line_end_x - underline_start.x,
-            //     color: underline_style.color,
-            //     thickness: underline_style.thickness.into(),
-            //     squiggly: underline_style.squiggly,
-            // });
+        if let Some((underline_start, underline_style)) = underline.take() {
+            let line_end_x = origin.x + self.layout.width;
+            cx.paint_underline(
+                underline_start,
+                line_end_x - underline_start.x,
+                &underline_style,
+            )?;
         }
 
         Ok(())
@@ -196,7 +192,7 @@ impl Line {
     pub fn paint_wrapped(
         &self,
         origin: Point<Pixels>,
-        _visible_bounds: Bounds<Pixels>,
+        _visible_bounds: Bounds<Pixels>, // todo!("use clipping")
         line_height: Pixels,
         boundaries: &[ShapedBoundary],
         cx: &mut WindowContext,
@@ -221,14 +217,12 @@ impl Line {
                     .map_or(false, |b| b.run_ix == run_ix && b.glyph_ix == glyph_ix)
                 {
                     boundaries.next();
-                    if let Some((_underline_origin, _underline_style)) = underline.take() {
-                        // cx.scene().push_underline(Underline {
-                        //     origin: underline_origin,
-                        //     width: glyph_origin.x - underline_origin.x,
-                        //     thickness: underline_style.thickness.into(),
-                        //     color: underline_style.color.unwrap(),
-                        //     squiggly: underline_style.squiggly,
-                        // });
+                    if let Some((underline_origin, underline_style)) = underline.take() {
+                        cx.paint_underline(
+                            underline_origin,
+                            glyph_origin.x - underline_origin.x,
+                            &underline_style,
+                        )?;
                     }
 
                     glyph_origin = point(origin.x, glyph_origin.y + line_height);
@@ -257,7 +251,7 @@ impl Line {
                                         style_run.underline.color.unwrap_or(style_run.color),
                                     ),
                                     thickness: style_run.underline.thickness,
-                                    squiggly: style_run.underline.squiggly,
+                                    wavy: style_run.underline.wavy,
                                 },
                             ));
                         }
@@ -268,14 +262,12 @@ impl Line {
                     }
                 }
 
-                if let Some((_underline_origin, _underline_style)) = finished_underline {
-                    // cx.scene().push_underline(Underline {
-                    //     origin: underline_origin,
-                    //     width: glyph_origin.x - underline_origin.x,
-                    //     thickness: underline_style.thickness.into(),
-                    //     color: underline_style.color.unwrap(),
-                    //     squiggly: underline_style.squiggly,
-                    // });
+                if let Some((underline_origin, underline_style)) = finished_underline {
+                    cx.paint_underline(
+                        underline_origin,
+                        glyph_origin.x - underline_origin.x,
+                        &underline_style,
+                    )?;
                 }
 
                 let text_system = cx.text_system();
@@ -306,15 +298,13 @@ impl Line {
             }
         }
 
-        if let Some((_underline_origin, _underline_style)) = underline.take() {
-            // let line_end_x = glyph_origin.x + self.layout.width - prev_position;
-            // cx.scene().push_underline(Underline {
-            //     origin: underline_origin,
-            //     width: line_end_x - underline_origin.x,
-            //     thickness: underline_style.thickness.into(),
-            //     color: underline_style.color,
-            //     squiggly: underline_style.squiggly,
-            // });
+        if let Some((underline_origin, underline_style)) = underline.take() {
+            let line_end_x = glyph_origin.x + self.layout.width - prev_position;
+            cx.paint_underline(
+                underline_origin,
+                line_end_x - underline_origin.x,
+                &underline_style,
+            )?;
         }
 
         Ok(())

@@ -1,6 +1,6 @@
 use crate::{
-    AnyElement, Bounds, Element, Layout, LayoutId, Overflow, ParentElement, Pixels, Point,
-    Refineable, RefinementCascade, Result, Style, StyleHelpers, Styled, ViewContext,
+    AnyElement, Bounds, Element, LayoutId, Overflow, ParentElement, Pixels, Point, Refineable,
+    RefinementCascade, Result, Style, StyleHelpers, Styled, ViewContext,
 };
 use parking_lot::Mutex;
 use smallvec::SmallVec;
@@ -40,34 +40,28 @@ impl<S: 'static + Send + Sync> Element for Div<S> {
 
     fn paint(
         &mut self,
-        layout: Layout,
+        bounds: Bounds<Pixels>,
         state: &mut S,
         child_layouts: &mut Self::FrameState,
         cx: &mut ViewContext<S>,
     ) -> Result<()> {
-        let Layout { order, bounds } = layout;
-
         let style = self.computed_style();
-        style.paint(order, bounds, cx);
+        cx.stack(0, |cx| style.paint(bounds, cx));
 
-        // // todo!("support only one dimension being hidden")
         let overflow = &style.overflow;
-        // if style.overflow.y != Overflow::Visible || style.overflow.x != Overflow::Visible {
-        //     cx.clip(layout.bounds, style.corner_radii, || )
-        // }
-
         style.apply_text_style(cx, |cx| {
-            style.apply_overflow(layout.bounds, cx, |cx| {
-                self.paint_children(overflow, state, cx)
+            cx.stack(1, |cx| {
+                style.apply_overflow(bounds, cx, |cx| self.paint_children(overflow, state, cx))
             })
         })?;
-        self.handle_scroll(order, bounds, style.overflow.clone(), child_layouts, cx);
+        self.handle_scroll(bounds, style.overflow.clone(), child_layouts, cx);
 
         // todo!("enable inspector")
         // if cx.is_inspector_enabled() {
         //     self.paint_inspector(parent_origin, layout, cx);
         // }
         //
+
         Ok(())
     }
 }
@@ -142,7 +136,6 @@ impl<S: 'static> Div<S> {
 
     fn handle_scroll(
         &mut self,
-        _order: u32,
         bounds: Bounds<Pixels>,
         overflow: Point<Overflow>,
         child_layout_ids: &[LayoutId],
@@ -151,8 +144,8 @@ impl<S: 'static> Div<S> {
         if overflow.y == Overflow::Scroll || overflow.x == Overflow::Scroll {
             let mut scroll_max = Point::default();
             for child_layout_id in child_layout_ids {
-                if let Some(child_layout) = cx.layout(*child_layout_id).log_err() {
-                    scroll_max = scroll_max.max(&child_layout.bounds.lower_right());
+                if let Some(child_bounds) = cx.layout_bounds(*child_layout_id).log_err() {
+                    scroll_max = scroll_max.max(&child_bounds.lower_right());
                 }
             }
             scroll_max -= bounds.size;

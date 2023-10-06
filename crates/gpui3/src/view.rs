@@ -1,7 +1,7 @@
 use parking_lot::Mutex;
 
 use crate::{
-    AnyElement, Element, Handle, IntoAnyElement, Layout, LayoutId, Result, ViewContext,
+    AnyElement, Bounds, Element, Handle, IntoAnyElement, LayoutId, Pixels, Result, ViewContext,
     WindowContext,
 };
 use std::{any::Any, marker::PhantomData, sync::Arc};
@@ -67,7 +67,7 @@ impl<S: Send + Sync + 'static, P: Send + 'static> Element for View<S, P> {
 
     fn paint(
         &mut self,
-        _: Layout,
+        _: Bounds<Pixels>,
         _: &mut Self::State,
         element: &mut Self::FrameState,
         cx: &mut ViewContext<Self::State>,
@@ -81,7 +81,7 @@ trait ViewObject: Send + 'static {
     fn layout(&mut self, cx: &mut WindowContext) -> Result<(LayoutId, Box<dyn Any>)>;
     fn paint(
         &mut self,
-        layout: Layout,
+        bounds: Bounds<Pixels>,
         element: &mut dyn Any,
         cx: &mut WindowContext,
     ) -> Result<()>;
@@ -97,7 +97,12 @@ impl<S: Send + Sync + 'static, P: Send + 'static> ViewObject for View<S, P> {
         })
     }
 
-    fn paint(&mut self, _: Layout, element: &mut dyn Any, cx: &mut WindowContext) -> Result<()> {
+    fn paint(
+        &mut self,
+        _: Bounds<Pixels>,
+        element: &mut dyn Any,
+        cx: &mut WindowContext,
+    ) -> Result<()> {
         self.state.update(cx, |state, cx| {
             let element = element.downcast_mut::<AnyElement<S>>().unwrap();
             element.paint(state, None, cx)
@@ -124,12 +129,12 @@ impl<S: 'static> Element for AnyView<S> {
 
     fn paint(
         &mut self,
-        layout: Layout,
+        bounds: Bounds<Pixels>,
         _: &mut (),
         element: &mut Box<dyn Any>,
         cx: &mut ViewContext<Self::State>,
     ) -> Result<()> {
-        self.view.lock().paint(layout, element.as_mut(), cx)
+        self.view.lock().paint(bounds, element.as_mut(), cx)
     }
 }
 

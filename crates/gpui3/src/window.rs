@@ -1,10 +1,11 @@
 use crate::{
-    image_cache::RenderImageParams, px, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
-    BorrowAppContext, Bounds, Context, Corners, DevicePixels, Effect, Element, EntityId, FontId,
-    GlyphId, Handle, Hsla, ImageData, IsZero, LayerId, LayoutId, MainThread, MainThreadOnly,
-    MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Reference,
-    RenderGlyphParams, RenderSvgParams, ScaledPixels, Scene, SharedString, Size, Style,
-    TaffyLayoutEngine, Task, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
+    image_cache::RenderImageParams, px, size, AnyView, AppContext, AsyncWindowContext,
+    AvailableSpace, BorrowAppContext, Bounds, Context, Corners, DevicePixels, DisplayId, Effect,
+    Element, EntityId, FontId, GlyphId, Handle, Hsla, ImageData, IsZero, LayoutId, MainThread,
+    MainThreadOnly, MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point,
+    PolychromeSprite, Reference, RenderGlyphParams, RenderSvgParams, ScaledPixels, Scene,
+    SharedString, Size, StackingOrder, Style, TaffyLayoutEngine, Task, Underline, UnderlineStyle,
+    WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use smallvec::SmallVec;
@@ -16,13 +17,14 @@ pub struct AnyWindow {}
 pub struct Window {
     handle: AnyWindowHandle,
     platform_window: MainThreadOnly<Box<dyn PlatformWindow>>,
+    pub(crate) display_id: DisplayId, // todo!("make private again?")
     sprite_atlas: Arc<dyn PlatformAtlas>,
     rem_size: Pixels,
     content_size: Size<Pixels>,
     layout_engine: TaffyLayoutEngine,
     pub(crate) root_view: Option<AnyView<()>>,
     mouse_position: Point<Pixels>,
-    current_layer_id: LayerId,
+    current_stacking_order: StackingOrder,
     content_mask_stack: Vec<ContentMask>,
     pub(crate) scene: Scene,
     pub(crate) dirty: bool,
@@ -35,6 +37,7 @@ impl Window {
         cx: &mut MainThread<AppContext>,
     ) -> Self {
         let platform_window = cx.platform().open_window(handle, options);
+        let display_id = platform_window.display().id();
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
         let content_size = platform_window.content_size();
@@ -46,6 +49,12 @@ impl Window {
                 cx.update_window(handle, |cx| {
                     cx.window.scene = Scene::new(scale_factor);
                     cx.window.content_size = content_size;
+                    cx.window.display_id = cx
+                        .window
+                        .platform_window
+                        .borrow_on_main_thread()
+                        .display()
+                        .id();
                     cx.window.dirty = true;
                 })
                 .log_err();
@@ -57,13 +66,14 @@ impl Window {
         Window {
             handle,
             platform_window,
+            display_id,
             sprite_atlas,
             rem_size: px(16.),
             content_size,
             layout_engine: TaffyLayoutEngine::new(),
             root_view: None,
             mouse_position,
-            current_layer_id: SmallVec::new(),
+            current_stacking_order: SmallVec::new(),
             content_mask_stack: Vec::new(),
             scene: Scene::new(scale_factor),
             dirty: true,
@@ -89,7 +99,7 @@ impl ContentMask {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
 #[repr(C)]
 pub struct ScaledContentMask {
     bounds: Bounds<ScaledPixels>,
@@ -131,6 +141,45 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub fn to_async(&self) -> AsyncWindowContext {
         AsyncWindowContext::new(self.app.to_async(), self.window.handle)
+    }
+
+    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut WindowContext) + Send + 'static) {
+        let f = Box::new(f);
+        let display_id = self.window.display_id;
+        let async_cx = self.to_async();
+        let app_cx = self.app_mut();
+        match app_cx.next_frame_callbacks.entry(display_id) {
+            collections::hash_map::Entry::Occupied(mut entry) => {
+                if entry.get().is_empty() {
+                    app_cx.display_linker.start(display_id);
+                }
+                entry.get_mut().push(f);
+            }
+            collections::hash_map::Entry::Vacant(entry) => {
+                app_cx.display_linker.set_output_callback(
+                    display_id,
+                    Box::new(move |_current_time, _output_time| {
+                        let _ = async_cx.update(|cx| {
+                            let callbacks = cx
+                                .next_frame_callbacks
+                                .get_mut(&display_id)
+                                .unwrap()
+                                .drain(..)
+                                .collect::<Vec<_>>();
+                            for callback in callbacks {
+                                callback(cx);
+                            }
+
+                            if cx.next_frame_callbacks.get(&display_id).unwrap().is_empty() {
+                                cx.display_linker.stop(display_id);
+                            }
+                        });
+                    }),
+                );
+                app_cx.display_linker.start(display_id);
+                entry.insert(vec![f]);
+            }
+        }
     }
 
     pub fn spawn<Fut, R>(
@@ -176,11 +225,11 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             .request_measured_layout(style, rem_size, measure)
     }
 
-    pub fn layout(&mut self, layout_id: LayoutId) -> Result<Layout> {
+    pub fn layout_bounds(&mut self, layout_id: LayoutId) -> Result<Bounds<Pixels>> {
         Ok(self
             .window
             .layout_engine
-            .layout(layout_id)
+            .layout_bounds(layout_id)
             .map(Into::into)?)
     }
 
@@ -201,20 +250,51 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 
     pub fn stack<R>(&mut self, order: u32, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.window.current_layer_id.push(order);
+        self.window.current_stacking_order.push(order);
         let result = f(self);
-        self.window.current_layer_id.pop();
+        self.window.current_stacking_order.pop();
         result
     }
 
-    pub fn current_layer_id(&self) -> LayerId {
-        self.window.current_layer_id.clone()
+    pub fn current_stacking_order(&self) -> StackingOrder {
+        self.window.current_stacking_order.clone()
+    }
+
+    pub fn paint_underline(
+        &mut self,
+        origin: Point<Pixels>,
+        width: Pixels,
+        style: &UnderlineStyle,
+    ) -> Result<()> {
+        let scale_factor = self.scale_factor();
+        let height = if style.wavy {
+            style.thickness * 3.
+        } else {
+            style.thickness
+        };
+        let bounds = Bounds {
+            origin,
+            size: size(width, height),
+        };
+        let content_mask = self.content_mask();
+        let layer_id = self.current_stacking_order();
+        self.window.scene.insert(
+            layer_id,
+            Underline {
+                order: 0,
+                bounds: bounds.scale(scale_factor),
+                content_mask: content_mask.scale(scale_factor),
+                thickness: style.thickness.scale(scale_factor),
+                color: style.color.unwrap_or_default(),
+                wavy: style.wavy,
+            },
+        );
+        Ok(())
     }
 
     pub fn paint_glyph(
         &mut self,
         origin: Point<Pixels>,
-        order: u32,
         font_id: FontId,
         glyph_id: GlyphId,
         font_size: Pixels,
@@ -237,7 +317,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
         if !raster_bounds.is_zero() {
-            let layer_id = self.current_layer_id();
+            let layer_id = self.current_stacking_order();
             let tile =
                 self.window
                     .sprite_atlas
@@ -254,7 +334,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             self.window.scene.insert(
                 layer_id,
                 MonochromeSprite {
-                    order,
+                    order: 0,
                     bounds,
                     content_mask,
                     color,
@@ -268,7 +348,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     pub fn paint_emoji(
         &mut self,
         origin: Point<Pixels>,
-        order: u32,
         font_id: FontId,
         glyph_id: GlyphId,
         font_size: Pixels,
@@ -287,7 +366,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
         if !raster_bounds.is_zero() {
-            let layer_id = self.current_layer_id();
+            let layer_id = self.current_stacking_order();
             let tile =
                 self.window
                     .sprite_atlas
@@ -304,7 +383,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             self.window.scene.insert(
                 layer_id,
                 PolychromeSprite {
-                    order,
+                    order: 0,
                     bounds,
                     corner_radii: Default::default(),
                     content_mask,
@@ -319,7 +398,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     pub fn paint_svg(
         &mut self,
         bounds: Bounds<Pixels>,
-        order: u32,
         path: SharedString,
         color: Hsla,
     ) -> Result<()> {
@@ -333,7 +411,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 .map(|pixels| DevicePixels::from((pixels.0 * 2.).ceil() as i32)),
         };
 
-        let layer_id = self.current_layer_id();
+        let layer_id = self.current_stacking_order();
         let tile =
             self.window
                 .sprite_atlas
@@ -346,7 +424,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         self.window.scene.insert(
             layer_id,
             MonochromeSprite {
-                order,
+                order: 0,
                 bounds,
                 content_mask,
                 color,
@@ -361,7 +439,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         &mut self,
         bounds: Bounds<Pixels>,
         corner_radii: Corners<Pixels>,
-        order: u32,
         data: Arc<ImageData>,
         grayscale: bool,
     ) -> Result<()> {
@@ -369,7 +446,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         let bounds = bounds.scale(scale_factor);
         let params = RenderImageParams { image_id: data.id };
 
-        let layer_id = self.current_layer_id();
+        let order = self.current_stacking_order();
         let tile = self
             .window
             .sprite_atlas
@@ -380,9 +457,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         let corner_radii = corner_radii.scale(scale_factor);
 
         self.window.scene.insert(
-            layer_id,
+            order,
             PolychromeSprite {
-                order,
+                order: 0,
                 bounds,
                 content_mask,
                 corner_radii,
@@ -401,12 +478,10 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             let (root_layout_id, mut frame_state) = root_view.layout(&mut (), cx)?;
             let available_space = cx.window.content_size.map(Into::into);
 
-            let started_at = std::time::Instant::now();
             cx.window
                 .layout_engine
                 .compute_layout(root_layout_id, available_space)?;
-            println!("compute_layout took {:?}", started_at.elapsed());
-            let layout = cx.window.layout_engine.layout(root_layout_id)?;
+            let layout = cx.window.layout_engine.layout_bounds(root_layout_id)?;
 
             root_view.paint(layout, &mut (), &mut frame_state, cx)?;
             cx.window.root_view = Some(root_view);
@@ -573,6 +648,20 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
         self.entities.weak_handle(self.entity_id)
     }
 
+    pub fn stack<R>(&mut self, order: u32, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.window.current_stacking_order.push(order);
+        let result = f(self);
+        self.window.current_stacking_order.pop();
+        result
+    }
+
+    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut S, &mut ViewContext<S>) + Send + 'static) {
+        let entity = self.handle();
+        self.window_cx.on_next_frame(move |cx| {
+            entity.update(cx, f).ok();
+        });
+    }
+
     pub fn observe<E: Send + Sync + 'static>(
         &mut self,
         handle: &Handle<E>,
@@ -725,10 +814,4 @@ impl<S: 'static> Into<AnyWindowHandle> for WindowHandle<S> {
 pub struct AnyWindowHandle {
     pub(crate) id: WindowId,
     state_type: TypeId,
-}
-
-#[derive(Clone)]
-pub struct Layout {
-    pub order: u32,
-    pub bounds: Bounds<Pixels>,
 }

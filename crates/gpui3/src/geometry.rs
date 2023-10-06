@@ -2,7 +2,7 @@ use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, Mul, Sub, SubAssign};
 use refineable::Refineable;
 use std::{
-    cmp,
+    cmp, fmt,
     ops::{Add, AddAssign, Div, Mul, MulAssign, Sub, SubAssign},
 };
 
@@ -128,7 +128,7 @@ impl<T: Clone + Debug> Clone for Point<T> {
     }
 }
 
-#[derive(Refineable, Default, Clone, Copy, Debug, PartialEq, Div, Hash)]
+#[derive(Refineable, Default, Clone, Copy, PartialEq, Div, Hash)]
 #[refineable(debug)]
 #[repr(C)]
 pub struct Size<T: Clone + Debug> {
@@ -199,11 +199,17 @@ impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Size<T> {
 
 impl<T: Eq + Debug + Clone> Eq for Size<T> {}
 
-impl From<Size<Option<Pixels>>> for Size<Option<f32>> {
-    fn from(size: Size<Option<Pixels>>) -> Self {
+impl<T: Clone + Debug> Debug for Size<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Size {{ {:?} × {:?} }}", self.width, self.height)
+    }
+}
+
+impl From<Size<Pixels>> for Size<GlobalPixels> {
+    fn from(size: Size<Pixels>) -> Self {
         Size {
-            width: size.width.map(|p| p.0 as f32),
-            height: size.height.map(|p| p.0 as f32),
+            width: GlobalPixels(size.width.0),
+            height: GlobalPixels(size.height.0),
         }
     }
 }
@@ -254,6 +260,26 @@ impl<T: Clone + Debug + Sub<Output = T>> Bounds<T> {
             height: lower_right.y - upper_left.y,
         };
         Bounds { origin, size }
+    }
+}
+
+impl<T: Clone + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T>> Bounds<T> {
+    pub fn intersects(&self, other: &Bounds<T>) -> bool {
+        let my_lower_right = self.lower_right();
+        let their_lower_right = other.lower_right();
+
+        self.origin.x < their_lower_right.x
+            && my_lower_right.x > other.origin.x
+            && self.origin.y < their_lower_right.y
+            && my_lower_right.y > other.origin.y
+    }
+
+    pub fn dilate(&mut self, amount: T) {
+        self.origin.x = self.origin.x.clone() - amount.clone();
+        self.origin.y = self.origin.y.clone() - amount.clone();
+        let double_amount = amount.clone() + amount;
+        self.size.width = self.size.width.clone() + double_amount.clone();
+        self.size.height = self.size.height.clone() + double_amount;
     }
 }
 
@@ -313,6 +339,13 @@ impl<T: Clone + Debug + Add<T, Output = T>> Bounds<T> {
     pub fn lower_right(&self) -> Point<T> {
         Point {
             x: self.origin.x.clone() + self.size.width.clone(),
+            y: self.origin.y.clone() + self.size.height.clone(),
+        }
+    }
+
+    pub fn lower_left(&self) -> Point<T> {
+        Point {
+            x: self.origin.x.clone(),
             y: self.origin.y.clone() + self.size.height.clone(),
         }
     }
@@ -448,6 +481,17 @@ impl Edges<AbsoluteLength> {
     }
 }
 
+impl Edges<Pixels> {
+    pub fn scale(&self, factor: f32) -> Edges<ScaledPixels> {
+        Edges {
+            top: self.top.scale(factor),
+            right: self.right.scale(factor),
+            bottom: self.bottom.scale(factor),
+            left: self.left.scale(factor),
+        }
+    }
+}
+
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
 #[refineable(debug)]
 #[repr(C)]
@@ -459,8 +503,8 @@ pub struct Corners<T: Clone + Debug> {
 }
 
 impl Corners<AbsoluteLength> {
-    pub fn to_pixels(&self, bounds: Bounds<Pixels>, rem_size: Pixels) -> Corners<Pixels> {
-        let max = bounds.size.width.max(bounds.size.height) / 2.;
+    pub fn to_pixels(&self, size: Size<Pixels>, rem_size: Pixels) -> Corners<Pixels> {
+        let max = size.width.max(size.height) / 2.;
         Corners {
             top_left: self.top_left.to_pixels(rem_size).min(max),
             top_right: self.top_right.to_pixels(rem_size).min(max),
@@ -587,7 +631,7 @@ impl From<f32> for Pixels {
 }
 
 impl Debug for Pixels {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} px", self.0)
     }
 }
@@ -622,8 +666,8 @@ impl DevicePixels {
     }
 }
 
-impl std::fmt::Debug for DevicePixels {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for DevicePixels {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} px (device)", self.0)
     }
 }
@@ -681,7 +725,7 @@ impl ScaledPixels {
 impl Eq for ScaledPixels {}
 
 impl Debug for ScaledPixels {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} px (scaled)", self.0)
     }
 }
@@ -698,6 +742,34 @@ impl From<DevicePixels> for ScaledPixels {
     }
 }
 
+impl From<ScaledPixels> for f64 {
+    fn from(scaled_pixels: ScaledPixels) -> Self {
+        scaled_pixels.0 as f64
+    }
+}
+
+#[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd)]
+#[repr(transparent)]
+pub struct GlobalPixels(pub(crate) f32);
+
+impl Debug for GlobalPixels {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} px (global coordinate space)", self.0)
+    }
+}
+
+impl From<GlobalPixels> for f64 {
+    fn from(global_pixels: GlobalPixels) -> Self {
+        global_pixels.0 as f64
+    }
+}
+
+impl From<f64> for GlobalPixels {
+    fn from(global_pixels: f64) -> Self {
+        GlobalPixels(global_pixels as f32)
+    }
+}
+
 #[derive(Clone, Copy, Default, Add, Sub, Mul, Div)]
 pub struct Rems(f32);
 
@@ -710,7 +782,7 @@ impl Mul<Pixels> for Rems {
 }
 
 impl Debug for Rems {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} rem", self.0)
     }
 }
@@ -778,7 +850,7 @@ impl DefiniteLength {
 }
 
 impl Debug for DefiniteLength {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             DefiniteLength::Absolute(length) => Debug::fmt(length, f),
             DefiniteLength::Fraction(fract) => write!(f, "{}%", (fract * 100.0) as i32),
@@ -818,7 +890,7 @@ pub enum Length {
 }
 
 impl Debug for Length {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Length::Definite(definite_length) => write!(f, "{:?}", definite_length),
             Length::Auto => write!(f, "auto"),
@@ -962,5 +1034,44 @@ impl<T: IsZero + Debug + Clone> IsZero for Corners<T> {
             && self.top_right.is_zero()
             && self.bottom_right.is_zero()
             && self.bottom_left.is_zero()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bounds_intersects() {
+        let bounds1 = Bounds {
+            origin: Point { x: 0.0, y: 0.0 },
+            size: Size {
+                width: 5.0,
+                height: 5.0,
+            },
+        };
+        let bounds2 = Bounds {
+            origin: Point { x: 4.0, y: 4.0 },
+            size: Size {
+                width: 5.0,
+                height: 5.0,
+            },
+        };
+        let bounds3 = Bounds {
+            origin: Point { x: 10.0, y: 10.0 },
+            size: Size {
+                width: 5.0,
+                height: 5.0,
+            },
+        };
+
+        // Test Case 1: Intersecting bounds
+        assert_eq!(bounds1.intersects(&bounds2), true);
+
+        // Test Case 2: Non-Intersecting bounds
+        assert_eq!(bounds1.intersects(&bounds3), false);
+
+        // Test Case 3: Bounds intersecting with themselves
+        assert_eq!(bounds1.intersects(&bounds1), true);
     }
 }

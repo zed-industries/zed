@@ -1,5 +1,5 @@
 use super::Platform;
-use crate::{Executor, ScreenId};
+use crate::{DisplayId, Executor};
 
 pub struct TestPlatform;
 
@@ -12,6 +12,10 @@ impl TestPlatform {
 // todo!("implement out what our tests needed in GPUI 1")
 impl Platform for TestPlatform {
     fn executor(&self) -> Executor {
+        unimplemented!()
+    }
+
+    fn display_linker(&self) -> std::sync::Arc<dyn crate::PlatformDisplayLinker> {
         unimplemented!()
     }
 
@@ -47,11 +51,11 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
-    fn screens(&self) -> Vec<std::rc::Rc<dyn crate::PlatformScreen>> {
+    fn displays(&self) -> Vec<std::rc::Rc<dyn crate::PlatformDisplay>> {
         unimplemented!()
     }
 
-    fn screen_by_id(&self, _id: ScreenId) -> Option<std::rc::Rc<dyn crate::PlatformScreen>> {
+    fn display(&self, _id: DisplayId) -> Option<std::rc::Rc<dyn crate::PlatformDisplay>> {
         unimplemented!()
     }
 

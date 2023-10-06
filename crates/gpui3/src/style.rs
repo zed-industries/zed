@@ -1,10 +1,11 @@
 use crate::{
     phi, point, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners,
     CornersRefinement, DefiniteLength, Edges, EdgesRefinement, Font, FontFeatures, FontStyle,
-    FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Quad, Rems, Result, RunStyle,
+    FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Quad, Rems, Result, RunStyle, Shadow,
     SharedString, Size, SizeRefinement, ViewContext, WindowContext,
 };
 use refineable::Refineable;
+use smallvec::SmallVec;
 pub use taffy::style::{
     AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap, JustifyContent,
     Overflow, Position,
@@ -89,8 +90,19 @@ pub struct Style {
     #[refineable]
     pub corner_radii: Corners<AbsoluteLength>,
 
+    /// Box Shadow of the element
+    pub box_shadow: SmallVec<[BoxShadow; 2]>,
+
     /// TEXT
     pub text: TextStyleRefinement,
+}
+
+#[derive(Clone, Debug)]
+pub struct BoxShadow {
+    pub color: Hsla,
+    pub offset: Point<Pixels>,
+    pub blur_radius: Pixels,
+    pub spread_radius: Pixels,
 }
 
 #[derive(Refineable, Clone, Debug)]
@@ -229,32 +241,55 @@ impl Style {
     }
 
     /// Paints the background of an element styled with this style.
-    pub fn paint<V: 'static>(&self, order: u32, bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
+    pub fn paint<V: 'static>(&self, bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
         let rem_size = cx.rem_size();
         let scale = cx.scale_factor();
 
+        for shadow in &self.box_shadow {
+            let content_mask = cx.content_mask();
+            let mut shadow_bounds = bounds;
+            shadow_bounds.origin += shadow.offset;
+            shadow_bounds.dilate(shadow.spread_radius);
+            cx.stack(0, |cx| {
+                let layer_id = cx.current_stacking_order();
+                cx.scene().insert(
+                    layer_id,
+                    Shadow {
+                        order: 0,
+                        bounds: shadow_bounds.scale(scale),
+                        content_mask: content_mask.scale(scale),
+                        corner_radii: self
+                            .corner_radii
+                            .to_pixels(shadow_bounds.size, rem_size)
+                            .scale(scale),
+                        color: shadow.color,
+                        blur_radius: shadow.blur_radius.scale(scale),
+                    },
+                );
+            })
+        }
+
         let background_color = self.fill.as_ref().and_then(Fill::color);
         if background_color.is_some() || self.is_border_visible() {
-            let layer_id = cx.current_layer_id();
-            cx.scene().insert(
-                layer_id,
-                Quad {
+            let content_mask = cx.content_mask();
+            cx.stack(1, |cx| {
+                let order = cx.current_stacking_order();
+                cx.scene().insert(
                     order,
-                    bounds: bounds.scale(scale),
-                    clip_bounds: bounds.scale(scale), // todo!
-                    clip_corner_radii: self
-                        .corner_radii
-                        .map(|length| length.to_pixels(rem_size).scale(scale)),
-                    background: background_color.unwrap_or_default(),
-                    border_color: self.border_color.unwrap_or_default(),
-                    corner_radii: self
-                        .corner_radii
-                        .map(|length| length.to_pixels(rem_size).scale(scale)),
-                    border_widths: self
-                        .border_widths
-                        .map(|length| length.to_pixels(rem_size).scale(scale)),
-                },
-            );
+                    Quad {
+                        order: 0,
+                        bounds: bounds.scale(scale),
+                        content_mask: content_mask.scale(scale),
+                        background: background_color.unwrap_or_default(),
+                        border_color: self.border_color.unwrap_or_default(),
+                        corner_radii: self
+                            .corner_radii
+                            .to_pixels(bounds.size, rem_size)
+                            .scale(scale),
+                        border_widths: self.border_widths.to_pixels(rem_size).scale(scale),
+                    },
+                );
+            });
         }
     }
 
@@ -298,6 +333,7 @@ impl Default for Style {
             fill: None,
             border_color: None,
             corner_radii: Corners::default(),
+            box_shadow: Default::default(),
             text: TextStyleRefinement::default(),
         }
     }
@@ -308,7 +344,7 @@ impl Default for Style {
 pub struct UnderlineStyle {
     pub thickness: Pixels,
     pub color: Option<Hsla>,
-    pub squiggly: bool,
+    pub wavy: bool,
 }
 
 #[derive(Clone, Debug)]
