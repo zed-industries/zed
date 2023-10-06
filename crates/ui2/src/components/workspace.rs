@@ -4,8 +4,11 @@ use std::sync::Arc;
 use chrono::DateTime;
 use gpui3::{relative, rems, Size};
 
-use crate::{prelude::*, Pane, PaneGroup, SplitDirection};
-use crate::{theme, v_stack, Panel, PanelAllowedSides, PanelSide, ProjectPanel, StatusBar};
+use crate::prelude::*;
+use crate::{
+    theme, v_stack, Pane, PaneGroup, Panel, PanelAllowedSides, PanelSide, ProjectPanel,
+    SplitDirection, StatusBar, Terminal,
+};
 
 #[derive(Element)]
 pub struct WorkspaceElement<S: 'static + Send + Sync + Clone> {
@@ -46,13 +49,10 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
                                 let theme = payload.downcast_ref::<Arc<Theme>>().unwrap();
 
                                 vec![
-                                    div()
-                                        .w_full()
-                                        .fill(gpui3::rgb::<gpui3::Hsla>(0xff0000))
-                                        .into_any(), // EditorPane::new(hello_world_rust_editor_with_status_example(
-                                                     //     &theme,
-                                                     // ))
-                                                     // .into_any()
+                                    Terminal::new().into_any(), // EditorPane::new(hello_world_rust_editor_with_status_example(
+                                                                //     &theme,
+                                                                // ))
+                                                                // .into_any()
                                 ]
                             },
                             Box::new(theme.clone()),
@@ -63,15 +63,7 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
                                 width: relative(1.).into(),
                                 height: temp_size,
                             },
-                            |_, _| {
-                                vec![
-                                    div()
-                                        .w_full()
-                                        .fill(gpui3::rgb::<gpui3::Hsla>(0x00ff00))
-                                        .into_any(),
-                                    // Terminal::new().into_any()
-                                ]
-                            },
+                            |_, _| vec![Terminal::new().into_any()],
                             Box::new(()),
                         ),
                     ],
@@ -88,10 +80,7 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
                             let theme = payload.downcast_ref::<Arc<Theme>>().unwrap();
 
                             vec![
-                                div()
-                                    .w_full()
-                                    .fill(gpui3::rgb::<gpui3::Hsla>(0x0000ff))
-                                    .into_any(),
+                                Terminal::new().into_any(),
                                 //     EditorPane::new(hello_world_rust_editor_with_status_example(
                                 //     &theme,
                                 // ))
@@ -175,36 +164,36 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
                         .side(PanelSide::Right),
                     ),
                 // .child(
-                       //     Panel::new(
-                       //         self.right_panel_scroll_state.clone(),
-                       //         |_, payload| {
-                       //             vec![ChatPanel::new(ScrollState::default())
-                       //                 .with_messages(vec![
-                       //                     ChatMessage::new(
-                       //                         "osiewicz".to_string(),
-                       //                         "is this thing on?".to_string(),
-                       //                         DateTime::parse_from_rfc3339(
-                       //                             "2023-09-27T15:40:52.707Z",
-                       //                         )
-                       //                         .unwrap()
-                       //                         .naive_local(),
-                       //                     ),
-                       //                     ChatMessage::new(
-                       //                         "maxdeviant".to_string(),
-                       //                         "Reading you loud and clear!".to_string(),
-                       //                         DateTime::parse_from_rfc3339(
-                       //                             "2023-09-28T15:40:52.707Z",
-                       //                         )
-                       //                         .unwrap()
-                       //                         .naive_local(),
-                       //                     ),
-                       //                 ])
-                       //                 .into_any()]
-                       //         },
-                       //         Box::new(()),
-                       //     )
-                       //     .side(PanelSide::Right),
-                       // ),
+                //     Panel::new(
+                //         self.right_panel_scroll_state.clone(),
+                //         |_, payload| {
+                //             vec![ChatPanel::new(ScrollState::default())
+                //                 .with_messages(vec![
+                //                     ChatMessage::new(
+                //                         "osiewicz".to_string(),
+                //                         "is this thing on?".to_string(),
+                //                         DateTime::parse_from_rfc3339(
+                //                             "2023-09-27T15:40:52.707Z",
+                //                         )
+                //                         .unwrap()
+                //                         .naive_local(),
+                //                     ),
+                //                     ChatMessage::new(
+                //                         "maxdeviant".to_string(),
+                //                         "Reading you loud and clear!".to_string(),
+                //                         DateTime::parse_from_rfc3339(
+                //                             "2023-09-28T15:40:52.707Z",
+                //                         )
+                //                         .unwrap()
+                //                         .naive_local(),
+                //                     ),
+                //                 ])
+                //                 .into_any()]
+                //         },
+                //         Box::new(()),
+                //     )
+                //     .side(PanelSide::Right),
+                // ),
             )
             .child(StatusBar::new())
         // An example of a toast is below
