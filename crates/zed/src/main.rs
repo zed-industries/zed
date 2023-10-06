@@ -43,7 +43,7 @@ use std::{
 };
 use sum_tree::Bias;
 use util::{
-    channel::ReleaseChannel,
+    channel::{parse_zed_link, ReleaseChannel},
     http::{self, HttpClient},
     paths::PathLikeWithPosition,
 };
@@ -206,12 +206,9 @@ fn main() {
 
         if stdout_is_a_pty() {
             cx.platform().activate(true);
-            let paths = collect_path_args();
-            if paths.is_empty() {
-                cx.spawn(|cx| async move { restore_or_create_workspace(&app_state, cx).await })
-                    .detach()
-            } else {
-                workspace::open_paths(&paths, &app_state, None, cx).detach_and_log_err(cx);
+            let urls = collect_url_args();
+            if !urls.is_empty() {
+                listener.open_urls(urls)
             }
         } else {
             upload_previous_panics(http.clone(), cx);
@@ -223,53 +220,51 @@ fn main() {
             {
                 listener.open_urls(collect_url_args())
             }
+        }
 
-            match open_rx.try_next() {
-                Ok(Some(OpenRequest::Paths { paths })) => {
-                    cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
-                        .detach();
-                }
-                Ok(Some(OpenRequest::CliConnection { connection })) => {
-                    cx.spawn(|cx| handle_cli_connection(connection, app_state.clone(), cx))
-                        .detach();
-                }
-                Ok(Some(OpenRequest::JoinChannel { channel_id })) => cx
-                    .update(|cx| workspace::join_channel(channel_id, app_state.clone(), None, cx))
-                    .detach(),
-                Ok(None) | Err(_) => cx
-                    .spawn({
-                        let app_state = app_state.clone();
-                        |cx| async move { restore_or_create_workspace(&app_state, cx).await }
-                    })
-                    .detach(),
+        match open_rx.try_next() {
+            Ok(Some(OpenRequest::Paths { paths })) => {
+                cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
+                    .detach();
             }
+            Ok(Some(OpenRequest::CliConnection { connection })) => {
+                cx.spawn(|cx| handle_cli_connection(connection, app_state.clone(), cx))
+                    .detach();
+            }
+            Ok(Some(OpenRequest::JoinChannel { channel_id })) => cx
+                .update(|cx| workspace::join_channel(channel_id, app_state.clone(), None, cx))
+                .detach_and_log_err(cx),
+            Ok(None) | Err(_) => cx
+                .spawn({
+                    let app_state = app_state.clone();
+                    |cx| async move { restore_or_create_workspace(&app_state, cx).await }
+                })
+                .detach(),
+        }
 
-            cx.spawn(|mut cx| {
-                let app_state = app_state.clone();
-                async move {
-                    while let Some(request) = open_rx.next().await {
-                        match request {
-                            OpenRequest::Paths { paths } => {
-                                cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
-                                    .detach();
-                            }
-                            OpenRequest::CliConnection { connection } => {
-                                cx.spawn(|cx| {
-                                    handle_cli_connection(connection, app_state.clone(), cx)
-                                })
+        cx.spawn(|mut cx| {
+            let app_state = app_state.clone();
+            async move {
+                while let Some(request) = open_rx.next().await {
+                    match request {
+                        OpenRequest::Paths { paths } => {
+                            cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
                                 .detach();
-                            }
-                            OpenRequest::JoinChannel { channel_id } => cx
-                                .update(|cx| {
-                                    workspace::join_channel(channel_id, app_state.clone(), None, cx)
-                                })
-                                .detach(),
                         }
+                        OpenRequest::CliConnection { connection } => {
+                            cx.spawn(|cx| handle_cli_connection(connection, app_state.clone(), cx))
+                                .detach();
+                        }
+                        OpenRequest::JoinChannel { channel_id } => cx
+                            .update(|cx| {
+                                workspace::join_channel(channel_id, app_state.clone(), None, cx)
+                            })
+                            .detach(),
                     }
                 }
-            })
-            .detach();
-        }
+            }
+        })
+        .detach();
 
         cx.spawn(|cx| async move {
             if stdout_is_a_pty() {
@@ -608,21 +603,21 @@ fn stdout_is_a_pty() -> bool {
     std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none() && std::io::stdout().is_terminal()
 }
 
-fn collect_path_args() -> Vec<PathBuf> {
+fn collect_url_args() -> Vec<String> {
     env::args()
         .skip(1)
-        .filter_map(|arg| match std::fs::canonicalize(arg) {
-            Ok(path) => Some(path),
+        .filter_map(|arg| match std::fs::canonicalize(Path::new(&arg)) {
+            Ok(path) => Some(format!("file://{}", path.to_string_lossy())),
             Err(error) => {
-                log::error!("error parsing path argument: {}", error);
-                None
+                if let Some(_) = parse_zed_link(&arg) {
+                    Some(arg)
+                } else {
+                    log::error!("error parsing path argument: {}", error);
+                    None
+                }
             }
         })
         .collect()
-}
-
-fn collect_url_args() -> Vec<String> {
-    env::args().skip(1).collect()
 }
 
 fn load_embedded_fonts(app: &App) {

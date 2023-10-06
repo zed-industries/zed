@@ -6,7 +6,7 @@ use std::ffi::OsStr;
 use std::os::unix::prelude::OsStrExt;
 use std::sync::atomic::Ordering;
 use std::{path::PathBuf, sync::atomic::AtomicBool};
-use util::channel::URL_SCHEME_PREFIX;
+use util::channel::parse_zed_link;
 use util::ResultExt;
 
 use crate::connect_to_cli;
@@ -47,10 +47,7 @@ impl OpenListener {
             urls.first().and_then(|url| url.strip_prefix("zed-cli://"))
         {
             self.handle_cli_connection(server_name)
-        } else if let Some(request_path) = urls
-            .first()
-            .and_then(|url| url.strip_prefix(URL_SCHEME_PREFIX.as_str()))
-        {
+        } else if let Some(request_path) = urls.first().and_then(|url| parse_zed_link(url)) {
             self.handle_zed_url_scheme(request_path)
         } else {
             self.handle_file_urls(urls)

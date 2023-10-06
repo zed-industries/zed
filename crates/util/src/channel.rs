@@ -1,7 +1,6 @@
 use std::env;
 
 use lazy_static::lazy_static;
-use url::Url;
 
 lazy_static! {
     pub static ref RELEASE_CHANNEL_NAME: String = if cfg!(debug_assertions) {
@@ -16,22 +15,6 @@ lazy_static! {
         "stable" => ReleaseChannel::Stable,
         _ => panic!("invalid release channel {}", *RELEASE_CHANNEL_NAME),
     };
-
-    pub static ref URL_SCHEME_PREFIX: String = match RELEASE_CHANNEL_NAME.as_str() {
-        "dev" => "zed-dev:/",
-        "preview" => "zed-preview:/",
-        "stable" => "zed:/",
-        // NOTE: this must be kept in sync with osx_url_schemes in Cargo.toml and with https://zed.dev.
-        _ => unreachable!(),
-    }.to_string();
-    pub static ref LINK_PREFIX: Url = Url::parse(match RELEASE_CHANNEL_NAME.as_str() {
-        "dev" => "http://localhost:3000/dev/",
-        "preview" => "https://zed.dev/preview/",
-        "stable" => "https://zed.dev/",
-        // NOTE: this must be kept in sync with https://zed.dev.
-        _ => unreachable!(),
-    })
-    .unwrap();
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -58,4 +41,36 @@ impl ReleaseChannel {
             ReleaseChannel::Stable => "stable",
         }
     }
+
+    pub fn url_scheme(&self) -> &'static str {
+        match self {
+            ReleaseChannel::Dev => "zed-dev:/",
+            ReleaseChannel::Preview => "zed-preview:/",
+            ReleaseChannel::Stable => "zed:/",
+        }
+    }
+
+    pub fn link_prefix(&self) -> &'static str {
+        match self {
+            ReleaseChannel::Dev => "https://zed.dev/dev/",
+            ReleaseChannel::Preview => "https://zed.dev/preview/",
+            ReleaseChannel::Stable => "https://zed.dev/",
+        }
+    }
+}
+
+pub fn parse_zed_link(link: &str) -> Option<&str> {
+    for release in [
+        ReleaseChannel::Dev,
+        ReleaseChannel::Preview,
+        ReleaseChannel::Stable,
+    ] {
+        if let Some(stripped) = link.strip_prefix(release.link_prefix()) {
+            return Some(stripped);
+        }
+        if let Some(stripped) = link.strip_prefix(release.url_scheme()) {
+            return Some(stripped);
+        }
+    }
+    None
 }
