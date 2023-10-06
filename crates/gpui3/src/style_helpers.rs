@@ -8,8 +8,13 @@ use smallvec::smallvec;
 pub trait StyleHelpers: Sized + Styled<Style = Style> {
     gpui3_macros::style_helpers!();
 
-    fn h(mut self, height: Length) -> Self {
-        self.declared_style().size.height = Some(height);
+    fn w<L: Into<Length>>(mut self, width: L) -> Self {
+        self.declared_style().size.width = Some(width.into());
+        self
+    }
+
+    fn h<L: Into<Length>>(mut self, height: L) -> Self {
+        self.declared_style().size.height = Some(height.into());
         self
     }
 

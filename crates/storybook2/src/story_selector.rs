@@ -33,6 +33,7 @@ impl ElementStory {
 #[strum(serialize_all = "snake_case")]
 pub enum ComponentStory {
     AssistantPanel,
+    Buffer,
     Panel,
 }
 
@@ -44,6 +45,7 @@ impl ComponentStory {
             Self::AssistantPanel => {
                 components::assistant_panel::AssistantPanelStory::new().into_any()
             }
+            Self::Buffer => components::buffer::BufferStory::new().into_any(),
             Self::Panel => components::panel::PanelStory::new().into_any(),
         }
     }

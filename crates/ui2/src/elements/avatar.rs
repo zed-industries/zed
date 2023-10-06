@@ -2,8 +2,8 @@ use std::marker::PhantomData;
 
 use gpui3::{img, ArcCow};
 
-use crate::theme::theme;
 use crate::prelude::*;
+use crate::theme::theme;
 
 #[derive(Element, Clone)]
 pub struct Avatar<S: 'static + Send + Sync> {

@@ -4,8 +4,8 @@ use std::sync::Arc;
 use gpui3::{svg, Hsla};
 use strum::EnumIter;
 
-use crate::theme::{theme, Theme};
 use crate::prelude::*;
+use crate::theme::{theme, Theme};
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum IconSize {

@@ -2,8 +2,8 @@ use std::marker::PhantomData;
 
 use gpui3::{div, Div, Hsla, WindowContext};
 
-use crate::theme::theme;
 use crate::prelude::*;
+use crate::theme::theme;
 use crate::{
     h_stack, token, v_stack, Avatar, Icon, IconColor, IconElement, IconSize, Label, LabelColor,
     LabelSize,
@@ -424,7 +424,7 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
                     // .ml(rems(0.75 * self.indent_level as f32))
                     .children((0..self.indent_level).map(|_| {
                         div()
-                            // .w(token.list_indent_depth)
+                            .w(token.list_indent_depth)
                             .h_full()
                             .flex()
                             .justify_center()

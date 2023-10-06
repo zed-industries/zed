@@ -48,28 +48,28 @@ impl HighlightColor {
             Self::Default => theme
                 .syntax
                 .get("primary")
-                .expect("no theme.syntax.primary")
-                .clone(),
+                .cloned()
+                .unwrap_or_else(|| rgb::<Hsla>(0xff00ff)),
             Self::Comment => theme
                 .syntax
                 .get("comment")
-                .expect("no theme.syntax.comment")
-                .clone(),
+                .cloned()
+                .unwrap_or_else(|| rgb::<Hsla>(0xff00ff)),
             Self::String => theme
                 .syntax
                 .get("string")
-                .expect("no theme.syntax.string")
-                .clone(),
+                .cloned()
+                .unwrap_or_else(|| rgb::<Hsla>(0xff00ff)),
             Self::Function => theme
                 .syntax
                 .get("function")
-                .expect("no theme.syntax.function")
-                .clone(),
+                .cloned()
+                .unwrap_or_else(|| rgb::<Hsla>(0xff00ff)),
             Self::Keyword => theme
                 .syntax
                 .get("keyword")
-                .expect("no theme.syntax.keyword")
-                .clone(),
+                .cloned()
+                .unwrap_or_else(|| rgb::<Hsla>(0xff00ff)),
         }
     }
 }
