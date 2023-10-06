@@ -139,7 +139,6 @@ tree-sitter-nu.workspace = true
 url = "2.2"
 urlencoding = "2.1.2"
 uuid.workspace = true
-owning_ref = "0.4.1"
 
 [dev-dependencies]
 call = { path = "../call", features = ["test-support"] }

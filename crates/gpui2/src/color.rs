@@ -160,15 +160,6 @@ pub fn black() -> Hsla {
     }
 }
 
-pub fn white() -> Hsla {
-    Hsla {
-        h: 0.,
-        s: 0.,
-        l: 1.,
-        a: 1.,
-    }
-}
-
 impl From<Rgba> for Hsla {
     fn from(color: Rgba) -> Self {
         let r = color.r;
