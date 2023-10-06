@@ -3100,8 +3100,13 @@ impl InlineAssistant {
         project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> anyhow::Result<()> {
-        if let Some(semantic_index) = self.semantic_index.clone() {
-            let _ = semantic_index.update(cx, |index, cx| index.index_project(project, cx));
+        if let Some(semantic_index) = SemanticIndex::global(cx) {
+            cx.spawn(|_, mut cx| async move {
+                semantic_index
+                    .update(&mut cx, |index, cx| index.index_project(project, cx))
+                    .await
+            })
+            .detach_and_log_err(cx);
         }
 
         anyhow::Ok(())
