@@ -3,10 +3,7 @@ use std::{any::TypeId, rc::Rc};
 use crate::{element::LayoutId, style::Style};
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
-use gpui::{
-    geometry::Size, scene::EventHandler, AnyWindowHandle, BorrowWindowContext, EventContext,
-    Layout, MeasureParams, WindowContext,
-};
+use gpui::{geometry::Size, scene::EventHandler, EventContext, Layout, MeasureParams};
 pub use gpui::{taffy::tree::NodeId, ViewContext as LegacyViewContext};
 
 #[derive(Deref, DerefMut)]
@@ -78,37 +75,5 @@ impl<'a, 'b, 'c, V: 'static> ViewContext<'a, 'b, 'c, V> {
         self.layout_engine()
             .ok_or_else(|| anyhow!("no layout engine present"))?
             .computed_layout(layout_id)
-    }
-}
-
-impl<'a, 'b, 'c, V: 'static> BorrowWindowContext for ViewContext<'a, 'b, 'c, V> {
-    type Result<T> = T;
-
-    fn read_window<T, F>(&self, window: AnyWindowHandle, f: F) -> Self::Result<T>
-    where
-        F: FnOnce(&WindowContext) -> T,
-    {
-        self.legacy_cx.read_window(window, f)
-    }
-
-    fn read_window_optional<T, F>(&self, window: AnyWindowHandle, f: F) -> Option<T>
-    where
-        F: FnOnce(&WindowContext) -> Option<T>,
-    {
-        self.legacy_cx.read_window_optional(window, f)
-    }
-
-    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Self::Result<T>
-    where
-        F: FnOnce(&mut WindowContext) -> T,
-    {
-        self.legacy_cx.update_window(window, f)
-    }
-
-    fn update_window_optional<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Option<T>
-    where
-        F: FnOnce(&mut WindowContext) -> Option<T>,
-    {
-        self.legacy_cx.update_window_optional(window, f)
     }
 }
