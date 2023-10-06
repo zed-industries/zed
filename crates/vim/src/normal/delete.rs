@@ -2,6 +2,7 @@ use crate::{motion::Motion, object::Object, utils::copy_selections_content, Vim}
 use collections::{HashMap, HashSet};
 use editor::{display_map::ToDisplayPoint, scroll::autoscroll::Autoscroll, Bias};
 use gpui::WindowContext;
+use language::Point;
 
 pub fn delete_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     vim.stop_recording();
@@ -14,6 +15,27 @@ pub fn delete_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
                     let original_head = selection.head();
                     original_columns.insert(selection.id, original_head.column());
                     motion.expand_selection(map, selection, times, true);
+
+                    // Motion::NextWordStart on an empty line should delete it.
+                    if let Motion::NextWordStart {
+                        ignore_punctuation: _,
+                    } = motion
+                    {
+                        if selection.is_empty()
+                            && map
+                                .buffer_snapshot
+                                .line_len(selection.start.to_point(&map).row)
+                                == 0
+                        {
+                            selection.end = map
+                                .buffer_snapshot
+                                .clip_point(
+                                    Point::new(selection.start.to_point(&map).row + 1, 0),
+                                    Bias::Left,
+                                )
+                                .to_display_point(map)
+                        }
+                    }
                 });
             });
             copy_selections_content(editor, motion.linewise(), cx);
@@ -129,28 +151,44 @@ mod test {
 
     #[gpui::test]
     async fn test_delete_w(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["d", "w"]);
-        cx.assert("Teˇst").await;
-        cx.assert("Tˇest test").await;
-        cx.assert(indoc! {"
-            Test teˇst
-            test"})
-            .await;
-        cx.assert(indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.assert_neovim_compatible(
+            indoc! {"
             Test tesˇt
-            test"})
-            .await;
-        cx.assert_exempted(
+                test"},
+            ["d", "w"],
+        )
+        .await;
+
+        cx.assert_neovim_compatible("Teˇst", ["d", "w"]).await;
+        cx.assert_neovim_compatible("Tˇest test", ["d", "w"]).await;
+        cx.assert_neovim_compatible(
+            indoc! {"
+            Test teˇst
+            test"},
+            ["d", "w"],
+        )
+        .await;
+        cx.assert_neovim_compatible(
+            indoc! {"
+            Test tesˇt
+            test"},
+            ["d", "w"],
+        )
+        .await;
+
+        cx.assert_neovim_compatible(
             indoc! {"
             Test test
             ˇ
             test"},
-            ExemptionFeatures::DeleteWordOnEmptyLine,
+            ["d", "w"],
         )
         .await;
 
         let mut cx = cx.binding(["d", "shift-w"]);
-        cx.assert("Test teˇst-test test").await;
+        cx.assert_neovim_compatible("Test teˇst-test test", ["d", "shift-w"])
+            .await;
     }
 
     #[gpui::test]
@@ -278,37 +316,41 @@ mod test {
 
     #[gpui::test]
     async fn test_delete_end_of_document(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx)
-            .await
-            .binding(["d", "shift-g"]);
-        cx.assert(indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.assert_neovim_compatible(
+            indoc! {"
             The quick
             brownˇ fox
             jumps over
-            the lazy"})
-            .await;
-        cx.assert(indoc! {"
+            the lazy"},
+            ["d", "shift-g"],
+        )
+        .await;
+        cx.assert_neovim_compatible(
+            indoc! {"
             The quick
             brownˇ fox
             jumps over
-            the lazy"})
-            .await;
-        cx.assert_exempted(
+            the lazy"},
+            ["d", "shift-g"],
+        )
+        .await;
+        cx.assert_neovim_compatible(
             indoc! {"
             The quick
             brown fox
             jumps over
             the lˇazy"},
-            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+            ["d", "shift-g"],
         )
         .await;
-        cx.assert_exempted(
+        cx.assert_neovim_compatible(
             indoc! {"
             The quick
             brown fox
             jumps over
             ˇ"},
-            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+            ["d", "shift-g"],
         )
         .await;
     }
@@ -318,34 +360,40 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx)
             .await
             .binding(["d", "g", "g"]);
-        cx.assert(indoc! {"
+        cx.assert_neovim_compatible(
+            indoc! {"
             The quick
             brownˇ fox
             jumps over
-            the lazy"})
-            .await;
-        cx.assert(indoc! {"
+            the lazy"},
+            ["d", "g", "g"],
+        )
+        .await;
+        cx.assert_neovim_compatible(
+            indoc! {"
             The quick
             brown fox
             jumps over
-            the lˇazy"})
-            .await;
-        cx.assert_exempted(
+            the lˇazy"},
+            ["d", "g", "g"],
+        )
+        .await;
+        cx.assert_neovim_compatible(
             indoc! {"
             The qˇuick
             brown fox
             jumps over
             the lazy"},
-            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+            ["d", "g", "g"],
         )
         .await;
-        cx.assert_exempted(
+        cx.assert_neovim_compatible(
             indoc! {"
             ˇ
             brown fox
             jumps over
             the lazy"},
-            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+            ["d", "g", "g"],
         )
         .await;
     }
@@ -386,5 +434,41 @@ mod test {
         cx.simulate_keystrokes(["d", "y"]);
         assert_eq!(cx.active_operator(), None);
         assert_eq!(cx.mode(), Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_delete_with_counts(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {"
+                The ˇquick brown
+                fox jumps over
+                the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes(["d", "2", "d"]).await;
+        cx.assert_shared_state(indoc! {"
+        the ˇlazy dog"})
+            .await;
+
+        cx.set_shared_state(indoc! {"
+                The ˇquick brown
+                fox jumps over
+                the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes(["2", "d", "d"]).await;
+        cx.assert_shared_state(indoc! {"
+        the ˇlazy dog"})
+            .await;
+
+        cx.set_shared_state(indoc! {"
+                The ˇquick brown
+                fox jumps over
+                the moon,
+                a star, and
+                the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes(["2", "d", "2", "d"]).await;
+        cx.assert_shared_state(indoc! {"
+        the ˇlazy dog"})
+            .await;
     }
 }

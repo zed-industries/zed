@@ -1,9 +1,10 @@
+use editor::scroll::VERTICAL_SCROLL_MARGIN;
 use indoc::indoc;
 use settings::SettingsStore;
 use std::ops::{Deref, DerefMut, Range};
 
 use collections::{HashMap, HashSet};
-use gpui::ContextHandle;
+use gpui::{geometry::vector::vec2f, ContextHandle};
 use language::{
     language_settings::{AllLanguageSettings, SoftWrap},
     OffsetRangeExt,
@@ -13,24 +14,15 @@ use util::test::{generate_marked_text, marked_text_offsets};
 use super::{neovim_connection::NeovimConnection, NeovimBackedBindingTestContext, VimTestContext};
 use crate::state::Mode;
 
-pub const SUPPORTED_FEATURES: &[ExemptionFeatures] = &[
-    ExemptionFeatures::DeletionOnEmptyLine,
-    ExemptionFeatures::OperatorAbortsOnFailedMotion,
-];
+pub const SUPPORTED_FEATURES: &[ExemptionFeatures] = &[];
 
 /// Enum representing features we have tests for but which don't work, yet. Used
 /// to add exemptions and automatically
 #[derive(PartialEq, Eq)]
 pub enum ExemptionFeatures {
     // MOTIONS
-    // Deletions on empty lines miss some newlines
-    DeletionOnEmptyLine,
-    // When a motion fails, it should should not apply linewise operations
-    OperatorAbortsOnFailedMotion,
     // When an operator completes at the end of the file, an extra newline is left
     OperatorLastNewlineRemains,
-    // Deleting a word on an empty line doesn't remove the newline
-    DeleteWordOnEmptyLine,
 
     // OBJECTS
     // Resulting position after the operation is slightly incorrect for unintuitive reasons.
@@ -68,6 +60,8 @@ pub struct NeovimBackedTestContext<'a> {
 
     last_set_state: Option<String>,
     recent_keystrokes: Vec<String>,
+
+    is_dirty: bool,
 }
 
 impl<'a> NeovimBackedTestContext<'a> {
@@ -81,6 +75,7 @@ impl<'a> NeovimBackedTestContext<'a> {
 
             last_set_state: None,
             recent_keystrokes: Default::default(),
+            is_dirty: false,
         }
     }
 
@@ -110,25 +105,25 @@ impl<'a> NeovimBackedTestContext<'a> {
     pub async fn simulate_shared_keystrokes<const COUNT: usize>(
         &mut self,
         keystroke_texts: [&str; COUNT],
-    ) -> ContextHandle {
+    ) {
         for keystroke_text in keystroke_texts.into_iter() {
             self.recent_keystrokes.push(keystroke_text.to_string());
             self.neovim.send_keystroke(keystroke_text).await;
         }
-        self.simulate_keystrokes(keystroke_texts)
+        self.simulate_keystrokes(keystroke_texts);
     }
 
-    pub async fn set_shared_state(&mut self, marked_text: &str) -> ContextHandle {
+    pub async fn set_shared_state(&mut self, marked_text: &str) {
         let mode = if marked_text.contains("»") {
             Mode::Visual
         } else {
             Mode::Normal
         };
-        let context_handle = self.set_state(marked_text, mode);
+        self.set_state(marked_text, mode);
         self.last_set_state = Some(marked_text.to_string());
         self.recent_keystrokes = Vec::new();
         self.neovim.set_state(marked_text).await;
-        context_handle
+        self.is_dirty = true;
     }
 
     pub async fn set_shared_wrap(&mut self, columns: u32) {
@@ -136,7 +131,9 @@ impl<'a> NeovimBackedTestContext<'a> {
             panic!("nvim doesn't support columns < 12")
         }
         self.neovim.set_option("wrap").await;
-        self.neovim.set_option("columns=12").await;
+        self.neovim
+            .set_option(&format!("columns={}", columns))
+            .await;
 
         self.update(|cx| {
             cx.update_global(|settings: &mut SettingsStore, cx| {
@@ -148,11 +145,26 @@ impl<'a> NeovimBackedTestContext<'a> {
         })
     }
 
+    pub async fn set_scroll_height(&mut self, rows: u32) {
+        // match Zed's scrolling behavior
+        self.neovim
+            .set_option(&format!("scrolloff={}", VERTICAL_SCROLL_MARGIN))
+            .await;
+        // +2 to account for the vim command UI at the bottom.
+        self.neovim.set_option(&format!("lines={}", rows + 2)).await;
+        let window = self.window;
+        let line_height =
+            self.editor(|editor, cx| editor.style(cx).text.line_height(cx.font_cache()));
+
+        window.simulate_resize(vec2f(1000., (rows as f32) * line_height), &mut self.cx);
+    }
+
     pub async fn set_neovim_option(&mut self, option: &str) {
         self.neovim.set_option(option).await;
     }
 
     pub async fn assert_shared_state(&mut self, marked_text: &str) {
+        self.is_dirty = false;
         let marked_text = marked_text.replace("•", " ");
         let neovim = self.neovim_state().await;
         let editor = self.editor_state();
@@ -258,6 +270,7 @@ impl<'a> NeovimBackedTestContext<'a> {
     }
 
     pub async fn assert_state_matches(&mut self) {
+        self.is_dirty = false;
         let neovim = self.neovim_state().await;
         let editor = self.editor_state();
         let initial_state = self
@@ -289,18 +302,18 @@ impl<'a> NeovimBackedTestContext<'a> {
         &mut self,
         keystrokes: [&str; COUNT],
         initial_state: &str,
-    ) -> Option<(ContextHandle, ContextHandle)> {
+    ) {
         if let Some(possible_exempted_keystrokes) = self.exemptions.get(initial_state) {
             match possible_exempted_keystrokes {
                 Some(exempted_keystrokes) => {
                     if exempted_keystrokes.contains(&format!("{keystrokes:?}")) {
                         // This keystroke was exempted for this insertion text
-                        return None;
+                        return;
                     }
                 }
                 None => {
                     // All keystrokes for this insertion text are exempted
-                    return None;
+                    return;
                 }
             }
         }
@@ -308,7 +321,6 @@ impl<'a> NeovimBackedTestContext<'a> {
         let _state_context = self.set_shared_state(initial_state).await;
         let _keystroke_context = self.simulate_shared_keystrokes(keystrokes).await;
         self.assert_state_matches().await;
-        Some((_state_context, _keystroke_context))
     }
 
     pub async fn assert_binding_matches_all<const COUNT: usize>(
@@ -349,6 +361,17 @@ impl<'a> NeovimBackedTestContext<'a> {
         self.assert_state_matches().await;
     }
 
+    pub async fn assert_matches_neovim<const COUNT: usize>(
+        &mut self,
+        marked_positions: &str,
+        keystrokes: [&str; COUNT],
+        result: &str,
+    ) {
+        self.set_shared_state(marked_positions).await;
+        self.simulate_shared_keystrokes(keystrokes).await;
+        self.assert_shared_state(result).await;
+    }
+
     pub async fn assert_binding_matches_all_exempted<const COUNT: usize>(
         &mut self,
         keystrokes: [&str; COUNT],
@@ -380,6 +403,17 @@ impl<'a> Deref for NeovimBackedTestContext<'a> {
 impl<'a> DerefMut for NeovimBackedTestContext<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.cx
+    }
+}
+
+// a common mistake in tests is to call set_shared_state when
+// you mean asswert_shared_state. This notices that and lets
+// you know.
+impl<'a> Drop for NeovimBackedTestContext<'a> {
+    fn drop(&mut self) {
+        if self.is_dirty {
+            panic!("Test context was dropped after set_shared_state before assert_shared_state")
+        }
     }
 }
 

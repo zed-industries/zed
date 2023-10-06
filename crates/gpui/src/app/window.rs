@@ -33,6 +33,7 @@ use std::{
     any::{type_name, Any, TypeId},
     mem,
     ops::{Deref, DerefMut, Range, Sub},
+    sync::Arc,
 };
 use taffy::{
     tree::{Measurable, MeasureFunc},
@@ -56,7 +57,7 @@ pub struct Window {
     pub(crate) rendered_views: HashMap<usize, Box<dyn AnyRootElement>>,
     scene: SceneBuilder,
     pub(crate) text_style_stack: Vec<TextStyle>,
-    pub(crate) theme_stack: Vec<Box<dyn Any>>,
+    pub(crate) theme_stack: Vec<Arc<dyn Any + Send + Sync>>,
     pub(crate) new_parents: HashMap<usize, usize>,
     pub(crate) views_to_notify_if_ancestors_change: HashMap<usize, SmallVec<[usize; 2]>>,
     titlebar_height: f32,
@@ -70,7 +71,7 @@ pub struct Window {
     pub(crate) hovered_region_ids: Vec<MouseRegionId>,
     pub(crate) clicked_region_ids: Vec<MouseRegionId>,
     pub(crate) clicked_region: Option<(MouseRegionId, MouseButton)>,
-    text_layout_cache: TextLayoutCache,
+    text_layout_cache: Arc<TextLayoutCache>,
     refreshing: bool,
 }
 
@@ -106,7 +107,7 @@ impl Window {
             cursor_regions: Default::default(),
             mouse_regions: Default::default(),
             event_handlers: Default::default(),
-            text_layout_cache: TextLayoutCache::new(cx.font_system.clone()),
+            text_layout_cache: Arc::new(TextLayoutCache::new(cx.font_system.clone())),
             last_mouse_moved_event: None,
             last_mouse_position: Vector2F::zero(),
             pressed_buttons: Default::default(),
@@ -302,7 +303,7 @@ impl<'a> WindowContext<'a> {
         self.window.refreshing
     }
 
-    pub fn text_layout_cache(&self) -> &TextLayoutCache {
+    pub fn text_layout_cache(&self) -> &Arc<TextLayoutCache> {
         &self.window.text_layout_cache
     }
 
@@ -611,9 +612,10 @@ impl<'a> WindowContext<'a> {
             }
 
             Event::MouseUp(e) => {
-                // NOTE: The order of event pushes is important! MouseUp events MUST be fired
-                // before click events, and so the MouseUp events need to be pushed before
-                // MouseClick events.
+                mouse_events.push(MouseEvent::Up(MouseUp {
+                    region: Default::default(),
+                    platform_event: e.clone(),
+                }));
 
                 // Synthesize one last drag event to end the drag
                 mouse_events.push(MouseEvent::Drag(MouseDrag {
@@ -626,10 +628,7 @@ impl<'a> WindowContext<'a> {
                     },
                     end: true,
                 }));
-                mouse_events.push(MouseEvent::Up(MouseUp {
-                    region: Default::default(),
-                    platform_event: e.clone(),
-                }));
+
                 mouse_events.push(MouseEvent::UpOut(MouseUpOut {
                     region: Default::default(),
                     platform_event: e.clone(),
@@ -1338,18 +1337,21 @@ impl<'a> WindowContext<'a> {
         self.window.text_style_stack.pop();
     }
 
-    pub fn theme<T: 'static>(&self) -> &T {
+    pub fn theme<T: 'static + Send + Sync>(&self) -> Arc<T> {
         self.window
             .theme_stack
             .iter()
             .rev()
-            .find_map(|theme| theme.downcast_ref())
+            .find_map(|theme| {
+                let entry = Arc::clone(theme);
+                entry.downcast::<T>().ok()
+            })
             .ok_or_else(|| anyhow!("no theme provided of type {}", type_name::<T>()))
             .unwrap()
     }
 
-    pub fn push_theme<T: 'static>(&mut self, theme: T) {
-        self.window.theme_stack.push(Box::new(theme));
+    pub fn push_theme<T: 'static + Send + Sync>(&mut self, theme: T) {
+        self.window.theme_stack.push(Arc::new(theme));
     }
 
     pub fn pop_theme(&mut self) {

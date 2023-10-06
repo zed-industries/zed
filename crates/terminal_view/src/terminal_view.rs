@@ -18,7 +18,7 @@ use gpui::{
     ViewHandle, WeakViewHandle,
 };
 use language::Bias;
-use project::{LocalWorktree, Project};
+use project::{search::SearchQuery, LocalWorktree, Project};
 use serde::Deserialize;
 use smallvec::{smallvec, SmallVec};
 use smol::Timer;
@@ -26,6 +26,7 @@ use std::{
     borrow::Cow,
     ops::RangeInclusive,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 use terminal::{
@@ -283,12 +284,7 @@ impl TerminalView {
     pub fn deploy_context_menu(&mut self, position: Vector2F, cx: &mut ViewContext<Self>) {
         let menu_entries = vec![
             ContextMenuItem::action("Clear", Clear),
-            ContextMenuItem::action(
-                "Close",
-                pane::CloseActiveItem {
-                    save_behavior: None,
-                },
-            ),
+            ContextMenuItem::action("Close", pane::CloseActiveItem { save_intent: None }),
         ];
 
         self.context_menu.update(cx, |menu, cx| {
@@ -380,10 +376,10 @@ impl TerminalView {
 
     pub fn find_matches(
         &mut self,
-        query: project::search::SearchQuery,
+        query: Arc<project::search::SearchQuery>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<RangeInclusive<Point>>> {
-        let searcher = regex_search_for_query(query);
+        let searcher = regex_search_for_query(&query);
 
         if let Some(searcher) = searcher {
             self.terminal
@@ -486,7 +482,7 @@ fn possible_open_targets(
         .collect()
 }
 
-pub fn regex_search_for_query(query: project::search::SearchQuery) -> Option<RegexSearch> {
+pub fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<RegexSearch> {
     let query = query.as_str();
     let searcher = RegexSearch::new(&query);
     searcher.ok()
@@ -798,6 +794,7 @@ impl SearchableItem for TerminalView {
             case: false,
             word: false,
             regex: false,
+            replacement: false,
         }
     }
 
@@ -851,10 +848,10 @@ impl SearchableItem for TerminalView {
     /// Get all of the matches for this query, should be done on the background
     fn find_matches(
         &mut self,
-        query: project::search::SearchQuery,
+        query: Arc<project::search::SearchQuery>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Self::Match>> {
-        if let Some(searcher) = regex_search_for_query(query) {
+        if let Some(searcher) = regex_search_for_query(&query) {
             self.terminal()
                 .update(cx, |term, cx| term.find_matches(searcher, cx))
         } else {
@@ -897,6 +894,9 @@ impl SearchableItem for TerminalView {
         };
 
         res
+    }
+    fn replace(&mut self, _: &Self::Match, _: &SearchQuery, _: &mut ViewContext<Self>) {
+        // Replacement is not supported in terminal view, so this is a no-op.
     }
 }
 

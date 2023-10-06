@@ -35,4 +35,4 @@
 {"Key":"."}
 {"Put":{"state":"THE QUIˇck brown fox"}}
 {"Key":"."}
-{"Put":{"state":"THE QUICK ˇbrown fox"}}
+{"Get":{"state":"THE QUICK ˇbrown fox","mode":"Normal"}}

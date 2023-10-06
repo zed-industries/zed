@@ -1,5 +1,4 @@
 mod db;
-mod embedding;
 mod embedding_queue;
 mod parsing;
 pub mod semantic_index_settings;
@@ -8,38 +7,41 @@ pub mod semantic_index_settings;
 mod semantic_index_tests;
 
 use crate::semantic_index_settings::SemanticIndexSettings;
+use ai::embedding::{Embedding, EmbeddingProvider, OpenAIEmbeddings};
 use anyhow::{anyhow, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use db::VectorDatabase;
-use embedding::{Embedding, EmbeddingProvider, OpenAIEmbeddings};
 use embedding_queue::{EmbeddingQueue, FileToEmbed};
 use futures::{future, FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
 use language::{Anchor, Bias, Buffer, Language, LanguageRegistry};
+use lazy_static::lazy_static;
+use ordered_float::OrderedFloat;
 use parking_lot::Mutex;
-use parsing::{CodeContextRetriever, SpanDigest, PARSEABLE_ENTIRE_FILE_TYPES};
+use parsing::{CodeContextRetriever, Span, SpanDigest, PARSEABLE_ENTIRE_FILE_TYPES};
 use postage::watch;
 use project::{search::PathMatcher, Fs, PathChange, Project, ProjectEntryId, Worktree, WorktreeId};
 use smol::channel;
 use std::{
-    cmp::Ordering,
+    cmp::Reverse,
+    env,
     future::Future,
+    mem,
     ops::Range,
     path::{Path, PathBuf},
     sync::{Arc, Weak},
     time::{Duration, Instant, SystemTime},
 };
-use util::{
-    channel::{ReleaseChannel, RELEASE_CHANNEL, RELEASE_CHANNEL_NAME},
-    http::HttpClient,
-    paths::EMBEDDINGS_DIR,
-    ResultExt,
-};
+use util::{channel::RELEASE_CHANNEL_NAME, http::HttpClient, paths::EMBEDDINGS_DIR, ResultExt};
 use workspace::WorkspaceCreated;
 
-const SEMANTIC_INDEX_VERSION: usize = 10;
+const SEMANTIC_INDEX_VERSION: usize = 11;
 const BACKGROUND_INDEXING_DELAY: Duration = Duration::from_secs(5 * 60);
 const EMBEDDING_QUEUE_FLUSH_TIMEOUT: Duration = Duration::from_millis(250);
+
+lazy_static! {
+    static ref OPENAI_API_KEY: Option<String> = env::var("OPENAI_API_KEY").ok();
+}
 
 pub fn init(
     fs: Arc<dyn Fs>,
@@ -52,11 +54,6 @@ pub fn init(
     let db_file_path = EMBEDDINGS_DIR
         .join(Path::new(RELEASE_CHANNEL_NAME.as_str()))
         .join("embeddings_db");
-
-    // This needs to be removed at some point before stable.
-    if *RELEASE_CHANNEL == ReleaseChannel::Stable {
-        return;
-    }
 
     cx.subscribe_global::<WorkspaceCreated, _>({
         move |event, cx| {
@@ -108,6 +105,7 @@ pub fn init(
 
 #[derive(Copy, Clone, Debug)]
 pub enum SemanticIndexStatus {
+    NotAuthenticated,
     NotIndexed,
     Indexed,
     Indexing {
@@ -262,9 +260,11 @@ pub struct PendingFile {
     job_handle: JobHandle,
 }
 
+#[derive(Clone)]
 pub struct SearchResult {
     pub buffer: ModelHandle<Buffer>,
     pub range: Range<Anchor>,
+    pub similarity: OrderedFloat<f32>,
 }
 
 impl SemanticIndex {
@@ -278,10 +278,13 @@ impl SemanticIndex {
 
     pub fn enabled(cx: &AppContext) -> bool {
         settings::get::<SemanticIndexSettings>(cx).enabled
-            && *RELEASE_CHANNEL != ReleaseChannel::Stable
     }
 
     pub fn status(&self, project: &ModelHandle<Project>) -> SemanticIndexStatus {
+        if !self.embedding_provider.is_authenticated() {
+            return SemanticIndexStatus::NotAuthenticated;
+        }
+
         if let Some(project_state) = self.projects.get(&project.downgrade()) {
             if project_state
                 .worktrees
@@ -301,7 +304,7 @@ impl SemanticIndex {
         }
     }
 
-    async fn new(
+    pub async fn new(
         fs: Arc<dyn Fs>,
         database_path: PathBuf,
         embedding_provider: Arc<dyn EmbeddingProvider>,
@@ -402,7 +405,7 @@ impl SemanticIndex {
 
         if let Some(content) = fs.load(&pending_file.absolute_path).await.log_err() {
             if let Some(mut spans) = retriever
-                .parse_file_with_template(&pending_file.relative_path, &content, language)
+                .parse_file_with_template(Some(&pending_file.relative_path), &content, language)
                 .log_err()
             {
                 log::trace!(
@@ -422,7 +425,7 @@ impl SemanticIndex {
                     path: pending_file.relative_path,
                     mtime: pending_file.modified_time,
                     job_handle: pending_file.job_handle,
-                    spans: spans,
+                    spans,
                 });
             }
         }
@@ -687,38 +690,79 @@ impl SemanticIndex {
     pub fn search_project(
         &mut self,
         project: ModelHandle<Project>,
-        phrase: String,
+        query: String,
         limit: usize,
         includes: Vec<PathMatcher>,
         excludes: Vec<PathMatcher>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<SearchResult>>> {
+        if query.is_empty() {
+            return Task::ready(Ok(Vec::new()));
+        }
+
         let index = self.index_project(project.clone(), cx);
         let embedding_provider = self.embedding_provider.clone();
+
+        cx.spawn(|this, mut cx| async move {
+            index.await?;
+            let t0 = Instant::now();
+            let query = embedding_provider
+                .embed_batch(vec![query])
+                .await?
+                .pop()
+                .ok_or_else(|| anyhow!("could not embed query"))?;
+            log::trace!("Embedding Search Query: {:?}ms", t0.elapsed().as_millis());
+
+            let search_start = Instant::now();
+            let modified_buffer_results = this.update(&mut cx, |this, cx| {
+                this.search_modified_buffers(
+                    &project,
+                    query.clone(),
+                    limit,
+                    &includes,
+                    &excludes,
+                    cx,
+                )
+            });
+            let file_results = this.update(&mut cx, |this, cx| {
+                this.search_files(project, query, limit, includes, excludes, cx)
+            });
+            let (modified_buffer_results, file_results) =
+                futures::join!(modified_buffer_results, file_results);
+
+            // Weave together the results from modified buffers and files.
+            let mut results = Vec::new();
+            let mut modified_buffers = HashSet::default();
+            for result in modified_buffer_results.log_err().unwrap_or_default() {
+                modified_buffers.insert(result.buffer.clone());
+                results.push(result);
+            }
+            for result in file_results.log_err().unwrap_or_default() {
+                if !modified_buffers.contains(&result.buffer) {
+                    results.push(result);
+                }
+            }
+            results.sort_by_key(|result| Reverse(result.similarity));
+            results.truncate(limit);
+            log::trace!("Semantic search took {:?}", search_start.elapsed());
+            Ok(results)
+        })
+    }
+
+    pub fn search_files(
+        &mut self,
+        project: ModelHandle<Project>,
+        query: Embedding,
+        limit: usize,
+        includes: Vec<PathMatcher>,
+        excludes: Vec<PathMatcher>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<SearchResult>>> {
         let db_path = self.db.path().clone();
         let fs = self.fs.clone();
         cx.spawn(|this, mut cx| async move {
-            index.await?;
-
-            let t0 = Instant::now();
             let database =
                 VectorDatabase::new(fs.clone(), db_path.clone(), cx.background()).await?;
-
-            if phrase.len() == 0 {
-                return Ok(Vec::new());
-            }
-
-            let phrase_embedding = embedding_provider
-                .embed_batch(vec![phrase])
-                .await?
-                .into_iter()
-                .next()
-                .unwrap();
-
-            log::trace!(
-                "Embedding search phrase took: {:?} milliseconds",
-                t0.elapsed().as_millis()
-            );
 
             let worktree_db_ids = this.read_with(&cx, |this, _| {
                 let project_state = this
@@ -738,16 +782,22 @@ impl SemanticIndex {
                     .collect::<Vec<i64>>();
                 anyhow::Ok(worktree_db_ids)
             })?;
+
             let file_ids = database
                 .retrieve_included_file_ids(&worktree_db_ids, &includes, &excludes)
                 .await?;
 
             let batch_n = cx.background().num_cpus();
             let ids_len = file_ids.clone().len();
-            let batch_size = if ids_len <= batch_n {
-                ids_len
-            } else {
-                ids_len / batch_n
+            let minimum_batch_size = 50;
+
+            let batch_size = {
+                let size = ids_len / batch_n;
+                if size < minimum_batch_size {
+                    minimum_batch_size
+                } else {
+                    size
+                }
             };
 
             let mut batch_results = Vec::new();
@@ -756,36 +806,41 @@ impl SemanticIndex {
                 let limit = limit.clone();
                 let fs = fs.clone();
                 let db_path = db_path.clone();
-                let phrase_embedding = phrase_embedding.clone();
+                let query = query.clone();
                 if let Some(db) = VectorDatabase::new(fs, db_path.clone(), cx.background())
                     .await
                     .log_err()
                 {
                     batch_results.push(async move {
-                        db.top_k_search(&phrase_embedding, limit, batch.as_slice())
-                            .await
+                        db.top_k_search(&query, limit, batch.as_slice()).await
                     });
                 }
             }
+
             let batch_results = futures::future::join_all(batch_results).await;
 
             let mut results = Vec::new();
             for batch_result in batch_results {
                 if batch_result.is_ok() {
                     for (id, similarity) in batch_result.unwrap() {
-                        let ix = match results.binary_search_by(|(_, s)| {
-                            similarity.partial_cmp(&s).unwrap_or(Ordering::Equal)
-                        }) {
+                        let ix = match results
+                            .binary_search_by_key(&Reverse(similarity), |(_, s)| Reverse(*s))
+                        {
                             Ok(ix) => ix,
                             Err(ix) => ix,
                         };
+
                         results.insert(ix, (id, similarity));
                         results.truncate(limit);
                     }
                 }
             }
 
-            let ids = results.into_iter().map(|(id, _)| id).collect::<Vec<i64>>();
+            let ids = results.iter().map(|(id, _)| *id).collect::<Vec<i64>>();
+            let scores = results
+                .into_iter()
+                .map(|(_, score)| score)
+                .collect::<Vec<_>>();
             let spans = database.spans_for_ids(ids.as_slice()).await?;
 
             let mut tasks = Vec::new();
@@ -809,25 +864,116 @@ impl SemanticIndex {
             })?;
 
             let buffers = futures::future::join_all(tasks).await;
-
-            log::trace!(
-                "Semantic Searching took: {:?} milliseconds in total",
-                t0.elapsed().as_millis()
-            );
-
             Ok(buffers
                 .into_iter()
                 .zip(ranges)
-                .filter_map(|(buffer, range)| {
+                .zip(scores)
+                .filter_map(|((buffer, range), similarity)| {
                     let buffer = buffer.log_err()?;
                     let range = buffer.read_with(&cx, |buffer, _| {
                         let start = buffer.clip_offset(range.start, Bias::Left);
                         let end = buffer.clip_offset(range.end, Bias::Right);
                         buffer.anchor_before(start)..buffer.anchor_after(end)
                     });
-                    Some(SearchResult { buffer, range })
+                    Some(SearchResult {
+                        buffer,
+                        range,
+                        similarity,
+                    })
                 })
-                .collect::<Vec<_>>())
+                .collect())
+        })
+    }
+
+    fn search_modified_buffers(
+        &self,
+        project: &ModelHandle<Project>,
+        query: Embedding,
+        limit: usize,
+        includes: &[PathMatcher],
+        excludes: &[PathMatcher],
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<SearchResult>>> {
+        let modified_buffers = project
+            .read(cx)
+            .opened_buffers(cx)
+            .into_iter()
+            .filter_map(|buffer_handle| {
+                let buffer = buffer_handle.read(cx);
+                let snapshot = buffer.snapshot();
+                let excluded = snapshot.resolve_file_path(cx, false).map_or(false, |path| {
+                    excludes.iter().any(|matcher| matcher.is_match(&path))
+                });
+
+                let included = if includes.len() == 0 {
+                    true
+                } else {
+                    snapshot.resolve_file_path(cx, false).map_or(false, |path| {
+                        includes.iter().any(|matcher| matcher.is_match(&path))
+                    })
+                };
+
+                if buffer.is_dirty() && !excluded && included {
+                    Some((buffer_handle, snapshot))
+                } else {
+                    None
+                }
+            })
+            .collect::<HashMap<_, _>>();
+
+        let embedding_provider = self.embedding_provider.clone();
+        let fs = self.fs.clone();
+        let db_path = self.db.path().clone();
+        let background = cx.background().clone();
+        cx.background().spawn(async move {
+            let db = VectorDatabase::new(fs, db_path.clone(), background).await?;
+            let mut results = Vec::<SearchResult>::new();
+
+            let mut retriever = CodeContextRetriever::new(embedding_provider.clone());
+            for (buffer, snapshot) in modified_buffers {
+                let language = snapshot
+                    .language_at(0)
+                    .cloned()
+                    .unwrap_or_else(|| language::PLAIN_TEXT.clone());
+                let mut spans = retriever
+                    .parse_file_with_template(None, &snapshot.text(), language)
+                    .log_err()
+                    .unwrap_or_default();
+                if Self::embed_spans(&mut spans, embedding_provider.as_ref(), &db)
+                    .await
+                    .log_err()
+                    .is_some()
+                {
+                    for span in spans {
+                        let similarity = span.embedding.unwrap().similarity(&query);
+                        let ix = match results
+                            .binary_search_by_key(&Reverse(similarity), |result| {
+                                Reverse(result.similarity)
+                            }) {
+                            Ok(ix) => ix,
+                            Err(ix) => ix,
+                        };
+
+                        let range = {
+                            let start = snapshot.clip_offset(span.range.start, Bias::Left);
+                            let end = snapshot.clip_offset(span.range.end, Bias::Right);
+                            snapshot.anchor_before(start)..snapshot.anchor_after(end)
+                        };
+
+                        results.insert(
+                            ix,
+                            SearchResult {
+                                buffer: buffer.clone(),
+                                range,
+                                similarity,
+                            },
+                        );
+                        results.truncate(limit);
+                    }
+                }
+            }
+
+            Ok(results)
         })
     }
 
@@ -836,9 +982,11 @@ impl SemanticIndex {
         project: ModelHandle<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        if !self.projects.contains_key(&project.downgrade()) {
-            log::trace!("Registering Project for Semantic Index");
+        if !self.embedding_provider.is_authenticated() {
+            return Task::ready(Err(anyhow!("user is not authenticated")));
+        }
 
+        if !self.projects.contains_key(&project.downgrade()) {
             let subscription = cx.subscribe(&project, |this, project, event, cx| match event {
                 project::Event::WorktreeAdded | project::Event::WorktreeRemoved(_) => {
                     this.project_worktrees_changed(project.clone(), cx);
@@ -1010,6 +1158,63 @@ impl SemanticIndex {
             }
             Ok(())
         })
+    }
+
+    async fn embed_spans(
+        spans: &mut [Span],
+        embedding_provider: &dyn EmbeddingProvider,
+        db: &VectorDatabase,
+    ) -> Result<()> {
+        let mut batch = Vec::new();
+        let mut batch_tokens = 0;
+        let mut embeddings = Vec::new();
+
+        let digests = spans
+            .iter()
+            .map(|span| span.digest.clone())
+            .collect::<Vec<_>>();
+        let embeddings_for_digests = db
+            .embeddings_for_digests(digests)
+            .await
+            .log_err()
+            .unwrap_or_default();
+
+        for span in &*spans {
+            if embeddings_for_digests.contains_key(&span.digest) {
+                continue;
+            };
+
+            if batch_tokens + span.token_count > embedding_provider.max_tokens_per_batch() {
+                let batch_embeddings = embedding_provider
+                    .embed_batch(mem::take(&mut batch))
+                    .await?;
+                embeddings.extend(batch_embeddings);
+                batch_tokens = 0;
+            }
+
+            batch_tokens += span.token_count;
+            batch.push(span.content.clone());
+        }
+
+        if !batch.is_empty() {
+            let batch_embeddings = embedding_provider
+                .embed_batch(mem::take(&mut batch))
+                .await?;
+
+            embeddings.extend(batch_embeddings);
+        }
+
+        let mut embeddings = embeddings.into_iter();
+        for span in spans {
+            let embedding = if let Some(embedding) = embeddings_for_digests.get(&span.digest) {
+                Some(embedding.clone())
+            } else {
+                embeddings.next()
+            };
+            let embedding = embedding.ok_or_else(|| anyhow!("failed to embed spans"))?;
+            span.embedding = Some(embedding);
+        }
+        Ok(())
     }
 }
 

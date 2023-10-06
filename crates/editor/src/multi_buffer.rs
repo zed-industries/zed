@@ -70,6 +70,9 @@ pub enum Event {
     Edited {
         sigleton_buffer_edited: bool,
     },
+    TransactionUndone {
+        transaction_id: TransactionId,
+    },
     Reloaded,
     DiffBaseChanged,
     LanguageChanged,
@@ -771,30 +774,36 @@ impl MultiBuffer {
     }
 
     pub fn undo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
+        let mut transaction_id = None;
         if let Some(buffer) = self.as_singleton() {
-            return buffer.update(cx, |buffer, cx| buffer.undo(cx));
-        }
+            transaction_id = buffer.update(cx, |buffer, cx| buffer.undo(cx));
+        } else {
+            while let Some(transaction) = self.history.pop_undo() {
+                let mut undone = false;
+                for (buffer_id, buffer_transaction_id) in &mut transaction.buffer_transactions {
+                    if let Some(BufferState { buffer, .. }) = self.buffers.borrow().get(buffer_id) {
+                        undone |= buffer.update(cx, |buffer, cx| {
+                            let undo_to = *buffer_transaction_id;
+                            if let Some(entry) = buffer.peek_undo_stack() {
+                                *buffer_transaction_id = entry.transaction_id();
+                            }
+                            buffer.undo_to_transaction(undo_to, cx)
+                        });
+                    }
+                }
 
-        while let Some(transaction) = self.history.pop_undo() {
-            let mut undone = false;
-            for (buffer_id, buffer_transaction_id) in &mut transaction.buffer_transactions {
-                if let Some(BufferState { buffer, .. }) = self.buffers.borrow().get(buffer_id) {
-                    undone |= buffer.update(cx, |buffer, cx| {
-                        let undo_to = *buffer_transaction_id;
-                        if let Some(entry) = buffer.peek_undo_stack() {
-                            *buffer_transaction_id = entry.transaction_id();
-                        }
-                        buffer.undo_to_transaction(undo_to, cx)
-                    });
+                if undone {
+                    transaction_id = Some(transaction.id);
+                    break;
                 }
             }
-
-            if undone {
-                return Some(transaction.id);
-            }
         }
 
-        None
+        if let Some(transaction_id) = transaction_id {
+            cx.emit(Event::TransactionUndone { transaction_id });
+        }
+
+        transaction_id
     }
 
     pub fn redo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {

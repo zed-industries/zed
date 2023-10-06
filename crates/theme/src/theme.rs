@@ -3,7 +3,9 @@ mod theme_registry;
 mod theme_settings;
 pub mod ui;
 
-use components::{action_button::ButtonStyle, disclosure::DisclosureStyle, ToggleIconButtonStyle};
+use components::{
+    action_button::ButtonStyle, disclosure::DisclosureStyle, IconButtonStyle, ToggleIconButtonStyle,
+};
 use gpui::{
     color::Color,
     elements::{Border, ContainerStyle, ImageStyle, LabelStyle, Shadow, SvgStyle, TooltipStyle},
@@ -50,6 +52,7 @@ pub struct Theme {
     pub copilot: Copilot,
     pub collab_panel: CollabPanel,
     pub project_panel: ProjectPanel,
+    pub chat_panel: ChatPanel,
     pub command_palette: CommandPalette,
     pub picker: Picker,
     pub editor: Editor,
@@ -128,6 +131,7 @@ pub struct Titlebar {
     pub menu: TitlebarMenu,
     pub project_menu_button: Toggleable<Interactive<ContainedText>>,
     pub git_menu_button: Toggleable<Interactive<ContainedText>>,
+    pub project_host: Interactive<ContainedText>,
     pub item_spacing: f32,
     pub face_pile_spacing: f32,
     pub avatar_ribbon: AvatarRibbon,
@@ -235,6 +239,7 @@ pub struct CollabPanel {
     pub log_in_button: Interactive<ContainedText>,
     pub channel_editor: ContainerStyle,
     pub channel_hash: Icon,
+    pub channel_note_active_color: Color,
     pub tabbed_modal: TabbedModal,
     pub contact_finder: ContactFinder,
     pub channel_modal: ChannelModal,
@@ -248,7 +253,7 @@ pub struct CollabPanel {
     pub leave_call: Interactive<ContainedText>,
     pub contact_row: Toggleable<Interactive<ContainerStyle>>,
     pub channel_row: Toggleable<Interactive<ContainerStyle>>,
-    pub channel_name: ContainedText,
+    pub channel_name: Toggleable<ContainedText>,
     pub row_height: f32,
     pub project_row: Toggleable<Interactive<ProjectRow>>,
     pub tree_branch: Toggleable<Interactive<TreeBranch>>,
@@ -439,9 +444,7 @@ pub struct Search {
     pub include_exclude_editor: FindEditor,
     pub invalid_include_exclude_editor: ContainerStyle,
     pub include_exclude_inputs: ContainedText,
-    pub option_button: Toggleable<Interactive<IconButton>>,
     pub option_button_component: ToggleIconButtonStyle,
-    pub action_button: Toggleable<Interactive<ContainedText>>,
     pub match_background: Color,
     pub match_index: ContainedText,
     pub major_results_status: TextStyle,
@@ -453,6 +456,10 @@ pub struct Search {
     pub search_row_spacing: f32,
     pub option_button_height: f32,
     pub modes_container: ContainerStyle,
+    pub replace_icon: IconStyle,
+    // Used for filters and replace
+    pub option_button: Toggleable<Interactive<IconButton>>,
+    pub action_button: IconButtonStyle,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]
@@ -621,9 +628,26 @@ pub struct IconButton {
 }
 
 #[derive(Deserialize, Default, JsonSchema)]
-pub struct ChatMessage {
+pub struct ChatPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
+    pub list: ContainerStyle,
+    pub channel_select: ChannelSelect,
+    pub input_editor: FieldEditor,
+    pub avatar: AvatarStyle,
+    pub avatar_container: ContainerStyle,
+    pub message: ChatMessage,
+    pub continuation_message: ChatMessage,
+    pub last_message_bottom_spacing: f32,
+    pub pending_message: ChatMessage,
+    pub sign_in_prompt: Interactive<TextStyle>,
+    pub icon_button: Interactive<IconButton>,
+}
+
+#[derive(Deserialize, Default, JsonSchema)]
+pub struct ChatMessage {
+    #[serde(flatten)]
+    pub container: Interactive<ContainerStyle>,
     pub body: TextStyle,
     pub sender: ContainedText,
     pub timestamp: ContainedText,
@@ -637,7 +661,6 @@ pub struct ChannelSelect {
     pub item: ChannelName,
     pub active_item: ChannelName,
     pub hovered_item: ChannelName,
-    pub hovered_active_item: ChannelName,
     pub menu: ContainerStyle,
 }
 
@@ -1048,13 +1071,12 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Interactive<T> {
 }
 
 impl Editor {
-    pub fn replica_selection_style(&self, replica_id: u16) -> &SelectionStyle {
-        let style_ix = replica_id as usize % (self.guest_selections.len() + 1);
-        if style_ix == 0 {
-            &self.selection
-        } else {
-            &self.guest_selections[style_ix - 1]
+    pub fn selection_style_for_room_participant(&self, participant_index: u32) -> SelectionStyle {
+        if self.guest_selections.is_empty() {
+            return SelectionStyle::default();
         }
+        let style_ix = participant_index as usize % self.guest_selections.len();
+        self.guest_selections[style_ix]
     }
 }
 

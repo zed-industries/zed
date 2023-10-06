@@ -1,5 +1,4 @@
 use crate::{
-    link_go_to_definition::DocumentRange,
     multi_buffer::{MultiBufferChunks, MultiBufferRows},
     Anchor, InlayId, MultiBufferSnapshot, ToOffset,
 };
@@ -11,12 +10,13 @@ use std::{
     cmp,
     iter::Peekable,
     ops::{Add, AddAssign, Range, Sub, SubAssign},
+    sync::Arc,
     vec,
 };
-use sum_tree::{Bias, Cursor, SumTree};
+use sum_tree::{Bias, Cursor, SumTree, TreeMap};
 use text::{Patch, Rope};
 
-use super::TextHighlights;
+use super::Highlights;
 
 pub struct InlayMap {
     snapshot: InlaySnapshot,
@@ -214,10 +214,11 @@ pub struct InlayChunks<'a> {
     inlay_chunk: Option<&'a str>,
     output_offset: InlayOffset,
     max_output_offset: InlayOffset,
-    hint_highlight_style: Option<HighlightStyle>,
+    inlay_highlight_style: Option<HighlightStyle>,
     suggestion_highlight_style: Option<HighlightStyle>,
     highlight_endpoints: Peekable<vec::IntoIter<HighlightEndpoint>>,
     active_highlights: BTreeMap<Option<TypeId>, HighlightStyle>,
+    highlights: Highlights<'a>,
     snapshot: &'a InlaySnapshot,
 }
 
@@ -293,8 +294,41 @@ impl<'a> Iterator for InlayChunks<'a> {
                 prefix
             }
             Transform::Inlay(inlay) => {
+                let mut inlay_style_and_highlight = None;
+                if let Some(inlay_highlights) = self.highlights.inlay_highlights {
+                    for (_, inlay_id_to_data) in inlay_highlights.iter() {
+                        let style_and_highlight = inlay_id_to_data.get(&inlay.id);
+                        if style_and_highlight.is_some() {
+                            inlay_style_and_highlight = style_and_highlight;
+                            break;
+                        }
+                    }
+                }
+
+                let mut highlight_style = match inlay.id {
+                    InlayId::Suggestion(_) => self.suggestion_highlight_style,
+                    InlayId::Hint(_) => self.inlay_highlight_style,
+                };
+                let next_inlay_highlight_endpoint;
+                let offset_in_inlay = self.output_offset - self.transforms.start().0;
+                if let Some((style, highlight)) = inlay_style_and_highlight {
+                    let range = &highlight.range;
+                    if offset_in_inlay.0 < range.start {
+                        next_inlay_highlight_endpoint = range.start - offset_in_inlay.0;
+                    } else if offset_in_inlay.0 >= range.end {
+                        next_inlay_highlight_endpoint = usize::MAX;
+                    } else {
+                        next_inlay_highlight_endpoint = range.end - offset_in_inlay.0;
+                        highlight_style
+                            .get_or_insert_with(|| Default::default())
+                            .highlight(style.clone());
+                    }
+                } else {
+                    next_inlay_highlight_endpoint = usize::MAX;
+                }
+
                 let inlay_chunks = self.inlay_chunks.get_or_insert_with(|| {
-                    let start = self.output_offset - self.transforms.start().0;
+                    let start = offset_in_inlay;
                     let end = cmp::min(self.max_output_offset, self.transforms.end(&()).0)
                         - self.transforms.start().0;
                     inlay.text.chunks_in_range(start.0..end.0)
@@ -302,21 +336,15 @@ impl<'a> Iterator for InlayChunks<'a> {
                 let inlay_chunk = self
                     .inlay_chunk
                     .get_or_insert_with(|| inlay_chunks.next().unwrap());
-                let (chunk, remainder) = inlay_chunk.split_at(
-                    inlay_chunk
-                        .len()
-                        .min(next_highlight_endpoint.0 - self.output_offset.0),
-                );
+                let (chunk, remainder) =
+                    inlay_chunk.split_at(inlay_chunk.len().min(next_inlay_highlight_endpoint));
                 *inlay_chunk = remainder;
                 if inlay_chunk.is_empty() {
                     self.inlay_chunk = None;
                 }
 
                 self.output_offset.0 += chunk.len();
-                let mut highlight_style = match inlay.id {
-                    InlayId::Suggestion(_) => self.suggestion_highlight_style,
-                    InlayId::Hint(_) => self.hint_highlight_style,
-                };
+
                 if !self.active_highlights.is_empty() {
                     for active_highlight in self.active_highlights.values() {
                         highlight_style
@@ -625,18 +653,20 @@ impl InlayMap {
                     .filter(|ch| *ch != '\r')
                     .take(len)
                     .collect::<String>();
-                log::info!(
-                    "creating inlay at buffer offset {} with bias {:?} and text {:?}",
-                    position,
-                    bias,
-                    text
-                );
 
                 let inlay_id = if i % 2 == 0 {
                     InlayId::Hint(post_inc(next_inlay_id))
                 } else {
                     InlayId::Suggestion(post_inc(next_inlay_id))
                 };
+                log::info!(
+                    "creating inlay {:?} at buffer offset {} with bias {:?} and text {:?}",
+                    inlay_id,
+                    position,
+                    bias,
+                    text
+                );
+
                 to_insert.push(Inlay {
                     id: inlay_id,
                     position: snapshot.buffer.anchor_at(position, bias),
@@ -992,77 +1022,24 @@ impl InlaySnapshot {
         &'a self,
         range: Range<InlayOffset>,
         language_aware: bool,
-        text_highlights: Option<&'a TextHighlights>,
-        hint_highlight_style: Option<HighlightStyle>,
-        suggestion_highlight_style: Option<HighlightStyle>,
+        highlights: Highlights<'a>,
     ) -> InlayChunks<'a> {
         let mut cursor = self.transforms.cursor::<(InlayOffset, usize)>();
         cursor.seek(&range.start, Bias::Right, &());
 
         let mut highlight_endpoints = Vec::new();
-        if let Some(text_highlights) = text_highlights {
+        if let Some(text_highlights) = highlights.text_highlights {
             if !text_highlights.is_empty() {
-                while cursor.start().0 < range.end {
-                    let transform_start = self.buffer.anchor_after(
-                        self.to_buffer_offset(cmp::max(range.start, cursor.start().0)),
-                    );
-                    let transform_start =
-                        self.to_inlay_offset(transform_start.to_offset(&self.buffer));
-
-                    let transform_end = {
-                        let overshoot = InlayOffset(range.end.0 - cursor.start().0 .0);
-                        self.buffer.anchor_before(self.to_buffer_offset(cmp::min(
-                            cursor.end(&()).0,
-                            cursor.start().0 + overshoot,
-                        )))
-                    };
-                    let transform_end = self.to_inlay_offset(transform_end.to_offset(&self.buffer));
-
-                    for (tag, text_highlights) in text_highlights.iter() {
-                        let style = text_highlights.0;
-                        let ranges = &text_highlights.1;
-
-                        let start_ix = match ranges.binary_search_by(|probe| {
-                            let cmp = self
-                                .document_to_inlay_range(probe)
-                                .end
-                                .cmp(&transform_start);
-                            if cmp.is_gt() {
-                                cmp::Ordering::Greater
-                            } else {
-                                cmp::Ordering::Less
-                            }
-                        }) {
-                            Ok(i) | Err(i) => i,
-                        };
-                        for range in &ranges[start_ix..] {
-                            let range = self.document_to_inlay_range(range);
-                            if range.start.cmp(&transform_end).is_ge() {
-                                break;
-                            }
-
-                            highlight_endpoints.push(HighlightEndpoint {
-                                offset: range.start,
-                                is_start: true,
-                                tag: *tag,
-                                style,
-                            });
-                            highlight_endpoints.push(HighlightEndpoint {
-                                offset: range.end,
-                                is_start: false,
-                                tag: *tag,
-                                style,
-                            });
-                        }
-                    }
-
-                    cursor.next(&());
-                }
-                highlight_endpoints.sort();
+                self.apply_text_highlights(
+                    &mut cursor,
+                    &range,
+                    text_highlights,
+                    &mut highlight_endpoints,
+                );
                 cursor.seek(&range.start, Bias::Right, &());
             }
         }
-
+        highlight_endpoints.sort();
         let buffer_range = self.to_buffer_offset(range.start)..self.to_buffer_offset(range.end);
         let buffer_chunks = self.buffer.chunks(buffer_range, language_aware);
 
@@ -1074,29 +1051,76 @@ impl InlaySnapshot {
             buffer_chunk: None,
             output_offset: range.start,
             max_output_offset: range.end,
-            hint_highlight_style,
-            suggestion_highlight_style,
+            inlay_highlight_style: highlights.inlay_highlight_style,
+            suggestion_highlight_style: highlights.suggestion_highlight_style,
             highlight_endpoints: highlight_endpoints.into_iter().peekable(),
             active_highlights: Default::default(),
+            highlights,
             snapshot: self,
         }
     }
 
-    fn document_to_inlay_range(&self, range: &DocumentRange) -> Range<InlayOffset> {
-        match range {
-            DocumentRange::Text(text_range) => {
-                self.to_inlay_offset(text_range.start.to_offset(&self.buffer))
-                    ..self.to_inlay_offset(text_range.end.to_offset(&self.buffer))
+    fn apply_text_highlights(
+        &self,
+        cursor: &mut Cursor<'_, Transform, (InlayOffset, usize)>,
+        range: &Range<InlayOffset>,
+        text_highlights: &TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>,
+        highlight_endpoints: &mut Vec<HighlightEndpoint>,
+    ) {
+        while cursor.start().0 < range.end {
+            let transform_start = self
+                .buffer
+                .anchor_after(self.to_buffer_offset(cmp::max(range.start, cursor.start().0)));
+            let transform_end =
+                {
+                    let overshoot = InlayOffset(range.end.0 - cursor.start().0 .0);
+                    self.buffer.anchor_before(self.to_buffer_offset(cmp::min(
+                        cursor.end(&()).0,
+                        cursor.start().0 + overshoot,
+                    )))
+                };
+
+            for (tag, text_highlights) in text_highlights.iter() {
+                let style = text_highlights.0;
+                let ranges = &text_highlights.1;
+
+                let start_ix = match ranges.binary_search_by(|probe| {
+                    let cmp = probe.end.cmp(&transform_start, &self.buffer);
+                    if cmp.is_gt() {
+                        cmp::Ordering::Greater
+                    } else {
+                        cmp::Ordering::Less
+                    }
+                }) {
+                    Ok(i) | Err(i) => i,
+                };
+                for range in &ranges[start_ix..] {
+                    if range.start.cmp(&transform_end, &self.buffer).is_ge() {
+                        break;
+                    }
+
+                    highlight_endpoints.push(HighlightEndpoint {
+                        offset: self.to_inlay_offset(range.start.to_offset(&self.buffer)),
+                        is_start: true,
+                        tag: *tag,
+                        style,
+                    });
+                    highlight_endpoints.push(HighlightEndpoint {
+                        offset: self.to_inlay_offset(range.end.to_offset(&self.buffer)),
+                        is_start: false,
+                        tag: *tag,
+                        style,
+                    });
+                }
             }
-            DocumentRange::Inlay(inlay_range) => {
-                inlay_range.highlight_start..inlay_range.highlight_end
-            }
+
+            cursor.next(&());
         }
     }
 
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks(Default::default()..self.len(), false, None, None, None)
+        self.chunks(Default::default()..self.len(), false, Highlights::default())
             .map(|chunk| chunk.text)
             .collect()
     }
@@ -1144,7 +1168,11 @@ fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{link_go_to_definition::InlayRange, InlayId, MultiBuffer};
+    use crate::{
+        display_map::{InlayHighlights, TextHighlights},
+        link_go_to_definition::InlayHighlight,
+        InlayId, MultiBuffer,
+    };
     use gpui::AppContext;
     use project::{InlayHint, InlayHintLabel, ResolveState};
     use rand::prelude::*;
@@ -1619,8 +1647,8 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             let mut expected_text = Rope::from(buffer_snapshot.text());
-            for (offset, inlay) in inlays.into_iter().rev() {
-                expected_text.replace(offset..offset, &inlay.text.to_string());
+            for (offset, inlay) in inlays.iter().rev() {
+                expected_text.replace(*offset..*offset, &inlay.text.to_string());
             }
             assert_eq!(inlay_snapshot.text(), expected_text.to_string());
 
@@ -1640,37 +1668,69 @@ mod tests {
                 );
             }
 
-            let mut highlights = TextHighlights::default();
-            let highlight_count = rng.gen_range(0_usize..10);
-            let mut highlight_ranges = (0..highlight_count)
+            let mut text_highlights = TextHighlights::default();
+            let text_highlight_count = rng.gen_range(0_usize..10);
+            let mut text_highlight_ranges = (0..text_highlight_count)
                 .map(|_| buffer_snapshot.random_byte_range(0, &mut rng))
                 .collect::<Vec<_>>();
-            highlight_ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
-            log::info!("highlighting ranges {:?}", highlight_ranges);
-            let highlight_ranges = if rng.gen_bool(0.5) {
-                highlight_ranges
-                    .into_iter()
-                    .map(|range| InlayRange {
-                        inlay_position: buffer_snapshot.anchor_before(range.start),
-                        highlight_start: inlay_snapshot.to_inlay_offset(range.start),
-                        highlight_end: inlay_snapshot.to_inlay_offset(range.end),
-                    })
-                    .map(DocumentRange::Inlay)
-                    .collect::<Vec<_>>()
-            } else {
-                highlight_ranges
-                    .into_iter()
-                    .map(|range| {
-                        buffer_snapshot.anchor_before(range.start)
-                            ..buffer_snapshot.anchor_after(range.end)
-                    })
-                    .map(DocumentRange::Text)
-                    .collect::<Vec<_>>()
-            };
-            highlights.insert(
+            text_highlight_ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
+            log::info!("highlighting text ranges {text_highlight_ranges:?}");
+            text_highlights.insert(
                 Some(TypeId::of::<()>()),
-                Arc::new((HighlightStyle::default(), highlight_ranges)),
+                Arc::new((
+                    HighlightStyle::default(),
+                    text_highlight_ranges
+                        .into_iter()
+                        .map(|range| {
+                            buffer_snapshot.anchor_before(range.start)
+                                ..buffer_snapshot.anchor_after(range.end)
+                        })
+                        .collect(),
+                )),
             );
+
+            let mut inlay_highlights = InlayHighlights::default();
+            if !inlays.is_empty() {
+                let inlay_highlight_count = rng.gen_range(0..inlays.len());
+                let mut inlay_indices = BTreeSet::default();
+                while inlay_indices.len() < inlay_highlight_count {
+                    inlay_indices.insert(rng.gen_range(0..inlays.len()));
+                }
+                let new_highlights = inlay_indices
+                    .into_iter()
+                    .filter_map(|i| {
+                        let (_, inlay) = &inlays[i];
+                        let inlay_text_len = inlay.text.len();
+                        match inlay_text_len {
+                            0 => None,
+                            1 => Some(InlayHighlight {
+                                inlay: inlay.id,
+                                inlay_position: inlay.position,
+                                range: 0..1,
+                            }),
+                            n => {
+                                let inlay_text = inlay.text.to_string();
+                                let mut highlight_end = rng.gen_range(1..n);
+                                let mut highlight_start = rng.gen_range(0..highlight_end);
+                                while !inlay_text.is_char_boundary(highlight_end) {
+                                    highlight_end += 1;
+                                }
+                                while !inlay_text.is_char_boundary(highlight_start) {
+                                    highlight_start -= 1;
+                                }
+                                Some(InlayHighlight {
+                                    inlay: inlay.id,
+                                    inlay_position: inlay.position,
+                                    range: highlight_start..highlight_end,
+                                })
+                            }
+                        }
+                    })
+                    .map(|highlight| (highlight.inlay, (HighlightStyle::default(), highlight)))
+                    .collect();
+                log::info!("highlighting inlay ranges {new_highlights:?}");
+                inlay_highlights.insert(TypeId::of::<()>(), new_highlights);
+            }
 
             for _ in 0..5 {
                 let mut end = rng.gen_range(0..=inlay_snapshot.len().0);
@@ -1678,13 +1738,17 @@ mod tests {
                 let mut start = rng.gen_range(0..=end);
                 start = expected_text.clip_offset(start, Bias::Right);
 
+                let range = InlayOffset(start)..InlayOffset(end);
+                log::info!("calling inlay_snapshot.chunks({range:?})");
                 let actual_text = inlay_snapshot
                     .chunks(
-                        InlayOffset(start)..InlayOffset(end),
+                        range,
                         false,
-                        Some(&highlights),
-                        None,
-                        None,
+                        Highlights {
+                            text_highlights: Some(&text_highlights),
+                            inlay_highlights: Some(&inlay_highlights),
+                            ..Highlights::default()
+                        },
                     )
                     .map(|chunk| chunk.text)
                     .collect::<String>();

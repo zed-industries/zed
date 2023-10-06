@@ -1,4 +1,4 @@
 [toolchain]
-channel = "1.72"
+channel = "1.73"
 components = [ "rustfmt" ]
 targets = [ "x86_64-apple-darwin", "aarch64-apple-darwin", "wasm32-wasi" ]

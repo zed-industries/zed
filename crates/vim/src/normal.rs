@@ -1,10 +1,11 @@
 mod case;
 mod change;
 mod delete;
+mod increment;
 mod paste;
-mod repeat;
+pub(crate) mod repeat;
 mod scroll;
-mod search;
+pub(crate) mod search;
 pub mod substitute;
 mod yank;
 
@@ -56,6 +57,7 @@ pub fn init(cx: &mut AppContext) {
     scroll::init(cx);
     search::init(cx);
     substitute::init(cx);
+    increment::init(cx);
 
     cx.add_action(insert_after);
     cx.add_action(insert_before);
@@ -68,21 +70,21 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(|_: &mut Workspace, _: &DeleteLeft, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
-            let times = vim.pop_number_operator(cx);
+            let times = vim.take_count(cx);
             delete_motion(vim, Motion::Left, times, cx);
         })
     });
     cx.add_action(|_: &mut Workspace, _: &DeleteRight, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
-            let times = vim.pop_number_operator(cx);
+            let times = vim.take_count(cx);
             delete_motion(vim, Motion::Right, times, cx);
         })
     });
     cx.add_action(|_: &mut Workspace, _: &ChangeToEndOfLine, cx| {
         Vim::update(cx, |vim, cx| {
             vim.start_recording(cx);
-            let times = vim.pop_number_operator(cx);
+            let times = vim.take_count(cx);
             change_motion(
                 vim,
                 Motion::EndOfLine {
@@ -96,7 +98,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(|_: &mut Workspace, _: &DeleteToEndOfLine, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
-            let times = vim.pop_number_operator(cx);
+            let times = vim.take_count(cx);
             delete_motion(
                 vim,
                 Motion::EndOfLine {
@@ -110,7 +112,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(|_: &mut Workspace, _: &JoinLines, cx| {
         Vim::update(cx, |vim, cx| {
             vim.record_current_action(cx);
-            let mut times = vim.pop_number_operator(cx).unwrap_or(1);
+            let mut times = vim.take_count(cx).unwrap_or(1);
             if vim.state().mode.is_visual() {
                 times = 1;
             } else if times > 1 {
@@ -168,7 +170,12 @@ pub fn normal_object(object: Object, cx: &mut WindowContext) {
     })
 }
 
-fn move_cursor(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
+pub(crate) fn move_cursor(
+    vim: &mut Vim,
+    motion: Motion,
+    times: Option<usize>,
+    cx: &mut WindowContext,
+) {
     vim.update_active_editor(cx, |editor, cx| {
         editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_cursors_with(|map, cursor, goal| {
@@ -356,7 +363,7 @@ mod test {
 
     use crate::{
         state::Mode::{self},
-        test::{ExemptionFeatures, NeovimBackedTestContext},
+        test::NeovimBackedTestContext,
     };
 
     #[gpui::test]
@@ -762,20 +769,22 @@ mod test {
 
     #[gpui::test]
     async fn test_dd(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["d", "d"]);
-        cx.assert("ˇ").await;
-        cx.assert("The ˇquick").await;
-        cx.assert_all(indoc! {"
-                The qˇuick
-                brown ˇfox
-                jumps ˇover"})
-            .await;
-        cx.assert_exempted(
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.assert_neovim_compatible("ˇ", ["d", "d"]).await;
+        cx.assert_neovim_compatible("The ˇquick", ["d", "d"]).await;
+        for marked_text in cx.each_marked_position(indoc! {"
+            The qˇuick
+            brown ˇfox
+            jumps ˇover"})
+        {
+            cx.assert_neovim_compatible(&marked_text, ["d", "d"]).await;
+        }
+        cx.assert_neovim_compatible(
             indoc! {"
                 The quick
                 ˇ
                 brown fox"},
-            ExemptionFeatures::DeletionOnEmptyLine,
+            ["d", "d"],
         )
         .await;
     }

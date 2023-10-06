@@ -333,6 +333,7 @@ mod test {
             cmd: false,
             function: false,
             key: "🖖🏻".to_string(), //2 char string
+            ime_key: None,
         };
         assert_eq!(to_esc_str(&ks, &TermMode::NONE, false), None);
     }

@@ -112,7 +112,7 @@ impl Item for SharedScreen {
     ) -> gpui::AnyElement<V> {
         Flex::row()
             .with_child(
-                Svg::new("icons/disable_screen_sharing_12.svg")
+                Svg::new("icons/desktop.svg")
                     .with_color(style.label.text.color)
                     .constrained()
                     .with_width(style.type_icon_width)

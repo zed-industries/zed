@@ -26,10 +26,11 @@ pub fn copy_selections_content(editor: &mut Editor, linewise: bool, cx: &mut App
             let is_last_line = linewise
                 && end.row == buffer.max_buffer_row()
                 && buffer.max_point().column > 0
+                && start.row < buffer.max_buffer_row()
                 && start == Point::new(start.row, buffer.line_len(start.row));
 
             if is_last_line {
-                start = Point::new(buffer.max_buffer_row(), 0);
+                start = Point::new(start.row + 1, 0);
             }
             for chunk in buffer.text_for_range(start..end) {
                 text.push_str(chunk);

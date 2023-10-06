@@ -86,7 +86,7 @@ impl RandomizedTest for RandomChannelBufferTest {
             match rng.gen_range(0..100_u32) {
                 0..=29 => {
                     let channel_name = client.channel_store().read_with(cx, |store, cx| {
-                        store.channels().find_map(|(_, channel)| {
+                        store.channel_dag_entries().find_map(|(_, channel)| {
                             if store.has_open_channel_buffer(channel.id, cx) {
                                 None
                             } else {
@@ -133,7 +133,7 @@ impl RandomizedTest for RandomChannelBufferTest {
             ChannelBufferOperation::JoinChannelNotes { channel_name } => {
                 let buffer = client.channel_store().update(cx, |store, cx| {
                     let channel_id = store
-                        .channels()
+                        .channel_dag_entries()
                         .find(|(_, c)| c.name == channel_name)
                         .unwrap()
                         .1
@@ -273,7 +273,7 @@ impl RandomizedTest for RandomChannelBufferTest {
                         // channel buffer.
                         let collaborators = channel_buffer.collaborators();
                         let mut user_ids =
-                            collaborators.iter().map(|c| c.user_id).collect::<Vec<_>>();
+                            collaborators.values().map(|c| c.user_id).collect::<Vec<_>>();
                         user_ids.sort();
                         assert_eq!(
                             user_ids,

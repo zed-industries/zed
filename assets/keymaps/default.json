@@ -30,6 +30,7 @@
       "cmd-s": "workspace::Save",
       "cmd-shift-s": "workspace::SaveAs",
       "cmd-=": "zed::IncreaseBufferFontSize",
+      "cmd-+": "zed::IncreaseBufferFontSize",
       "cmd--": "zed::DecreaseBufferFontSize",
       "cmd-0": "zed::ResetBufferFontSize",
       "cmd-,": "zed::OpenSettings",
@@ -231,7 +232,14 @@
     }
   },
   {
-    "context": "BufferSearchBar > Editor",
+    "context": "BufferSearchBar && in_replace",
+    "bindings": {
+      "enter": "search::ReplaceNext",
+      "cmd-enter": "search::ReplaceAll"
+    }
+  },
+  {
+    "context": "BufferSearchBar && !in_replace > Editor",
     "bindings": {
       "up": "search::PreviousHistoryQuery",
       "down": "search::NextHistoryQuery"
@@ -241,7 +249,11 @@
     "context": "ProjectSearchBar",
     "bindings": {
       "escape": "project_search::ToggleFocus",
-      "alt-tab": "search::CycleMode"
+      "alt-tab": "search::CycleMode",
+      "cmd-shift-h": "search::ToggleReplace",
+      "alt-cmd-g": "search::ActivateRegexMode",
+      "alt-cmd-s": "search::ActivateSemanticMode",
+      "alt-cmd-x": "search::ActivateTextMode"
     }
   },
   {
@@ -252,10 +264,21 @@
     }
   },
   {
+    "context": "ProjectSearchBar && in_replace",
+    "bindings": {
+      "enter": "search::ReplaceNext",
+      "cmd-enter": "search::ReplaceAll"
+    }
+  },
+  {
     "context": "ProjectSearchView",
     "bindings": {
       "escape": "project_search::ToggleFocus",
-      "alt-tab": "search::CycleMode"
+      "alt-tab": "search::CycleMode",
+      "cmd-shift-h": "search::ToggleReplace",
+      "alt-cmd-g": "search::ActivateRegexMode",
+      "alt-cmd-s": "search::ActivateSemanticMode",
+      "alt-cmd-x": "search::ActivateTextMode"
     }
   },
   {
@@ -264,11 +287,15 @@
       "cmd-f": "project_search::ToggleFocus",
       "cmd-g": "search::SelectNextMatch",
       "cmd-shift-g": "search::SelectPrevMatch",
+      "cmd-shift-h": "search::ToggleReplace",
       "alt-enter": "search::SelectAllMatches",
       "alt-cmd-c": "search::ToggleCaseSensitive",
       "alt-cmd-w": "search::ToggleWholeWord",
       "alt-tab": "search::CycleMode",
-      "alt-cmd-f": "project_search::ToggleFilters"
+      "alt-cmd-f": "project_search::ToggleFilters",
+      "alt-cmd-g": "search::ActivateRegexMode",
+      "alt-cmd-s": "search::ActivateSemanticMode",
+      "alt-cmd-x": "search::ActivateTextMode"
     }
   },
   // Bindings from VS Code
@@ -287,6 +314,7 @@
           "replace_newest": false
         }
       ],
+      "cmd-shift-l": "editor::SelectAllMatches",
       "ctrl-cmd-d": [
         "editor::SelectPrevious",
         {
@@ -447,7 +475,6 @@
     "bindings": {
       "ctrl-shift-k": "editor::DeleteLine",
       "cmd-shift-d": "editor::DuplicateLine",
-      "cmd-shift-l": "editor::SplitSelectionIntoLines",
       "ctrl-j": "editor::JoinLines",
       "ctrl-cmd-up": "editor::MoveLineUp",
       "ctrl-cmd-down": "editor::MoveLineDown",
@@ -481,6 +508,22 @@
       ],
       "cmd-k cmd-down": [
         "workspace::ActivatePaneInDirection",
+        "Down"
+      ],
+      "cmd-k shift-left": [
+        "workspace::SwapPaneInDirection",
+        "Left"
+      ],
+      "cmd-k shift-right": [
+        "workspace::SwapPaneInDirection",
+        "Right"
+      ],
+      "cmd-k shift-up": [
+        "workspace::SwapPaneInDirection",
+        "Up"
+      ],
+      "cmd-k shift-down": [
+        "workspace::SwapPaneInDirection",
         "Down"
       ]
     }
@@ -546,7 +589,7 @@
     }
   },
   {
-    "context": "ProjectSearchBar",
+    "context": "ProjectSearchBar && !in_replace",
     "bindings": {
       "cmd-enter": "project_search::SearchInNew"
     }
@@ -572,10 +615,24 @@
     }
   },
   {
-    "context": "CollabPanel",
+    "context": "CollabPanel && not_editing",
     "bindings": {
       "ctrl-backspace": "collab_panel::Remove",
       "space": "menu::Confirm"
+    }
+  },
+  {
+    "context": "(CollabPanel && editing) > Editor",
+    "bindings": {
+      "space": "collab_panel::InsertSpace"
+    }
+  },
+  {
+    "context": "(CollabPanel && not_editing) > Editor",
+    "bindings": {
+      "cmd-c": "collab_panel::StartLinkChannel",
+      "cmd-x": "collab_panel::StartMoveChannel",
+      "cmd-v": "collab_panel::MoveOrLinkToSelected"
     }
   },
   {

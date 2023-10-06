@@ -165,17 +165,25 @@ impl LspAdapter for RustLspAdapter {
                 lazy_static! {
                     static ref REGEX: Regex = Regex::new("\\(…?\\)").unwrap();
                 }
-
                 let detail = completion.detail.as_ref().unwrap();
-                if detail.starts_with("fn(") {
-                    let text = REGEX.replace(&completion.label, &detail[2..]).to_string();
-                    let source = Rope::from(format!("fn {} {{}}", text).as_str());
-                    let runs = language.highlight_text(&source, 3..3 + text.len());
-                    return Some(CodeLabel {
-                        filter_range: 0..completion.label.find('(').unwrap_or(text.len()),
-                        text,
-                        runs,
-                    });
+                const FUNCTION_PREFIXES: [&'static str; 2] = ["async fn", "fn"];
+                let prefix = FUNCTION_PREFIXES
+                    .iter()
+                    .find_map(|prefix| detail.strip_prefix(*prefix).map(|suffix| (prefix, suffix)));
+                // fn keyword should be followed by opening parenthesis.
+                if let Some((prefix, suffix)) = prefix {
+                    if suffix.starts_with('(') {
+                        let text = REGEX.replace(&completion.label, suffix).to_string();
+                        let source = Rope::from(format!("{prefix} {} {{}}", text).as_str());
+                        let run_start = prefix.len() + 1;
+                        let runs =
+                            language.highlight_text(&source, run_start..run_start + text.len());
+                        return Some(CodeLabel {
+                            filter_range: 0..completion.label.find('(').unwrap_or(text.len()),
+                            text,
+                            runs,
+                        });
+                    }
                 }
             }
             Some(kind) => {
@@ -377,7 +385,28 @@ mod tests {
                 ],
             })
         );
-
+        assert_eq!(
+            language
+                .label_for_completion(&lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FUNCTION),
+                    label: "hello(…)".to_string(),
+                    detail: Some("async fn(&mut Option<T>) -> Vec<T>".to_string()),
+                    ..Default::default()
+                })
+                .await,
+            Some(CodeLabel {
+                text: "hello(&mut Option<T>) -> Vec<T>".to_string(),
+                filter_range: 0..5,
+                runs: vec![
+                    (0..5, highlight_function),
+                    (7..10, highlight_keyword),
+                    (11..17, highlight_type),
+                    (18..19, highlight_type),
+                    (25..28, highlight_type),
+                    (29..30, highlight_type),
+                ],
+            })
+        );
         assert_eq!(
             language
                 .label_for_completion(&lsp::CompletionItem {

@@ -11,7 +11,7 @@ mod project_tests;
 mod worktree_tests;
 
 use anyhow::{anyhow, Context, Result};
-use client::{proto, Client, TypedEnvelope, UserId, UserStore};
+use client::{proto, Client, Collaborator, TypedEnvelope, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet};
 use copilot::Copilot;
@@ -108,6 +108,8 @@ pub struct Project {
     active_entry: Option<ProjectEntryId>,
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
     languages: Arc<LanguageRegistry>,
+    supplementary_language_servers:
+        HashMap<LanguageServerId, (LanguageServerName, Arc<LanguageServer>)>,
     language_servers: HashMap<LanguageServerId, LanguageServerState>,
     language_server_ids: HashMap<(WorktreeId, LanguageServerName), LanguageServerId>,
     language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
@@ -147,7 +149,8 @@ pub struct Project {
     _maintain_buffer_languages: Task<()>,
     _maintain_workspace_config: Task<()>,
     terminals: Terminals,
-    copilot_enabled: bool,
+    copilot_lsp_subscription: Option<gpui::Subscription>,
+    copilot_log_subscription: Option<lsp::Subscription>,
     current_lsp_settings: HashMap<Arc<str>, LspSettings>,
 }
 
@@ -248,13 +251,6 @@ enum ProjectClientState {
         remote_id: u64,
         replica_id: ReplicaId,
     },
-}
-
-#[derive(Clone, Debug)]
-pub struct Collaborator {
-    pub peer_id: proto::PeerId,
-    pub replica_id: ReplicaId,
-    pub user_id: UserId,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -618,6 +614,8 @@ impl Project {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn_weak(|this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
+            let copilot_lsp_subscription =
+                Copilot::global(cx).map(|copilot| subscribe_for_copilot_events(&copilot, cx));
             Self {
                 worktrees: Default::default(),
                 buffer_ordered_messages_tx: tx,
@@ -647,6 +645,7 @@ impl Project {
                 fs,
                 next_entry_id: Default::default(),
                 next_diagnostic_group_id: Default::default(),
+                supplementary_language_servers: HashMap::default(),
                 language_servers: Default::default(),
                 language_server_ids: Default::default(),
                 language_server_statuses: Default::default(),
@@ -658,7 +657,8 @@ impl Project {
                 terminals: Terminals {
                     local_handles: Vec::new(),
                 },
-                copilot_enabled: Copilot::global(cx).is_some(),
+                copilot_lsp_subscription,
+                copilot_log_subscription: None,
                 current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
             }
         })
@@ -694,6 +694,8 @@ impl Project {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn_weak(|this, cx| Self::send_buffer_ordered_messages(this, rx, cx))
                 .detach();
+            let copilot_lsp_subscription =
+                Copilot::global(cx).map(|copilot| subscribe_for_copilot_events(&copilot, cx));
             let mut this = Self {
                 worktrees: Vec::new(),
                 buffer_ordered_messages_tx: tx,
@@ -723,6 +725,7 @@ impl Project {
                     remote_id,
                     replica_id,
                 }),
+                supplementary_language_servers: HashMap::default(),
                 language_servers: Default::default(),
                 language_server_ids: Default::default(),
                 language_server_statuses: response
@@ -751,7 +754,8 @@ impl Project {
                 terminals: Terminals {
                     local_handles: Vec::new(),
                 },
-                copilot_enabled: Copilot::global(cx).is_some(),
+                copilot_lsp_subscription,
+                copilot_log_subscription: None,
                 current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
             };
             for worktree in worktrees {
@@ -882,12 +886,14 @@ impl Project {
             self.restart_language_servers(worktree, language, cx);
         }
 
-        if !self.copilot_enabled && Copilot::global(cx).is_some() {
-            self.copilot_enabled = true;
-            for buffer in self.opened_buffers.values() {
-                if let Some(buffer) = buffer.upgrade(cx) {
-                    self.register_buffer_with_copilot(&buffer, cx);
+        if self.copilot_lsp_subscription.is_none() {
+            if let Some(copilot) = Copilot::global(cx) {
+                for buffer in self.opened_buffers.values() {
+                    if let Some(buffer) = buffer.upgrade(cx) {
+                        self.register_buffer_with_copilot(&buffer, cx);
+                    }
                 }
+                self.copilot_lsp_subscription = Some(subscribe_for_copilot_events(&copilot, cx));
             }
         }
 
@@ -912,7 +918,6 @@ impl Project {
         self.user_store.clone()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn opened_buffers(&self, cx: &AppContext) -> Vec<ModelHandle<Buffer>> {
         self.opened_buffers
             .values()
@@ -968,6 +973,10 @@ impl Project {
 
     pub fn collaborators(&self) -> &HashMap<proto::PeerId, Collaborator> {
         &self.collaborators
+    }
+
+    pub fn host(&self) -> Option<&Collaborator> {
+        self.collaborators.values().find(|c| c.replica_id == 0)
     }
 
     /// Collect all worktrees, including ones that don't appear in the project panel
@@ -1832,6 +1841,7 @@ impl Project {
                     Worktree::Remote(_) => panic!("cannot remote buffers as new files"),
                 })
                 .await?;
+
             this.update(&mut cx, |this, cx| {
                 this.detect_language_for_buffer(&buffer, cx);
                 this.register_buffer_with_language_servers(&buffer, cx);
@@ -2219,26 +2229,62 @@ impl Project {
                         .get_mut(&buffer.remote_id())
                         .and_then(|m| m.get_mut(&language_server.server_id()))?;
                     let previous_snapshot = buffer_snapshots.last()?;
-                    let next_version = previous_snapshot.version + 1;
 
-                    let content_changes = buffer
-                        .edits_since::<(PointUtf16, usize)>(previous_snapshot.snapshot.version())
-                        .map(|edit| {
-                            let edit_start = edit.new.start.0;
-                            let edit_end = edit_start + (edit.old.end.0 - edit.old.start.0);
-                            let new_text = next_snapshot
-                                .text_for_range(edit.new.start.1..edit.new.end.1)
-                                .collect();
-                            lsp::TextDocumentContentChangeEvent {
-                                range: Some(lsp::Range::new(
-                                    point_to_lsp(edit_start),
-                                    point_to_lsp(edit_end),
-                                )),
+                    let build_incremental_change = || {
+                        buffer
+                            .edits_since::<(PointUtf16, usize)>(
+                                previous_snapshot.snapshot.version(),
+                            )
+                            .map(|edit| {
+                                let edit_start = edit.new.start.0;
+                                let edit_end = edit_start + (edit.old.end.0 - edit.old.start.0);
+                                let new_text = next_snapshot
+                                    .text_for_range(edit.new.start.1..edit.new.end.1)
+                                    .collect();
+                                lsp::TextDocumentContentChangeEvent {
+                                    range: Some(lsp::Range::new(
+                                        point_to_lsp(edit_start),
+                                        point_to_lsp(edit_end),
+                                    )),
+                                    range_length: None,
+                                    text: new_text,
+                                }
+                            })
+                            .collect()
+                    };
+
+                    let document_sync_kind = language_server
+                        .capabilities()
+                        .text_document_sync
+                        .as_ref()
+                        .and_then(|sync| match sync {
+                            lsp::TextDocumentSyncCapability::Kind(kind) => Some(*kind),
+                            lsp::TextDocumentSyncCapability::Options(options) => options.change,
+                        });
+
+                    let content_changes: Vec<_> = match document_sync_kind {
+                        Some(lsp::TextDocumentSyncKind::FULL) => {
+                            vec![lsp::TextDocumentContentChangeEvent {
+                                range: None,
                                 range_length: None,
-                                text: new_text,
+                                text: next_snapshot.text(),
+                            }]
+                        }
+                        Some(lsp::TextDocumentSyncKind::INCREMENTAL) => build_incremental_change(),
+                        _ => {
+                            #[cfg(any(test, feature = "test-support"))]
+                            {
+                                build_incremental_change()
                             }
-                        })
-                        .collect();
+
+                            #[cfg(not(any(test, feature = "test-support")))]
+                            {
+                                continue;
+                            }
+                        }
+                    };
+
+                    let next_version = previous_snapshot.version + 1;
 
                     buffer_snapshots.push(LspBufferSnapshot {
                         version: next_version,
@@ -2268,11 +2314,13 @@ impl Project {
                 };
 
                 for (_, _, server) in self.language_servers_for_worktree(worktree_id) {
+                    let text = include_text(server.as_ref()).then(|| buffer.read(cx).text());
+
                     server
                         .notify::<lsp::notification::DidSaveTextDocument>(
                             lsp::DidSaveTextDocumentParams {
                                 text_document: text_document.clone(),
-                                text: None,
+                                text,
                             },
                         )
                         .log_err();
@@ -2321,7 +2369,30 @@ impl Project {
                     }
                 }
             }
+            BufferEvent::FileHandleChanged => {
+                let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
+                    return None;
+                };
 
+                match self.local_buffer_ids_by_entry_id.get(&file.entry_id) {
+                    Some(_) => {
+                        return None;
+                    }
+                    None => {
+                        let remote_id = buffer.read(cx).remote_id();
+                        self.local_buffer_ids_by_entry_id
+                            .insert(file.entry_id, remote_id);
+
+                        self.local_buffer_ids_by_path.insert(
+                            ProjectPath {
+                                worktree_id: file.worktree_id(cx),
+                                path: file.path.clone(),
+                            },
+                            remote_id,
+                        );
+                    }
+                }
+            }
             _ => {}
         }
 
@@ -2789,18 +2860,6 @@ impl Project {
             Some(server) => server,
             None => return Ok(None),
         };
-
-        language_server
-            .on_notification::<lsp::notification::LogMessage, _>({
-                move |params, mut cx| {
-                    if let Some(this) = this.upgrade(&cx) {
-                        this.update(&mut cx, |_, cx| {
-                            cx.emit(Event::LanguageServerLog(server_id, params.message))
-                        });
-                    }
-                }
-            })
-            .detach();
 
         language_server
             .on_notification::<lsp::notification::PublishDiagnostics, _>({
@@ -4926,8 +4985,16 @@ impl Project {
                     if abs_path.ends_with("/") {
                         fs.create_dir(&abs_path).await?;
                     } else {
-                        fs.create_file(&abs_path, op.options.map(Into::into).unwrap_or_default())
-                            .await?;
+                        fs.create_file(
+                            &abs_path,
+                            op.options
+                                .map(|options| fs::CreateOptions {
+                                    overwrite: options.overwrite.unwrap_or(false),
+                                    ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
+                                })
+                                .unwrap_or_default(),
+                        )
+                        .await?;
                     }
                 }
 
@@ -4943,7 +5010,12 @@ impl Project {
                     fs.rename(
                         &source_abs_path,
                         &target_abs_path,
-                        op.options.map(Into::into).unwrap_or_default(),
+                        op.options
+                            .map(|options| fs::RenameOptions {
+                                overwrite: options.overwrite.unwrap_or(false),
+                                ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
+                            })
+                            .unwrap_or_default(),
                     )
                     .await?;
                 }
@@ -4953,7 +5025,13 @@ impl Project {
                         .uri
                         .to_file_path()
                         .map_err(|_| anyhow!("can't convert URI to path"))?;
-                    let options = op.options.map(Into::into).unwrap_or_default();
+                    let options = op
+                        .options
+                        .map(|options| fs::RemoveOptions {
+                            recursive: options.recursive.unwrap_or(false),
+                            ignore_if_not_exists: options.ignore_if_not_exists.unwrap_or(false),
+                        })
+                        .unwrap_or_default();
                     if abs_path.ends_with("/") {
                         fs.remove_dir(&abs_path, options).await?;
                     } else {
@@ -5852,7 +5930,9 @@ impl Project {
                 Some(&buffer_id) => buffer_id,
                 None => match self.local_buffer_ids_by_path.get(&project_path) {
                     Some(&buffer_id) => buffer_id,
-                    None => continue,
+                    None => {
+                        continue;
+                    }
                 },
             };
 
@@ -7955,9 +8035,23 @@ impl Project {
             })
     }
 
+    pub fn supplementary_language_servers(
+        &self,
+    ) -> impl '_
+           + Iterator<
+        Item = (
+            &LanguageServerId,
+            &(LanguageServerName, Arc<LanguageServer>),
+        ),
+    > {
+        self.supplementary_language_servers.iter()
+    }
+
     pub fn language_server_for_id(&self, id: LanguageServerId) -> Option<Arc<LanguageServer>> {
-        if let LanguageServerState::Running { server, .. } = self.language_servers.get(&id)? {
+        if let Some(LanguageServerState::Running { server, .. }) = self.language_servers.get(&id) {
             Some(server.clone())
+        } else if let Some((_, server)) = self.supplementary_language_servers.get(&id) {
+            Some(Arc::clone(server))
         } else {
             None
         }
@@ -8015,6 +8109,45 @@ impl Project {
             Vec::new()
         }
     }
+}
+
+fn subscribe_for_copilot_events(
+    copilot: &ModelHandle<Copilot>,
+    cx: &mut ModelContext<'_, Project>,
+) -> gpui::Subscription {
+    cx.subscribe(
+        copilot,
+        |project, copilot, copilot_event, cx| match copilot_event {
+            copilot::Event::CopilotLanguageServerStarted => {
+                match copilot.read(cx).language_server() {
+                    Some((name, copilot_server)) => {
+                        // Another event wants to re-add the server that was already added and subscribed to, avoid doing it again.
+                        if !copilot_server.has_notification_handler::<copilot::request::LogMessage>() {
+                            let new_server_id = copilot_server.server_id();
+                            let weak_project = cx.weak_handle();
+                            let copilot_log_subscription = copilot_server
+                                .on_notification::<copilot::request::LogMessage, _>(
+                                    move |params, mut cx| {
+                                        if let Some(project) = weak_project.upgrade(&mut cx) {
+                                            project.update(&mut cx, |_, cx| {
+                                                cx.emit(Event::LanguageServerLog(
+                                                    new_server_id,
+                                                    params.message,
+                                                ));
+                                            })
+                                        }
+                                    },
+                                );
+                            project.supplementary_language_servers.insert(new_server_id, (name.clone(), Arc::clone(copilot_server)));
+                            project.copilot_log_subscription = Some(copilot_log_subscription);
+                            cx.emit(Event::LanguageServerAdded(new_server_id));
+                        }
+                    }
+                    None => debug_panic!("Received Copilot language server started event, but no language server is running"),
+                }
+            }
+        },
+    )
 }
 
 fn glob_literal_prefix<'a>(glob: &'a str) -> &'a str {
@@ -8161,16 +8294,6 @@ impl Entity for Project {
     }
 }
 
-impl Collaborator {
-    fn from_proto(message: proto::Collaborator) -> Result<Self> {
-        Ok(Self {
-            peer_id: message.peer_id.ok_or_else(|| anyhow!("invalid peer id"))?,
-            replica_id: message.replica_id as ReplicaId,
-            user_id: message.user_id as UserId,
-        })
-    }
-}
-
 impl<P: AsRef<Path>> From<(WorktreeId, P)> for ProjectPath {
     fn from((worktree_id, path): (WorktreeId, P)) -> Self {
         Self {
@@ -8274,4 +8397,20 @@ async fn wait_for_loading_buffer(
         }
         receiver.next().await;
     }
+}
+
+fn include_text(server: &lsp::LanguageServer) -> bool {
+    server
+        .capabilities()
+        .text_document_sync
+        .as_ref()
+        .and_then(|sync| match sync {
+            lsp::TextDocumentSyncCapability::Kind(_) => None,
+            lsp::TextDocumentSyncCapability::Options(options) => options.save.as_ref(),
+        })
+        .and_then(|save_options| match save_options {
+            lsp::TextDocumentSyncSaveOptions::Supported(_) => None,
+            lsp::TextDocumentSyncSaveOptions::SaveOptions(options) => options.include_text,
+        })
+        .unwrap_or(false)
 }

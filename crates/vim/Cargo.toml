@@ -34,6 +34,8 @@ settings = { path = "../settings" }
 workspace = { path = "../workspace" }
 theme = { path = "../theme" }
 language_selector = { path = "../language_selector"}
+diagnostics = { path = "../diagnostics" }
+zed-actions = { path = "../zed-actions" }
 
 [dev-dependencies]
 indoc.workspace = true

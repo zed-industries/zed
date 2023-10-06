@@ -1,12 +1,12 @@
 use crate::{
     db::{tests::TestDb, NewUserParams, UserId},
     executor::Executor,
-    rpc::{Server, CLEANUP_TIMEOUT},
+    rpc::{Server, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
     AppState,
 };
 use anyhow::anyhow;
 use call::ActiveCall;
-use channel::{channel_buffer::ChannelBuffer, ChannelStore};
+use channel::{ChannelBuffer, ChannelStore};
 use client::{
     self, proto::PeerId, Client, Connection, Credentials, EstablishConnectionError, UserStore,
 };
@@ -17,6 +17,7 @@ use gpui::{executor::Deterministic, ModelHandle, Task, TestAppContext, WindowHan
 use language::LanguageRegistry;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
+use rpc::RECEIVE_TIMEOUT;
 use settings::SettingsStore;
 use std::{
     cell::{Ref, RefCell, RefMut},
@@ -29,7 +30,7 @@ use std::{
     },
 };
 use util::http::FakeHttpClient;
-use workspace::Workspace;
+use workspace::{Workspace, WorkspaceStore};
 
 pub struct TestServer {
     pub app_state: Arc<AppState>,
@@ -151,12 +152,12 @@ impl TestServer {
 
         Arc::get_mut(&mut client)
             .unwrap()
-            .set_id(user_id.0 as usize)
+            .set_id(user_id.to_proto())
             .override_authenticate(move |cx| {
                 cx.spawn(|_| async move {
                     let access_token = "the-token".to_string();
                     Ok(Credentials {
-                        user_id: user_id.0 as u64,
+                        user_id: user_id.to_proto(),
                         access_token,
                     })
                 })
@@ -204,13 +205,17 @@ impl TestServer {
 
         let fs = FakeFs::new(cx.background());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
+        let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
         let channel_store =
             cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
+        let mut language_registry = LanguageRegistry::test();
+        language_registry.set_executor(cx.background());
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
+            workspace_store,
             channel_store: channel_store.clone(),
-            languages: Arc::new(LanguageRegistry::test()),
+            languages: Arc::new(language_registry),
             fs: fs.clone(),
             build_window_options: |_, _, _| Default::default(),
             initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
@@ -251,6 +256,19 @@ impl TestServer {
             .store(true, SeqCst);
     }
 
+    pub fn simulate_long_connection_interruption(
+        &self,
+        peer_id: PeerId,
+        deterministic: &Arc<Deterministic>,
+    ) {
+        self.forbid_connections();
+        self.disconnect_client(peer_id);
+        deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+        self.allow_connections();
+        deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+        deterministic.run_until_parked();
+    }
+
     pub fn forbid_connections(&self) {
         self.forbid_connections.store(true, SeqCst);
     }
@@ -288,6 +306,7 @@ impl TestServer {
     pub async fn make_channel(
         &self,
         channel: &str,
+        parent: Option<u64>,
         admin: (&TestClient, &mut TestAppContext),
         members: &mut [(&TestClient, &mut TestAppContext)],
     ) -> u64 {
@@ -296,7 +315,7 @@ impl TestServer {
             .app_state
             .channel_store
             .update(admin_cx, |channel_store, cx| {
-                channel_store.create_channel(channel, None, cx)
+                channel_store.create_channel(channel, parent, cx)
             })
             .await
             .unwrap();
@@ -329,6 +348,39 @@ impl TestServer {
         }
 
         channel_id
+    }
+
+    pub async fn make_channel_tree(
+        &self,
+        channels: &[(&str, Option<&str>)],
+        creator: (&TestClient, &mut TestAppContext),
+    ) -> Vec<u64> {
+        let mut observed_channels = HashMap::default();
+        let mut result = Vec::new();
+        for (channel, parent) in channels {
+            let id;
+            if let Some(parent) = parent {
+                if let Some(parent_id) = observed_channels.get(parent) {
+                    id = self
+                        .make_channel(channel, Some(*parent_id), (creator.0, creator.1), &mut [])
+                        .await;
+                } else {
+                    panic!(
+                        "Edge {}->{} referenced before {} was created",
+                        parent, channel, parent
+                    )
+                }
+            } else {
+                id = self
+                    .make_channel(channel, None, (creator.0, creator.1), &mut [])
+                    .await;
+            }
+
+            observed_channels.insert(channel, id);
+            result.push(id);
+        }
+
+        result
     }
 
     pub async fn create_room(&self, clients: &mut [(&TestClient, &mut TestAppContext)]) {
@@ -502,15 +554,7 @@ impl TestClient {
         root_path: impl AsRef<Path>,
         cx: &mut TestAppContext,
     ) -> (ModelHandle<Project>, WorktreeId) {
-        let project = cx.update(|cx| {
-            Project::local(
-                self.client().clone(),
-                self.app_state.user_store.clone(),
-                self.app_state.languages.clone(),
-                self.app_state.fs.clone(),
-                cx,
-            )
-        });
+        let project = self.build_empty_local_project(cx);
         let (worktree, _) = project
             .update(cx, |p, cx| {
                 p.find_or_create_local_worktree(root_path, true, cx)
@@ -521,6 +565,18 @@ impl TestClient {
             .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
         (project, worktree.read_with(cx, |tree, _| tree.id()))
+    }
+
+    pub fn build_empty_local_project(&self, cx: &mut TestAppContext) -> ModelHandle<Project> {
+        cx.update(|cx| {
+            Project::local(
+                self.client().clone(),
+                self.app_state.user_store.clone(),
+                self.app_state.languages.clone(),
+                self.app_state.fs.clone(),
+                cx,
+            )
+        })
     }
 
     pub async fn build_remote_project(
@@ -548,6 +604,34 @@ impl TestClient {
         cx: &mut TestAppContext,
     ) -> WindowHandle<Workspace> {
         cx.add_window(|cx| Workspace::new(0, project.clone(), self.app_state.clone(), cx))
+    }
+
+    pub async fn add_admin_to_channel(
+        &self,
+        user: (&TestClient, &mut TestAppContext),
+        channel: u64,
+        cx_self: &mut TestAppContext,
+    ) {
+        let (other_client, other_cx) = user;
+
+        self.app_state
+            .channel_store
+            .update(cx_self, |channel_store, cx| {
+                channel_store.invite_member(channel, other_client.user_id().unwrap(), true, cx)
+            })
+            .await
+            .unwrap();
+
+        cx_self.foreground().run_until_parked();
+
+        other_client
+            .app_state
+            .channel_store
+            .update(other_cx, |channels, _| {
+                channels.respond_to_channel_invite(channel, true)
+            })
+            .await
+            .unwrap();
     }
 }
 

@@ -54,7 +54,7 @@ use welcome::{show_welcome_experience, FIRST_OPEN};
 
 use fs::RealFs;
 use util::{channel::RELEASE_CHANNEL, paths, ResultExt, TryFutureExt};
-use workspace::AppState;
+use workspace::{AppState, WorkspaceStore};
 use zed::{
     assets::Assets,
     build_window_options, handle_keymap_file_changes, initialize_workspace, languages, menus,
@@ -119,12 +119,6 @@ fn main() {
     app.run(move |cx| {
         cx.set_global(*RELEASE_CHANNEL);
 
-        #[cfg(debug_assertions)]
-        {
-            use feature_flags::FeatureFlagAppExt;
-            cx.set_staff(true);
-        }
-
         let mut store = SettingsStore::default();
         store
             .set_default_settings(default_settings().as_ref(), cx)
@@ -135,15 +129,17 @@ fn main() {
 
         let client = client::Client::new(http.clone(), cx);
         let mut languages = LanguageRegistry::new(login_shell_env_loaded);
+        let copilot_language_server_id = languages.next_language_server_id();
         languages.set_executor(cx.background().clone());
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
         let node_runtime = RealNodeRuntime::new(http.clone());
 
-        languages::init(languages.clone(), node_runtime.clone());
+        languages::init(languages.clone(), node_runtime.clone(), cx);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
         let channel_store =
             cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
+        let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
         cx.set_global(client.clone());
 
@@ -165,8 +161,8 @@ fn main() {
         semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
         vim::init(cx);
         terminal_view::init(cx);
-        copilot::init(http.clone(), node_runtime, cx);
-        ai::init(cx);
+        copilot::init(copilot_language_server_id, http.clone(), node_runtime, cx);
+        assistant::init(cx);
         component_test::init(cx);
 
         cx.spawn(|cx| watch_themes(fs.clone(), cx)).detach();
@@ -181,7 +177,7 @@ fn main() {
         })
         .detach();
 
-        client.telemetry().start(installation_id);
+        client.telemetry().start(installation_id, cx);
 
         let app_state = Arc::new(AppState {
             languages,
@@ -192,6 +188,7 @@ fn main() {
             build_window_options,
             initialize_workspace,
             background_actions,
+            workspace_store,
         });
         cx.set_global(Arc::downgrade(&app_state));
 

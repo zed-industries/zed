@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use client::ParticipantIndex;
 use client::{proto, User};
 use collections::HashMap;
 use gpui::WeakModelHandle;
@@ -43,6 +44,7 @@ pub struct RemoteParticipant {
     pub peer_id: proto::PeerId,
     pub projects: Vec<proto::ParticipantProject>,
     pub location: ParticipantLocation,
+    pub participant_index: ParticipantIndex,
     pub muted: bool,
     pub speaking: bool,
     pub video_tracks: HashMap<live_kit_client::Sid, Arc<RemoteVideoTrack>>,

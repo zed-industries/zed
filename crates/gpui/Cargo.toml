@@ -11,7 +11,7 @@ path = "src/gpui.rs"
 doctest = false
 
 [features]
-test-support = ["backtrace", "dhat", "env_logger", "collections/test-support"]
+test-support = ["backtrace", "dhat", "env_logger", "collections/test-support", "util/test-support"]
 
 [dependencies]
 collections = { path = "../collections" }
@@ -53,7 +53,7 @@ thiserror.workspace = true
 time.workspace = true
 tiny-skia = "0.5"
 usvg = { version = "0.14", features = [] }
-uuid = { version = "1.1.2", features = ["v4"] }
+uuid.workspace = true
 waker-fn = "1.1.0"
 
 [build-dependencies]
@@ -67,6 +67,7 @@ dhat = "0.3"
 env_logger.workspace = true
 png = "0.16"
 simplelog = "0.9"
+util = { path = "../util", features = ["test-support"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 media = { path = "../media" }

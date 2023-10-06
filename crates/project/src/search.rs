@@ -7,6 +7,7 @@ use language::{char_kind, BufferSnapshot};
 use regex::{Regex, RegexBuilder};
 use smol::future::yield_now;
 use std::{
+    borrow::Cow,
     io::{BufRead, BufReader, Read},
     ops::Range,
     path::{Path, PathBuf},
@@ -34,7 +35,8 @@ impl SearchInputs {
 #[derive(Clone, Debug)]
 pub enum SearchQuery {
     Text {
-        search: Arc<AhoCorasick<usize>>,
+        search: Arc<AhoCorasick>,
+        replacement: Option<String>,
         whole_word: bool,
         case_sensitive: bool,
         inner: SearchInputs,
@@ -42,7 +44,7 @@ pub enum SearchQuery {
 
     Regex {
         regex: Regex,
-
+        replacement: Option<String>,
         multiline: bool,
         whole_word: bool,
         case_sensitive: bool,
@@ -82,23 +84,23 @@ impl SearchQuery {
         case_sensitive: bool,
         files_to_include: Vec<PathMatcher>,
         files_to_exclude: Vec<PathMatcher>,
-    ) -> Self {
+    ) -> Result<Self> {
         let query = query.to_string();
         let search = AhoCorasickBuilder::new()
-            .auto_configure(&[&query])
             .ascii_case_insensitive(!case_sensitive)
-            .build(&[&query]);
+            .build(&[&query])?;
         let inner = SearchInputs {
             query: query.into(),
             files_to_exclude,
             files_to_include,
         };
-        Self::Text {
+        Ok(Self::Text {
             search: Arc::new(search),
+            replacement: None,
             whole_word,
             case_sensitive,
             inner,
-        }
+        })
     }
 
     pub fn regex(
@@ -130,6 +132,7 @@ impl SearchQuery {
         };
         Ok(Self::Regex {
             regex,
+            replacement: None,
             multiline,
             whole_word,
             case_sensitive,
@@ -147,16 +150,30 @@ impl SearchQuery {
                 deserialize_path_matches(&message.files_to_exclude)?,
             )
         } else {
-            Ok(Self::text(
+            Self::text(
                 message.query,
                 message.whole_word,
                 message.case_sensitive,
                 deserialize_path_matches(&message.files_to_include)?,
                 deserialize_path_matches(&message.files_to_exclude)?,
-            ))
+            )
         }
     }
-
+    pub fn with_replacement(mut self, new_replacement: String) -> Self {
+        match self {
+            Self::Text {
+                ref mut replacement,
+                ..
+            }
+            | Self::Regex {
+                ref mut replacement,
+                ..
+            } => {
+                *replacement = Some(new_replacement);
+                self
+            }
+        }
+    }
     pub fn to_proto(&self, project_id: u64) -> proto::SearchProject {
         proto::SearchProject {
             project_id,
@@ -214,7 +231,29 @@ impl SearchQuery {
             }
         }
     }
-
+    /// Returns the replacement text for this `SearchQuery`.
+    pub fn replacement(&self) -> Option<&str> {
+        match self {
+            SearchQuery::Text { replacement, .. } | SearchQuery::Regex { replacement, .. } => {
+                replacement.as_deref()
+            }
+        }
+    }
+    /// Replaces search hits if replacement is set. `text` is assumed to be a string that matches this `SearchQuery` exactly, without any leftovers on either side.
+    pub fn replacement_for<'a>(&self, text: &'a str) -> Option<Cow<'a, str>> {
+        match self {
+            SearchQuery::Text { replacement, .. } => replacement.clone().map(Cow::from),
+            SearchQuery::Regex {
+                regex, replacement, ..
+            } => {
+                if let Some(replacement) = replacement {
+                    Some(regex.replace(text, replacement))
+                } else {
+                    None
+                }
+            }
+        }
+    }
     pub async fn search(
         &self,
         buffer: &BufferSnapshot,

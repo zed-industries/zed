@@ -8,7 +8,9 @@ use gpui::{
 pub use mode::SearchMode;
 use project::search::SearchQuery;
 pub use project_search::{ProjectSearchBar, ProjectSearchView};
-use theme::components::{action_button::Button, svg::Svg, ComponentExt, ToggleIconButtonStyle};
+use theme::components::{
+    action_button::Button, svg::Svg, ComponentExt, IconButtonStyle, ToggleIconButtonStyle,
+};
 
 pub mod buffer_search;
 mod history;
@@ -27,6 +29,7 @@ actions!(
         CycleMode,
         ToggleWholeWord,
         ToggleCaseSensitive,
+        ToggleReplace,
         SelectNextMatch,
         SelectPrevMatch,
         SelectAllMatches,
@@ -34,7 +37,9 @@ actions!(
         PreviousHistoryQuery,
         ActivateTextMode,
         ActivateSemanticMode,
-        ActivateRegexMode
+        ActivateRegexMode,
+        ReplaceAll,
+        ReplaceNext,
     ]
 );
 
@@ -58,8 +63,8 @@ impl SearchOptions {
 
     pub fn icon(&self) -> &'static str {
         match *self {
-            SearchOptions::WHOLE_WORD => "icons/word_search_12.svg",
-            SearchOptions::CASE_SENSITIVE => "icons/case_insensitive_12.svg",
+            SearchOptions::WHOLE_WORD => "icons/word_search.svg",
+            SearchOptions::CASE_SENSITIVE => "icons/case_insensitive.svg",
             _ => panic!("{:?} is not a named SearchOption", self),
         }
     }
@@ -97,4 +102,33 @@ impl SearchOptions {
             .element()
             .into_any()
     }
+}
+
+fn toggle_replace_button<V: View>(
+    active: bool,
+    tooltip_style: TooltipStyle,
+    button_style: ToggleIconButtonStyle,
+) -> AnyElement<V> {
+    Button::dynamic_action(Box::new(ToggleReplace))
+        .with_tooltip("Toggle Replace", tooltip_style)
+        .with_contents(theme::components::svg::Svg::new("icons/replace.svg"))
+        .toggleable(active)
+        .with_style(button_style)
+        .element()
+        .into_any()
+}
+
+fn replace_action<V: View>(
+    action: impl Action,
+    name: &'static str,
+    icon_path: &'static str,
+    tooltip_style: TooltipStyle,
+    button_style: IconButtonStyle,
+) -> AnyElement<V> {
+    Button::dynamic_action(Box::new(action))
+        .with_tooltip(name, tooltip_style)
+        .with_contents(theme::components::svg::Svg::new(icon_path))
+        .with_style(button_style)
+        .element()
+        .into_any()
 }

@@ -40,6 +40,8 @@ pub enum Motion {
     FindForward { before: bool, char: char },
     FindBackward { after: bool, char: char },
     NextLineStart,
+    StartOfLineDownward,
+    EndOfLineDownward,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -117,6 +119,8 @@ actions!(
         EndOfDocument,
         Matching,
         NextLineStart,
+        StartOfLineDownward,
+        EndOfLineDownward,
     ]
 );
 impl_actions!(
@@ -207,6 +211,12 @@ pub fn init(cx: &mut AppContext) {
          cx: _| { motion(Motion::PreviousWordStart { ignore_punctuation }, cx) },
     );
     cx.add_action(|_: &mut Workspace, &NextLineStart, cx: _| motion(Motion::NextLineStart, cx));
+    cx.add_action(|_: &mut Workspace, &StartOfLineDownward, cx: _| {
+        motion(Motion::StartOfLineDownward, cx)
+    });
+    cx.add_action(|_: &mut Workspace, &EndOfLineDownward, cx: _| {
+        motion(Motion::EndOfLineDownward, cx)
+    });
     cx.add_action(|_: &mut Workspace, action: &RepeatFind, cx: _| {
         repeat_motion(action.backwards, cx)
     })
@@ -219,11 +229,11 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
         Vim::update(cx, |vim, cx| vim.pop_operator(cx));
     }
 
-    let times = Vim::update(cx, |vim, cx| vim.pop_number_operator(cx));
+    let count = Vim::update(cx, |vim, cx| vim.take_count(cx));
     let operator = Vim::read(cx).active_operator();
     match Vim::read(cx).state().mode {
-        Mode::Normal => normal_motion(motion, operator, times, cx),
-        Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_motion(motion, times, cx),
+        Mode::Normal => normal_motion(motion, operator, count, cx),
+        Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_motion(motion, count, cx),
         Mode::Insert => {
             // Shouldn't execute a motion in insert mode. Ignoring
         }
@@ -272,6 +282,7 @@ impl Motion {
             | EndOfDocument
             | CurrentLine
             | NextLineStart
+            | StartOfLineDownward
             | StartOfParagraph
             | EndOfParagraph => true,
             EndOfLine { .. }
@@ -282,6 +293,7 @@ impl Motion {
             | Backspace
             | Right
             | StartOfLine { .. }
+            | EndOfLineDownward
             | NextWordStart { .. }
             | PreviousWordStart { .. }
             | FirstNonWhitespace { .. }
@@ -305,6 +317,8 @@ impl Motion {
             | StartOfLine { .. }
             | StartOfParagraph
             | EndOfParagraph
+            | StartOfLineDownward
+            | EndOfLineDownward
             | NextWordStart { .. }
             | PreviousWordStart { .. }
             | FirstNonWhitespace { .. }
@@ -322,6 +336,7 @@ impl Motion {
             | EndOfDocument
             | CurrentLine
             | EndOfLine { .. }
+            | EndOfLineDownward
             | NextWordEnd { .. }
             | Matching
             | FindForward { .. }
@@ -330,6 +345,7 @@ impl Motion {
             | Backspace
             | Right
             | StartOfLine { .. }
+            | StartOfLineDownward
             | StartOfParagraph
             | EndOfParagraph
             | NextWordStart { .. }
@@ -396,7 +412,7 @@ impl Motion {
                 map.clip_at_line_end(movement::end_of_paragraph(map, point, times)),
                 SelectionGoal::None,
             ),
-            CurrentLine => (end_of_line(map, false, point), SelectionGoal::None),
+            CurrentLine => (next_line_end(map, point, times), SelectionGoal::None),
             StartOfDocument => (start_of_document(map, point, times), SelectionGoal::None),
             EndOfDocument => (
                 end_of_document(map, point, maybe_times),
@@ -412,6 +428,8 @@ impl Motion {
                 SelectionGoal::None,
             ),
             NextLineStart => (next_line_start(map, point, times), SelectionGoal::None),
+            StartOfLineDownward => (next_line_start(map, point, times - 1), SelectionGoal::None),
+            EndOfLineDownward => (next_line_end(map, point, times), SelectionGoal::None),
         };
 
         (new_point != point || infallible).then_some((new_point, goal))
@@ -449,6 +467,22 @@ impl Motion {
 
                 (_, selection.end) = map.next_line_boundary(selection.end.to_point(map));
             } else {
+                // Another special case: When using the "w" motion in combination with an
+                // operator and the last word moved over is at the end of a line, the end of
+                // that word becomes the end of the operated text, not the first word in the
+                // next line.
+                if let Motion::NextWordStart {
+                    ignore_punctuation: _,
+                } = self
+                {
+                    let start_row = selection.start.to_point(&map).row;
+                    if selection.end.to_point(&map).row > start_row {
+                        selection.end =
+                            Point::new(start_row, map.buffer_snapshot.line_len(start_row))
+                                .to_display_point(&map)
+                    }
+                }
+
                 // If the motion is exclusive and the end of the motion is in column 1, the
                 // end of the motion is moved to the end of the previous line and the motion
                 // becomes inclusive. Example: "}" moves to the first line after a paragraph,
@@ -515,11 +549,15 @@ fn down(
 
     let new_row = cmp::min(
         start.row() + times as u32,
-        map.buffer_snapshot.max_point().row,
+        map.fold_snapshot.max_point().row(),
     );
     let new_col = cmp::min(goal_column, map.fold_snapshot.line_len(new_row));
-    let point = map.fold_point_to_display_point(FoldPoint::new(new_row, new_col));
+    let point = map.fold_point_to_display_point(
+        map.fold_snapshot
+            .clip_point(FoldPoint::new(new_row, new_col), Bias::Left),
+    );
 
+    // clip twice to "clip at end of line"
     (map.clip_point(point, Bias::Left), goal)
 }
 
@@ -555,7 +593,10 @@ pub(crate) fn up(
 
     let new_row = start.row().saturating_sub(times as u32);
     let new_col = cmp::min(goal_column, map.fold_snapshot.line_len(new_row));
-    let point = map.fold_point_to_display_point(FoldPoint::new(new_row, new_col));
+    let point = map.fold_point_to_display_point(
+        map.fold_snapshot
+            .clip_point(FoldPoint::new(new_row, new_col), Bias::Left),
+    );
 
     (map.clip_point(point, Bias::Left), goal)
 }
@@ -847,6 +888,13 @@ fn find_backward(
 fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
     let correct_line = down(map, point, SelectionGoal::None, times).0;
     first_non_whitespace(map, false, correct_line)
+}
+
+fn next_line_end(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
+    if times > 1 {
+        point = down(map, point, SelectionGoal::None, times - 1).0;
+    }
+    end_of_line(map, false, point)
 }
 
 #[cfg(test)]

@@ -1,29 +1,82 @@
 #![allow(dead_code, unused_variables)]
 
-use crate::theme::Theme;
+mod stories;
+mod story;
+mod story_selector;
+
+use std::{process::Command, sync::Arc};
+
 use ::theme as legacy_theme;
-use element_ext::ElementExt;
-use gpui2::{serde_json, vec2f, view, Element, RectF, ViewContext, WindowBounds};
-use legacy_theme::ThemeSettings;
+use clap::Parser;
+use gpui2::{
+    serde_json, vec2f, view, Element, IntoElement, ParentElement, RectF, ViewContext, WindowBounds,
+};
+use legacy_theme::{ThemeRegistry, ThemeSettings};
 use log::LevelFilter;
 use settings::{default_settings, SettingsStore};
 use simplelog::SimpleLogger;
+use ui::prelude::*;
+use ui::{ElementExt, Theme, WorkspaceElement};
 
-mod collab_panel;
-mod components;
-mod element_ext;
-mod theme;
-mod workspace;
+use crate::story_selector::StorySelector;
 
 gpui2::actions! {
     storybook,
     [ToggleInspector]
 }
 
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[arg(value_enum)]
+    story: Option<StorySelector>,
+
+    /// The name of the theme to use in the storybook.
+    ///
+    /// If not provided, the default theme will be used.
+    #[arg(long)]
+    theme: Option<String>,
+}
+
+async fn watch_zed_changes(fs: Arc<dyn fs::Fs>) -> Option<()> {
+    if std::env::var("ZED_HOT_RELOAD").is_err() {
+        return None;
+    }
+    use futures::StreamExt;
+    let mut events = fs
+        .watch(".".as_ref(), std::time::Duration::from_millis(100))
+        .await;
+    let mut current_child: Option<std::process::Child> = None;
+    while let Some(events) = events.next().await {
+        if !events.iter().any(|event| {
+            event
+                .path
+                .to_str()
+                .map(|path| path.contains("/crates/"))
+                .unwrap_or_default()
+        }) {
+            continue;
+        }
+        let child = current_child.take().map(|mut child| child.kill());
+        log::info!("Storybook changed, rebuilding...");
+        current_child = Some(
+            Command::new("cargo")
+                .args(["run", "-p", "storybook"])
+                .spawn()
+                .ok()?,
+        );
+    }
+    Some(())
+}
+
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
-    gpui2::App::new(Assets).unwrap().run(|cx| {
+    let args = Args::parse();
+
+    let fs = Arc::new(fs::RealFs);
+
+    gpui2::App::new(Assets).unwrap().run(move |cx| {
         let mut store = SettingsStore::default();
         store
             .set_default_settings(default_settings().as_ref(), cx)
@@ -32,39 +85,76 @@ fn main() {
         legacy_theme::init(Assets, cx);
         // load_embedded_fonts(cx.platform().as_ref());
 
+        let theme_registry = cx.global::<Arc<ThemeRegistry>>();
+
+        let theme_override = args
+            .theme
+            .and_then(|theme| {
+                theme_registry
+                    .list_names(true)
+                    .find(|known_theme| theme == *known_theme)
+            })
+            .and_then(|theme_name| theme_registry.get(&theme_name).ok());
+
+        cx.spawn(|_| async move {
+            watch_zed_changes(fs).await;
+        })
+        .detach();
         cx.add_window(
             gpui2::WindowOptions {
-                bounds: WindowBounds::Fixed(RectF::new(vec2f(0., 0.), vec2f(1400., 900.))),
+                bounds: WindowBounds::Fixed(RectF::new(vec2f(0., 0.), vec2f(1700., 980.))),
                 center: true,
                 ..Default::default()
             },
-            |cx| {
-                view(|cx| {
-                    cx.enable_inspector();
-                    storybook(&mut ViewContext::new(cx))
-                })
+            |cx| match args.story {
+                Some(selector) => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        div().flex().flex_col().h_full().child_any(selector.story()),
+                    )
+                }),
+                None => view(move |cx| {
+                    render_story(
+                        &mut ViewContext::new(cx),
+                        theme_override.clone(),
+                        WorkspaceElement::default(),
+                    )
+                }),
             },
         );
         cx.platform().activate(true);
     });
 }
 
-fn storybook<V: 'static>(cx: &mut ViewContext<V>) -> impl Element<V> {
-    workspace().themed(current_theme(cx))
+fn render_story<V: 'static, S: IntoElement<V>>(
+    cx: &mut ViewContext<V>,
+    theme_override: Option<Arc<legacy_theme::Theme>>,
+    story: S,
+) -> impl Element<V> {
+    let theme = current_theme(cx, theme_override);
+
+    story.into_element().themed(theme)
+}
+
+fn current_theme<V: 'static>(
+    cx: &mut ViewContext<V>,
+    theme_override: Option<Arc<legacy_theme::Theme>>,
+) -> Theme {
+    let legacy_theme =
+        theme_override.unwrap_or_else(|| settings::get::<ThemeSettings>(cx).theme.clone());
+
+    let new_theme: Theme = serde_json::from_value(legacy_theme.base_theme.clone()).unwrap();
+
+    add_base_theme_to_legacy_theme(&legacy_theme, new_theme)
 }
 
 // Nathan: During the transition to gpui2, we will include the base theme on the legacy Theme struct.
-fn current_theme<V: 'static>(cx: &mut ViewContext<V>) -> Theme {
-    settings::get::<ThemeSettings>(cx)
-        .theme
+fn add_base_theme_to_legacy_theme(legacy_theme: &legacy_theme::Theme, new_theme: Theme) -> Theme {
+    legacy_theme
         .deserialized_base_theme
         .lock()
-        .get_or_insert_with(|| {
-            let theme: Theme =
-                serde_json::from_value(settings::get::<ThemeSettings>(cx).theme.base_theme.clone())
-                    .unwrap();
-            Box::new(theme)
-        })
+        .get_or_insert_with(|| Box::new(new_theme))
         .downcast_ref::<Theme>()
         .unwrap()
         .clone()
@@ -73,7 +163,6 @@ fn current_theme<V: 'static>(cx: &mut ViewContext<V>) -> Theme {
 use anyhow::{anyhow, Result};
 use gpui2::AssetSource;
 use rust_embed::RustEmbed;
-use workspace::workspace;
 
 #[derive(RustEmbed)]
 #[folder = "../../assets"]

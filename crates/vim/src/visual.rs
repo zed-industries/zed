@@ -1,3 +1,4 @@
+use anyhow::Result;
 use std::{cmp, sync::Arc};
 
 use collections::HashMap;
@@ -12,7 +13,7 @@ use language::{Selection, SelectionGoal};
 use workspace::Workspace;
 
 use crate::{
-    motion::Motion,
+    motion::{start_of_line, Motion},
     object::Object,
     state::{Mode, Operator},
     utils::copy_selections_content,
@@ -28,6 +29,8 @@ actions!(
         VisualDelete,
         VisualYank,
         OtherEnd,
+        SelectNext,
+        SelectPrevious,
     ]
 );
 
@@ -46,6 +49,9 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(other_end);
     cx.add_action(delete);
     cx.add_action(yank);
+
+    cx.add_action(select_next);
+    cx.add_action(select_previous);
 }
 
 pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
@@ -326,7 +332,10 @@ pub fn yank(_: &mut Workspace, _: &VisualYank, cx: &mut ViewContext<Workspace>) 
             let line_mode = editor.selections.line_mode;
             copy_selections_content(editor, line_mode, cx);
             editor.change_selections(None, cx, |s| {
-                s.move_with(|_, selection| {
+                s.move_with(|map, selection| {
+                    if line_mode {
+                        selection.start = start_of_line(map, false, selection.start);
+                    };
                     selection.collapse_to(selection.start, SelectionGoal::None)
                 });
                 if vim.state().mode == Mode::VisualBlock {
@@ -379,6 +388,50 @@ pub(crate) fn visual_replace(text: Arc<str>, cx: &mut WindowContext) {
         });
         vim.switch_mode(Mode::Normal, false, cx);
     });
+}
+
+pub fn select_next(
+    _: &mut Workspace,
+    _: &SelectNext,
+    cx: &mut ViewContext<Workspace>,
+) -> Result<()> {
+    Vim::update(cx, |vim, cx| {
+        let count =
+            vim.take_count(cx)
+                .unwrap_or_else(|| if vim.state().mode.is_visual() { 1 } else { 2 });
+        vim.update_active_editor(cx, |editor, cx| {
+            for _ in 0..count {
+                match editor.select_next(&Default::default(), cx) {
+                    Err(a) => return Err(a),
+                    _ => {}
+                }
+            }
+            Ok(())
+        })
+    })
+    .unwrap_or(Ok(()))
+}
+
+pub fn select_previous(
+    _: &mut Workspace,
+    _: &SelectPrevious,
+    cx: &mut ViewContext<Workspace>,
+) -> Result<()> {
+    Vim::update(cx, |vim, cx| {
+        let count =
+            vim.take_count(cx)
+                .unwrap_or_else(|| if vim.state().mode.is_visual() { 1 } else { 2 });
+        vim.update_active_editor(cx, |editor, cx| {
+            for _ in 0..count {
+                match editor.select_previous(&Default::default(), cx) {
+                    Err(a) => return Err(a),
+                    _ => {}
+                }
+            }
+            Ok(())
+        })
+    })
+    .unwrap_or(Ok(()))
 }
 
 #[cfg(test)]
@@ -672,6 +725,21 @@ mod test {
                     the lazy dog"})
             .await;
         cx.assert_clipboard_content(Some("The q"));
+
+        cx.set_shared_state(indoc! {"
+                    The quick brown
+                    fox ˇjumps over
+                    the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes(["shift-v", "shift-g", "shift-y"])
+            .await;
+        cx.assert_shared_state(indoc! {"
+                    The quick brown
+                    ˇfox jumps over
+                    the lazy dog"})
+            .await;
+        cx.assert_shared_clipboard("fox jumps over\nthe lazy dog\n")
+            .await;
     }
 
     #[gpui::test]

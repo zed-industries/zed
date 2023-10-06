@@ -32,7 +32,7 @@ Have a team member add you to the [Zed Industries](https://zed-industries.slack.
 
 ### Discord
 
-We have a discord community. You can use [this link](https://discord.gg/SSD9eJrn6s) to join. **!Don't share this link, this is specifically for team memebers!**
+We have a Discord community. You can use [this link](https://discord.gg/SSD9eJrn6s) to join. **!Don't share this link, this is specifically for team members!**
 
 Once you have joined the community, let a team member know and we can add your correct role.
 
@@ -56,7 +56,7 @@ We use Vercel for all of our web deployments and some backend things. If you sig
 
 ### Environment Variables
 
-You can get access to many of our shared enviroment variables through 1Password and Vercel. For one password search the value you are looking for, or sort by passwords or API credentials.
+You can get access to many of our shared enviroment variables through 1Password and Vercel. For 1Password search the value you are looking for, or sort by passwords or API credentials.
 
 For Vercel, go to `settings` -> `Environment Variables` (either on the entire org, or on a specific project depending on where it is shared.) For a given Vercel project if you have their CLI installed you can use `vercel pull` or `vercel env` to pull values down directly. More on those in their [CLI docs](https://vercel.com/docs/cli/env).
 

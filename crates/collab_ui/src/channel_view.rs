@@ -1,12 +1,12 @@
 use anyhow::{anyhow, Result};
-use channel::{
-    channel_buffer::{self, ChannelBuffer},
-    ChannelId,
+use call::report_call_event_for_channel;
+use channel::{Channel, ChannelBuffer, ChannelBufferEvent, ChannelId, ChannelStore};
+use client::{
+    proto::{self, PeerId},
+    Collaborator, ParticipantIndex,
 };
-use client::proto;
-use clock::ReplicaId;
 use collections::HashMap;
-use editor::Editor;
+use editor::{CollaborationHub, Editor};
 use gpui::{
     actions,
     elements::{ChildView, Label},
@@ -15,7 +15,11 @@ use gpui::{
     ViewContext, ViewHandle,
 };
 use project::Project;
-use std::any::{Any, TypeId};
+use std::{
+    any::{Any, TypeId},
+    sync::Arc,
+};
+use util::ResultExt;
 use workspace::{
     item::{FollowableItem, Item, ItemHandle},
     register_followable_item,
@@ -25,13 +29,14 @@ use workspace::{
 
 actions!(channel_view, [Deploy]);
 
-pub(crate) fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut AppContext) {
     register_followable_item::<ChannelView>(cx)
 }
 
 pub struct ChannelView {
     pub editor: ViewHandle<Editor>,
     project: ModelHandle<Project>,
+    channel_store: ModelHandle<ChannelStore>,
     channel_buffer: ModelHandle<ChannelBuffer>,
     remote_id: Option<ViewId>,
     _editor_event_subscription: Subscription,
@@ -39,6 +44,28 @@ pub struct ChannelView {
 
 impl ChannelView {
     pub fn open(
+        channel_id: ChannelId,
+        workspace: ViewHandle<Workspace>,
+        cx: &mut AppContext,
+    ) -> Task<Result<ViewHandle<Self>>> {
+        let pane = workspace.read(cx).active_pane().clone();
+        let channel_view = Self::open_in_pane(channel_id, pane.clone(), workspace.clone(), cx);
+        cx.spawn(|mut cx| async move {
+            let channel_view = channel_view.await?;
+            pane.update(&mut cx, |pane, cx| {
+                report_call_event_for_channel(
+                    "open channel notes",
+                    channel_id,
+                    &workspace.read(cx).app_state().client,
+                    cx,
+                );
+                pane.add_item(Box::new(channel_view.clone()), true, true, None, cx);
+            });
+            anyhow::Ok(channel_view)
+        })
+    }
+
+    pub fn open_in_pane(
         channel_id: ChannelId,
         pane: ViewHandle<Pane>,
         workspace: ViewHandle<Workspace>,
@@ -56,17 +83,25 @@ impl ChannelView {
 
         cx.spawn(|mut cx| async move {
             let channel_buffer = channel_buffer.await?;
-            let markdown = markdown.await?;
-            channel_buffer.update(&mut cx, |buffer, cx| {
-                buffer.buffer().update(cx, |buffer, cx| {
-                    buffer.set_language(Some(markdown), cx);
-                })
-            });
+
+            if let Some(markdown) = markdown.await.log_err() {
+                channel_buffer.update(&mut cx, |buffer, cx| {
+                    buffer.buffer().update(cx, |buffer, cx| {
+                        buffer.set_language(Some(markdown), cx);
+                    })
+                });
+            }
 
             pane.update(&mut cx, |pane, cx| {
                 pane.items_of_type::<Self>()
                     .find(|channel_view| channel_view.read(cx).channel_buffer == channel_buffer)
-                    .unwrap_or_else(|| cx.add_view(|cx| Self::new(project, channel_buffer, cx)))
+                    .unwrap_or_else(|| {
+                        cx.add_view(|cx| {
+                            let mut this = Self::new(project, channel_store, channel_buffer, cx);
+                            this.acknowledge_buffer_version(cx);
+                            this
+                        })
+                    })
             })
             .ok_or_else(|| anyhow!("pane was dropped"))
         })
@@ -74,96 +109,79 @@ impl ChannelView {
 
     pub fn new(
         project: ModelHandle<Project>,
+        channel_store: ModelHandle<ChannelStore>,
         channel_buffer: ModelHandle<ChannelBuffer>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let buffer = channel_buffer.read(cx).buffer();
-        // buffer.update(cx, |buffer, cx| buffer.set_language(language, cx));
-        let editor = cx.add_view(|cx| Editor::for_buffer(buffer, None, cx));
+        let editor = cx.add_view(|cx| {
+            let mut editor = Editor::for_buffer(buffer, None, cx);
+            editor.set_collaboration_hub(Box::new(ChannelBufferCollaborationHub(
+                channel_buffer.clone(),
+            )));
+            editor
+        });
         let _editor_event_subscription = cx.subscribe(&editor, |_, _, e, cx| cx.emit(e.clone()));
 
-        cx.subscribe(&project, Self::handle_project_event).detach();
         cx.subscribe(&channel_buffer, Self::handle_channel_buffer_event)
             .detach();
 
-        let this = Self {
+        Self {
             editor,
             project,
+            channel_store,
             channel_buffer,
             remote_id: None,
             _editor_event_subscription,
-        };
-        this.refresh_replica_id_map(cx);
-        this
+        }
     }
 
-    fn handle_project_event(
-        &mut self,
-        _: ModelHandle<Project>,
-        event: &project::Event,
-        cx: &mut ViewContext<Self>,
-    ) {
-        match event {
-            project::Event::RemoteIdChanged(_) => {}
-            project::Event::DisconnectedFromHost => {}
-            project::Event::Closed => {}
-            project::Event::CollaboratorUpdated { .. } => {}
-            project::Event::CollaboratorLeft(_) => {}
-            project::Event::CollaboratorJoined(_) => {}
-            _ => return,
-        }
-        self.refresh_replica_id_map(cx);
+    pub fn channel(&self, cx: &AppContext) -> Arc<Channel> {
+        self.channel_buffer.read(cx).channel()
     }
 
     fn handle_channel_buffer_event(
         &mut self,
         _: ModelHandle<ChannelBuffer>,
-        event: &channel_buffer::Event,
+        event: &ChannelBufferEvent,
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            channel_buffer::Event::CollaboratorsChanged => {
-                self.refresh_replica_id_map(cx);
-            }
-            channel_buffer::Event::Disconnected => self.editor.update(cx, |editor, cx| {
+            ChannelBufferEvent::Disconnected => self.editor.update(cx, |editor, cx| {
                 editor.set_read_only(true);
                 cx.notify();
             }),
+            ChannelBufferEvent::BufferEdited => {
+                if cx.is_self_focused() || self.editor.is_focused(cx) {
+                    self.acknowledge_buffer_version(cx);
+                } else {
+                    self.channel_store.update(cx, |store, cx| {
+                        let channel_buffer = self.channel_buffer.read(cx);
+                        store.notes_changed(
+                            channel_buffer.channel().id,
+                            channel_buffer.epoch(),
+                            &channel_buffer.buffer().read(cx).version(),
+                            cx,
+                        )
+                    });
+                }
+            }
+            _ => {}
         }
     }
 
-    /// Build a mapping of channel buffer replica ids to the corresponding
-    /// replica ids in the current project.
-    ///
-    /// Using this mapping, a given user can be displayed with the same color
-    /// in the channel buffer as in other files in the project. Users who are
-    /// in the channel buffer but not the project will not have a color.
-    fn refresh_replica_id_map(&self, cx: &mut ViewContext<Self>) {
-        let mut project_replica_ids_by_channel_buffer_replica_id = HashMap::default();
-        let project = self.project.read(cx);
-        let channel_buffer = self.channel_buffer.read(cx);
-        project_replica_ids_by_channel_buffer_replica_id
-            .insert(channel_buffer.replica_id(cx), project.replica_id());
-        project_replica_ids_by_channel_buffer_replica_id.extend(
-            channel_buffer
-                .collaborators()
-                .iter()
-                .filter_map(|channel_buffer_collaborator| {
-                    project
-                        .collaborators()
-                        .values()
-                        .find_map(|project_collaborator| {
-                            (project_collaborator.user_id == channel_buffer_collaborator.user_id)
-                                .then_some((
-                                    channel_buffer_collaborator.replica_id as ReplicaId,
-                                    project_collaborator.replica_id,
-                                ))
-                        })
-                }),
-        );
-
-        self.editor.update(cx, |editor, cx| {
-            editor.set_replica_id_map(Some(project_replica_ids_by_channel_buffer_replica_id), cx)
+    fn acknowledge_buffer_version(&mut self, cx: &mut ViewContext<'_, '_, ChannelView>) {
+        self.channel_store.update(cx, |store, cx| {
+            let channel_buffer = self.channel_buffer.read(cx);
+            store.acknowledge_notes_version(
+                channel_buffer.channel().id,
+                channel_buffer.epoch(),
+                &channel_buffer.buffer().read(cx).version(),
+                cx,
+            )
+        });
+        self.channel_buffer.update(cx, |buffer, cx| {
+            buffer.acknowledge_buffer_version(cx);
         });
     }
 }
@@ -183,6 +201,7 @@ impl View for ChannelView {
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         if cx.is_self_focused() {
+            self.acknowledge_buffer_version(cx);
             cx.focus(self.editor.as_any())
         }
     }
@@ -222,6 +241,7 @@ impl Item for ChannelView {
     fn clone_on_split(&self, _: WorkspaceId, cx: &mut ViewContext<Self>) -> Option<Self> {
         Some(Self::new(
             self.project.clone(),
+            self.channel_store.clone(),
             self.channel_buffer.clone(),
             cx,
         ))
@@ -294,7 +314,7 @@ impl FollowableItem for ChannelView {
             unreachable!()
         };
 
-        let open = ChannelView::open(state.channel_id, pane, workspace, cx);
+        let open = ChannelView::open_in_pane(state.channel_id, pane, workspace, cx);
 
         Some(cx.spawn(|mut cx| async move {
             let this = open.await?;
@@ -354,17 +374,32 @@ impl FollowableItem for ChannelView {
         })
     }
 
-    fn set_leader_replica_id(
-        &mut self,
-        leader_replica_id: Option<u16>,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn set_leader_peer_id(&mut self, leader_peer_id: Option<PeerId>, cx: &mut ViewContext<Self>) {
         self.editor.update(cx, |editor, cx| {
-            editor.set_leader_replica_id(leader_replica_id, cx)
+            editor.set_leader_peer_id(leader_peer_id, cx)
         })
     }
 
     fn should_unfollow_on_event(event: &Self::Event, cx: &AppContext) -> bool {
         Editor::should_unfollow_on_event(event, cx)
+    }
+
+    fn is_project_item(&self, _cx: &AppContext) -> bool {
+        false
+    }
+}
+
+struct ChannelBufferCollaborationHub(ModelHandle<ChannelBuffer>);
+
+impl CollaborationHub for ChannelBufferCollaborationHub {
+    fn collaborators<'a>(&self, cx: &'a AppContext) -> &'a HashMap<PeerId, Collaborator> {
+        self.0.read(cx).collaborators()
+    }
+
+    fn user_participant_indices<'a>(
+        &self,
+        cx: &'a AppContext,
+    ) -> &'a HashMap<u64, ParticipantIndex> {
+        self.0.read(cx).user_store().read(cx).participant_indices()
     }
 }

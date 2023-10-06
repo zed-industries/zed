@@ -1,7 +1,5 @@
 use std::ops::{Deref, DerefMut};
 
-use gpui::ContextHandle;
-
 use crate::state::Mode;
 
 use super::{ExemptionFeatures, NeovimBackedTestContext, SUPPORTED_FEATURES};
@@ -33,26 +31,17 @@ impl<'a, const COUNT: usize> NeovimBackedBindingTestContext<'a, COUNT> {
         self.consume().binding(keystrokes)
     }
 
-    pub async fn assert(
-        &mut self,
-        marked_positions: &str,
-    ) -> Option<(ContextHandle, ContextHandle)> {
+    pub async fn assert(&mut self, marked_positions: &str) {
         self.cx
             .assert_binding_matches(self.keystrokes_under_test, marked_positions)
-            .await
+            .await;
     }
 
-    pub async fn assert_exempted(
-        &mut self,
-        marked_positions: &str,
-        feature: ExemptionFeatures,
-    ) -> Option<(ContextHandle, ContextHandle)> {
+    pub async fn assert_exempted(&mut self, marked_positions: &str, feature: ExemptionFeatures) {
         if SUPPORTED_FEATURES.contains(&feature) {
             self.cx
                 .assert_binding_matches(self.keystrokes_under_test, marked_positions)
                 .await
-        } else {
-            None
         }
     }
 

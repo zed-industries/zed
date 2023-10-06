@@ -4,7 +4,10 @@ use crate::{
 };
 use crate::{AutosaveSetting, DelayedDebouncedEditAction, WorkspaceSettings};
 use anyhow::Result;
-use client::{proto, Client};
+use client::{
+    proto::{self, PeerId},
+    Client,
+};
 use gpui::geometry::vector::Vector2F;
 use gpui::AnyWindowHandle;
 use gpui::{
@@ -401,6 +404,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
         if let Some(followed_item) = self.to_followable_item_handle(cx) {
             if let Some(message) = followed_item.to_state_proto(cx) {
                 workspace.update_followers(
+                    followed_item.is_project_item(cx),
                     proto::update_followers::Variant::CreateView(proto::View {
                         id: followed_item
                             .remote_id(&workspace.app_state.client, cx)
@@ -436,6 +440,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                     };
 
                     if let Some(item) = item.to_followable_item_handle(cx) {
+                        let is_project_item = item.is_project_item(cx);
                         let leader_id = workspace.leader_for_pane(&pane);
 
                         if leader_id.is_some() && item.should_unfollow_on_event(event, cx) {
@@ -455,6 +460,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                                 move |this, cx| {
                                     pending_update_scheduled.store(false, Ordering::SeqCst);
                                     this.update_followers(
+                                        is_project_item,
                                         proto::update_followers::Variant::UpdateView(
                                             proto::UpdateView {
                                                 id: item
@@ -475,11 +481,7 @@ impl<T: Item> ItemHandle for ViewHandle<T> {
                         match item_event {
                             ItemEvent::CloseItem => {
                                 pane.update(cx, |pane, cx| {
-                                    pane.close_item_by_id(
-                                        item.id(),
-                                        crate::SaveBehavior::PromptOnWrite,
-                                        cx,
-                                    )
+                                    pane.close_item_by_id(item.id(), crate::SaveIntent::Close, cx)
                                 })
                                 .detach_and_log_err(cx);
                                 return;
@@ -696,14 +698,15 @@ pub trait FollowableItem: Item {
         message: proto::update_view::Variant,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>>;
+    fn is_project_item(&self, cx: &AppContext) -> bool;
 
-    fn set_leader_replica_id(&mut self, leader_replica_id: Option<u16>, cx: &mut ViewContext<Self>);
+    fn set_leader_peer_id(&mut self, leader_peer_id: Option<PeerId>, cx: &mut ViewContext<Self>);
     fn should_unfollow_on_event(event: &Self::Event, cx: &AppContext) -> bool;
 }
 
 pub trait FollowableItemHandle: ItemHandle {
     fn remote_id(&self, client: &Arc<Client>, cx: &AppContext) -> Option<ViewId>;
-    fn set_leader_replica_id(&self, leader_replica_id: Option<u16>, cx: &mut WindowContext);
+    fn set_leader_peer_id(&self, leader_peer_id: Option<PeerId>, cx: &mut WindowContext);
     fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant>;
     fn add_event_to_update_proto(
         &self,
@@ -718,6 +721,7 @@ pub trait FollowableItemHandle: ItemHandle {
         cx: &mut WindowContext,
     ) -> Task<Result<()>>;
     fn should_unfollow_on_event(&self, event: &dyn Any, cx: &AppContext) -> bool;
+    fn is_project_item(&self, cx: &AppContext) -> bool;
 }
 
 impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
@@ -730,10 +734,8 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
         })
     }
 
-    fn set_leader_replica_id(&self, leader_replica_id: Option<u16>, cx: &mut WindowContext) {
-        self.update(cx, |this, cx| {
-            this.set_leader_replica_id(leader_replica_id, cx)
-        })
+    fn set_leader_peer_id(&self, leader_peer_id: Option<PeerId>, cx: &mut WindowContext) {
+        self.update(cx, |this, cx| this.set_leader_peer_id(leader_peer_id, cx))
     }
 
     fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant> {
@@ -768,6 +770,10 @@ impl<T: FollowableItem> FollowableItemHandle for ViewHandle<T> {
         } else {
             false
         }
+    }
+
+    fn is_project_item(&self, cx: &AppContext) -> bool {
+        self.read(cx).is_project_item(cx)
     }
 }
 

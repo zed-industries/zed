@@ -128,6 +128,7 @@ impl Database {
                 calling_connection_server_id: ActiveValue::set(Some(ServerId(
                     connection.owner_id as i32,
                 ))),
+                participant_index: ActiveValue::set(Some(0)),
                 ..Default::default()
             }
             .insert(&*tx)
@@ -152,6 +153,7 @@ impl Database {
                 room_id: ActiveValue::set(room_id),
                 user_id: ActiveValue::set(called_user_id),
                 answering_connection_lost: ActiveValue::set(false),
+                participant_index: ActiveValue::NotSet,
                 calling_user_id: ActiveValue::set(calling_user_id),
                 calling_connection_id: ActiveValue::set(calling_connection.id as i32),
                 calling_connection_server_id: ActiveValue::set(Some(ServerId(
@@ -283,6 +285,26 @@ impl Database {
                 .await?
                 .ok_or_else(|| anyhow!("no such room"))?;
 
+            #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+            enum QueryParticipantIndices {
+                ParticipantIndex,
+            }
+            let existing_participant_indices: Vec<i32> = room_participant::Entity::find()
+                .filter(
+                    room_participant::Column::RoomId
+                        .eq(room_id)
+                        .and(room_participant::Column::ParticipantIndex.is_not_null()),
+                )
+                .select_only()
+                .column(room_participant::Column::ParticipantIndex)
+                .into_values::<_, QueryParticipantIndices>()
+                .all(&*tx)
+                .await?;
+            let mut participant_index = 0;
+            while existing_participant_indices.contains(&participant_index) {
+                participant_index += 1;
+            }
+
             if let Some(channel_id) = channel_id {
                 self.check_user_is_channel_member(channel_id, user_id, &*tx)
                     .await?;
@@ -300,6 +322,7 @@ impl Database {
                     calling_connection_server_id: ActiveValue::set(Some(ServerId(
                         connection.owner_id as i32,
                     ))),
+                    participant_index: ActiveValue::Set(Some(participant_index)),
                     ..Default::default()
                 }])
                 .on_conflict(
@@ -308,6 +331,7 @@ impl Database {
                             room_participant::Column::AnsweringConnectionId,
                             room_participant::Column::AnsweringConnectionServerId,
                             room_participant::Column::AnsweringConnectionLost,
+                            room_participant::Column::ParticipantIndex,
                         ])
                         .to_owned(),
                 )
@@ -322,6 +346,7 @@ impl Database {
                             .add(room_participant::Column::AnsweringConnectionId.is_null()),
                     )
                     .set(room_participant::ActiveModel {
+                        participant_index: ActiveValue::Set(Some(participant_index)),
                         answering_connection_id: ActiveValue::set(Some(connection.id as i32)),
                         answering_connection_server_id: ActiveValue::set(Some(ServerId(
                             connection.owner_id as i32,
@@ -890,52 +915,41 @@ impl Database {
 
     pub async fn connection_lost(&self, connection: ConnectionId) -> Result<()> {
         self.transaction(|tx| async move {
-            let participant = room_participant::Entity::find()
-                .filter(
-                    Condition::all()
-                        .add(
-                            room_participant::Column::AnsweringConnectionId
-                                .eq(connection.id as i32),
-                        )
-                        .add(
-                            room_participant::Column::AnsweringConnectionServerId
-                                .eq(connection.owner_id as i32),
-                        ),
-                )
-                .one(&*tx)
+            self.room_connection_lost(connection, &*tx).await?;
+            self.channel_buffer_connection_lost(connection, &*tx)
                 .await?;
-
-            if let Some(participant) = participant {
-                room_participant::Entity::update(room_participant::ActiveModel {
-                    answering_connection_lost: ActiveValue::set(true),
-                    ..participant.into_active_model()
-                })
-                .exec(&*tx)
-                .await?;
-            }
-
-            channel_buffer_collaborator::Entity::update_many()
-                .filter(
-                    Condition::all()
-                        .add(
-                            channel_buffer_collaborator::Column::ConnectionId
-                                .eq(connection.id as i32),
-                        )
-                        .add(
-                            channel_buffer_collaborator::Column::ConnectionServerId
-                                .eq(connection.owner_id as i32),
-                        ),
-                )
-                .set(channel_buffer_collaborator::ActiveModel {
-                    connection_lost: ActiveValue::set(true),
-                    ..Default::default()
-                })
-                .exec(&*tx)
-                .await?;
-
+            self.channel_chat_connection_lost(connection, &*tx).await?;
             Ok(())
         })
         .await
+    }
+
+    pub async fn room_connection_lost(
+        &self,
+        connection: ConnectionId,
+        tx: &DatabaseTransaction,
+    ) -> Result<()> {
+        let participant = room_participant::Entity::find()
+            .filter(
+                Condition::all()
+                    .add(room_participant::Column::AnsweringConnectionId.eq(connection.id as i32))
+                    .add(
+                        room_participant::Column::AnsweringConnectionServerId
+                            .eq(connection.owner_id as i32),
+                    ),
+            )
+            .one(&*tx)
+            .await?;
+
+        if let Some(participant) = participant {
+            room_participant::Entity::update(room_participant::ActiveModel {
+                answering_connection_lost: ActiveValue::set(true),
+                ..participant.into_active_model()
+            })
+            .exec(&*tx)
+            .await?;
+        }
+        Ok(())
     }
 
     fn build_incoming_call(
@@ -971,6 +985,39 @@ impl Database {
         Ok(room)
     }
 
+    pub async fn room_connection_ids(
+        &self,
+        room_id: RoomId,
+        connection_id: ConnectionId,
+    ) -> Result<RoomGuard<HashSet<ConnectionId>>> {
+        self.room_transaction(room_id, |tx| async move {
+            let mut participants = room_participant::Entity::find()
+                .filter(room_participant::Column::RoomId.eq(room_id))
+                .stream(&*tx)
+                .await?;
+
+            let mut is_participant = false;
+            let mut connection_ids = HashSet::default();
+            while let Some(participant) = participants.next().await {
+                let participant = participant?;
+                if let Some(answering_connection) = participant.answering_connection() {
+                    if answering_connection == connection_id {
+                        is_participant = true;
+                    } else {
+                        connection_ids.insert(answering_connection);
+                    }
+                }
+            }
+
+            if !is_participant {
+                Err(anyhow!("not a room participant"))?;
+            }
+
+            Ok(connection_ids)
+        })
+        .await
+    }
+
     async fn get_channel_room(
         &self,
         room_id: RoomId,
@@ -989,10 +1036,15 @@ impl Database {
         let mut pending_participants = Vec::new();
         while let Some(db_participant) = db_participants.next().await {
             let db_participant = db_participant?;
-            if let Some((answering_connection_id, answering_connection_server_id)) = db_participant
-                .answering_connection_id
-                .zip(db_participant.answering_connection_server_id)
-            {
+            if let (
+                Some(answering_connection_id),
+                Some(answering_connection_server_id),
+                Some(participant_index),
+            ) = (
+                db_participant.answering_connection_id,
+                db_participant.answering_connection_server_id,
+                db_participant.participant_index,
+            ) {
                 let location = match (
                     db_participant.location_kind,
                     db_participant.location_project_id,
@@ -1023,6 +1075,7 @@ impl Database {
                         peer_id: Some(answering_connection.into()),
                         projects: Default::default(),
                         location: Some(proto::ParticipantLocation { variant: location }),
+                        participant_index: participant_index as u32,
                     },
                 );
             } else {

@@ -34,6 +34,27 @@ pub trait Element<V: 'static>: 'static + IntoElement<V> {
             phase: ElementPhase::Init,
         }))
     }
+
+    /// Applies a given function `then` to the current element if `condition` is true.
+    /// This function is used to conditionally modify the element based on a given condition.
+    /// If `condition` is false, it just returns the current element as it is.
+    ///
+    /// # Parameters
+    /// - `self`: The current element
+    /// - `condition`: The boolean condition based on which `then` is applied to the element.
+    /// - `then`: A function that takes in the current element and returns a possibly modified element.
+    ///
+    /// # Return
+    /// It returns the potentially modified element.
+    fn when(mut self, condition: bool, then: impl FnOnce(Self) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        if condition {
+            self = then(self);
+        }
+        self
+    }
 }
 
 /// Used to make ElementState<V, E> into a trait object, so we can wrap it in AnyElement<V>.
@@ -175,6 +196,31 @@ pub trait ParentElement<V: 'static> {
                 .into_iter()
                 .map(|child| child.into_element().into_any()),
         );
+        self
+    }
+
+    // HACK: This is a temporary hack to get children working for the purposes
+    // of building UI on top of the current version of gpui2.
+    //
+    // We'll (hopefully) be moving away from this in the future.
+    fn children_any<I>(mut self, children: I) -> Self
+    where
+        I: IntoIterator<Item = AnyElement<V>>,
+        Self: Sized,
+    {
+        self.children_mut().extend(children.into_iter());
+        self
+    }
+
+    // HACK: This is a temporary hack to get children working for the purposes
+    // of building UI on top of the current version of gpui2.
+    //
+    // We'll (hopefully) be moving away from this in the future.
+    fn child_any(mut self, children: AnyElement<V>) -> Self
+    where
+        Self: Sized,
+    {
+        self.children_mut().push(children);
         self
     }
 }
