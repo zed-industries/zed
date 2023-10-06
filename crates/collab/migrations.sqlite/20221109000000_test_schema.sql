@@ -327,7 +327,8 @@ CREATE TABLE "notifications" (
     "kind" INTEGER NOT NULL REFERENCES notification_kinds (id),
     "is_read" BOOLEAN NOT NULL DEFAULT FALSE,
     "entity_id_1" INTEGER,
-    "entity_id_2" INTEGER
+    "entity_id_2" INTEGER,
+    "entity_id_3" INTEGER
 );
 
 CREATE INDEX "index_notifications_on_recipient_id" ON "notifications" ("recipient_id");

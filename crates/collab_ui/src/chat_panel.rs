@@ -1,4 +1,7 @@
-use crate::{channel_view::ChannelView, ChatPanelSettings};
+use crate::{
+    channel_view::ChannelView, format_timestamp, is_channels_feature_enabled, render_avatar,
+    ChatPanelSettings,
+};
 use anyhow::Result;
 use call::ActiveCall;
 use channel::{ChannelChat, ChannelChatEvent, ChannelMessageId, ChannelStore};
@@ -6,15 +9,14 @@ use client::Client;
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
-use feature_flags::{ChannelsAlpha, FeatureFlagAppExt};
 use gpui::{
     actions,
     elements::*,
     platform::{CursorStyle, MouseButton},
     serde_json,
     views::{ItemType, Select, SelectStyle},
-    AnyViewHandle, AppContext, AsyncAppContext, Entity, ImageData, ModelHandle, Subscription, Task,
-    View, ViewContext, ViewHandle, WeakViewHandle,
+    AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelHandle, Subscription, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
 use menu::Confirm;
@@ -675,32 +677,6 @@ impl ChatPanel {
     }
 }
 
-fn render_avatar(avatar: Option<Arc<ImageData>>, theme: &Arc<Theme>) -> AnyElement<ChatPanel> {
-    let avatar_style = theme.chat_panel.avatar;
-
-    avatar
-        .map(|avatar| {
-            Image::from_data(avatar)
-                .with_style(avatar_style.image)
-                .aligned()
-                .contained()
-                .with_corner_radius(avatar_style.outer_corner_radius)
-                .constrained()
-                .with_width(avatar_style.outer_width)
-                .with_height(avatar_style.outer_width)
-                .into_any()
-        })
-        .unwrap_or_else(|| {
-            Empty::new()
-                .constrained()
-                .with_width(avatar_style.outer_width)
-                .into_any()
-        })
-        .contained()
-        .with_style(theme.chat_panel.avatar_container)
-        .into_any()
-}
-
 fn render_remove(
     message_id_to_remove: Option<u64>,
     cx: &mut ViewContext<'_, '_, ChatPanel>,
@@ -810,14 +786,14 @@ impl Panel for ChatPanel {
         self.active = active;
         if active {
             self.acknowledge_last_message(cx);
-            if !is_chat_feature_enabled(cx) {
+            if !is_channels_feature_enabled(cx) {
                 cx.emit(Event::Dismissed);
             }
         }
     }
 
     fn icon_path(&self, cx: &gpui::WindowContext) -> Option<&'static str> {
-        (settings::get::<ChatPanelSettings>(cx).button && is_chat_feature_enabled(cx))
+        (settings::get::<ChatPanelSettings>(cx).button && is_channels_feature_enabled(cx))
             .then(|| "icons/conversations.svg")
     }
 
@@ -839,35 +815,6 @@ impl Panel for ChatPanel {
 
     fn is_focus_event(event: &Self::Event) -> bool {
         matches!(event, Event::Focus)
-    }
-}
-
-fn is_chat_feature_enabled(cx: &gpui::WindowContext<'_>) -> bool {
-    cx.is_staff() || cx.has_flag::<ChannelsAlpha>()
-}
-
-fn format_timestamp(
-    mut timestamp: OffsetDateTime,
-    mut now: OffsetDateTime,
-    local_timezone: UtcOffset,
-) -> String {
-    timestamp = timestamp.to_offset(local_timezone);
-    now = now.to_offset(local_timezone);
-
-    let today = now.date();
-    let date = timestamp.date();
-    let mut hour = timestamp.hour();
-    let mut part = "am";
-    if hour > 12 {
-        hour -= 12;
-        part = "pm";
-    }
-    if date == today {
-        format!("{:02}:{:02}{}", hour, timestamp.minute(), part)
-    } else if date.next_day() == Some(today) {
-        format!("yesterday at {:02}:{:02}{}", hour, timestamp.minute(), part)
-    } else {
-        format!("{:02}/{}/{}", date.month() as u32, date.day(), date.year())
     }
 }
 

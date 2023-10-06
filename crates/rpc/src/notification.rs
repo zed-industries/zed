@@ -7,13 +7,18 @@ use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
 #[derive(Copy, Clone, Debug, EnumIter, EnumString, Display)]
 pub enum NotificationKind {
     ContactRequest = 0,
-    ChannelInvitation = 1,
-    ChannelMessageMention = 2,
+    ContactRequestAccepted = 1,
+    ChannelInvitation = 2,
+    ChannelMessageMention = 3,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Notification {
     ContactRequest {
         requester_id: u64,
+    },
+    ContactRequestAccepted {
+        contact_id: u64,
     },
     ChannelInvitation {
         inviter_id: u64,
@@ -26,13 +31,6 @@ pub enum Notification {
     },
 }
 
-#[derive(Copy, Clone)]
-pub enum NotificationEntityKind {
-    User,
-    Channel,
-    ChannelMessage,
-}
-
 impl Notification {
     /// Load this notification from its generic representation, which is
     /// used to represent it in the database, and in the wire protocol.
@@ -42,15 +40,20 @@ impl Notification {
     /// not change, because they're stored in that order in the database.
     pub fn from_parts(kind: NotificationKind, entity_ids: [Option<u64>; 3]) -> Option<Self> {
         use NotificationKind::*;
-
         Some(match kind {
             ContactRequest => Self::ContactRequest {
                 requester_id: entity_ids[0]?,
             },
+
+            ContactRequestAccepted => Self::ContactRequest {
+                requester_id: entity_ids[0]?,
+            },
+
             ChannelInvitation => Self::ChannelInvitation {
                 inviter_id: entity_ids[0]?,
                 channel_id: entity_ids[1]?,
             },
+
             ChannelMessageMention => Self::ChannelMessageMention {
                 sender_id: entity_ids[0]?,
                 channel_id: entity_ids[1]?,
@@ -65,33 +68,23 @@ impl Notification {
     /// The order in which a given notification type's fields are listed must
     /// match the order they're listed in the `from_parts` method, and it must
     /// not change, because they're stored in that order in the database.
-    ///
-    /// Along with each field, provide the kind of entity that the field refers
-    /// to. This is used to load the associated entities for a batch of
-    /// notifications from the database.
-    pub fn to_parts(&self) -> (NotificationKind, [Option<(u64, NotificationEntityKind)>; 3]) {
+    pub fn to_parts(&self) -> (NotificationKind, [Option<u64>; 3]) {
         use NotificationKind::*;
-
         match self {
-            Self::ContactRequest { requester_id } => (
-                ContactRequest,
-                [
-                    Some((*requester_id, NotificationEntityKind::User)),
-                    None,
-                    None,
-                ],
-            ),
+            Self::ContactRequest { requester_id } => {
+                (ContactRequest, [Some(*requester_id), None, None])
+            }
+
+            Self::ContactRequestAccepted { contact_id } => {
+                (ContactRequest, [Some(*contact_id), None, None])
+            }
 
             Self::ChannelInvitation {
                 inviter_id,
                 channel_id,
             } => (
                 ChannelInvitation,
-                [
-                    Some((*inviter_id, NotificationEntityKind::User)),
-                    Some((*channel_id, NotificationEntityKind::User)),
-                    None,
-                ],
+                [Some(*inviter_id), Some(*channel_id), None],
             ),
 
             Self::ChannelMessageMention {
@@ -100,11 +93,7 @@ impl Notification {
                 message_id,
             } => (
                 ChannelMessageMention,
-                [
-                    Some((*sender_id, NotificationEntityKind::User)),
-                    Some((*channel_id, NotificationEntityKind::ChannelMessage)),
-                    Some((*message_id, NotificationEntityKind::Channel)),
-                ],
+                [Some(*sender_id), Some(*channel_id), Some(*message_id)],
             ),
         }
     }

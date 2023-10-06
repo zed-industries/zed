@@ -70,6 +70,7 @@ pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 
 const MESSAGE_COUNT_PER_PAGE: usize = 100;
 const MAX_MESSAGE_LEN: usize = 1024;
+const INITIAL_NOTIFICATION_COUNT: usize = 30;
 
 lazy_static! {
     static ref METRIC_CONNECTIONS: IntGauge =
@@ -289,6 +290,8 @@ impl Server {
         let timeout = self.executor.sleep(CLEANUP_TIMEOUT);
         let pool = self.connection_pool.clone();
         let live_kit_client = self.app_state.live_kit_client.clone();
+
+        self.app_state.db.ensure_notification_kinds().await?;
 
         let span = info_span!("start server");
         self.executor.spawn_detached(
@@ -578,15 +581,17 @@ impl Server {
                 this.app_state.db.set_user_connected_once(user_id, true).await?;
             }
 
-            let (contacts, channels_for_user, channel_invites) = future::try_join3(
+            let (contacts, channels_for_user, channel_invites, notifications) = future::try_join4(
                 this.app_state.db.get_contacts(user_id),
                 this.app_state.db.get_channels_for_user(user_id),
-                this.app_state.db.get_channel_invites_for_user(user_id)
+                this.app_state.db.get_channel_invites_for_user(user_id),
+                this.app_state.db.get_notifications(user_id, INITIAL_NOTIFICATION_COUNT)
             ).await?;
 
             {
                 let mut pool = this.connection_pool.lock();
                 pool.add_connection(connection_id, user_id, user.admin);
+                this.peer.send(connection_id, notifications)?;
                 this.peer.send(connection_id, build_initial_contacts_update(contacts, &pool))?;
                 this.peer.send(connection_id, build_initial_channels_update(
                     channels_for_user,
@@ -2064,7 +2069,7 @@ async fn request_contact(
         return Err(anyhow!("cannot add yourself as a contact"))?;
     }
 
-    session
+    let notification = session
         .db()
         .await
         .send_contact_request(requester_id, responder_id)
@@ -2095,6 +2100,12 @@ async fn request_contact(
         .user_connection_ids(responder_id)
     {
         session.peer.send(connection_id, update.clone())?;
+        session.peer.send(
+            connection_id,
+            proto::AddNotifications {
+                notifications: vec![notification.clone()],
+            },
+        )?;
     }
 
     response.send(proto::Ack {})?;

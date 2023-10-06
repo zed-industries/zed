@@ -124,7 +124,11 @@ impl Database {
         .await
     }
 
-    pub async fn send_contact_request(&self, sender_id: UserId, receiver_id: UserId) -> Result<()> {
+    pub async fn send_contact_request(
+        &self,
+        sender_id: UserId,
+        receiver_id: UserId,
+    ) -> Result<proto::Notification> {
         self.transaction(|tx| async move {
             let (id_a, id_b, a_to_b) = if sender_id < receiver_id {
                 (sender_id, receiver_id, true)
@@ -162,7 +166,14 @@ impl Database {
             .await?;
 
             if rows_affected == 1 {
-                Ok(())
+                self.create_notification(
+                    receiver_id,
+                    rpc::Notification::ContactRequest {
+                        requester_id: sender_id.to_proto(),
+                    },
+                    &*tx,
+                )
+                .await
             } else {
                 Err(anyhow!("contact already requested"))?
             }

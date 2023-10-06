@@ -47,6 +47,7 @@ members = [
     "crates/media",
     "crates/menu",
     "crates/node_runtime",
+    "crates/notifications",
     "crates/outline",
     "crates/picker",
     "crates/plugin",

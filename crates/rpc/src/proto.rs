@@ -133,6 +133,7 @@ impl fmt::Display for PeerId {
 
 messages!(
     (Ack, Foreground),
+    (AddNotifications, Foreground),
     (AddProjectCollaborator, Foreground),
     (ApplyCodeAction, Background),
     (ApplyCodeActionResponse, Background),
@@ -166,6 +167,7 @@ messages!(
     (GetHoverResponse, Background),
     (GetChannelMessages, Background),
     (GetChannelMessagesResponse, Background),
+    (GetChannelMessagesById, Background),
     (SendChannelMessage, Background),
     (SendChannelMessageResponse, Background),
     (GetCompletions, Background),
@@ -329,6 +331,7 @@ request_messages!(
     (SetChannelMemberAdmin, Ack),
     (SendChannelMessage, SendChannelMessageResponse),
     (GetChannelMessages, GetChannelMessagesResponse),
+    (GetChannelMessagesById, GetChannelMessagesResponse),
     (GetChannelMembers, GetChannelMembersResponse),
     (JoinChannel, JoinRoomResponse),
     (RemoveChannelMessage, Ack),

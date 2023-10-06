@@ -1559,6 +1559,7 @@ dependencies = [
  "language",
  "log",
  "menu",
+ "notifications",
  "picker",
  "postage",
  "project",
@@ -4725,6 +4726,26 @@ checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
 dependencies = [
  "memchr",
  "minimal-lexical",
+]
+
+[[package]]
+name = "notifications"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "channel",
+ "client",
+ "clock",
+ "collections",
+ "db",
+ "feature_flags",
+ "gpui",
+ "rpc",
+ "settings",
+ "sum_tree",
+ "text",
+ "time",
+ "util",
 ]
 
 [[package]]
@@ -10123,6 +10144,7 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
+ "notifications",
  "num_cpus",
  "outline",
  "parking_lot 0.11.2",

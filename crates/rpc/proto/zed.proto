@@ -172,7 +172,8 @@ message Envelope {
         UnlinkChannel unlink_channel = 141;
         MoveChannel move_channel = 142;
 
-        AddNotifications add_notification = 145; // Current max
+        AddNotifications add_notifications = 145;
+        GetChannelMessagesById get_channel_messages_by_id = 146; // Current max
     }
 }
 
@@ -1101,6 +1102,10 @@ message GetChannelMessagesResponse {
     bool done = 2;
 }
 
+message GetChannelMessagesById {
+    repeated uint64 message_ids = 1;
+}
+
 message LinkChannel {
     uint64 channel_id = 1;
     uint64 to = 2;
@@ -1562,37 +1567,14 @@ message UpdateDiffBase {
 
 message AddNotifications {
     repeated Notification notifications = 1;
-    repeated User users = 2;
-    repeated Channel channels = 3;
-    repeated ChannelMessage messages = 4;
 }
 
 message Notification {
-    uint32 kind = 1;
-    uint64 timestamp = 2;
-    bool is_read = 3;
-    optional uint64 entity_id_1 = 4;
-    optional uint64 entity_id_2 = 5;
-    optional uint64 entity_id_3 = 6;
-
-    // oneof variant {
-    //     ContactRequest contact_request = 3;
-    //     ChannelInvitation channel_invitation = 4;
-    //     ChatMessageMention chat_message_mention = 5;
-    // };
-
-    // message ContactRequest {
-    //     uint64 requester_id = 1;
-    // }
-
-    // message ChannelInvitation {
-    //     uint64 inviter_id = 1;
-    //     uint64 channel_id = 2;
-    // }
-
-    // message ChatMessageMention {
-    //     uint64 sender_id = 1;
-    //     uint64 channel_id = 2;
-    //     uint64 message_id = 3;
-    // }
+    uint64 id = 1;
+    uint32 kind = 2;
+    uint64 timestamp = 3;
+    bool is_read = 4;
+    optional uint64 entity_id_1 = 5;
+    optional uint64 entity_id_2 = 6;
+    optional uint64 entity_id_3 = 7;
 }

@@ -1,6 +1,6 @@
 mod channel_index;
 
-use crate::{channel_buffer::ChannelBuffer, channel_chat::ChannelChat};
+use crate::{channel_buffer::ChannelBuffer, channel_chat::ChannelChat, ChannelMessage};
 use anyhow::{anyhow, Result};
 use channel_index::ChannelIndex;
 use client::{Client, Subscription, User, UserId, UserStore};
@@ -246,6 +246,33 @@ impl ChannelStore {
             |channel, cx| ChannelBuffer::new(channel, client, user_store, cx),
             cx,
         )
+    }
+
+    pub fn fetch_channel_messages(
+        &self,
+        message_ids: Vec<u64>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<ChannelMessage>>> {
+        let request = if message_ids.is_empty() {
+            None
+        } else {
+            Some(
+                self.client
+                    .request(proto::GetChannelMessagesById { message_ids }),
+            )
+        };
+        cx.spawn_weak(|this, mut cx| async move {
+            if let Some(request) = request {
+                let response = request.await?;
+                let this = this
+                    .upgrade(&cx)
+                    .ok_or_else(|| anyhow!("channel store dropped"))?;
+                let user_store = this.read_with(&cx, |this, _| this.user_store.clone());
+                ChannelMessage::from_proto_vec(response.messages, &user_store, &mut cx).await
+            } else {
+                Ok(Vec::new())
+            }
+        })
     }
 
     pub fn has_channel_buffer_changed(&self, channel_id: ChannelId) -> Option<bool> {

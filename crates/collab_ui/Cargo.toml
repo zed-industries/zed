@@ -37,6 +37,7 @@ fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 menu = { path = "../menu" }
+notifications = { path = "../notifications" }
 rich_text = { path = "../rich_text" }
 picker = { path = "../picker" }
 project = { path = "../project" }
@@ -65,6 +66,7 @@ client = { path = "../client", features = ["test-support"] }
 collections = { path = "../collections", features = ["test-support"] }
 editor = { path = "../editor", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
+notifications = { path = "../notifications", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }

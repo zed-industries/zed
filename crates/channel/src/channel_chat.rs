@@ -451,22 +451,7 @@ async fn messages_from_proto(
     user_store: &ModelHandle<UserStore>,
     cx: &mut AsyncAppContext,
 ) -> Result<SumTree<ChannelMessage>> {
-    let unique_user_ids = proto_messages
-        .iter()
-        .map(|m| m.sender_id)
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect();
-    user_store
-        .update(cx, |user_store, cx| {
-            user_store.get_users(unique_user_ids, cx)
-        })
-        .await?;
-
-    let mut messages = Vec::with_capacity(proto_messages.len());
-    for message in proto_messages {
-        messages.push(ChannelMessage::from_proto(message, user_store, cx).await?);
-    }
+    let messages = ChannelMessage::from_proto_vec(proto_messages, user_store, cx).await?;
     let mut result = SumTree::new();
     result.extend(messages, &());
     Ok(result)
@@ -497,6 +482,30 @@ impl ChannelMessage {
 
     pub fn is_pending(&self) -> bool {
         matches!(self.id, ChannelMessageId::Pending(_))
+    }
+
+    pub async fn from_proto_vec(
+        proto_messages: Vec<proto::ChannelMessage>,
+        user_store: &ModelHandle<UserStore>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<Vec<Self>> {
+        let unique_user_ids = proto_messages
+            .iter()
+            .map(|m| m.sender_id)
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        user_store
+            .update(cx, |user_store, cx| {
+                user_store.get_users(unique_user_ids, cx)
+            })
+            .await?;
+
+        let mut messages = Vec::with_capacity(proto_messages.len());
+        for message in proto_messages {
+            messages.push(ChannelMessage::from_proto(message, user_store, cx).await?);
+        }
+        Ok(messages)
     }
 }
 
