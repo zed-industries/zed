@@ -76,7 +76,7 @@
   // Settings related to calls in Zed
   "calls": {
     // Join calls with the microphone muted by default
-    "mute_on_join": true
+    "mute_on_join": false
   },
   // Scrollbar related settings
   "scrollbar": {

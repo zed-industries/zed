@@ -3,6 +3,8 @@ use cli::{ipc::IpcSender, CliRequest, CliResponse};
 use futures::channel::mpsc;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use std::ffi::OsStr;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::os::unix::prelude::OsStrExt;
 use std::sync::atomic::Ordering;
 use std::{path::PathBuf, sync::atomic::AtomicBool};
@@ -41,6 +43,16 @@ impl OpenListener {
     }
 
     pub fn open_urls(&self, urls: Vec<String>) {
+        writeln!(
+            OpenOptions::new()
+                .write(true)
+                .append(true)
+                .open("/Users/conrad/dbg")
+                .unwrap(),
+            "{:?}",
+            &urls,
+        )
+        .unwrap();
         self.triggered.store(true, Ordering::Release);
         let request = if let Some(server_name) =
             urls.first().and_then(|url| url.strip_prefix("zed-cli://"))
@@ -79,6 +91,7 @@ impl OpenListener {
                 }
             }
         }
+        log::error!("invalid zed url: {}", request_path);
         None
     }
 

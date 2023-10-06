@@ -66,6 +66,15 @@ use crate::open_url::{OpenListener, OpenRequest};
 mod open_url;
 
 fn main() {
+    writeln!(
+        OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open("/Users/conrad/dbg")
+            .unwrap(),
+        "HELLO"
+    )
+    .unwrap();
     let http = http::client();
     init_paths();
     init_logger();
@@ -270,6 +279,7 @@ fn main() {
                         }
                         OpenRequest::JoinChannel { channel_id } => cx
                             .update(|cx| {
+                                dbg!("joining channel");
                                 workspace::join_channel(channel_id, app_state.clone(), None, cx)
                             })
                             .detach(),

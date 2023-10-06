@@ -47,6 +47,7 @@ use std::{
     any::TypeId,
     borrow::Cow,
     cmp, env,
+    fs::OpenOptions,
     future::Future,
     path::{Path, PathBuf},
     rc::Rc,
@@ -4161,6 +4162,7 @@ async fn join_channel_internal(
     active_call: &ModelHandle<ActiveCall>,
     cx: &mut AsyncAppContext,
 ) -> Result<bool> {
+    dbg!("join channel internal");
     let should_prompt = active_call.read_with(cx, |active_call, cx| {
         let Some(room) = active_call.room().map(|room| room.read(cx)) else {
             return false;
@@ -4193,6 +4195,7 @@ async fn join_channel_internal(
             return Ok(false); // unreachable!() hopefully
         }
     }
+    dbg!("asdajdkjkasd");
 
     let client = cx.read(|cx| active_call.read(cx).client());
 
@@ -4218,13 +4221,17 @@ async fn join_channel_internal(
         }
     }
 
+    dbg!("past here");
+
     let room = active_call
         .update(cx, |active_call, cx| {
             active_call.join_channel(channel_id, cx)
         })
         .await?;
 
-    room.update(cx, |room, cx| room.next_room_update()).await;
+    room.update(cx, |room, _| room.next_room_update()).await;
+
+    dbg!("wow");
 
     let task = room.update(cx, |room, cx| {
         if let Some((project, host)) = room.most_active_project() {
@@ -4237,7 +4244,16 @@ async fn join_channel_internal(
         task.await?;
         return anyhow::Ok(true);
     }
-
+    use std::io::Write;
+    writeln!(
+        OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open("/Users/conrad/dbg")
+            .unwrap(),
+        "no jokes"
+    )
+    .unwrap();
     anyhow::Ok(false)
 }
 
@@ -4257,6 +4273,7 @@ pub fn join_channel(
             &mut cx,
         )
         .await;
+        dbg!("joined!");
 
         // join channel succeeded, and opened a window
         if matches!(result, Ok(true)) {

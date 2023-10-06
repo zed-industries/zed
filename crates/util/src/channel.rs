@@ -44,9 +44,9 @@ impl ReleaseChannel {
 
     pub fn url_scheme(&self) -> &'static str {
         match self {
-            ReleaseChannel::Dev => "zed-dev:/",
-            ReleaseChannel::Preview => "zed-preview:/",
-            ReleaseChannel::Stable => "zed:/",
+            ReleaseChannel::Dev => "zed-dev://",
+            ReleaseChannel::Preview => "zed-preview://",
+            ReleaseChannel::Stable => "zed://",
         }
     }
 
