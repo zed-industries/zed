@@ -2,7 +2,7 @@ use gpui3::{
     div, img, svg, view, Context, Element, ParentElement, RootView, StyleHelpers, View,
     ViewContext, WindowContext,
 };
-use ui::prelude::*;
+use ui::{prelude::*};
 use ui::{themed, Panel, Stack};
 
 use crate::{
@@ -30,6 +30,7 @@ impl Workspace {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<State = Self> {
         themed(rose_pine_dawn(), cx, |cx| {
             let theme = theme(cx);
+
             div()
                 .size_full()
                 .v_stack()

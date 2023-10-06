@@ -38,6 +38,7 @@ pub enum ComponentStory {
     Buffer,
     Panel,
     ProjectPanel,
+    Workspace,
 }
 
 impl ComponentStory {
@@ -51,6 +52,7 @@ impl ComponentStory {
             Self::Buffer => components::buffer::BufferStory::new().into_any(),
             Self::Panel => components::panel::PanelStory::new().into_any(),
             Self::ProjectPanel => components::project_panel::ProjectPanelStory::new().into_any(),
+            Self::Workspace => components::workspace::WorkspaceStory::new().into_any(),
         }
     }
 }
