@@ -7829,6 +7829,7 @@ dependencies = [
  "smallvec",
  "strum",
  "theme",
+ "ui2",
  "util",
 ]
 
@@ -9043,6 +9044,21 @@ dependencies = [
  "anyhow",
  "chrono",
  "gpui2",
+ "rand 0.8.5",
+ "serde",
+ "settings",
+ "smallvec",
+ "strum",
+ "theme",
+]
+
+[[package]]
+name = "ui2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "gpui3",
  "rand 0.8.5",
  "serde",
  "settings",

@@ -75,6 +75,7 @@ members = [
     "crates/theme",
     "crates/theme_selector",
     "crates/ui",
+    "crates/ui2",
     "crates/util",
     "crates/semantic_index",
     "crates/vim",

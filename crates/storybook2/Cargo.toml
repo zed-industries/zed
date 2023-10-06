@@ -23,6 +23,7 @@ simplelog = "0.9"
 smallvec.workspace = true
 strum = { version = "0.25.0", features = ["derive"] }
 theme = { path = "../theme" }
+ui = { package = "ui2", path = "../ui2" }
 util = { path = "../util" }
 
 [dev-dependencies]
