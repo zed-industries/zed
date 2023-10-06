@@ -3,12 +3,10 @@ pub use gpui3::{
     WindowContext,
 };
 
-pub use crate::{HackyChildren, HackyChildrenPayload, ElementExt};
+pub use crate::{theme, ButtonVariant, ElementExt, HackyChildren, HackyChildrenPayload, Theme};
 
 use gpui3::{hsla, rgb, Hsla};
 use strum::EnumIter;
-
-use crate::theme::{theme, Theme};
 
 #[derive(Default)]
 pub struct SystemColor {

@@ -3,7 +3,7 @@ use gpui3::{
     ViewContext, WindowContext,
 };
 use ui::prelude::*;
-use ui::{theme, themed, Panel, Stack};
+use ui::{themed, Panel, Stack};
 
 use crate::{
     collab_panel::{collab_panel, CollabPanel},
