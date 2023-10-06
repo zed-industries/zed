@@ -27,7 +27,7 @@ impl Details {
             .gap_0p5()
             .text_xs()
             .text_color(theme.lowest.base.default.foreground)
-            .child(self.text.clone())
+            .child(self.text)
             .children(self.meta.map(|m| m))
     }
 }

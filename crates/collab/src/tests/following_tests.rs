@@ -4,6 +4,7 @@ use collab_ui::project_shared_notification::ProjectSharedNotification;
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{executor::Deterministic, geometry::vector::vec2f, TestAppContext, ViewHandle};
 use live_kit_client::MacOSDisplay;
+use rpc::proto::PeerId;
 use serde_json::json;
 use std::{borrow::Cow, sync::Arc};
 use workspace::{
@@ -724,10 +725,9 @@ async fn test_peers_following_each_other(
         .await
         .unwrap();
 
-    // Client A opens some editors.
+    // Client A opens a file.
     let workspace_a = client_a.build_workspace(&project_a, cx_a).root(cx_a);
-    let pane_a1 = workspace_a.read_with(cx_a, |workspace, _| workspace.active_pane().clone());
-    let _editor_a1 = workspace_a
+    workspace_a
         .update(cx_a, |workspace, cx| {
             workspace.open_path((worktree_id, "1.txt"), None, true, cx)
         })
@@ -736,10 +736,9 @@ async fn test_peers_following_each_other(
         .downcast::<Editor>()
         .unwrap();
 
-    // Client B opens an editor.
+    // Client B opens a different file.
     let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
-    let pane_b1 = workspace_b.read_with(cx_b, |workspace, _| workspace.active_pane().clone());
-    let _editor_b1 = workspace_b
+    workspace_b
         .update(cx_b, |workspace, cx| {
             workspace.open_path((worktree_id, "2.txt"), None, true, cx)
         })
@@ -754,9 +753,7 @@ async fn test_peers_following_each_other(
     });
     workspace_a
         .update(cx_a, |workspace, cx| {
-            assert_ne!(*workspace.active_pane(), pane_a1);
-            let leader_id = *project_a.read(cx).collaborators().keys().next().unwrap();
-            workspace.follow(leader_id, cx).unwrap()
+            workspace.follow(client_b.peer_id().unwrap(), cx).unwrap()
         })
         .await
         .unwrap();
@@ -765,85 +762,443 @@ async fn test_peers_following_each_other(
     });
     workspace_b
         .update(cx_b, |workspace, cx| {
-            assert_ne!(*workspace.active_pane(), pane_b1);
-            let leader_id = *project_b.read(cx).collaborators().keys().next().unwrap();
-            workspace.follow(leader_id, cx).unwrap()
+            workspace.follow(client_a.peer_id().unwrap(), cx).unwrap()
         })
         .await
         .unwrap();
 
-    workspace_a.update(cx_a, |workspace, cx| {
-        workspace.activate_next_pane(cx);
-    });
-    // Wait for focus effects to be fully flushed
-    workspace_a.update(cx_a, |workspace, _| {
-        assert_eq!(*workspace.active_pane(), pane_a1);
-    });
+    // Clients A and B return focus to the original files they had open
+    workspace_a.update(cx_a, |workspace, cx| workspace.activate_next_pane(cx));
+    workspace_b.update(cx_b, |workspace, cx| workspace.activate_next_pane(cx));
+    deterministic.run_until_parked();
 
+    // Both clients see the other client's focused file in their right pane.
+    assert_eq!(
+        pane_summaries(&workspace_a, cx_a),
+        &[
+            PaneSummary {
+                active: true,
+                leader: None,
+                items: vec![(true, "1.txt".into())]
+            },
+            PaneSummary {
+                active: false,
+                leader: client_b.peer_id(),
+                items: vec![(false, "1.txt".into()), (true, "2.txt".into())]
+            },
+        ]
+    );
+    assert_eq!(
+        pane_summaries(&workspace_b, cx_b),
+        &[
+            PaneSummary {
+                active: true,
+                leader: None,
+                items: vec![(true, "2.txt".into())]
+            },
+            PaneSummary {
+                active: false,
+                leader: client_a.peer_id(),
+                items: vec![(false, "2.txt".into()), (true, "1.txt".into())]
+            },
+        ]
+    );
+
+    // Clients A and B each open a new file.
     workspace_a
         .update(cx_a, |workspace, cx| {
             workspace.open_path((worktree_id, "3.txt"), None, true, cx)
         })
         .await
         .unwrap();
-    workspace_b.update(cx_b, |workspace, cx| {
-        workspace.activate_next_pane(cx);
-    });
 
     workspace_b
         .update(cx_b, |workspace, cx| {
-            assert_eq!(*workspace.active_pane(), pane_b1);
             workspace.open_path((worktree_id, "4.txt"), None, true, cx)
         })
         .await
         .unwrap();
-    cx_a.foreground().run_until_parked();
+    deterministic.run_until_parked();
 
-    // Ensure leader updates don't change the active pane of followers
-    workspace_a.read_with(cx_a, |workspace, _| {
-        assert_eq!(*workspace.active_pane(), pane_a1);
-    });
-    workspace_b.read_with(cx_b, |workspace, _| {
-        assert_eq!(*workspace.active_pane(), pane_b1);
-    });
-
-    // Ensure peers following each other doesn't cause an infinite loop.
+    // Both client's see the other client open the new file, but keep their
+    // focus on their own active pane.
     assert_eq!(
-        workspace_a.read_with(cx_a, |workspace, cx| workspace
-            .active_item(cx)
-            .unwrap()
-            .project_path(cx)),
-        Some((worktree_id, "3.txt").into())
+        pane_summaries(&workspace_a, cx_a),
+        &[
+            PaneSummary {
+                active: true,
+                leader: None,
+                items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
+            },
+            PaneSummary {
+                active: false,
+                leader: client_b.peer_id(),
+                items: vec![
+                    (false, "1.txt".into()),
+                    (false, "2.txt".into()),
+                    (true, "4.txt".into())
+                ]
+            },
+        ]
     );
-    workspace_a.update(cx_a, |workspace, cx| {
-        assert_eq!(
-            workspace.active_item(cx).unwrap().project_path(cx),
-            Some((worktree_id, "3.txt").into())
-        );
-        workspace.activate_next_pane(cx);
-    });
+    assert_eq!(
+        pane_summaries(&workspace_b, cx_b),
+        &[
+            PaneSummary {
+                active: true,
+                leader: None,
+                items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
+            },
+            PaneSummary {
+                active: false,
+                leader: client_a.peer_id(),
+                items: vec![
+                    (false, "2.txt".into()),
+                    (false, "1.txt".into()),
+                    (true, "3.txt".into())
+                ]
+            },
+        ]
+    );
 
-    workspace_a.update(cx_a, |workspace, cx| {
-        assert_eq!(
-            workspace.active_item(cx).unwrap().project_path(cx),
-            Some((worktree_id, "4.txt").into())
-        );
-    });
+    // Client A focuses their right pane, in which they're following client B.
+    workspace_a.update(cx_a, |workspace, cx| workspace.activate_next_pane(cx));
+    deterministic.run_until_parked();
 
+    // Client B sees that client A is now looking at the same file as them.
+    assert_eq!(
+        pane_summaries(&workspace_a, cx_a),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: client_b.peer_id(),
+                items: vec![
+                    (false, "1.txt".into()),
+                    (false, "2.txt".into()),
+                    (true, "4.txt".into())
+                ]
+            },
+        ]
+    );
+    assert_eq!(
+        pane_summaries(&workspace_b, cx_b),
+        &[
+            PaneSummary {
+                active: true,
+                leader: None,
+                items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
+            },
+            PaneSummary {
+                active: false,
+                leader: client_a.peer_id(),
+                items: vec![
+                    (false, "2.txt".into()),
+                    (false, "1.txt".into()),
+                    (false, "3.txt".into()),
+                    (true, "4.txt".into())
+                ]
+            },
+        ]
+    );
+
+    // Client B focuses their right pane, in which they're following client A,
+    // who is following them.
+    workspace_b.update(cx_b, |workspace, cx| workspace.activate_next_pane(cx));
+    deterministic.run_until_parked();
+
+    // Client A sees that client B is now looking at the same file as them.
+    assert_eq!(
+        pane_summaries(&workspace_b, cx_b),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: client_a.peer_id(),
+                items: vec![
+                    (false, "2.txt".into()),
+                    (false, "1.txt".into()),
+                    (false, "3.txt".into()),
+                    (true, "4.txt".into())
+                ]
+            },
+        ]
+    );
+    assert_eq!(
+        pane_summaries(&workspace_a, cx_a),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: client_b.peer_id(),
+                items: vec![
+                    (false, "1.txt".into()),
+                    (false, "2.txt".into()),
+                    (true, "4.txt".into())
+                ]
+            },
+        ]
+    );
+
+    // Client B focuses a file that they previously followed A to, breaking
+    // the follow.
     workspace_b.update(cx_b, |workspace, cx| {
-        assert_eq!(
-            workspace.active_item(cx).unwrap().project_path(cx),
-            Some((worktree_id, "4.txt").into())
-        );
-        workspace.activate_next_pane(cx);
+        workspace.active_pane().update(cx, |pane, cx| {
+            pane.activate_prev_item(true, cx);
+        });
+    });
+    deterministic.run_until_parked();
+
+    // Both clients see that client B is looking at that previous file.
+    assert_eq!(
+        pane_summaries(&workspace_b, cx_b),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: None,
+                items: vec![
+                    (false, "2.txt".into()),
+                    (false, "1.txt".into()),
+                    (true, "3.txt".into()),
+                    (false, "4.txt".into())
+                ]
+            },
+        ]
+    );
+    assert_eq!(
+        pane_summaries(&workspace_a, cx_a),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: client_b.peer_id(),
+                items: vec![
+                    (false, "1.txt".into()),
+                    (false, "2.txt".into()),
+                    (false, "4.txt".into()),
+                    (true, "3.txt".into()),
+                ]
+            },
+        ]
+    );
+
+    // Client B closes tabs, some of which were originally opened by client A,
+    // and some of which were originally opened by client B.
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.active_pane().update(cx, |pane, cx| {
+            pane.close_inactive_items(&Default::default(), cx)
+                .unwrap()
+                .detach();
+        });
     });
 
-    workspace_b.update(cx_b, |workspace, cx| {
-        assert_eq!(
-            workspace.active_item(cx).unwrap().project_path(cx),
-            Some((worktree_id, "3.txt").into())
-        );
+    deterministic.run_until_parked();
+
+    // Both clients see that Client B is looking at the previous tab.
+    assert_eq!(
+        pane_summaries(&workspace_b, cx_b),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: None,
+                items: vec![(true, "3.txt".into()),]
+            },
+        ]
+    );
+    assert_eq!(
+        pane_summaries(&workspace_a, cx_a),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: client_b.peer_id(),
+                items: vec![
+                    (false, "1.txt".into()),
+                    (false, "2.txt".into()),
+                    (false, "4.txt".into()),
+                    (true, "3.txt".into()),
+                ]
+            },
+        ]
+    );
+
+    // Client B follows client A again.
+    workspace_b
+        .update(cx_b, |workspace, cx| {
+            workspace.follow(client_a.peer_id().unwrap(), cx).unwrap()
+        })
+        .await
+        .unwrap();
+
+    // Client A cycles through some tabs.
+    workspace_a.update(cx_a, |workspace, cx| {
+        workspace.active_pane().update(cx, |pane, cx| {
+            pane.activate_prev_item(true, cx);
+        });
     });
+    deterministic.run_until_parked();
+
+    // Client B follows client A into those tabs.
+    assert_eq!(
+        pane_summaries(&workspace_a, cx_a),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: None,
+                items: vec![
+                    (false, "1.txt".into()),
+                    (false, "2.txt".into()),
+                    (true, "4.txt".into()),
+                    (false, "3.txt".into()),
+                ]
+            },
+        ]
+    );
+    assert_eq!(
+        pane_summaries(&workspace_b, cx_b),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: client_a.peer_id(),
+                items: vec![(false, "3.txt".into()), (true, "4.txt".into())]
+            },
+        ]
+    );
+
+    workspace_a.update(cx_a, |workspace, cx| {
+        workspace.active_pane().update(cx, |pane, cx| {
+            pane.activate_prev_item(true, cx);
+        });
+    });
+    deterministic.run_until_parked();
+
+    assert_eq!(
+        pane_summaries(&workspace_a, cx_a),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: None,
+                items: vec![
+                    (false, "1.txt".into()),
+                    (true, "2.txt".into()),
+                    (false, "4.txt".into()),
+                    (false, "3.txt".into()),
+                ]
+            },
+        ]
+    );
+    assert_eq!(
+        pane_summaries(&workspace_b, cx_b),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: client_a.peer_id(),
+                items: vec![
+                    (false, "3.txt".into()),
+                    (false, "4.txt".into()),
+                    (true, "2.txt".into())
+                ]
+            },
+        ]
+    );
+
+    workspace_a.update(cx_a, |workspace, cx| {
+        workspace.active_pane().update(cx, |pane, cx| {
+            pane.activate_prev_item(true, cx);
+        });
+    });
+    deterministic.run_until_parked();
+
+    assert_eq!(
+        pane_summaries(&workspace_a, cx_a),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "1.txt".into()), (true, "3.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: None,
+                items: vec![
+                    (true, "1.txt".into()),
+                    (false, "2.txt".into()),
+                    (false, "4.txt".into()),
+                    (false, "3.txt".into()),
+                ]
+            },
+        ]
+    );
+    assert_eq!(
+        pane_summaries(&workspace_b, cx_b),
+        &[
+            PaneSummary {
+                active: false,
+                leader: None,
+                items: vec![(false, "2.txt".into()), (true, "4.txt".into())]
+            },
+            PaneSummary {
+                active: true,
+                leader: client_a.peer_id(),
+                items: vec![
+                    (false, "3.txt".into()),
+                    (false, "4.txt".into()),
+                    (false, "2.txt".into()),
+                    (true, "1.txt".into()),
+                ]
+            },
+        ]
+    );
 }
 
 #[gpui::test(iterations = 10)]
@@ -1074,24 +1429,6 @@ async fn test_peers_simultaneously_following_each_other(
     });
 }
 
-fn visible_push_notifications(
-    cx: &mut TestAppContext,
-) -> Vec<gpui::ViewHandle<ProjectSharedNotification>> {
-    let mut ret = Vec::new();
-    for window in cx.windows() {
-        window.read_with(cx, |window| {
-            if let Some(handle) = window
-                .root_view()
-                .clone()
-                .downcast::<ProjectSharedNotification>()
-            {
-                ret.push(handle)
-            }
-        });
-    }
-    ret
-}
-
 #[gpui::test(iterations = 10)]
 async fn test_following_across_workspaces(
     deterministic: Arc<Deterministic>,
@@ -1303,4 +1640,60 @@ async fn test_following_across_workspaces(
         let item = workspace.active_item(cx).unwrap();
         assert_eq!(item.tab_description(0, cx).unwrap(), Cow::Borrowed("y.rs"));
     });
+}
+
+fn visible_push_notifications(
+    cx: &mut TestAppContext,
+) -> Vec<gpui::ViewHandle<ProjectSharedNotification>> {
+    let mut ret = Vec::new();
+    for window in cx.windows() {
+        window.read_with(cx, |window| {
+            if let Some(handle) = window
+                .root_view()
+                .clone()
+                .downcast::<ProjectSharedNotification>()
+            {
+                ret.push(handle)
+            }
+        });
+    }
+    ret
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct PaneSummary {
+    active: bool,
+    leader: Option<PeerId>,
+    items: Vec<(bool, String)>,
+}
+
+fn pane_summaries(workspace: &ViewHandle<Workspace>, cx: &mut TestAppContext) -> Vec<PaneSummary> {
+    workspace.read_with(cx, |workspace, cx| {
+        let active_pane = workspace.active_pane();
+        workspace
+            .panes()
+            .iter()
+            .map(|pane| {
+                let leader = workspace.leader_for_pane(pane);
+                let active = pane == active_pane;
+                let pane = pane.read(cx);
+                let active_ix = pane.active_item_index();
+                PaneSummary {
+                    active,
+                    leader,
+                    items: pane
+                        .items()
+                        .enumerate()
+                        .map(|(ix, item)| {
+                            (
+                                ix == active_ix,
+                                item.tab_description(0, cx)
+                                    .map_or(String::new(), |s| s.to_string()),
+                            )
+                        })
+                        .collect(),
+                }
+            })
+            .collect()
+    })
 }

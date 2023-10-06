@@ -64,6 +64,7 @@ members = [
     "crates/sqlez",
     "crates/sqlez_macros",
     "crates/feature_flags",
+    "crates/rich_text",
     "crates/storybook",
     "crates/sum_tree",
     "crates/terminal",

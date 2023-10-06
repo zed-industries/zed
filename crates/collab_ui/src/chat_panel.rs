@@ -3,6 +3,7 @@ use anyhow::Result;
 use call::ActiveCall;
 use channel::{ChannelChat, ChannelChatEvent, ChannelMessageId, ChannelStore};
 use client::Client;
+use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use feature_flags::{ChannelsAlpha, FeatureFlagAppExt};
@@ -12,12 +13,13 @@ use gpui::{
     platform::{CursorStyle, MouseButton},
     serde_json,
     views::{ItemType, Select, SelectStyle},
-    AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelHandle, Subscription, Task, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    AnyViewHandle, AppContext, AsyncAppContext, Entity, ImageData, ModelHandle, Subscription, Task,
+    View, ViewContext, ViewHandle, WeakViewHandle,
 };
-use language::language_settings::SoftWrap;
+use language::{language_settings::SoftWrap, LanguageRegistry};
 use menu::Confirm;
 use project::Fs;
+use rich_text::RichText;
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
 use std::sync::Arc;
@@ -35,6 +37,7 @@ const CHAT_PANEL_KEY: &'static str = "ChatPanel";
 pub struct ChatPanel {
     client: Arc<Client>,
     channel_store: ModelHandle<ChannelStore>,
+    languages: Arc<LanguageRegistry>,
     active_chat: Option<(ModelHandle<ChannelChat>, Subscription)>,
     message_list: ListState<ChatPanel>,
     input_editor: ViewHandle<Editor>,
@@ -47,6 +50,7 @@ pub struct ChatPanel {
     subscriptions: Vec<gpui::Subscription>,
     workspace: WeakViewHandle<Workspace>,
     has_focus: bool,
+    markdown_data: HashMap<ChannelMessageId, RichText>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -78,6 +82,7 @@ impl ChatPanel {
         let fs = workspace.app_state().fs.clone();
         let client = workspace.app_state().client.clone();
         let channel_store = workspace.app_state().channel_store.clone();
+        let languages = workspace.app_state().languages.clone();
 
         let input_editor = cx.add_view(|cx| {
             let mut editor = Editor::auto_height(
@@ -130,6 +135,7 @@ impl ChatPanel {
                 fs,
                 client,
                 channel_store,
+                languages,
 
                 active_chat: Default::default(),
                 pending_serialization: Task::ready(None),
@@ -142,6 +148,7 @@ impl ChatPanel {
                 workspace: workspace_handle,
                 active: false,
                 width: None,
+                markdown_data: Default::default(),
             };
 
             let mut old_dock_position = this.position(cx);
@@ -177,6 +184,25 @@ impl ChatPanel {
                 }
             })
             .detach();
+
+            let markdown = this.languages.language_for_name("Markdown");
+            cx.spawn(|this, mut cx| async move {
+                let markdown = markdown.await?;
+
+                this.update(&mut cx, |this, cx| {
+                    this.input_editor.update(cx, |editor, cx| {
+                        editor.buffer().update(cx, |multi_buffer, cx| {
+                            multi_buffer
+                                .as_singleton()
+                                .unwrap()
+                                .update(cx, |buffer, cx| buffer.set_language(Some(markdown), cx))
+                        })
+                    })
+                })?;
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
 
             this
         })
@@ -328,7 +354,7 @@ impl ChatPanel {
         messages.flex(1., true).into_any()
     }
 
-    fn render_message(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+    fn render_message(&mut self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let (message, is_continuation, is_last) = {
             let active_chat = self.active_chat.as_ref().unwrap().0.read(cx);
             let last_message = active_chat.message(ix.saturating_sub(1));
@@ -337,15 +363,21 @@ impl ChatPanel {
                 && this_message.sender.id == last_message.sender.id;
 
             (
-                active_chat.message(ix),
+                active_chat.message(ix).clone(),
                 is_continuation,
                 active_chat.message_count() == ix + 1,
             )
         };
 
+        let is_pending = message.is_pending();
+        let text = self
+            .markdown_data
+            .entry(message.id)
+            .or_insert_with(|| rich_text::render_markdown(message.body, &self.languages, None));
+
         let now = OffsetDateTime::now_utc();
         let theme = theme::current(cx);
-        let style = if message.is_pending() {
+        let style = if is_pending {
             &theme.chat_panel.pending_message
         } else if is_continuation {
             &theme.chat_panel.continuation_message
@@ -361,106 +393,90 @@ impl ChatPanel {
                 None
             };
 
-        enum DeleteMessage {}
-
-        let body = message.body.clone();
-        if is_continuation {
-            Flex::row()
-                .with_child(Text::new(body, style.body.clone()))
-                .with_children(message_id_to_remove.map(|id| {
-                    MouseEventHandler::new::<DeleteMessage, _>(id as usize, cx, |mouse_state, _| {
-                        let button_style = theme.chat_panel.icon_button.style_for(mouse_state);
-                        render_icon_button(button_style, "icons/x.svg")
-                            .aligned()
-                            .into_any()
+        enum MessageBackgroundHighlight {}
+        MouseEventHandler::new::<MessageBackgroundHighlight, _>(ix, cx, |state, cx| {
+            let container = style.container.style_for(state);
+            if is_continuation {
+                Flex::row()
+                    .with_child(
+                        text.element(
+                            theme.editor.syntax.clone(),
+                            style.body.clone(),
+                            theme.editor.document_highlight_read_background,
+                            cx,
+                        )
+                        .flex(1., true),
+                    )
+                    .with_child(render_remove(message_id_to_remove, cx, &theme))
+                    .contained()
+                    .with_style(*container)
+                    .with_margin_bottom(if is_last {
+                        theme.chat_panel.last_message_bottom_spacing
+                    } else {
+                        0.
                     })
-                    .with_padding(Padding::uniform(2.))
-                    .with_cursor_style(CursorStyle::PointingHand)
-                    .on_click(MouseButton::Left, move |_, this, cx| {
-                        this.remove_message(id, cx);
-                    })
-                    .flex_float()
-                }))
-                .contained()
-                .with_style(style.container)
-                .with_margin_bottom(if is_last {
-                    theme.chat_panel.last_message_bottom_spacing
-                } else {
-                    0.
-                })
-                .into_any()
-        } else {
-            Flex::column()
-                .with_child(
-                    Flex::row()
-                        .with_child(
-                            message
-                                .sender
-                                .avatar
-                                .clone()
-                                .map(|avatar| {
-                                    Image::from_data(avatar)
-                                        .with_style(theme.collab_panel.channel_avatar)
-                                        .into_any()
-                                })
-                                .unwrap_or_else(|| {
-                                    Empty::new()
-                                        .constrained()
-                                        .with_width(
-                                            theme.collab_panel.channel_avatar.width.unwrap_or(12.),
+                    .into_any()
+            } else {
+                Flex::column()
+                    .with_child(
+                        Flex::row()
+                            .with_child(
+                                Flex::row()
+                                    .with_child(render_avatar(
+                                        message.sender.avatar.clone(),
+                                        &theme,
+                                    ))
+                                    .with_child(
+                                        Label::new(
+                                            message.sender.github_login.clone(),
+                                            style.sender.text.clone(),
                                         )
-                                        .into_any()
-                                })
-                                .contained()
-                                .with_margin_right(4.),
-                        )
-                        .with_child(
-                            Label::new(
-                                message.sender.github_login.clone(),
-                                style.sender.text.clone(),
+                                        .contained()
+                                        .with_style(style.sender.container),
+                                    )
+                                    .with_child(
+                                        Label::new(
+                                            format_timestamp(
+                                                message.timestamp,
+                                                now,
+                                                self.local_timezone,
+                                            ),
+                                            style.timestamp.text.clone(),
+                                        )
+                                        .contained()
+                                        .with_style(style.timestamp.container),
+                                    )
+                                    .align_children_center()
+                                    .flex(1., true),
                             )
-                            .contained()
-                            .with_style(style.sender.container),
-                        )
-                        .with_child(
-                            Label::new(
-                                format_timestamp(message.timestamp, now, self.local_timezone),
-                                style.timestamp.text.clone(),
+                            .with_child(render_remove(message_id_to_remove, cx, &theme))
+                            .align_children_center(),
+                    )
+                    .with_child(
+                        Flex::row()
+                            .with_child(
+                                text.element(
+                                    theme.editor.syntax.clone(),
+                                    style.body.clone(),
+                                    theme.editor.document_highlight_read_background,
+                                    cx,
+                                )
+                                .flex(1., true),
                             )
-                            .contained()
-                            .with_style(style.timestamp.container),
-                        )
-                        .with_children(message_id_to_remove.map(|id| {
-                            MouseEventHandler::new::<DeleteMessage, _>(
-                                id as usize,
-                                cx,
-                                |mouse_state, _| {
-                                    let button_style =
-                                        theme.chat_panel.icon_button.style_for(mouse_state);
-                                    render_icon_button(button_style, "icons/x.svg")
-                                        .aligned()
-                                        .into_any()
-                                },
-                            )
-                            .with_padding(Padding::uniform(2.))
-                            .with_cursor_style(CursorStyle::PointingHand)
-                            .on_click(MouseButton::Left, move |_, this, cx| {
-                                this.remove_message(id, cx);
-                            })
-                            .flex_float()
-                        }))
-                        .align_children_center(),
-                )
-                .with_child(Text::new(body, style.body.clone()))
-                .contained()
-                .with_style(style.container)
-                .with_margin_bottom(if is_last {
-                    theme.chat_panel.last_message_bottom_spacing
-                } else {
-                    0.
-                })
-                .into_any()
-        }
+                            // Add a spacer to make everything line up
+                            .with_child(render_remove(None, cx, &theme)),
+                    )
+                    .contained()
+                    .with_style(*container)
+                    .with_margin_bottom(if is_last {
+                        theme.chat_panel.last_message_bottom_spacing
+                    } else {
+                        0.
+                    })
+                    .into_any()
+            }
+        })
+        .into_any()
     }
 
     fn render_input_box(&self, theme: &Arc<Theme>, cx: &AppContext) -> AnyElement<Self> {
@@ -634,6 +650,7 @@ impl ChatPanel {
         cx.spawn(|this, mut cx| async move {
             let chat = open_chat.await?;
             this.update(&mut cx, |this, cx| {
+                this.markdown_data = Default::default();
                 this.set_active_chat(chat, cx);
             })
         })
@@ -656,6 +673,72 @@ impl ChatPanel {
                 .detach_and_log_err(cx);
         }
     }
+}
+
+fn render_avatar(avatar: Option<Arc<ImageData>>, theme: &Arc<Theme>) -> AnyElement<ChatPanel> {
+    let avatar_style = theme.chat_panel.avatar;
+
+    avatar
+        .map(|avatar| {
+            Image::from_data(avatar)
+                .with_style(avatar_style.image)
+                .aligned()
+                .contained()
+                .with_corner_radius(avatar_style.outer_corner_radius)
+                .constrained()
+                .with_width(avatar_style.outer_width)
+                .with_height(avatar_style.outer_width)
+                .into_any()
+        })
+        .unwrap_or_else(|| {
+            Empty::new()
+                .constrained()
+                .with_width(avatar_style.outer_width)
+                .into_any()
+        })
+        .contained()
+        .with_style(theme.chat_panel.avatar_container)
+        .into_any()
+}
+
+fn render_remove(
+    message_id_to_remove: Option<u64>,
+    cx: &mut ViewContext<'_, '_, ChatPanel>,
+    theme: &Arc<Theme>,
+) -> AnyElement<ChatPanel> {
+    enum DeleteMessage {}
+
+    message_id_to_remove
+        .map(|id| {
+            MouseEventHandler::new::<DeleteMessage, _>(id as usize, cx, |mouse_state, _| {
+                let button_style = theme.chat_panel.icon_button.style_for(mouse_state);
+                render_icon_button(button_style, "icons/x.svg")
+                    .aligned()
+                    .into_any()
+            })
+            .with_padding(Padding::uniform(2.))
+            .with_cursor_style(CursorStyle::PointingHand)
+            .on_click(MouseButton::Left, move |_, this, cx| {
+                this.remove_message(id, cx);
+            })
+            .flex_float()
+            .into_any()
+        })
+        .unwrap_or_else(|| {
+            let style = theme.chat_panel.icon_button.default;
+
+            Empty::new()
+                .constrained()
+                .with_width(style.icon_width)
+                .aligned()
+                .constrained()
+                .with_width(style.button_width)
+                .with_height(style.button_width)
+                .contained()
+                .with_uniform_padding(2.)
+                .flex_float()
+                .into_any()
+        })
 }
 
 impl Entity for ChatPanel {

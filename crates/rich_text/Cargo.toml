@@ -1,0 +1,30 @@
+[package]
+name = "rich_text"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/rich_text.rs"
+doctest = false
+
+[features]
+test-support = [
+    "gpui/test-support",
+    "util/test-support",
+]
+
+
+[dependencies]
+collections = { path = "../collections" }
+gpui = { path = "../gpui" }
+sum_tree = { path = "../sum_tree" }
+theme = { path = "../theme" }
+language = { path = "../language" }
+util = { path = "../util" }
+anyhow.workspace = true
+futures.workspace = true
+lazy_static.workspace = true
+pulldown-cmark = { version = "0.9.2", default-features = false }
+smallvec.workspace = true
+smol.workspace = true

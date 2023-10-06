@@ -79,7 +79,7 @@ use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use theme::{Theme, ThemeSettings};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
-use util::{async_iife, ResultExt};
+use util::ResultExt;
 pub use workspace_settings::{AutosaveSetting, GitGutterSetting, WorkspaceSettings};
 
 lazy_static! {
@@ -573,6 +573,7 @@ pub struct Workspace {
     panes_by_item: HashMap<usize, WeakViewHandle<Pane>>,
     active_pane: ViewHandle<Pane>,
     last_active_center_pane: Option<WeakViewHandle<Pane>>,
+    last_active_view_id: Option<proto::ViewId>,
     status_bar: ViewHandle<StatusBar>,
     titlebar_item: Option<AnyViewHandle>,
     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
@@ -786,6 +787,7 @@ impl Workspace {
             panes_by_item: Default::default(),
             active_pane: center_pane.clone(),
             last_active_center_pane: Some(center_pane.downgrade()),
+            last_active_view_id: None,
             status_bar,
             titlebar_item: None,
             notifications: Default::default(),
@@ -934,7 +936,8 @@ impl Workspace {
                 app_state,
                 cx,
             )
-            .await;
+            .await
+            .unwrap_or_default();
 
             (workspace, opened_items)
         })
@@ -2862,6 +2865,7 @@ impl Workspace {
 
         cx.notify();
 
+        self.last_active_view_id = active_view_id.clone();
         proto::FollowResponse {
             active_view_id,
             views: self
@@ -3028,7 +3032,7 @@ impl Workspace {
         Ok(())
     }
 
-    fn update_active_view_for_followers(&self, cx: &AppContext) {
+    fn update_active_view_for_followers(&mut self, cx: &AppContext) {
         let mut is_project_item = true;
         let mut update = proto::UpdateActiveView::default();
         if self.active_pane.read(cx).has_focus() {
@@ -3046,11 +3050,14 @@ impl Workspace {
             }
         }
 
-        self.update_followers(
-            is_project_item,
-            proto::update_followers::Variant::UpdateActiveView(update),
-            cx,
-        );
+        if update.id != self.last_active_view_id {
+            self.last_active_view_id = update.id.clone();
+            self.update_followers(
+                is_project_item,
+                proto::update_followers::Variant::UpdateActiveView(update),
+                cx,
+            );
+        }
     }
 
     fn update_followers(
@@ -3394,140 +3401,124 @@ impl Workspace {
         serialized_workspace: SerializedWorkspace,
         paths_to_open: Vec<Option<ProjectPath>>,
         cx: &mut AppContext,
-    ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>> {
+    ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
         cx.spawn(|mut cx| async move {
-            let result = async_iife! {{
-                let (project, old_center_pane) =
-                workspace.read_with(&cx, |workspace, _| {
-                    (
-                        workspace.project().clone(),
-                        workspace.last_active_center_pane.clone(),
-                    )
-                })?;
+            let (project, old_center_pane) = workspace.read_with(&cx, |workspace, _| {
+                (
+                    workspace.project().clone(),
+                    workspace.last_active_center_pane.clone(),
+                )
+            })?;
 
-                let mut center_items = None;
-                let mut center_group = None;
-                // Traverse the splits tree and add to things
-                if let Some((group, active_pane, items)) = serialized_workspace
-                        .center_group
-                        .deserialize(&project, serialized_workspace.id, &workspace, &mut cx)
-                        .await {
-                    center_items = Some(items);
-                    center_group = Some((group, active_pane))
+            let mut center_group = None;
+            let mut center_items = None;
+            // Traverse the splits tree and add to things
+            if let Some((group, active_pane, items)) = serialized_workspace
+                .center_group
+                .deserialize(&project, serialized_workspace.id, &workspace, &mut cx)
+                .await
+            {
+                center_items = Some(items);
+                center_group = Some((group, active_pane))
+            }
+
+            let mut items_by_project_path = cx.read(|cx| {
+                center_items
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|item| {
+                        let item = item?;
+                        let project_path = item.project_path(cx)?;
+                        Some((project_path, item))
+                    })
+                    .collect::<HashMap<_, _>>()
+            });
+
+            let opened_items = paths_to_open
+                .into_iter()
+                .map(|path_to_open| {
+                    path_to_open
+                        .and_then(|path_to_open| items_by_project_path.remove(&path_to_open))
+                })
+                .collect::<Vec<_>>();
+
+            // Remove old panes from workspace panes list
+            workspace.update(&mut cx, |workspace, cx| {
+                if let Some((center_group, active_pane)) = center_group {
+                    workspace.remove_panes(workspace.center.root.clone(), cx);
+
+                    // Swap workspace center group
+                    workspace.center = PaneGroup::with_root(center_group);
+
+                    // Change the focus to the workspace first so that we retrigger focus in on the pane.
+                    cx.focus_self();
+
+                    if let Some(active_pane) = active_pane {
+                        cx.focus(&active_pane);
+                    } else {
+                        cx.focus(workspace.panes.last().unwrap());
+                    }
+                } else {
+                    let old_center_handle = old_center_pane.and_then(|weak| weak.upgrade(cx));
+                    if let Some(old_center_handle) = old_center_handle {
+                        cx.focus(&old_center_handle)
+                    } else {
+                        cx.focus_self()
+                    }
                 }
 
-                let resulting_list = cx.read(|cx| {
-                    let mut opened_items = center_items
-                        .unwrap_or_default()
-                        .into_iter()
-                        .filter_map(|item| {
-                            let item = item?;
-                            let project_path = item.project_path(cx)?;
-                            Some((project_path, item))
-                        })
-                        .collect::<HashMap<_, _>>();
-
-                    paths_to_open
-                        .into_iter()
-                        .map(|path_to_open| {
-                            path_to_open.map(|path_to_open| {
-                                Ok(opened_items.remove(&path_to_open))
-                            })
-                            .transpose()
-                            .map(|item| item.flatten())
-                            .transpose()
-                        })
-                        .collect::<Vec<_>>()
-                });
-
-                // Remove old panes from workspace panes list
-                workspace.update(&mut cx, |workspace, cx| {
-                    if let Some((center_group, active_pane)) = center_group {
-                        workspace.remove_panes(workspace.center.root.clone(), cx);
-
-                        // Swap workspace center group
-                        workspace.center = PaneGroup::with_root(center_group);
-
-                        // Change the focus to the workspace first so that we retrigger focus in on the pane.
-                        cx.focus_self();
-
-                        if let Some(active_pane) = active_pane {
-                            cx.focus(&active_pane);
-                        } else {
-                            cx.focus(workspace.panes.last().unwrap());
+                let docks = serialized_workspace.docks;
+                workspace.left_dock.update(cx, |dock, cx| {
+                    dock.set_open(docks.left.visible, cx);
+                    if let Some(active_panel) = docks.left.active_panel {
+                        if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
+                            dock.activate_panel(ix, cx);
                         }
-                    } else {
-                        let old_center_handle = old_center_pane.and_then(|weak| weak.upgrade(cx));
-                        if let Some(old_center_handle) = old_center_handle {
-                            cx.focus(&old_center_handle)
-                        } else {
-                            cx.focus_self()
+                    }
+                    dock.active_panel()
+                        .map(|panel| panel.set_zoomed(docks.left.zoom, cx));
+                    if docks.left.visible && docks.left.zoom {
+                        cx.focus_self()
+                    }
+                });
+                // TODO: I think the bug is that setting zoom or active undoes the bottom zoom or something
+                workspace.right_dock.update(cx, |dock, cx| {
+                    dock.set_open(docks.right.visible, cx);
+                    if let Some(active_panel) = docks.right.active_panel {
+                        if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
+                            dock.activate_panel(ix, cx);
+                        }
+                    }
+                    dock.active_panel()
+                        .map(|panel| panel.set_zoomed(docks.right.zoom, cx));
+
+                    if docks.right.visible && docks.right.zoom {
+                        cx.focus_self()
+                    }
+                });
+                workspace.bottom_dock.update(cx, |dock, cx| {
+                    dock.set_open(docks.bottom.visible, cx);
+                    if let Some(active_panel) = docks.bottom.active_panel {
+                        if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
+                            dock.activate_panel(ix, cx);
                         }
                     }
 
-                    let docks = serialized_workspace.docks;
-                    workspace.left_dock.update(cx, |dock, cx| {
-                        dock.set_open(docks.left.visible, cx);
-                        if let Some(active_panel) = docks.left.active_panel {
-                            if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
-                                dock.activate_panel(ix, cx);
-                            }
-                        }
-                                dock.active_panel()
-                                    .map(|panel| {
-                                        panel.set_zoomed(docks.left.zoom, cx)
-                                    });
-                                if docks.left.visible && docks.left.zoom {
-                                    cx.focus_self()
-                                }
-                    });
-                    // TODO: I think the bug is that setting zoom or active undoes the bottom zoom or something
-                    workspace.right_dock.update(cx, |dock, cx| {
-                        dock.set_open(docks.right.visible, cx);
-                        if let Some(active_panel) = docks.right.active_panel {
-                            if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
-                                dock.activate_panel(ix, cx);
+                    dock.active_panel()
+                        .map(|panel| panel.set_zoomed(docks.bottom.zoom, cx));
 
-                            }
-                        }
-                                dock.active_panel()
-                                    .map(|panel| {
-                                        panel.set_zoomed(docks.right.zoom, cx)
-                                    });
+                    if docks.bottom.visible && docks.bottom.zoom {
+                        cx.focus_self()
+                    }
+                });
 
-                                if docks.right.visible && docks.right.zoom {
-                                    cx.focus_self()
-                                }
-                    });
-                    workspace.bottom_dock.update(cx, |dock, cx| {
-                        dock.set_open(docks.bottom.visible, cx);
-                        if let Some(active_panel) = docks.bottom.active_panel {
-                            if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
-                                dock.activate_panel(ix, cx);
-                            }
-                        }
+                cx.notify();
+            })?;
 
-                        dock.active_panel()
-                            .map(|panel| {
-                                panel.set_zoomed(docks.bottom.zoom, cx)
-                            });
+            // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
+            workspace.read_with(&cx, |workspace, cx| workspace.serialize_workspace(cx))?;
 
-                        if docks.bottom.visible && docks.bottom.zoom {
-                            cx.focus_self()
-                        }
-                    });
-
-
-                    cx.notify();
-                })?;
-
-                // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
-                workspace.read_with(&cx, |workspace, cx| workspace.serialize_workspace(cx))?;
-
-                Ok::<_, anyhow::Error>(resulting_list)
-            }};
-
-            result.await.unwrap_or_default()
+            Ok(opened_items)
         })
     }
 
@@ -3601,7 +3592,7 @@ async fn open_items(
     mut project_paths_to_open: Vec<(PathBuf, Option<ProjectPath>)>,
     app_state: Arc<AppState>,
     mut cx: AsyncAppContext,
-) -> Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>> {
+) -> Result<Vec<Option<Result<Box<dyn ItemHandle>>>>> {
     let mut opened_items = Vec::with_capacity(project_paths_to_open.len());
 
     if let Some(serialized_workspace) = serialized_workspace {
@@ -3619,16 +3610,19 @@ async fn open_items(
                     cx,
                 )
             })
-            .await;
+            .await?;
 
         let restored_project_paths = cx.read(|cx| {
             restored_items
                 .iter()
-                .filter_map(|item| item.as_ref()?.as_ref().ok()?.project_path(cx))
+                .filter_map(|item| item.as_ref()?.project_path(cx))
                 .collect::<HashSet<_>>()
         });
 
-        opened_items = restored_items;
+        for restored_item in restored_items {
+            opened_items.push(restored_item.map(Ok));
+        }
+
         project_paths_to_open
             .iter_mut()
             .for_each(|(_, project_path)| {
@@ -3681,7 +3675,7 @@ async fn open_items(
         }
     }
 
-    opened_items
+    Ok(opened_items)
 }
 
 fn notify_of_new_dock(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppContext) {
