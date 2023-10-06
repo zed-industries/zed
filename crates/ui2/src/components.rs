@@ -6,6 +6,7 @@ mod panel;
 mod panes;
 mod project_panel;
 mod status_bar;
+mod tab;
 mod workspace;
 
 pub use assistant_panel::*;
@@ -16,4 +17,5 @@ pub use panel::*;
 pub use panes::*;
 pub use project_panel::*;
 pub use status_bar::*;
+pub use tab::*;
 pub use workspace::*;
