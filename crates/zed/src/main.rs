@@ -8,7 +8,9 @@ use cli::{
     ipc::{self, IpcSender},
     CliRequest, CliResponse, IpcHandshake, FORCE_CLI_MODE_ENV_VAR_NAME,
 };
-use client::{self, TelemetrySettings, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN};
+use client::{
+    self, Client, TelemetrySettings, UserStore, ZED_APP_VERSION, ZED_SECRET_CLIENT_TOKEN,
+};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{scroll::autoscroll::Autoscroll, Editor};
 use futures::{
@@ -33,7 +35,7 @@ use std::{
     fs::OpenOptions,
     io::{IsTerminal, Write as _},
     panic,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc, Weak,
@@ -222,6 +224,8 @@ fn main() {
             }
         }
 
+        let mut triggered_authentication = false;
+
         match open_rx.try_next() {
             Ok(Some(OpenRequest::Paths { paths })) => {
                 cx.update(|cx| workspace::open_paths(&paths, &app_state, None, cx))
@@ -231,9 +235,18 @@ fn main() {
                 cx.spawn(|cx| handle_cli_connection(connection, app_state.clone(), cx))
                     .detach();
             }
-            Ok(Some(OpenRequest::JoinChannel { channel_id })) => cx
-                .update(|cx| workspace::join_channel(channel_id, app_state.clone(), None, cx))
-                .detach_and_log_err(cx),
+            Ok(Some(OpenRequest::JoinChannel { channel_id })) => {
+                triggered_authentication = true;
+                let app_state = app_state.clone();
+                let client = client.clone();
+                cx.spawn(|mut cx| async move {
+                    // ignore errors here, we'll show a generic "not signed in"
+                    let _ = authenticate(client, &cx).await;
+                    cx.update(|cx| workspace::join_channel(channel_id, app_state, None, cx))
+                        .await
+                })
+                .detach_and_log_err(cx)
+            }
             Ok(None) | Err(_) => cx
                 .spawn({
                     let app_state = app_state.clone();
@@ -266,18 +279,22 @@ fn main() {
         })
         .detach();
 
-        cx.spawn(|cx| async move {
-            if stdout_is_a_pty() {
-                if client::IMPERSONATE_LOGIN.is_some() {
-                    client.authenticate_and_connect(false, &cx).await?;
-                }
-            } else if client.has_keychain_credentials(&cx) {
-                client.authenticate_and_connect(true, &cx).await?;
-            }
-            Ok::<_, anyhow::Error>(())
-        })
-        .detach_and_log_err(cx);
+        if !triggered_authentication {
+            cx.spawn(|cx| async move { authenticate(client, &cx).await })
+                .detach_and_log_err(cx);
+        }
     });
+}
+
+async fn authenticate(client: Arc<Client>, cx: &AsyncAppContext) -> Result<()> {
+    if stdout_is_a_pty() {
+        if client::IMPERSONATE_LOGIN.is_some() {
+            client.authenticate_and_connect(false, &cx).await?;
+        }
+    } else if client.has_keychain_credentials(&cx) {
+        client.authenticate_and_connect(true, &cx).await?;
+    }
+    Ok::<_, anyhow::Error>(())
 }
 
 async fn installation_id() -> Result<String> {

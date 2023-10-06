@@ -18,7 +18,7 @@ use live_kit_client::{
     LocalAudioTrack, LocalTrackPublication, LocalVideoTrack, RemoteAudioTrackUpdate,
     RemoteVideoTrackUpdate,
 };
-use postage::stream::Stream;
+use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
 use std::{future::Future, mem, pin::Pin, sync::Arc, time::Duration};
 use util::{post_inc, ResultExt, TryFutureExt};
@@ -70,6 +70,8 @@ pub struct Room {
     user_store: ModelHandle<UserStore>,
     follows_by_leader_id_project_id: HashMap<(PeerId, u64), Vec<PeerId>>,
     subscriptions: Vec<client::Subscription>,
+    room_update_completed_tx: watch::Sender<Option<()>>,
+    room_update_completed_rx: watch::Receiver<Option<()>>,
     pending_room_update: Option<Task<()>>,
     maintain_connection: Option<Task<Option<()>>>,
 }
@@ -211,6 +213,8 @@ impl Room {
 
         Audio::play_sound(Sound::Joined, cx);
 
+        let (room_update_completed_tx, room_update_completed_rx) = watch::channel();
+
         Self {
             id,
             channel_id,
@@ -230,6 +234,8 @@ impl Room {
             user_store,
             follows_by_leader_id_project_id: Default::default(),
             maintain_connection: Some(maintain_connection),
+            room_update_completed_tx,
+            room_update_completed_rx,
         }
     }
 
@@ -856,12 +862,24 @@ impl Room {
                 });
 
                 this.check_invariants();
+                this.room_update_completed_tx.try_send(Some(())).ok();
                 cx.notify();
             });
         }));
 
         cx.notify();
         Ok(())
+    }
+
+    pub fn next_room_update(&mut self) -> impl Future<Output = ()> {
+        let mut done_rx = self.room_update_completed_rx.clone();
+        async move {
+            while let Some(result) = done_rx.next().await {
+                if result.is_some() {
+                    break;
+                }
+            }
+        }
     }
 
     fn remote_video_track_updated(

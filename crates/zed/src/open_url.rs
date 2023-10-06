@@ -42,7 +42,6 @@ impl OpenListener {
 
     pub fn open_urls(&self, urls: Vec<String>) {
         self.triggered.store(true, Ordering::Release);
-        dbg!(&urls);
         let request = if let Some(server_name) =
             urls.first().and_then(|url| url.strip_prefix("zed-cli://"))
         {

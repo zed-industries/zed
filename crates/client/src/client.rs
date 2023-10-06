@@ -798,7 +798,8 @@ impl Client {
                         }
                     }
                 }
-                _ = status_rx.next().fuse() => {
+                status = status_rx.next().fuse() => {
+                    dbg!(status);
                     return Err(anyhow!("authentication canceled"));
                 }
             }
