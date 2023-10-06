@@ -32,6 +32,7 @@ impl ElementStory {
 #[derive(Debug, PartialEq, Eq, Clone, Copy, strum::Display, EnumString, EnumIter)]
 #[strum(serialize_all = "snake_case")]
 pub enum ComponentStory {
+    AssistantPanel,
     Panel,
 }
 
@@ -40,6 +41,9 @@ impl ComponentStory {
         use crate::stories::components;
 
         match self {
+            Self::AssistantPanel => {
+                components::assistant_panel::AssistantPanelStory::new().into_any()
+            }
             Self::Panel => components::panel::PanelStory::new().into_any(),
         }
     }
