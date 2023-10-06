@@ -128,8 +128,8 @@ pub fn init(
         "tsx",
         tree_sitter_typescript::language_tsx(),
         vec![
-            // Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-            // Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
+            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+            Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
     );
