@@ -5,7 +5,7 @@ use chrono::DateTime;
 use gpui3::{relative, rems, Size};
 
 use crate::prelude::*;
-use crate::{theme, v_stack, Panel, PanelAllowedSides, PanelSide, ProjectPanel};
+use crate::{theme, v_stack, Panel, PanelAllowedSides, PanelSide, ProjectPanel, StatusBar};
 
 #[derive(Element)]
 pub struct WorkspaceElement<S: 'static + Send + Sync + Clone> {
@@ -185,7 +185,7 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
                        //     .side(PanelSide::Right),
                        // ),
             )
-            // .child(StatusBar::new())
+            .child(StatusBar::new())
         // An example of a toast is below
         // Currently because of stacking order this gets obscured by other elements
 

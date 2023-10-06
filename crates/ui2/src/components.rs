@@ -4,6 +4,7 @@ mod icon_button;
 mod list;
 mod panel;
 mod project_panel;
+mod status_bar;
 mod workspace;
 
 pub use assistant_panel::*;
@@ -12,4 +13,5 @@ pub use icon_button::*;
 pub use list::*;
 pub use panel::*;
 pub use project_panel::*;
+pub use status_bar::*;
 pub use workspace::*;
