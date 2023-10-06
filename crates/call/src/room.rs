@@ -602,6 +602,7 @@ impl Room {
     pub fn most_active_project(&self) -> Option<(u64, u64)> {
         let mut projects = HashMap::default();
         let mut hosts = HashMap::default();
+
         for participant in self.remote_participants.values() {
             match participant.location {
                 ParticipantLocation::SharedProject { project_id } => {
@@ -619,8 +620,8 @@ impl Room {
         pairs.sort_by_key(|(_, count)| *count as i32);
 
         pairs
-            .first()
-            .map(|(project_id, _)| (*project_id, hosts[&project_id]))
+            .iter()
+            .find_map(|(project_id, _)| hosts.get(project_id).map(|host| (*project_id, *host)))
     }
 
     async fn handle_room_updated(
