@@ -8,6 +8,7 @@ use sysinfo::{Pid, PidExt, ProcessExt, System, SystemExt};
 use tempfile::NamedTempFile;
 use util::http::HttpClient;
 use util::{channel::ReleaseChannel, TryFutureExt};
+use uuid::Uuid;
 
 pub struct Telemetry {
     http_client: Arc<dyn HttpClient>,
@@ -18,7 +19,8 @@ pub struct Telemetry {
 #[derive(Default)]
 struct TelemetryState {
     metrics_id: Option<Arc<str>>,      // Per logged-in user
-    installation_id: Option<Arc<str>>, // Per app installation
+    installation_id: Option<Arc<str>>, // Per app installation (different for dev, preview, and stable)
+    session_id: String,                // Per app launch
     app_version: Option<Arc<str>>,
     release_channel: Option<&'static str>,
     os_name: &'static str,
@@ -41,6 +43,7 @@ lazy_static! {
 struct ClickhouseEventRequestBody {
     token: &'static str,
     installation_id: Option<Arc<str>>,
+    session_id: String,
     is_staff: Option<bool>,
     app_version: Option<Arc<str>>,
     os_name: &'static str,
@@ -90,14 +93,12 @@ pub enum ClickhouseEvent {
         model: &'static str,
     },
     Cpu {
-        usage_as_percent: f32,
+        usage_as_percentage: f32,
         core_count: u32,
     },
     Memory {
         memory_in_bytes: u64,
         virtual_memory_in_bytes: u64,
-        start_time_in_seconds: u64,
-        run_time_in_seconds: u64,
     },
 }
 
@@ -133,6 +134,7 @@ impl Telemetry {
                 release_channel,
                 installation_id: None,
                 metrics_id: None,
+                session_id: Uuid::new_v4().to_string(),
                 clickhouse_events_queue: Default::default(),
                 flush_clickhouse_events_task: Default::default(),
                 log_file: None,
@@ -168,8 +170,6 @@ impl Telemetry {
                 const DURATION_BETWEEN_SYSTEM_EVENTS: Duration = Duration::from_secs(60);
                 smol::Timer::after(DURATION_BETWEEN_SYSTEM_EVENTS).await;
 
-                let telemetry_settings = cx.update(|cx| *settings::get::<TelemetrySettings>(cx));
-
                 system.refresh_memory();
                 system.refresh_processes();
 
@@ -184,14 +184,14 @@ impl Telemetry {
                 let memory_event = ClickhouseEvent::Memory {
                     memory_in_bytes: process.memory(),
                     virtual_memory_in_bytes: process.virtual_memory(),
-                    start_time_in_seconds: process.start_time(),
-                    run_time_in_seconds: process.run_time(),
                 };
 
                 let cpu_event = ClickhouseEvent::Cpu {
-                    usage_as_percent: process.cpu_usage(),
+                    usage_as_percentage: process.cpu_usage(),
                     core_count: system.cpus().len() as u32,
                 };
+
+                let telemetry_settings = cx.update(|cx| *settings::get::<TelemetrySettings>(cx));
 
                 this.report_clickhouse_event(memory_event, telemetry_settings);
                 this.report_clickhouse_event(cpu_event, telemetry_settings);
@@ -289,6 +289,7 @@ impl Telemetry {
                             &ClickhouseEventRequestBody {
                                 token: ZED_SECRET_CLIENT_TOKEN,
                                 installation_id: state.installation_id.clone(),
+                                session_id: state.session_id.clone(),
                                 is_staff: state.is_staff.clone(),
                                 app_version: state.app_version.clone(),
                                 os_name: state.os_name,

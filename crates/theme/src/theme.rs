@@ -239,6 +239,7 @@ pub struct CollabPanel {
     pub log_in_button: Interactive<ContainedText>,
     pub channel_editor: ContainerStyle,
     pub channel_hash: Icon,
+    pub channel_note_active_color: Color,
     pub tabbed_modal: TabbedModal,
     pub contact_finder: ContactFinder,
     pub channel_modal: ChannelModal,
@@ -252,7 +253,7 @@ pub struct CollabPanel {
     pub leave_call: Interactive<ContainedText>,
     pub contact_row: Toggleable<Interactive<ContainerStyle>>,
     pub channel_row: Toggleable<Interactive<ContainerStyle>>,
-    pub channel_name: ContainedText,
+    pub channel_name: Toggleable<ContainedText>,
     pub row_height: f32,
     pub project_row: Toggleable<Interactive<ProjectRow>>,
     pub tree_branch: Toggleable<Interactive<TreeBranch>>,
@@ -633,7 +634,11 @@ pub struct ChatPanel {
     pub list: ContainerStyle,
     pub channel_select: ChannelSelect,
     pub input_editor: FieldEditor,
+    pub avatar: AvatarStyle,
+    pub avatar_container: ContainerStyle,
     pub message: ChatMessage,
+    pub continuation_message: ChatMessage,
+    pub last_message_bottom_spacing: f32,
     pub pending_message: ChatMessage,
     pub sign_in_prompt: Interactive<TextStyle>,
     pub icon_button: Interactive<IconButton>,
@@ -642,7 +647,7 @@ pub struct ChatPanel {
 #[derive(Deserialize, Default, JsonSchema)]
 pub struct ChatMessage {
     #[serde(flatten)]
-    pub container: ContainerStyle,
+    pub container: Interactive<ContainerStyle>,
     pub body: TextStyle,
     pub sender: ContainedText,
     pub timestamp: ContainedText,

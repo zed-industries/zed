@@ -1,7 +1,6 @@
+use super::*;
 use rpc::proto::ChannelEdge;
 use smallvec::SmallVec;
-
-use super::*;
 
 type ChannelDescendants = HashMap<ChannelId, SmallSet<ChannelId>>;
 
@@ -391,7 +390,8 @@ impl Database {
                 .all(&*tx)
                 .await?;
 
-            self.get_user_channels(channel_memberships, &tx).await
+            self.get_user_channels(user_id, channel_memberships, &tx)
+                .await
         })
         .await
     }
@@ -414,13 +414,15 @@ impl Database {
                 .all(&*tx)
                 .await?;
 
-            self.get_user_channels(channel_membership, &tx).await
+            self.get_user_channels(user_id, channel_membership, &tx)
+                .await
         })
         .await
     }
 
     pub async fn get_user_channels(
         &self,
+        user_id: UserId,
         channel_memberships: Vec<channel_member::Model>,
         tx: &DatabaseTransaction,
     ) -> Result<ChannelsForUser> {
@@ -460,10 +462,21 @@ impl Database {
             }
         }
 
+        let channel_ids = graph.channels.iter().map(|c| c.id).collect::<Vec<_>>();
+        let channel_buffer_changes = self
+            .unseen_channel_buffer_changes(user_id, &channel_ids, &*tx)
+            .await?;
+
+        let unseen_messages = self
+            .unseen_channel_messages(user_id, &channel_ids, &*tx)
+            .await?;
+
         Ok(ChannelsForUser {
             channels: graph,
             channel_participants,
             channels_with_admin_privileges,
+            unseen_buffer_changes: channel_buffer_changes,
+            channel_messages: unseen_messages,
         })
     }
 
@@ -645,7 +658,7 @@ impl Database {
     ) -> Result<Vec<ChannelId>> {
         let paths = channel_path::Entity::find()
             .filter(channel_path::Column::ChannelId.eq(channel_id))
-            .order_by(channel_path::Column::IdPath, sea_query::Order::Desc)
+            .order_by(channel_path::Column::IdPath, sea_orm::Order::Desc)
             .all(tx)
             .await?;
         let mut channel_ids = Vec::new();

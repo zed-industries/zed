@@ -5,6 +5,7 @@ import {
 } from "./components"
 import { icon_button } from "../component/icon_button"
 import { useTheme } from "../theme"
+import { interactive } from "../element"
 
 export default function chat_panel(): any {
     const theme = useTheme()
@@ -27,11 +28,23 @@ export default function chat_panel(): any {
 
     return {
         background: background(layer),
-        list: {
-            margin: {
-                left: SPACING,
-                right: SPACING,
+        avatar: {
+            icon_width: 24,
+            icon_height: 24,
+            corner_radius: 4,
+            outer_width: 24,
+            outer_corner_radius: 16,
+        },
+        avatar_container: {
+            padding: {
+                right: 6,
+                left: 2,
+                top: 2,
+                bottom: 2,
             }
+        },
+        list: {
+
         },
         channel_select: {
             header: {
@@ -79,6 +92,22 @@ export default function chat_panel(): any {
             },
         },
         message: {
+            ...interactive({
+                base: {
+                    margin: { top: SPACING },
+                    padding: {
+                        top: 4,
+                        bottom: 4,
+                        left: SPACING / 2,
+                        right: SPACING / 3,
+                    }
+                },
+                state: {
+                    hovered: {
+                        background: background(layer, "hovered"),
+                    },
+                },
+            }),
             body: text(layer, "sans", "base"),
             sender: {
                 margin: {
@@ -87,7 +116,32 @@ export default function chat_panel(): any {
                 ...text(layer, "sans", "base", { weight: "bold" }),
             },
             timestamp: text(layer, "sans", "base", "disabled"),
-            margin: { bottom: SPACING }
+        },
+        last_message_bottom_spacing: SPACING,
+        continuation_message: {
+            body: text(layer, "sans", "base"),
+            sender: {
+                margin: {
+                    right: 8,
+                },
+                ...text(layer, "sans", "base", { weight: "bold" }),
+            },
+            timestamp: text(layer, "sans", "base", "disabled"),
+            ...interactive({
+                base: {
+                    padding: {
+                        top: 4,
+                        bottom: 4,
+                        left: SPACING / 2,
+                        right: SPACING / 3,
+                    }
+                },
+                state: {
+                    hovered: {
+                        background: background(layer, "hovered"),
+                    },
+                },
+            }),
         },
         pending_message: {
             body: text(layer, "sans", "base"),
@@ -98,6 +152,21 @@ export default function chat_panel(): any {
                 ...text(layer, "sans", "base", "disabled"),
             },
             timestamp: text(layer, "sans", "base"),
+            ...interactive({
+                base: {
+                    padding: {
+                        top: 4,
+                        bottom: 4,
+                        left: SPACING / 2,
+                        right: SPACING / 3,
+                    }
+                },
+                state: {
+                    hovered: {
+                        background: background(layer, "hovered"),
+                    },
+                },
+            }),
         },
         sign_in_prompt: {
             default: text(layer, "sans", "base"),

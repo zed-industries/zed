@@ -2,7 +2,7 @@ mod channel_buffer;
 mod channel_chat;
 mod channel_store;
 
-pub use channel_buffer::{ChannelBuffer, ChannelBufferEvent};
+pub use channel_buffer::{ChannelBuffer, ChannelBufferEvent, ACKNOWLEDGE_DEBOUNCE_INTERVAL};
 pub use channel_chat::{ChannelChat, ChannelChatEvent, ChannelMessage, ChannelMessageId};
 pub use channel_store::{
     Channel, ChannelData, ChannelEvent, ChannelId, ChannelMembership, ChannelPath, ChannelStore,

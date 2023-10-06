@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use call::report_call_event_for_channel;
-use channel::{Channel, ChannelBuffer, ChannelBufferEvent, ChannelId};
+use channel::{Channel, ChannelBuffer, ChannelBufferEvent, ChannelId, ChannelStore};
 use client::{
     proto::{self, PeerId},
     Collaborator, ParticipantIndex,
@@ -36,6 +36,7 @@ pub fn init(cx: &mut AppContext) {
 pub struct ChannelView {
     pub editor: ViewHandle<Editor>,
     project: ModelHandle<Project>,
+    channel_store: ModelHandle<ChannelStore>,
     channel_buffer: ModelHandle<ChannelBuffer>,
     remote_id: Option<ViewId>,
     _editor_event_subscription: Subscription,
@@ -94,7 +95,13 @@ impl ChannelView {
             pane.update(&mut cx, |pane, cx| {
                 pane.items_of_type::<Self>()
                     .find(|channel_view| channel_view.read(cx).channel_buffer == channel_buffer)
-                    .unwrap_or_else(|| cx.add_view(|cx| Self::new(project, channel_buffer, cx)))
+                    .unwrap_or_else(|| {
+                        cx.add_view(|cx| {
+                            let mut this = Self::new(project, channel_store, channel_buffer, cx);
+                            this.acknowledge_buffer_version(cx);
+                            this
+                        })
+                    })
             })
             .ok_or_else(|| anyhow!("pane was dropped"))
         })
@@ -102,6 +109,7 @@ impl ChannelView {
 
     pub fn new(
         project: ModelHandle<Project>,
+        channel_store: ModelHandle<ChannelStore>,
         channel_buffer: ModelHandle<ChannelBuffer>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -121,6 +129,7 @@ impl ChannelView {
         Self {
             editor,
             project,
+            channel_store,
             channel_buffer,
             remote_id: None,
             _editor_event_subscription,
@@ -137,12 +146,43 @@ impl ChannelView {
         event: &ChannelBufferEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        if let ChannelBufferEvent::Disconnected = event {
-            self.editor.update(cx, |editor, cx| {
+        match event {
+            ChannelBufferEvent::Disconnected => self.editor.update(cx, |editor, cx| {
                 editor.set_read_only(true);
                 cx.notify();
-            })
+            }),
+            ChannelBufferEvent::BufferEdited => {
+                if cx.is_self_focused() || self.editor.is_focused(cx) {
+                    self.acknowledge_buffer_version(cx);
+                } else {
+                    self.channel_store.update(cx, |store, cx| {
+                        let channel_buffer = self.channel_buffer.read(cx);
+                        store.notes_changed(
+                            channel_buffer.channel().id,
+                            channel_buffer.epoch(),
+                            &channel_buffer.buffer().read(cx).version(),
+                            cx,
+                        )
+                    });
+                }
+            }
+            _ => {}
         }
+    }
+
+    fn acknowledge_buffer_version(&mut self, cx: &mut ViewContext<'_, '_, ChannelView>) {
+        self.channel_store.update(cx, |store, cx| {
+            let channel_buffer = self.channel_buffer.read(cx);
+            store.acknowledge_notes_version(
+                channel_buffer.channel().id,
+                channel_buffer.epoch(),
+                &channel_buffer.buffer().read(cx).version(),
+                cx,
+            )
+        });
+        self.channel_buffer.update(cx, |buffer, cx| {
+            buffer.acknowledge_buffer_version(cx);
+        });
     }
 }
 
@@ -161,6 +201,7 @@ impl View for ChannelView {
 
     fn focus_in(&mut self, _: AnyViewHandle, cx: &mut ViewContext<Self>) {
         if cx.is_self_focused() {
+            self.acknowledge_buffer_version(cx);
             cx.focus(self.editor.as_any())
         }
     }
@@ -200,6 +241,7 @@ impl Item for ChannelView {
     fn clone_on_split(&self, _: WorkspaceId, cx: &mut ViewContext<Self>) -> Option<Self> {
         Some(Self::new(
             self.project.clone(),
+            self.channel_store.clone(),
             self.channel_buffer.clone(),
             cx,
         ))

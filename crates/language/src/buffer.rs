@@ -660,12 +660,12 @@ impl Buffer {
             file_changed = true;
         };
 
+        self.file = Some(new_file);
         if file_changed {
             self.file_update_count += 1;
             cx.emit(Event::FileHandleChanged);
             cx.notify();
         }
-        self.file = Some(new_file);
         task
     }
 

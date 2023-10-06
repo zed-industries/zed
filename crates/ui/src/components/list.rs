@@ -135,7 +135,7 @@ impl ListHeader {
                                     .size(IconSize::Small)
                             }))
                             .child(
-                                Label::new(self.label.clone())
+                                Label::new(self.label)
                                     .color(LabelColor::Muted)
                                     .size(LabelSize::Small),
                             ),
@@ -191,7 +191,7 @@ impl ListSubHeader {
                                 .size(IconSize::Small)
                         }))
                         .child(
-                            Label::new(self.label.clone())
+                            Label::new(self.label)
                                 .color(LabelColor::Muted)
                                 .size(LabelSize::Small),
                         ),

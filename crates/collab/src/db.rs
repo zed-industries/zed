@@ -19,11 +19,12 @@ use rpc::{
     ConnectionId,
 };
 use sea_orm::{
-    entity::prelude::*, ActiveValue, Condition, ConnectionTrait, DatabaseConnection,
-    DatabaseTransaction, DbErr, FromQueryResult, IntoActiveModel, IsolationLevel, JoinType,
-    QueryOrder, QuerySelect, Statement, TransactionTrait,
+    entity::prelude::*,
+    sea_query::{Alias, Expr, OnConflict, Query},
+    ActiveValue, Condition, ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbErr,
+    FromQueryResult, IntoActiveModel, IsolationLevel, JoinType, QueryOrder, QuerySelect, Statement,
+    TransactionTrait,
 };
-use sea_query::{Alias, Expr, OnConflict, Query};
 use serde::{Deserialize, Serialize};
 use sqlx::{
     migrate::{Migrate, Migration, MigrationSource},
@@ -62,6 +63,7 @@ pub struct Database {
 // separate files in the `queries` folder.
 impl Database {
     pub async fn new(options: ConnectOptions, executor: Executor) -> Result<Self> {
+        sqlx::any::install_default_drivers();
         Ok(Self {
             options: options.clone(),
             pool: sea_orm::Database::connect(options).await?,
@@ -119,7 +121,7 @@ impl Database {
         Ok(new_migrations)
     }
 
-    async fn transaction<F, Fut, T>(&self, f: F) -> Result<T>
+    pub async fn transaction<F, Fut, T>(&self, f: F) -> Result<T>
     where
         F: Send + Fn(TransactionHandle) -> Fut,
         Fut: Send + Future<Output = Result<T>>,
@@ -321,7 +323,7 @@ fn is_serialization_error(error: &Error) -> bool {
     }
 }
 
-struct TransactionHandle(Arc<Option<DatabaseTransaction>>);
+pub struct TransactionHandle(Arc<Option<DatabaseTransaction>>);
 
 impl Deref for TransactionHandle {
     type Target = DatabaseTransaction;
@@ -437,6 +439,8 @@ pub struct ChannelsForUser {
     pub channels: ChannelGraph,
     pub channel_participants: HashMap<ChannelId, Vec<UserId>>,
     pub channels_with_admin_privileges: HashSet<ChannelId>,
+    pub unseen_buffer_changes: Vec<proto::UnseenChannelBufferChange>,
+    pub channel_messages: Vec<proto::UnseenChannelMessage>,
 }
 
 #[derive(Debug)]

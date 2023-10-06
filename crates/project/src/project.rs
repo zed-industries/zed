@@ -1841,6 +1841,7 @@ impl Project {
                     Worktree::Remote(_) => panic!("cannot remote buffers as new files"),
                 })
                 .await?;
+
             this.update(&mut cx, |this, cx| {
                 this.detect_language_for_buffer(&buffer, cx);
                 this.register_buffer_with_language_servers(&buffer, cx);
@@ -2368,7 +2369,30 @@ impl Project {
                     }
                 }
             }
+            BufferEvent::FileHandleChanged => {
+                let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
+                    return None;
+                };
 
+                match self.local_buffer_ids_by_entry_id.get(&file.entry_id) {
+                    Some(_) => {
+                        return None;
+                    }
+                    None => {
+                        let remote_id = buffer.read(cx).remote_id();
+                        self.local_buffer_ids_by_entry_id
+                            .insert(file.entry_id, remote_id);
+
+                        self.local_buffer_ids_by_path.insert(
+                            ProjectPath {
+                                worktree_id: file.worktree_id(cx),
+                                path: file.path.clone(),
+                            },
+                            remote_id,
+                        );
+                    }
+                }
+            }
             _ => {}
         }
 
@@ -5906,7 +5930,9 @@ impl Project {
                 Some(&buffer_id) => buffer_id,
                 None => match self.local_buffer_ids_by_path.get(&project_path) {
                     Some(&buffer_id) => buffer_id,
-                    None => continue,
+                    None => {
+                        continue;
+                    }
                 },
             };
 

@@ -78,10 +78,14 @@ fn increment(vim: &mut Vim, mut delta: i32, step: i32, cx: &mut WindowContext) {
                             2 => format!("{:b}", result),
                             _ => unreachable!(),
                         };
-                        if selection.is_empty() {
-                            new_anchors.push((false, snapshot.anchor_after(range.end)))
-                        }
-                        edits.push((range, replace));
+                        edits.push((range.clone(), replace));
+                    }
+                    if selection.is_empty() {
+                        new_anchors.push((false, snapshot.anchor_after(range.end)))
+                    }
+                } else {
+                    if selection.is_empty() {
+                        new_anchors.push((true, snapshot.anchor_after(start)))
                     }
                 }
             }
@@ -226,6 +230,8 @@ mod test {
         cx.assert_matches_neovim("(ˇ0b10f)", ["ctrl-a"], "(0b1ˇ1f)")
             .await;
         cx.assert_matches_neovim("ˇ-1", ["ctrl-a"], "ˇ0").await;
+        cx.assert_matches_neovim("banˇana", ["ctrl-a"], "banˇana")
+            .await;
     }
 
     #[gpui::test]
