@@ -14,7 +14,7 @@ pub struct MacDisplayLinker {
 }
 
 struct MacDisplayLink {
-    system_link: sys::DisplayLink,
+    system_link: Mutex<sys::DisplayLink>,
     _output_callback: Arc<OutputCallback>,
 }
 
@@ -45,7 +45,7 @@ impl PlatformDisplayLinker for MacDisplayLinker {
                 display_id,
                 MacDisplayLink {
                     _output_callback: callback,
-                    system_link,
+                    system_link: Mutex::new(system_link),
                 },
             );
         } else {
@@ -57,7 +57,7 @@ impl PlatformDisplayLinker for MacDisplayLinker {
     fn start(&self, display_id: DisplayId) {
         if let Some(link) = self.links.lock().get_mut(&display_id) {
             unsafe {
-                link.system_link.start();
+                link.system_link.lock().start();
             }
         } else {
             log::warn!("No DisplayLink callback registered for {:?}", display_id)
@@ -67,7 +67,7 @@ impl PlatformDisplayLinker for MacDisplayLinker {
     fn stop(&self, display_id: DisplayId) {
         if let Some(link) = self.links.lock().get_mut(&display_id) {
             unsafe {
-                link.system_link.stop();
+                link.system_link.lock().stop();
             }
         } else {
             log::warn!("No DisplayLink callback registered for {:?}", display_id)
