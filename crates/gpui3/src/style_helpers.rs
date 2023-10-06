@@ -5,7 +5,7 @@ use crate::{
 };
 use smallvec::smallvec;
 
-pub trait StyleHelpers: Styled<Style = Style> {
+pub trait StyleHelpers: Sized + Styled<Style = Style> {
     gpui3_macros::style_helpers!();
 
     fn h(mut self, height: Length) -> Self {
