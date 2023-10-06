@@ -38,7 +38,7 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
 
             fn paint(
                 &mut self,
-                layout: gpui3::Layout,
+                bounds: gpui3::Bounds<gpui3::Pixels>,
                 state: &mut Self::State,
                 rendered_element: &mut Self::FrameState,
                 cx: &mut gpui3::ViewContext<Self::State>,
