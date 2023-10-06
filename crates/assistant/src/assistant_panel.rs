@@ -2939,7 +2939,7 @@ impl InlineAssistant {
         assistant
     }
 
-    fn semantic_permissioned(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<bool>> {
+    fn semantic_permissioned(&self, cx: &mut ViewContext<Self>) -> Task<Result<bool>> {
         if let Some(value) = self.semantic_permissioned {
             return Task::ready(Ok(value));
         }
@@ -2949,7 +2949,7 @@ impl InlineAssistant {
         };
 
         self.semantic_index
-            .as_mut()
+            .as_ref()
             .map(|semantic| {
                 semantic.update(cx, |this, cx| this.project_previously_indexed(&project, cx))
             })
@@ -3118,11 +3118,17 @@ impl InlineAssistant {
             return Err(anyhow!("project was dropped!"));
         };
 
+        let semantic_permissioned = self.semantic_permissioned(cx);
         if let Some(semantic_index) = SemanticIndex::global(cx) {
             cx.spawn(|_, mut cx| async move {
-                semantic_index
-                    .update(&mut cx, |index, cx| index.index_project(project, cx))
-                    .await
+                // This has to be updated to accomodate for semantic_permissions
+                if semantic_permissioned.await.unwrap_or(false) {
+                    semantic_index
+                        .update(&mut cx, |index, cx| index.index_project(project, cx))
+                        .await
+                } else {
+                    Err(anyhow!("project is not permissioned for semantic indexing"))
+                }
             })
             .detach_and_log_err(cx);
         }
