@@ -7,7 +7,7 @@ use crate::{
 use futures::FutureExt;
 use gpui::{
     actions,
-    elements::{Empty, Flex, MouseEventHandler, Padding, ParentElement, Text},
+    elements::{Flex, MouseEventHandler, Padding, ParentElement, Text},
     platform::{CursorStyle, MouseButton},
     AnyElement, AppContext, Element, ModelHandle, Task, ViewContext,
 };
@@ -121,12 +121,15 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
                     this.hover_state.diagnostic_popover = None;
                 })?;
 
+                let language_registry = project.update(&mut cx, |p, _| p.languages().clone());
+                let blocks = vec![inlay_hover.tooltip];
+                let parsed_content = parse_blocks(&blocks, &language_registry, None).await;
+
                 let hover_popover = InfoPopover {
                     project: project.clone(),
                     symbol_range: DocumentRange::Inlay(inlay_hover.range),
-                    blocks: vec![inlay_hover.tooltip],
-                    language: None,
-                    parsed_content: None,
+                    blocks,
+                    parsed_content,
                 };
 
                 this.update(&mut cx, |this, cx| {
@@ -304,35 +307,38 @@ fn show_hover(
                     });
             })?;
 
-            // Construct new hover popover from hover request
-            let hover_popover = hover_request.await.ok().flatten().and_then(|hover_result| {
-                if hover_result.is_empty() {
-                    return None;
+            let hover_result = hover_request.await.ok().flatten();
+            let hover_popover = match hover_result {
+                Some(hover_result) if !hover_result.is_empty() => {
+                    // Create symbol range of anchors for highlighting and filtering of future requests.
+                    let range = if let Some(range) = hover_result.range {
+                        let start = snapshot
+                            .buffer_snapshot
+                            .anchor_in_excerpt(excerpt_id.clone(), range.start);
+                        let end = snapshot
+                            .buffer_snapshot
+                            .anchor_in_excerpt(excerpt_id.clone(), range.end);
+
+                        start..end
+                    } else {
+                        anchor..anchor
+                    };
+
+                    let language_registry = project.update(&mut cx, |p, _| p.languages().clone());
+                    let blocks = hover_result.contents;
+                    let language = hover_result.language;
+                    let parsed_content = parse_blocks(&blocks, &language_registry, language).await;
+
+                    Some(InfoPopover {
+                        project: project.clone(),
+                        symbol_range: DocumentRange::Text(range),
+                        blocks,
+                        parsed_content,
+                    })
                 }
 
-                // Create symbol range of anchors for highlighting and filtering
-                // of future requests.
-                let range = if let Some(range) = hover_result.range {
-                    let start = snapshot
-                        .buffer_snapshot
-                        .anchor_in_excerpt(excerpt_id.clone(), range.start);
-                    let end = snapshot
-                        .buffer_snapshot
-                        .anchor_in_excerpt(excerpt_id.clone(), range.end);
-
-                    start..end
-                } else {
-                    anchor..anchor
-                };
-
-                Some(InfoPopover {
-                    project: project.clone(),
-                    symbol_range: DocumentRange::Text(range),
-                    blocks: hover_result.contents,
-                    language: hover_result.language,
-                    parsed_content: None,
-                })
-            });
+                _ => None,
+            };
 
             this.update(&mut cx, |this, cx| {
                 if let Some(symbol_range) = hover_popover
@@ -472,8 +478,7 @@ pub struct InfoPopover {
     pub project: ModelHandle<Project>,
     symbol_range: DocumentRange,
     pub blocks: Vec<HoverBlock>,
-    language: Option<Arc<Language>>,
-    parsed_content: Option<ParsedMarkdown>,
+    parsed_content: ParsedMarkdown,
 }
 
 impl InfoPopover {
@@ -482,26 +487,14 @@ impl InfoPopover {
         style: &EditorStyle,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement<Editor> {
-        let rendered = if let Some(parsed) = &self.parsed_content {
-            crate::render_parsed_markdown(parsed, style, cx).into_any()
-        } else {
-            let language_registry = self.project.read(cx).languages().clone();
-            let blocks = self.blocks.clone();
-            let language = self.language.clone();
-            cx.spawn(|this, mut cx| async move {
-                let blocks = parse_blocks(&blocks, &language_registry, language).await;
-                _ = this.update(&mut cx, |_, cx| cx.notify());
-                blocks
-            })
-            .detach();
-
-            Empty::new().into_any()
-        };
-
         MouseEventHandler::new::<InfoPopover, _>(0, cx, |_, cx| {
             Flex::column()
                 .scrollable::<HoverBlock>(1, None, cx)
-                .with_child(rendered)
+                .with_child(crate::render_parsed_markdown(
+                    &self.parsed_content,
+                    style,
+                    cx,
+                ))
                 .contained()
                 .with_style(style.hover_popover.container)
         })
@@ -1277,11 +1270,7 @@ mod tests {
                 "Popover range should match the new type label part"
             );
             assert_eq!(
-                popover
-                    .parsed_content
-                    .as_ref()
-                    .expect("should have label text for new type hint")
-                    .text,
+                popover.parsed_content.text,
                 format!("A tooltip for `{new_type_label}`"),
                 "Rendered text should not anyhow alter backticks"
             );
@@ -1341,11 +1330,7 @@ mod tests {
                 "Popover range should match the struct label part"
             );
             assert_eq!(
-                popover
-                    .parsed_content
-                    .as_ref()
-                    .expect("should have label text for struct hint")
-                    .text,
+                popover.parsed_content.text,
                 format!("A tooltip for {struct_label}"),
                 "Rendered markdown element should remove backticks from text"
             );
