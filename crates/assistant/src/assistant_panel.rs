@@ -24,10 +24,10 @@ use futures::StreamExt;
 use gpui::{
     actions,
     elements::{
-        ChildView, Component, Empty, Flex, Label, LabelStyle, MouseEventHandler, ParentElement,
-        SafeStylable, Stack, Svg, Text, UniformList, UniformListState,
+        ChildView, Component, Empty, Flex, Label, MouseEventHandler, ParentElement, SafeStylable,
+        Stack, Svg, Text, UniformList, UniformListState,
     },
-    fonts::{HighlightStyle, TextStyle},
+    fonts::HighlightStyle,
     geometry::vector::{vec2f, Vector2F},
     platform::{CursorStyle, MouseButton, PromptLevel},
     Action, AnyElement, AppContext, AsyncAppContext, ClipboardItem, Element, Entity, ModelContext,
@@ -52,7 +52,7 @@ use std::{
 };
 use theme::{
     components::{action_button::Button, ComponentExt},
-    AssistantStyle, Icon,
+    AssistantStyle,
 };
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -2755,7 +2755,7 @@ struct InlineAssistant {
     retrieve_context: bool,
     semantic_index: Option<ModelHandle<SemanticIndex>>,
     semantic_permissioned: Option<bool>,
-    project: ModelHandle<Project>,
+    project: WeakModelHandle<Project>,
     maintain_rate_limit: Option<Task<()>>,
 }
 
@@ -2914,7 +2914,7 @@ impl InlineAssistant {
             subscriptions.push(cx.observe(&semantic_index, Self::semantic_index_changed));
         }
 
-        Self {
+        let assistant = Self {
             id,
             prompt_editor,
             workspace,
@@ -2930,9 +2930,13 @@ impl InlineAssistant {
             retrieve_context,
             semantic_permissioned: None,
             semantic_index,
-            project,
+            project: project.downgrade(),
             maintain_rate_limit: None,
-        }
+        };
+
+        assistant.index_project(cx).log_err();
+
+        assistant
     }
 
     fn semantic_permissioned(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<bool>> {
@@ -2940,7 +2944,10 @@ impl InlineAssistant {
             return Task::ready(Ok(value));
         }
 
-        let project = self.project.clone();
+        let Some(project) = self.project.upgrade(cx) else {
+            return Task::ready(Err(anyhow!("project was dropped")));
+        };
+
         self.semantic_index
             .as_mut()
             .map(|semantic| {
@@ -2966,7 +2973,10 @@ impl InlineAssistant {
         semantic_index: ModelHandle<SemanticIndex>,
         cx: &mut ViewContext<Self>,
     ) {
-        let project = self.project.clone();
+        let Some(project) = self.project.upgrade(cx) else {
+            return;
+        };
+
         let status = semantic_index.read(cx).status(&project);
         match status {
             SemanticIndexStatus::Indexing {
@@ -3047,7 +3057,11 @@ impl InlineAssistant {
 
     fn toggle_retrieve_context(&mut self, _: &ToggleRetrieveContext, cx: &mut ViewContext<Self>) {
         let semantic_permissioned = self.semantic_permissioned(cx);
-        let project = self.project.clone();
+
+        let Some(project) = self.project.upgrade(cx) else {
+            return;
+        };
+
         let project_name = project
             .read(cx)
             .worktree_root_names(cx)
@@ -3086,7 +3100,11 @@ impl InlineAssistant {
                 cx.emit(InlineAssistantEvent::RetrieveContextToggled {
                     retrieve_context: this.retrieve_context,
                 });
-                this.index_project(project, cx).log_err();
+
+                if this.retrieve_context {
+                    this.index_project(cx).log_err();
+                }
+
                 cx.notify();
             })?;
 
@@ -3095,11 +3113,11 @@ impl InlineAssistant {
         .detach_and_log_err(cx);
     }
 
-    fn index_project(
-        &self,
-        project: ModelHandle<Project>,
-        cx: &mut ViewContext<Self>,
-    ) -> anyhow::Result<()> {
+    fn index_project(&self, cx: &mut ViewContext<Self>) -> anyhow::Result<()> {
+        let Some(project) = self.project.upgrade(cx) else {
+            return Err(anyhow!("project was dropped!"));
+        };
+
         if let Some(semantic_index) = SemanticIndex::global(cx) {
             cx.spawn(|_, mut cx| async move {
                 semantic_index
@@ -3117,7 +3135,11 @@ impl InlineAssistant {
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement<InlineAssistant>> {
         enum ContextStatusIcon {}
-        let project = self.project.clone();
+
+        let Some(project) = self.project.upgrade(cx) else {
+            return None;
+        };
+
         if let Some(semantic_index) = SemanticIndex::global(cx) {
             let status = semantic_index.update(cx, |index, _| index.status(&project));
             let theme = theme::current(cx);
