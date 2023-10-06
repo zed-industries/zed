@@ -5,7 +5,7 @@ use crate::{
 use anyhow::Result;
 use gpui::{
     geometry::{vector::Vector2F, Size},
-    text_layout::LineLayout,
+    text_layout::Line,
     LayoutId,
 };
 use parking_lot::Mutex;
@@ -32,7 +32,7 @@ impl<V: 'static> Element<V> for Text {
         _view: &mut V,
         cx: &mut ViewContext<V>,
     ) -> Result<(LayoutId, Self::PaintState)> {
-        let fonts = cx.platform().fonts();
+        let layout_cache = cx.text_layout_cache().clone();
         let text_style = cx.text_style();
         let line_height = cx.font_cache().line_height(text_style.font_size);
         let text = self.text.clone();
@@ -41,14 +41,14 @@ impl<V: 'static> Element<V> for Text {
         let layout_id = cx.add_measured_layout_node(Default::default(), {
             let paint_state = paint_state.clone();
             move |_params| {
-                let line_layout = fonts.layout_line(
+                let line_layout = layout_cache.layout_str(
                     text.as_ref(),
                     text_style.font_size,
                     &[(text.len(), text_style.to_run())],
                 );
 
                 let size = Size {
-                    width: line_layout.width,
+                    width: line_layout.width(),
                     height: line_height,
                 };
 
@@ -85,13 +85,9 @@ impl<V: 'static> Element<V> for Text {
             line_height = paint_state.line_height;
         }
 
-        let text_style = cx.text_style();
-        let line =
-            gpui::text_layout::Line::new(line_layout, &[(self.text.len(), text_style.to_run())]);
-
         // TODO: We haven't added visible bounds to the new element system yet, so this is a placeholder.
         let visible_bounds = bounds;
-        line.paint(bounds.origin(), visible_bounds, line_height, cx.legacy_cx);
+        line_layout.paint(bounds.origin(), visible_bounds, line_height, cx.legacy_cx);
     }
 }
 
@@ -104,6 +100,6 @@ impl<V: 'static> IntoElement<V> for Text {
 }
 
 pub struct TextLayout {
-    line_layout: Arc<LineLayout>,
+    line_layout: Arc<Line>,
     line_height: f32,
 }
