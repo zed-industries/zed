@@ -66,11 +66,62 @@ impl TaffyLayoutEngine {
             .into())
     }
 
+    fn count_all_children(&self, parent: LayoutId) -> Result<u32> {
+        let mut count = 0;
+
+        for child in self.taffy.children(parent.0)? {
+            // Count this child.
+            count += 1;
+
+            // Count all of this child's children.
+            count += self.count_all_children(LayoutId(child))?
+        }
+
+        Ok(count)
+    }
+
+    fn max_depth(&self, depth: u32, parent: LayoutId) -> Result<u32> {
+        println!(
+            "{parent:?} at depth {depth} has {} children",
+            self.taffy.child_count(parent.0)?
+        );
+
+        let mut max_child_depth = 0;
+
+        for child in self.taffy.children(parent.0)? {
+            max_child_depth = std::cmp::max(max_child_depth, self.max_depth(0, LayoutId(child))?);
+        }
+
+        Ok(depth + 1 + max_child_depth)
+    }
+
+    fn get_edges(&self, parent: LayoutId) -> Result<Vec<(LayoutId, LayoutId)>> {
+        let mut edges = Vec::new();
+
+        for child in self.taffy.children(parent.0)? {
+            edges.push((parent, LayoutId(child)));
+
+            edges.extend(self.get_edges(LayoutId(child))?);
+        }
+
+        Ok(edges)
+    }
+
     pub fn compute_layout(
         &mut self,
         id: LayoutId,
         available_space: Size<AvailableSpace>,
     ) -> Result<()> {
+        println!("Laying out {} children", self.count_all_children(id)?);
+        println!("Max layout depth: {}", self.max_depth(0, id)?);
+
+        // Output the edges (branches) of the tree in Mermaid format for visualization.
+        // println!("Edges:");
+        // for (a, b) in self.get_edges(id)? {
+        //     println!("N{} --> N{}", u64::from(a), u64::from(b));
+        // }
+        // println!("");
+
         self.taffy
             .compute_layout(id.into(), available_space.into())?;
         Ok(())

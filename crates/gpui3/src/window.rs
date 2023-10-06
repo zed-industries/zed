@@ -401,9 +401,11 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             let (root_layout_id, mut frame_state) = root_view.layout(&mut (), cx)?;
             let available_space = cx.window.content_size.map(Into::into);
 
+            let started_at = std::time::Instant::now();
             cx.window
                 .layout_engine
                 .compute_layout(root_layout_id, available_space)?;
+            println!("compute_layout took {:?}", started_at.elapsed());
             let layout = cx.window.layout_engine.layout(root_layout_id)?;
 
             root_view.paint(layout, &mut (), &mut frame_state, cx)?;
