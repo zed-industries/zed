@@ -1,9 +1,74 @@
 use crate::{
-    db::{Database, NewUserParams},
+    db::{Database, MessageId, NewUserParams},
     test_both_dbs,
 };
 use std::sync::Arc;
 use time::OffsetDateTime;
+
+test_both_dbs!(
+    test_channel_message_retrieval,
+    test_channel_message_retrieval_postgres,
+    test_channel_message_retrieval_sqlite
+);
+
+async fn test_channel_message_retrieval(db: &Arc<Database>) {
+    let user = db
+        .create_user(
+            "user@example.com",
+            false,
+            NewUserParams {
+                github_login: "user".into(),
+                github_user_id: 1,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap()
+        .user_id;
+    let channel = db
+        .create_channel("channel", None, "room", user)
+        .await
+        .unwrap();
+
+    let owner_id = db.create_server("test").await.unwrap().0 as u32;
+    db.join_channel_chat(channel, rpc::ConnectionId { owner_id, id: 0 }, user)
+        .await
+        .unwrap();
+
+    let mut all_messages = Vec::new();
+    for i in 0..10 {
+        all_messages.push(
+            db.create_channel_message(channel, user, &i.to_string(), OffsetDateTime::now_utc(), i)
+                .await
+                .unwrap()
+                .0
+                .to_proto(),
+        );
+    }
+
+    let messages = db
+        .get_channel_messages(channel, user, 3, None)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|message| message.id)
+        .collect::<Vec<_>>();
+    assert_eq!(messages, &all_messages[7..10]);
+
+    let messages = db
+        .get_channel_messages(
+            channel,
+            user,
+            4,
+            Some(MessageId::from_proto(all_messages[6])),
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|message| message.id)
+        .collect::<Vec<_>>();
+    assert_eq!(messages, &all_messages[2..6]);
+}
 
 test_both_dbs!(
     test_channel_message_nonces,
