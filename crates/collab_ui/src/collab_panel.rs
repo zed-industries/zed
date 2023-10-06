@@ -648,7 +648,7 @@ impl CollabPanel {
                 channel_editing_state: None,
                 selection: None,
                 user_store: workspace.user_store().clone(),
-                channel_store: workspace.app_state().channel_store.clone(),
+                channel_store: ChannelStore::global(cx),
                 project: workspace.project().clone(),
                 subscriptions: Vec::default(),
                 match_candidates: Vec::default(),

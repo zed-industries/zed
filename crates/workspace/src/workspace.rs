@@ -12,7 +12,6 @@ mod workspace_settings;
 
 use anyhow::{anyhow, Context, Result};
 use call::ActiveCall;
-use channel::ChannelStore;
 use client::{
     proto::{self, PeerId},
     Client, TypedEnvelope, UserStore,
@@ -450,7 +449,6 @@ pub struct AppState {
     pub languages: Arc<LanguageRegistry>,
     pub client: Arc<Client>,
     pub user_store: ModelHandle<UserStore>,
-    pub channel_store: ModelHandle<ChannelStore>,
     pub workspace_store: ModelHandle<WorkspaceStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub build_window_options:
@@ -487,8 +485,6 @@ impl AppState {
         let http_client = util::http::FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone(), cx);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        let channel_store =
-            cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
         let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
         theme::init((), cx);
@@ -500,7 +496,7 @@ impl AppState {
             fs,
             languages,
             user_store,
-            channel_store,
+            // channel_store,
             workspace_store,
             initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
             build_window_options: |_, _, _| Default::default(),
@@ -3527,15 +3523,12 @@ impl Workspace {
         let client = project.read(cx).client();
         let user_store = project.read(cx).user_store();
 
-        let channel_store =
-            cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
         let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
         let app_state = Arc::new(AppState {
             languages: project.read(cx).languages().clone(),
             workspace_store,
             client,
             user_store,
-            channel_store,
             fs: project.read(cx).fs().clone(),
             build_window_options: |_, _, _| Default::default(),
             initialize_workspace: |_, _, _, _| Task::ready(Ok(())),

@@ -9969,7 +9969,6 @@ dependencies = [
  "async-recursion 1.0.5",
  "bincode",
  "call",
- "channel",
  "client",
  "collections",
  "context_menu",
