@@ -1,6 +1,7 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, OpenAIModel},
     codegen::{self, Codegen, CodegenKind},
+    prompts::generate_content_prompt,
     MessageId, MessageMetadata, MessageStatus, Role, SavedConversation, SavedConversationMetadata,
     SavedMessage,
 };
@@ -273,13 +274,17 @@ impl AssistantPanel {
             return;
         };
 
+        let selection = editor.read(cx).selections.newest_anchor().clone();
+        if selection.start.excerpt_id() != selection.end.excerpt_id() {
+            return;
+        }
+
         let inline_assist_id = post_inc(&mut self.next_inline_assist_id);
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
         let provider = Arc::new(OpenAICompletionProvider::new(
             api_key,
             cx.background().clone(),
         ));
-        let selection = editor.read(cx).selections.newest_anchor().clone();
         let codegen_kind = if editor.read(cx).selections.newest::<usize>(cx).is_empty() {
             CodegenKind::Generate {
                 position: selection.start,
@@ -541,11 +546,26 @@ impl AssistantPanel {
             self.inline_prompt_history.pop_front();
         }
 
+        let codegen = pending_assist.codegen.clone();
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
-        let range = pending_assist.codegen.read(cx).range();
-        let selected_text = snapshot.text_for_range(range.clone()).collect::<String>();
+        let range = codegen.read(cx).range();
+        let start = snapshot.point_to_buffer_offset(range.start);
+        let end = snapshot.point_to_buffer_offset(range.end);
+        let (buffer, range) = if let Some((start, end)) = start.zip(end) {
+            let (start_buffer, start_buffer_offset) = start;
+            let (end_buffer, end_buffer_offset) = end;
+            if start_buffer.remote_id() == end_buffer.remote_id() {
+                (start_buffer.clone(), start_buffer_offset..end_buffer_offset)
+            } else {
+                self.finish_inline_assist(inline_assist_id, false, cx);
+                return;
+            }
+        } else {
+            self.finish_inline_assist(inline_assist_id, false, cx);
+            return;
+        };
 
-        let language = snapshot.language_at(range.start);
+        let language = buffer.language_at(range.start);
         let language_name = if let Some(language) = language.as_ref() {
             if Arc::ptr_eq(language, &language::PLAIN_TEXT) {
                 None
@@ -555,96 +575,13 @@ impl AssistantPanel {
         } else {
             None
         };
-        let language_name = language_name.as_deref();
 
-        let mut prompt = String::new();
-        if let Some(language_name) = language_name {
-            writeln!(prompt, "You're an expert {language_name} engineer.").unwrap();
-        }
-        match pending_assist.codegen.read(cx).kind() {
-            CodegenKind::Transform { .. } => {
-                writeln!(
-                    prompt,
-                    "You're currently working inside an editor on this file:"
-                )
-                .unwrap();
-                if let Some(language_name) = language_name {
-                    writeln!(prompt, "```{language_name}").unwrap();
-                } else {
-                    writeln!(prompt, "```").unwrap();
-                }
-                for chunk in snapshot.text_for_range(Anchor::min()..Anchor::max()) {
-                    write!(prompt, "{chunk}").unwrap();
-                }
-                writeln!(prompt, "```").unwrap();
-
-                writeln!(
-                    prompt,
-                    "In particular, the user has selected the following text:"
-                )
-                .unwrap();
-                if let Some(language_name) = language_name {
-                    writeln!(prompt, "```{language_name}").unwrap();
-                } else {
-                    writeln!(prompt, "```").unwrap();
-                }
-                writeln!(prompt, "{selected_text}").unwrap();
-                writeln!(prompt, "```").unwrap();
-                writeln!(prompt).unwrap();
-                writeln!(
-                    prompt,
-                    "Modify the selected text given the user prompt: {user_prompt}"
-                )
-                .unwrap();
-                writeln!(
-                    prompt,
-                    "You MUST reply only with the edited selected text, not the entire file."
-                )
-                .unwrap();
-            }
-            CodegenKind::Generate { .. } => {
-                writeln!(
-                    prompt,
-                    "You're currently working inside an editor on this file:"
-                )
-                .unwrap();
-                if let Some(language_name) = language_name {
-                    writeln!(prompt, "```{language_name}").unwrap();
-                } else {
-                    writeln!(prompt, "```").unwrap();
-                }
-                for chunk in snapshot.text_for_range(Anchor::min()..range.start) {
-                    write!(prompt, "{chunk}").unwrap();
-                }
-                write!(prompt, "<|>").unwrap();
-                for chunk in snapshot.text_for_range(range.start..Anchor::max()) {
-                    write!(prompt, "{chunk}").unwrap();
-                }
-                writeln!(prompt).unwrap();
-                writeln!(prompt, "```").unwrap();
-                writeln!(
-                    prompt,
-                    "Assume the cursor is located where the `<|>` marker is."
-                )
-                .unwrap();
-                writeln!(
-                    prompt,
-                    "Text can't be replaced, so assume your answer will be inserted at the cursor."
-                )
-                .unwrap();
-                writeln!(
-                    prompt,
-                    "Complete the text given the user prompt: {user_prompt}"
-                )
-                .unwrap();
-            }
-        }
-        if let Some(language_name) = language_name {
-            writeln!(prompt, "Your answer MUST always be valid {language_name}.").unwrap();
-        }
-        writeln!(prompt, "Always wrap your response in a Markdown codeblock.").unwrap();
-        writeln!(prompt, "Never make remarks about the output.").unwrap();
-
+        let codegen_kind = codegen.read(cx).kind().clone();
+        let user_prompt = user_prompt.to_string();
+        let prompt = cx.background().spawn(async move {
+            let language_name = language_name.as_deref();
+            generate_content_prompt(user_prompt, language_name, &buffer, range, codegen_kind)
+        });
         let mut messages = Vec::new();
         let mut model = settings::get::<AssistantSettings>(cx)
             .default_open_ai_model
@@ -660,18 +597,21 @@ impl AssistantPanel {
             model = conversation.model.clone();
         }
 
-        messages.push(RequestMessage {
-            role: Role::User,
-            content: prompt,
-        });
-        let request = OpenAIRequest {
-            model: model.full_name().into(),
-            messages,
-            stream: true,
-        };
-        pending_assist
-            .codegen
-            .update(cx, |codegen, cx| codegen.start(request, cx));
+        cx.spawn(|_, mut cx| async move {
+            let prompt = prompt.await;
+
+            messages.push(RequestMessage {
+                role: Role::User,
+                content: prompt,
+            });
+            let request = OpenAIRequest {
+                model: model.full_name().into(),
+                messages,
+                stream: true,
+            };
+            codegen.update(&mut cx, |codegen, cx| codegen.start(request, cx));
+        })
+        .detach();
     }
 
     fn update_highlights_for_editor(

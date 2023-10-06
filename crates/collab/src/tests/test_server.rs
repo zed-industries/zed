@@ -1,7 +1,7 @@
 use crate::{
     db::{tests::TestDb, NewUserParams, UserId},
     executor::Executor,
-    rpc::{Server, CLEANUP_TIMEOUT},
+    rpc::{Server, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
     AppState,
 };
 use anyhow::anyhow;
@@ -17,6 +17,7 @@ use gpui::{executor::Deterministic, ModelHandle, Task, TestAppContext, WindowHan
 use language::LanguageRegistry;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
+use rpc::RECEIVE_TIMEOUT;
 use settings::SettingsStore;
 use std::{
     cell::{Ref, RefCell, RefMut},
@@ -151,12 +152,12 @@ impl TestServer {
 
         Arc::get_mut(&mut client)
             .unwrap()
-            .set_id(user_id.0 as usize)
+            .set_id(user_id.to_proto())
             .override_authenticate(move |cx| {
                 cx.spawn(|_| async move {
                     let access_token = "the-token".to_string();
                     Ok(Credentials {
-                        user_id: user_id.0 as u64,
+                        user_id: user_id.to_proto(),
                         access_token,
                     })
                 })
@@ -253,6 +254,19 @@ impl TestServer {
             .remove(&peer_id)
             .unwrap()
             .store(true, SeqCst);
+    }
+
+    pub fn simulate_long_connection_interruption(
+        &self,
+        peer_id: PeerId,
+        deterministic: &Arc<Deterministic>,
+    ) {
+        self.forbid_connections();
+        self.disconnect_client(peer_id);
+        deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+        self.allow_connections();
+        deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+        deterministic.run_until_parked();
     }
 
     pub fn forbid_connections(&self) {

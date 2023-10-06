@@ -1252,7 +1252,7 @@ impl AppContext {
                 result
             })
         } else {
-            panic!("circular model update");
+            panic!("circular model update for {}", std::any::type_name::<T>());
         }
     }
 

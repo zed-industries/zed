@@ -71,7 +71,7 @@ pub struct Window {
     pub(crate) hovered_region_ids: Vec<MouseRegionId>,
     pub(crate) clicked_region_ids: Vec<MouseRegionId>,
     pub(crate) clicked_region: Option<(MouseRegionId, MouseButton)>,
-    text_layout_cache: TextLayoutCache,
+    text_layout_cache: Arc<TextLayoutCache>,
     refreshing: bool,
 }
 
@@ -107,7 +107,7 @@ impl Window {
             cursor_regions: Default::default(),
             mouse_regions: Default::default(),
             event_handlers: Default::default(),
-            text_layout_cache: TextLayoutCache::new(cx.font_system.clone()),
+            text_layout_cache: Arc::new(TextLayoutCache::new(cx.font_system.clone())),
             last_mouse_moved_event: None,
             last_mouse_position: Vector2F::zero(),
             pressed_buttons: Default::default(),
@@ -303,7 +303,7 @@ impl<'a> WindowContext<'a> {
         self.window.refreshing
     }
 
-    pub fn text_layout_cache(&self) -> &TextLayoutCache {
+    pub fn text_layout_cache(&self) -> &Arc<TextLayoutCache> {
         &self.window.text_layout_cache
     }
 

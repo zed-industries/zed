@@ -8,8 +8,8 @@ use crate::{
     language_settings::{language_settings, LanguageSettings},
     outline::OutlineItem,
     syntax_map::{
-        SyntaxLayerInfo, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxSnapshot,
-        ToTreeSitterPoint,
+        SyntaxLayerInfo, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatches,
+        SyntaxSnapshot, ToTreeSitterPoint,
     },
     CodeLabel, LanguageScope, Outline,
 };
@@ -660,12 +660,12 @@ impl Buffer {
             file_changed = true;
         };
 
+        self.file = Some(new_file);
         if file_changed {
             self.file_update_count += 1;
             cx.emit(Event::FileHandleChanged);
             cx.notify();
         }
-        self.file = Some(new_file);
         task
     }
 
@@ -2465,6 +2465,14 @@ impl BufferSnapshot {
             })
         }
         Some(items)
+    }
+
+    pub fn matches(
+        &self,
+        range: Range<usize>,
+        query: fn(&Grammar) -> Option<&tree_sitter::Query>,
+    ) -> SyntaxMapMatches {
+        self.syntax.matches(range, self, query)
     }
 
     /// Returns bracket range pairs overlapping or adjacent to `range`

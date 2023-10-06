@@ -2,6 +2,7 @@
     [(line_comment) (attribute_item)]* @context
     .
     [
+
         (struct_item
             name: (_) @name)
 
@@ -26,3 +27,6 @@
             name: (_) @name)
         ] @item
     )
+
+(attribute_item) @collapse
+(use_declaration) @collapse

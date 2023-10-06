@@ -44,6 +44,12 @@ pub enum Event {
     RemoteProjectUnshared {
         project_id: u64,
     },
+    RemoteProjectJoined {
+        project_id: u64,
+    },
+    RemoteProjectInvitationDiscarded {
+        project_id: u64,
+    },
     Left,
 }
 
@@ -96,6 +102,10 @@ impl Entity for Room {
 impl Room {
     pub fn channel_id(&self) -> Option<u64> {
         self.channel_id
+    }
+
+    pub fn is_sharing_project(&self) -> bool {
+        !self.shared_projects.is_empty()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -588,6 +598,31 @@ impl Room {
             .map_or(&[], |v| v.as_slice())
     }
 
+    /// Returns the most 'active' projects, defined as most people in the project
+    pub fn most_active_project(&self) -> Option<(u64, u64)> {
+        let mut projects = HashMap::default();
+        let mut hosts = HashMap::default();
+        for participant in self.remote_participants.values() {
+            match participant.location {
+                ParticipantLocation::SharedProject { project_id } => {
+                    *projects.entry(project_id).or_insert(0) += 1;
+                }
+                ParticipantLocation::External | ParticipantLocation::UnsharedProject => {}
+            }
+            for project in &participant.projects {
+                *projects.entry(project.id).or_insert(0) += 1;
+                hosts.insert(project.id, participant.user.id);
+            }
+        }
+
+        let mut pairs: Vec<(u64, usize)> = projects.into_iter().collect();
+        pairs.sort_by_key(|(_, count)| *count as i32);
+
+        pairs
+            .first()
+            .map(|(project_id, _)| (*project_id, hosts[&project_id]))
+    }
+
     async fn handle_room_updated(
         this: ModelHandle<Self>,
         envelope: TypedEnvelope<proto::RoomUpdated>,
@@ -1015,6 +1050,7 @@ impl Room {
     ) -> Task<Result<ModelHandle<Project>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
+        cx.emit(Event::RemoteProjectJoined { project_id: id });
         cx.spawn(|this, mut cx| async move {
             let project =
                 Project::remote(id, client, user_store, language_registry, fs, cx.clone()).await?;

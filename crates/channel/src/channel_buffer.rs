@@ -2,13 +2,16 @@ use crate::Channel;
 use anyhow::Result;
 use client::{Client, Collaborator, UserStore};
 use collections::HashMap;
-use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle};
+use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task};
+use language::proto::serialize_version;
 use rpc::{
     proto::{self, PeerId},
     TypedEnvelope,
 };
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use util::ResultExt;
+
+pub const ACKNOWLEDGE_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(250);
 
 pub(crate) fn init(client: &Arc<Client>) {
     client.add_model_message_handler(ChannelBuffer::handle_update_channel_buffer);
@@ -24,11 +27,13 @@ pub struct ChannelBuffer {
     buffer_epoch: u64,
     client: Arc<Client>,
     subscription: Option<client::Subscription>,
+    acknowledge_task: Option<Task<Result<()>>>,
 }
 
 pub enum ChannelBufferEvent {
     CollaboratorsChanged,
     Disconnected,
+    BufferEdited,
 }
 
 impl Entity for ChannelBuffer {
@@ -36,6 +41,9 @@ impl Entity for ChannelBuffer {
 
     fn release(&mut self, _: &mut AppContext) {
         if self.connected {
+            if let Some(task) = self.acknowledge_task.take() {
+                task.detach();
+            }
             self.client
                 .send(proto::LeaveChannelBuffer {
                     channel_id: self.channel.id,
@@ -81,6 +89,7 @@ impl ChannelBuffer {
                 client,
                 connected: true,
                 collaborators: Default::default(),
+                acknowledge_task: None,
                 channel,
                 subscription: Some(subscription.set_model(&cx.handle(), &mut cx.to_async())),
                 user_store,
@@ -159,17 +168,43 @@ impl ChannelBuffer {
         &mut self,
         _: ModelHandle<language::Buffer>,
         event: &language::Event,
-        _: &mut ModelContext<Self>,
+        cx: &mut ModelContext<Self>,
     ) {
-        if let language::Event::Operation(operation) = event {
-            let operation = language::proto::serialize_operation(operation);
-            self.client
-                .send(proto::UpdateChannelBuffer {
-                    channel_id: self.channel.id,
-                    operations: vec![operation],
-                })
-                .log_err();
+        match event {
+            language::Event::Operation(operation) => {
+                let operation = language::proto::serialize_operation(operation);
+                self.client
+                    .send(proto::UpdateChannelBuffer {
+                        channel_id: self.channel.id,
+                        operations: vec![operation],
+                    })
+                    .log_err();
+            }
+            language::Event::Edited => {
+                cx.emit(ChannelBufferEvent::BufferEdited);
+            }
+            _ => {}
         }
+    }
+
+    pub fn acknowledge_buffer_version(&mut self, cx: &mut ModelContext<'_, ChannelBuffer>) {
+        let buffer = self.buffer.read(cx);
+        let version = buffer.version();
+        let buffer_id = buffer.remote_id();
+        let client = self.client.clone();
+        let epoch = self.epoch();
+
+        self.acknowledge_task = Some(cx.spawn_weak(|_, cx| async move {
+            cx.background().timer(ACKNOWLEDGE_DEBOUNCE_INTERVAL).await;
+            client
+                .send(proto::AckBufferOperation {
+                    buffer_id,
+                    epoch,
+                    version: serialize_version(&version),
+                })
+                .ok();
+            Ok(())
+        }));
     }
 
     pub fn epoch(&self) -> u64 {

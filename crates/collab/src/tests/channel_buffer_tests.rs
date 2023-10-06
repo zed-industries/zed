@@ -3,7 +3,7 @@ use crate::{
     tests::TestServer,
 };
 use call::ActiveCall;
-use channel::Channel;
+use channel::{Channel, ACKNOWLEDGE_DEBOUNCE_INTERVAL};
 use client::ParticipantIndex;
 use client::{Collaborator, UserId};
 use collab_ui::channel_view::ChannelView;
@@ -410,10 +410,7 @@ async fn test_channel_buffer_disconnect(
     channel_buffer_a.update(cx_a, |buffer, _| {
         assert_eq!(
             buffer.channel().as_ref(),
-            &Channel {
-                id: channel_id,
-                name: "the-channel".to_string()
-            }
+            &channel(channel_id, "the-channel")
         );
         assert!(!buffer.is_connected());
     });
@@ -438,13 +435,19 @@ async fn test_channel_buffer_disconnect(
     channel_buffer_b.update(cx_b, |buffer, _| {
         assert_eq!(
             buffer.channel().as_ref(),
-            &Channel {
-                id: channel_id,
-                name: "the-channel".to_string()
-            }
+            &channel(channel_id, "the-channel")
         );
         assert!(!buffer.is_connected());
     });
+}
+
+fn channel(id: u64, name: &'static str) -> Channel {
+    Channel {
+        id,
+        name: name.to_string(),
+        unseen_note_version: None,
+        unseen_message_id: None,
+    }
 }
 
 #[gpui::test]
@@ -627,6 +630,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
+
     let client_c = server.create_client(cx_c, "user_c").await;
 
     cx_a.update(editor::init);
@@ -702,9 +706,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
     // Client B follows client A.
     workspace_b
         .update(cx_b, |workspace, cx| {
-            workspace
-                .toggle_follow(client_a.peer_id().unwrap(), cx)
-                .unwrap()
+            workspace.follow(client_a.peer_id().unwrap(), cx).unwrap()
         })
         .await
         .unwrap();
@@ -755,6 +757,126 @@ async fn test_following_to_channel_notes_without_a_shared_project(
     channel_view_2_b.read_with(cx_b, |notes, cx| {
         assert_eq!(notes.channel(cx).name, "channel-2");
     });
+}
+
+#[gpui::test]
+async fn test_channel_buffer_changes(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+
+    let channel_id = server
+        .make_channel(
+            "the-channel",
+            None,
+            (&client_a, cx_a),
+            &mut [(&client_b, cx_b)],
+        )
+        .await;
+
+    let channel_buffer_a = client_a
+        .channel_store()
+        .update(cx_a, |store, cx| store.open_channel_buffer(channel_id, cx))
+        .await
+        .unwrap();
+
+    // Client A makes an edit, and client B should see that the note has changed.
+    channel_buffer_a.update(cx_a, |buffer, cx| {
+        buffer.buffer().update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "1")], None, cx);
+        })
+    });
+    deterministic.run_until_parked();
+
+    let has_buffer_changed = cx_b.read(|cx| {
+        client_b
+            .channel_store()
+            .read(cx)
+            .has_channel_buffer_changed(channel_id)
+            .unwrap()
+    });
+    assert!(has_buffer_changed);
+
+    // Opening the buffer should clear the changed flag.
+    let project_b = client_b.build_empty_local_project(cx_b);
+    let workspace_b = client_b.build_workspace(&project_b, cx_b).root(cx_b);
+    let channel_view_b = cx_b
+        .update(|cx| ChannelView::open(channel_id, workspace_b.clone(), cx))
+        .await
+        .unwrap();
+    deterministic.run_until_parked();
+
+    let has_buffer_changed = cx_b.read(|cx| {
+        client_b
+            .channel_store()
+            .read(cx)
+            .has_channel_buffer_changed(channel_id)
+            .unwrap()
+    });
+    assert!(!has_buffer_changed);
+
+    // Editing the channel while the buffer is open should not show that the buffer has changed.
+    channel_buffer_a.update(cx_a, |buffer, cx| {
+        buffer.buffer().update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "2")], None, cx);
+        })
+    });
+    deterministic.run_until_parked();
+
+    let has_buffer_changed = cx_b.read(|cx| {
+        client_b
+            .channel_store()
+            .read(cx)
+            .has_channel_buffer_changed(channel_id)
+            .unwrap()
+    });
+    assert!(!has_buffer_changed);
+
+    deterministic.advance_clock(ACKNOWLEDGE_DEBOUNCE_INTERVAL);
+
+    // Test that the server is tracking things correctly, and we retain our 'not changed'
+    // state across a disconnect
+    server.simulate_long_connection_interruption(client_b.peer_id().unwrap(), &deterministic);
+    let has_buffer_changed = cx_b.read(|cx| {
+        client_b
+            .channel_store()
+            .read(cx)
+            .has_channel_buffer_changed(channel_id)
+            .unwrap()
+    });
+    assert!(!has_buffer_changed);
+
+    // Closing the buffer should re-enable change tracking
+    cx_b.update(|cx| {
+        workspace_b.update(cx, |workspace, cx| {
+            workspace.close_all_items_and_panes(&Default::default(), cx)
+        });
+
+        drop(channel_view_b)
+    });
+
+    deterministic.run_until_parked();
+
+    channel_buffer_a.update(cx_a, |buffer, cx| {
+        buffer.buffer().update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "3")], None, cx);
+        })
+    });
+    deterministic.run_until_parked();
+
+    let has_buffer_changed = cx_b.read(|cx| {
+        client_b
+            .channel_store()
+            .read(cx)
+            .has_channel_buffer_changed(channel_id)
+            .unwrap()
+    });
+    assert!(has_buffer_changed);
 }
 
 #[track_caller]

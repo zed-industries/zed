@@ -635,3 +635,20 @@ async fn test_zero(cx: &mut gpui::TestAppContext) {
         the lazy dog"})
         .await;
 }
+
+#[gpui::test]
+async fn test_selection_goal(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state(indoc! {"
+        ;;ˇ;
+        Lorem Ipsum"})
+        .await;
+
+    cx.simulate_shared_keystrokes(["a", "down", "up", ";", "down", "up"])
+        .await;
+    cx.assert_shared_state(indoc! {"
+        ;;;;ˇ
+        Lorem Ipsum"})
+        .await;
+}

@@ -82,6 +82,7 @@ impl WorkspaceElement {
         );
 
         div()
+            .relative()
             .size_full()
             .flex()
             .flex_col()
@@ -169,5 +170,17 @@ impl WorkspaceElement {
                     ),
             )
             .child(StatusBar::new())
+        // An example of a toast is below
+        // Currently because of stacking order this gets obscured by other elements
+
+        // .child(Toast::new(
+        //     ToastOrigin::Bottom,
+        //     |_, payload| {
+        //         let theme = payload.downcast_ref::<Arc<Theme>>().unwrap();
+
+        //         vec![Label::new("label").into_any()]
+        //     },
+        //     Box::new(theme.clone()),
+        // ))
     }
 }

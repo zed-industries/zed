@@ -36,6 +36,7 @@ language = { path = "../language" }
 lsp = { path = "../lsp" }
 project = { path = "../project" }
 rpc = { path = "../rpc" }
+rich_text = { path = "../rich_text" }
 settings = { path = "../settings" }
 snippet = { path = "../snippet" }
 sum_tree = { path = "../sum_tree" }
