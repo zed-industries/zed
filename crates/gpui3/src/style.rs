@@ -241,7 +241,7 @@ impl Style {
     }
 
     /// Paints the background of an element styled with this style.
-    pub fn paint<V: 'static>(&self, order: u32, bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
+    pub fn paint<V: 'static>(&self, bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
         let rem_size = cx.rem_size();
         let scale = cx.scale_factor();
 

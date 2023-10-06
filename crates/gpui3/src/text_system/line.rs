@@ -1,6 +1,6 @@
 use crate::{
-    black, point, px, Bounds, FontId, Hsla, Layout, Pixels, Point, RunStyle, ShapedBoundary,
-    ShapedLine, ShapedRun, UnderlineStyle, WindowContext,
+    black, point, px, Bounds, FontId, Hsla, Pixels, Point, RunStyle, ShapedBoundary, ShapedLine,
+    ShapedRun, UnderlineStyle, WindowContext,
 };
 use anyhow::Result;
 use smallvec::SmallVec;
@@ -90,15 +90,14 @@ impl Line {
         }
     }
 
-    // todo!
     pub fn paint(
         &self,
-        layout: &Layout,
-        visible_bounds: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
+        visible_bounds: Bounds<Pixels>, // todo!("use clipping")
         line_height: Pixels,
         cx: &mut WindowContext,
     ) -> Result<()> {
-        let origin = layout.bounds.origin;
+        let origin = bounds.origin;
         let padding_top = (line_height - self.layout.ascent - self.layout.descent) / 2.;
         let baseline_offset = point(px(0.), padding_top + self.layout.ascent);
 
@@ -159,17 +158,10 @@ impl Line {
                 }
 
                 if glyph.is_emoji {
-                    cx.paint_emoji(
-                        glyph_origin,
-                        layout.order,
-                        run.font_id,
-                        glyph.id,
-                        self.layout.font_size,
-                    )?;
+                    cx.paint_emoji(glyph_origin, run.font_id, glyph.id, self.layout.font_size)?;
                 } else {
                     cx.paint_glyph(
                         glyph_origin,
-                        layout.order,
                         run.font_id,
                         glyph.id,
                         self.layout.font_size,

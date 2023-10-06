@@ -1,6 +1,5 @@
 use super::{
-    AbsoluteLength, Bounds, DefiniteLength, Edges, Layout, Length, Pixels, Point, Result, Size,
-    Style,
+    AbsoluteLength, Bounds, DefiniteLength, Edges, Length, Pixels, Point, Result, Size, Style,
 };
 use collections::HashMap;
 use std::fmt::Debug;
@@ -14,7 +13,7 @@ use taffy::{
 pub struct TaffyLayoutEngine {
     taffy: Taffy,
     children_to_parents: HashMap<LayoutId, LayoutId>,
-    absolute_layouts: HashMap<LayoutId, Layout>,
+    absolute_layout_bounds: HashMap<LayoutId, Bounds<Pixels>>,
 }
 
 impl TaffyLayoutEngine {
@@ -22,7 +21,7 @@ impl TaffyLayoutEngine {
         TaffyLayoutEngine {
             taffy: Taffy::new(),
             children_to_parents: HashMap::default(),
-            absolute_layouts: HashMap::default(),
+            absolute_layout_bounds: HashMap::default(),
         }
     }
 
@@ -76,19 +75,24 @@ impl TaffyLayoutEngine {
         Ok(())
     }
 
-    pub fn layout(&mut self, id: LayoutId) -> Result<Layout> {
-        if let Some(layout) = self.absolute_layouts.get(&id).cloned() {
+    pub fn layout_bounds(&mut self, id: LayoutId) -> Result<Bounds<Pixels>> {
+        if let Some(layout) = self.absolute_layout_bounds.get(&id).cloned() {
             return Ok(layout);
         }
 
-        let mut relative_layout: Layout = self.taffy.layout(id.into()).map(Into::into)?;
-        if let Some(parent_id) = self.children_to_parents.get(&id).copied() {
-            let parent_layout = self.layout(parent_id)?;
-            relative_layout.bounds.origin += parent_layout.bounds.origin;
-        }
-        self.absolute_layouts.insert(id, relative_layout.clone());
+        let layout = self.taffy.layout(id.into())?;
+        let mut bounds = Bounds {
+            origin: layout.location.into(),
+            size: layout.size.into(),
+        };
 
-        Ok(relative_layout)
+        if let Some(parent_id) = self.children_to_parents.get(&id).copied() {
+            let parent_bounds = self.layout_bounds(parent_id)?;
+            bounds.origin += parent_bounds.origin;
+        }
+        self.absolute_layout_bounds.insert(id, bounds);
+
+        Ok(bounds)
     }
 }
 
@@ -367,17 +371,5 @@ impl From<TaffyAvailableSpace> for AvailableSpace {
 impl From<Pixels> for AvailableSpace {
     fn from(pixels: Pixels) -> Self {
         AvailableSpace::Definite(pixels)
-    }
-}
-
-impl From<&taffy::tree::Layout> for Layout {
-    fn from(layout: &taffy::tree::Layout) -> Self {
-        Layout {
-            order: layout.order,
-            bounds: Bounds {
-                origin: layout.location.into(),
-                size: layout.size.into(),
-            },
-        }
     }
 }

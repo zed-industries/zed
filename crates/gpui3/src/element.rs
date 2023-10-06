@@ -1,4 +1,6 @@
-use super::{Layout, LayoutId, Pixels, Point, Result, ViewContext};
+use crate::Bounds;
+
+use super::{LayoutId, Pixels, Point, Result, ViewContext};
 pub(crate) use smallvec::SmallVec;
 
 pub trait Element: 'static {
@@ -13,7 +15,7 @@ pub trait Element: 'static {
 
     fn paint(
         &mut self,
-        layout: Layout,
+        bounds: Bounds<Pixels>,
         state: &mut Self::State,
         frame_state: &mut Self::FrameState,
         cx: &mut ViewContext<Self::State>,
@@ -65,7 +67,7 @@ enum ElementRenderPhase<S> {
         frame_state: S,
     },
     Painted {
-        layout: Layout,
+        bounds: Bounds<Pixels>,
         frame_state: S,
     },
 }
@@ -105,24 +107,23 @@ impl<E: Element> ElementObject<E::State> for RenderedElement<E> {
                 layout_id,
                 mut frame_state,
             } => {
-                let mut layout = cx.layout(layout_id)?.clone();
-                offset.map(|offset| layout.bounds.origin += offset);
-                self.element
-                    .paint(layout.clone(), state, &mut frame_state, cx)?;
+                let mut bounds = cx.layout_bounds(layout_id)?.clone();
+                offset.map(|offset| bounds.origin += offset);
+                self.element.paint(bounds, state, &mut frame_state, cx)?;
                 ElementRenderPhase::Painted {
-                    layout,
+                    bounds,
                     frame_state,
                 }
             }
 
             ElementRenderPhase::Painted {
-                layout,
+                bounds,
                 mut frame_state,
             } => {
                 self.element
-                    .paint(layout.clone(), state, &mut frame_state, cx)?;
+                    .paint(bounds.clone(), state, &mut frame_state, cx)?;
                 ElementRenderPhase::Painted {
-                    layout,
+                    bounds,
                     frame_state,
                 }
             }

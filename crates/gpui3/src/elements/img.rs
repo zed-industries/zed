@@ -1,6 +1,6 @@
 use crate::{
-    BorrowWindow, Element, Layout, LayoutId, Result, SharedString, Style, StyleHelpers, Styled,
-    ViewContext,
+    BorrowWindow, Bounds, Element, LayoutId, Pixels, Result, SharedString, Style, StyleHelpers,
+    Styled, ViewContext,
 };
 use futures::FutureExt;
 use refineable::RefinementCascade;
@@ -54,16 +54,14 @@ impl<S: Send + Sync + 'static> Element for Img<S> {
 
     fn paint(
         &mut self,
-        layout: Layout,
+        bounds: Bounds<Pixels>,
         _: &mut Self::State,
         _: &mut Self::FrameState,
         cx: &mut ViewContext<Self::State>,
     ) -> Result<()> {
         let style = self.computed_style();
-        let order = layout.order;
-        let bounds = layout.bounds;
 
-        style.paint(order, bounds, cx);
+        style.paint(bounds, cx);
 
         if let Some(uri) = self.uri.clone() {
             let image_future = cx.image_cache.get(uri);
@@ -74,7 +72,7 @@ impl<S: Send + Sync + 'static> Element for Img<S> {
             {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
                 cx.stack(1, |cx| {
-                    cx.paint_image(bounds, corner_radii, order, data, self.grayscale)
+                    cx.paint_image(bounds, corner_radii, data, self.grayscale)
                 })?;
             } else {
                 cx.spawn(|_, mut cx| async move {

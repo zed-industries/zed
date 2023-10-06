@@ -1,4 +1,4 @@
-use crate::{Element, Layout, LayoutId, Result, SharedString, Style, StyleHelpers, Styled};
+use crate::{Bounds, Element, LayoutId, Pixels, Result, SharedString, Style, StyleHelpers, Styled};
 use refineable::RefinementCascade;
 use std::marker::PhantomData;
 
@@ -41,7 +41,7 @@ impl<S: 'static> Element for Svg<S> {
 
     fn paint(
         &mut self,
-        layout: Layout,
+        bounds: Bounds<Pixels>,
         _: &mut Self::State,
         _: &mut Self::FrameState,
         cx: &mut crate::ViewContext<S>,
@@ -51,7 +51,7 @@ impl<S: 'static> Element for Svg<S> {
     {
         let fill_color = self.computed_style().fill.and_then(|fill| fill.color());
         if let Some((path, fill_color)) = self.path.as_ref().zip(fill_color) {
-            cx.paint_svg(layout.bounds, layout.order, path.clone(), fill_color)?;
+            cx.paint_svg(bounds, path.clone(), fill_color)?;
         }
         Ok(())
     }

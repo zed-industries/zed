@@ -224,11 +224,11 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             .request_measured_layout(style, rem_size, measure)
     }
 
-    pub fn layout(&mut self, layout_id: LayoutId) -> Result<Layout> {
+    pub fn layout_bounds(&mut self, layout_id: LayoutId) -> Result<Bounds<Pixels>> {
         Ok(self
             .window
             .layout_engine
-            .layout(layout_id)
+            .layout_bounds(layout_id)
             .map(Into::into)?)
     }
 
@@ -262,7 +262,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     pub fn paint_glyph(
         &mut self,
         origin: Point<Pixels>,
-        order: u32,
         font_id: FontId,
         glyph_id: GlyphId,
         font_size: Pixels,
@@ -302,7 +301,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             self.window.scene.insert(
                 layer_id,
                 MonochromeSprite {
-                    order,
+                    order: 0,
                     bounds,
                     content_mask,
                     color,
@@ -316,7 +315,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     pub fn paint_emoji(
         &mut self,
         origin: Point<Pixels>,
-        order: u32,
         font_id: FontId,
         glyph_id: GlyphId,
         font_size: Pixels,
@@ -352,7 +350,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             self.window.scene.insert(
                 layer_id,
                 PolychromeSprite {
-                    order,
+                    order: 0,
                     bounds,
                     corner_radii: Default::default(),
                     content_mask,
@@ -367,7 +365,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     pub fn paint_svg(
         &mut self,
         bounds: Bounds<Pixels>,
-        order: u32,
         path: SharedString,
         color: Hsla,
     ) -> Result<()> {
@@ -394,7 +391,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         self.window.scene.insert(
             layer_id,
             MonochromeSprite {
-                order,
+                order: 0,
                 bounds,
                 content_mask,
                 color,
@@ -409,7 +406,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         &mut self,
         bounds: Bounds<Pixels>,
         corner_radii: Corners<Pixels>,
-        order: u32,
         data: Arc<ImageData>,
         grayscale: bool,
     ) -> Result<()> {
@@ -430,7 +426,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         self.window.scene.insert(
             order,
             PolychromeSprite {
-                order: 0, // Used in in Scene::batches. 0 has no meaning.
+                order: 0,
                 bounds,
                 content_mask,
                 corner_radii,
@@ -452,7 +448,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             cx.window
                 .layout_engine
                 .compute_layout(root_layout_id, available_space)?;
-            let layout = cx.window.layout_engine.layout(root_layout_id)?;
+            let layout = cx.window.layout_engine.layout_bounds(root_layout_id)?;
 
             root_view.paint(layout, &mut (), &mut frame_state, cx)?;
             cx.window.root_view = Some(root_view);
@@ -785,10 +781,4 @@ impl<S: 'static> Into<AnyWindowHandle> for WindowHandle<S> {
 pub struct AnyWindowHandle {
     pub(crate) id: WindowId,
     state_type: TypeId,
-}
-
-#[derive(Clone)]
-pub struct Layout {
-    pub order: u32,
-    pub bounds: Bounds<Pixels>,
 }

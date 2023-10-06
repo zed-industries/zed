@@ -1,5 +1,5 @@
 use gpui3::{
-    BorrowAppContext, Element, Hsla, Layout, LayoutId, Result, ViewContext, WindowContext,
+    BorrowAppContext, Bounds, Element, Hsla, LayoutId, Pixels, Result, ViewContext, WindowContext,
 };
 use serde::{de::Visitor, Deserialize, Deserializer};
 use std::{collections::HashMap, fmt};
@@ -160,7 +160,7 @@ impl<E: Element> Element for Themed<E> {
 
     fn paint(
         &mut self,
-        layout: Layout,
+        bounds: Bounds<Pixels>,
         state: &mut Self::State,
         frame_state: &mut Self::FrameState,
         cx: &mut ViewContext<Self::State>,
@@ -169,7 +169,7 @@ impl<E: Element> Element for Themed<E> {
         Self: Sized,
     {
         cx.with_state(self.theme.clone(), |cx| {
-            self.child.paint(layout, state, frame_state, cx)
+            self.child.paint(bounds, state, frame_state, cx)
         })
     }
 }

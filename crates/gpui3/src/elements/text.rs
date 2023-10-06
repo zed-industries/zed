@@ -1,5 +1,5 @@
 use crate::{
-    AnyElement, Element, IntoAnyElement, Layout, LayoutId, Line, Pixels, Result, Size, ViewContext,
+    AnyElement, Bounds, Element, IntoAnyElement, LayoutId, Line, Pixels, Result, Size, ViewContext,
 };
 use parking_lot::Mutex;
 use std::{marker::PhantomData, sync::Arc};
@@ -82,7 +82,7 @@ impl<S: 'static> Element for Text<S> {
 
     fn paint<'a>(
         &mut self,
-        layout: Layout,
+        bounds: Bounds<Pixels>,
         _: &mut Self::State,
         frame_state: &mut Self::FrameState,
         cx: &mut ViewContext<S>,
@@ -99,8 +99,7 @@ impl<S: 'static> Element for Text<S> {
         }
 
         // todo!("We haven't added visible bounds to the new element system yet, so this is a placeholder.");
-        let visible_bounds = layout.bounds;
-        line.paint(&layout, visible_bounds, line_height, cx)?;
+        line.paint(bounds, bounds, line_height, cx)?;
 
         Ok(())
     }

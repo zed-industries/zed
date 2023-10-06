@@ -1,4 +1,4 @@
-use crate::Element;
+use crate::{Bounds, Element, Pixels};
 use std::marker::PhantomData;
 
 pub struct Stateless<E: Element<State = ()>, S> {
@@ -20,11 +20,11 @@ impl<E: Element<State = ()>, S: Send + Sync + 'static> Element for Stateless<E, 
 
     fn paint(
         &mut self,
-        layout: crate::Layout,
+        bounds: Bounds<Pixels>,
         _: &mut Self::State,
         frame_state: &mut Self::FrameState,
         cx: &mut crate::ViewContext<Self::State>,
     ) -> anyhow::Result<()> {
-        cx.erase_state(|cx| self.element.paint(layout, &mut (), frame_state, cx))
+        cx.erase_state(|cx| self.element.paint(bounds, &mut (), frame_state, cx))
     }
 }
