@@ -104,7 +104,7 @@ impl StoryWrapper {
             div()
                 .flex()
                 .flex_col()
-                .h_full()
+                .size_full()
                 .child_any(self.selector.story())
         })
     }

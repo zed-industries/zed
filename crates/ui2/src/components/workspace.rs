@@ -4,7 +4,7 @@ use std::sync::Arc;
 use chrono::DateTime;
 use gpui3::{relative, rems, Size};
 
-use crate::prelude::*;
+use crate::{prelude::*, Pane, PaneGroup, SplitDirection};
 use crate::{theme, v_stack, Panel, PanelAllowedSides, PanelSide, ProjectPanel, StatusBar};
 
 #[derive(Element)]
@@ -30,62 +30,81 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
     pub fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
         let theme = theme(cx).clone();
 
-        // let temp_size = rems(36.).into();
+        let temp_size = rems(36.).into();
 
-        // let root_group = PaneGroup::new_groups(
-        //     vec![
-        //         PaneGroup::new_panes(
-        //             vec![
-        //                 Pane::new(
-        //                     ScrollState::default(),
-        //                     Size {
-        //                         width: relative(1.).into(),
-        //                         height: temp_size,
-        //                     },
-        //                     |_, payload| {
-        //                         let theme = payload.downcast_ref::<Arc<Theme>>().unwrap();
+        let root_group = PaneGroup::new_groups(
+            vec![
+                PaneGroup::new_panes(
+                    vec![
+                        Pane::new(
+                            ScrollState::default(),
+                            Size {
+                                width: relative(1.).into(),
+                                height: temp_size,
+                            },
+                            |_, payload| {
+                                let theme = payload.downcast_ref::<Arc<Theme>>().unwrap();
 
-        //                         vec![EditorPane::new(hello_world_rust_editor_with_status_example(
-        //                             &theme,
-        //                         ))
-        //                         .into_any()]
-        //                     },
-        //                     Box::new(theme.clone()),
-        //                 ),
-        //                 Pane::new(
-        //                     ScrollState::default(),
-        //                     Size {
-        //                         width: relative(1.).into(),
-        //                         height: temp_size,
-        //                     },
-        //                     |_, _| vec![Terminal::new().into_any()],
-        //                     Box::new(()),
-        //                 ),
-        //             ],
-        //             SplitDirection::Vertical,
-        //         ),
-        //         PaneGroup::new_panes(
-        //             vec![Pane::new(
-        //                 ScrollState::default(),
-        //                 Size {
-        //                     width: relative(1.).into(),
-        //                     height: relative(1.).into(),
-        //                 },
-        //                 |_, payload| {
-        //                     let theme = payload.downcast_ref::<Arc<Theme>>().unwrap();
+                                vec![
+                                    div()
+                                        .w_full()
+                                        .fill(gpui3::rgb::<gpui3::Hsla>(0xff0000))
+                                        .into_any(), // EditorPane::new(hello_world_rust_editor_with_status_example(
+                                                     //     &theme,
+                                                     // ))
+                                                     // .into_any()
+                                ]
+                            },
+                            Box::new(theme.clone()),
+                        ),
+                        Pane::new(
+                            ScrollState::default(),
+                            Size {
+                                width: relative(1.).into(),
+                                height: temp_size,
+                            },
+                            |_, _| {
+                                vec![
+                                    div()
+                                        .w_full()
+                                        .fill(gpui3::rgb::<gpui3::Hsla>(0x00ff00))
+                                        .into_any(),
+                                    // Terminal::new().into_any()
+                                ]
+                            },
+                            Box::new(()),
+                        ),
+                    ],
+                    SplitDirection::Vertical,
+                ),
+                PaneGroup::new_panes(
+                    vec![Pane::new(
+                        ScrollState::default(),
+                        Size {
+                            width: relative(1.).into(),
+                            height: relative(1.).into(),
+                        },
+                        |_, payload| {
+                            let theme = payload.downcast_ref::<Arc<Theme>>().unwrap();
 
-        //                     vec![EditorPane::new(hello_world_rust_editor_with_status_example(
-        //                         &theme,
-        //                     ))
-        //                     .into_any()]
-        //                 },
-        //                 Box::new(theme.clone()),
-        //             )],
-        //             SplitDirection::Vertical,
-        //         ),
-        //     ],
-        //     SplitDirection::Horizontal,
-        // );
+                            vec![
+                                div()
+                                    .w_full()
+                                    .fill(gpui3::rgb::<gpui3::Hsla>(0x0000ff))
+                                    .into_any(),
+                                //     EditorPane::new(hello_world_rust_editor_with_status_example(
+                                //     &theme,
+                                // ))
+                                // .into_any()
+                            ]
+                        },
+                        Box::new(theme.clone()),
+                    )],
+                    SplitDirection::Vertical,
+                ),
+            ],
+            SplitDirection::Horizontal,
+        );
 
         div()
             .relative()
@@ -130,7 +149,8 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
                                     .flex_1()
                                     // CSS Hack: Flex 1 has to have a set height to properly fill the space
                                     // Or it will give you a height of 0
-                                    .h_px(), // .child(root_group),
+                                    .h_px()
+                                    .child(root_group),
                             )
                             .child(
                                 Panel::new(
@@ -153,7 +173,8 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
                             Box::new(()),
                         )
                         .side(PanelSide::Right),
-                    ), // .child(
+                    ),
+                // .child(
                        //     Panel::new(
                        //         self.right_panel_scroll_state.clone(),
                        //         |_, payload| {
