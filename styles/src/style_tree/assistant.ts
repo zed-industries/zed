@@ -81,17 +81,17 @@ export default function assistant(): any {
             pending_edit_background: background(theme.highest, "positive"),
             context_status: {
                 error_icon: {
-                    margin: { left: 8, right: 8 },
+                    margin: { left: 8, right: 18 },
                     color: foreground(theme.highest, "negative"),
                     width: 12,
                 },
                 in_progress_icon: {
-                    margin: { left: 8, right: 8 },
-                    color: foreground(theme.highest, "warning"),
+                    margin: { left: 8, right: 18 },
+                    color: foreground(theme.highest, "positive"),
                     width: 12,
                 },
                 complete_icon: {
-                    margin: { left: 8, right: 8 },
+                    margin: { left: 8, right: 18 },
                     color: foreground(theme.highest, "positive"),
                     width: 12,
                 }
