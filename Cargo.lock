@@ -2832,7 +2832,6 @@ dependencies = [
  "parking_lot 0.11.2",
  "regex",
  "rope",
- "rpc",
  "serde",
  "serde_derive",
  "serde_json",
