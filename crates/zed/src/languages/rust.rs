@@ -377,7 +377,28 @@ mod tests {
                 ],
             })
         );
-
+        assert_eq!(
+            language
+                .label_for_completion(&lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FUNCTION),
+                    label: "hello(…)".to_string(),
+                    detail: Some("async fn(&mut Option<T>) -> Vec<T>".to_string()),
+                    ..Default::default()
+                })
+                .await,
+            Some(CodeLabel {
+                text: "hello(&mut Option<T>) -> Vec<T>".to_string(),
+                filter_range: 0..5,
+                runs: vec![
+                    (0..5, highlight_function),
+                    (7..10, highlight_keyword),
+                    (11..17, highlight_type),
+                    (18..19, highlight_type),
+                    (25..28, highlight_type),
+                    (29..30, highlight_type),
+                ],
+            })
+        );
         assert_eq!(
             language
                 .label_for_completion(&lsp::CompletionItem {
