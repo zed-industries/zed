@@ -2,9 +2,8 @@ use std::marker::PhantomData;
 
 use gpui3::AbsoluteLength;
 
-use crate::themes::rose_pine_dawn;
-use crate::ui::prelude::*;
-use crate::ui::{token, v_stack};
+use crate::{prelude::*, theme};
+use crate::{token, v_stack};
 
 #[derive(Default, Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum PanelAllowedSides {
@@ -103,7 +102,7 @@ impl<S: 'static + Send + Sync> Panel<S> {
 
     fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
         let token = token();
-        let theme = rose_pine_dawn();
+        let theme = theme(cx);
 
         let panel_base;
         let current_width = self.width.unwrap_or(self.initial_width);

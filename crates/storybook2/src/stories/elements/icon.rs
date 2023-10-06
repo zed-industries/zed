@@ -1,9 +1,8 @@
 use std::marker::PhantomData;
 
 use strum::IntoEnumIterator;
-
-use crate::ui::prelude::*;
-use crate::ui::{Icon, IconElement};
+use ui::prelude::*;
+use ui::{Icon, IconElement};
 
 use crate::story::Story;
 

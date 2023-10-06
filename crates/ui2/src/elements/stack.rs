@@ -1,6 +1,6 @@
 use gpui3::{div, Div};
 
-use crate::ui::prelude::*;
+use crate::prelude::*;
 
 pub trait Stack: StyleHelpers {
     /// Horizontally stacks elements.

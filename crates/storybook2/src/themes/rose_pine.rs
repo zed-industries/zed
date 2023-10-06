@@ -1,5 +1,5 @@
-use crate::theme::Theme;
 use gpui3::serde_json::{self, json};
+use ui::Theme;
 
 pub fn rose_pine() -> Theme {
     serde_json::from_value(json! {

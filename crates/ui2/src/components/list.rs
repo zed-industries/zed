@@ -3,8 +3,8 @@ use std::marker::PhantomData;
 use gpui3::{div, Div, Hsla, WindowContext};
 
 use crate::theme::theme;
-use crate::ui::prelude::*;
-use crate::ui::{
+use crate::prelude::*;
+use crate::{
     h_stack, token, v_stack, Avatar, Icon, IconColor, IconElement, IconSize, Label, LabelColor,
     LabelSize,
 };

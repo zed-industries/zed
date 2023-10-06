@@ -7,7 +7,7 @@ use clap::ValueEnum;
 use gpui3::AnyElement;
 use strum::{EnumIter, EnumString, IntoEnumIterator};
 
-use crate::ui::prelude::*;
+use ui::prelude::*;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, strum::Display, EnumString, EnumIter)]
 #[strum(serialize_all = "snake_case")]

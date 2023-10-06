@@ -5,9 +5,7 @@ mod collab_panel;
 mod stories;
 mod story;
 mod story_selector;
-mod theme;
 mod themes;
-mod ui;
 mod workspace;
 
 use std::sync::Arc;
@@ -18,12 +16,12 @@ use gpui3::{
 };
 use log::LevelFilter;
 use simplelog::SimpleLogger;
+use ui::prelude::*;
+use ui::themed;
 
 use crate::assets::Assets;
 use crate::story_selector::StorySelector;
-use crate::theme::themed;
 use crate::themes::rose_pine_dawn;
-use crate::ui::prelude::*;
 use crate::workspace::workspace;
 
 // gpui2::actions! {

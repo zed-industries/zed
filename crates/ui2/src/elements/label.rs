@@ -4,7 +4,7 @@ use gpui3::{Hsla, WindowContext};
 use smallvec::SmallVec;
 
 use crate::theme::theme;
-use crate::ui::prelude::*;
+use crate::prelude::*;
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum LabelColor {

@@ -3,7 +3,7 @@ pub use gpui3::{
     WindowContext,
 };
 
-pub use crate::ui::{HackyChildren, HackyChildrenPayload, ElementExt};
+pub use crate::{HackyChildren, HackyChildrenPayload, ElementExt};
 
 use gpui3::{hsla, rgb, Hsla};
 use strum::EnumIter;

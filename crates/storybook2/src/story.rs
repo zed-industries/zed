@@ -1,6 +1,6 @@
-use crate::theme::theme;
-use crate::ui::prelude::*;
 use gpui3::Div;
+use ui::prelude::*;
+use ui::theme;
 
 pub struct Story {}
 

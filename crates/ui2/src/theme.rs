@@ -1,5 +1,6 @@
+use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
-use std::{collections::HashMap, fmt};
 
 use gpui3::{
     BorrowAppContext, Bounds, Element, Hsla, LayoutId, Pixels, Result, ViewContext, WindowContext,
@@ -175,22 +176,6 @@ impl<E: Element> Element for Themed<E> {
         })
     }
 }
-
-// fn preferred_theme<V: 'static>(cx: &AppContext) -> Theme {
-//     settings::get::<ThemeSettings>(cx)
-//         .theme
-//         .deserialized_base_theme
-//         .lock()
-//         .get_or_insert_with(|| {
-//             let theme: Theme =
-//                 serde_json::from_value(settings::get::<ThemeSettings>(cx).theme.base_theme.clone())
-//                     .unwrap();
-//             Box::new(theme)
-//         })
-//         .downcast_ref::<Theme>()
-//         .unwrap()
-//         .clone()
-// }
 
 pub fn theme(cx: &WindowContext) -> Arc<Theme> {
     Arc::new(cx.state::<Theme>().clone())

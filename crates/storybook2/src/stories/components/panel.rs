@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
-use crate::ui::prelude::*;
-use crate::ui::{Label, Panel};
+use ui::prelude::*;
+use ui::{Label, Panel};
 
 use crate::story::Story;
 

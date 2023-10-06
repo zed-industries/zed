@@ -1,10 +1,10 @@
 use std::marker::PhantomData;
 
 use strum::IntoEnumIterator;
+use ui::prelude::*;
 
 use crate::story::Story;
 use crate::story_selector::{ComponentStory, ElementStory};
-use crate::ui::prelude::*;
 
 #[derive(Element)]
 pub struct KitchenSinkStory<S: 'static + Send + Sync + Clone> {

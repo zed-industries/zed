@@ -1,13 +1,13 @@
-use crate::ui::prelude::*;
-use crate::ui::{Panel, Stack};
-use crate::{
-    collab_panel::{collab_panel, CollabPanel},
-    theme::{theme, themed},
-    themes::rose_pine_dawn,
-};
 use gpui3::{
     div, img, svg, view, Context, Element, ParentElement, RootView, StyleHelpers, View,
     ViewContext, WindowContext,
+};
+use ui::prelude::*;
+use ui::{theme, themed, Panel, Stack};
+
+use crate::{
+    collab_panel::{collab_panel, CollabPanel},
+    themes::rose_pine_dawn,
 };
 
 pub struct Workspace {
