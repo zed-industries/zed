@@ -160,7 +160,13 @@ impl Titlebar {
                             // .fill(theme.lowest.base.hovered.background)
                             // .active()
                             // .fill(theme.lowest.base.pressed.background)
-                            .child(div().text_sm().child("branch")),
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_decoration_1()
+                                    .text_decoration_wavy()
+                                    .child("branch"),
+                            ),
                     ),
             )
     }

@@ -416,6 +416,96 @@ pub trait StyleHelpers: Styled<Style = Style> {
         self
     }
 
+    fn text_decoration_none(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .underline = None;
+        self
+    }
+
+    fn text_decoration_color(mut self, color: impl Into<Hsla>) -> Self
+    where
+        Self: Sized,
+    {
+        let style = self.text_style().get_or_insert_with(Default::default);
+        let underline = style.underline.get_or_insert_with(Default::default);
+        underline.color = Some(color.into());
+        self
+    }
+
+    fn text_decoration_solid(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        let style = self.text_style().get_or_insert_with(Default::default);
+        let underline = style.underline.get_or_insert_with(Default::default);
+        underline.wavy = false;
+        self
+    }
+
+    fn text_decoration_wavy(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        let style = self.text_style().get_or_insert_with(Default::default);
+        let underline = style.underline.get_or_insert_with(Default::default);
+        underline.wavy = true;
+        self
+    }
+
+    fn text_decoration_0(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        let style = self.text_style().get_or_insert_with(Default::default);
+        let underline = style.underline.get_or_insert_with(Default::default);
+        underline.thickness = px(0.);
+        self
+    }
+
+    fn text_decoration_1(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        let style = self.text_style().get_or_insert_with(Default::default);
+        let underline = style.underline.get_or_insert_with(Default::default);
+        underline.thickness = px(1.);
+        self
+    }
+
+    fn text_decoration_2(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        let style = self.text_style().get_or_insert_with(Default::default);
+        let underline = style.underline.get_or_insert_with(Default::default);
+        underline.thickness = px(2.);
+        self
+    }
+
+    fn text_decoration_4(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        let style = self.text_style().get_or_insert_with(Default::default);
+        let underline = style.underline.get_or_insert_with(Default::default);
+        underline.thickness = px(4.);
+        self
+    }
+
+    fn text_decoration_8(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        let style = self.text_style().get_or_insert_with(Default::default);
+        let underline = style.underline.get_or_insert_with(Default::default);
+        underline.thickness = px(8.);
+        self
+    }
+
     fn font(mut self, family_name: impl Into<SharedString>) -> Self
     where
         Self: Sized,

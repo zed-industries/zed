@@ -17,8 +17,9 @@ pub type DrawOrder = u32;
 pub struct Scene {
     pub(crate) scale_factor: f32,
     pub(crate) layers: BTreeMap<StackingOrder, LayerId>,
-    pub quads: Vec<Quad>,
     pub shadows: Vec<Shadow>,
+    pub quads: Vec<Quad>,
+    pub underlines: Vec<Underline>,
     pub monochrome_sprites: Vec<MonochromeSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
 }
@@ -28,8 +29,9 @@ impl Scene {
         Scene {
             scale_factor,
             layers: BTreeMap::new(),
-            quads: Vec::new(),
             shadows: Vec::new(),
+            quads: Vec::new(),
+            underlines: Vec::new(),
             monochrome_sprites: Vec::new(),
             polychrome_sprites: Vec::new(),
         }
@@ -39,8 +41,9 @@ impl Scene {
         Scene {
             scale_factor: self.scale_factor,
             layers: mem::take(&mut self.layers),
-            quads: mem::take(&mut self.quads),
             shadows: mem::take(&mut self.shadows),
+            quads: mem::take(&mut self.quads),
+            underlines: mem::take(&mut self.underlines),
             monochrome_sprites: mem::take(&mut self.monochrome_sprites),
             polychrome_sprites: mem::take(&mut self.polychrome_sprites),
         }
@@ -51,13 +54,17 @@ impl Scene {
         let layer_id = *self.layers.entry(layer_id).or_insert(next_id);
         let primitive = primitive.into();
         match primitive {
+            Primitive::Shadow(mut shadow) => {
+                shadow.order = layer_id;
+                self.shadows.push(shadow);
+            }
             Primitive::Quad(mut quad) => {
                 quad.order = layer_id;
                 self.quads.push(quad);
             }
-            Primitive::Shadow(mut shadow) => {
-                shadow.order = layer_id;
-                self.shadows.push(shadow);
+            Primitive::Underline(mut underline) => {
+                underline.order = layer_id;
+                self.underlines.push(underline);
             }
             Primitive::MonochromeSprite(mut sprite) => {
                 sprite.order = layer_id;
@@ -78,15 +85,26 @@ impl Scene {
         }
 
         // Add all primitives to the BSP splitter to determine draw order
+        // todo!("reuse the same splitter")
         let mut splitter = BspSplitter::new();
+
+        for (ix, shadow) in self.shadows.iter().enumerate() {
+            let z = layer_z_values[shadow.order as LayerId as usize];
+            splitter.add(shadow.bounds.to_bsp_polygon(z, (PrimitiveKind::Shadow, ix)));
+        }
+
         for (ix, quad) in self.quads.iter().enumerate() {
             let z = layer_z_values[quad.order as LayerId as usize];
             splitter.add(quad.bounds.to_bsp_polygon(z, (PrimitiveKind::Quad, ix)));
         }
 
-        for (ix, shadow) in self.shadows.iter().enumerate() {
-            let z = layer_z_values[shadow.order as LayerId as usize];
-            splitter.add(shadow.bounds.to_bsp_polygon(z, (PrimitiveKind::Shadow, ix)));
+        for (ix, underline) in self.underlines.iter().enumerate() {
+            let z = layer_z_values[underline.order as LayerId as usize];
+            splitter.add(
+                underline
+                    .bounds
+                    .to_bsp_polygon(z, (PrimitiveKind::Underline, ix)),
+            );
         }
 
         for (ix, monochrome_sprite) in self.monochrome_sprites.iter().enumerate() {
@@ -111,8 +129,11 @@ impl Scene {
         // We need primitives to be repr(C), hence the weird reuse of the order field for two different types.
         for (draw_order, polygon) in splitter.sort(Vector3D::new(0., 0., 1.)).iter().enumerate() {
             match polygon.anchor {
-                (PrimitiveKind::Quad, ix) => self.quads[ix].order = draw_order as DrawOrder,
                 (PrimitiveKind::Shadow, ix) => self.shadows[ix].order = draw_order as DrawOrder,
+                (PrimitiveKind::Quad, ix) => self.quads[ix].order = draw_order as DrawOrder,
+                (PrimitiveKind::Underline, ix) => {
+                    self.underlines[ix].order = draw_order as DrawOrder
+                }
                 (PrimitiveKind::MonochromeSprite, ix) => {
                     self.monochrome_sprites[ix].order = draw_order as DrawOrder
                 }
@@ -123,18 +144,22 @@ impl Scene {
         }
 
         // Sort the primitives
-        self.quads.sort_unstable();
         self.shadows.sort_unstable();
+        self.quads.sort_unstable();
+        self.underlines.sort_unstable();
         self.monochrome_sprites.sort_unstable();
         self.polychrome_sprites.sort_unstable();
 
         BatchIterator {
-            quads: &self.quads,
-            quads_start: 0,
-            quads_iter: self.quads.iter().peekable(),
             shadows: &self.shadows,
             shadows_start: 0,
             shadows_iter: self.shadows.iter().peekable(),
+            quads: &self.quads,
+            quads_start: 0,
+            quads_iter: self.quads.iter().peekable(),
+            underlines: &self.underlines,
+            underlines_start: 0,
+            underlines_iter: self.underlines.iter().peekable(),
             monochrome_sprites: &self.monochrome_sprites,
             monochrome_sprites_start: 0,
             monochrome_sprites_iter: self.monochrome_sprites.iter().peekable(),
@@ -152,6 +177,9 @@ struct BatchIterator<'a> {
     shadows: &'a [Shadow],
     shadows_start: usize,
     shadows_iter: Peekable<slice::Iter<'a, Shadow>>,
+    underlines: &'a [Underline],
+    underlines_start: usize,
+    underlines_iter: Peekable<slice::Iter<'a, Underline>>,
     monochrome_sprites: &'a [MonochromeSprite],
     monochrome_sprites_start: usize,
     monochrome_sprites_iter: Peekable<slice::Iter<'a, MonochromeSprite>>,
@@ -165,10 +193,14 @@ impl<'a> Iterator for BatchIterator<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut orders_and_kinds = [
-            (self.quads_iter.peek().map(|q| q.order), PrimitiveKind::Quad),
             (
                 self.shadows_iter.peek().map(|s| s.order),
                 PrimitiveKind::Shadow,
+            ),
+            (self.quads_iter.peek().map(|q| q.order), PrimitiveKind::Quad),
+            (
+                self.underlines_iter.peek().map(|u| u.order),
+                PrimitiveKind::Underline,
             ),
             (
                 self.monochrome_sprites_iter.peek().map(|s| s.order),
@@ -190,19 +222,6 @@ impl<'a> Iterator for BatchIterator<'a> {
         };
 
         match batch_kind {
-            PrimitiveKind::Quad => {
-                let quads_start = self.quads_start;
-                let mut quads_end = quads_start;
-                while self
-                    .quads_iter
-                    .next_if(|quad| quad.order <= max_order)
-                    .is_some()
-                {
-                    quads_end += 1;
-                }
-                self.quads_start = quads_end;
-                Some(PrimitiveBatch::Quads(&self.quads[quads_start..quads_end]))
-            }
             PrimitiveKind::Shadow => {
                 let shadows_start = self.shadows_start;
                 let mut shadows_end = shadows_start;
@@ -216,6 +235,34 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.shadows_start = shadows_end;
                 Some(PrimitiveBatch::Shadows(
                     &self.shadows[shadows_start..shadows_end],
+                ))
+            }
+            PrimitiveKind::Quad => {
+                let quads_start = self.quads_start;
+                let mut quads_end = quads_start;
+                while self
+                    .quads_iter
+                    .next_if(|quad| quad.order <= max_order)
+                    .is_some()
+                {
+                    quads_end += 1;
+                }
+                self.quads_start = quads_end;
+                Some(PrimitiveBatch::Quads(&self.quads[quads_start..quads_end]))
+            }
+            PrimitiveKind::Underline => {
+                let underlines_start = self.underlines_start;
+                let mut underlines_end = underlines_start;
+                while self
+                    .underlines_iter
+                    .next_if(|underline| underline.order <= max_order)
+                    .is_some()
+                {
+                    underlines_end += 1;
+                }
+                self.underlines_start = underlines_end;
+                Some(PrimitiveBatch::Underlines(
+                    &self.underlines[underlines_start..underlines_end],
                 ))
             }
             PrimitiveKind::MonochromeSprite => {
@@ -265,22 +312,25 @@ pub enum PrimitiveKind {
     Shadow,
     #[default]
     Quad,
+    Underline,
     MonochromeSprite,
     PolychromeSprite,
 }
 
 #[derive(Clone, Debug)]
 pub enum Primitive {
-    Quad(Quad),
     Shadow(Shadow),
+    Quad(Quad),
+    Underline(Underline),
     MonochromeSprite(MonochromeSprite),
     PolychromeSprite(PolychromeSprite),
 }
 
 #[derive(Debug)]
 pub(crate) enum PrimitiveBatch<'a> {
-    Quads(&'a [Quad]),
     Shadows(&'a [Shadow]),
+    Quads(&'a [Quad]),
+    Underlines(&'a [Underline]),
     MonochromeSprites {
         texture_id: AtlasTextureId,
         sprites: &'a [MonochromeSprite],
@@ -318,6 +368,35 @@ impl PartialOrd for Quad {
 impl From<Quad> for Primitive {
     fn from(quad: Quad) -> Self {
         Primitive::Quad(quad)
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+#[repr(C)]
+pub struct Underline {
+    pub order: u32,
+    pub bounds: Bounds<ScaledPixels>,
+    pub content_mask: ScaledContentMask,
+    pub thickness: ScaledPixels,
+    pub color: Hsla,
+    pub wavy: bool,
+}
+
+impl Ord for Underline {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.order.cmp(&other.order)
+    }
+}
+
+impl PartialOrd for Underline {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl From<Underline> for Primitive {
+    fn from(underline: Underline) -> Self {
+        Primitive::Underline(underline)
     }
 }
 

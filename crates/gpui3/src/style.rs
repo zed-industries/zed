@@ -344,7 +344,7 @@ impl Default for Style {
 pub struct UnderlineStyle {
     pub thickness: Pixels,
     pub color: Option<Hsla>,
-    pub squiggly: bool,
+    pub wavy: bool,
 }
 
 #[derive(Clone, Debug)]

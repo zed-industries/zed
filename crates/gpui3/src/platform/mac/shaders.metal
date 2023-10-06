@@ -193,6 +193,53 @@ fragment float4 shadow_fragment(ShadowVertexOutput input [[stage_in]],
   return input.color * float4(1., 1., 1., alpha);
 }
 
+struct UnderlineVertexOutput {
+  float4 position [[position]];
+  float4 color [[flat]];
+  uint underline_id [[flat]];
+};
+
+vertex UnderlineVertexOutput underline_vertex(
+    uint unit_vertex_id [[vertex_id]], uint underline_id [[instance_id]],
+    constant float2 *unit_vertices [[buffer(UnderlineInputIndex_Vertices)]],
+    constant Underline *underlines [[buffer(UnderlineInputIndex_Underlines)]],
+    constant Size_DevicePixels *viewport_size
+    [[buffer(ShadowInputIndex_ViewportSize)]]) {
+  float2 unit_vertex = unit_vertices[unit_vertex_id];
+  Underline underline = underlines[underline_id];
+  float4 device_position =
+      to_device_position(unit_vertex, underline.bounds,
+                         underline.content_mask.bounds, viewport_size);
+  float4 color = hsla_to_rgba(underline.color);
+  return UnderlineVertexOutput{device_position, color, underline_id};
+}
+
+fragment float4 underline_fragment(UnderlineVertexOutput input [[stage_in]],
+                                   constant Underline *underlines
+                                   [[buffer(UnderlineInputIndex_Underlines)]]) {
+  Underline underline = underlines[input.underline_id];
+  if (underline.wavy) {
+    float half_thickness = underline.thickness * 0.5;
+    float2 origin =
+        float2(underline.bounds.origin.x, underline.bounds.origin.y);
+    float2 st = ((input.position.xy - origin) / underline.bounds.size.height) -
+                float2(0., 0.5);
+    float frequency = (M_PI_F * (3. * underline.thickness)) / 8.;
+    float amplitude = 1. / (2. * underline.thickness);
+    float sine = sin(st.x * frequency) * amplitude;
+    float dSine = cos(st.x * frequency) * amplitude * frequency;
+    float distance = (st.y - sine) / sqrt(1. + dSine * dSine);
+    float distance_in_pixels = distance * underline.bounds.size.height;
+    float distance_from_top_border = distance_in_pixels - half_thickness;
+    float distance_from_bottom_border = distance_in_pixels + half_thickness;
+    float alpha = saturate(
+        0.5 - max(-distance_from_bottom_border, distance_from_top_border));
+    return input.color * float4(1., 1., 1., alpha);
+  } else {
+    return input.color;
+  }
+}
+
 struct MonochromeSpriteVertexOutput {
   float4 position [[position]];
   float2 tile_position;
@@ -211,8 +258,8 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
 
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   MonochromeSprite sprite = sprites[sprite_id];
-  // Don't apply content mask at the vertex level because we don't have time to
-  // make sampling from the texture match the mask.
+  // Don't apply content mask at the vertex level because we don't have time
+  // to make sampling from the texture match the mask.
   float4 device_position = to_device_position(unit_vertex, sprite.bounds,
                                               sprite.bounds, viewport_size);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
@@ -254,8 +301,8 @@ vertex PolychromeSpriteVertexOutput polychrome_sprite_vertex(
 
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   PolychromeSprite sprite = sprites[sprite_id];
-  // Don't apply content mask at the vertex level because we don't have time to
-  // make sampling from the texture match the mask.
+  // Don't apply content mask at the vertex level because we don't have time
+  // to make sampling from the texture match the mask.
   float4 device_position = to_device_position(unit_vertex, sprite.bounds,
                                               sprite.bounds, viewport_size);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);

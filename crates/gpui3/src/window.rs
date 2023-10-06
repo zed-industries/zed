@@ -1,10 +1,11 @@
 use crate::{
-    image_cache::RenderImageParams, px, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
-    BorrowAppContext, Bounds, Context, Corners, DevicePixels, DisplayId, Effect, Element, EntityId,
-    FontId, GlyphId, Handle, Hsla, ImageData, IsZero, LayoutId, MainThread, MainThreadOnly,
-    MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Reference,
-    RenderGlyphParams, RenderSvgParams, ScaledPixels, Scene, SharedString, Size, StackingOrder,
-    Style, TaffyLayoutEngine, Task, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
+    image_cache::RenderImageParams, px, size, AnyView, AppContext, AsyncWindowContext,
+    AvailableSpace, BorrowAppContext, Bounds, Context, Corners, DevicePixels, DisplayId, Effect,
+    Element, EntityId, FontId, GlyphId, Handle, Hsla, ImageData, IsZero, LayoutId, MainThread,
+    MainThreadOnly, MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point,
+    PolychromeSprite, Reference, RenderGlyphParams, RenderSvgParams, ScaledPixels, Scene,
+    SharedString, Size, StackingOrder, Style, TaffyLayoutEngine, Task, Underline, UnderlineStyle,
+    WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use smallvec::SmallVec;
@@ -257,6 +258,38 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub fn current_stacking_order(&self) -> StackingOrder {
         self.window.current_stacking_order.clone()
+    }
+
+    pub fn paint_underline(
+        &mut self,
+        origin: Point<Pixels>,
+        width: Pixels,
+        style: &UnderlineStyle,
+    ) -> Result<()> {
+        let scale_factor = self.scale_factor();
+        let height = if style.wavy {
+            style.thickness * 3.
+        } else {
+            style.thickness
+        };
+        let bounds = Bounds {
+            origin,
+            size: size(width, height),
+        };
+        let content_mask = self.content_mask();
+        let layer_id = self.current_stacking_order();
+        self.window.scene.insert(
+            layer_id,
+            Underline {
+                order: 0,
+                bounds: bounds.scale(scale_factor),
+                content_mask: content_mask.scale(scale_factor),
+                thickness: style.thickness.scale(scale_factor),
+                color: style.color.unwrap_or_default(),
+                wavy: style.wavy,
+            },
+        );
+        Ok(())
     }
 
     pub fn paint_glyph(
