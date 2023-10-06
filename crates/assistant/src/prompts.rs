@@ -125,6 +125,7 @@ pub fn generate_content_prompt(
     model: &str,
 ) -> String {
     const MAXIMUM_SNIPPET_TOKEN_COUNT: usize = 500;
+    const RESERVED_TOKENS_FOR_GENERATION: usize = 1000;
 
     let mut prompts = Vec::new();
 
@@ -182,11 +183,17 @@ pub fn generate_content_prompt(
         name: None,
     }];
 
-    let remaining_token_count = if let Ok(current_token_count) =
+    let mut remaining_token_count = if let Ok(current_token_count) =
         tiktoken_rs::num_tokens_from_messages(model, &current_messages)
     {
         let max_token_count = tiktoken_rs::model::get_context_size(model);
-        max_token_count - current_token_count
+        let intermediate_token_count = max_token_count - current_token_count;
+
+        if intermediate_token_count < RESERVED_TOKENS_FOR_GENERATION {
+            0
+        } else {
+            intermediate_token_count - RESERVED_TOKENS_FOR_GENERATION
+        }
     } else {
         // If tiktoken fails to count token count, assume we have no space remaining.
         0
@@ -197,7 +204,7 @@ pub fn generate_content_prompt(
     //   - add file path
     //   - add language
     if let Ok(encoding) = tiktoken_rs::get_bpe_from_model(model) {
-        let template = "You are working inside a large repository, here are a few code snippets that may be useful";
+        let mut template = "You are working inside a large repository, here are a few code snippets that may be useful";
 
         for search_result in search_results {
             let mut snippet_prompt = template.to_string();
@@ -210,6 +217,9 @@ pub fn generate_content_prompt(
                 if token_count < MAXIMUM_SNIPPET_TOKEN_COUNT {
                     prompts.insert(snippet_position, snippet_prompt);
                     snippet_position += 1;
+                    remaining_token_count -= token_count;
+                    // If you have already added the template to the prompt, remove the template.
+                    template = "";
                 }
             } else {
                 break;
