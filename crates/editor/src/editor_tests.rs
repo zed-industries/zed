@@ -1333,7 +1333,7 @@ async fn test_move_start_of_paragraph_end_of_paragraph(cx: &mut gpui::TestAppCon
 
     cx.update_editor(|editor, cx| editor.move_to_end_of_paragraph(&MoveToEndOfParagraph, cx));
     cx.assert_editor_state(
-        &r#"ˇone
+        &r#"one
         two
 
         three
@@ -1344,9 +1344,22 @@ async fn test_move_start_of_paragraph_end_of_paragraph(cx: &mut gpui::TestAppCon
             .unindent(),
     );
 
-    cx.update_editor(|editor, cx| editor.move_to_end_of_paragraph(&MoveToEndOfParagraph, cx));
+    cx.update_editor(|editor, cx| editor.move_to_start_of_paragraph(&MoveToStartOfParagraph, cx));
     cx.assert_editor_state(
-        &r#"ˇone
+        &r#"one
+        two
+
+        three
+        four
+        five
+        ˇ
+        six"#
+            .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| editor.move_to_start_of_paragraph(&MoveToStartOfParagraph, cx));
+    cx.assert_editor_state(
+        &r#"one
         two
         ˇ
         three
@@ -1366,32 +1379,6 @@ async fn test_move_start_of_paragraph_end_of_paragraph(cx: &mut gpui::TestAppCon
         four
         five
 
-        sixˇ"#
-            .unindent(),
-    );
-
-    cx.update_editor(|editor, cx| editor.move_to_start_of_paragraph(&MoveToStartOfParagraph, cx));
-    cx.assert_editor_state(
-        &r#"one
-        two
-
-        three
-        four
-        five
-        ˇ
-        sixˇ"#
-            .unindent(),
-    );
-
-    cx.update_editor(|editor, cx| editor.move_to_start_of_paragraph(&MoveToStartOfParagraph, cx));
-    cx.assert_editor_state(
-        &r#"one
-        two
-        ˇ
-        three
-        four
-        five
-        ˇ
         six"#
             .unindent(),
     );
