@@ -10,7 +10,7 @@ use futures::future;
 use gpui::{AppContext, AsyncAppContext, ModelHandle};
 use language::{
     language_settings::{language_settings, InlayHintKind},
-    point_from_lsp, point_to_lsp,
+    point_from_lsp, point_to_lsp, prepare_completion_documentation,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind,
     CodeAction, Completion, OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction,
@@ -1341,7 +1341,7 @@ impl LspCommand for GetCompletions {
     async fn response_from_lsp(
         self,
         completions: Option<lsp::CompletionResponse>,
-        _: ModelHandle<Project>,
+        project: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
         server_id: LanguageServerId,
         cx: AsyncAppContext,
@@ -1361,7 +1361,8 @@ impl LspCommand for GetCompletions {
             Vec::new()
         };
 
-        let completions = buffer.read_with(&cx, |buffer, _| {
+        let completions = buffer.read_with(&cx, |buffer, cx| {
+            let language_registry = project.read(cx).languages().clone();
             let language = buffer.language().cloned();
             let snapshot = buffer.snapshot();
             let clipped_position = buffer.clip_point_utf16(Unclipped(self.position), Bias::Left);
@@ -1453,14 +1454,28 @@ impl LspCommand for GetCompletions {
                         }
                     };
 
-                    let language = language.clone();
                     LineEnding::normalize(&mut new_text);
+                    let language_registry = language_registry.clone();
+                    let language = language.clone();
+
                     Some(async move {
                         let mut label = None;
-                        if let Some(language) = language {
+                        if let Some(language) = language.as_ref() {
                             language.process_completion(&mut lsp_completion).await;
                             label = language.label_for_completion(&lsp_completion).await;
                         }
+
+                        let documentation = if let Some(lsp_docs) = &lsp_completion.documentation {
+                            prepare_completion_documentation(
+                                lsp_docs,
+                                &language_registry,
+                                language.clone(),
+                            )
+                            .await
+                        } else {
+                            None
+                        };
+
                         Completion {
                             old_range,
                             new_text,
@@ -1470,7 +1485,7 @@ impl LspCommand for GetCompletions {
                                     lsp_completion.filter_text.as_deref(),
                                 )
                             }),
-                            documentation: None,
+                            documentation,
                             server_id,
                             lsp_completion,
                         }

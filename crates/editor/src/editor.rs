@@ -61,10 +61,10 @@ pub use language::{char_kind, CharKind};
 use language::{
     language_settings::{self, all_language_settings, InlayHintSettings},
     markdown::MarkdownHighlight,
-    point_from_lsp, prepare_completion_documentation, AutoindentMode, BracketPair, Buffer,
-    CodeAction, CodeLabel, Completion, CursorShape, Diagnostic, DiagnosticSeverity, Documentation,
-    File, IndentKind, IndentSize, Language, LanguageServerName, OffsetRangeExt, OffsetUtf16, Point,
-    Selection, SelectionGoal, TransactionId,
+    point_from_lsp, AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion,
+    CursorShape, Diagnostic, DiagnosticSeverity, Documentation, File, IndentKind, IndentSize,
+    Language, LanguageServerName, OffsetRangeExt, OffsetUtf16, Point, Selection, SelectionGoal,
+    TransactionId,
 };
 use link_go_to_definition::{
     hide_link_definition, show_link_definition, GoToDefinitionLink, InlayHighlight,
@@ -940,12 +940,11 @@ impl ContextMenu {
     fn render(
         &self,
         cursor_position: DisplayPoint,
-        editor: &Editor,
         style: EditorStyle,
         cx: &mut ViewContext<Editor>,
     ) -> (DisplayPoint, AnyElement<Editor>) {
         match self {
-            ContextMenu::Completions(menu) => (cursor_position, menu.render(editor, style, cx)),
+            ContextMenu::Completions(menu) => (cursor_position, menu.render(style, cx)),
             ContextMenu::CodeActions(menu) => menu.render(cursor_position, style, cx),
         }
     }
@@ -1077,12 +1076,7 @@ impl CompletionsMenu {
         !self.matches.is_empty()
     }
 
-    fn render(
-        &self,
-        editor: &Editor,
-        style: EditorStyle,
-        cx: &mut ViewContext<Editor>,
-    ) -> AnyElement<Editor> {
+    fn render(&self, style: EditorStyle, cx: &mut ViewContext<Editor>) -> AnyElement<Editor> {
         enum CompletionTag {}
 
         let widest_completion_ix = self
@@ -1103,7 +1097,6 @@ impl CompletionsMenu {
             })
             .map(|(ix, _)| ix);
 
-        let project = editor.project.clone();
         let completions = self.completions.clone();
         let matches = self.matches.clone();
         let selected_item = self.selected_item;
@@ -1118,36 +1111,6 @@ impl CompletionsMenu {
                     let item_ix = start_ix + ix;
                     let candidate_id = mat.candidate_id;
                     let completion = &completions_guard[candidate_id];
-
-                    if item_ix == selected_item && completion.documentation.is_none() {
-                        if let Some(lsp_docs) = &completion.lsp_completion.documentation {
-                            let project = project
-                                .as_ref()
-                                .expect("It is impossible have LSP servers without a project");
-
-                            let lsp_docs = lsp_docs.clone();
-                            let language_registry = project.read(cx).languages().clone();
-                            let completions = completions.clone();
-
-                            cx.spawn(|this, mut cx| async move {
-                                let documentation = prepare_completion_documentation(
-                                    &lsp_docs,
-                                    &language_registry,
-                                    None,
-                                )
-                                .await;
-
-                                this.update(&mut cx, |_, cx| {
-                                    let mut completions = completions.write();
-                                    completions[candidate_id].documentation = documentation;
-                                    drop(completions);
-                                    cx.notify();
-                                })
-                            })
-                            .detach();
-                        }
-                    }
-
                     let documentation = &completion.documentation;
 
                     items.push(
@@ -4201,7 +4164,7 @@ impl Editor {
     ) -> Option<(DisplayPoint, AnyElement<Editor>)> {
         self.context_menu
             .as_ref()
-            .map(|menu| menu.render(cursor_position, self, style, cx))
+            .map(|menu| menu.render(cursor_position, style, cx))
     }
 
     fn show_context_menu(&mut self, menu: ContextMenu, cx: &mut ViewContext<Self>) {
