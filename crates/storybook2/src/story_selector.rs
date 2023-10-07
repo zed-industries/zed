@@ -39,6 +39,7 @@ pub enum ComponentStory {
     Panel,
     ProjectPanel,
     Tab,
+    TabBar,
     Terminal,
     Workspace,
 }
@@ -55,6 +56,7 @@ impl ComponentStory {
             Self::Panel => components::panel::PanelStory::new().into_any(),
             Self::ProjectPanel => components::project_panel::ProjectPanelStory::new().into_any(),
             Self::Tab => components::tab::TabStory::new().into_any(),
+            Self::TabBar => components::tab_bar::TabBarStory::new().into_any(),
             Self::Terminal => components::terminal::TerminalStory::new().into_any(),
             Self::Workspace => components::workspace::WorkspaceStory::new().into_any(),
         }
