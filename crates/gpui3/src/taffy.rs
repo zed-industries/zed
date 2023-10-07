@@ -111,8 +111,8 @@ impl TaffyLayoutEngine {
         id: LayoutId,
         available_space: Size<AvailableSpace>,
     ) -> Result<()> {
-        println!("Laying out {} children", self.count_all_children(id)?);
-        println!("Max layout depth: {}", self.max_depth(0, id)?);
+        // println!("Laying out {} children", self.count_all_children(id)?);
+        // println!("Max layout depth: {}", self.max_depth(0, id)?);
 
         // Output the edges (branches) of the tree in Mermaid format for visualization.
         // println!("Edges:");
@@ -121,8 +121,10 @@ impl TaffyLayoutEngine {
         // }
         // println!("");
 
+        let started_at = std::time::Instant::now();
         self.taffy
             .compute_layout(id.into(), available_space.into())?;
+        println!("compute_layout took {:?}", started_at.elapsed());
         Ok(())
     }
 
