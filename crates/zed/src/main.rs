@@ -74,7 +74,8 @@ fn main() {
     let mut app = gpui::App::new(Assets).unwrap();
 
     let installation_id = app.background().block(installation_id()).ok();
-    init_panic_hook(&app, installation_id.clone());
+    let session_id = Uuid::new_v4().to_string();
+    init_panic_hook(&app, installation_id.clone(), session_id.clone());
 
     load_embedded_fonts(&app);
 
@@ -177,7 +178,7 @@ fn main() {
         })
         .detach();
 
-        client.telemetry().start(installation_id, cx);
+        client.telemetry().start(installation_id, session_id, cx);
 
         let app_state = Arc::new(AppState {
             languages,
@@ -402,6 +403,7 @@ struct Panic {
     panicked_on: u128,
     #[serde(skip_serializing_if = "Option::is_none")]
     installation_id: Option<String>,
+    session_id: String,
 }
 
 #[derive(Serialize)]
@@ -412,7 +414,7 @@ struct PanicRequest {
 
 static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
 
-fn init_panic_hook(app: &App, installation_id: Option<String>) {
+fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: String) {
     let is_pty = stdout_is_a_pty();
     let platform = app.platform();
 
@@ -477,7 +479,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>) {
                 line: location.line(),
             }),
             app_version: app_version.clone(),
-            release_channel: RELEASE_CHANNEL.dev_name().into(),
+            release_channel: RELEASE_CHANNEL.display_name().into(),
             os_name: platform.os_name().into(),
             os_version: platform
                 .os_version()
@@ -490,6 +492,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>) {
                 .as_millis(),
             backtrace,
             installation_id: installation_id.clone(),
+            session_id: session_id.clone(),
         };
 
         if is_pty {
