@@ -6,9 +6,9 @@ use gpui3::{relative, rems, Size};
 
 use crate::prelude::*;
 use crate::{
-    hello_world_rust_editor_with_status_example, theme, v_stack, ChatMessage, ChatPanel,
-    EditorPane, Pane, PaneGroup, Panel, PanelAllowedSides, PanelSide, ProjectPanel, SplitDirection,
-    StatusBar, Terminal,
+    hello_world_rust_editor_with_status_example, random_players_with_call_status, theme, v_stack,
+    ChatMessage, ChatPanel, EditorPane, Livestream, Pane, PaneGroup, Panel, PanelAllowedSides,
+    PanelSide, ProjectPanel, SplitDirection, StatusBar, Terminal, TitleBar,
 };
 
 #[derive(Element)]
@@ -102,10 +102,10 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
             .items_start()
             .text_color(theme.lowest.base.default.foreground)
             .fill(theme.lowest.base.default.background)
-            // .child(TitleBar::new(cx).set_livestream(Some(Livestream {
-            //     players: random_players_with_call_status(7),
-            //     channel: Some("gpui2-ui".to_string()),
-            // })))
+            .child(TitleBar::new(cx).set_livestream(Some(Livestream {
+                players: random_players_with_call_status(7),
+                channel: Some("gpui2-ui".to_string()),
+            })))
             .child(
                 div()
                     .flex_1()
