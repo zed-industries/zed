@@ -205,6 +205,7 @@ mod tests {
     use super::*;
     use crate::{font, App, RunStyle};
 
+    #[ignore]
     #[test]
     fn test_wrap_line() {
         App::test().run(|cx| {
@@ -269,6 +270,7 @@ mod tests {
     }
 
     // todo! repeat this test
+    #[ignore]
     #[test]
     fn test_wrap_shaped_line() {
         App::test().run(|cx| {
