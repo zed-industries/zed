@@ -1,4 +1,4 @@
-import { icon_button, toggleable_icon_button, toggleable_text_button } from "../component"
+import { icon_button, text_button, toggleable_icon_button, toggleable_text_button } from "../component"
 import { interactive, toggleable } from "../element"
 import { useTheme, with_opacity } from "../theme"
 import { background, border, foreground, text } from "./components"
@@ -189,6 +189,12 @@ export function titlebar(): any {
 
         git_menu_button: toggleable_text_button(theme, {
             color: "variant",
+        }),
+
+        project_host: text_button({
+            text_properties: {
+                weight: "bold"
+            }
         }),
 
         // Collaborators

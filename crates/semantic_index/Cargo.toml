@@ -9,6 +9,7 @@ path = "src/semantic_index.rs"
 doctest = false
 
 [dependencies]
+ai = { path = "../ai" }
 collections = { path = "../collections" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
@@ -23,24 +24,22 @@ settings = { path = "../settings" }
 anyhow.workspace = true
 postage.workspace = true
 futures.workspace = true
+ordered-float.workspace = true
 smol.workspace = true
-rusqlite = { version = "0.27.0", features = ["blob", "array", "modern_sqlite"] }
-isahc.workspace = true
+rusqlite.workspace = true
 log.workspace = true
 tree-sitter.workspace = true
 lazy_static.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
-bincode = "1.3.3"
-matrixmultiply = "0.3.7"
 tiktoken-rs = "0.5.0"
 parking_lot.workspace = true
 rand.workspace = true
 schemars.workspace = true
 globset.workspace = true
 sha1 = "0.10.5"
-parse_duration = "2.1.1"
+ndarray = { version = "0.15.0" }
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }
@@ -50,6 +49,10 @@ project = { path = "../project", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"]}
+rust-embed = { version = "8.0", features = ["include-exclude"] }
+client = { path = "../client" }
+zed = { path = "../zed"}
+node_runtime = { path = "../node_runtime"}
 
 pretty_assertions.workspace = true
 rand.workspace = true
@@ -67,3 +70,6 @@ tree-sitter-elixir.workspace = true
 tree-sitter-lua.workspace = true
 tree-sitter-ruby.workspace = true
 tree-sitter-php.workspace = true
+
+[[example]]
+name = "eval"

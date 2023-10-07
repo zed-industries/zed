@@ -73,10 +73,15 @@ impl<V: 'static, E: Element<V> + Styleable> Element<V> for Pressable<E> {
                 if bounds.contains_point(event.position) {
                     pressed.set(true);
                     cx.repaint();
+                } else {
+                    cx.bubble_event();
                 }
-            } else if pressed.get() {
-                pressed.set(false);
-                cx.repaint();
+            } else {
+                if pressed.get() {
+                    pressed.set(false);
+                    cx.repaint();
+                }
+                cx.bubble_event();
             }
         });
 

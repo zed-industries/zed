@@ -26,7 +26,6 @@ impl<C: SafeStylable> ComponentExt<C> for C {
 }
 
 pub mod disclosure {
-
     use gpui::{
         elements::{Component, ContainerStyle, Empty, Flex, ParentElement, SafeStylable},
         Action, Element,

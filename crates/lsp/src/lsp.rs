@@ -605,6 +605,10 @@ impl LanguageServer {
         self.notification_handlers.lock().remove(T::METHOD);
     }
 
+    pub fn has_notification_handler<T: notification::Notification>(&self) -> bool {
+        self.notification_handlers.lock().contains_key(T::METHOD)
+    }
+
     #[must_use]
     pub fn on_custom_notification<Params, F>(&self, method: &'static str, mut f: F) -> Subscription
     where
@@ -712,11 +716,11 @@ impl LanguageServer {
         }
     }
 
-    pub fn name<'a>(self: &'a Arc<Self>) -> &'a str {
+    pub fn name(&self) -> &str {
         &self.name
     }
 
-    pub fn capabilities<'a>(self: &'a Arc<Self>) -> &'a ServerCapabilities {
+    pub fn capabilities(&self) -> &ServerCapabilities {
         &self.capabilities
     }
 

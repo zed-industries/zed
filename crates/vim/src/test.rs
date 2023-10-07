@@ -186,11 +186,8 @@ async fn test_selection_on_search(cx: &mut gpui::TestAppContext) {
         assert_eq!(bar.query(cx), "cc");
     });
 
-    // wait for the query editor change event to fire.
-    search_bar.next_notification(&cx).await;
-
     cx.update_editor(|editor, cx| {
-        let highlights = editor.all_background_highlights(cx);
+        let highlights = editor.all_text_background_highlights(cx);
         assert_eq!(3, highlights.len());
         assert_eq!(
             DisplayPoint::new(2, 0)..DisplayPoint::new(2, 2),
@@ -572,5 +569,86 @@ async fn test_folds(cx: &mut gpui::TestAppContext) {
           bazp()
         }
     "})
+        .await;
+}
+
+#[gpui::test]
+async fn test_folds_panic(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+    cx.set_neovim_option("foldmethod=manual").await;
+
+    cx.set_shared_state(indoc! { "
+        fn boop() {
+          ˇbarp()
+          bazp()
+        }
+    "})
+        .await;
+    cx.simulate_shared_keystrokes(["shift-v", "j", "z", "f"])
+        .await;
+    cx.simulate_shared_keystrokes(["escape"]).await;
+    cx.simulate_shared_keystrokes(["g", "g"]).await;
+    cx.simulate_shared_keystrokes(["5", "d", "j"]).await;
+    cx.assert_shared_state(indoc! { "ˇ"}).await;
+}
+
+#[gpui::test]
+async fn test_clear_counts(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state(indoc! {"
+        The quick brown
+        fox juˇmps over
+        the lazy dog"})
+        .await;
+
+    cx.simulate_shared_keystrokes(["4", "escape", "3", "d", "l"])
+        .await;
+    cx.assert_shared_state(indoc! {"
+        The quick brown
+        fox juˇ over
+        the lazy dog"})
+        .await;
+}
+
+#[gpui::test]
+async fn test_zero(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state(indoc! {"
+        The quˇick brown
+        fox jumps over
+        the lazy dog"})
+        .await;
+
+    cx.simulate_shared_keystrokes(["0"]).await;
+    cx.assert_shared_state(indoc! {"
+        ˇThe quick brown
+        fox jumps over
+        the lazy dog"})
+        .await;
+
+    cx.simulate_shared_keystrokes(["1", "0", "l"]).await;
+    cx.assert_shared_state(indoc! {"
+        The quick ˇbrown
+        fox jumps over
+        the lazy dog"})
+        .await;
+}
+
+#[gpui::test]
+async fn test_selection_goal(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state(indoc! {"
+        ;;ˇ;
+        Lorem Ipsum"})
+        .await;
+
+    cx.simulate_shared_keystrokes(["a", "down", "up", ";", "down", "up"])
+        .await;
+    cx.assert_shared_state(indoc! {"
+        ;;;;ˇ
+        Lorem Ipsum"})
         .await;
 }

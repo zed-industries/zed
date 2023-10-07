@@ -1,26 +1,34 @@
-use crate::channel_buffer::ChannelBuffer;
+mod channel_index;
+
+use crate::{channel_buffer::ChannelBuffer, channel_chat::ChannelChat};
 use anyhow::{anyhow, Result};
 use client::{Client, Subscription, User, UserId, UserStore};
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
-use rpc::{proto, TypedEnvelope};
-use std::{mem, sync::Arc, time::Duration};
+use rpc::{
+    proto::{self, ChannelEdge, ChannelPermission},
+    TypedEnvelope,
+};
+use serde_derive::{Deserialize, Serialize};
+use std::{borrow::Cow, hash::Hash, mem, ops::Deref, sync::Arc, time::Duration};
 use util::ResultExt;
+
+use self::channel_index::ChannelIndex;
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub type ChannelId = u64;
 
 pub struct ChannelStore {
-    channels_by_id: HashMap<ChannelId, Arc<Channel>>,
-    channel_paths: Vec<Vec<ChannelId>>,
+    channel_index: ChannelIndex,
     channel_invitations: Vec<Arc<Channel>>,
     channel_participants: HashMap<ChannelId, Vec<Arc<User>>>,
     channels_with_admin_privileges: HashSet<ChannelId>,
     outgoing_invites: HashSet<(ChannelId, UserId)>,
     update_channels_tx: mpsc::UnboundedSender<proto::UpdateChannels>,
-    opened_buffers: HashMap<ChannelId, OpenedChannelBuffer>,
+    opened_buffers: HashMap<ChannelId, OpenedModelHandle<ChannelBuffer>>,
+    opened_chats: HashMap<ChannelId, OpenedModelHandle<ChannelChat>>,
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
     _rpc_subscription: Subscription,
@@ -29,11 +37,18 @@ pub struct ChannelStore {
     _update_channels: Task<()>,
 }
 
+pub type ChannelData = (Channel, ChannelPath);
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Channel {
     pub id: ChannelId,
     pub name: String,
+    pub unseen_note_version: Option<(u64, clock::Global)>,
+    pub unseen_message_id: Option<u64>,
 }
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
+pub struct ChannelPath(Arc<[ChannelId]>);
 
 pub struct ChannelMembership {
     pub user: Arc<User>,
@@ -50,15 +65,9 @@ impl Entity for ChannelStore {
     type Event = ChannelEvent;
 }
 
-pub enum ChannelMemberStatus {
-    Invited,
-    Member,
-    NotMember,
-}
-
-enum OpenedChannelBuffer {
-    Open(WeakModelHandle<ChannelBuffer>),
-    Loading(Shared<Task<Result<ModelHandle<ChannelBuffer>, Arc<anyhow::Error>>>>),
+enum OpenedModelHandle<E: Entity> {
+    Open(WeakModelHandle<E>),
+    Loading(Shared<Task<Result<ModelHandle<E>, Arc<anyhow::Error>>>>),
 }
 
 impl ChannelStore {
@@ -87,13 +96,13 @@ impl ChannelStore {
         });
 
         Self {
-            channels_by_id: HashMap::default(),
             channel_invitations: Vec::default(),
-            channel_paths: Vec::default(),
+            channel_index: ChannelIndex::default(),
             channel_participants: Default::default(),
             channels_with_admin_privileges: Default::default(),
             outgoing_invites: Default::default(),
             opened_buffers: Default::default(),
+            opened_chats: Default::default(),
             update_channels_tx,
             client,
             user_store,
@@ -115,8 +124,12 @@ impl ChannelStore {
         }
     }
 
+    pub fn client(&self) -> Arc<Client> {
+        self.client.clone()
+    }
+
     pub fn has_children(&self, channel_id: ChannelId) -> bool {
-        self.channel_paths.iter().any(|path| {
+        self.channel_index.iter().any(|path| {
             if let Some(ix) = path.iter().position(|id| *id == channel_id) {
                 path.len() > ix + 1
             } else {
@@ -125,23 +138,43 @@ impl ChannelStore {
         })
     }
 
+    /// Returns the number of unique channels in the store
     pub fn channel_count(&self) -> usize {
-        self.channel_paths.len()
+        self.channel_index.by_id().len()
     }
 
-    pub fn channels(&self) -> impl '_ + Iterator<Item = (usize, &Arc<Channel>)> {
-        self.channel_paths.iter().map(move |path| {
+    /// Returns the index of a channel ID in the list of unique channels
+    pub fn index_of_channel(&self, channel_id: ChannelId) -> Option<usize> {
+        self.channel_index
+            .by_id()
+            .keys()
+            .position(|id| *id == channel_id)
+    }
+
+    /// Returns an iterator over all unique channels
+    pub fn channels(&self) -> impl '_ + Iterator<Item = &Arc<Channel>> {
+        self.channel_index.by_id().values()
+    }
+
+    /// Iterate over all entries in the channel DAG
+    pub fn channel_dag_entries(&self) -> impl '_ + Iterator<Item = (usize, &Arc<Channel>)> {
+        self.channel_index.iter().map(move |path| {
             let id = path.last().unwrap();
             let channel = self.channel_for_id(*id).unwrap();
             (path.len() - 1, channel)
         })
     }
 
-    pub fn channel_at_index(&self, ix: usize) -> Option<(usize, &Arc<Channel>)> {
-        let path = self.channel_paths.get(ix)?;
+    pub fn channel_dag_entry_at(&self, ix: usize) -> Option<(&Arc<Channel>, &ChannelPath)> {
+        let path = self.channel_index.get(ix)?;
         let id = path.last().unwrap();
         let channel = self.channel_for_id(*id).unwrap();
-        Some((path.len() - 1, channel))
+
+        Some((channel, path))
+    }
+
+    pub fn channel_at(&self, ix: usize) -> Option<&Arc<Channel>> {
+        self.channel_index.by_id().values().nth(ix)
     }
 
     pub fn channel_invitations(&self) -> &[Arc<Channel>] {
@@ -149,12 +182,12 @@ impl ChannelStore {
     }
 
     pub fn channel_for_id(&self, channel_id: ChannelId) -> Option<&Arc<Channel>> {
-        self.channels_by_id.get(&channel_id)
+        self.channel_index.by_id().get(&channel_id)
     }
 
     pub fn has_open_channel_buffer(&self, channel_id: ChannelId, cx: &AppContext) -> bool {
         if let Some(buffer) = self.opened_buffers.get(&channel_id) {
-            if let OpenedChannelBuffer::Open(buffer) = buffer {
+            if let OpenedModelHandle::Open(buffer) = buffer {
                 return buffer.upgrade(cx).is_some();
             }
         }
@@ -166,24 +199,122 @@ impl ChannelStore {
         channel_id: ChannelId,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<ChannelBuffer>>> {
-        // Make sure that a given channel buffer is only opened once per
-        // app instance, even if this method is called multiple times
-        // with the same channel id while the first task is still running.
+        let client = self.client.clone();
+        let user_store = self.user_store.clone();
+        self.open_channel_resource(
+            channel_id,
+            |this| &mut this.opened_buffers,
+            |channel, cx| ChannelBuffer::new(channel, client, user_store, cx),
+            cx,
+        )
+    }
+
+    pub fn has_channel_buffer_changed(&self, channel_id: ChannelId) -> Option<bool> {
+        self.channel_index
+            .by_id()
+            .get(&channel_id)
+            .map(|channel| channel.unseen_note_version.is_some())
+    }
+
+    pub fn has_new_messages(&self, channel_id: ChannelId) -> Option<bool> {
+        self.channel_index
+            .by_id()
+            .get(&channel_id)
+            .map(|channel| channel.unseen_message_id.is_some())
+    }
+
+    pub fn notes_changed(
+        &mut self,
+        channel_id: ChannelId,
+        epoch: u64,
+        version: &clock::Global,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.channel_index.note_changed(channel_id, epoch, version);
+        cx.notify();
+    }
+
+    pub fn new_message(
+        &mut self,
+        channel_id: ChannelId,
+        message_id: u64,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.channel_index.new_message(channel_id, message_id);
+        cx.notify();
+    }
+
+    pub fn acknowledge_message_id(
+        &mut self,
+        channel_id: ChannelId,
+        message_id: u64,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.channel_index
+            .acknowledge_message_id(channel_id, message_id);
+        cx.notify();
+    }
+
+    pub fn acknowledge_notes_version(
+        &mut self,
+        channel_id: ChannelId,
+        epoch: u64,
+        version: &clock::Global,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.channel_index
+            .acknowledge_note_version(channel_id, epoch, version);
+        cx.notify();
+    }
+
+    pub fn open_channel_chat(
+        &mut self,
+        channel_id: ChannelId,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ModelHandle<ChannelChat>>> {
+        let client = self.client.clone();
+        let user_store = self.user_store.clone();
+        let this = cx.handle();
+        self.open_channel_resource(
+            channel_id,
+            |this| &mut this.opened_chats,
+            |channel, cx| ChannelChat::new(channel, this, user_store, client, cx),
+            cx,
+        )
+    }
+
+    /// Asynchronously open a given resource associated with a channel.
+    ///
+    /// Make sure that the resource is only opened once, even if this method
+    /// is called multiple times with the same channel id while the first task
+    /// is still running.
+    fn open_channel_resource<T: Entity, F, Fut>(
+        &mut self,
+        channel_id: ChannelId,
+        get_map: fn(&mut Self) -> &mut HashMap<ChannelId, OpenedModelHandle<T>>,
+        load: F,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ModelHandle<T>>>
+    where
+        F: 'static + FnOnce(Arc<Channel>, AsyncAppContext) -> Fut,
+        Fut: Future<Output = Result<ModelHandle<T>>>,
+    {
         let task = loop {
-            match self.opened_buffers.entry(channel_id) {
+            match get_map(self).entry(channel_id) {
                 hash_map::Entry::Occupied(e) => match e.get() {
-                    OpenedChannelBuffer::Open(buffer) => {
-                        if let Some(buffer) = buffer.upgrade(cx) {
-                            break Task::ready(Ok(buffer)).shared();
+                    OpenedModelHandle::Open(model) => {
+                        if let Some(model) = model.upgrade(cx) {
+                            break Task::ready(Ok(model)).shared();
                         } else {
-                            self.opened_buffers.remove(&channel_id);
+                            get_map(self).remove(&channel_id);
                             continue;
                         }
                     }
-                    OpenedChannelBuffer::Loading(task) => break task.clone(),
+                    OpenedModelHandle::Loading(task) => {
+                        break task.clone();
+                    }
                 },
                 hash_map::Entry::Vacant(e) => {
-                    let client = self.client.clone();
                     let task = cx
                         .spawn(|this, cx| async move {
                             let channel = this.read_with(&cx, |this, _| {
@@ -192,30 +323,24 @@ impl ChannelStore {
                                 })
                             })?;
 
-                            ChannelBuffer::new(channel, client, cx)
-                                .await
-                                .map_err(Arc::new)
+                            load(channel, cx).await.map_err(Arc::new)
                         })
                         .shared();
-                    e.insert(OpenedChannelBuffer::Loading(task.clone()));
+
+                    e.insert(OpenedModelHandle::Loading(task.clone()));
                     cx.spawn({
                         let task = task.clone();
                         |this, mut cx| async move {
                             let result = task.await;
-                            this.update(&mut cx, |this, cx| match result {
-                                Ok(buffer) => {
-                                    cx.observe_release(&buffer, move |this, _, _| {
-                                        this.opened_buffers.remove(&channel_id);
-                                    })
-                                    .detach();
-                                    this.opened_buffers.insert(
+                            this.update(&mut cx, |this, _| match result {
+                                Ok(model) => {
+                                    get_map(this).insert(
                                         channel_id,
-                                        OpenedChannelBuffer::Open(buffer.downgrade()),
+                                        OpenedModelHandle::Open(model.downgrade()),
                                     );
                                 }
-                                Err(error) => {
-                                    log::error!("failed to open channel buffer {error:?}");
-                                    this.opened_buffers.remove(&channel_id);
+                                Err(_) => {
+                                    get_map(this).remove(&channel_id);
                                 }
                             });
                         }
@@ -230,7 +355,7 @@ impl ChannelStore {
     }
 
     pub fn is_user_admin(&self, channel_id: ChannelId) -> bool {
-        self.channel_paths.iter().any(|path| {
+        self.channel_index.iter().any(|path| {
             if let Some(ix) = path.iter().position(|id| *id == channel_id) {
                 path[..=ix]
                     .iter()
@@ -256,18 +381,33 @@ impl ChannelStore {
         let client = self.client.clone();
         let name = name.trim_start_matches("#").to_owned();
         cx.spawn(|this, mut cx| async move {
-            let channel = client
+            let response = client
                 .request(proto::CreateChannel { name, parent_id })
-                .await?
+                .await?;
+
+            let channel = response
                 .channel
                 .ok_or_else(|| anyhow!("missing channel in response"))?;
-
             let channel_id = channel.id;
+
+            let parent_edge = if let Some(parent_id) = parent_id {
+                vec![ChannelEdge {
+                    channel_id: channel.id,
+                    parent_id,
+                }]
+            } else {
+                vec![]
+            };
 
             this.update(&mut cx, |this, cx| {
                 let task = this.update_channels(
                     proto::UpdateChannels {
                         channels: vec![channel],
+                        insert_edge: parent_edge,
+                        channel_permissions: vec![ChannelPermission {
+                            channel_id,
+                            is_admin: true,
+                        }],
                         ..Default::default()
                     },
                     cx,
@@ -282,6 +422,59 @@ impl ChannelStore {
             });
 
             Ok(channel_id)
+        })
+    }
+
+    pub fn link_channel(
+        &mut self,
+        channel_id: ChannelId,
+        to: ChannelId,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let client = self.client.clone();
+        cx.spawn(|_, _| async move {
+            let _ = client
+                .request(proto::LinkChannel { channel_id, to })
+                .await?;
+
+            Ok(())
+        })
+    }
+
+    pub fn unlink_channel(
+        &mut self,
+        channel_id: ChannelId,
+        from: ChannelId,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let client = self.client.clone();
+        cx.spawn(|_, _| async move {
+            let _ = client
+                .request(proto::UnlinkChannel { channel_id, from })
+                .await?;
+
+            Ok(())
+        })
+    }
+
+    pub fn move_channel(
+        &mut self,
+        channel_id: ChannelId,
+        from: ChannelId,
+        to: ChannelId,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let client = self.client.clone();
+        cx.spawn(|_, _| async move {
+            let _ = client
+                .request(proto::MoveChannel {
+                    channel_id,
+                    from,
+                    to,
+                })
+                .await?;
+
+            Ok(())
         })
     }
 
@@ -464,7 +657,7 @@ impl ChannelStore {
     pub fn remove_channel(&self, channel_id: ChannelId) -> impl Future<Output = Result<()>> {
         let client = self.client.clone();
         async move {
-            client.request(proto::RemoveChannel { channel_id }).await?;
+            client.request(proto::DeleteChannel { channel_id }).await?;
             Ok(())
         }
     }
@@ -494,9 +687,19 @@ impl ChannelStore {
     fn handle_connect(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         self.disconnect_channel_buffers_task.take();
 
+        for chat in self.opened_chats.values() {
+            if let OpenedModelHandle::Open(chat) = chat {
+                if let Some(chat) = chat.upgrade(cx) {
+                    chat.update(cx, |chat, cx| {
+                        chat.rejoin(cx);
+                    });
+                }
+            }
+        }
+
         let mut buffer_versions = Vec::new();
         for buffer in self.opened_buffers.values() {
-            if let OpenedChannelBuffer::Open(buffer) = buffer {
+            if let OpenedModelHandle::Open(buffer) = buffer {
                 if let Some(buffer) = buffer.upgrade(cx) {
                     let channel_buffer = buffer.read(cx);
                     let buffer = channel_buffer.buffer().read(cx);
@@ -522,7 +725,7 @@ impl ChannelStore {
 
             this.update(&mut cx, |this, cx| {
                 this.opened_buffers.retain(|_, buffer| match buffer {
-                    OpenedChannelBuffer::Open(channel_buffer) => {
+                    OpenedModelHandle::Open(channel_buffer) => {
                         let Some(channel_buffer) = channel_buffer.upgrade(cx) else {
                             return false;
                         };
@@ -583,7 +786,7 @@ impl ChannelStore {
                             false
                         })
                     }
-                    OpenedChannelBuffer::Loading(_) => true,
+                    OpenedModelHandle::Loading(_) => true,
                 });
             });
             anyhow::Ok(())
@@ -591,11 +794,11 @@ impl ChannelStore {
     }
 
     fn handle_disconnect(&mut self, cx: &mut ModelContext<Self>) {
-        self.channels_by_id.clear();
+        self.channel_index.clear();
         self.channel_invitations.clear();
         self.channel_participants.clear();
         self.channels_with_admin_privileges.clear();
-        self.channel_paths.clear();
+        self.channel_index.clear();
         self.outgoing_invites.clear();
         cx.notify();
 
@@ -605,7 +808,7 @@ impl ChannelStore {
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| {
                         for (_, buffer) in this.opened_buffers.drain() {
-                            if let OpenedChannelBuffer::Open(buffer) = buffer {
+                            if let OpenedModelHandle::Open(buffer) = buffer {
                                 if let Some(buffer) = buffer.upgrade(cx) {
                                     buffer.update(cx, |buffer, cx| buffer.disconnect(cx));
                                 }
@@ -637,24 +840,31 @@ impl ChannelStore {
                     Arc::new(Channel {
                         id: channel.id,
                         name: channel.name,
+                        unseen_note_version: None,
+                        unseen_message_id: None,
                     }),
                 ),
             }
         }
 
-        let channels_changed = !payload.channels.is_empty() || !payload.remove_channels.is_empty();
-        if channels_changed {
-            if !payload.remove_channels.is_empty() {
-                self.channels_by_id
-                    .retain(|channel_id, _| !payload.remove_channels.contains(channel_id));
-                self.channel_participants
-                    .retain(|channel_id, _| !payload.remove_channels.contains(channel_id));
-                self.channels_with_admin_privileges
-                    .retain(|channel_id| !payload.remove_channels.contains(channel_id));
+        let channels_changed = !payload.channels.is_empty()
+            || !payload.delete_channels.is_empty()
+            || !payload.insert_edge.is_empty()
+            || !payload.delete_edge.is_empty()
+            || !payload.unseen_channel_messages.is_empty()
+            || !payload.unseen_channel_buffer_changes.is_empty();
 
-                for channel_id in &payload.remove_channels {
+        if channels_changed {
+            if !payload.delete_channels.is_empty() {
+                self.channel_index.delete_channels(&payload.delete_channels);
+                self.channel_participants
+                    .retain(|channel_id, _| !payload.delete_channels.contains(channel_id));
+                self.channels_with_admin_privileges
+                    .retain(|channel_id| !payload.delete_channels.contains(channel_id));
+
+                for channel_id in &payload.delete_channels {
                     let channel_id = *channel_id;
-                    if let Some(OpenedChannelBuffer::Open(buffer)) =
+                    if let Some(OpenedModelHandle::Open(buffer)) =
                         self.opened_buffers.remove(&channel_id)
                     {
                         if let Some(buffer) = buffer.upgrade(cx) {
@@ -664,44 +874,34 @@ impl ChannelStore {
                 }
             }
 
-            for channel_proto in payload.channels {
-                if let Some(existing_channel) = self.channels_by_id.get_mut(&channel_proto.id) {
-                    Arc::make_mut(existing_channel).name = channel_proto.name;
-                } else {
-                    let channel = Arc::new(Channel {
-                        id: channel_proto.id,
-                        name: channel_proto.name,
-                    });
-                    self.channels_by_id.insert(channel.id, channel.clone());
-
-                    if let Some(parent_id) = channel_proto.parent_id {
-                        let mut ix = 0;
-                        while ix < self.channel_paths.len() {
-                            let path = &self.channel_paths[ix];
-                            if path.ends_with(&[parent_id]) {
-                                let mut new_path = path.clone();
-                                new_path.push(channel.id);
-                                self.channel_paths.insert(ix + 1, new_path);
-                                ix += 1;
-                            }
-                            ix += 1;
-                        }
-                    } else {
-                        self.channel_paths.push(vec![channel.id]);
-                    }
-                }
+            let mut index = self.channel_index.bulk_insert();
+            for channel in payload.channels {
+                index.insert(channel)
             }
 
-            self.channel_paths.sort_by(|a, b| {
-                let a = Self::channel_path_sorting_key(a, &self.channels_by_id);
-                let b = Self::channel_path_sorting_key(b, &self.channels_by_id);
-                a.cmp(b)
-            });
-            self.channel_paths.dedup();
-            self.channel_paths.retain(|path| {
-                path.iter()
-                    .all(|channel_id| self.channels_by_id.contains_key(channel_id))
-            });
+            for unseen_buffer_change in payload.unseen_channel_buffer_changes {
+                let version = language::proto::deserialize_version(&unseen_buffer_change.version);
+                index.note_changed(
+                    unseen_buffer_change.channel_id,
+                    unseen_buffer_change.epoch,
+                    &version,
+                );
+            }
+
+            for unseen_channel_message in payload.unseen_channel_messages {
+                index.new_messages(
+                    unseen_channel_message.channel_id,
+                    unseen_channel_message.message_id,
+                );
+            }
+
+            for edge in payload.insert_edge {
+                index.insert_edge(edge.channel_id, edge.parent_id);
+            }
+
+            for edge in payload.delete_edge {
+                index.delete_edge(edge.parent_id, edge.channel_id);
+            }
         }
 
         for permission in payload.channel_permissions {
@@ -759,12 +959,45 @@ impl ChannelStore {
             anyhow::Ok(())
         }))
     }
+}
 
-    fn channel_path_sorting_key<'a>(
-        path: &'a [ChannelId],
-        channels_by_id: &'a HashMap<ChannelId, Arc<Channel>>,
-    ) -> impl 'a + Iterator<Item = Option<&'a str>> {
-        path.iter()
-            .map(|id| Some(channels_by_id.get(id)?.name.as_str()))
+impl Deref for ChannelPath {
+    type Target = [ChannelId];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl ChannelPath {
+    pub fn new(path: Arc<[ChannelId]>) -> Self {
+        debug_assert!(path.len() >= 1);
+        Self(path)
+    }
+
+    pub fn parent_id(&self) -> Option<ChannelId> {
+        self.0.len().checked_sub(2).map(|i| self.0[i])
+    }
+
+    pub fn channel_id(&self) -> ChannelId {
+        self.0[self.0.len() - 1]
+    }
+}
+
+impl From<ChannelPath> for Cow<'static, ChannelPath> {
+    fn from(value: ChannelPath) -> Self {
+        Cow::Owned(value)
+    }
+}
+
+impl<'a> From<&'a ChannelPath> for Cow<'a, ChannelPath> {
+    fn from(value: &'a ChannelPath) -> Self {
+        Cow::Borrowed(value)
+    }
+}
+
+impl Default for ChannelPath {
+    fn default() -> Self {
+        ChannelPath(Arc::from([]))
     }
 }

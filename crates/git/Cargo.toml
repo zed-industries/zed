@@ -20,7 +20,7 @@ smol.workspace = true
 parking_lot.workspace = true
 async-trait.workspace = true
 futures.workspace = true
-git2 = { version = "0.15", default-features = false }
+git2.workspace = true
 
 [dev-dependencies]
 unindent.workspace = true

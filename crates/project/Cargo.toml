@@ -37,7 +37,7 @@ sum_tree = { path = "../sum_tree" }
 terminal = { path = "../terminal" }
 util = { path = "../util" }
 
-aho-corasick = "0.7"
+aho-corasick = "1.1"
 anyhow.workspace = true
 async-trait.workspace = true
 backtrace = "0.3"
@@ -75,6 +75,6 @@ lsp = { path = "../lsp", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
-git2 = { version = "0.15", default-features = false }
+git2.workspace = true
 tempdir.workspace = true
 unindent.workspace = true

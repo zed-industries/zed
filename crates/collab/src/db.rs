@@ -14,13 +14,17 @@ use collections::{BTreeMap, HashMap, HashSet};
 use dashmap::DashMap;
 use futures::StreamExt;
 use rand::{prelude::StdRng, Rng, SeedableRng};
-use rpc::{proto, ConnectionId};
-use sea_orm::{
-    entity::prelude::*, ActiveValue, Condition, ConnectionTrait, DatabaseConnection,
-    DatabaseTransaction, DbErr, FromQueryResult, IntoActiveModel, IsolationLevel, JoinType,
-    QueryOrder, QuerySelect, Statement, TransactionTrait,
+use rpc::{
+    proto::{self},
+    ConnectionId,
 };
-use sea_query::{Alias, Expr, OnConflict, Query};
+use sea_orm::{
+    entity::prelude::*,
+    sea_query::{Alias, Expr, OnConflict, Query},
+    ActiveValue, Condition, ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbErr,
+    FromQueryResult, IntoActiveModel, IsolationLevel, JoinType, QueryOrder, QuerySelect, Statement,
+    TransactionTrait,
+};
 use serde::{Deserialize, Serialize};
 use sqlx::{
     migrate::{Migrate, Migration, MigrationSource},
@@ -43,6 +47,8 @@ pub use ids::*;
 pub use sea_orm::ConnectOptions;
 pub use tables::user::Model as User;
 
+use self::queries::channels::ChannelGraph;
+
 pub struct Database {
     options: ConnectOptions,
     pool: DatabaseConnection,
@@ -57,6 +63,7 @@ pub struct Database {
 // separate files in the `queries` folder.
 impl Database {
     pub async fn new(options: ConnectOptions, executor: Executor) -> Result<Self> {
+        sqlx::any::install_default_drivers();
         Ok(Self {
             options: options.clone(),
             pool: sea_orm::Database::connect(options).await?,
@@ -114,7 +121,7 @@ impl Database {
         Ok(new_migrations)
     }
 
-    async fn transaction<F, Fut, T>(&self, f: F) -> Result<T>
+    pub async fn transaction<F, Fut, T>(&self, f: F) -> Result<T>
     where
         F: Send + Fn(TransactionHandle) -> Fut,
         Fut: Send + Future<Output = Result<T>>,
@@ -316,7 +323,7 @@ fn is_serialization_error(error: &Error) -> bool {
     }
 }
 
-struct TransactionHandle(Arc<Option<DatabaseTransaction>>);
+pub struct TransactionHandle(Arc<Option<DatabaseTransaction>>);
 
 impl Deref for TransactionHandle {
     type Target = DatabaseTransaction;
@@ -421,18 +428,19 @@ pub struct NewUserResult {
     pub signup_device_id: Option<String>,
 }
 
-#[derive(FromQueryResult, Debug, PartialEq)]
+#[derive(FromQueryResult, Debug, PartialEq, Eq, Hash)]
 pub struct Channel {
     pub id: ChannelId,
     pub name: String,
-    pub parent_id: Option<ChannelId>,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct ChannelsForUser {
-    pub channels: Vec<Channel>,
+    pub channels: ChannelGraph,
     pub channel_participants: HashMap<ChannelId, Vec<UserId>>,
     pub channels_with_admin_privileges: HashSet<ChannelId>,
+    pub unseen_buffer_changes: Vec<proto::UnseenChannelBufferChange>,
+    pub channel_messages: Vec<proto::UnseenChannelMessage>,
 }
 
 #[derive(Debug)]
@@ -506,7 +514,7 @@ pub struct RefreshedRoom {
 
 pub struct RefreshedChannelBuffer {
     pub connection_ids: Vec<ConnectionId>,
-    pub removed_collaborators: Vec<proto::RemoveChannelBufferCollaborator>,
+    pub collaborators: Vec<proto::Collaborator>,
 }
 
 pub struct Project {

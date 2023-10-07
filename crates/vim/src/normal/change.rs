@@ -76,12 +76,6 @@ pub fn change_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Windo
 // word does not include the following white space.  {Vi: "cw" when on a blank
 //     followed by other blanks changes only the first blank; this is probably a
 //     bug, because "dw" deletes all the blanks}
-//
-// NOT HANDLED YET
-// Another special case: When using the "w" motion in combination with an
-// operator and the last word moved over is at the end of a line, the end of
-// that word becomes the end of the operated text, not the first word in the
-// next line.
 fn expand_changed_word_selection(
     map: &DisplaySnapshot,
     selection: &mut Selection<DisplayPoint>,
@@ -121,7 +115,7 @@ fn expand_changed_word_selection(
 mod test {
     use indoc::indoc;
 
-    use crate::test::{ExemptionFeatures, NeovimBackedTestContext};
+    use crate::test::NeovimBackedTestContext;
 
     #[gpui::test]
     async fn test_change_h(cx: &mut gpui::TestAppContext) {
@@ -239,150 +233,178 @@ mod test {
 
     #[gpui::test]
     async fn test_change_0(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["c", "0"]);
-        cx.assert(indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.assert_neovim_compatible(
+            indoc! {"
             The qˇuick
-            brown fox"})
-            .await;
-        cx.assert(indoc! {"
+            brown fox"},
+            ["c", "0"],
+        )
+        .await;
+        cx.assert_neovim_compatible(
+            indoc! {"
             The quick
             ˇ
-            brown fox"})
-            .await;
+            brown fox"},
+            ["c", "0"],
+        )
+        .await;
     }
 
     #[gpui::test]
     async fn test_change_k(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["c", "k"]);
-        cx.assert(indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.assert_neovim_compatible(
+            indoc! {"
             The quick
             brown ˇfox
-            jumps over"})
-            .await;
-        cx.assert(indoc! {"
+            jumps over"},
+            ["c", "k"],
+        )
+        .await;
+        cx.assert_neovim_compatible(
+            indoc! {"
             The quick
             brown fox
-            jumps ˇover"})
-            .await;
-        cx.assert_exempted(
+            jumps ˇover"},
+            ["c", "k"],
+        )
+        .await;
+        cx.assert_neovim_compatible(
             indoc! {"
             The qˇuick
             brown fox
             jumps over"},
-            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+            ["c", "k"],
         )
         .await;
-        cx.assert_exempted(
+        cx.assert_neovim_compatible(
             indoc! {"
             ˇ
             brown fox
             jumps over"},
-            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+            ["c", "k"],
         )
         .await;
     }
 
     #[gpui::test]
     async fn test_change_j(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await.binding(["c", "j"]);
-        cx.assert(indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.assert_neovim_compatible(
+            indoc! {"
             The quick
             brown ˇfox
-            jumps over"})
-            .await;
-        cx.assert_exempted(
+            jumps over"},
+            ["c", "j"],
+        )
+        .await;
+        cx.assert_neovim_compatible(
             indoc! {"
             The quick
             brown fox
             jumps ˇover"},
-            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+            ["c", "j"],
         )
         .await;
-        cx.assert(indoc! {"
+        cx.assert_neovim_compatible(
+            indoc! {"
             The qˇuick
             brown fox
-            jumps over"})
-            .await;
-        cx.assert_exempted(
+            jumps over"},
+            ["c", "j"],
+        )
+        .await;
+        cx.assert_neovim_compatible(
             indoc! {"
             The quick
             brown fox
             ˇ"},
-            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+            ["c", "j"],
         )
         .await;
     }
 
     #[gpui::test]
     async fn test_change_end_of_document(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx)
-            .await
-            .binding(["c", "shift-g"]);
-        cx.assert(indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.assert_neovim_compatible(
+            indoc! {"
             The quick
             brownˇ fox
             jumps over
-            the lazy"})
-            .await;
-        cx.assert(indoc! {"
+            the lazy"},
+            ["c", "shift-g"],
+        )
+        .await;
+        cx.assert_neovim_compatible(
+            indoc! {"
             The quick
             brownˇ fox
             jumps over
-            the lazy"})
-            .await;
-        cx.assert_exempted(
+            the lazy"},
+            ["c", "shift-g"],
+        )
+        .await;
+        cx.assert_neovim_compatible(
             indoc! {"
             The quick
             brown fox
             jumps over
             the lˇazy"},
-            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+            ["c", "shift-g"],
         )
         .await;
-        cx.assert_exempted(
+        cx.assert_neovim_compatible(
             indoc! {"
             The quick
             brown fox
             jumps over
             ˇ"},
-            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+            ["c", "shift-g"],
         )
         .await;
     }
 
     #[gpui::test]
     async fn test_change_gg(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx)
-            .await
-            .binding(["c", "g", "g"]);
-        cx.assert(indoc! {"
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.assert_neovim_compatible(
+            indoc! {"
             The quick
             brownˇ fox
             jumps over
-            the lazy"})
-            .await;
-        cx.assert(indoc! {"
+            the lazy"},
+            ["c", "g", "g"],
+        )
+        .await;
+        cx.assert_neovim_compatible(
+            indoc! {"
             The quick
             brown fox
             jumps over
-            the lˇazy"})
-            .await;
-        cx.assert_exempted(
+            the lˇazy"},
+            ["c", "g", "g"],
+        )
+        .await;
+        cx.assert_neovim_compatible(
             indoc! {"
             The qˇuick
             brown fox
             jumps over
             the lazy"},
-            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+            ["c", "g", "g"],
         )
         .await;
-        cx.assert_exempted(
+        cx.assert_neovim_compatible(
             indoc! {"
             ˇ
             brown fox
             jumps over
             the lazy"},
-            ExemptionFeatures::OperatorAbortsOnFailedMotion,
+            ["c", "g", "g"],
         )
         .await;
     }
@@ -427,27 +449,17 @@ mod test {
     async fn test_repeated_cb(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.add_initial_state_exemptions(
-            indoc! {"
-            ˇThe quick brown
-
-            fox jumps-over
-            the lazy dog
-            "},
-            ExemptionFeatures::OperatorAbortsOnFailedMotion,
-        );
-
         for count in 1..=5 {
-            cx.assert_binding_matches_all(
-                ["c", &count.to_string(), "b"],
-                indoc! {"
-                    ˇThe quˇickˇ browˇn
-                    ˇ
-                    ˇfox ˇjumpsˇ-ˇoˇver
-                    ˇthe lazy dog
-                    "},
-            )
-            .await;
+            for marked_text in cx.each_marked_position(indoc! {"
+                ˇThe quˇickˇ browˇn
+                ˇ
+                ˇfox ˇjumpsˇ-ˇoˇver
+                ˇthe lazy dog
+                "})
+            {
+                cx.assert_neovim_compatible(&marked_text, ["c", &count.to_string(), "b"])
+                    .await;
+            }
         }
     }
 

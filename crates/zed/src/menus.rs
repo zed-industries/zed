@@ -38,14 +38,12 @@ pub fn menus() -> Vec<Menu<'static>> {
                 MenuItem::action("Open Recent...", recent_projects::OpenRecent),
                 MenuItem::separator(),
                 MenuItem::action("Add Folder to Project…", workspace::AddFolderToProject),
-                MenuItem::action("Save", workspace::Save),
+                MenuItem::action("Save", workspace::Save { save_intent: None }),
                 MenuItem::action("Save As…", workspace::SaveAs),
-                MenuItem::action("Save All", workspace::SaveAll),
+                MenuItem::action("Save All", workspace::SaveAll { save_intent: None }),
                 MenuItem::action(
                     "Close Editor",
-                    workspace::CloseActiveItem {
-                        save_behavior: None,
-                    },
+                    workspace::CloseActiveItem { save_intent: None },
                 ),
                 MenuItem::action("Close Window", workspace::CloseWindow),
             ],

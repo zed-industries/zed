@@ -91,9 +91,9 @@ export default function editor(): any {
             vertical_scale: 0.55,
         },
         folds: {
-            icon_margin_scale: 2.5,
-            folded_icon: "icons/chevron_right_8.svg",
-            foldable_icon: "icons/chevron_down_8.svg",
+            icon_margin_scale: 4,
+            folded_icon: "icons/chevron_right.svg",
+            foldable_icon: "icons/chevron_down.svg",
             indicator: toggleable({
                 base: interactive({
                     base: {

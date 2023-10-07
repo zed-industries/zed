@@ -1,38 +1,49 @@
 use crate::Channel;
 use anyhow::Result;
-use client::Client;
-use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle};
-use rpc::{proto, TypedEnvelope};
-use std::sync::Arc;
+use client::{Client, Collaborator, UserStore};
+use collections::HashMap;
+use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task};
+use language::proto::serialize_version;
+use rpc::{
+    proto::{self, PeerId},
+    TypedEnvelope,
+};
+use std::{sync::Arc, time::Duration};
 use util::ResultExt;
+
+pub const ACKNOWLEDGE_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(250);
 
 pub(crate) fn init(client: &Arc<Client>) {
     client.add_model_message_handler(ChannelBuffer::handle_update_channel_buffer);
-    client.add_model_message_handler(ChannelBuffer::handle_add_channel_buffer_collaborator);
-    client.add_model_message_handler(ChannelBuffer::handle_remove_channel_buffer_collaborator);
-    client.add_model_message_handler(ChannelBuffer::handle_update_channel_buffer_collaborator);
+    client.add_model_message_handler(ChannelBuffer::handle_update_channel_buffer_collaborators);
 }
 
 pub struct ChannelBuffer {
     pub(crate) channel: Arc<Channel>,
     connected: bool,
-    collaborators: Vec<proto::Collaborator>,
+    collaborators: HashMap<PeerId, Collaborator>,
+    user_store: ModelHandle<UserStore>,
     buffer: ModelHandle<language::Buffer>,
     buffer_epoch: u64,
     client: Arc<Client>,
     subscription: Option<client::Subscription>,
+    acknowledge_task: Option<Task<Result<()>>>,
 }
 
-pub enum Event {
+pub enum ChannelBufferEvent {
     CollaboratorsChanged,
     Disconnected,
+    BufferEdited,
 }
 
 impl Entity for ChannelBuffer {
-    type Event = Event;
+    type Event = ChannelBufferEvent;
 
     fn release(&mut self, _: &mut AppContext) {
         if self.connected {
+            if let Some(task) = self.acknowledge_task.take() {
+                task.detach();
+            }
             self.client
                 .send(proto::LeaveChannelBuffer {
                     channel_id: self.channel.id,
@@ -46,6 +57,7 @@ impl ChannelBuffer {
     pub(crate) async fn new(
         channel: Arc<Channel>,
         client: Arc<Client>,
+        user_store: ModelHandle<UserStore>,
         mut cx: AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
         let response = client
@@ -61,8 +73,6 @@ impl ChannelBuffer {
             .map(language::proto::deserialize_operation)
             .collect::<Result<Vec<_>, _>>()?;
 
-        let collaborators = response.collaborators;
-
         let buffer = cx.add_model(|_| {
             language::Buffer::remote(response.buffer_id, response.replica_id as u16, base_text)
         });
@@ -73,16 +83,24 @@ impl ChannelBuffer {
         anyhow::Ok(cx.add_model(|cx| {
             cx.subscribe(&buffer, Self::on_buffer_update).detach();
 
-            Self {
+            let mut this = Self {
                 buffer,
                 buffer_epoch: response.epoch,
                 client,
                 connected: true,
-                collaborators,
+                collaborators: Default::default(),
+                acknowledge_task: None,
                 channel,
                 subscription: Some(subscription.set_model(&cx.handle(), &mut cx.to_async())),
-            }
+                user_store,
+            };
+            this.replace_collaborators(response.collaborators, cx);
+            this
         }))
+    }
+
+    pub fn user_store(&self) -> &ModelHandle<UserStore> {
+        &self.user_store
     }
 
     pub(crate) fn replace_collaborators(
@@ -90,18 +108,22 @@ impl ChannelBuffer {
         collaborators: Vec<proto::Collaborator>,
         cx: &mut ModelContext<Self>,
     ) {
-        for old_collaborator in &self.collaborators {
-            if collaborators
-                .iter()
-                .any(|c| c.replica_id == old_collaborator.replica_id)
-            {
+        let mut new_collaborators = HashMap::default();
+        for collaborator in collaborators {
+            if let Ok(collaborator) = Collaborator::from_proto(collaborator) {
+                new_collaborators.insert(collaborator.peer_id, collaborator);
+            }
+        }
+
+        for (_, old_collaborator) in &self.collaborators {
+            if !new_collaborators.contains_key(&old_collaborator.peer_id) {
                 self.buffer.update(cx, |buffer, cx| {
                     buffer.remove_peer(old_collaborator.replica_id as u16, cx)
                 });
             }
         }
-        self.collaborators = collaborators;
-        cx.emit(Event::CollaboratorsChanged);
+        self.collaborators = new_collaborators;
+        cx.emit(ChannelBufferEvent::CollaboratorsChanged);
         cx.notify();
     }
 
@@ -127,65 +149,15 @@ impl ChannelBuffer {
         Ok(())
     }
 
-    async fn handle_add_channel_buffer_collaborator(
+    async fn handle_update_channel_buffer_collaborators(
         this: ModelHandle<Self>,
-        envelope: TypedEnvelope<proto::AddChannelBufferCollaborator>,
-        _: Arc<Client>,
-        mut cx: AsyncAppContext,
-    ) -> Result<()> {
-        let collaborator = envelope.payload.collaborator.ok_or_else(|| {
-            anyhow::anyhow!(
-                "Should have gotten a collaborator in the AddChannelBufferCollaborator message"
-            )
-        })?;
-
-        this.update(&mut cx, |this, cx| {
-            this.collaborators.push(collaborator);
-            cx.emit(Event::CollaboratorsChanged);
-            cx.notify();
-        });
-
-        Ok(())
-    }
-
-    async fn handle_remove_channel_buffer_collaborator(
-        this: ModelHandle<Self>,
-        message: TypedEnvelope<proto::RemoveChannelBufferCollaborator>,
+        message: TypedEnvelope<proto::UpdateChannelBufferCollaborators>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
-            this.collaborators.retain(|collaborator| {
-                if collaborator.peer_id == message.payload.peer_id {
-                    this.buffer.update(cx, |buffer, cx| {
-                        buffer.remove_peer(collaborator.replica_id as u16, cx)
-                    });
-                    false
-                } else {
-                    true
-                }
-            });
-            cx.emit(Event::CollaboratorsChanged);
-            cx.notify();
-        });
-
-        Ok(())
-    }
-
-    async fn handle_update_channel_buffer_collaborator(
-        this: ModelHandle<Self>,
-        message: TypedEnvelope<proto::UpdateChannelBufferCollaborator>,
-        _: Arc<Client>,
-        mut cx: AsyncAppContext,
-    ) -> Result<()> {
-        this.update(&mut cx, |this, cx| {
-            for collaborator in &mut this.collaborators {
-                if collaborator.peer_id == message.payload.old_peer_id {
-                    collaborator.peer_id = message.payload.new_peer_id;
-                    break;
-                }
-            }
-            cx.emit(Event::CollaboratorsChanged);
+            this.replace_collaborators(message.payload.collaborators, cx);
+            cx.emit(ChannelBufferEvent::CollaboratorsChanged);
             cx.notify();
         });
 
@@ -196,17 +168,43 @@ impl ChannelBuffer {
         &mut self,
         _: ModelHandle<language::Buffer>,
         event: &language::Event,
-        _: &mut ModelContext<Self>,
+        cx: &mut ModelContext<Self>,
     ) {
-        if let language::Event::Operation(operation) = event {
-            let operation = language::proto::serialize_operation(operation);
-            self.client
-                .send(proto::UpdateChannelBuffer {
-                    channel_id: self.channel.id,
-                    operations: vec![operation],
-                })
-                .log_err();
+        match event {
+            language::Event::Operation(operation) => {
+                let operation = language::proto::serialize_operation(operation);
+                self.client
+                    .send(proto::UpdateChannelBuffer {
+                        channel_id: self.channel.id,
+                        operations: vec![operation],
+                    })
+                    .log_err();
+            }
+            language::Event::Edited => {
+                cx.emit(ChannelBufferEvent::BufferEdited);
+            }
+            _ => {}
         }
+    }
+
+    pub fn acknowledge_buffer_version(&mut self, cx: &mut ModelContext<'_, ChannelBuffer>) {
+        let buffer = self.buffer.read(cx);
+        let version = buffer.version();
+        let buffer_id = buffer.remote_id();
+        let client = self.client.clone();
+        let epoch = self.epoch();
+
+        self.acknowledge_task = Some(cx.spawn_weak(|_, cx| async move {
+            cx.background().timer(ACKNOWLEDGE_DEBOUNCE_INTERVAL).await;
+            client
+                .send(proto::AckBufferOperation {
+                    buffer_id,
+                    epoch,
+                    version: serialize_version(&version),
+                })
+                .ok();
+            Ok(())
+        }));
     }
 
     pub fn epoch(&self) -> u64 {
@@ -217,7 +215,7 @@ impl ChannelBuffer {
         self.buffer.clone()
     }
 
-    pub fn collaborators(&self) -> &[proto::Collaborator] {
+    pub fn collaborators(&self) -> &HashMap<PeerId, Collaborator> {
         &self.collaborators
     }
 
@@ -230,7 +228,7 @@ impl ChannelBuffer {
         if self.connected {
             self.connected = false;
             self.subscription.take();
-            cx.emit(Event::Disconnected);
+            cx.emit(ChannelBufferEvent::Disconnected);
             cx.notify()
         }
     }

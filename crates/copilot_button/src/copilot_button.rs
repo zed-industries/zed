@@ -78,15 +78,15 @@ impl View for CopilotButton {
                             .with_child(
                                 Svg::new({
                                     match status {
-                                        Status::Error(_) => "icons/copilot_error_16.svg",
+                                        Status::Error(_) => "icons/copilot_error.svg",
                                         Status::Authorized => {
                                             if enabled {
-                                                "icons/copilot_16.svg"
+                                                "icons/copilot.svg"
                                             } else {
-                                                "icons/copilot_disabled_16.svg"
+                                                "icons/copilot_disabled.svg"
                                             }
                                         }
-                                        _ => "icons/copilot_init_16.svg",
+                                        _ => "icons/copilot_init.svg",
                                     }
                                 })
                                 .with_color(style.icon_color)

@@ -9,7 +9,7 @@ path = "src/quick_action_bar.rs"
 doctest = false
 
 [dependencies]
-ai = { path = "../ai" }
+assistant = { path = "../assistant" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 search = { path = "../search" }

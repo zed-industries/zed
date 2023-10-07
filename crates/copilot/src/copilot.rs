@@ -11,13 +11,12 @@ use gpui::{
 };
 use language::{
     language_settings::{all_language_settings, language_settings},
-    point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16,
-    ToPointUtf16,
+    point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language,
+    LanguageServerName, PointUtf16, ToPointUtf16,
 };
-use log::{debug, error};
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId};
 use node_runtime::NodeRuntime;
-use request::{LogMessage, StatusNotification};
+use request::StatusNotification;
 use settings::SettingsStore;
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
@@ -41,10 +40,15 @@ actions!(
     [Suggest, NextSuggestion, PreviousSuggestion, Reinstall]
 );
 
-pub fn init(http: Arc<dyn HttpClient>, node_runtime: Arc<dyn NodeRuntime>, cx: &mut AppContext) {
+pub fn init(
+    new_server_id: LanguageServerId,
+    http: Arc<dyn HttpClient>,
+    node_runtime: Arc<dyn NodeRuntime>,
+    cx: &mut AppContext,
+) {
     let copilot = cx.add_model({
         let node_runtime = node_runtime.clone();
-        move |cx| Copilot::start(http, node_runtime, cx)
+        move |cx| Copilot::start(new_server_id, http, node_runtime, cx)
     });
     cx.set_global(copilot.clone());
 
@@ -125,6 +129,7 @@ impl CopilotServer {
 }
 
 struct RunningCopilotServer {
+    name: LanguageServerName,
     lsp: Arc<LanguageServer>,
     sign_in_status: SignInStatus,
     registered_buffers: HashMap<usize, RegisteredBuffer>,
@@ -268,10 +273,15 @@ pub struct Copilot {
     node_runtime: Arc<dyn NodeRuntime>,
     server: CopilotServer,
     buffers: HashSet<WeakModelHandle<Buffer>>,
+    server_id: LanguageServerId,
+}
+
+pub enum Event {
+    CopilotLanguageServerStarted,
 }
 
 impl Entity for Copilot {
-    type Event = ();
+    type Event = Event;
 
     fn app_will_quit(
         &mut self,
@@ -298,11 +308,13 @@ impl Copilot {
     }
 
     fn start(
+        new_server_id: LanguageServerId,
         http: Arc<dyn HttpClient>,
         node_runtime: Arc<dyn NodeRuntime>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let mut this = Self {
+            server_id: new_server_id,
             http,
             node_runtime,
             server: CopilotServer::Disabled,
@@ -315,13 +327,16 @@ impl Copilot {
     }
 
     fn enable_or_disable_copilot(&mut self, cx: &mut ModelContext<Copilot>) {
+        let server_id = self.server_id;
         let http = self.http.clone();
         let node_runtime = self.node_runtime.clone();
         if all_language_settings(None, cx).copilot_enabled(None, None) {
             if matches!(self.server, CopilotServer::Disabled) {
                 let start_task = cx
                     .spawn({
-                        move |this, cx| Self::start_language_server(http, node_runtime, this, cx)
+                        move |this, cx| {
+                            Self::start_language_server(server_id, http, node_runtime, this, cx)
+                        }
                     })
                     .shared();
                 self.server = CopilotServer::Starting { task: start_task };
@@ -342,9 +357,11 @@ impl Copilot {
         let http = util::http::FakeHttpClient::create(|_| async { unreachable!() });
         let node_runtime = FakeNodeRuntime::new();
         let this = cx.add_model(|_| Self {
+            server_id: LanguageServerId(0),
             http: http.clone(),
             node_runtime,
             server: CopilotServer::Running(RunningCopilotServer {
+                name: LanguageServerName(Arc::from("copilot")),
                 lsp: Arc::new(server),
                 sign_in_status: SignInStatus::Authorized,
                 registered_buffers: Default::default(),
@@ -355,6 +372,7 @@ impl Copilot {
     }
 
     fn start_language_server(
+        new_server_id: LanguageServerId,
         http: Arc<dyn HttpClient>,
         node_runtime: Arc<dyn NodeRuntime>,
         this: ModelHandle<Self>,
@@ -369,27 +387,8 @@ impl Copilot {
                     path: node_path,
                     arguments,
                 };
-                let server = LanguageServer::new(
-                    LanguageServerId(0),
-                    binary,
-                    Path::new("/"),
-                    None,
-                    cx.clone(),
-                )?;
-
-                server
-                    .on_notification::<LogMessage, _>(|params, _cx| {
-                        match params.level {
-                            // Copilot is pretty aggressive about logging
-                            0 => debug!("copilot: {}", params.message),
-                            1 => debug!("copilot: {}", params.message),
-                            _ => error!("copilot: {}", params.message),
-                        }
-
-                        debug!("copilot metadata: {}", params.metadata_str);
-                        debug!("copilot extra: {:?}", params.extra);
-                    })
-                    .detach();
+                let server =
+                    LanguageServer::new(new_server_id, binary, Path::new("/"), None, cx.clone())?;
 
                 server
                     .on_notification::<StatusNotification, _>(
@@ -427,10 +426,12 @@ impl Copilot {
                 match server {
                     Ok((server, status)) => {
                         this.server = CopilotServer::Running(RunningCopilotServer {
+                            name: LanguageServerName(Arc::from("copilot")),
                             lsp: server,
                             sign_in_status: SignInStatus::SignedOut,
                             registered_buffers: Default::default(),
                         });
+                        cx.emit(Event::CopilotLanguageServerStarted);
                         this.update_sign_in_status(status, cx);
                     }
                     Err(error) => {
@@ -547,9 +548,10 @@ impl Copilot {
             .spawn({
                 let http = self.http.clone();
                 let node_runtime = self.node_runtime.clone();
+                let server_id = self.server_id;
                 move |this, cx| async move {
                     clear_copilot_dir().await;
-                    Self::start_language_server(http, node_runtime, this, cx).await
+                    Self::start_language_server(server_id, http, node_runtime, this, cx).await
                 }
             })
             .shared();
@@ -561,6 +563,14 @@ impl Copilot {
         cx.notify();
 
         cx.foreground().spawn(start_task)
+    }
+
+    pub fn language_server(&self) -> Option<(&LanguageServerName, &Arc<LanguageServer>)> {
+        if let CopilotServer::Running(server) = &self.server {
+            Some((&server.name, &server.lsp))
+        } else {
+            None
+        }
     }
 
     pub fn register_buffer(&mut self, buffer: &ModelHandle<Buffer>, cx: &mut ModelContext<Self>) {

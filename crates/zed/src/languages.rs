@@ -1,9 +1,12 @@
 use anyhow::Context;
+use gpui::AppContext;
 pub use language::*;
 use node_runtime::NodeRuntime;
 use rust_embed::RustEmbed;
 use std::{borrow::Cow, str, sync::Arc};
 use util::asset_str;
+
+use self::elixir::ElixirSettings;
 
 mod c;
 mod css;
@@ -37,7 +40,13 @@ mod yaml;
 #[exclude = "*.rs"]
 struct LanguageDir;
 
-pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<dyn NodeRuntime>) {
+pub fn init(
+    languages: Arc<LanguageRegistry>,
+    node_runtime: Arc<dyn NodeRuntime>,
+    cx: &mut AppContext,
+) {
+    settings::register::<elixir::ElixirSettings>(cx);
+
     let language = |name, grammar, adapters| {
         languages.register(name, load_config(name), grammar, adapters, load_queries)
     };
@@ -61,11 +70,28 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: Arc<dyn NodeRuntime>
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ],
     );
-    language(
-        "elixir",
-        tree_sitter_elixir::language(),
-        vec![Arc::new(elixir::ElixirLspAdapter)],
-    );
+
+    match &settings::get::<ElixirSettings>(cx).lsp {
+        elixir::ElixirLspSetting::ElixirLs => language(
+            "elixir",
+            tree_sitter_elixir::language(),
+            vec![Arc::new(elixir::ElixirLspAdapter)],
+        ),
+        elixir::ElixirLspSetting::NextLs => language(
+            "elixir",
+            tree_sitter_elixir::language(),
+            vec![Arc::new(elixir::NextLspAdapter)],
+        ),
+        elixir::ElixirLspSetting::Local { path, arguments } => language(
+            "elixir",
+            tree_sitter_elixir::language(),
+            vec![Arc::new(elixir::LocalLspAdapter {
+                path: path.clone(),
+                arguments: arguments.clone(),
+            })],
+        ),
+    }
+
     language(
         "go",
         tree_sitter_go::language(),

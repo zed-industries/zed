@@ -1,15 +1,16 @@
 pub mod channel_view;
+pub mod chat_panel;
 pub mod collab_panel;
 mod collab_titlebar_item;
 mod contact_notification;
 mod face_pile;
 mod incoming_call_notification;
 mod notifications;
-mod project_shared_notification;
+mod panel_settings;
+pub mod project_shared_notification;
 mod sharing_status_indicator;
 
-use call::{ActiveCall, Room};
-pub use collab_titlebar_item::CollabTitlebarItem;
+use call::{report_call_event_for_room, ActiveCall, Room};
 use gpui::{
     actions,
     geometry::{
@@ -23,15 +24,22 @@ use std::{rc::Rc, sync::Arc};
 use util::ResultExt;
 use workspace::AppState;
 
+pub use collab_titlebar_item::CollabTitlebarItem;
+pub use panel_settings::{ChatPanelSettings, CollaborationPanelSettings};
+
 actions!(
     collab,
     [ToggleScreenSharing, ToggleMute, ToggleDeafen, LeaveCall]
 );
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
+    settings::register::<CollaborationPanelSettings>(cx);
+    settings::register::<ChatPanelSettings>(cx);
+
     vcs_menu::init(cx);
     collab_titlebar_item::init(cx);
-    collab_panel::init(app_state.client.clone(), cx);
+    collab_panel::init(cx);
+    chat_panel::init(cx);
     incoming_call_notification::init(&app_state, cx);
     project_shared_notification::init(&app_state, cx);
     sharing_status_indicator::init(cx);
@@ -47,18 +55,18 @@ pub fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut AppContext) {
         let client = call.client();
         let toggle_screen_sharing = room.update(cx, |room, cx| {
             if room.is_screen_sharing() {
-                ActiveCall::report_call_event_for_room(
+                report_call_event_for_room(
                     "disable screen share",
-                    Some(room.id()),
+                    room.id(),
                     room.channel_id(),
                     &client,
                     cx,
                 );
                 Task::ready(room.unshare_screen(cx))
             } else {
-                ActiveCall::report_call_event_for_room(
+                report_call_event_for_room(
                     "enable screen share",
-                    Some(room.id()),
+                    room.id(),
                     room.channel_id(),
                     &client,
                     cx,
@@ -75,23 +83,13 @@ pub fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
     if let Some(room) = call.room().cloned() {
         let client = call.client();
         room.update(cx, |room, cx| {
-            if room.is_muted(cx) {
-                ActiveCall::report_call_event_for_room(
-                    "enable microphone",
-                    Some(room.id()),
-                    room.channel_id(),
-                    &client,
-                    cx,
-                );
+            let operation = if room.is_muted(cx) {
+                "enable microphone"
             } else {
-                ActiveCall::report_call_event_for_room(
-                    "disable microphone",
-                    Some(room.id()),
-                    room.channel_id(),
-                    &client,
-                    cx,
-                );
-            }
+                "disable microphone"
+            };
+            report_call_event_for_room(operation, room.id(), room.channel_id(), &client, cx);
+
             room.toggle_mute(cx)
         })
         .map(|task| task.detach_and_log_err(cx))

@@ -36,6 +36,7 @@ language = { path = "../language" }
 lsp = { path = "../lsp" }
 project = { path = "../project" }
 rpc = { path = "../rpc" }
+rich_text = { path = "../rich_text" }
 settings = { path = "../settings" }
 snippet = { path = "../snippet" }
 sum_tree = { path = "../sum_tree" }
@@ -45,7 +46,7 @@ util = { path = "../util" }
 sqlez = { path = "../sqlez" }
 workspace = { path = "../workspace" }
 
-aho-corasick = "0.7"
+aho-corasick = "1.1"
 anyhow.workspace = true
 convert_case = "0.6.0"
 futures.workspace = true

@@ -122,6 +122,7 @@ actions!(
         CopyPath,
         CopyRelativePath,
         RevealInFinder,
+        OpenInTerminal,
         Cut,
         Paste,
         Delete,
@@ -156,6 +157,7 @@ pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     cx.add_action(ProjectPanel::copy_path);
     cx.add_action(ProjectPanel::copy_relative_path);
     cx.add_action(ProjectPanel::reveal_in_finder);
+    cx.add_action(ProjectPanel::open_in_terminal);
     cx.add_action(ProjectPanel::new_search_in_directory);
     cx.add_action(
         |this: &mut ProjectPanel, action: &Paste, cx: &mut ViewContext<ProjectPanel>| {
@@ -423,24 +425,30 @@ impl ProjectPanel {
             menu_entries.push(ContextMenuItem::Separator);
             menu_entries.push(ContextMenuItem::action("Cut", Cut));
             menu_entries.push(ContextMenuItem::action("Copy", Copy));
+            if let Some(clipboard_entry) = self.clipboard_entry {
+                if clipboard_entry.worktree_id() == worktree.id() {
+                    menu_entries.push(ContextMenuItem::action("Paste", Paste));
+                }
+            }
             menu_entries.push(ContextMenuItem::Separator);
             menu_entries.push(ContextMenuItem::action("Copy Path", CopyPath));
             menu_entries.push(ContextMenuItem::action(
                 "Copy Relative Path",
                 CopyRelativePath,
             ));
+
+            if entry.is_dir() {
+                menu_entries.push(ContextMenuItem::Separator);
+            }
             menu_entries.push(ContextMenuItem::action("Reveal in Finder", RevealInFinder));
             if entry.is_dir() {
+                menu_entries.push(ContextMenuItem::action("Open in Terminal", OpenInTerminal));
                 menu_entries.push(ContextMenuItem::action(
                     "Search Inside",
                     NewSearchInDirectory,
                 ));
             }
-            if let Some(clipboard_entry) = self.clipboard_entry {
-                if clipboard_entry.worktree_id() == worktree.id() {
-                    menu_entries.push(ContextMenuItem::action("Paste", Paste));
-                }
-            }
+
             menu_entries.push(ContextMenuItem::Separator);
             menu_entries.push(ContextMenuItem::action("Rename", Rename));
             if !is_root {
@@ -965,6 +973,26 @@ impl ProjectPanel {
         }
     }
 
+    fn open_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            let window = cx.window();
+            let view_id = cx.view_id();
+            let path = worktree.abs_path().join(&entry.path);
+
+            cx.app_context()
+                .spawn(|mut cx| async move {
+                    window.dispatch_action(
+                        view_id,
+                        &workspace::OpenTerminal {
+                            working_directory: path,
+                        },
+                        &mut cx,
+                    );
+                })
+                .detach();
+        }
+    }
+
     pub fn new_search_in_directory(
         &mut self,
         _: &NewSearchInDirectory,
@@ -1485,7 +1513,7 @@ impl ProjectPanel {
         .as_draggable(entry_id, {
             let row_container_style = theme.dragged_entry.container;
 
-            move |_, cx: &mut ViewContext<Workspace>| {
+            move |_, _, cx: &mut ViewContext<Workspace>| {
                 let theme = theme::current(cx).clone();
                 Self::render_entry_visual_element(
                     &details,
@@ -1709,7 +1737,7 @@ mod tests {
     use settings::SettingsStore;
     use std::{
         collections::HashSet,
-        path::Path,
+        path::{Path, PathBuf},
         sync::atomic::{self, AtomicUsize},
     };
     use workspace::{pane, AppState};
@@ -2731,6 +2759,71 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_new_file_move(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background());
+        fs.as_fake().insert_tree("/root", json!({})).await;
+        let project = Project::test(fs, ["/root".as_ref()], cx).await;
+        let workspace = cx
+            .add_window(|cx| Workspace::test_new(project.clone(), cx))
+            .root(cx);
+        let panel = workspace.update(cx, |workspace, cx| ProjectPanel::new(workspace, cx));
+
+        // Make a new buffer with no backing file
+        workspace.update(cx, |workspace, cx| {
+            Editor::new_file(workspace, &Default::default(), cx)
+        });
+
+        // "Save as"" the buffer, creating a new backing file for it
+        let task = workspace.update(cx, |workspace, cx| {
+            workspace.save_active_item(workspace::SaveIntent::Save, cx)
+        });
+
+        cx.foreground().run_until_parked();
+        cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/new")));
+        task.await.unwrap();
+
+        // Rename the file
+        select_path(&panel, "root/new", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v root", "      new  <== selected"]
+        );
+        panel.update(cx, |panel, cx| panel.rename(&Rename, cx));
+        panel.update(cx, |panel, cx| {
+            panel
+                .filename_editor
+                .update(cx, |editor, cx| editor.set_text("newer", cx));
+        });
+        panel
+            .update(cx, |panel, cx| panel.confirm(&Confirm, cx))
+            .unwrap()
+            .await
+            .unwrap();
+
+        cx.foreground().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v root", "      newer  <== selected"]
+        );
+
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace.save_active_item(workspace::SaveIntent::Save, cx)
+            })
+            .await
+            .unwrap();
+
+        cx.foreground().run_until_parked();
+        // assert that saving the file doesn't restore "new"
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v root", "      newer  <== selected"]
+        );
+    }
+
     fn toggle_expand_dir(
         panel: &ViewHandle<ProjectPanel>,
         path: impl AsRef<Path>,
@@ -2834,6 +2927,7 @@ mod tests {
             editor::init_settings(cx);
             crate::init((), cx);
             workspace::init_settings(cx);
+            client::init_settings(cx);
             Project::init_settings(cx);
         });
     }

@@ -32,7 +32,7 @@ export default function tab_bar(): any {
         type_icon_width: 14,
 
         // Close icons
-        close_icon_width: 8,
+        close_icon_width: 14,
         icon_close: foreground(layer, "variant"),
         icon_close_active: foreground(layer, "hovered"),
 

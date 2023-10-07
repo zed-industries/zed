@@ -2,22 +2,23 @@ pub mod call_settings;
 pub mod participant;
 pub mod room;
 
-use std::sync::Arc;
-
 use anyhow::{anyhow, Result};
 use audio::Audio;
 use call_settings::CallSettings;
 use channel::ChannelId;
-use client::{proto, ClickhouseEvent, Client, TelemetrySettings, TypedEnvelope, User, UserStore};
+use client::{
+    proto, ClickhouseEvent, Client, TelemetrySettings, TypedEnvelope, User, UserStore,
+    ZED_ALWAYS_ACTIVE,
+};
 use collections::HashSet;
 use futures::{future::Shared, FutureExt};
-use postage::watch;
-
 use gpui::{
     AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Subscription, Task,
     WeakModelHandle,
 };
+use postage::watch;
 use project::Project;
+use std::sync::Arc;
 
 pub use participant::ParticipantLocation;
 pub use room::Room;
@@ -68,6 +69,7 @@ impl ActiveCall {
             location: None,
             pending_invites: Default::default(),
             incoming_call: watch::channel(),
+
             _subscriptions: vec![
                 client.add_request_handler(cx.handle(), Self::handle_incoming_call),
                 client.add_message_handler(cx.handle(), Self::handle_call_canceled),
@@ -206,9 +208,14 @@ impl ActiveCall {
 
         cx.spawn(|this, mut cx| async move {
             let result = invite.await;
+            if result.is_ok() {
+                this.update(&mut cx, |this, cx| this.report_call_event("invite", cx));
+            } else {
+                // TODO: Resport collaboration error
+            }
+
             this.update(&mut cx, |this, cx| {
                 this.pending_invites.remove(&called_user_id);
-                this.report_call_event("invite", cx);
                 cx.notify();
             });
             result
@@ -273,13 +280,7 @@ impl ActiveCall {
             .borrow_mut()
             .take()
             .ok_or_else(|| anyhow!("no incoming call"))?;
-        Self::report_call_event_for_room(
-            "decline incoming",
-            Some(call.room_id),
-            None,
-            &self.client,
-            cx,
-        );
+        report_call_event_for_room("decline incoming", call.room_id, None, &self.client, cx);
         self.client.send(proto::DeclineCall {
             room_id: call.room_id,
         })?;
@@ -290,10 +291,10 @@ impl ActiveCall {
         &mut self,
         channel_id: u64,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
+    ) -> Task<Result<ModelHandle<Room>>> {
         if let Some(room) = self.room().cloned() {
             if room.read(cx).channel_id() == Some(channel_id) {
-                return Task::ready(Ok(()));
+                return Task::ready(Ok(room));
             } else {
                 room.update(cx, |room, cx| room.clear_state(cx));
             }
@@ -308,7 +309,7 @@ impl ActiveCall {
             this.update(&mut cx, |this, cx| {
                 this.report_call_event("join channel", cx)
             });
-            Ok(())
+            Ok(room)
         })
     }
 
@@ -349,17 +350,22 @@ impl ActiveCall {
         }
     }
 
+    pub fn location(&self) -> Option<&WeakModelHandle<Project>> {
+        self.location.as_ref()
+    }
+
     pub fn set_location(
         &mut self,
         project: Option<&ModelHandle<Project>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        self.location = project.map(|project| project.downgrade());
-        if let Some((room, _)) = self.room.as_ref() {
-            room.update(cx, |room, cx| room.set_location(project, cx))
-        } else {
-            Task::ready(Ok(()))
+        if project.is_some() || !*ZED_ALWAYS_ACTIVE {
+            self.location = project.map(|project| project.downgrade());
+            if let Some((room, _)) = self.room.as_ref() {
+                return room.update(cx, |room, cx| room.set_location(project, cx));
+            }
         }
+        Task::ready(Ok(()))
     }
 
     fn set_room(
@@ -409,31 +415,46 @@ impl ActiveCall {
         &self.pending_invites
     }
 
-    fn report_call_event(&self, operation: &'static str, cx: &AppContext) {
-        let (room_id, channel_id) = match self.room() {
-            Some(room) => {
-                let room = room.read(cx);
-                (Some(room.id()), room.channel_id())
-            }
-            None => (None, None),
-        };
-        Self::report_call_event_for_room(operation, room_id, channel_id, &self.client, cx)
+    pub fn report_call_event(&self, operation: &'static str, cx: &AppContext) {
+        if let Some(room) = self.room() {
+            let room = room.read(cx);
+            report_call_event_for_room(operation, room.id(), room.channel_id(), &self.client, cx);
+        }
     }
+}
 
-    pub fn report_call_event_for_room(
-        operation: &'static str,
-        room_id: Option<u64>,
-        channel_id: Option<u64>,
-        client: &Arc<Client>,
-        cx: &AppContext,
-    ) {
-        let telemetry = client.telemetry();
-        let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
-        let event = ClickhouseEvent::Call {
-            operation,
-            room_id,
-            channel_id,
-        };
-        telemetry.report_clickhouse_event(event, telemetry_settings);
-    }
+pub fn report_call_event_for_room(
+    operation: &'static str,
+    room_id: u64,
+    channel_id: Option<u64>,
+    client: &Arc<Client>,
+    cx: &AppContext,
+) {
+    let telemetry = client.telemetry();
+    let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
+    let event = ClickhouseEvent::Call {
+        operation,
+        room_id: Some(room_id),
+        channel_id,
+    };
+    telemetry.report_clickhouse_event(event, telemetry_settings);
+}
+
+pub fn report_call_event_for_channel(
+    operation: &'static str,
+    channel_id: u64,
+    client: &Arc<Client>,
+    cx: &AppContext,
+) {
+    let room = ActiveCall::global(cx).read(cx).room();
+
+    let telemetry = client.telemetry();
+    let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
+
+    let event = ClickhouseEvent::Call {
+        operation,
+        room_id: room.map(|r| r.read(cx).id()),
+        channel_id: Some(channel_id),
+    };
+    telemetry.report_clickhouse_event(event, telemetry_settings);
 }

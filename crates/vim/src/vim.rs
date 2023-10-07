@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod test;
 
+mod command;
 mod editor_events;
 mod insert;
 mod mode_indicator;
@@ -13,10 +14,11 @@ mod visual;
 
 use anyhow::Result;
 use collections::{CommandPaletteFilter, HashMap};
+use command_palette::CommandPaletteInterceptor;
 use editor::{movement, Editor, EditorMode, Event};
 use gpui::{
-    actions, impl_actions, keymap_matcher::KeymapContext, keymap_matcher::MatchResult, AppContext,
-    Subscription, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
+    actions, impl_actions, keymap_matcher::KeymapContext, keymap_matcher::MatchResult, Action,
+    AppContext, Subscription, ViewContext, ViewHandle, WeakViewHandle, WindowContext,
 };
 use language::{CursorShape, Point, Selection, SelectionGoal};
 pub use mode_indicator::ModeIndicator;
@@ -40,9 +42,12 @@ pub struct SwitchMode(pub Mode);
 pub struct PushOperator(pub Operator);
 
 #[derive(Clone, Deserialize, PartialEq)]
-struct Number(u8);
+struct Number(usize);
 
-actions!(vim, [Tab, Enter]);
+actions!(
+    vim,
+    [Tab, Enter, Object, InnerObject, FindForward, FindBackward]
+);
 impl_actions!(vim, [Number, SwitchMode, PushOperator]);
 
 #[derive(Copy, Clone, Debug)]
@@ -51,6 +56,7 @@ enum VimEvent {
 }
 
 pub fn init(cx: &mut AppContext) {
+    cx.set_global(Vim::default());
     settings::register::<VimModeSetting>(cx);
 
     editor_events::init(cx);
@@ -59,6 +65,7 @@ pub fn init(cx: &mut AppContext) {
     insert::init(cx);
     object::init(cx);
     motion::init(cx);
+    command::init(cx);
 
     // Vim Actions
     cx.add_action(|_: &mut Workspace, &SwitchMode(mode): &SwitchMode, cx| {
@@ -70,7 +77,7 @@ pub fn init(cx: &mut AppContext) {
         },
     );
     cx.add_action(|_: &mut Workspace, n: &Number, cx: _| {
-        Vim::update(cx, |vim, cx| vim.push_number(n, cx));
+        Vim::update(cx, |vim, cx| vim.push_count_digit(n.0, cx));
     });
 
     cx.add_action(|_: &mut Workspace, _: &Tab, cx| {
@@ -87,11 +94,11 @@ pub fn init(cx: &mut AppContext) {
     cx.update_default_global::<CommandPaletteFilter, _, _>(|filter, _| {
         filter.filtered_namespaces.insert("vim");
     });
-    cx.update_default_global(|vim: &mut Vim, cx: &mut AppContext| {
+    cx.update_global(|vim: &mut Vim, cx: &mut AppContext| {
         vim.set_enabled(settings::get::<VimModeSetting>(cx).0, cx)
     });
     cx.observe_global::<SettingsStore, _>(|cx| {
-        cx.update_default_global(|vim: &mut Vim, cx: &mut AppContext| {
+        cx.update_global(|vim: &mut Vim, cx: &mut AppContext| {
             vim.set_enabled(settings::get::<VimModeSetting>(cx).0, cx)
         });
     })
@@ -156,7 +163,7 @@ impl Vim {
     where
         F: FnOnce(&mut Self, &mut WindowContext) -> S,
     {
-        cx.update_default_global(update)
+        cx.update_global(update)
     }
 
     fn set_active_editor(&mut self, editor: ViewHandle<Editor>, cx: &mut WindowContext) {
@@ -164,7 +171,7 @@ impl Vim {
         self.editor_subscription = Some(cx.subscribe(&editor, |editor, event, cx| match event {
             Event::SelectionsChanged { local: true } => {
                 let editor = editor.read(cx);
-                if editor.leader_replica_id().is_none() {
+                if editor.leader_peer_id().is_none() {
                     let newest = editor.selections.newest::<usize>(cx);
                     local_selections_changed(newest, cx);
                 }
@@ -188,6 +195,8 @@ impl Vim {
             if editor_mode == EditorMode::Full
                 && !newest_selection_empty
                 && self.state().mode == Mode::Normal
+                // When following someone, don't switch vim mode.
+                && editor.leader_peer_id().is_none()
             {
                 self.switch_mode(Mode::Visual, true, cx);
             }
@@ -225,23 +234,12 @@ impl Vim {
         let editor = self.active_editor.clone()?.upgrade(cx)?;
         Some(editor.update(cx, update))
     }
-    // ~, shift-j, x, shift-x, p
-    // shift-c, shift-d, shift-i, i, a, o, shift-o, s
-    // c, d
-    // r
 
-    // TODO: shift-j?
-    //
     pub fn start_recording(&mut self, cx: &mut WindowContext) {
         if !self.workspace_state.replaying {
             self.workspace_state.recording = true;
             self.workspace_state.recorded_actions = Default::default();
-            self.workspace_state.recorded_count =
-                if let Some(Operator::Number(number)) = self.active_operator() {
-                    Some(number)
-                } else {
-                    None
-                };
+            self.workspace_state.recorded_count = None;
 
             let selections = self
                 .active_editor
@@ -286,6 +284,16 @@ impl Vim {
         }
     }
 
+    pub fn stop_recording_immediately(&mut self, action: Box<dyn Action>) {
+        if self.workspace_state.recording {
+            self.workspace_state
+                .recorded_actions
+                .push(ReplayableAction::Action(action.boxed_clone()));
+            self.workspace_state.recording = false;
+            self.workspace_state.stop_recording_after_next_action = false;
+        }
+    }
+
     pub fn record_current_action(&mut self, cx: &mut WindowContext) {
         self.start_recording(cx);
         self.stop_recording();
@@ -300,6 +308,9 @@ impl Vim {
             state.mode = mode;
             state.operator_stack.clear();
         });
+        if mode != Mode::Insert {
+            self.take_count(cx);
+        }
 
         cx.emit_global(VimEvent::ModeChanged { mode });
 
@@ -352,6 +363,39 @@ impl Vim {
         });
     }
 
+    fn push_count_digit(&mut self, number: usize, cx: &mut WindowContext) {
+        if self.active_operator().is_some() {
+            self.update_state(|state| {
+                state.post_count = Some(state.post_count.unwrap_or(0) * 10 + number)
+            })
+        } else {
+            self.update_state(|state| {
+                state.pre_count = Some(state.pre_count.unwrap_or(0) * 10 + number)
+            })
+        }
+        // update the keymap so that 0 works
+        self.sync_vim_settings(cx)
+    }
+
+    fn take_count(&mut self, cx: &mut WindowContext) -> Option<usize> {
+        if self.workspace_state.replaying {
+            return self.workspace_state.recorded_count;
+        }
+
+        let count = if self.state().post_count == None && self.state().pre_count == None {
+            return None;
+        } else {
+            Some(self.update_state(|state| {
+                state.post_count.take().unwrap_or(1) * state.pre_count.take().unwrap_or(1)
+            }))
+        };
+        if self.workspace_state.recording {
+            self.workspace_state.recorded_count = count;
+        }
+        self.sync_vim_settings(cx);
+        count
+    }
+
     fn push_operator(&mut self, operator: Operator, cx: &mut WindowContext) {
         if matches!(
             operator,
@@ -361,15 +405,6 @@ impl Vim {
         };
         self.update_state(|state| state.operator_stack.push(operator));
         self.sync_vim_settings(cx);
-    }
-
-    fn push_number(&mut self, Number(number): &Number, cx: &mut WindowContext) {
-        if let Some(Operator::Number(current_number)) = self.active_operator() {
-            self.pop_operator(cx);
-            self.push_operator(Operator::Number(current_number * 10 + *number as usize), cx);
-        } else {
-            self.push_operator(Operator::Number(*number as usize), cx);
-        }
     }
 
     fn maybe_pop_operator(&mut self) -> Option<Operator> {
@@ -382,22 +417,8 @@ impl Vim {
         self.sync_vim_settings(cx);
         popped_operator
     }
-
-    fn pop_number_operator(&mut self, cx: &mut WindowContext) -> Option<usize> {
-        if self.workspace_state.replaying {
-            if let Some(number) = self.workspace_state.recorded_count {
-                return Some(number);
-            }
-        }
-
-        if let Some(Operator::Number(number)) = self.active_operator() {
-            self.pop_operator(cx);
-            return Some(number);
-        }
-        None
-    }
-
     fn clear_operator(&mut self, cx: &mut WindowContext) {
+        self.take_count(cx);
         self.update_state(|state| state.operator_stack.clear());
         self.sync_vim_settings(cx);
     }
@@ -452,6 +473,12 @@ impl Vim {
                     filter.filtered_namespaces.insert("vim");
                 }
             });
+
+            if self.enabled {
+                cx.set_global::<CommandPaletteInterceptor>(Box::new(command::command_interceptor));
+            } else if cx.has_global::<CommandPaletteInterceptor>() {
+                let _ = cx.remove_global::<CommandPaletteInterceptor>();
+            }
 
             cx.update_active_window(|cx| {
                 if self.enabled {

@@ -1,0 +1,13 @@
+{"SetOption":{"value":"foldmethod=manual"}}
+{"Put":{"state":"fn boop() {\n  ˇbarp()\n  bazp()\n}\n"}}
+{"Key":"shift-v"}
+{"Key":"j"}
+{"Key":"z"}
+{"Key":"f"}
+{"Key":"escape"}
+{"Key":"g"}
+{"Key":"g"}
+{"Key":"5"}
+{"Key":"d"}
+{"Key":"j"}
+{"Get":{"state":"ˇ","mode":"Normal"}}

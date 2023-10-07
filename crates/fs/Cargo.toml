@@ -9,8 +9,6 @@ path = "src/fs.rs"
 
 [dependencies]
 collections = { path = "../collections" }
-gpui = { path = "../gpui" }
-lsp = { path = "../lsp" }
 rope = { path = "../rope" }
 text = { path = "../text" }
 util = { path = "../util" }
@@ -26,7 +24,7 @@ lazy_static.workspace = true
 parking_lot.workspace = true
 smol.workspace = true
 regex.workspace = true
-git2 = { version = "0.15", default-features = false }
+git2.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
@@ -34,8 +32,10 @@ log.workspace = true
 libc = "0.2"
 time.workspace = true
 
+gpui = { path = "../gpui", optional = true}
+
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }
 
 [features]
-test-support = []
+test-support = ["gpui/test-support"]

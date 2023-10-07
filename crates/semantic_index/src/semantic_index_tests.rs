@@ -1,10 +1,10 @@
 use crate::{
-    embedding::{DummyEmbeddings, Embedding, EmbeddingProvider},
     embedding_queue::EmbeddingQueue,
     parsing::{subtract_ranges, CodeContextRetriever, Span, SpanDigest},
     semantic_index_settings::SemanticIndexSettings,
     FileToEmbed, JobHandle, SearchResult, SemanticIndex, EMBEDDING_QUEUE_FLUSH_TIMEOUT,
 };
+use ai::embedding::{DummyEmbeddings, Embedding, EmbeddingProvider};
 use anyhow::Result;
 use async_trait::async_trait;
 use gpui::{executor::Deterministic, Task, TestAppContext};
@@ -305,6 +305,11 @@ async fn test_code_context_retrieval_rust() {
                 todo!();
             }
         }
+
+        #[derive(Clone)]
+        struct D {
+            name: String
+        }
     "
     .unindent();
 
@@ -360,6 +365,15 @@ async fn test_code_context_retrieval_rust() {
                 }"
                 .unindent(),
                 text.find("fn function_2").unwrap(),
+            ),
+            (
+                "
+                #[derive(Clone)]
+                struct D {
+                    name: String
+                }"
+                .unindent(),
+                text.find("struct D").unwrap(),
             ),
         ],
     );
@@ -1267,6 +1281,9 @@ impl FakeEmbeddingProvider {
 
 #[async_trait]
 impl EmbeddingProvider for FakeEmbeddingProvider {
+    fn is_authenticated(&self) -> bool {
+        true
+    }
     fn truncate(&self, span: &str) -> (String, usize) {
         (span.to_string(), 1)
     }
@@ -1419,6 +1436,9 @@ fn rust_lang() -> Arc<Language> {
                         name: (_) @name)
                 ] @item
             )
+
+            (attribute_item) @collapse
+            (use_declaration) @collapse
             "#,
         )
         .unwrap(),

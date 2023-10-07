@@ -30,12 +30,14 @@ channel = { path = "../channel" }
 clock = { path = "../clock" }
 collections = { path = "../collections" }
 context_menu = { path = "../context_menu" }
+drag_and_drop = { path = "../drag_and_drop" }
 editor = { path = "../editor" }
 feedback = { path = "../feedback" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 menu = { path = "../menu" }
+rich_text = { path = "../rich_text" }
 picker = { path = "../picker" }
 project = { path = "../project" }
 recent_projects = {path = "../recent_projects"}
@@ -55,6 +57,7 @@ schemars.workspace = true
 postage.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
+time.workspace = true
 
 [dev-dependencies]
 call = { path = "../call", features = ["test-support"] }

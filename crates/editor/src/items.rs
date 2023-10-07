@@ -16,8 +16,8 @@ use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, OffsetRangeExt, Point,
     SelectionGoal,
 };
-use project::{FormatTrigger, Item as _, Project, ProjectPath};
-use rpc::proto::{self, update_view};
+use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
+use rpc::proto::{self, update_view, PeerId};
 use smallvec::SmallVec;
 use std::{
     borrow::Cow,
@@ -26,6 +26,7 @@ use std::{
     iter,
     ops::Range,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 use text::Selection;
 use util::{
@@ -155,13 +156,9 @@ impl FollowableItem for Editor {
         }))
     }
 
-    fn set_leader_replica_id(
-        &mut self,
-        leader_replica_id: Option<u16>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.leader_replica_id = leader_replica_id;
-        if self.leader_replica_id.is_some() {
+    fn set_leader_peer_id(&mut self, leader_peer_id: Option<PeerId>, cx: &mut ViewContext<Self>) {
+        self.leader_peer_id = leader_peer_id;
+        if self.leader_peer_id.is_some() {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.remove_active_selections(cx);
             });
@@ -307,6 +304,10 @@ impl FollowableItem for Editor {
             Event::ScrollPositionChanged { local, .. } => *local,
             _ => false,
         }
+    }
+
+    fn is_project_item(&self, _cx: &AppContext) -> bool {
+        true
     }
 }
 
@@ -978,7 +979,28 @@ impl SearchableItem for Editor {
         }
         self.change_selections(None, cx, |s| s.select_ranges(ranges));
     }
+    fn replace(
+        &mut self,
+        identifier: &Self::Match,
+        query: &SearchQuery,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let text = self.buffer.read(cx);
+        let text = text.snapshot(cx);
+        let text = text.text_for_range(identifier.clone()).collect::<Vec<_>>();
+        let text: Cow<_> = if text.len() == 1 {
+            text.first().cloned().unwrap().into()
+        } else {
+            let joined_chunks = text.join("");
+            joined_chunks.into()
+        };
 
+        if let Some(replacement) = query.replacement_for(&text) {
+            self.transact(cx, |this, cx| {
+                this.edit([(identifier.clone(), Arc::from(&*replacement))], cx);
+            });
+        }
+    }
     fn match_index_for_direction(
         &mut self,
         matches: &Vec<Range<Anchor>>,
@@ -1030,7 +1052,7 @@ impl SearchableItem for Editor {
 
     fn find_matches(
         &mut self,
-        query: project::search::SearchQuery,
+        query: Arc<project::search::SearchQuery>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Range<Anchor>>> {
         let buffer = self.buffer().read(cx).snapshot(cx);

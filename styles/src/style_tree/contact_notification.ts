@@ -42,10 +42,10 @@ export default function contact_notification(): any {
         dismiss_button: {
             default: {
                 color: foreground(theme.lowest, "variant"),
-                icon_width: 8,
-                icon_height: 8,
-                button_width: 8,
-                button_height: 8,
+                icon_width: 14,
+                icon_height: 14,
+                button_width: 14,
+                button_height: 14,
                 hover: {
                     color: foreground(theme.lowest, "hovered"),
                 },
