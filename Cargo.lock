@@ -7796,6 +7796,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap 4.4.4",
+ "derive_more",
  "fs",
  "futures 0.3.28",
  "gpui2",
@@ -7817,13 +7818,18 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "backtrace-on-stack-overflow",
+ "clap 4.4.4",
  "gpui3",
+ "itertools 0.11.0",
  "log",
  "rust-embed",
  "serde",
  "settings",
  "simplelog",
+ "smallvec",
+ "strum",
  "theme",
+ "ui2",
  "util",
 ]
 
@@ -9038,6 +9044,21 @@ dependencies = [
  "anyhow",
  "chrono",
  "gpui2",
+ "rand 0.8.5",
+ "serde",
+ "settings",
+ "smallvec",
+ "strum",
+ "theme",
+]
+
+[[package]]
+name = "ui2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "gpui3",
  "rand 0.8.5",
  "serde",
  "settings",
