@@ -3,8 +3,8 @@ use std::str::FromStr;
 
 use crate::{
     Buffer, BufferRow, BufferRows, Editor, FileSystemStatus, GitStatus, HighlightColor,
-    HighlightedLine, HighlightedText, Icon, Label, LabelColor, ListEntry, ListItem, Symbol, Tab,
-    Theme, ToggleState,
+    HighlightedLine, HighlightedText, Icon, Label, LabelColor, ListEntry, ListItem, Player, Symbol,
+    Tab, Theme, ToggleState,
 };
 
 pub fn static_tabs_example<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
@@ -98,6 +98,36 @@ pub fn static_tabs_2<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
 
 pub fn static_tabs_3<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
     vec![Tab::new().git_status(GitStatus::Created).current(true)]
+}
+
+pub fn static_players() -> Vec<Player> {
+    vec![
+        Player::new(
+            0,
+            "https://avatars.githubusercontent.com/u/1714999?v=4".into(),
+            "nathansobo".into(),
+        ),
+        Player::new(
+            1,
+            "https://avatars.githubusercontent.com/u/326587?v=4".into(),
+            "maxbrunsfeld".into(),
+        ),
+        Player::new(
+            2,
+            "https://avatars.githubusercontent.com/u/482957?v=4".into(),
+            "as-cii".into(),
+        ),
+        Player::new(
+            3,
+            "https://avatars.githubusercontent.com/u/1714999?v=4".into(),
+            "iamnbutler".into(),
+        ),
+        Player::new(
+            4,
+            "https://avatars.githubusercontent.com/u/1486634?v=4".into(),
+            "maxdeviant".into(),
+        ),
+    ]
 }
 
 pub fn static_project_panel_project_items<S: 'static + Send + Sync + Clone>() -> Vec<ListItem<S>> {

@@ -2,6 +2,7 @@ pub mod assistant_panel;
 pub mod breadcrumb;
 pub mod buffer;
 pub mod chat_panel;
+pub mod facepile;
 pub mod panel;
 pub mod project_panel;
 pub mod tab;
