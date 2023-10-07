@@ -847,7 +847,10 @@ impl Database {
             .await?;
 
         let mut new_path_suffixes = HashSet::default();
+        let mut our_roots = Vec::new();
         for path in paths {
+            add_root(&path, &mut our_roots)?;
+
             if let Some(start_offset) = path.id_path.find(&format!("/{}/", channel)) {
                 new_path_suffixes.insert((
                     path.channel_id,
@@ -862,7 +865,10 @@ impl Database {
             .await?;
 
         let mut new_paths = Vec::new();
+        let mut their_roots = Vec::new();
         for path in paths_to_new_parent {
+            add_root(&path, &mut their_roots)?;
+
             if path.id_path.contains(&format!("/{}/", channel)) {
                 Err(anyhow!("cycle"))?;
             }
@@ -873,6 +879,10 @@ impl Database {
                     id_path: ActiveValue::Set(format!("{}{}", &path.id_path, path_suffix)),
                 }
             }));
+        }
+
+        if our_roots != their_roots {
+            Err(anyhow!("Can't move a channel out of it's creating org"))?;
         }
 
         channel_path::Entity::insert_many(new_paths)
@@ -1004,6 +1014,29 @@ impl Database {
         })
         .await
     }
+}
+
+fn add_root(path: &channel_path::Model, parent_roots: &mut Vec<ChannelId>) -> Result<(), Error> {
+    let mut root = String::new();
+    for char in path.id_path.chars().skip(1) {
+        if char == '/' {
+            break;
+        } else {
+            root.push(char);
+        }
+    }
+    let root_id = ChannelId(
+        root.parse::<u64>()
+            .map_err(|_| anyhow!("Failed to parse root id"))?
+            .try_into()
+            .map_err(|_| anyhow!("Failed to parse root id"))?,
+    );
+    Ok(match parent_roots.binary_search(&root_id) {
+        Ok(_) => {}
+        Err(idx) => {
+            parent_roots.insert(idx, root_id);
+        }
+    })
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
