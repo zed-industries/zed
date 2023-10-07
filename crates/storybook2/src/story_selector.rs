@@ -39,6 +39,7 @@ pub enum ComponentStory {
     AssistantPanel,
     Breadcrumb,
     Buffer,
+    ChatPanel,
     Panel,
     ProjectPanel,
     Tab,
@@ -58,6 +59,7 @@ impl ComponentStory {
             }
             Self::Buffer => components::buffer::BufferStory::new().into_any(),
             Self::Breadcrumb => components::breadcrumb::BreadcrumbStory::new().into_any(),
+            Self::ChatPanel => components::chat_panel::ChatPanelStory::new().into_any(),
             Self::Panel => components::panel::PanelStory::new().into_any(),
             Self::ProjectPanel => components::project_panel::ProjectPanelStory::new().into_any(),
             Self::Tab => components::tab::TabStory::new().into_any(),

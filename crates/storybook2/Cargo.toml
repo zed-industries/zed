@@ -13,6 +13,7 @@ anyhow.workspace = true
 # TODO: Remove after diagnosing stack overflow.
 backtrace-on-stack-overflow = "0.3.0"
 clap = { version = "4.4", features = ["derive", "string"] }
+chrono = "0.4"
 gpui3 = { path = "../gpui3" }
 itertools = "0.11.0"
 log.workspace = true
