@@ -6,4 +6,5 @@ pub mod project_panel;
 pub mod tab;
 pub mod tab_bar;
 pub mod terminal;
+pub mod toolbar;
 pub mod workspace;
