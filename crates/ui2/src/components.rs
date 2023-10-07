@@ -1,6 +1,7 @@
 mod assistant_panel;
 mod breadcrumb;
 mod buffer;
+mod editor_pane;
 mod icon_button;
 mod list;
 mod panel;
@@ -16,6 +17,7 @@ mod workspace;
 pub use assistant_panel::*;
 pub use breadcrumb::*;
 pub use buffer::*;
+pub use editor_pane::*;
 pub use icon_button::*;
 pub use list::*;
 pub use panel::*;

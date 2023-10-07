@@ -6,8 +6,8 @@ use gpui3::{relative, rems, Size};
 
 use crate::prelude::*;
 use crate::{
-    theme, v_stack, Pane, PaneGroup, Panel, PanelAllowedSides, PanelSide, ProjectPanel,
-    SplitDirection, StatusBar, Terminal,
+    hello_world_rust_editor_with_status_example, theme, v_stack, EditorPane, Pane, PaneGroup,
+    Panel, PanelAllowedSides, PanelSide, ProjectPanel, SplitDirection, StatusBar, Terminal,
 };
 
 #[derive(Element)]
@@ -48,12 +48,10 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
                             |_, payload| {
                                 let theme = payload.downcast_ref::<Arc<Theme>>().unwrap();
 
-                                vec![
-                                    Terminal::new().into_any(), // EditorPane::new(hello_world_rust_editor_with_status_example(
-                                                                //     &theme,
-                                                                // ))
-                                                                // .into_any()
-                                ]
+                                vec![EditorPane::new(hello_world_rust_editor_with_status_example(
+                                    &theme,
+                                ))
+                                .into_any()]
                             },
                             Box::new(theme.clone()),
                         ),
@@ -79,13 +77,10 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
                         |_, payload| {
                             let theme = payload.downcast_ref::<Arc<Theme>>().unwrap();
 
-                            vec![
-                                Terminal::new().into_any(),
-                                //     EditorPane::new(hello_world_rust_editor_with_status_example(
-                                //     &theme,
-                                // ))
-                                // .into_any()
-                            ]
+                            vec![EditorPane::new(hello_world_rust_editor_with_status_example(
+                                &theme,
+                            ))
+                            .into_any()]
                         },
                         Box::new(theme.clone()),
                     )],

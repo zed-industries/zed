@@ -1,7 +1,104 @@
+use std::path::PathBuf;
+use std::str::FromStr;
+
 use crate::{
-    Buffer, BufferRow, BufferRows, GitStatus, HighlightColor, HighlightedLine, HighlightedText,
-    Icon, Label, LabelColor, ListEntry, ListItem, Theme, ToggleState,
+    Buffer, BufferRow, BufferRows, Editor, FileSystemStatus, GitStatus, HighlightColor,
+    HighlightedLine, HighlightedText, Icon, Label, LabelColor, ListEntry, ListItem, Symbol, Tab,
+    Theme, ToggleState,
 };
+
+pub fn static_tabs_example<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
+    vec![
+        Tab::new()
+            .title("wip.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false)
+            .fs_status(FileSystemStatus::Deleted),
+        Tab::new()
+            .title("Cargo.toml".to_string())
+            .icon(Icon::FileToml)
+            .current(false)
+            .git_status(GitStatus::Modified),
+        Tab::new()
+            .title("Channels Panel".to_string())
+            .icon(Icon::Hash)
+            .current(false),
+        Tab::new()
+            .title("channels_panel.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(true)
+            .git_status(GitStatus::Modified),
+        Tab::new()
+            .title("workspace.rs".to_string())
+            .current(false)
+            .icon(Icon::FileRust)
+            .git_status(GitStatus::Modified),
+        Tab::new()
+            .title("icon_button.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false),
+        Tab::new()
+            .title("storybook.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false)
+            .git_status(GitStatus::Created),
+        Tab::new()
+            .title("theme.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false),
+        Tab::new()
+            .title("theme_registry.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false),
+        Tab::new()
+            .title("styleable_helpers.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false),
+    ]
+}
+
+pub fn static_tabs_1<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
+    vec![
+        Tab::new()
+            .title("project_panel.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false)
+            .fs_status(FileSystemStatus::Deleted),
+        Tab::new()
+            .title("tab_bar.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false)
+            .git_status(GitStatus::Modified),
+        Tab::new()
+            .title("workspace.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false),
+        Tab::new()
+            .title("tab.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(true)
+            .git_status(GitStatus::Modified),
+    ]
+}
+
+pub fn static_tabs_2<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
+    vec![
+        Tab::new()
+            .title("tab_bar.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(false)
+            .fs_status(FileSystemStatus::Deleted),
+        Tab::new()
+            .title("static_data.rs".to_string())
+            .icon(Icon::FileRust)
+            .current(true)
+            .git_status(GitStatus::Modified),
+    ]
+}
+
+pub fn static_tabs_3<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
+    vec![Tab::new().git_status(GitStatus::Created).current(true)]
+}
 
 pub fn static_project_panel_project_items<S: 'static + Send + Sync + Clone>() -> Vec<ListItem<S>> {
     vec![
@@ -147,8 +244,37 @@ pub fn static_project_panel_single_items<S: 'static + Send + Sync + Clone>() -> 
     .collect()
 }
 
+pub fn empty_editor_example<S: 'static + Send + Sync + Clone>() -> Editor<S> {
+    Editor {
+        tabs: static_tabs_example(),
+        path: PathBuf::from_str("crates/ui/src/static_data.rs").unwrap(),
+        symbols: vec![],
+        buffer: empty_buffer_example(),
+    }
+}
+
 pub fn empty_buffer_example<S: 'static + Send + Sync + Clone>() -> Buffer<S> {
     Buffer::new().set_rows(Some(BufferRows::default()))
+}
+
+pub fn hello_world_rust_editor_example<S: 'static + Send + Sync + Clone>(
+    theme: &Theme,
+) -> Editor<S> {
+    Editor {
+        tabs: static_tabs_example(),
+        path: PathBuf::from_str("crates/ui/src/static_data.rs").unwrap(),
+        symbols: vec![Symbol(vec![
+            HighlightedText {
+                text: "fn ".to_string(),
+                color: HighlightColor::Keyword.hsla(&theme),
+            },
+            HighlightedText {
+                text: "main".to_string(),
+                color: HighlightColor::Function.hsla(&theme),
+            },
+        ])],
+        buffer: hello_world_rust_buffer_example(theme),
+    }
 }
 
 pub fn hello_world_rust_buffer_example<S: 'static + Send + Sync + Clone>(
@@ -269,6 +395,26 @@ pub fn hello_world_rust_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
             show_line_number,
         },
     ]
+}
+
+pub fn hello_world_rust_editor_with_status_example<S: 'static + Send + Sync + Clone>(
+    theme: &Theme,
+) -> Editor<S> {
+    Editor {
+        tabs: static_tabs_example(),
+        path: PathBuf::from_str("crates/ui/src/static_data.rs").unwrap(),
+        symbols: vec![Symbol(vec![
+            HighlightedText {
+                text: "fn ".to_string(),
+                color: HighlightColor::Keyword.hsla(&theme),
+            },
+            HighlightedText {
+                text: "main".to_string(),
+                color: HighlightColor::Function.hsla(&theme),
+            },
+        ])],
+        buffer: hello_world_rust_buffer_with_status_example(theme),
+    }
 }
 
 pub fn hello_world_rust_buffer_with_status_example<S: 'static + Send + Sync + Clone>(
