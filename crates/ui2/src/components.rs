@@ -13,6 +13,7 @@ mod tab;
 mod tab_bar;
 mod terminal;
 mod toolbar;
+mod traffic_lights;
 mod workspace;
 
 pub use assistant_panel::*;
@@ -30,4 +31,5 @@ pub use tab::*;
 pub use tab_bar::*;
 pub use terminal::*;
 pub use toolbar::*;
+pub use traffic_lights::*;
 pub use workspace::*;

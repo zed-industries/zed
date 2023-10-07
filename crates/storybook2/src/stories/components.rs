@@ -8,4 +8,5 @@ pub mod tab;
 pub mod tab_bar;
 pub mod terminal;
 pub mod toolbar;
+pub mod traffic_lights;
 pub mod workspace;

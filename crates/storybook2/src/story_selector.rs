@@ -46,6 +46,7 @@ pub enum ComponentStory {
     TabBar,
     Terminal,
     Toolbar,
+    TrafficLights,
     Workspace,
 }
 
@@ -66,6 +67,7 @@ impl ComponentStory {
             Self::TabBar => components::tab_bar::TabBarStory::new().into_any(),
             Self::Terminal => components::terminal::TerminalStory::new().into_any(),
             Self::Toolbar => components::toolbar::ToolbarStory::new().into_any(),
+            Self::TrafficLights => components::traffic_lights::TrafficLightsStory::new().into_any(),
             Self::Workspace => components::workspace::WorkspaceStory::new().into_any(),
         }
     }
