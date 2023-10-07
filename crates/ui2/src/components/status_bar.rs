@@ -1,8 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::prelude::*;
-use crate::theme::{theme, Theme};
-use crate::{Icon, IconButton, IconColor, ToolDivider};
+use crate::{Button, Icon, IconButton, IconColor, ToolDivider};
 
 #[derive(Default, PartialEq)]
 pub enum Tool {
@@ -30,14 +29,14 @@ impl Default for ToolGroup {
 }
 
 #[derive(Element)]
-pub struct StatusBar<S: 'static + Send + Sync> {
+pub struct StatusBar<S: 'static + Send + Sync + Clone> {
     state_type: PhantomData<S>,
     left_tools: Option<ToolGroup>,
     right_tools: Option<ToolGroup>,
     bottom_tools: Option<ToolGroup>,
 }
 
-impl<S: 'static + Send + Sync> StatusBar<S> {
+impl<S: 'static + Send + Sync + Clone> StatusBar<S> {
     pub fn new() -> Self {
         Self {
             state_type: PhantomData,
@@ -119,8 +118,8 @@ impl<S: 'static + Send + Sync> StatusBar<S> {
                     .flex()
                     .items_center()
                     .gap_1()
-                    // .child(Button::new("116:25"))
-                    // .child(Button::new("Rust")),
+                    .child(Button::new("116:25"))
+                    .child(Button::new("Rust")),
             )
             .child(ToolDivider::new())
             .child(

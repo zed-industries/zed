@@ -13,6 +13,7 @@ use ui::prelude::*;
 #[strum(serialize_all = "snake_case")]
 pub enum ElementStory {
     Avatar,
+    Button,
     Icon,
     Input,
     Label,
@@ -24,6 +25,7 @@ impl ElementStory {
 
         match self {
             Self::Avatar => elements::avatar::AvatarStory::new().into_any(),
+            Self::Button => elements::button::ButtonStory::new().into_any(),
             Self::Icon => elements::icon::IconStory::new().into_any(),
             Self::Input => elements::input::InputStory::new().into_any(),
             Self::Label => elements::label::LabelStory::new().into_any(),
