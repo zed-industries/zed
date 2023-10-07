@@ -1,4 +1,5 @@
 pub mod assistant_panel;
+pub mod breadcrumb;
 pub mod buffer;
 pub mod panel;
 pub mod project_panel;

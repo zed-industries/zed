@@ -35,6 +35,7 @@ impl ElementStory {
 #[strum(serialize_all = "snake_case")]
 pub enum ComponentStory {
     AssistantPanel,
+    Breadcrumb,
     Buffer,
     Panel,
     ProjectPanel,
@@ -53,6 +54,7 @@ impl ComponentStory {
                 components::assistant_panel::AssistantPanelStory::new().into_any()
             }
             Self::Buffer => components::buffer::BufferStory::new().into_any(),
+            Self::Breadcrumb => components::breadcrumb::BreadcrumbStory::new().into_any(),
             Self::Panel => components::panel::PanelStory::new().into_any(),
             Self::ProjectPanel => components::project_panel::ProjectPanelStory::new().into_any(),
             Self::Tab => components::tab::TabStory::new().into_any(),
