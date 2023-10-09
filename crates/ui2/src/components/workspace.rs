@@ -183,7 +183,12 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
             .child(StatusBar::new())
             .child(Toast::new(
                 ToastOrigin::Bottom,
-                |_, _| vec![Label::new("label").into_any()],
+                |_, _| vec![Label::new("A toast").into_any()],
+                Box::new(()),
+            ))
+            .child(Toast::new(
+                ToastOrigin::BottomRight,
+                |_, _| vec![Label::new("Another toast").into_any()],
                 Box::new(()),
             ))
     }
