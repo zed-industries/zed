@@ -50,14 +50,7 @@ fn main() {
 
     let story_selector = args.story.clone();
 
-    let theme = match args.theme.as_ref().map(|theme| theme.as_str()) {
-        Some("Rosé Pine") => themes::rose_pine(),
-        Some("Rosé Pine Dawn") => themes::rose_pine_dawn(),
-        Some(theme_name) => {
-            panic!("Only 'Rosé Pine' and 'Rosé Pine Dawn' are currently supported.")
-        }
-        None => themes::rose_pine_dawn(),
-    };
+    let theme = themes::load_theme(args.theme);
 
     let asset_source = Arc::new(Assets);
     gpui3::App::production(asset_source).run(move |cx| {
