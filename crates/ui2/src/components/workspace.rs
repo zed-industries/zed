@@ -135,6 +135,8 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
                                     .flex_1()
                                     // CSS Hack: Flex 1 has to have a set height to properly fill the space
                                     // Or it will give you a height of 0
+                                    // Marshall: We may not need this anymore with `gpui3`. It seems to render
+                                    //           fine without it.
                                     .h_px()
                                     .child(root_group),
                             )
