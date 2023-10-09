@@ -8,6 +8,7 @@ pub struct Model {
     pub id: RoomId,
     pub live_kit_room: String,
     pub channel_id: Option<ChannelId>,
+    pub release_channel: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

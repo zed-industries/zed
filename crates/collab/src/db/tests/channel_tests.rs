@@ -5,7 +5,11 @@ use rpc::{
 };
 
 use crate::{
-    db::{queries::channels::ChannelGraph, tests::graph, ChannelId, Database, NewUserParams},
+    db::{
+        queries::channels::ChannelGraph,
+        tests::{graph, TEST_RELEASE_CHANNEL},
+        ChannelId, Database, NewUserParams,
+    },
     test_both_dbs,
 };
 use std::sync::Arc;
@@ -206,7 +210,12 @@ async fn test_joining_channels(db: &Arc<Database>) {
 
     // can join a room with membership to its channel
     let joined_room = db
-        .join_room(room_1, user_1, ConnectionId { owner_id, id: 1 })
+        .join_room(
+            room_1,
+            user_1,
+            ConnectionId { owner_id, id: 1 },
+            TEST_RELEASE_CHANNEL,
+        )
         .await
         .unwrap();
     assert_eq!(joined_room.room.participants.len(), 1);
@@ -214,7 +223,12 @@ async fn test_joining_channels(db: &Arc<Database>) {
     drop(joined_room);
     // cannot join a room without membership to its channel
     assert!(db
-        .join_room(room_1, user_2, ConnectionId { owner_id, id: 1 })
+        .join_room(
+            room_1,
+            user_2,
+            ConnectionId { owner_id, id: 1 },
+            TEST_RELEASE_CHANNEL
+        )
         .await
         .is_err());
 }

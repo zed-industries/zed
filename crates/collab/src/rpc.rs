@@ -63,6 +63,7 @@ use time::OffsetDateTime;
 use tokio::sync::{watch, Semaphore};
 use tower::ServiceBuilder;
 use tracing::{info_span, instrument, Instrument};
+use util::channel::RELEASE_CHANNEL_NAME;
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -957,7 +958,12 @@ async fn create_room(
     let room = session
         .db()
         .await
-        .create_room(session.user_id, session.connection_id, &live_kit_room)
+        .create_room(
+            session.user_id,
+            session.connection_id,
+            &live_kit_room,
+            RELEASE_CHANNEL_NAME.as_str(),
+        )
         .await?;
 
     response.send(proto::CreateRoomResponse {
@@ -979,7 +985,12 @@ async fn join_room(
         let room = session
             .db()
             .await
-            .join_room(room_id, session.user_id, session.connection_id)
+            .join_room(
+                room_id,
+                session.user_id,
+                session.connection_id,
+                RELEASE_CHANNEL_NAME.as_str(),
+            )
             .await?;
         room_updated(&room.room, &session.peer);
         room.into_inner()
@@ -2616,7 +2627,12 @@ async fn join_channel(
         let room_id = db.room_id_for_channel(channel_id).await?;
 
         let joined_room = db
-            .join_room(room_id, session.user_id, session.connection_id)
+            .join_room(
+                room_id,
+                session.user_id,
+                session.connection_id,
+                RELEASE_CHANNEL_NAME.as_str(),
+            )
             .await?;
 
         let live_kit_connection_info = session.live_kit_client.as_ref().and_then(|live_kit| {

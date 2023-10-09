@@ -107,10 +107,12 @@ impl Database {
         user_id: UserId,
         connection: ConnectionId,
         live_kit_room: &str,
+        release_channel: &str,
     ) -> Result<proto::Room> {
         self.transaction(|tx| async move {
             let room = room::ActiveModel {
                 live_kit_room: ActiveValue::set(live_kit_room.into()),
+                release_channel: ActiveValue::set(Some(release_channel.to_string())),
                 ..Default::default()
             }
             .insert(&*tx)
@@ -270,20 +272,31 @@ impl Database {
         room_id: RoomId,
         user_id: UserId,
         connection: ConnectionId,
+        collab_release_channel: &str,
     ) -> Result<RoomGuard<JoinRoom>> {
         self.room_transaction(room_id, |tx| async move {
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-            enum QueryChannelId {
+            enum QueryChannelIdAndReleaseChannel {
                 ChannelId,
+                ReleaseChannel,
             }
-            let channel_id: Option<ChannelId> = room::Entity::find()
-                .select_only()
-                .column(room::Column::ChannelId)
-                .filter(room::Column::Id.eq(room_id))
-                .into_values::<_, QueryChannelId>()
-                .one(&*tx)
-                .await?
-                .ok_or_else(|| anyhow!("no such room"))?;
+
+            let (channel_id, release_channel): (Option<ChannelId>, Option<String>) =
+                room::Entity::find()
+                    .select_only()
+                    .column(room::Column::ChannelId)
+                    .column(room::Column::ReleaseChannel)
+                    .filter(room::Column::Id.eq(room_id))
+                    .into_values::<_, QueryChannelIdAndReleaseChannel>()
+                    .one(&*tx)
+                    .await?
+                    .ok_or_else(|| anyhow!("no such room"))?;
+
+            if let Some(release_channel) = release_channel {
+                if &release_channel != collab_release_channel {
+                    Err(anyhow!("must join using the {} release", release_channel))?;
+                }
+            }
 
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
             enum QueryParticipantIndices {
@@ -300,6 +313,7 @@ impl Database {
                 .into_values::<_, QueryParticipantIndices>()
                 .all(&*tx)
                 .await?;
+
             let mut participant_index = 0;
             while existing_participant_indices.contains(&participant_index) {
                 participant_index += 1;
