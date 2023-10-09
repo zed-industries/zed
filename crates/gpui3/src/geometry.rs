@@ -1,5 +1,5 @@
 use core::fmt::Debug;
-use derive_more::{Add, AddAssign, Div, Mul, Sub, SubAssign};
+use derive_more::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};
 use refineable::Refineable;
 use std::{
     cmp, fmt,
@@ -560,7 +560,7 @@ impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Corners<T
 
 impl<T: Clone + Debug + Copy> Copy for Corners<T> {}
 
-#[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, Neg, PartialEq, PartialOrd)]
 #[repr(transparent)]
 pub struct Pixels(pub(crate) f32);
 
@@ -770,7 +770,7 @@ impl From<f64> for GlobalPixels {
     }
 }
 
-#[derive(Clone, Copy, Default, Add, Sub, Mul, Div)]
+#[derive(Clone, Copy, Default, Add, Sub, Mul, Div, Neg)]
 pub struct Rems(f32);
 
 impl Mul<Pixels> for Rems {
@@ -787,7 +787,7 @@ impl Debug for Rems {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Neg)]
 pub enum AbsoluteLength {
     Pixels(Pixels),
     Rems(Rems),
@@ -830,7 +830,7 @@ impl Default for AbsoluteLength {
 }
 
 /// A non-auto length that can be defined in pixels, rems, or percent of parent.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Neg)]
 pub enum DefiniteLength {
     Absolute(AbsoluteLength),
     /// A fraction of the parent's size between 0 and 1.
