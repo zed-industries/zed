@@ -34,8 +34,8 @@ use gpui::{
     },
     impl_actions,
     platform::{CursorStyle, MouseButton, PromptLevel},
-    serde_json, AnyElement, AppContext, AsyncAppContext, Element, Entity, FontCache, ModelHandle,
-    Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    serde_json, AnyElement, AppContext, AsyncAppContext, ClipboardItem, Element, Entity, FontCache,
+    ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
@@ -100,6 +100,11 @@ pub struct JoinChannelChat {
     pub channel_id: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CopyChannelLink {
+    pub channel_id: u64,
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct StartMoveChannelFor {
     channel_id: ChannelId,
@@ -157,6 +162,7 @@ impl_actions!(
         OpenChannelNotes,
         JoinChannelCall,
         JoinChannelChat,
+        CopyChannelLink,
         LinkChannel,
         StartMoveChannelFor,
         StartLinkChannelFor,
@@ -205,6 +211,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(CollabPanel::expand_selected_channel);
     cx.add_action(CollabPanel::open_channel_notes);
     cx.add_action(CollabPanel::join_channel_chat);
+    cx.add_action(CollabPanel::copy_channel_link);
 
     cx.add_action(
         |panel: &mut CollabPanel, action: &ToggleSelectedIx, cx: &mut ViewContext<CollabPanel>| {
@@ -2571,6 +2578,13 @@ impl CollabPanel {
                 },
             ));
 
+            items.push(ContextMenuItem::action(
+                "Copy Channel Link",
+                CopyChannelLink {
+                    channel_id: path.channel_id(),
+                },
+            ));
+
             if self.channel_store.read(cx).is_user_admin(path.channel_id()) {
                 let parent_id = path.parent_id();
 
@@ -3218,6 +3232,15 @@ impl CollabPanel {
                 });
             });
         }
+    }
+
+    fn copy_channel_link(&mut self, action: &CopyChannelLink, cx: &mut ViewContext<Self>) {
+        let channel_store = self.channel_store.read(cx);
+        let Some(channel) = channel_store.channel_for_id(action.channel_id) else {
+            return;
+        };
+        let item = ClipboardItem::new(channel.link());
+        cx.write_to_clipboard(item)
     }
 }
 
