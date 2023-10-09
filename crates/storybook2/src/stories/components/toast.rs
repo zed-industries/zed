@@ -1,5 +1,4 @@
 use std::marker::PhantomData;
-use std::sync::Arc;
 
 use ui::prelude::*;
 use ui::{Label, Toast, ToastOrigin};
