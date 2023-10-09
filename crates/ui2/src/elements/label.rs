@@ -133,17 +133,17 @@ impl<S: 'static + Send + Sync + Clone> Label<S> {
 
         div()
             .flex()
-            // .when(self.strikethrough, |this| {
-            //     this.relative().child(
-            //         div()
-            //             .absolute()
-            //             .top_px()
-            //             .my_auto()
-            //             .w_full()
-            //             .h_px()
-            //             .fill(LabelColor::Hidden.hsla(cx)),
-            //     )
-            // })
+            .when(self.strikethrough, |this| {
+                this.relative().child(
+                    div()
+                        .absolute()
+                        .top_px()
+                        .my_auto()
+                        .w_full()
+                        .h_px()
+                        .fill(LabelColor::Hidden.hsla(cx)),
+                )
+            })
             .children(runs.into_iter().map(|run| {
                 let mut div = div();
 
