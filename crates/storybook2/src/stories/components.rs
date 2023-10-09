@@ -3,6 +3,7 @@ pub mod breadcrumb;
 pub mod buffer;
 pub mod chat_panel;
 pub mod collab_panel;
+pub mod command_palette;
 pub mod facepile;
 pub mod keybinding;
 pub mod palette;

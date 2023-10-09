@@ -5,9 +5,10 @@ use rand::Rng;
 
 use crate::{
     Buffer, BufferRow, BufferRows, Editor, FileSystemStatus, GitStatus, HighlightColor,
-    HighlightedLine, HighlightedText, Icon, Label, LabelColor, ListEntry, ListEntrySize, ListItem,
-    Livestream, MicStatus, Player, PlayerCallStatus, PlayerWithCallStatus, ScreenShareStatus,
-    Symbol, Tab, Theme, ToggleState, VideoStatus,
+    HighlightedLine, HighlightedText, Icon, Keybinding, Label, LabelColor, ListEntry,
+    ListEntrySize, ListItem, Livestream, MicStatus, ModifierKeys, PaletteItem, Player,
+    PlayerCallStatus, PlayerWithCallStatus, ScreenShareStatus, Symbol, Tab, Theme, ToggleState,
+    VideoStatus,
 };
 
 pub fn static_tabs_example<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
@@ -539,6 +540,61 @@ pub fn static_collab_panel_channels<S: 'static + Send + Sync + Clone>() -> Vec<L
     .into_iter()
     .map(From::from)
     .collect()
+}
+
+pub fn example_editor_actions<S: 'static + Send + Sync + Clone>() -> Vec<PaletteItem<S>> {
+    vec![
+        PaletteItem::new("New File").keybinding(Keybinding::new(
+            "N".to_string(),
+            ModifierKeys::new().control(true),
+        )),
+        PaletteItem::new("Open File").keybinding(Keybinding::new(
+            "O".to_string(),
+            ModifierKeys::new().control(true),
+        )),
+        PaletteItem::new("Save File").keybinding(Keybinding::new(
+            "S".to_string(),
+            ModifierKeys::new().control(true),
+        )),
+        PaletteItem::new("Cut").keybinding(Keybinding::new(
+            "X".to_string(),
+            ModifierKeys::new().control(true),
+        )),
+        PaletteItem::new("Copy").keybinding(Keybinding::new(
+            "C".to_string(),
+            ModifierKeys::new().control(true),
+        )),
+        PaletteItem::new("Paste").keybinding(Keybinding::new(
+            "V".to_string(),
+            ModifierKeys::new().control(true),
+        )),
+        PaletteItem::new("Undo").keybinding(Keybinding::new(
+            "Z".to_string(),
+            ModifierKeys::new().control(true),
+        )),
+        PaletteItem::new("Redo").keybinding(Keybinding::new(
+            "Z".to_string(),
+            ModifierKeys::new().control(true).shift(true),
+        )),
+        PaletteItem::new("Find").keybinding(Keybinding::new(
+            "F".to_string(),
+            ModifierKeys::new().control(true),
+        )),
+        PaletteItem::new("Replace").keybinding(Keybinding::new(
+            "R".to_string(),
+            ModifierKeys::new().control(true),
+        )),
+        PaletteItem::new("Jump to Line"),
+        PaletteItem::new("Select All"),
+        PaletteItem::new("Deselect All"),
+        PaletteItem::new("Switch Document"),
+        PaletteItem::new("Insert Line Below"),
+        PaletteItem::new("Insert Line Above"),
+        PaletteItem::new("Move Line Up"),
+        PaletteItem::new("Move Line Down"),
+        PaletteItem::new("Toggle Comment"),
+        PaletteItem::new("Delete Line"),
+    ]
 }
 
 pub fn empty_editor_example<S: 'static + Send + Sync + Clone>() -> Editor<S> {

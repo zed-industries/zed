@@ -41,6 +41,7 @@ pub enum ComponentStory {
     Buffer,
     ChatPanel,
     CollabPanel,
+    CommandPalette,
     Facepile,
     Keybinding,
     Palette,
@@ -67,6 +68,9 @@ impl ComponentStory {
             Self::Breadcrumb => components::breadcrumb::BreadcrumbStory::new().into_any(),
             Self::ChatPanel => components::chat_panel::ChatPanelStory::new().into_any(),
             Self::CollabPanel => components::collab_panel::CollabPanelStory::new().into_any(),
+            Self::CommandPalette => {
+                components::command_palette::CommandPaletteStory::new().into_any()
+            }
             Self::Facepile => components::facepile::FacepileStory::new().into_any(),
             Self::Keybinding => components::keybinding::KeybindingStory::new().into_any(),
             Self::Palette => components::palette::PaletteStory::new().into_any(),
