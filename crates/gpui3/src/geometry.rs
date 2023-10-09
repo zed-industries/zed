@@ -289,6 +289,12 @@ impl<T: Clone + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T>> Bound
         let lower_right = self.lower_right().min(&other.lower_right());
         Self::from_corners(upper_left, lower_right)
     }
+
+    pub fn union(&self, other: &Self) -> Self {
+        let top_left = self.origin.min(&other.origin);
+        let bottom_right = self.lower_right().max(&other.lower_right());
+        Bounds::from_corners(top_left, bottom_right)
+    }
 }
 
 impl<T, Rhs> Mul<Rhs> for Bounds<T>

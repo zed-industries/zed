@@ -1,11 +1,16 @@
 use crate::{
-    AtlasTextureId, AtlasTile, Bounds, Corners, Edges, Hsla, Point, ScaledContentMask, ScaledPixels,
+    point, px, AtlasTextureId, AtlasTile, Bounds, Corners, Edges, Hsla, Pixels, Point,
+    ScaledContentMask, ScaledPixels,
 };
 use collections::BTreeMap;
 use etagere::euclid::{Point3D, Vector3D};
 use plane_split::{BspSplitter, Polygon as BspPolygon};
 use smallvec::SmallVec;
-use std::{iter::Peekable, mem, slice};
+use std::{
+    iter::Peekable,
+    mem, slice,
+    sync::atomic::{AtomicU32, Ordering::SeqCst},
+};
 
 // Exported to metal
 pub type PointF = Point<f32>;
@@ -490,6 +495,96 @@ impl From<PolychromeSprite> for Primitive {
     fn from(sprite: PolychromeSprite) -> Self {
         Primitive::PolychromeSprite(sprite)
     }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PathId(u32);
+
+pub struct PathBuilder {
+    bounds: Bounds<Pixels>,
+    vertices: Vec<PathVertex>,
+    start: Option<Point<Pixels>>,
+    current: Point<Pixels>,
+}
+
+impl PathBuilder {
+    pub fn new() -> Self {
+        const NEXT_PATH_ID: AtomicU32 = AtomicU32::new(0);
+
+        Self {
+            vertices: Vec::new(),
+            start: Default::default(),
+            current: Default::default(),
+            bounds: Default::default(),
+        }
+    }
+
+    pub fn line_to(&mut self, to: Point<Pixels>) {
+        if let Some(start) = self.start {
+            self.push_triangle(
+                (start, self.current, to),
+                (point(0., 1.), point(0., 1.), point(0., 1.)),
+            );
+        } else {
+            self.start = Some(to);
+        }
+        self.current = to;
+    }
+
+    pub fn curve_to(&mut self, to: Point<Pixels>, ctrl: Point<Pixels>) {
+        self.line_to(to);
+        self.push_triangle(
+            (self.current, ctrl, to),
+            (point(0., 0.), point(0.5, 0.), point(1., 1.)),
+        );
+    }
+
+    fn push_triangle(
+        &mut self,
+        xy: (Point<Pixels>, Point<Pixels>, Point<Pixels>),
+        st: (Point<f32>, Point<f32>, Point<f32>),
+    ) {
+        if self.vertices.is_empty() {
+            self.bounds = Bounds {
+                origin: xy.0,
+                size: Default::default(),
+            };
+        }
+        self.bounds = self
+            .bounds
+            .union(&Bounds {
+                origin: xy.0,
+                size: Default::default(),
+            })
+            .union(&Bounds {
+                origin: xy.1,
+                size: Default::default(),
+            })
+            .union(&Bounds {
+                origin: xy.2,
+                size: Default::default(),
+            });
+
+        self.vertices.push(PathVertex {
+            xy_position: xy.0,
+            st_position: st.0,
+        });
+        self.vertices.push(PathVertex {
+            xy_position: xy.1,
+            st_position: st.1,
+        });
+        self.vertices.push(PathVertex {
+            xy_position: xy.2,
+            st_position: st.2,
+        });
+    }
+}
+
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct PathVertex {
+    pub xy_position: Point<Pixels>,
+    pub st_position: Point<f32>,
 }
 
 #[derive(Copy, Clone, Debug)]
