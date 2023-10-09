@@ -605,7 +605,7 @@ impl Room {
     }
 
     /// Returns the most 'active' projects, defined as most people in the project
-    pub fn most_active_project(&self) -> Option<(u64, u64)> {
+    pub fn most_active_project(&self, cx: &AppContext) -> Option<(u64, u64)> {
         let mut projects = HashMap::default();
         let mut hosts = HashMap::default();
 
@@ -619,6 +619,13 @@ impl Room {
             for project in &participant.projects {
                 *projects.entry(project.id).or_insert(0) += 1;
                 hosts.insert(project.id, participant.user.id);
+            }
+        }
+
+        if let Some(user) = self.user_store.read(cx).current_user() {
+            for project in &self.local_participant.projects {
+                *projects.entry(project.id).or_insert(0) += 1;
+                hosts.insert(project.id, user.id);
             }
         }
 

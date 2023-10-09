@@ -4162,15 +4162,36 @@ async fn join_channel_internal(
     active_call: &ModelHandle<ActiveCall>,
     cx: &mut AsyncAppContext,
 ) -> Result<bool> {
-    let should_prompt = active_call.read_with(cx, |active_call, cx| {
+    let (should_prompt, open_room) = active_call.read_with(cx, |active_call, cx| {
         let Some(room) = active_call.room().map(|room| room.read(cx)) else {
-            return false;
+            return (false, None);
         };
 
-        room.is_sharing_project()
+        let already_in_channel = room.channel_id() == Some(channel_id);
+        let should_prompt = room.is_sharing_project()
             && room.remote_participants().len() > 0
-            && room.channel_id() != Some(channel_id)
+            && !already_in_channel;
+        let open_room = if already_in_channel {
+            active_call.room().cloned()
+        } else {
+            None
+        };
+        (should_prompt, open_room)
     });
+
+    if let Some(room) = open_room {
+        let task = room.update(cx, |room, cx| {
+            if let Some((project, host)) = room.most_active_project(cx) {
+                return Some(join_remote_project(project, host, app_state.clone(), cx));
+            }
+
+            None
+        });
+        if let Some(task) = task {
+            task.await?;
+        }
+        return anyhow::Ok(true);
+    }
 
     if should_prompt {
         if let Some(workspace) = requesting_window {
@@ -4228,7 +4249,7 @@ async fn join_channel_internal(
     room.update(cx, |room, _| room.next_room_update()).await;
 
     let task = room.update(cx, |room, cx| {
-        if let Some((project, host)) = room.most_active_project() {
+        if let Some((project, host)) = room.most_active_project(cx) {
             return Some(join_remote_project(project, host, app_state.clone(), cx));
         }
 
