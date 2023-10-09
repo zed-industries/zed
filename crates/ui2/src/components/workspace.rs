@@ -7,8 +7,9 @@ use gpui3::{relative, rems, Size};
 use crate::prelude::*;
 use crate::{
     hello_world_rust_editor_with_status_example, random_players_with_call_status, theme, v_stack,
-    ChatMessage, ChatPanel, EditorPane, Livestream, Pane, PaneGroup, Panel, PanelAllowedSides,
-    PanelSide, ProjectPanel, SplitDirection, StatusBar, Terminal, TitleBar,
+    ChatMessage, ChatPanel, EditorPane, Label, Livestream, Pane, PaneGroup, Panel,
+    PanelAllowedSides, PanelSide, ProjectPanel, SplitDirection, StatusBar, Terminal, TitleBar,
+    Toast, ToastOrigin,
 };
 
 #[derive(Element)]
@@ -180,17 +181,10 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
                     ),
             )
             .child(StatusBar::new())
-        // An example of a toast is below
-        // Currently because of stacking order this gets obscured by other elements
-
-        // .child(Toast::new(
-        //     ToastOrigin::Bottom,
-        //     |_, payload| {
-        //         let theme = payload.downcast_ref::<Arc<Theme>>().unwrap();
-
-        //         vec![Label::new("label").into_any()]
-        //     },
-        //     Box::new(theme.clone()),
-        // ))
+            .child(Toast::new(
+                ToastOrigin::Bottom,
+                |_, _| vec![Label::new("label").into_any()],
+                Box::new(()),
+            ))
     }
 }

@@ -46,11 +46,12 @@ impl<S: 'static + Send + Sync> Element for Div<S> {
         cx: &mut ViewContext<S>,
     ) -> Result<()> {
         let style = self.computed_style();
-        cx.stack(0, |cx| style.paint(bounds, cx));
+        let z_index = style.z_index.unwrap_or(0);
+        cx.stack(z_index, |cx| style.paint(bounds, cx));
 
         let overflow = &style.overflow;
         style.apply_text_style(cx, |cx| {
-            cx.stack(1, |cx| {
+            cx.stack(z_index + 1, |cx| {
                 style.apply_overflow(bounds, cx, |cx| self.paint_children(overflow, state, cx))
             })
         })?;
@@ -67,6 +68,11 @@ impl<S: 'static + Send + Sync> Element for Div<S> {
 }
 
 impl<S: 'static> Div<S> {
+    pub fn z_index(mut self, z_index: u32) -> Self {
+        self.declared_style().z_index = Some(z_index);
+        self
+    }
+
     pub fn overflow_hidden(mut self) -> Self {
         self.declared_style().overflow.x = Some(Overflow::Hidden);
         self.declared_style().overflow.y = Some(Overflow::Hidden);

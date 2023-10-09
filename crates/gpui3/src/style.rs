@@ -95,6 +95,8 @@ pub struct Style {
 
     /// TEXT
     pub text: TextStyleRefinement,
+
+    pub z_index: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -335,6 +337,7 @@ impl Default for Style {
             corner_radii: Corners::default(),
             box_shadow: Default::default(),
             text: TextStyleRefinement::default(),
+            z_index: None,
         }
     }
 }

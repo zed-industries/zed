@@ -52,7 +52,8 @@ impl<S: 'static + Send + Sync> Toast<S> {
             div = div.right_4();
         }
 
-        div.absolute()
+        div.z_index(5)
+            .absolute()
             .bottom_4()
             .flex()
             .py_2()
