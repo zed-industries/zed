@@ -5,9 +5,9 @@ use rand::Rng;
 
 use crate::{
     Buffer, BufferRow, BufferRows, Editor, FileSystemStatus, GitStatus, HighlightColor,
-    HighlightedLine, HighlightedText, Icon, Label, LabelColor, ListEntry, ListItem, Livestream,
-    MicStatus, Player, PlayerCallStatus, PlayerWithCallStatus, ScreenShareStatus, Symbol, Tab,
-    Theme, ToggleState, VideoStatus,
+    HighlightedLine, HighlightedText, Icon, Label, LabelColor, ListEntry, ListEntrySize, ListItem,
+    Livestream, MicStatus, Player, PlayerCallStatus, PlayerWithCallStatus, ScreenShareStatus,
+    Symbol, Tab, Theme, ToggleState, VideoStatus,
 };
 
 pub fn static_tabs_example<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
@@ -458,6 +458,83 @@ pub fn static_project_panel_single_items<S: 'static + Send + Sync + Clone>() -> 
         ListEntry::new(Label::new("config.json"))
             .left_icon(Icon::FileGeneric.into())
             .indent_level(0),
+    ]
+    .into_iter()
+    .map(From::from)
+    .collect()
+}
+
+pub fn static_collab_panel_current_call<S: 'static + Send + Sync + Clone>() -> Vec<ListItem<S>> {
+    vec![
+        ListEntry::new(Label::new("as-cii")).left_avatar("http://github.com/as-cii.png?s=50"),
+        ListEntry::new(Label::new("nathansobo"))
+            .left_avatar("http://github.com/nathansobo.png?s=50"),
+        ListEntry::new(Label::new("maxbrunsfeld"))
+            .left_avatar("http://github.com/maxbrunsfeld.png?s=50"),
+    ]
+    .into_iter()
+    .map(From::from)
+    .collect()
+}
+
+pub fn static_collab_panel_channels<S: 'static + Send + Sync + Clone>() -> Vec<ListItem<S>> {
+    vec![
+        ListEntry::new(Label::new("zed"))
+            .left_icon(Icon::Hash.into())
+            .size(ListEntrySize::Medium)
+            .indent_level(0),
+        ListEntry::new(Label::new("community"))
+            .left_icon(Icon::Hash.into())
+            .size(ListEntrySize::Medium)
+            .indent_level(1),
+        ListEntry::new(Label::new("dashboards"))
+            .left_icon(Icon::Hash.into())
+            .size(ListEntrySize::Medium)
+            .indent_level(2),
+        ListEntry::new(Label::new("feedback"))
+            .left_icon(Icon::Hash.into())
+            .size(ListEntrySize::Medium)
+            .indent_level(2),
+        ListEntry::new(Label::new("teams-in-channels-alpha"))
+            .left_icon(Icon::Hash.into())
+            .size(ListEntrySize::Medium)
+            .indent_level(2),
+        ListEntry::new(Label::new("current-projects"))
+            .left_icon(Icon::Hash.into())
+            .size(ListEntrySize::Medium)
+            .indent_level(1),
+        ListEntry::new(Label::new("codegen"))
+            .left_icon(Icon::Hash.into())
+            .size(ListEntrySize::Medium)
+            .indent_level(2),
+        ListEntry::new(Label::new("gpui2"))
+            .left_icon(Icon::Hash.into())
+            .size(ListEntrySize::Medium)
+            .indent_level(2),
+        ListEntry::new(Label::new("livestreaming"))
+            .left_icon(Icon::Hash.into())
+            .size(ListEntrySize::Medium)
+            .indent_level(2),
+        ListEntry::new(Label::new("open-source"))
+            .left_icon(Icon::Hash.into())
+            .size(ListEntrySize::Medium)
+            .indent_level(2),
+        ListEntry::new(Label::new("replace"))
+            .left_icon(Icon::Hash.into())
+            .size(ListEntrySize::Medium)
+            .indent_level(2),
+        ListEntry::new(Label::new("semantic-index"))
+            .left_icon(Icon::Hash.into())
+            .size(ListEntrySize::Medium)
+            .indent_level(2),
+        ListEntry::new(Label::new("vim"))
+            .left_icon(Icon::Hash.into())
+            .size(ListEntrySize::Medium)
+            .indent_level(2),
+        ListEntry::new(Label::new("web-tech"))
+            .left_icon(Icon::Hash.into())
+            .size(ListEntrySize::Medium)
+            .indent_level(2),
     ]
     .into_iter()
     .map(From::from)
