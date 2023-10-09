@@ -13,20 +13,15 @@ struct LegacyTheme {
     pub base_theme: serde_json::Value,
 }
 
-pub fn load_theme(override_theme_name: Option<String>) -> Theme {
-    let theme = if let Some(theme) = override_theme_name {
-        let theme_contents = Assets::get(&format!("themes/{theme}.json"))
-            .unwrap_or_else(|| panic!("failed to load theme: {theme}.json"));
+/// Loads the [`Theme`] with the given name.
+pub fn load_theme(name: String) -> Theme {
+    let theme_contents = Assets::get(&format!("themes/{name}.json"))
+        .unwrap_or_else(|| panic!("failed to load theme: {name}.json"));
 
-        let legacy_theme: LegacyTheme =
-            serde_json::from_str(std::str::from_utf8(&theme_contents.data).unwrap()).unwrap();
+    let legacy_theme: LegacyTheme =
+        serde_json::from_str(std::str::from_utf8(&theme_contents.data).unwrap()).unwrap();
 
-        let new_theme: Theme = serde_json::from_value(legacy_theme.base_theme.clone()).unwrap();
-
-        new_theme
-    } else {
-        rose_pine_dawn()
-    };
+    let theme: Theme = serde_json::from_value(legacy_theme.base_theme.clone()).unwrap();
 
     theme
 }
