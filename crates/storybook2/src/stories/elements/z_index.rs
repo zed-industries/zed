@@ -60,7 +60,8 @@ impl<S: 'static + Send + Sync> ZIndexStory<S> {
 }
 
 trait Styles: StyleHelpers {
-    fn blocks(self) -> Self {
+    // Trailing `_` is so we don't collide with `block` style `StyleHelpers`.
+    fn block_(self) -> Self {
         self.absolute()
             .w(px(150.))
             .h(px(50.))
@@ -136,7 +137,7 @@ impl<S: 'static + Send + Sync> ZIndexExample<S> {
             .child(
                 div()
                     .blue()
-                    .blocks()
+                    .block_()
                     .top(px(0.))
                     .left(px(0.))
                     .z_index(6)
@@ -145,7 +146,7 @@ impl<S: 'static + Send + Sync> ZIndexExample<S> {
             .child(
                 div()
                     .blue()
-                    .blocks()
+                    .block_()
                     .top(px(30.))
                     .left(px(30.))
                     .z_index(4)
@@ -154,7 +155,7 @@ impl<S: 'static + Send + Sync> ZIndexExample<S> {
             .child(
                 div()
                     .blue()
-                    .blocks()
+                    .block_()
                     .top(px(60.))
                     .left(px(60.))
                     .z_index(2)
@@ -164,7 +165,7 @@ impl<S: 'static + Send + Sync> ZIndexExample<S> {
             .child(
                 div()
                     .red()
-                    .blocks()
+                    .block_()
                     .top(px(150.))
                     .left(px(0.))
                     .child("z-index: auto"),
@@ -172,7 +173,7 @@ impl<S: 'static + Send + Sync> ZIndexExample<S> {
             .child(
                 div()
                     .red()
-                    .blocks()
+                    .block_()
                     .top(px(180.))
                     .left(px(30.))
                     .child("z-index: auto"),
@@ -180,7 +181,7 @@ impl<S: 'static + Send + Sync> ZIndexExample<S> {
             .child(
                 div()
                     .red()
-                    .blocks()
+                    .block_()
                     .top(px(210.))
                     .left(px(60.))
                     .child("z-index: auto"),
