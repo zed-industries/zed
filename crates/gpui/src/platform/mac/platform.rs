@@ -1014,7 +1014,6 @@ extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
 }
 
 extern "C" fn continue_user_activity(this: &mut Object, _: Sel, _: id, user_activity: id, _: id) {
-    dbg!("yay!");
     let url = unsafe {
         let url: id = msg_send!(user_activity, webpageURL);
         if url == nil {
@@ -1028,7 +1027,6 @@ extern "C" fn continue_user_activity(this: &mut Object, _: Sel, _: id, user_acti
             )
         }
     };
-    dbg!(&url);
     let platform = unsafe { get_foreground_platform(this) };
     if let Some(callback) = platform.0.borrow_mut().open_urls.as_mut() {
         callback(url.into_iter().collect());

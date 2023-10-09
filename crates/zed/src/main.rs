@@ -279,7 +279,6 @@ fn main() {
                         }
                         OpenRequest::JoinChannel { channel_id } => cx
                             .update(|cx| {
-                                dbg!("joining channel");
                                 workspace::join_channel(channel_id, app_state.clone(), None, cx)
                             })
                             .detach(),
