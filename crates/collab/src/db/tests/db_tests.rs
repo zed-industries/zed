@@ -659,6 +659,71 @@ async fn test_non_matching_release_channels(db: &Arc<Database>) {
     assert!(result.is_ok())
 }
 
+test_both_dbs!(
+    test_public_rooms,
+    test_public_rooms_postgres,
+    test_public_rooms_sqlite
+);
+
+async fn test_public_rooms(db: &Arc<Database>) {
+    let owner_id = db.create_server("test").await.unwrap().0 as u32;
+
+    let user1 = db
+        .create_user(
+            &format!("admin@example.com"),
+            true,
+            NewUserParams {
+                github_login: "admin".into(),
+                github_user_id: 0,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap();
+    let user2 = db
+        .create_user(
+            &format!("user@example.com"),
+            false,
+            NewUserParams {
+                github_login: "user".into(),
+                github_user_id: 1,
+                invite_count: 0,
+            },
+        )
+        .await
+        .unwrap();
+
+    let channel_id = db
+        .create_channel("livestreaming", None, "live-kit-room", user1.user_id)
+        .await
+        .unwrap();
+
+    let user_1_connection = ConnectionId { owner_id, id: 0 };
+    let room = db
+        .create_room(user1.user_id, user_1_connection, "", TEST_RELEASE_CHANNEL)
+        .await
+        .unwrap();
+
+    db.set_public(user_1_connection, RoomId::from_proto(room.id), true)
+        .await
+        .unwrap();
+
+    let result = db
+        .join_room(
+            RoomId::from_proto(room.id),
+            user2.user_id,
+            ConnectionId { owner_id, id: 1 },
+            TEST_RELEASE_CHANNEL,
+        )
+        .await;
+    assert!(result.is_ok());
+
+    let result = db
+        .join_channel_buffer(channel_id, user2.user_id, ConnectionId { owner_id, id: 1 })
+        .await;
+    assert!(result.is_ok());
+}
+
 fn build_background_executor() -> Arc<Background> {
     Deterministic::new(0).build_background()
 }

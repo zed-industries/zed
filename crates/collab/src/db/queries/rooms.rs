@@ -279,13 +279,15 @@ impl Database {
             enum QueryChannelIdAndEnviroment {
                 ChannelId,
                 Enviroment,
+                IsPublic,
             }
 
-            let (channel_id, release_channel): (Option<ChannelId>, Option<String>) =
+            let (channel_id, release_channel, public): (Option<ChannelId>, Option<String>, bool) =
                 room::Entity::find()
                     .select_only()
                     .column(room::Column::ChannelId)
                     .column(room::Column::Enviroment)
+                    .column(room::Column::IsPublic)
                     .filter(room::Column::Id.eq(room_id))
                     .into_values::<_, QueryChannelIdAndEnviroment>()
                     .one(&*tx)
@@ -296,6 +298,36 @@ impl Database {
                 if &release_channel != enviroment {
                     Err(anyhow!("must join using the {} release", release_channel))?;
                 }
+            }
+
+            let mut can_join_room = public;
+
+            if !can_join_room {
+                if let Some(channel_id) = channel_id {
+                    can_join_room = self
+                        .check_user_is_channel_member(channel_id, user_id, &*tx)
+                        .await
+                        .is_ok()
+                }
+            }
+
+            if !can_join_room {
+                // if you've been invited, you may join the room.
+                // (whether or not the room is in a channel)
+                can_join_room = room_participant::Entity::find()
+                    .filter(
+                        Condition::all()
+                            .add(room_participant::Column::RoomId.eq(room_id))
+                            .add(room_participant::Column::UserId.eq(user_id))
+                            .add(room_participant::Column::AnsweringConnectionId.is_null()),
+                    )
+                    .count(&*tx)
+                    .await?
+                    > 0;
+            }
+
+            if !can_join_room {
+                Err(anyhow!("permission denied"))?
             }
 
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
@@ -319,61 +351,34 @@ impl Database {
                 participant_index += 1;
             }
 
-            if let Some(channel_id) = channel_id {
-                self.check_user_is_channel_member(channel_id, user_id, &*tx)
-                    .await?;
-
-                room_participant::Entity::insert_many([room_participant::ActiveModel {
-                    room_id: ActiveValue::set(room_id),
-                    user_id: ActiveValue::set(user_id),
-                    answering_connection_id: ActiveValue::set(Some(connection.id as i32)),
-                    answering_connection_server_id: ActiveValue::set(Some(ServerId(
-                        connection.owner_id as i32,
-                    ))),
-                    answering_connection_lost: ActiveValue::set(false),
-                    calling_user_id: ActiveValue::set(user_id),
-                    calling_connection_id: ActiveValue::set(connection.id as i32),
-                    calling_connection_server_id: ActiveValue::set(Some(ServerId(
-                        connection.owner_id as i32,
-                    ))),
-                    participant_index: ActiveValue::Set(Some(participant_index)),
-                    ..Default::default()
-                }])
-                .on_conflict(
-                    OnConflict::columns([room_participant::Column::UserId])
-                        .update_columns([
-                            room_participant::Column::AnsweringConnectionId,
-                            room_participant::Column::AnsweringConnectionServerId,
-                            room_participant::Column::AnsweringConnectionLost,
-                            room_participant::Column::ParticipantIndex,
-                        ])
-                        .to_owned(),
-                )
-                .exec(&*tx)
-                .await?;
-            } else {
-                let result = room_participant::Entity::update_many()
-                    .filter(
-                        Condition::all()
-                            .add(room_participant::Column::RoomId.eq(room_id))
-                            .add(room_participant::Column::UserId.eq(user_id))
-                            .add(room_participant::Column::AnsweringConnectionId.is_null()),
-                    )
-                    .set(room_participant::ActiveModel {
-                        participant_index: ActiveValue::Set(Some(participant_index)),
-                        answering_connection_id: ActiveValue::set(Some(connection.id as i32)),
-                        answering_connection_server_id: ActiveValue::set(Some(ServerId(
-                            connection.owner_id as i32,
-                        ))),
-                        answering_connection_lost: ActiveValue::set(false),
-                        ..Default::default()
-                    })
-                    .exec(&*tx)
-                    .await?;
-                if result.rows_affected == 0 {
-                    Err(anyhow!("room does not exist or was already joined"))?;
-                }
-            }
+            room_participant::Entity::insert_many([room_participant::ActiveModel {
+                room_id: ActiveValue::set(room_id),
+                user_id: ActiveValue::set(user_id),
+                answering_connection_id: ActiveValue::set(Some(connection.id as i32)),
+                answering_connection_server_id: ActiveValue::set(Some(ServerId(
+                    connection.owner_id as i32,
+                ))),
+                answering_connection_lost: ActiveValue::set(false),
+                calling_user_id: ActiveValue::set(user_id),
+                calling_connection_id: ActiveValue::set(connection.id as i32),
+                calling_connection_server_id: ActiveValue::set(Some(ServerId(
+                    connection.owner_id as i32,
+                ))),
+                participant_index: ActiveValue::Set(Some(participant_index)),
+                ..Default::default()
+            }])
+            .on_conflict(
+                OnConflict::columns([room_participant::Column::UserId])
+                    .update_columns([
+                        room_participant::Column::AnsweringConnectionId,
+                        room_participant::Column::AnsweringConnectionServerId,
+                        room_participant::Column::AnsweringConnectionLost,
+                        room_participant::Column::ParticipantIndex,
+                    ])
+                    .to_owned(),
+            )
+            .exec(&*tx)
+            .await?;
 
             let room = self.get_room(room_id, &tx).await?;
             let channel_members = if let Some(channel_id) = channel_id {
@@ -1025,6 +1030,36 @@ impl Database {
             }
 
             Ok(connection_ids)
+        })
+        .await
+    }
+
+    pub async fn set_public(
+        &self,
+        connection_id: ConnectionId,
+        room_id: RoomId,
+        public: bool,
+    ) -> Result<RoomGuard<()>> {
+        self.room_transaction(room_id, |tx| async move {
+            room_participant::Entity::find()
+                .filter(
+                    Condition::all()
+                        .add(room_participant::Column::RoomId.eq(room_id))
+                        .add(room_participant::Column::AnsweringConnectionId.eq(connection_id.id)),
+                )
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("not a room participant"))?;
+
+            room::Entity::update(room::ActiveModel {
+                id: ActiveValue::Unchanged(room_id),
+                public: ActiveValue::set(public),
+                ..Default::default()
+            })
+            .exec(&*tx)
+            .await?;
+
+            Ok(())
         })
         .await
     }

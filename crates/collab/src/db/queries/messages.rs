@@ -9,7 +9,7 @@ impl Database {
         user_id: UserId,
     ) -> Result<()> {
         self.transaction(|tx| async move {
-            self.check_user_is_channel_member(channel_id, user_id, &*tx)
+            self.check_user_can_access_channel_resources(channel_id, user_id, &*tx)
                 .await?;
             channel_chat_participant::ActiveModel {
                 id: ActiveValue::NotSet,
@@ -77,7 +77,7 @@ impl Database {
         before_message_id: Option<MessageId>,
     ) -> Result<Vec<proto::ChannelMessage>> {
         self.transaction(|tx| async move {
-            self.check_user_is_channel_member(channel_id, user_id, &*tx)
+            self.check_user_can_access_channel_resources(channel_id, user_id, &*tx)
                 .await?;
 
             let mut condition =

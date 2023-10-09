@@ -615,6 +615,41 @@ impl Database {
         Ok(())
     }
 
+    // you can access channel resources if you're on a call in the channel,
+    // or if you're a channel member.
+    pub async fn check_user_can_access_channel_resources(
+        &self,
+        channel_id: ChannelId,
+        user_id: UserId,
+        tx: &DatabaseTransaction,
+    ) -> Result<()> {
+        let sql = r#"
+            SELECT
+                1
+            FROM
+                room_participants, rooms
+            WHERE
+                room_participants.room_id = rooms.id
+                AND room_participants.user_id = $1
+                AND rooms.channel_id = $2
+                AND room_participants.answering_connection_id IS NOT NULL
+                AND room_participants.answering_connection_lost IS FALSE
+            "#;
+
+        let stmt = Statement::from_sql_and_values(
+            tx.get_database_backend(),
+            sql,
+            [user_id.to_proto().into(), channel_id.to_proto().into()],
+        );
+
+        if tx.query_one(stmt).await.is_ok() {
+            return Ok(());
+        }
+
+        self.check_user_is_channel_member(channel_id, user_id, tx)
+            .await
+    }
+
     pub async fn check_user_is_channel_admin(
         &self,
         channel_id: ChannelId,
