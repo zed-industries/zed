@@ -21,7 +21,6 @@ use ui::themed;
 
 use crate::assets::Assets;
 use crate::story_selector::StorySelector;
-use crate::themes::rose_pine_dawn;
 use crate::workspace::workspace;
 
 // gpui2::actions! {
@@ -51,6 +50,15 @@ fn main() {
 
     let story_selector = args.story.clone();
 
+    let theme = match args.theme.as_ref().map(|theme| theme.as_str()) {
+        Some("Rosé Pine") => themes::rose_pine(),
+        Some("Rosé Pine Dawn") => themes::rose_pine_dawn(),
+        Some(theme_name) => {
+            panic!("Only 'Rosé Pine' and 'Rosé Pine Dawn' are currently supported.")
+        }
+        None => themes::rose_pine_dawn(),
+    };
+
     let asset_source = Arc::new(Assets);
     gpui3::App::production(asset_source).run(move |cx| {
         match story_selector {
@@ -65,7 +73,7 @@ fn main() {
                     },
                     move |cx| {
                         view(
-                            cx.entity(|cx| StoryWrapper::new(selector)),
+                            cx.entity(|cx| StoryWrapper::new(selector, theme)),
                             StoryWrapper::render,
                         )
                     },
@@ -92,15 +100,16 @@ fn main() {
 #[derive(Clone)]
 pub struct StoryWrapper {
     selector: StorySelector,
+    theme: Theme,
 }
 
 impl StoryWrapper {
-    pub(crate) fn new(selector: StorySelector) -> Self {
-        Self { selector }
+    pub(crate) fn new(selector: StorySelector, theme: Theme) -> Self {
+        Self { selector, theme }
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<State = Self> {
-        themed(rose_pine_dawn(), cx, |cx| {
+        themed(self.theme.clone(), cx, |cx| {
             div()
                 .flex()
                 .flex_col()
