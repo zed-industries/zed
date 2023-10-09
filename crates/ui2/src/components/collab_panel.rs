@@ -11,14 +11,14 @@ use crate::{
 
 #[derive(Element)]
 pub struct CollabPanel<S: 'static + Send + Sync + Clone> {
-    view_type: PhantomData<S>,
+    state_type: PhantomData<S>,
     scroll_state: ScrollState,
 }
 
 impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
     pub fn new(scroll_state: ScrollState) -> Self {
         Self {
-            view_type: PhantomData,
+            state_type: PhantomData,
             scroll_state,
         }
     }
