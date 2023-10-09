@@ -45,6 +45,7 @@ pub enum ComponentStory {
     ContextMenu,
     Facepile,
     Keybinding,
+    LanguageSelector,
     MultiBuffer,
     Palette,
     Panel,
@@ -77,6 +78,9 @@ impl ComponentStory {
             Self::ContextMenu => components::context_menu::ContextMenuStory::new().into_any(),
             Self::Facepile => components::facepile::FacepileStory::new().into_any(),
             Self::Keybinding => components::keybinding::KeybindingStory::new().into_any(),
+            Self::LanguageSelector => {
+                components::language_selector::LanguageSelectorStory::new().into_any()
+            }
             Self::MultiBuffer => components::multi_buffer::MultiBufferStory::new().into_any(),
             Self::Palette => components::palette::PaletteStory::new().into_any(),
             Self::Panel => components::panel::PanelStory::new().into_any(),

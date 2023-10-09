@@ -7,6 +7,7 @@ pub mod command_palette;
 pub mod context_menu;
 pub mod facepile;
 pub mod keybinding;
+pub mod language_selector;
 pub mod multi_buffer;
 pub mod palette;
 pub mod panel;
