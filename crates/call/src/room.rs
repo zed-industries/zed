@@ -686,6 +686,7 @@ impl Room {
                         let Some(peer_id) = participant.peer_id else {
                             continue;
                         };
+                        let participant_index = ParticipantIndex(participant.participant_index);
                         this.participant_user_ids.insert(participant.user_id);
 
                         let old_projects = this
@@ -736,8 +737,9 @@ impl Room {
                         if let Some(remote_participant) =
                             this.remote_participants.get_mut(&participant.user_id)
                         {
-                            remote_participant.projects = participant.projects;
                             remote_participant.peer_id = peer_id;
+                            remote_participant.projects = participant.projects;
+                            remote_participant.participant_index = participant_index;
                             if location != remote_participant.location {
                                 remote_participant.location = location;
                                 cx.emit(Event::ParticipantLocationChanged {
@@ -749,9 +751,7 @@ impl Room {
                                 participant.user_id,
                                 RemoteParticipant {
                                     user: user.clone(),
-                                    participant_index: ParticipantIndex(
-                                        participant.participant_index,
-                                    ),
+                                    participant_index,
                                     peer_id,
                                     projects: participant.projects,
                                     location,
