@@ -12,6 +12,7 @@ pub mod multi_buffer;
 pub mod palette;
 pub mod panel;
 pub mod project_panel;
+pub mod recent_projects;
 pub mod tab;
 pub mod tab_bar;
 pub mod terminal;
