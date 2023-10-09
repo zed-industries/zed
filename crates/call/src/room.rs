@@ -600,27 +600,30 @@ impl Room {
 
     /// Returns the most 'active' projects, defined as most people in the project
     pub fn most_active_project(&self) -> Option<(u64, u64)> {
-        let mut projects = HashMap::default();
-        let mut hosts = HashMap::default();
+        let mut project_hosts_and_guest_counts = HashMap::<u64, (Option<u64>, u32)>::default();
         for participant in self.remote_participants.values() {
             match participant.location {
                 ParticipantLocation::SharedProject { project_id } => {
-                    *projects.entry(project_id).or_insert(0) += 1;
+                    project_hosts_and_guest_counts
+                        .entry(project_id)
+                        .or_default()
+                        .1 += 1;
                 }
                 ParticipantLocation::External | ParticipantLocation::UnsharedProject => {}
             }
             for project in &participant.projects {
-                *projects.entry(project.id).or_insert(0) += 1;
-                hosts.insert(project.id, participant.user.id);
+                project_hosts_and_guest_counts
+                    .entry(project.id)
+                    .or_default()
+                    .0 = Some(participant.user.id);
             }
         }
 
-        let mut pairs: Vec<(u64, usize)> = projects.into_iter().collect();
-        pairs.sort_by_key(|(_, count)| *count as i32);
-
-        pairs
-            .first()
-            .map(|(project_id, _)| (*project_id, hosts[&project_id]))
+        project_hosts_and_guest_counts
+            .into_iter()
+            .filter_map(|(id, (host, guest_count))| Some((id, host?, guest_count)))
+            .max_by_key(|(_, _, guest_count)| *guest_count)
+            .map(|(id, host, _)| (id, host))
     }
 
     async fn handle_room_updated(
@@ -686,6 +689,7 @@ impl Room {
                         let Some(peer_id) = participant.peer_id else {
                             continue;
                         };
+                        let participant_index = ParticipantIndex(participant.participant_index);
                         this.participant_user_ids.insert(participant.user_id);
 
                         let old_projects = this
@@ -736,8 +740,9 @@ impl Room {
                         if let Some(remote_participant) =
                             this.remote_participants.get_mut(&participant.user_id)
                         {
-                            remote_participant.projects = participant.projects;
                             remote_participant.peer_id = peer_id;
+                            remote_participant.projects = participant.projects;
+                            remote_participant.participant_index = participant_index;
                             if location != remote_participant.location {
                                 remote_participant.location = location;
                                 cx.emit(Event::ParticipantLocationChanged {
@@ -749,9 +754,7 @@ impl Room {
                                 participant.user_id,
                                 RemoteParticipant {
                                     user: user.clone(),
-                                    participant_index: ParticipantIndex(
-                                        participant.participant_index,
-                                    ),
+                                    participant_index,
                                     peer_id,
                                     projects: participant.projects,
                                     location,
