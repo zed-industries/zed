@@ -42,6 +42,7 @@ pub enum ComponentStory {
     ChatPanel,
     CollabPanel,
     CommandPalette,
+    ContextMenu,
     Facepile,
     Keybinding,
     Palette,
@@ -71,6 +72,7 @@ impl ComponentStory {
             Self::CommandPalette => {
                 components::command_palette::CommandPaletteStory::new().into_any()
             }
+            Self::ContextMenu => components::context_menu::ContextMenuStory::new().into_any(),
             Self::Facepile => components::facepile::FacepileStory::new().into_any(),
             Self::Keybinding => components::keybinding::KeybindingStory::new().into_any(),
             Self::Palette => components::palette::PaletteStory::new().into_any(),
