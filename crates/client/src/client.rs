@@ -70,7 +70,7 @@ pub const ZED_SECRET_CLIENT_TOKEN: &str = "618033988749894";
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(100);
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 
-actions!(client, [SignIn, SignOut]);
+actions!(client, [SignIn, SignOut, Reconnect]);
 
 pub fn init_settings(cx: &mut AppContext) {
     settings::register::<TelemetrySettings>(cx);
@@ -97,6 +97,17 @@ pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
             if let Some(client) = client.upgrade() {
                 cx.spawn(|cx| async move {
                     client.disconnect(&cx);
+                })
+                .detach();
+            }
+        }
+    });
+    cx.add_global_action({
+        let client = client.clone();
+        move |_: &Reconnect, cx| {
+            if let Some(client) = client.upgrade() {
+                cx.spawn(|cx| async move {
+                    client.reconnect(&cx);
                 })
                 .detach();
             }
@@ -1210,6 +1221,11 @@ impl Client {
     pub fn disconnect(self: &Arc<Self>, cx: &AsyncAppContext) {
         self.peer.teardown();
         self.set_status(Status::SignedOut, cx);
+    }
+
+    pub fn reconnect(self: &Arc<Self>, cx: &AsyncAppContext) {
+        self.peer.teardown();
+        self.set_status(Status::ConnectionLost, cx);
     }
 
     fn connection_id(&self) -> Result<ConnectionId> {
