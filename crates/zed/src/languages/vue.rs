@@ -1,23 +1,19 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 pub use language::*;
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
+use parking_lot::Mutex;
 use serde_json::Value;
-use smol::fs::{self, File};
+use smol::fs::{self};
 use std::{
     any::Any,
-    cell::OnceCell,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{
-    fs::remove_matching,
-    github::{latest_github_release, GitHubLspBinaryVersion},
-    ResultExt,
-};
+use util::ResultExt;
 
 pub struct VueLspVersion {
     vue_version: String,
@@ -26,15 +22,20 @@ pub struct VueLspVersion {
 
 pub struct VueLspAdapter {
     node: Arc<dyn NodeRuntime>,
+    typescript_install_path: Mutex<Option<PathBuf>>,
 }
 
 impl VueLspAdapter {
     const SERVER_PATH: &'static str =
         "node_modules/@vue/language-server/bin/vue-language-server.js";
     // TODO: this can't be hardcoded, yet we have to figure out how to pass it in initialization_options.
-    const TYPESCRIPT_PATH: &'static str = "/Users/hiro/Library/Application Support/Zed/languages/vue-language-server/node_modules/typescript/lib"; //"node_modules/@vue/typescript/lib";
+    const TYPESCRIPT_PATH: &'static str = "node_modules/typescript/lib";
     pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
-        Self { node }
+        let typescript_install_path = Mutex::new(None);
+        Self {
+            node,
+            typescript_install_path,
+        }
     }
 }
 #[async_trait]
@@ -49,7 +50,7 @@ impl super::LspAdapter for VueLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        _: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         Ok(Box::new(VueLspVersion {
             vue_version: self
@@ -60,9 +61,14 @@ impl super::LspAdapter for VueLspAdapter {
         }) as Box<_>)
     }
     async fn initialization_options(&self) -> Option<Value> {
+        let typescript_sdk_path = self.typescript_install_path.lock();
+        let typescript_sdk_path = typescript_sdk_path
+            .as_ref()
+            .expect("initialization_options called without a container_dir for typescript");
+
         Some(serde_json::json!({
             "typescript": {
-                "tsdk": Self::TYPESCRIPT_PATH//
+                "tsdk": typescript_sdk_path
             }
         }))
     }
@@ -70,11 +76,11 @@ impl super::LspAdapter for VueLspAdapter {
         &self,
         version: Box<dyn 'static + Send + Any>,
         container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
+        _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<VueLspVersion>().unwrap();
         let server_path = container_dir.join(Self::SERVER_PATH);
-
+        let ts_path = container_dir.join(Self::TYPESCRIPT_PATH);
         if fs::metadata(&server_path).await.is_err() {
             self.node
                 .npm_install_packages(
@@ -82,6 +88,9 @@ impl super::LspAdapter for VueLspAdapter {
                     &[("@vue/language-server", version.vue_version.as_str())],
                 )
                 .await?;
+        }
+        assert!(fs::metadata(&server_path).await.is_ok());
+        if fs::metadata(&ts_path).await.is_err() {
             self.node
                 .npm_install_packages(
                     &container_dir,
@@ -89,7 +98,9 @@ impl super::LspAdapter for VueLspAdapter {
                 )
                 .await?;
         }
-        assert!(fs::metadata(&server_path).await.is_ok());
+
+        assert!(fs::metadata(&ts_path).await.is_ok());
+        *self.typescript_install_path.lock() = Some(ts_path);
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
             arguments: vue_server_binary_arguments(&server_path),
@@ -101,34 +112,38 @@ impl super::LspAdapter for VueLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, self.node.clone()).await
+        let (server, ts_path) = get_cached_server_binary(container_dir, self.node.clone()).await?;
+        *self.typescript_install_path.lock() = Some(ts_path);
+        Some(server)
     }
 
     async fn installation_test_binary(
         &self,
         container_dir: PathBuf,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, self.node.clone())
+        let (server, ts_path) = get_cached_server_binary(container_dir, self.node.clone())
             .await
-            .map(|mut binary| {
+            .map(|(mut binary, ts_path)| {
                 binary.arguments = vec!["--help".into()];
-                binary
-            })
+                (binary, ts_path)
+            })?;
+        *self.typescript_install_path.lock() = Some(ts_path);
+        Some(server)
     }
 
     async fn label_for_completion(
         &self,
-        completion: &lsp::CompletionItem,
-        language: &Arc<Language>,
+        _: &lsp::CompletionItem,
+        _: &Arc<Language>,
     ) -> Option<CodeLabel> {
         None
     }
 
     async fn label_for_symbol(
         &self,
-        name: &str,
-        kind: lsp::SymbolKind,
-        language: &Arc<Language>,
+        _: &str,
+        _: lsp::SymbolKind,
+        _: &Arc<Language>,
     ) -> Option<CodeLabel> {
         None
     }
@@ -138,10 +153,11 @@ fn vue_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
 }
 
+type TypescriptPath = PathBuf;
 async fn get_cached_server_binary(
     container_dir: PathBuf,
     node: Arc<dyn NodeRuntime>,
-) -> Option<LanguageServerBinary> {
+) -> Option<(LanguageServerBinary, TypescriptPath)> {
     (|| async move {
         let mut last_version_dir = None;
         let mut entries = fs::read_dir(&container_dir).await?;
@@ -153,11 +169,15 @@ async fn get_cached_server_binary(
         }
         let last_version_dir = last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
         let server_path = last_version_dir.join(VueLspAdapter::SERVER_PATH);
-        if server_path.exists() {
-            Ok(LanguageServerBinary {
-                path: node.binary_path().await?,
-                arguments: vue_server_binary_arguments(&server_path),
-            })
+        let typescript_path = last_version_dir.join(VueLspAdapter::TYPESCRIPT_PATH);
+        if server_path.exists() && typescript_path.exists() {
+            Ok((
+                LanguageServerBinary {
+                    path: node.binary_path().await?,
+                    arguments: vue_server_binary_arguments(&server_path),
+                },
+                typescript_path,
+            ))
         } else {
             Err(anyhow!(
                 "missing executable in directory {:?}",
