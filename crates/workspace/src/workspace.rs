@@ -574,7 +574,7 @@ pub struct Workspace {
     titlebar_item: Option<AnyViewHandle>,
     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
     project: ModelHandle<Project>,
-    follower_states_by_leader: FollowerStatesByLeader,
+    follower_states: HashMap<ViewHandle<Pane>, FollowerState>,
     last_leaders_by_pane: HashMap<WeakViewHandle<Pane>, PeerId>,
     window_edited: bool,
     active_call: Option<(ModelHandle<ActiveCall>, Vec<Subscription>)>,
@@ -599,10 +599,9 @@ pub struct ViewId {
     pub id: u64,
 }
 
-type FollowerStatesByLeader = HashMap<PeerId, HashMap<ViewHandle<Pane>, FollowerState>>;
-
 #[derive(Default)]
 struct FollowerState {
+    leader_id: PeerId,
     active_view_id: Option<ViewId>,
     items_by_leader_view_id: HashMap<ViewId, Box<dyn FollowableItemHandle>>,
 }
@@ -791,7 +790,7 @@ impl Workspace {
             bottom_dock,
             right_dock,
             project: project.clone(),
-            follower_states_by_leader: Default::default(),
+            follower_states: Default::default(),
             last_leaders_by_pane: Default::default(),
             window_edited: false,
             active_call,
@@ -2509,13 +2508,16 @@ impl Workspace {
     }
 
     fn collaborator_left(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
-        if let Some(states_by_pane) = self.follower_states_by_leader.remove(&peer_id) {
-            for state in states_by_pane.into_values() {
-                for item in state.items_by_leader_view_id.into_values() {
+        self.follower_states.retain(|_, state| {
+            if state.leader_id == peer_id {
+                for item in state.items_by_leader_view_id.values() {
                     item.set_leader_peer_id(None, cx);
                 }
+                false
+            } else {
+                true
             }
-        }
+        });
         cx.notify();
     }
 
@@ -2528,10 +2530,15 @@ impl Workspace {
 
         self.last_leaders_by_pane
             .insert(pane.downgrade(), leader_id);
-        self.follower_states_by_leader
-            .entry(leader_id)
-            .or_default()
-            .insert(pane.clone(), Default::default());
+        self.unfollow(&pane, cx);
+        self.follower_states.insert(
+            pane.clone(),
+            FollowerState {
+                leader_id,
+                active_view_id: None,
+                items_by_leader_view_id: Default::default(),
+            },
+        );
         cx.notify();
 
         let room_id = self.active_call()?.read(cx).room()?.read(cx).id();
@@ -2546,9 +2553,8 @@ impl Workspace {
             let response = request.await?;
             this.update(&mut cx, |this, _| {
                 let state = this
-                    .follower_states_by_leader
-                    .get_mut(&leader_id)
-                    .and_then(|states_by_pane| states_by_pane.get_mut(&pane))
+                    .follower_states
+                    .get_mut(&pane)
                     .ok_or_else(|| anyhow!("following interrupted"))?;
                 state.active_view_id = if let Some(active_view_id) = response.active_view_id {
                     Some(ViewId::from_proto(active_view_id)?)
@@ -2643,12 +2649,10 @@ impl Workspace {
         }
 
         // if you're already following, find the right pane and focus it.
-        for (existing_leader_id, states_by_pane) in &mut self.follower_states_by_leader {
-            if leader_id == *existing_leader_id {
-                for (pane, _) in states_by_pane {
-                    cx.focus(pane);
-                    return None;
-                }
+        for (pane, state) in &self.follower_states {
+            if leader_id == state.leader_id {
+                cx.focus(pane);
+                return None;
             }
         }
 
@@ -2661,36 +2665,37 @@ impl Workspace {
         pane: &ViewHandle<Pane>,
         cx: &mut ViewContext<Self>,
     ) -> Option<PeerId> {
-        for (leader_id, states_by_pane) in &mut self.follower_states_by_leader {
-            let leader_id = *leader_id;
-            if let Some(state) = states_by_pane.remove(pane) {
-                for (_, item) in state.items_by_leader_view_id {
-                    item.set_leader_peer_id(None, cx);
-                }
-
-                if states_by_pane.is_empty() {
-                    self.follower_states_by_leader.remove(&leader_id);
-                    let project_id = self.project.read(cx).remote_id();
-                    let room_id = self.active_call()?.read(cx).room()?.read(cx).id();
-                    self.app_state
-                        .client
-                        .send(proto::Unfollow {
-                            room_id,
-                            project_id,
-                            leader_id: Some(leader_id),
-                        })
-                        .log_err();
-                }
-
-                cx.notify();
-                return Some(leader_id);
-            }
+        let state = self.follower_states.remove(pane)?;
+        let leader_id = state.leader_id;
+        for (_, item) in state.items_by_leader_view_id {
+            item.set_leader_peer_id(None, cx);
         }
-        None
+
+        if self
+            .follower_states
+            .values()
+            .all(|state| state.leader_id != state.leader_id)
+        {
+            let project_id = self.project.read(cx).remote_id();
+            let room_id = self.active_call()?.read(cx).room()?.read(cx).id();
+            self.app_state
+                .client
+                .send(proto::Unfollow {
+                    room_id,
+                    project_id,
+                    leader_id: Some(leader_id),
+                })
+                .log_err();
+        }
+
+        cx.notify();
+        Some(leader_id)
     }
 
     pub fn is_being_followed(&self, peer_id: PeerId) -> bool {
-        self.follower_states_by_leader.contains_key(&peer_id)
+        self.follower_states
+            .values()
+            .any(|state| state.leader_id == peer_id)
     }
 
     fn render_titlebar(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
@@ -2913,8 +2918,8 @@ impl Workspace {
         match update.variant.ok_or_else(|| anyhow!("invalid update"))? {
             proto::update_followers::Variant::UpdateActiveView(update_active_view) => {
                 this.update(cx, |this, _| {
-                    if let Some(state) = this.follower_states_by_leader.get_mut(&leader_id) {
-                        for state in state.values_mut() {
+                    for (_, state) in &mut this.follower_states {
+                        if state.leader_id == leader_id {
                             state.active_view_id =
                                 if let Some(active_view_id) = update_active_view.id.clone() {
                                     Some(ViewId::from_proto(active_view_id)?)
@@ -2936,8 +2941,8 @@ impl Workspace {
                 let mut tasks = Vec::new();
                 this.update(cx, |this, cx| {
                     let project = this.project.clone();
-                    if let Some(state) = this.follower_states_by_leader.get_mut(&leader_id) {
-                        for state in state.values_mut() {
+                    for (_, state) in &mut this.follower_states {
+                        if state.leader_id == leader_id {
                             let view_id = ViewId::from_proto(id.clone())?;
                             if let Some(item) = state.items_by_leader_view_id.get(&view_id) {
                                 tasks.push(item.apply_update_proto(&project, variant.clone(), cx));
@@ -2950,10 +2955,9 @@ impl Workspace {
             }
             proto::update_followers::Variant::CreateView(view) => {
                 let panes = this.read_with(cx, |this, _| {
-                    this.follower_states_by_leader
-                        .get(&leader_id)
-                        .into_iter()
-                        .flat_map(|states_by_pane| states_by_pane.keys())
+                    this.follower_states
+                        .iter()
+                        .filter_map(|(pane, state)| (state.leader_id == leader_id).then_some(pane))
                         .cloned()
                         .collect()
                 })?;
@@ -3012,11 +3016,7 @@ impl Workspace {
         for (pane, (item_tasks, leader_view_ids)) in item_tasks_by_pane {
             let items = futures::future::try_join_all(item_tasks).await?;
             this.update(cx, |this, cx| {
-                let state = this
-                    .follower_states_by_leader
-                    .get_mut(&leader_id)?
-                    .get_mut(&pane)?;
-
+                let state = this.follower_states.get_mut(&pane)?;
                 for (id, item) in leader_view_ids.into_iter().zip(items) {
                     item.set_leader_peer_id(Some(leader_id), cx);
                     state.items_by_leader_view_id.insert(id, item);
@@ -3073,15 +3073,7 @@ impl Workspace {
     }
 
     pub fn leader_for_pane(&self, pane: &ViewHandle<Pane>) -> Option<PeerId> {
-        self.follower_states_by_leader
-            .iter()
-            .find_map(|(leader_id, state)| {
-                if state.contains_key(pane) {
-                    Some(*leader_id)
-                } else {
-                    None
-                }
-            })
+        self.follower_states.get(pane).map(|state| state.leader_id)
     }
 
     fn leader_updated(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) -> Option<()> {
@@ -3109,7 +3101,10 @@ impl Workspace {
             }
         };
 
-        for (pane, state) in self.follower_states_by_leader.get(&leader_id)? {
+        for (pane, state) in &self.follower_states {
+            if state.leader_id != leader_id {
+                continue;
+            }
             if leader_in_this_app {
                 let item = state
                     .active_view_id
@@ -3804,7 +3799,7 @@ impl View for Workspace {
                                                     self.center.render(
                                                         &project,
                                                         &theme,
-                                                        &self.follower_states_by_leader,
+                                                        &self.follower_states,
                                                         self.active_call(),
                                                         self.active_pane(),
                                                         self.zoomed
