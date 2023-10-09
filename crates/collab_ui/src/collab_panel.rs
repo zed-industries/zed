@@ -1976,21 +1976,18 @@ impl CollabPanel {
                     let style = collab_theme.channel_name.inactive_state();
                     Flex::row()
                         .with_child(
-                            Label::new(
-                                channel.name.clone().to_owned() + channel_id.to_string().as_str(),
-                                style.text.clone(),
-                            )
-                            .contained()
-                            .with_style(style.container)
-                            .aligned()
-                            .left()
-                            .with_tooltip::<ChannelTooltip>(
-                                ix,
-                                "Join channel",
-                                None,
-                                theme.tooltip.clone(),
-                                cx,
-                            ),
+                            Label::new(channel.name.clone(), style.text.clone())
+                                .contained()
+                                .with_style(style.container)
+                                .aligned()
+                                .left()
+                                .with_tooltip::<ChannelTooltip>(
+                                    ix,
+                                    "Join channel",
+                                    None,
+                                    theme.tooltip.clone(),
+                                    cx,
+                                ),
                         )
                         .with_children({
                             let participants =
