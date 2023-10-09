@@ -1,7 +1,7 @@
 use crate::{
-    point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, DevicePixels, MetalAtlas,
-    MonochromeSprite, PathId, PolychromeSprite, PrimitiveBatch, Quad, Scene, Shadow, Size,
-    Underline,
+    point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels,
+    MetalAtlas, MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad,
+    ScaledPixels, Scene, Shadow, Size, Underline,
 };
 use cocoa::{
     base::{NO, YES},
@@ -170,6 +170,9 @@ impl MetalRenderer {
         };
         let command_queue = self.command_queue.clone();
         let command_buffer = command_queue.new_command_buffer();
+        let mut instance_offset = 0;
+
+        let path_tiles = self.rasterize_paths(scene.paths(), &mut instance_offset, &command_buffer);
 
         let render_pass_descriptor = metal::RenderPassDescriptor::new();
         let color_attachment = render_pass_descriptor
@@ -192,17 +195,6 @@ impl MetalRenderer {
             znear: 0.0,
             zfar: 1.0,
         });
-
-        let mut instance_offset = 0;
-
-        let mut path_tiles: HashMap<PathId, AtlasTile> = HashMap::default();
-        for path in scene.paths() {
-            let tile = self
-                .sprite_atlas
-                .allocate(path.bounds.size.map(Into::into), AtlasTextureKind::Path);
-            path_tiles.insert(path.id, tile);
-        }
-
         for batch in scene.batches() {
             match batch {
                 PrimitiveBatch::Shadows(shadows) => {
@@ -264,6 +256,93 @@ impl MetalRenderer {
         command_buffer.commit();
         command_buffer.wait_until_completed();
         drawable.present();
+    }
+
+    fn rasterize_paths(
+        &mut self,
+        paths: &[Path<ScaledPixels>],
+        offset: &mut usize,
+        command_buffer: &metal::CommandBufferRef,
+    ) -> HashMap<PathId, AtlasTile> {
+        let mut tiles = HashMap::default();
+        let mut vertices_by_texture_id = HashMap::default();
+        for path in paths {
+            let tile = self
+                .sprite_atlas
+                .allocate(path.bounds.size.map(Into::into), AtlasTextureKind::Path);
+            vertices_by_texture_id
+                .entry(tile.texture_id)
+                .or_insert(Vec::new())
+                .extend(path.vertices.iter().map(|vertex| PathVertex {
+                    xy_position: vertex.xy_position - path.bounds.origin
+                        + tile.bounds.origin.map(Into::into),
+                    st_position: vertex.st_position,
+                    content_mask: ContentMask {
+                        bounds: Bounds {
+                            origin: vertex.xy_position - path.bounds.origin
+                                + tile.bounds.origin.map(Into::into),
+                            size: vertex.content_mask.bounds.size,
+                        },
+                    },
+                }));
+            tiles.insert(path.id, tile);
+        }
+
+        for (texture_id, vertices) in vertices_by_texture_id {
+            todo!();
+            // align_offset(offset);
+            // let next_offset = *offset + vertices.len() * mem::size_of::<PathVertex<ScaledPixels>>();
+            // assert!(
+            //     next_offset <= INSTANCE_BUFFER_SIZE,
+            //     "instance buffer exhausted"
+            // );
+
+            // let render_pass_descriptor = metal::RenderPassDescriptor::new();
+            // let color_attachment = render_pass_descriptor
+            //     .color_attachments()
+            //     .object_at(0)
+            //     .unwrap();
+
+            // let texture = self.sprite_atlas.metal_texture(texture_id);
+            // color_attachment.set_texture(Some(&texture));
+            // color_attachment.set_load_action(metal::MTLLoadAction::Clear);
+            // color_attachment.set_store_action(metal::MTLStoreAction::Store);
+            // color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., 1.));
+            // let command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
+            // command_encoder.set_render_pipeline_state(&self.path_atlas_pipeline_state);
+            // command_encoder.set_vertex_buffer(
+            //     shaders::GPUIPathAtlasVertexInputIndex_GPUIPathAtlasVertexInputIndexVertices as u64,
+            //     Some(&self.instances),
+            //     *offset as u64,
+            // );
+            // command_encoder.set_vertex_bytes(
+            //     shaders::GPUIPathAtlasVertexInputIndex_GPUIPathAtlasVertexInputIndexAtlasSize
+            //         as u64,
+            //     mem::size_of::<shaders::vector_float2>() as u64,
+            //     [vec2i(texture.width() as i32, texture.height() as i32).to_float2()].as_ptr()
+            //         as *const c_void,
+            // );
+
+            // let buffer_contents = unsafe {
+            //     (self.instances.contents() as *mut u8).add(*offset) as *mut shaders::GPUIPathVertex
+            // };
+
+            // for (ix, vertex) in vertices.iter().enumerate() {
+            //     unsafe {
+            //         *buffer_contents.add(ix) = *vertex;
+            //     }
+            // }
+
+            // command_encoder.draw_primitives(
+            //     metal::MTLPrimitiveType::Triangle,
+            //     0,
+            //     vertices.len() as u64,
+            // );
+            // command_encoder.end_encoding();
+            // *offset = next_offset;
+        }
+
+        tiles
     }
 
     fn draw_shadows(

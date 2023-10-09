@@ -180,8 +180,8 @@ pub(crate) struct Scene {
 }
 
 impl Scene {
-    pub fn paths(&self) -> impl Iterator<Item = &Path<ScaledPixels>> {
-        self.paths.iter()
+    pub fn paths(&self) -> &[Path<ScaledPixels>] {
+        &self.paths
     }
 
     pub fn batches(&self) -> impl Iterator<Item = PrimitiveBatch> {
@@ -678,7 +678,7 @@ impl From<Path<ScaledPixels>> for Primitive {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[repr(C)]
 pub struct PathVertex<P: Clone + Debug> {
     pub(crate) xy_position: Point<P>,

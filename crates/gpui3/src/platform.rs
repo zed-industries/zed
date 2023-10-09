@@ -245,7 +245,7 @@ pub struct AtlasTile {
     pub(crate) bounds: Bounds<DevicePixels>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(C)]
 pub(crate) struct AtlasTextureId {
     // We use u32 instead of usize for Metal Shader Language compatibility
@@ -253,7 +253,7 @@ pub(crate) struct AtlasTextureId {
     pub(crate) kind: AtlasTextureKind,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(C)]
 pub(crate) enum AtlasTextureKind {
     Monochrome = 0,
