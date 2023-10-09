@@ -73,7 +73,7 @@ impl ChannelView {
     ) -> Task<Result<ViewHandle<Self>>> {
         let workspace = workspace.read(cx);
         let project = workspace.project().to_owned();
-        let channel_store = workspace.app_state().channel_store.clone();
+        let channel_store = ChannelStore::global(cx);
         let markdown = workspace
             .app_state()
             .languages

@@ -3,7 +3,6 @@
 
 use anyhow::{anyhow, Context, Result};
 use backtrace::Backtrace;
-use channel::ChannelStore;
 use cli::{
     ipc::{self, IpcSender},
     CliRequest, CliResponse, IpcHandshake, FORCE_CLI_MODE_ENV_VAR_NAME,
@@ -138,8 +137,6 @@ fn main() {
 
         languages::init(languages.clone(), node_runtime.clone(), cx);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
-        let channel_store =
-            cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
         let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
         cx.set_global(client.clone());
@@ -156,7 +153,7 @@ fn main() {
         outline::init(cx);
         project_symbols::init(cx);
         project_panel::init(Assets, cx);
-        channel::init(&client);
+        channel::init(&client, user_store.clone(), cx);
         diagnostics::init(cx);
         search::init(cx);
         semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
@@ -184,7 +181,6 @@ fn main() {
             languages,
             client: client.clone(),
             user_store,
-            channel_store,
             fs,
             build_window_options,
             initialize_workspace,

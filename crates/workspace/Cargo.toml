@@ -22,7 +22,6 @@ test-support = [
 db = { path = "../db" }
 call = { path = "../call" }
 client = { path = "../client" }
-channel = { path = "../channel" }
 collections = { path = "../collections" }
 context_menu = { path = "../context_menu" }
 drag_and_drop = { path = "../drag_and_drop" }

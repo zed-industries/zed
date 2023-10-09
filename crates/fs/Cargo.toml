@@ -13,7 +13,6 @@ rope = { path = "../rope" }
 text = { path = "../text" }
 util = { path = "../util" }
 sum_tree = { path = "../sum_tree" }
-rpc = { path = "../rpc" }
 
 anyhow.workspace = true
 async-trait.workspace = true
