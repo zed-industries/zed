@@ -495,11 +495,11 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
             session_id: session_id.clone(),
         };
 
-        if is_pty {
-            if let Some(panic_data_json) = serde_json::to_string_pretty(&panic_data).log_err() {
-                eprintln!("{}", panic_data_json);
-            }
-        } else {
+        if let Some(panic_data_json) = serde_json::to_string_pretty(&panic_data).log_err() {
+            log::error!("{}", panic_data_json);
+        }
+
+        if !is_pty {
             if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
                 let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
                 let panic_file_path = paths::LOGS_DIR.join(format!("zed-{}.panic", timestamp));
