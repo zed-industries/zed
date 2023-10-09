@@ -377,12 +377,7 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
 
         match (self.toggle, self.disclosure_control_style) {
             (Some(_), DisclosureControlVisibility::OnHover) => {
-                Some(
-                    div()
-                        .absolute()
-                        // .neg_left_5()
-                        .child(disclosure_control_icon),
-                )
+                Some(div().absolute().neg_left_5().child(disclosure_control_icon))
             }
             (Some(_), DisclosureControlVisibility::Always) => {
                 Some(div().child(disclosure_control_icon))

@@ -62,10 +62,7 @@ impl<S: 'static + Send + Sync> PlayerStack<S> {
                     })
                     .child(Avatar::new(player.avatar_src().to_string()))
                     .children(followers.map(|followers| {
-                        div()
-                            // TODO: Blocked on negative margins.
-                            // .neg_ml_2()
-                            .child(Facepile::new(followers.into_iter()))
+                        div().neg_ml_2().child(Facepile::new(followers.into_iter()))
                     })),
             )
     }

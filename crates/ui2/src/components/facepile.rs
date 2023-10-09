@@ -24,8 +24,7 @@ impl<S: 'static + Send + Sync> Facepile<S> {
             let isnt_last = ix < player_count - 1;
 
             div()
-                // TODO: Blocked on negative margins.
-                // .when(isnt_last, |div| div.neg_mr_1())
+                .when(isnt_last, |div| div.neg_mr_1())
                 .child(Avatar::new(player.avatar_src().to_string()))
         });
         div().p_1().flex().items_center().children(player_list)
