@@ -546,43 +546,43 @@ pub fn example_editor_actions<S: 'static + Send + Sync + Clone>() -> Vec<Palette
     vec![
         PaletteItem::new("New File").keybinding(Keybinding::new(
             "N".to_string(),
-            ModifierKeys::new().control(true),
+            ModifierKeys::new().command(true),
         )),
         PaletteItem::new("Open File").keybinding(Keybinding::new(
             "O".to_string(),
-            ModifierKeys::new().control(true),
+            ModifierKeys::new().command(true),
         )),
         PaletteItem::new("Save File").keybinding(Keybinding::new(
             "S".to_string(),
-            ModifierKeys::new().control(true),
+            ModifierKeys::new().command(true),
         )),
         PaletteItem::new("Cut").keybinding(Keybinding::new(
             "X".to_string(),
-            ModifierKeys::new().control(true),
+            ModifierKeys::new().command(true),
         )),
         PaletteItem::new("Copy").keybinding(Keybinding::new(
             "C".to_string(),
-            ModifierKeys::new().control(true),
+            ModifierKeys::new().command(true),
         )),
         PaletteItem::new("Paste").keybinding(Keybinding::new(
             "V".to_string(),
-            ModifierKeys::new().control(true),
+            ModifierKeys::new().command(true),
         )),
         PaletteItem::new("Undo").keybinding(Keybinding::new(
             "Z".to_string(),
-            ModifierKeys::new().control(true),
+            ModifierKeys::new().command(true),
         )),
         PaletteItem::new("Redo").keybinding(Keybinding::new(
             "Z".to_string(),
-            ModifierKeys::new().control(true).shift(true),
+            ModifierKeys::new().command(true).shift(true),
         )),
         PaletteItem::new("Find").keybinding(Keybinding::new(
             "F".to_string(),
-            ModifierKeys::new().control(true),
+            ModifierKeys::new().command(true),
         )),
         PaletteItem::new("Replace").keybinding(Keybinding::new(
             "R".to_string(),
-            ModifierKeys::new().control(true),
+            ModifierKeys::new().command(true),
         )),
         PaletteItem::new("Jump to Line"),
         PaletteItem::new("Select All"),
