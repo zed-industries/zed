@@ -51,7 +51,7 @@ fn main() {
     let story_selector = args.story.clone();
 
     let theme_name = args.theme.unwrap_or("One Dark".to_string());
-    let theme = themes::load_theme(theme_name);
+    let theme = themes::load_theme(theme_name).unwrap();
 
     let asset_source = Arc::new(Assets);
     gpui3::App::production(asset_source).run(move |cx| {
