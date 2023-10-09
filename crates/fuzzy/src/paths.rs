@@ -14,7 +14,7 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub struct PathMatchCandidate<'a> {
-    pub path: &'a Arc<Path>,
+    pub path: &'a Path,
     pub char_bag: CharBag,
 }
 
@@ -120,7 +120,7 @@ pub fn match_fixed_path_set(
             score,
             worktree_id,
             positions: Vec::new(),
-            path: candidate.path.clone(),
+            path: Arc::from(candidate.path),
             path_prefix: Arc::from(""),
             distance_to_relative_ancestor: usize::MAX,
         },
@@ -195,7 +195,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                                     score,
                                     worktree_id,
                                     positions: Vec::new(),
-                                    path: candidate.path.clone(),
+                                    path: Arc::from(candidate.path),
                                     path_prefix: candidate_set.prefix(),
                                     distance_to_relative_ancestor: relative_to.as_ref().map_or(
                                         usize::MAX,
