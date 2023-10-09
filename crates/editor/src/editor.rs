@@ -60,7 +60,6 @@ use itertools::Itertools;
 pub use language::{char_kind, CharKind};
 use language::{
     language_settings::{self, all_language_settings, InlayHintSettings},
-    markdown::MarkdownHighlight,
     point_from_lsp, AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion,
     CursorShape, Diagnostic, DiagnosticSeverity, Documentation, File, IndentKind, IndentSize,
     Language, LanguageServerName, OffsetRangeExt, OffsetUtf16, Point, Selection, SelectionGoal,
@@ -139,45 +138,21 @@ pub fn render_parsed_markdown(
                 .highlights
                 .iter()
                 .filter_map(|(range, highlight)| {
-                    let highlight = match highlight {
-                        MarkdownHighlight::Style(style) => {
-                            let mut highlight = HighlightStyle::default();
-
-                            if style.italic {
-                                highlight.italic = Some(true);
-                            }
-
-                            if style.underline {
-                                highlight.underline = Some(fonts::Underline {
-                                    thickness: 1.0.into(),
-                                    ..Default::default()
-                                });
-                            }
-
-                            if style.weight != fonts::Weight::default() {
-                                highlight.weight = Some(style.weight);
-                            }
-
-                            highlight
-                        }
-
-                        MarkdownHighlight::Code(id) => id.style(&editor_style.syntax)?,
-                    };
-
+                    let highlight = highlight.to_highlight_style(&editor_style.syntax)?;
                     Some((range.clone(), highlight))
                 })
                 .collect::<Vec<_>>(),
         )
-        .with_custom_runs(parsed.region_ranges, move |ix, bounds, scene, _| {
+        .with_custom_runs(parsed.region_ranges, move |ix, bounds, cx| {
             region_id += 1;
             let region = parsed.regions[ix].clone();
 
             if let Some(url) = region.link_url {
-                scene.push_cursor_region(CursorRegion {
+                cx.scene().push_cursor_region(CursorRegion {
                     bounds,
                     style: CursorStyle::PointingHand,
                 });
-                scene.push_mouse_region(
+                cx.scene().push_mouse_region(
                     MouseRegion::new::<RenderedMarkdown>(view_id, region_id, bounds)
                         .on_click::<Editor, _>(MouseButton::Left, move |_, _, cx| {
                             cx.platform().open_url(&url)
@@ -186,7 +161,7 @@ pub fn render_parsed_markdown(
             }
 
             if region.code {
-                scene.push_quad(gpui::Quad {
+                cx.scene().push_quad(gpui::Quad {
                     bounds,
                     background: Some(code_span_background_color),
                     border: Default::default(),

@@ -2,7 +2,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use crate::{HighlightId, Language, LanguageRegistry};
-use gpui::fonts::Weight;
+use gpui::fonts::{self, HighlightStyle, Weight};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 
 #[derive(Debug, Clone)]
@@ -17,6 +17,35 @@ pub struct ParsedMarkdown {
 pub enum MarkdownHighlight {
     Style(MarkdownHighlightStyle),
     Code(HighlightId),
+}
+
+impl MarkdownHighlight {
+    pub fn to_highlight_style(&self, theme: &theme::SyntaxTheme) -> Option<HighlightStyle> {
+        match self {
+            MarkdownHighlight::Style(style) => {
+                let mut highlight = HighlightStyle::default();
+
+                if style.italic {
+                    highlight.italic = Some(true);
+                }
+
+                if style.underline {
+                    highlight.underline = Some(fonts::Underline {
+                        thickness: 1.0.into(),
+                        ..Default::default()
+                    });
+                }
+
+                if style.weight != fonts::Weight::default() {
+                    highlight.weight = Some(style.weight);
+                }
+
+                Some(highlight)
+            }
+
+            MarkdownHighlight::Code(id) => id.style(theme),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
