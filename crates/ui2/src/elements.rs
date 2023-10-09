@@ -1,5 +1,6 @@
 mod avatar;
 mod button;
+mod details;
 mod icon;
 mod input;
 mod label;
@@ -9,6 +10,7 @@ mod tool_divider;
 
 pub use avatar::*;
 pub use button::*;
+pub use details::*;
 pub use icon::*;
 pub use input::*;
 pub use label::*;
