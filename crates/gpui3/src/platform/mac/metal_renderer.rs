@@ -1,12 +1,14 @@
 use crate::{
-    point, size, AtlasTextureId, DevicePixels, MetalAtlas, MonochromeSprite, PolychromeSprite,
-    PrimitiveBatch, Quad, Scene, Shadow, Size, Underline,
+    point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, DevicePixels, MetalAtlas,
+    MonochromeSprite, PathId, PolychromeSprite, PrimitiveBatch, Quad, Scene, Shadow, Size,
+    Underline,
 };
 use cocoa::{
     base::{NO, YES},
     foundation::NSUInteger,
     quartzcore::AutoresizingMask,
 };
+use collections::HashMap;
 use metal::{CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
 use objc::{self, msg_send, sel, sel_impl};
 use std::{ffi::c_void, mem, ptr, sync::Arc};
@@ -14,7 +16,7 @@ use std::{ffi::c_void, mem, ptr, sync::Arc};
 const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
 const INSTANCE_BUFFER_SIZE: usize = 8192 * 1024; // This is an arbitrary decision. There's probably a more optimal value.
 
-pub struct MetalRenderer {
+pub(crate) struct MetalRenderer {
     layer: metal::MetalLayer,
     command_queue: CommandQueue,
     shadows_pipeline_state: metal::RenderPipelineState,
@@ -150,7 +152,7 @@ impl MetalRenderer {
         &self.sprite_atlas
     }
 
-    pub fn draw(&mut self, scene: &mut Scene) {
+    pub fn draw(&mut self, scene: &Scene) {
         let layer = self.layer.clone();
         let viewport_size = layer.drawable_size();
         let viewport_size: Size<DevicePixels> = size(
@@ -192,6 +194,15 @@ impl MetalRenderer {
         });
 
         let mut instance_offset = 0;
+
+        let mut path_tiles: HashMap<PathId, AtlasTile> = HashMap::default();
+        for path in scene.paths() {
+            let tile = self
+                .sprite_atlas
+                .allocate(path.bounds.size.map(Into::into), AtlasTextureKind::Path);
+            path_tiles.insert(path.id, tile);
+        }
+
         for batch in scene.batches() {
             match batch {
                 PrimitiveBatch::Shadows(shadows) => {
@@ -204,6 +215,9 @@ impl MetalRenderer {
                 }
                 PrimitiveBatch::Quads(quads) => {
                     self.draw_quads(quads, &mut instance_offset, viewport_size, command_encoder);
+                }
+                PrimitiveBatch::Paths(paths) => {
+                    // self.draw_paths(paths, &mut instance_offset, viewport_size, command_encoder);
                 }
                 PrimitiveBatch::Underlines(underlines) => {
                     self.draw_underlines(
@@ -441,7 +455,7 @@ impl MetalRenderer {
         }
         align_offset(offset);
 
-        let texture = self.sprite_atlas.texture(texture_id);
+        let texture = self.sprite_atlas.metal_texture(texture_id);
         let texture_size = size(
             DevicePixels(texture.width() as i32),
             DevicePixels(texture.height() as i32),
@@ -512,7 +526,7 @@ impl MetalRenderer {
         }
         align_offset(offset);
 
-        let texture = self.sprite_atlas.texture(texture_id);
+        let texture = self.sprite_atlas.metal_texture(texture_id);
         let texture_size = size(
             DevicePixels(texture.width() as i32),
             DevicePixels(texture.height() as i32),

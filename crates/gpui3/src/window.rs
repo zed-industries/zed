@@ -1,15 +1,17 @@
 use crate::{
     image_cache::RenderImageParams, px, size, AnyView, AppContext, AsyncWindowContext,
-    AvailableSpace, BorrowAppContext, Bounds, Context, Corners, DevicePixels, DisplayId, Effect,
-    Element, EntityId, FontId, GlyphId, Handle, Hsla, ImageData, IsZero, LayoutId, MainThread,
-    MainThreadOnly, MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point,
-    PolychromeSprite, Reference, RenderGlyphParams, RenderSvgParams, ScaledPixels, Scene,
-    SharedString, Size, StackingOrder, Style, TaffyLayoutEngine, Task, Underline, UnderlineStyle,
-    WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
+    AvailableSpace, BorrowAppContext, Bounds, BoxShadow, Context, Corners, DevicePixels, DisplayId,
+    Edges, Effect, Element, EntityId, FontId, GlyphId, Handle, Hsla, ImageData, IsZero, LayoutId,
+    MainThread, MainThreadOnly, MonochromeSprite, Path, Pixels, PlatformAtlas, PlatformWindow,
+    Point, PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderSvgParams, ScaledPixels,
+    SceneBuilder, Shadow, SharedString, Size, StackingOrder, Style, TaffyLayoutEngine, Task,
+    Underline, UnderlineStyle, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use smallvec::SmallVec;
-use std::{any::TypeId, borrow::Cow, future::Future, marker::PhantomData, mem, sync::Arc};
+use std::{
+    any::TypeId, borrow::Cow, fmt::Debug, future::Future, marker::PhantomData, mem, sync::Arc,
+};
 use util::ResultExt;
 
 pub struct AnyWindow {}
@@ -25,8 +27,9 @@ pub struct Window {
     pub(crate) root_view: Option<AnyView<()>>,
     mouse_position: Point<Pixels>,
     current_stacking_order: StackingOrder,
-    content_mask_stack: Vec<ContentMask>,
-    pub(crate) scene: Scene,
+    content_mask_stack: Vec<ContentMask<Pixels>>,
+    scale_factor: f32,
+    pub(crate) scene_builder: SceneBuilder,
     pub(crate) dirty: bool,
 }
 
@@ -47,7 +50,8 @@ impl Window {
             let cx = cx.to_async();
             move |content_size, scale_factor| {
                 cx.update_window(handle, |cx| {
-                    cx.window.scene = Scene::new(scale_factor);
+                    cx.window.scale_factor = scale_factor;
+                    cx.window.scene_builder = SceneBuilder::new();
                     cx.window.content_size = content_size;
                     cx.window.display_id = cx
                         .window
@@ -75,20 +79,22 @@ impl Window {
             mouse_position,
             current_stacking_order: SmallVec::new(),
             content_mask_stack: Vec::new(),
-            scene: Scene::new(scale_factor),
+            scale_factor,
+            scene_builder: SceneBuilder::new(),
             dirty: true,
         }
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct ContentMask {
-    pub bounds: Bounds<Pixels>,
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[repr(C)]
+pub struct ContentMask<P: Clone + Debug> {
+    pub bounds: Bounds<P>,
 }
 
-impl ContentMask {
-    pub fn scale(&self, factor: f32) -> ScaledContentMask {
-        ScaledContentMask {
+impl ContentMask<Pixels> {
+    pub fn scale(&self, factor: f32) -> ContentMask<ScaledPixels> {
+        ContentMask {
             bounds: self.bounds.scale(factor),
         }
     }
@@ -97,12 +103,6 @@ impl ContentMask {
         let bounds = self.bounds.intersect(&other.bounds);
         ContentMask { bounds }
     }
-}
-
-#[derive(Default, Clone, Debug, PartialEq, Eq)]
-#[repr(C)]
-pub struct ScaledContentMask {
-    bounds: Bounds<ScaledPixels>,
 }
 
 pub struct WindowContext<'a, 'w> {
@@ -234,7 +234,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 
     pub fn scale_factor(&self) -> f32 {
-        self.window.scene.scale_factor
+        self.window.scale_factor
     }
 
     pub fn rem_size(&self) -> Pixels {
@@ -245,10 +245,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         self.window.mouse_position
     }
 
-    pub fn scene(&mut self) -> &mut Scene {
-        &mut self.window.scene
-    }
-
     pub fn stack<R>(&mut self, order: u32, f: impl FnOnce(&mut Self) -> R) -> R {
         self.window.current_stacking_order.push(order);
         let result = f(self);
@@ -256,8 +252,69 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         result
     }
 
-    pub fn current_stacking_order(&self) -> StackingOrder {
-        self.window.current_stacking_order.clone()
+    pub fn paint_shadows(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        corner_radii: Corners<Pixels>,
+        shadows: &[BoxShadow],
+    ) {
+        let scale_factor = self.scale_factor();
+        let content_mask = self.content_mask();
+        let window = &mut *self.window;
+        for shadow in shadows {
+            let mut shadow_bounds = bounds;
+            shadow_bounds.origin += shadow.offset;
+            shadow_bounds.dilate(shadow.spread_radius);
+            window.scene_builder.insert(
+                &window.current_stacking_order,
+                Shadow {
+                    order: 0,
+                    bounds: shadow_bounds.scale(scale_factor),
+                    content_mask: content_mask.scale(scale_factor),
+                    corner_radii: corner_radii.scale(scale_factor),
+                    color: shadow.color,
+                    blur_radius: shadow.blur_radius.scale(scale_factor),
+                },
+            );
+        }
+    }
+
+    pub fn paint_quad(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        corner_radii: Corners<Pixels>,
+        background: impl Into<Hsla>,
+        border_widths: Edges<Pixels>,
+        border_color: impl Into<Hsla>,
+    ) {
+        let scale_factor = self.scale_factor();
+        let content_mask = self.content_mask();
+
+        let window = &mut *self.window;
+        window.scene_builder.insert(
+            &window.current_stacking_order,
+            Quad {
+                order: 0,
+                bounds: bounds.scale(scale_factor),
+                content_mask: content_mask.scale(scale_factor),
+                background: background.into(),
+                border_color: border_color.into(),
+                corner_radii: corner_radii.scale(scale_factor),
+                border_widths: border_widths.scale(scale_factor),
+            },
+        );
+    }
+
+    pub fn paint_path(&mut self, mut path: Path<Pixels>) {
+        let scale_factor = self.scale_factor();
+        let content_mask = self.content_mask();
+        for vertex in &mut path.vertices {
+            vertex.content_mask = content_mask.clone();
+        }
+        let window = &mut *self.window;
+        window
+            .scene_builder
+            .insert(&window.current_stacking_order, path.scale(scale_factor));
     }
 
     pub fn paint_underline(
@@ -277,9 +334,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             size: size(width, height),
         };
         let content_mask = self.content_mask();
-        let layer_id = self.current_stacking_order();
-        self.window.scene.insert(
-            layer_id,
+        let window = &mut *self.window;
+        window.scene_builder.insert(
+            &window.current_stacking_order,
             Underline {
                 order: 0,
                 bounds: bounds.scale(scale_factor),
@@ -317,7 +374,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
         if !raster_bounds.is_zero() {
-            let layer_id = self.current_stacking_order();
             let tile =
                 self.window
                     .sprite_atlas
@@ -330,9 +386,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.content_mask().scale(scale_factor);
-
-            self.window.scene.insert(
-                layer_id,
+            let window = &mut *self.window;
+            window.scene_builder.insert(
+                &window.current_stacking_order,
                 MonochromeSprite {
                     order: 0,
                     bounds,
@@ -366,7 +422,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
         if !raster_bounds.is_zero() {
-            let layer_id = self.current_stacking_order();
             let tile =
                 self.window
                     .sprite_atlas
@@ -379,9 +434,10 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.content_mask().scale(scale_factor);
+            let window = &mut *self.window;
 
-            self.window.scene.insert(
-                layer_id,
+            window.scene_builder.insert(
+                &window.current_stacking_order,
                 PolychromeSprite {
                     order: 0,
                     bounds,
@@ -411,7 +467,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 .map(|pixels| DevicePixels::from((pixels.0 * 2.).ceil() as i32)),
         };
 
-        let layer_id = self.current_stacking_order();
         let tile =
             self.window
                 .sprite_atlas
@@ -421,8 +476,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 })?;
         let content_mask = self.content_mask().scale(scale_factor);
 
-        self.window.scene.insert(
-            layer_id,
+        let window = &mut *self.window;
+        window.scene_builder.insert(
+            &window.current_stacking_order,
             MonochromeSprite {
                 order: 0,
                 bounds,
@@ -446,7 +502,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         let bounds = bounds.scale(scale_factor);
         let params = RenderImageParams { image_id: data.id };
 
-        let order = self.current_stacking_order();
         let tile = self
             .window
             .sprite_atlas
@@ -456,8 +511,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         let content_mask = self.content_mask().scale(scale_factor);
         let corner_radii = corner_radii.scale(scale_factor);
 
-        self.window.scene.insert(
-            order,
+        let window = &mut *self.window;
+        window.scene_builder.insert(
+            &window.current_stacking_order,
             PolychromeSprite {
                 order: 0,
                 bounds,
@@ -467,7 +523,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 grayscale,
             },
         );
-
         Ok(())
     }
 
@@ -485,7 +540,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
             root_view.paint(layout, &mut (), &mut frame_state, cx)?;
             cx.window.root_view = Some(root_view);
-            let scene = cx.window.scene.take();
+            let scene = cx.window.scene_builder.build();
 
             cx.run_on_main(view, |_, cx| {
                 cx.window
@@ -557,7 +612,11 @@ pub trait BorrowWindow: BorrowAppContext {
     fn window(&self) -> &Window;
     fn window_mut(&mut self) -> &mut Window;
 
-    fn with_content_mask<R>(&mut self, mask: ContentMask, f: impl FnOnce(&mut Self) -> R) -> R {
+    fn with_content_mask<R>(
+        &mut self,
+        mask: ContentMask<Pixels>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
         let mask = mask.intersect(&self.content_mask());
         self.window_mut().content_mask_stack.push(mask);
         let result = f(self);
@@ -565,7 +624,7 @@ pub trait BorrowWindow: BorrowAppContext {
         result
     }
 
-    fn content_mask(&self) -> ContentMask {
+    fn content_mask(&self) -> ContentMask<Pixels> {
         self.window()
             .content_mask_stack
             .last()

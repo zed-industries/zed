@@ -47,7 +47,7 @@ fn generate_shader_bindings() -> PathBuf {
         "Pixels".into(),
         "PointF".into(),
         "Hsla".into(),
-        "ScaledContentMask".into(),
+        "ContentMask".into(),
         "Uniforms".into(),
         "AtlasTile".into(),
         "ShadowInputIndex".into(),

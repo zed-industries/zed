@@ -911,7 +911,7 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn draw(&self, scene: crate::Scene) {
+    fn draw(&self, scene: Scene) {
         let mut this = self.0.lock();
         this.scene_to_render = Some(scene);
         unsafe {
@@ -1395,8 +1395,8 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
     unsafe {
         let window_state = get_window_state(this);
         let mut window_state = window_state.as_ref().lock();
-        if let Some(mut scene) = window_state.scene_to_render.take() {
-            window_state.renderer.draw(&mut scene);
+        if let Some(scene) = window_state.scene_to_render.take() {
+            window_state.renderer.draw(&scene);
         }
     }
 }
