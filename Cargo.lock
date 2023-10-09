@@ -9665,6 +9665,7 @@ dependencies = [
  "theme",
  "theme_selector",
  "util",
+ "vim",
  "workspace",
 ]
 
