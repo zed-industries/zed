@@ -18,6 +18,7 @@ pub enum ElementStory {
     Icon,
     Input,
     Label,
+    ZIndex,
 }
 
 impl ElementStory {
@@ -31,6 +32,7 @@ impl ElementStory {
             Self::Icon => elements::icon::IconStory::new().into_any(),
             Self::Input => elements::input::InputStory::new().into_any(),
             Self::Label => elements::label::LabelStory::new().into_any(),
+            Self::ZIndex => elements::z_index::ZIndexStory::new().into_any(),
         }
     }
 }
