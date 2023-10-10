@@ -89,7 +89,7 @@ impl Default for NavigationDirection {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct MouseMovedEvent {
+pub struct MouseMoveEvent {
     pub position: Point<Pixels>,
     pub pressed_button: Option<MouseButton>,
     pub modifiers: Modifiers,
@@ -140,13 +140,13 @@ impl ScrollDelta {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct MouseExitedEvent {
+pub struct MouseExitEvent {
     pub position: Point<Pixels>,
     pub pressed_button: Option<MouseButton>,
     pub modifiers: Modifiers,
 }
 
-impl Deref for MouseExitedEvent {
+impl Deref for MouseExitEvent {
     type Target = Modifiers;
 
     fn deref(&self) -> &Self::Target {
@@ -161,8 +161,8 @@ pub enum Event {
     ModifiersChanged(ModifiersChangedEvent),
     MouseDown(MouseDownEvent),
     MouseUp(MouseUpEvent),
-    MouseMoved(MouseMovedEvent),
-    MouseExited(MouseExitedEvent),
+    MouseMoved(MouseMoveEvent),
+    MouseExited(MouseExitEvent),
     ScrollWheel(ScrollWheelEvent),
 }
 

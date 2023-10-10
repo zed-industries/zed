@@ -2,7 +2,7 @@ use super::{display_bounds_from_native, ns_string, MacDisplay, MetalRenderer, NS
 use crate::{
     display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, Event, Executor,
     GlobalPixels, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMovedEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformInputHandler, PlatformWindow, Point, Scene, Size, Timer, WindowAppearance,
     WindowBounds, WindowKind, WindowOptions, WindowPromptLevel,
 };
@@ -1141,7 +1141,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
 
         match &event {
             Event::MouseMoved(
-                event @ MouseMovedEvent {
+                event @ MouseMoveEvent {
                     pressed_button: Some(_),
                     ..
                 },
@@ -1596,7 +1596,7 @@ extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
 async fn synthetic_drag(
     window_state: Weak<Mutex<MacWindowState>>,
     drag_id: usize,
-    event: MouseMovedEvent,
+    event: MouseMoveEvent,
 ) {
     loop {
         Timer::after(Duration::from_millis(16)).await;
