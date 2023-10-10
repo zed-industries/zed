@@ -1,7 +1,7 @@
 use crate::theme::{theme, Theme};
 use gpui3::{
-    div, img, svg, view, AppContext, Context, Element, IntoAnyElement, ParentElement, ScrollState,
-    SharedString, StyleHelpers, View, ViewContext, WindowContext,
+    div, img, svg, view, AppContext, Context, Element, Interactive, IntoAnyElement, MouseButton,
+    ParentElement, ScrollState, SharedString, StyleHelpers, View, ViewContext, WindowContext,
 };
 
 pub struct CollabPanel {
@@ -44,6 +44,9 @@ impl CollabPanel {
                     // List Container
                     .child(
                         div()
+                            .on_click(MouseButton::Left, |_, _, _| {
+                                dbg!("click!");
+                            })
                             .fill(theme.lowest.base.default.background)
                             .pb_1()
                             .border_color(theme.lowest.base.default.border)

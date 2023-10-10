@@ -278,7 +278,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         self.window.rem_size
     }
 
-    pub fn stop_event_propagation(&mut self) {
+    pub fn stop_propagation(&mut self) {
         self.window.propagate_event = false;
     }
 
@@ -625,10 +625,10 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 .mouse_event_handlers
                 .remove(&any_mouse_event.type_id())
             {
-                // We sort these every time, because handlers may add handlers. Probably fast enough.
+                // Because handlers may add other handlers, we sort every time.
                 handlers.sort_by(|(a, _), (b, _)| a.cmp(b));
 
-                // Handlers may set this to false by calling `stop_propagation`;
+                // Handlers may set this to false by calling `stop_propagation`
                 self.window.propagate_event = true;
 
                 // Capture phase, events bubble from back to front. Handlers for this phase are used for
@@ -640,7 +640,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                     }
                 }
 
-                // Bubble phase
+                // Bubble phase, where most normal handlers do their work.
                 if self.window.propagate_event {
                     for (_, handler) in handlers.iter().rev() {
                         handler(any_mouse_event, DispatchPhase::Bubble, self);
@@ -650,6 +650,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                     }
                 }
 
+                // Just in case any handlers added new handlers, which is weird, but possible.
                 handlers.extend(
                     self.window
                         .mouse_event_handlers
