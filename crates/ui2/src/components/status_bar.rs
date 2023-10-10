@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::prelude::*;
-use crate::{Button, Icon, IconButton, IconColor, ToolDivider};
+use crate::{Button, ClickHandler, Icon, IconButton, IconColor, ToolDivider};
 
 #[derive(Default, PartialEq)]
 pub enum Tool {
@@ -34,15 +34,17 @@ pub struct StatusBar<S: 'static + Send + Sync + Clone> {
     left_tools: Option<ToolGroup>,
     right_tools: Option<ToolGroup>,
     bottom_tools: Option<ToolGroup>,
+    on_select_language: ClickHandler<S>,
 }
 
 impl<S: 'static + Send + Sync + Clone> StatusBar<S> {
-    pub fn new() -> Self {
+    pub fn new(on_select_language: ClickHandler<S>) -> Self {
         Self {
             state_type: PhantomData,
             left_tools: None,
             right_tools: None,
             bottom_tools: None,
+            on_select_language,
         }
     }
 
@@ -119,9 +121,7 @@ impl<S: 'static + Send + Sync + Clone> StatusBar<S> {
                     .items_center()
                     .gap_1()
                     .child(Button::new("116:25"))
-                    .child(
-                        Button::new("Rust").on_click(|_, _| println!("Select Language clicked.")),
-                    ),
+                    .child(Button::new("Rust").on_click(self.on_select_language.clone())),
             )
             .child(ToolDivider::new())
             .child(

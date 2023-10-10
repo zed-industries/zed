@@ -4,10 +4,10 @@ use std::sync::Arc;
 use gpui3::{Interactive, MouseButton};
 
 use crate::prelude::*;
-use crate::{theme, Icon, IconColor, IconElement};
+use crate::{theme, ClickHandler, Icon, IconColor, IconElement};
 
 struct IconButtonHandlers<S: 'static + Send + Sync> {
-    click: Option<Arc<dyn Fn(&mut S, &mut ViewContext<S>) + 'static + Send + Sync>>,
+    click: Option<ClickHandler<S>>,
 }
 
 impl<S: 'static + Send + Sync> Default for IconButtonHandlers<S> {

@@ -20,8 +20,10 @@ pub enum ButtonVariant {
     Filled,
 }
 
+pub type ClickHandler<S> = Arc<dyn Fn(&mut S, &mut ViewContext<S>) + 'static + Send + Sync>;
+
 struct ButtonHandlers<S: 'static + Send + Sync> {
-    click: Option<Arc<dyn Fn(&mut S, &mut ViewContext<S>) + 'static + Send + Sync>>,
+    click: Option<ClickHandler<S>>,
 }
 
 impl<S: 'static + Send + Sync> Default for ButtonHandlers<S> {
@@ -94,11 +96,8 @@ impl<S: 'static + Send + Sync + Clone> Button<S> {
         self
     }
 
-    pub fn on_click(
-        mut self,
-        handler: impl Fn(&mut S, &mut ViewContext<S>) + 'static + Send + Sync,
-    ) -> Self {
-        self.handlers.click = Some(Arc::new(handler));
+    pub fn on_click(mut self, handler: ClickHandler<S>) -> Self {
+        self.handlers.click = Some(handler);
         self
     }
 
@@ -403,7 +402,7 @@ mod stories {
                 .child(
                     Button::new("Label")
                         .variant(ButtonVariant::Ghost)
-                        .on_click(|_view, _cx| println!("Button clicked.")),
+                        .on_click(Arc::new(|_view, _cx| println!("Button clicked."))),
                 )
         }
     }

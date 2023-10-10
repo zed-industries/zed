@@ -1,4 +1,5 @@
 use std::marker::PhantomData;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use chrono::DateTime;
@@ -7,9 +8,9 @@ use gpui3::{relative, rems, Size};
 use crate::prelude::*;
 use crate::{
     hello_world_rust_editor_with_status_example, random_players_with_call_status, theme, v_stack,
-    ChatMessage, ChatPanel, EditorPane, Label, Livestream, Pane, PaneGroup, Panel,
-    PanelAllowedSides, PanelSide, ProjectPanel, SplitDirection, StatusBar, Terminal, TitleBar,
-    Toast, ToastOrigin,
+    ChatMessage, ChatPanel, EditorPane, Label, LanguageSelector, Livestream, Pane, PaneGroup,
+    Panel, PanelAllowedSides, PanelSide, ProjectPanel, SplitDirection, StatusBar, Terminal,
+    TitleBar, Toast, ToastOrigin,
 };
 
 #[derive(Element)]
@@ -19,6 +20,7 @@ pub struct WorkspaceElement<S: 'static + Send + Sync + Clone> {
     right_panel_scroll_state: ScrollState,
     tab_bar_scroll_state: ScrollState,
     bottom_panel_scroll_state: ScrollState,
+    show_language_selector: Arc<AtomicBool>,
 }
 
 impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
@@ -29,11 +31,14 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
             right_panel_scroll_state: ScrollState::default(),
             tab_bar_scroll_state: ScrollState::default(),
             bottom_panel_scroll_state: ScrollState::default(),
+            show_language_selector: Arc::new(AtomicBool::new(false)),
         }
     }
 
     pub fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
         let theme = theme(cx).clone();
+
+        let show_language_selector = self.show_language_selector.clone();
 
         let temp_size = rems(36.).into();
 
@@ -182,7 +187,31 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
                         .side(PanelSide::Right),
                     ),
             )
-            .child(StatusBar::new())
+            .child(StatusBar::new(Arc::new(move |_, cx| {
+                let is_showing_language_selector = show_language_selector.load(Ordering::SeqCst);
+
+                show_language_selector
+                    .compare_exchange(
+                        is_showing_language_selector,
+                        !is_showing_language_selector,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    )
+                    .unwrap();
+
+                cx.notify();
+            })))
+            .children(
+                Some(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .z_index(999)
+                        .child(LanguageSelector::new()),
+                )
+                .filter(|_| self.show_language_selector.load(Ordering::SeqCst)),
+            )
             .child(Toast::new(
                 ToastOrigin::Bottom,
                 |_, _| vec![Label::new("A toast").into_any()],
