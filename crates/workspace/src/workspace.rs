@@ -2878,8 +2878,7 @@ impl Workspace {
                         let cx = &cx;
                         move |item| {
                             let item = item.to_followable_item_handle(cx)?;
-                            if project_id.is_some()
-                                && project_id != follower_project_id
+                            if (project_id.is_none() || project_id != follower_project_id)
                                 && item.is_project_item(cx)
                             {
                                 return None;
