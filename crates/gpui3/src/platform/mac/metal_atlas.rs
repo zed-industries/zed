@@ -27,13 +27,24 @@ impl MetalAtlas {
         self.0.lock().texture(id).metal_texture.clone()
     }
 
-    #[allow(dead_code)]
     pub(crate) fn allocate(
         &self,
         size: Size<DevicePixels>,
         texture_kind: AtlasTextureKind,
     ) -> AtlasTile {
         self.0.lock().allocate(size, texture_kind)
+    }
+
+    pub(crate) fn clear_textures(&self, texture_kind: AtlasTextureKind) {
+        let mut lock = self.0.lock();
+        let textures = match texture_kind {
+            AtlasTextureKind::Monochrome => &mut lock.monochrome_textures,
+            AtlasTextureKind::Polychrome => &mut lock.polychrome_textures,
+            AtlasTextureKind::Path => &mut lock.path_textures,
+        };
+        for texture in textures {
+            texture.clear();
+        }
     }
 }
 
@@ -59,12 +70,23 @@ impl PlatformAtlas for MetalAtlas {
             let tile = lock.allocate(size, key.texture_kind());
             let texture = lock.texture(tile.texture_id);
             texture.upload(tile.bounds, &bytes);
+            lock.tiles_by_key.insert(key.clone(), tile.clone());
             Ok(tile)
         }
     }
 
     fn clear(&self) {
-        self.0.lock().tiles_by_key.clear();
+        let mut lock = self.0.lock();
+        lock.tiles_by_key.clear();
+        for texture in &mut lock.monochrome_textures {
+            texture.clear();
+        }
+        for texture in &mut lock.polychrome_textures {
+            texture.clear();
+        }
+        for texture in &mut lock.path_textures {
+            texture.clear();
+        }
     }
 }
 
@@ -153,6 +175,10 @@ struct MetalAtlasTexture {
 }
 
 impl MetalAtlasTexture {
+    fn clear(&mut self) {
+        self.allocator.clear();
+    }
+
     fn allocate(&mut self, size: Size<DevicePixels>) -> Option<AtlasTile> {
         let allocation = self.allocator.allocate(size.into())?;
         let tile = AtlasTile {

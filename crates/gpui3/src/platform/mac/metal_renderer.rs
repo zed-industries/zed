@@ -281,6 +281,7 @@ impl MetalRenderer {
         command_buffer.commit();
         command_buffer.wait_until_completed();
         drawable.present();
+        self.sprite_atlas.clear_textures(AtlasTextureKind::Path);
     }
 
     fn rasterize_paths(
