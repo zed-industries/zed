@@ -61,20 +61,11 @@ use zed::{
     only_instance::{ensure_only_instance, IsOnlyInstance},
 };
 
-use crate::open_url::{OpenListener, OpenRequest};
+use crate::open_listener::{OpenListener, OpenRequest};
 
-mod open_url;
+mod open_listener;
 
 fn main() {
-    writeln!(
-        OpenOptions::new()
-            .write(true)
-            .append(true)
-            .open("/Users/conrad/dbg")
-            .unwrap(),
-        "HELLO"
-    )
-    .unwrap();
     let http = http::client();
     init_paths();
     init_logger();

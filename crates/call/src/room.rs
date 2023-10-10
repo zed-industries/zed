@@ -878,7 +878,7 @@ impl Room {
         Ok(())
     }
 
-    pub fn next_room_update(&mut self) -> impl Future<Output = ()> {
+    pub fn room_update_completed(&mut self) -> impl Future<Output = ()> {
         let mut done_rx = self.room_update_completed_rx.clone();
         async move {
             while let Some(result) = done_rx.next().await {

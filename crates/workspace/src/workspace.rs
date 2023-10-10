@@ -47,7 +47,6 @@ use std::{
     any::TypeId,
     borrow::Cow,
     cmp, env,
-    fs::OpenOptions,
     future::Future,
     path::{Path, PathBuf},
     rc::Rc,
@@ -4246,7 +4245,8 @@ async fn join_channel_internal(
         })
         .await?;
 
-    room.update(cx, |room, _| room.next_room_update()).await;
+    room.update(cx, |room, _| room.room_update_completed())
+        .await;
 
     let task = room.update(cx, |room, cx| {
         if let Some((project, host)) = room.most_active_project(cx) {
@@ -4259,16 +4259,6 @@ async fn join_channel_internal(
         task.await?;
         return anyhow::Ok(true);
     }
-    use std::io::Write;
-    writeln!(
-        OpenOptions::new()
-            .write(true)
-            .append(true)
-            .open("/Users/conrad/dbg")
-            .unwrap(),
-        "no jokes"
-    )
-    .unwrap();
     anyhow::Ok(false)
 }
 
