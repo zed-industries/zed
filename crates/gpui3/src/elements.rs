@@ -1,4 +1,5 @@
 mod div;
+mod hoverable;
 mod img;
 mod stateless;
 mod svg;
