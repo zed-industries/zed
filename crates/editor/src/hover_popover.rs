@@ -474,8 +474,8 @@ impl InfoPopover {
     ) -> AnyElement<Editor> {
         MouseEventHandler::new::<InfoPopover, _>(0, cx, |_, cx| {
             Flex::column()
-                .scrollable::<HoverBlock>(1, None, cx)
-                .with_child(crate::render_parsed_markdown(
+                .scrollable::<HoverBlock>(0, None, cx)
+                .with_child(crate::render_parsed_markdown::<HoverBlock>(
                     &self.parsed_content,
                     style,
                     cx,

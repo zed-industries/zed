@@ -119,7 +119,7 @@ pub const DOCUMENT_HIGHLIGHTS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis
 
 pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 
-pub fn render_parsed_markdown(
+pub fn render_parsed_markdown<Tag: 'static>(
     parsed: &language::ParsedMarkdown,
     editor_style: &EditorStyle,
     cx: &mut ViewContext<Editor>,
@@ -153,7 +153,7 @@ pub fn render_parsed_markdown(
                     style: CursorStyle::PointingHand,
                 });
                 cx.scene().push_mouse_region(
-                    MouseRegion::new::<RenderedMarkdown>(view_id, region_id, bounds)
+                    MouseRegion::new::<(RenderedMarkdown, Tag)>(view_id, region_id, bounds)
                         .on_click::<Editor, _>(MouseButton::Left, move |_, _, cx| {
                             cx.platform().open_url(&url)
                         }),
@@ -1247,6 +1247,8 @@ impl CompletionsMenu {
         })
         .with_width_from_item(widest_completion_ix);
 
+        enum MultiLineDocumentation {}
+
         Flex::row()
             .with_child(list)
             .with_children({
@@ -1256,13 +1258,21 @@ impl CompletionsMenu {
                 let documentation = &completion.documentation;
 
                 match documentation {
-                    Some(Documentation::MultiLinePlainText(text)) => {
-                        Some(Text::new(text.clone(), style.text.clone()))
-                    }
+                    Some(Documentation::MultiLinePlainText(text)) => Some(
+                        Flex::column()
+                            .scrollable::<MultiLineDocumentation>(0, None, cx)
+                            .with_child(
+                                Text::new(text.clone(), style.text.clone()).with_soft_wrap(true),
+                            ),
+                    ),
 
-                    Some(Documentation::MultiLineMarkdown(parsed)) => {
-                        Some(render_parsed_markdown(parsed, &style, cx))
-                    }
+                    Some(Documentation::MultiLineMarkdown(parsed)) => Some(
+                        Flex::column()
+                            .scrollable::<MultiLineDocumentation>(0, None, cx)
+                            .with_child(render_parsed_markdown::<MultiLineDocumentation>(
+                                parsed, &style, cx,
+                            )),
+                    ),
 
                     _ => None,
                 }
