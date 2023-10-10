@@ -40,6 +40,7 @@ CREATE TABLE "rooms" (
     "release_channel" VARCHAR,
     "channel_id" INTEGER REFERENCES channels (id) ON DELETE CASCADE
 );
+CREATE UNIQUE INDEX "index_rooms_on_channel_id" ON "rooms" ("channel_id");
 
 CREATE TABLE "projects" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,

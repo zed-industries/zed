@@ -19,21 +19,14 @@ impl Database {
         .await
     }
 
-    pub async fn create_root_channel(
-        &self,
-        name: &str,
-        live_kit_room: &str,
-        creator_id: UserId,
-    ) -> Result<ChannelId> {
-        self.create_channel(name, None, live_kit_room, creator_id)
-            .await
+    pub async fn create_root_channel(&self, name: &str, creator_id: UserId) -> Result<ChannelId> {
+        self.create_channel(name, None, creator_id).await
     }
 
     pub async fn create_channel(
         &self,
         name: &str,
         parent: Option<ChannelId>,
-        live_kit_room: &str,
         creator_id: UserId,
     ) -> Result<ChannelId> {
         let name = Self::sanitize_channel_name(name)?;
@@ -85,14 +78,6 @@ impl Database {
                 user_id: ActiveValue::Set(creator_id),
                 accepted: ActiveValue::Set(true),
                 admin: ActiveValue::Set(true),
-                ..Default::default()
-            }
-            .insert(&*tx)
-            .await?;
-
-            room::ActiveModel {
-                channel_id: ActiveValue::Set(Some(channel.id)),
-                live_kit_room: ActiveValue::Set(live_kit_room.to_string()),
                 ..Default::default()
             }
             .insert(&*tx)
@@ -797,18 +782,36 @@ impl Database {
         .await
     }
 
-    pub async fn room_id_for_channel(&self, channel_id: ChannelId) -> Result<RoomId> {
+    pub async fn get_or_create_channel_room(
+        &self,
+        channel_id: ChannelId,
+        live_kit_room: &str,
+        enviroment: &str,
+    ) -> Result<RoomId> {
         self.transaction(|tx| async move {
             let tx = tx;
-            let room = channel::Model {
-                id: channel_id,
-                ..Default::default()
-            }
-            .find_related(room::Entity)
-            .one(&*tx)
-            .await?
-            .ok_or_else(|| anyhow!("invalid channel"))?;
-            Ok(room.id)
+
+            let room = room::Entity::find()
+                .filter(room::Column::ChannelId.eq(channel_id))
+                .one(&*tx)
+                .await?;
+
+            let room_id = if let Some(room) = room {
+                room.id
+            } else {
+                let result = room::Entity::insert(room::ActiveModel {
+                    channel_id: ActiveValue::Set(Some(channel_id)),
+                    live_kit_room: ActiveValue::Set(live_kit_room.to_string()),
+                    release_channel: ActiveValue::Set(Some(enviroment.to_string())),
+                    ..Default::default()
+                })
+                .exec(&*tx)
+                .await?;
+
+                result.last_insert_id
+            };
+
+            Ok(room_id)
         })
         .await
     }

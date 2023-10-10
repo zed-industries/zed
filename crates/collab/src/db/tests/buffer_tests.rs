@@ -54,7 +54,7 @@ async fn test_channel_buffers(db: &Arc<Database>) {
 
     let owner_id = db.create_server("production").await.unwrap().0 as u32;
 
-    let zed_id = db.create_root_channel("zed", "1", a_id).await.unwrap();
+    let zed_id = db.create_root_channel("zed", a_id).await.unwrap();
 
     db.invite_channel_member(zed_id, b_id, a_id, false)
         .await
@@ -141,7 +141,7 @@ async fn test_channel_buffers(db: &Arc<Database>) {
 
     assert_eq!(left_buffer.connections, &[connection_id_a],);
 
-    let cargo_id = db.create_root_channel("cargo", "2", a_id).await.unwrap();
+    let cargo_id = db.create_root_channel("cargo", a_id).await.unwrap();
     let _ = db
         .join_channel_buffer(cargo_id, a_id, connection_id_a)
         .await
@@ -207,7 +207,7 @@ async fn test_channel_buffers_last_operations(db: &Database) {
     let mut text_buffers = Vec::new();
     for i in 0..3 {
         let channel = db
-            .create_root_channel(&format!("channel-{i}"), &format!("room-{i}"), user_id)
+            .create_root_channel(&format!("channel-{i}"), user_id)
             .await
             .unwrap();
 

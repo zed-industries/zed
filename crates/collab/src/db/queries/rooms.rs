@@ -832,10 +832,7 @@ impl Database {
 
                 let (channel_id, room) = self.get_channel_room(room_id, &tx).await?;
                 let deleted = if room.participants.is_empty() {
-                    let result = room::Entity::delete_by_id(room_id)
-                        .filter(room::Column::ChannelId.is_null())
-                        .exec(&*tx)
-                        .await?;
+                    let result = room::Entity::delete_by_id(room_id).exec(&*tx).await?;
                     result.rows_affected > 0
                 } else {
                     false
