@@ -3,8 +3,6 @@ use cli::{ipc::IpcSender, CliRequest, CliResponse};
 use futures::channel::mpsc;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use std::ffi::OsStr;
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::os::unix::prelude::OsStrExt;
 use std::sync::atomic::Ordering;
 use std::{path::PathBuf, sync::atomic::AtomicBool};

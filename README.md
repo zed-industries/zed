@@ -83,9 +83,7 @@ foreman start
 If you want to run Zed pointed at the local servers, you can run:
 
 ```
-script/zed-with-local-servers
-# or...
-script/zed-with-local-servers --release
+script/zed-local
 ```
 
 ### Dump element JSON

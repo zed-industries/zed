@@ -1427,7 +1427,7 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut AppContex
         // Insert the block at column zero. The entire block is indented
         // so that the first line matches the previous line's indentation.
         buffer.edit(
-            [(Point::new(2, 0)..Point::new(2, 0), inserted_text.clone())],
+            [(Point::new(2, 0)..Point::new(2, 0), inserted_text)],
             Some(AutoindentMode::Block {
                 original_indent_columns: original_indent_columns.clone(),
             }),

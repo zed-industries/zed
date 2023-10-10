@@ -2,7 +2,6 @@ use anyhow::Result;
 use collections::HashMap;
 use git2::{BranchType, StatusShow};
 use parking_lot::Mutex;
-use rpc::proto;
 use serde_derive::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
@@ -23,6 +22,7 @@ pub struct Branch {
     /// Timestamp of most recent commit, normalized to Unix Epoch format.
     pub unix_timestamp: Option<i64>,
 }
+
 #[async_trait::async_trait]
 pub trait GitRepository: Send {
     fn reload_index(&self);
@@ -356,24 +356,6 @@ impl GitFileStatus {
                 }
                 _ => None,
             }
-        }
-    }
-
-    pub fn from_proto(git_status: Option<i32>) -> Option<GitFileStatus> {
-        git_status.and_then(|status| {
-            proto::GitStatus::from_i32(status).map(|status| match status {
-                proto::GitStatus::Added => GitFileStatus::Added,
-                proto::GitStatus::Modified => GitFileStatus::Modified,
-                proto::GitStatus::Conflict => GitFileStatus::Conflict,
-            })
-        })
-    }
-
-    pub fn to_proto(self) -> i32 {
-        match self {
-            GitFileStatus::Added => proto::GitStatus::Added as i32,
-            GitFileStatus::Modified => proto::GitStatus::Modified as i32,
-            GitFileStatus::Conflict => proto::GitStatus::Conflict as i32,
         }
     }
 }

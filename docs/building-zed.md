@@ -75,8 +75,7 @@ Expect this to take 30min to an hour! Some of these steps will take quite a whil
     - If you are just using the latest version, but not working on zed:
       - `cargo run --release`
     - If you need to run the collaboration server locally:
-      - `script/zed-with-local-servers`
-    - If you need to test collaboration with mutl
+      - `script/zed-local`
 
 ## Troubleshooting
 

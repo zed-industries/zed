@@ -107,13 +107,23 @@ fn matching_history_item_paths(
 ) -> HashMap<Arc<Path>, PathMatch> {
     let history_items_by_worktrees = history_items
         .iter()
-        .map(|found_path| {
-            let path = &found_path.project.path;
+        .filter_map(|found_path| {
             let candidate = PathMatchCandidate {
-                path,
-                char_bag: CharBag::from_iter(path.to_string_lossy().to_lowercase().chars()),
+                path: &found_path.project.path,
+                // Only match history items names, otherwise their paths may match too many queries, producing false positives.
+                // E.g. `foo` would match both `something/foo/bar.rs` and `something/foo/foo.rs` and if the former is a history item,
+                // it would be shown first always, despite the latter being a better match.
+                char_bag: CharBag::from_iter(
+                    found_path
+                        .project
+                        .path
+                        .file_name()?
+                        .to_string_lossy()
+                        .to_lowercase()
+                        .chars(),
+                ),
             };
-            (found_path.project.worktree_id, candidate)
+            Some((found_path.project.worktree_id, candidate))
         })
         .fold(
             HashMap::default(),
@@ -1800,6 +1810,113 @@ mod tests {
             ));
             assert_eq!(delegate.matches.search.len(), 1, "Only one non-history item contains {first_query_again}, it should be present, even after non-matching query");
             assert_eq!(delegate.matches.search.first().unwrap().path.as_ref(), Path::new("test/fourth.rs"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_history_items_vs_very_good_external_match(
+        deterministic: Arc<gpui::executor::Deterministic>,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/src",
+                json!({
+                    "collab_ui": {
+                        "first.rs": "// First Rust file",
+                        "second.rs": "// Second Rust file",
+                        "third.rs": "// Third Rust file",
+                        "collab_ui.rs": "// Fourth Rust file",
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
+        // generate some history to select from
+        open_close_queried_buffer(
+            "fir",
+            1,
+            "first.rs",
+            window.into(),
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        open_close_queried_buffer(
+            "sec",
+            1,
+            "second.rs",
+            window.into(),
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        open_close_queried_buffer(
+            "thi",
+            1,
+            "third.rs",
+            window.into(),
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        open_close_queried_buffer(
+            "sec",
+            1,
+            "second.rs",
+            window.into(),
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+
+        cx.dispatch_action(window.into(), Toggle);
+        let query = "collab_ui";
+        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
+        finder
+            .update(cx, |finder, cx| {
+                finder.delegate_mut().update_matches(query.to_string(), cx)
+            })
+            .await;
+        finder.read_with(cx, |finder, _| {
+            let delegate = finder.delegate();
+            assert!(
+                delegate.matches.history.is_empty(),
+                "History items should not math query {query}, they should be matched by name only"
+            );
+
+            let search_entries = delegate
+                .matches
+                .search
+                .iter()
+                .map(|e| e.path.to_path_buf())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                search_entries.len(),
+                4,
+                "All history and the new file should be found after query {query} as search results"
+            );
+            assert_eq!(
+                search_entries,
+                vec![
+                    PathBuf::from("collab_ui/collab_ui.rs"),
+                    PathBuf::from("collab_ui/third.rs"),
+                    PathBuf::from("collab_ui/first.rs"),
+                    PathBuf::from("collab_ui/second.rs"),
+                ],
+                "Despite all search results having the same directory name, the most matching one should be on top"
+            );
         });
     }
 

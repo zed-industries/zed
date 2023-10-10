@@ -22,7 +22,6 @@ test-support = [
 ]
 
 [dependencies]
-client = { path = "../client" }
 clock = { path = "../clock" }
 collections = { path = "../collections" }
 fuzzy = { path = "../fuzzy" }

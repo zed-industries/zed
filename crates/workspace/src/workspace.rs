@@ -12,7 +12,6 @@ mod workspace_settings;
 
 use anyhow::{anyhow, Context, Result};
 use call::ActiveCall;
-use channel::ChannelStore;
 use client::{
     proto::{self, PeerId},
     Client, Status, TypedEnvelope, UserStore,
@@ -79,7 +78,7 @@ use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use theme::{Theme, ThemeSettings};
 pub use toolbar::{ToolbarItemLocation, ToolbarItemView};
-use util::{async_iife, ResultExt};
+use util::ResultExt;
 pub use workspace_settings::{AutosaveSetting, GitGutterSetting, WorkspaceSettings};
 
 lazy_static! {
@@ -450,7 +449,6 @@ pub struct AppState {
     pub languages: Arc<LanguageRegistry>,
     pub client: Arc<Client>,
     pub user_store: ModelHandle<UserStore>,
-    pub channel_store: ModelHandle<ChannelStore>,
     pub workspace_store: ModelHandle<WorkspaceStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub build_window_options:
@@ -487,8 +485,6 @@ impl AppState {
         let http_client = util::http::FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone(), cx);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        let channel_store =
-            cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
         let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
         theme::init((), cx);
@@ -500,7 +496,7 @@ impl AppState {
             fs,
             languages,
             user_store,
-            channel_store,
+            // channel_store,
             workspace_store,
             initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
             build_window_options: |_, _, _| Default::default(),
@@ -573,11 +569,12 @@ pub struct Workspace {
     panes_by_item: HashMap<usize, WeakViewHandle<Pane>>,
     active_pane: ViewHandle<Pane>,
     last_active_center_pane: Option<WeakViewHandle<Pane>>,
+    last_active_view_id: Option<proto::ViewId>,
     status_bar: ViewHandle<StatusBar>,
     titlebar_item: Option<AnyViewHandle>,
     notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
     project: ModelHandle<Project>,
-    follower_states_by_leader: FollowerStatesByLeader,
+    follower_states: HashMap<ViewHandle<Pane>, FollowerState>,
     last_leaders_by_pane: HashMap<WeakViewHandle<Pane>, PeerId>,
     window_edited: bool,
     active_call: Option<(ModelHandle<ActiveCall>, Vec<Subscription>)>,
@@ -602,10 +599,9 @@ pub struct ViewId {
     pub id: u64,
 }
 
-type FollowerStatesByLeader = HashMap<PeerId, HashMap<ViewHandle<Pane>, FollowerState>>;
-
 #[derive(Default)]
 struct FollowerState {
+    leader_id: PeerId,
     active_view_id: Option<ViewId>,
     items_by_leader_view_id: HashMap<ViewId, Box<dyn FollowableItemHandle>>,
 }
@@ -786,6 +782,7 @@ impl Workspace {
             panes_by_item: Default::default(),
             active_pane: center_pane.clone(),
             last_active_center_pane: Some(center_pane.downgrade()),
+            last_active_view_id: None,
             status_bar,
             titlebar_item: None,
             notifications: Default::default(),
@@ -793,7 +790,7 @@ impl Workspace {
             bottom_dock,
             right_dock,
             project: project.clone(),
-            follower_states_by_leader: Default::default(),
+            follower_states: Default::default(),
             last_leaders_by_pane: Default::default(),
             window_edited: false,
             active_call,
@@ -934,7 +931,8 @@ impl Workspace {
                 app_state,
                 cx,
             )
-            .await;
+            .await
+            .unwrap_or_default();
 
             (workspace, opened_items)
         })
@@ -2510,13 +2508,16 @@ impl Workspace {
     }
 
     fn collaborator_left(&mut self, peer_id: PeerId, cx: &mut ViewContext<Self>) {
-        if let Some(states_by_pane) = self.follower_states_by_leader.remove(&peer_id) {
-            for state in states_by_pane.into_values() {
-                for item in state.items_by_leader_view_id.into_values() {
+        self.follower_states.retain(|_, state| {
+            if state.leader_id == peer_id {
+                for item in state.items_by_leader_view_id.values() {
                     item.set_leader_peer_id(None, cx);
                 }
+                false
+            } else {
+                true
             }
-        }
+        });
         cx.notify();
     }
 
@@ -2529,10 +2530,15 @@ impl Workspace {
 
         self.last_leaders_by_pane
             .insert(pane.downgrade(), leader_id);
-        self.follower_states_by_leader
-            .entry(leader_id)
-            .or_default()
-            .insert(pane.clone(), Default::default());
+        self.unfollow(&pane, cx);
+        self.follower_states.insert(
+            pane.clone(),
+            FollowerState {
+                leader_id,
+                active_view_id: None,
+                items_by_leader_view_id: Default::default(),
+            },
+        );
         cx.notify();
 
         let room_id = self.active_call()?.read(cx).room()?.read(cx).id();
@@ -2547,9 +2553,8 @@ impl Workspace {
             let response = request.await?;
             this.update(&mut cx, |this, _| {
                 let state = this
-                    .follower_states_by_leader
-                    .get_mut(&leader_id)
-                    .and_then(|states_by_pane| states_by_pane.get_mut(&pane))
+                    .follower_states
+                    .get_mut(&pane)
                     .ok_or_else(|| anyhow!("following interrupted"))?;
                 state.active_view_id = if let Some(active_view_id) = response.active_view_id {
                     Some(ViewId::from_proto(active_view_id)?)
@@ -2644,12 +2649,10 @@ impl Workspace {
         }
 
         // if you're already following, find the right pane and focus it.
-        for (existing_leader_id, states_by_pane) in &mut self.follower_states_by_leader {
-            if leader_id == *existing_leader_id {
-                for (pane, _) in states_by_pane {
-                    cx.focus(pane);
-                    return None;
-                }
+        for (pane, state) in &self.follower_states {
+            if leader_id == state.leader_id {
+                cx.focus(pane);
+                return None;
             }
         }
 
@@ -2662,36 +2665,37 @@ impl Workspace {
         pane: &ViewHandle<Pane>,
         cx: &mut ViewContext<Self>,
     ) -> Option<PeerId> {
-        for (leader_id, states_by_pane) in &mut self.follower_states_by_leader {
-            let leader_id = *leader_id;
-            if let Some(state) = states_by_pane.remove(pane) {
-                for (_, item) in state.items_by_leader_view_id {
-                    item.set_leader_peer_id(None, cx);
-                }
-
-                if states_by_pane.is_empty() {
-                    self.follower_states_by_leader.remove(&leader_id);
-                    let project_id = self.project.read(cx).remote_id();
-                    let room_id = self.active_call()?.read(cx).room()?.read(cx).id();
-                    self.app_state
-                        .client
-                        .send(proto::Unfollow {
-                            room_id,
-                            project_id,
-                            leader_id: Some(leader_id),
-                        })
-                        .log_err();
-                }
-
-                cx.notify();
-                return Some(leader_id);
-            }
+        let state = self.follower_states.remove(pane)?;
+        let leader_id = state.leader_id;
+        for (_, item) in state.items_by_leader_view_id {
+            item.set_leader_peer_id(None, cx);
         }
-        None
+
+        if self
+            .follower_states
+            .values()
+            .all(|state| state.leader_id != state.leader_id)
+        {
+            let project_id = self.project.read(cx).remote_id();
+            let room_id = self.active_call()?.read(cx).room()?.read(cx).id();
+            self.app_state
+                .client
+                .send(proto::Unfollow {
+                    room_id,
+                    project_id,
+                    leader_id: Some(leader_id),
+                })
+                .log_err();
+        }
+
+        cx.notify();
+        Some(leader_id)
     }
 
     pub fn is_being_followed(&self, peer_id: PeerId) -> bool {
-        self.follower_states_by_leader.contains_key(&peer_id)
+        self.follower_states
+            .values()
+            .any(|state| state.leader_id == peer_id)
     }
 
     fn render_titlebar(&self, theme: &Theme, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
@@ -2862,6 +2866,7 @@ impl Workspace {
 
         cx.notify();
 
+        self.last_active_view_id = active_view_id.clone();
         proto::FollowResponse {
             active_view_id,
             views: self
@@ -2913,8 +2918,8 @@ impl Workspace {
         match update.variant.ok_or_else(|| anyhow!("invalid update"))? {
             proto::update_followers::Variant::UpdateActiveView(update_active_view) => {
                 this.update(cx, |this, _| {
-                    if let Some(state) = this.follower_states_by_leader.get_mut(&leader_id) {
-                        for state in state.values_mut() {
+                    for (_, state) in &mut this.follower_states {
+                        if state.leader_id == leader_id {
                             state.active_view_id =
                                 if let Some(active_view_id) = update_active_view.id.clone() {
                                     Some(ViewId::from_proto(active_view_id)?)
@@ -2936,8 +2941,8 @@ impl Workspace {
                 let mut tasks = Vec::new();
                 this.update(cx, |this, cx| {
                     let project = this.project.clone();
-                    if let Some(state) = this.follower_states_by_leader.get_mut(&leader_id) {
-                        for state in state.values_mut() {
+                    for (_, state) in &mut this.follower_states {
+                        if state.leader_id == leader_id {
                             let view_id = ViewId::from_proto(id.clone())?;
                             if let Some(item) = state.items_by_leader_view_id.get(&view_id) {
                                 tasks.push(item.apply_update_proto(&project, variant.clone(), cx));
@@ -2950,10 +2955,9 @@ impl Workspace {
             }
             proto::update_followers::Variant::CreateView(view) => {
                 let panes = this.read_with(cx, |this, _| {
-                    this.follower_states_by_leader
-                        .get(&leader_id)
-                        .into_iter()
-                        .flat_map(|states_by_pane| states_by_pane.keys())
+                    this.follower_states
+                        .iter()
+                        .filter_map(|(pane, state)| (state.leader_id == leader_id).then_some(pane))
                         .cloned()
                         .collect()
                 })?;
@@ -3012,11 +3016,7 @@ impl Workspace {
         for (pane, (item_tasks, leader_view_ids)) in item_tasks_by_pane {
             let items = futures::future::try_join_all(item_tasks).await?;
             this.update(cx, |this, cx| {
-                let state = this
-                    .follower_states_by_leader
-                    .get_mut(&leader_id)?
-                    .get_mut(&pane)?;
-
+                let state = this.follower_states.get_mut(&pane)?;
                 for (id, item) in leader_view_ids.into_iter().zip(items) {
                     item.set_leader_peer_id(Some(leader_id), cx);
                     state.items_by_leader_view_id.insert(id, item);
@@ -3028,7 +3028,7 @@ impl Workspace {
         Ok(())
     }
 
-    fn update_active_view_for_followers(&self, cx: &AppContext) {
+    fn update_active_view_for_followers(&mut self, cx: &AppContext) {
         let mut is_project_item = true;
         let mut update = proto::UpdateActiveView::default();
         if self.active_pane.read(cx).has_focus() {
@@ -3046,11 +3046,14 @@ impl Workspace {
             }
         }
 
-        self.update_followers(
-            is_project_item,
-            proto::update_followers::Variant::UpdateActiveView(update),
-            cx,
-        );
+        if update.id != self.last_active_view_id {
+            self.last_active_view_id = update.id.clone();
+            self.update_followers(
+                is_project_item,
+                proto::update_followers::Variant::UpdateActiveView(update),
+                cx,
+            );
+        }
     }
 
     fn update_followers(
@@ -3070,15 +3073,7 @@ impl Workspace {
     }
 
     pub fn leader_for_pane(&self, pane: &ViewHandle<Pane>) -> Option<PeerId> {
-        self.follower_states_by_leader
-            .iter()
-            .find_map(|(leader_id, state)| {
-                if state.contains_key(pane) {
-                    Some(*leader_id)
-                } else {
-                    None
-                }
-            })
+        self.follower_states.get(pane).map(|state| state.leader_id)
     }
 
     fn leader_updated(&mut self, leader_id: PeerId, cx: &mut ViewContext<Self>) -> Option<()> {
@@ -3106,17 +3101,23 @@ impl Workspace {
             }
         };
 
-        for (pane, state) in self.follower_states_by_leader.get(&leader_id)? {
-            if leader_in_this_app {
-                let item = state
-                    .active_view_id
-                    .and_then(|id| state.items_by_leader_view_id.get(&id));
-                if let Some(item) = item {
+        for (pane, state) in &self.follower_states {
+            if state.leader_id != leader_id {
+                continue;
+            }
+            if let (Some(active_view_id), true) = (state.active_view_id, leader_in_this_app) {
+                if let Some(item) = state.items_by_leader_view_id.get(&active_view_id) {
                     if leader_in_this_project || !item.is_project_item(cx) {
                         items_to_activate.push((pane.clone(), item.boxed_clone()));
                     }
-                    continue;
+                } else {
+                    log::warn!(
+                        "unknown view id {:?} for leader {:?}",
+                        active_view_id,
+                        leader_id
+                    );
                 }
+                continue;
             }
             if let Some(shared_screen) = self.shared_screen_for_peer(leader_id, pane, cx) {
                 items_to_activate.push((pane.clone(), Box::new(shared_screen)));
@@ -3394,140 +3395,124 @@ impl Workspace {
         serialized_workspace: SerializedWorkspace,
         paths_to_open: Vec<Option<ProjectPath>>,
         cx: &mut AppContext,
-    ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>> {
+    ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
         cx.spawn(|mut cx| async move {
-            let result = async_iife! {{
-                let (project, old_center_pane) =
-                workspace.read_with(&cx, |workspace, _| {
-                    (
-                        workspace.project().clone(),
-                        workspace.last_active_center_pane.clone(),
-                    )
-                })?;
+            let (project, old_center_pane) = workspace.read_with(&cx, |workspace, _| {
+                (
+                    workspace.project().clone(),
+                    workspace.last_active_center_pane.clone(),
+                )
+            })?;
 
-                let mut center_items = None;
-                let mut center_group = None;
-                // Traverse the splits tree and add to things
-                if let Some((group, active_pane, items)) = serialized_workspace
-                        .center_group
-                        .deserialize(&project, serialized_workspace.id, &workspace, &mut cx)
-                        .await {
-                    center_items = Some(items);
-                    center_group = Some((group, active_pane))
+            let mut center_group = None;
+            let mut center_items = None;
+            // Traverse the splits tree and add to things
+            if let Some((group, active_pane, items)) = serialized_workspace
+                .center_group
+                .deserialize(&project, serialized_workspace.id, &workspace, &mut cx)
+                .await
+            {
+                center_items = Some(items);
+                center_group = Some((group, active_pane))
+            }
+
+            let mut items_by_project_path = cx.read(|cx| {
+                center_items
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|item| {
+                        let item = item?;
+                        let project_path = item.project_path(cx)?;
+                        Some((project_path, item))
+                    })
+                    .collect::<HashMap<_, _>>()
+            });
+
+            let opened_items = paths_to_open
+                .into_iter()
+                .map(|path_to_open| {
+                    path_to_open
+                        .and_then(|path_to_open| items_by_project_path.remove(&path_to_open))
+                })
+                .collect::<Vec<_>>();
+
+            // Remove old panes from workspace panes list
+            workspace.update(&mut cx, |workspace, cx| {
+                if let Some((center_group, active_pane)) = center_group {
+                    workspace.remove_panes(workspace.center.root.clone(), cx);
+
+                    // Swap workspace center group
+                    workspace.center = PaneGroup::with_root(center_group);
+
+                    // Change the focus to the workspace first so that we retrigger focus in on the pane.
+                    cx.focus_self();
+
+                    if let Some(active_pane) = active_pane {
+                        cx.focus(&active_pane);
+                    } else {
+                        cx.focus(workspace.panes.last().unwrap());
+                    }
+                } else {
+                    let old_center_handle = old_center_pane.and_then(|weak| weak.upgrade(cx));
+                    if let Some(old_center_handle) = old_center_handle {
+                        cx.focus(&old_center_handle)
+                    } else {
+                        cx.focus_self()
+                    }
                 }
 
-                let resulting_list = cx.read(|cx| {
-                    let mut opened_items = center_items
-                        .unwrap_or_default()
-                        .into_iter()
-                        .filter_map(|item| {
-                            let item = item?;
-                            let project_path = item.project_path(cx)?;
-                            Some((project_path, item))
-                        })
-                        .collect::<HashMap<_, _>>();
-
-                    paths_to_open
-                        .into_iter()
-                        .map(|path_to_open| {
-                            path_to_open.map(|path_to_open| {
-                                Ok(opened_items.remove(&path_to_open))
-                            })
-                            .transpose()
-                            .map(|item| item.flatten())
-                            .transpose()
-                        })
-                        .collect::<Vec<_>>()
-                });
-
-                // Remove old panes from workspace panes list
-                workspace.update(&mut cx, |workspace, cx| {
-                    if let Some((center_group, active_pane)) = center_group {
-                        workspace.remove_panes(workspace.center.root.clone(), cx);
-
-                        // Swap workspace center group
-                        workspace.center = PaneGroup::with_root(center_group);
-
-                        // Change the focus to the workspace first so that we retrigger focus in on the pane.
-                        cx.focus_self();
-
-                        if let Some(active_pane) = active_pane {
-                            cx.focus(&active_pane);
-                        } else {
-                            cx.focus(workspace.panes.last().unwrap());
+                let docks = serialized_workspace.docks;
+                workspace.left_dock.update(cx, |dock, cx| {
+                    dock.set_open(docks.left.visible, cx);
+                    if let Some(active_panel) = docks.left.active_panel {
+                        if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
+                            dock.activate_panel(ix, cx);
                         }
-                    } else {
-                        let old_center_handle = old_center_pane.and_then(|weak| weak.upgrade(cx));
-                        if let Some(old_center_handle) = old_center_handle {
-                            cx.focus(&old_center_handle)
-                        } else {
-                            cx.focus_self()
+                    }
+                    dock.active_panel()
+                        .map(|panel| panel.set_zoomed(docks.left.zoom, cx));
+                    if docks.left.visible && docks.left.zoom {
+                        cx.focus_self()
+                    }
+                });
+                // TODO: I think the bug is that setting zoom or active undoes the bottom zoom or something
+                workspace.right_dock.update(cx, |dock, cx| {
+                    dock.set_open(docks.right.visible, cx);
+                    if let Some(active_panel) = docks.right.active_panel {
+                        if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
+                            dock.activate_panel(ix, cx);
+                        }
+                    }
+                    dock.active_panel()
+                        .map(|panel| panel.set_zoomed(docks.right.zoom, cx));
+
+                    if docks.right.visible && docks.right.zoom {
+                        cx.focus_self()
+                    }
+                });
+                workspace.bottom_dock.update(cx, |dock, cx| {
+                    dock.set_open(docks.bottom.visible, cx);
+                    if let Some(active_panel) = docks.bottom.active_panel {
+                        if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
+                            dock.activate_panel(ix, cx);
                         }
                     }
 
-                    let docks = serialized_workspace.docks;
-                    workspace.left_dock.update(cx, |dock, cx| {
-                        dock.set_open(docks.left.visible, cx);
-                        if let Some(active_panel) = docks.left.active_panel {
-                            if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
-                                dock.activate_panel(ix, cx);
-                            }
-                        }
-                                dock.active_panel()
-                                    .map(|panel| {
-                                        panel.set_zoomed(docks.left.zoom, cx)
-                                    });
-                                if docks.left.visible && docks.left.zoom {
-                                    cx.focus_self()
-                                }
-                    });
-                    // TODO: I think the bug is that setting zoom or active undoes the bottom zoom or something
-                    workspace.right_dock.update(cx, |dock, cx| {
-                        dock.set_open(docks.right.visible, cx);
-                        if let Some(active_panel) = docks.right.active_panel {
-                            if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
-                                dock.activate_panel(ix, cx);
+                    dock.active_panel()
+                        .map(|panel| panel.set_zoomed(docks.bottom.zoom, cx));
 
-                            }
-                        }
-                                dock.active_panel()
-                                    .map(|panel| {
-                                        panel.set_zoomed(docks.right.zoom, cx)
-                                    });
+                    if docks.bottom.visible && docks.bottom.zoom {
+                        cx.focus_self()
+                    }
+                });
 
-                                if docks.right.visible && docks.right.zoom {
-                                    cx.focus_self()
-                                }
-                    });
-                    workspace.bottom_dock.update(cx, |dock, cx| {
-                        dock.set_open(docks.bottom.visible, cx);
-                        if let Some(active_panel) = docks.bottom.active_panel {
-                            if let Some(ix) = dock.panel_index_for_ui_name(&active_panel, cx) {
-                                dock.activate_panel(ix, cx);
-                            }
-                        }
+                cx.notify();
+            })?;
 
-                        dock.active_panel()
-                            .map(|panel| {
-                                panel.set_zoomed(docks.bottom.zoom, cx)
-                            });
+            // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
+            workspace.read_with(&cx, |workspace, cx| workspace.serialize_workspace(cx))?;
 
-                        if docks.bottom.visible && docks.bottom.zoom {
-                            cx.focus_self()
-                        }
-                    });
-
-
-                    cx.notify();
-                })?;
-
-                // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
-                workspace.read_with(&cx, |workspace, cx| workspace.serialize_workspace(cx))?;
-
-                Ok::<_, anyhow::Error>(resulting_list)
-            }};
-
-            result.await.unwrap_or_default()
+            Ok(opened_items)
         })
     }
 
@@ -3536,15 +3521,12 @@ impl Workspace {
         let client = project.read(cx).client();
         let user_store = project.read(cx).user_store();
 
-        let channel_store =
-            cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
         let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
         let app_state = Arc::new(AppState {
             languages: project.read(cx).languages().clone(),
             workspace_store,
             client,
             user_store,
-            channel_store,
             fs: project.read(cx).fs().clone(),
             build_window_options: |_, _, _| Default::default(),
             initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
@@ -3601,7 +3583,7 @@ async fn open_items(
     mut project_paths_to_open: Vec<(PathBuf, Option<ProjectPath>)>,
     app_state: Arc<AppState>,
     mut cx: AsyncAppContext,
-) -> Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>> {
+) -> Result<Vec<Option<Result<Box<dyn ItemHandle>>>>> {
     let mut opened_items = Vec::with_capacity(project_paths_to_open.len());
 
     if let Some(serialized_workspace) = serialized_workspace {
@@ -3619,16 +3601,19 @@ async fn open_items(
                     cx,
                 )
             })
-            .await;
+            .await?;
 
         let restored_project_paths = cx.read(|cx| {
             restored_items
                 .iter()
-                .filter_map(|item| item.as_ref()?.as_ref().ok()?.project_path(cx))
+                .filter_map(|item| item.as_ref()?.project_path(cx))
                 .collect::<HashSet<_>>()
         });
 
-        opened_items = restored_items;
+        for restored_item in restored_items {
+            opened_items.push(restored_item.map(Ok));
+        }
+
         project_paths_to_open
             .iter_mut()
             .for_each(|(_, project_path)| {
@@ -3681,7 +3666,7 @@ async fn open_items(
         }
     }
 
-    opened_items
+    Ok(opened_items)
 }
 
 fn notify_of_new_dock(workspace: &WeakViewHandle<Workspace>, cx: &mut AsyncAppContext) {
@@ -3817,7 +3802,7 @@ impl View for Workspace {
                                                     self.center.render(
                                                         &project,
                                                         &theme,
-                                                        &self.follower_states_by_leader,
+                                                        &self.follower_states,
                                                         self.active_call(),
                                                         self.active_pane(),
                                                         self.zoomed

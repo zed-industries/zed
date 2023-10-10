@@ -3,7 +3,6 @@
 
 use anyhow::{anyhow, Context, Result};
 use backtrace::Backtrace;
-use channel::ChannelStore;
 use cli::{
     ipc::{self, IpcSender},
     CliRequest, CliResponse, IpcHandshake, FORCE_CLI_MODE_ENV_VAR_NAME,
@@ -78,7 +77,8 @@ fn main() {
     let mut app = gpui::App::new(Assets).unwrap();
 
     let installation_id = app.background().block(installation_id()).ok();
-    init_panic_hook(&app, installation_id.clone());
+    let session_id = Uuid::new_v4().to_string();
+    init_panic_hook(&app, installation_id.clone(), session_id.clone());
 
     load_embedded_fonts(&app);
 
@@ -132,8 +132,6 @@ fn main() {
 
         languages::init(languages.clone(), node_runtime.clone(), cx);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
-        let channel_store =
-            cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
         let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
 
         cx.set_global(client.clone());
@@ -150,7 +148,7 @@ fn main() {
         outline::init(cx);
         project_symbols::init(cx);
         project_panel::init(Assets, cx);
-        channel::init(&client);
+        channel::init(&client, user_store.clone(), cx);
         diagnostics::init(cx);
         search::init(cx);
         semantic_index::init(fs.clone(), http.clone(), languages.clone(), cx);
@@ -172,13 +170,12 @@ fn main() {
         })
         .detach();
 
-        client.telemetry().start(installation_id, cx);
+        client.telemetry().start(installation_id, session_id, cx);
 
         let app_state = Arc::new(AppState {
             languages,
             client: client.clone(),
             user_store,
-            channel_store,
             fs,
             build_window_options,
             initialize_workspace,
@@ -387,6 +384,7 @@ struct Panic {
     panicked_on: u128,
     #[serde(skip_serializing_if = "Option::is_none")]
     installation_id: Option<String>,
+    session_id: String,
 }
 
 #[derive(Serialize)]
@@ -397,7 +395,7 @@ struct PanicRequest {
 
 static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
 
-fn init_panic_hook(app: &App, installation_id: Option<String>) {
+fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: String) {
     let is_pty = stdout_is_a_pty();
     let platform = app.platform();
 
@@ -462,7 +460,7 @@ fn init_panic_hook(app: &App, installation_id: Option<String>) {
                 line: location.line(),
             }),
             app_version: app_version.clone(),
-            release_channel: RELEASE_CHANNEL.dev_name().into(),
+            release_channel: RELEASE_CHANNEL.display_name().into(),
             os_name: platform.os_name().into(),
             os_version: platform
                 .os_version()
@@ -475,13 +473,14 @@ fn init_panic_hook(app: &App, installation_id: Option<String>) {
                 .as_millis(),
             backtrace,
             installation_id: installation_id.clone(),
+            session_id: session_id.clone(),
         };
 
-        if is_pty {
-            if let Some(panic_data_json) = serde_json::to_string_pretty(&panic_data).log_err() {
-                eprintln!("{}", panic_data_json);
-            }
-        } else {
+        if let Some(panic_data_json) = serde_json::to_string_pretty(&panic_data).log_err() {
+            log::error!("{}", panic_data_json);
+        }
+
+        if !is_pty {
             if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
                 let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
                 let panic_file_path = paths::LOGS_DIR.join(format!("zed-{}.panic", timestamp));

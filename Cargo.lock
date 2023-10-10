@@ -1082,7 +1082,6 @@ dependencies = [
  "anyhow",
  "async-broadcast",
  "audio",
- "channel",
  "client",
  "collections",
  "fs",
@@ -1467,7 +1466,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.23.1"
+version = "0.23.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2079,9 +2078,9 @@ dependencies = [
 
 [[package]]
 name = "curl-sys"
-version = "0.4.66+curl-8.3.0"
+version = "0.4.67+curl-8.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70c44a72e830f0e40ad90dda8a6ab6ed6314d39776599a58a2e5e37fbc6db5b9"
+checksum = "3cc35d066510b197a0f72de863736641539957628c8a42e70e27c66849e77c34"
 dependencies = [
  "cc",
  "libc",
@@ -2832,7 +2831,6 @@ dependencies = [
  "parking_lot 0.11.2",
  "regex",
  "rope",
- "rpc",
  "serde",
  "serde_derive",
  "serde_json",
@@ -9665,6 +9663,7 @@ dependencies = [
  "theme",
  "theme_selector",
  "util",
+ "vim",
  "workspace",
 ]
 
@@ -9971,7 +9970,6 @@ dependencies = [
  "async-recursion 1.0.5",
  "bincode",
  "call",
- "channel",
  "client",
  "collections",
  "context_menu",
