@@ -580,6 +580,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_apply_code_action);
         client.add_model_request_handler(Self::handle_on_type_formatting);
         client.add_model_request_handler(Self::handle_inlay_hints);
+        client.add_model_request_handler(Self::handle_resolve_completion_documentation);
         client.add_model_request_handler(Self::handle_resolve_inlay_hint);
         client.add_model_request_handler(Self::handle_refresh_inlay_hints);
         client.add_model_request_handler(Self::handle_reload_buffers);
@@ -7153,6 +7154,40 @@ impl Project {
                 .as_ref()
                 .map(language::proto::serialize_transaction),
         })
+    }
+
+    async fn handle_resolve_completion_documentation(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::ResolveCompletionDocumentation>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ResolveCompletionDocumentationResponse> {
+        let lsp_completion = serde_json::from_slice(&envelope.payload.lsp_completion)?;
+
+        let completion = this
+            .read_with(&mut cx, |this, _| {
+                let id = LanguageServerId(envelope.payload.language_server_id as usize);
+                let Some(server) = this.language_server_for_id(id) else {
+                    return Err(anyhow!("No language server {id}"));
+                };
+
+                Ok(server.request::<lsp::request::ResolveCompletionItem>(lsp_completion))
+            })?
+            .await?;
+
+        let mut is_markdown = false;
+        let text = match completion.documentation {
+            Some(lsp::Documentation::String(text)) => text,
+
+            Some(lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value })) => {
+                is_markdown = kind == lsp::MarkupKind::Markdown;
+                value
+            }
+
+            _ => String::new(),
+        };
+
+        Ok(proto::ResolveCompletionDocumentationResponse { text, is_markdown })
     }
 
     async fn handle_apply_code_action(

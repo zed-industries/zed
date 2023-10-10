@@ -224,6 +224,7 @@ impl Server {
             .add_request_handler(forward_project_request::<proto::OpenBufferByPath>)
             .add_request_handler(forward_project_request::<proto::GetCompletions>)
             .add_request_handler(forward_project_request::<proto::ApplyCompletionAdditionalEdits>)
+            .add_request_handler(forward_project_request::<proto::ResolveCompletionDocumentation>)
             .add_request_handler(forward_project_request::<proto::GetCodeActions>)
             .add_request_handler(forward_project_request::<proto::ApplyCodeAction>)
             .add_request_handler(forward_project_request::<proto::PrepareRename>)

@@ -89,88 +89,90 @@ message Envelope {
         FormatBuffersResponse format_buffers_response = 70;
         GetCompletions get_completions = 71;
         GetCompletionsResponse get_completions_response = 72;
-        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 73;
-        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 74;
-        GetCodeActions get_code_actions = 75;
-        GetCodeActionsResponse get_code_actions_response = 76;
-        GetHover get_hover = 77;
-        GetHoverResponse get_hover_response = 78;
-        ApplyCodeAction apply_code_action = 79;
-        ApplyCodeActionResponse apply_code_action_response = 80;
-        PrepareRename prepare_rename = 81;
-        PrepareRenameResponse prepare_rename_response = 82;
-        PerformRename perform_rename = 83;
-        PerformRenameResponse perform_rename_response = 84;
-        SearchProject search_project = 85;
-        SearchProjectResponse search_project_response = 86;
+        ResolveCompletionDocumentation resolve_completion_documentation = 73;
+        ResolveCompletionDocumentationResponse resolve_completion_documentation_response = 74;
+        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 75;
+        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 76;
+        GetCodeActions get_code_actions = 77;
+        GetCodeActionsResponse get_code_actions_response = 78;
+        GetHover get_hover = 79;
+        GetHoverResponse get_hover_response = 80;
+        ApplyCodeAction apply_code_action = 81;
+        ApplyCodeActionResponse apply_code_action_response = 82;
+        PrepareRename prepare_rename = 83;
+        PrepareRenameResponse prepare_rename_response = 84;
+        PerformRename perform_rename = 85;
+        PerformRenameResponse perform_rename_response = 86;
+        SearchProject search_project = 87;
+        SearchProjectResponse search_project_response = 88;
 
-        UpdateContacts update_contacts = 87;
-        UpdateInviteInfo update_invite_info = 88;
-        ShowContacts show_contacts = 89;
+        UpdateContacts update_contacts = 89;
+        UpdateInviteInfo update_invite_info = 90;
+        ShowContacts show_contacts = 91;
 
-        GetUsers get_users = 90;
-        FuzzySearchUsers fuzzy_search_users = 91;
-        UsersResponse users_response = 92;
-        RequestContact request_contact = 93;
-        RespondToContactRequest respond_to_contact_request = 94;
-        RemoveContact remove_contact = 95;
+        GetUsers get_users = 92;
+        FuzzySearchUsers fuzzy_search_users = 93;
+        UsersResponse users_response = 94;
+        RequestContact request_contact = 95;
+        RespondToContactRequest respond_to_contact_request = 96;
+        RemoveContact remove_contact = 97;
 
-        Follow follow = 96;
-        FollowResponse follow_response = 97;
-        UpdateFollowers update_followers = 98;
-        Unfollow unfollow = 99;
-        GetPrivateUserInfo get_private_user_info = 100;
-        GetPrivateUserInfoResponse get_private_user_info_response = 101;
-        UpdateDiffBase update_diff_base = 102;
+        Follow follow = 98;
+        FollowResponse follow_response = 99;
+        UpdateFollowers update_followers = 100;
+        Unfollow unfollow = 101;
+        GetPrivateUserInfo get_private_user_info = 102;
+        GetPrivateUserInfoResponse get_private_user_info_response = 103;
+        UpdateDiffBase update_diff_base = 104;
 
-        OnTypeFormatting on_type_formatting = 103;
-        OnTypeFormattingResponse on_type_formatting_response = 104;
+        OnTypeFormatting on_type_formatting = 105;
+        OnTypeFormattingResponse on_type_formatting_response = 106;
 
-        UpdateWorktreeSettings update_worktree_settings = 105;
+        UpdateWorktreeSettings update_worktree_settings = 107;
 
-        InlayHints inlay_hints = 106;
-        InlayHintsResponse inlay_hints_response = 107;
-        ResolveInlayHint resolve_inlay_hint = 108;
-        ResolveInlayHintResponse resolve_inlay_hint_response = 109;
-        RefreshInlayHints refresh_inlay_hints = 110;
+        InlayHints inlay_hints = 108;
+        InlayHintsResponse inlay_hints_response = 109;
+        ResolveInlayHint resolve_inlay_hint = 110;
+        ResolveInlayHintResponse resolve_inlay_hint_response = 111;
+        RefreshInlayHints refresh_inlay_hints = 112;
 
-        CreateChannel create_channel = 111;
-        CreateChannelResponse create_channel_response = 112;
-        InviteChannelMember invite_channel_member = 113;
-        RemoveChannelMember remove_channel_member = 114;
-        RespondToChannelInvite respond_to_channel_invite = 115;
-        UpdateChannels update_channels = 116;
-        JoinChannel join_channel = 117;
-        DeleteChannel delete_channel = 118;
-        GetChannelMembers get_channel_members = 119;
-        GetChannelMembersResponse get_channel_members_response = 120;
-        SetChannelMemberAdmin set_channel_member_admin = 121;
-        RenameChannel rename_channel = 122;
-        RenameChannelResponse rename_channel_response = 123;
+        CreateChannel create_channel = 113;
+        CreateChannelResponse create_channel_response = 114;
+        InviteChannelMember invite_channel_member = 115;
+        RemoveChannelMember remove_channel_member = 116;
+        RespondToChannelInvite respond_to_channel_invite = 117;
+        UpdateChannels update_channels = 118;
+        JoinChannel join_channel = 119;
+        DeleteChannel delete_channel = 120;
+        GetChannelMembers get_channel_members = 121;
+        GetChannelMembersResponse get_channel_members_response = 122;
+        SetChannelMemberAdmin set_channel_member_admin = 123;
+        RenameChannel rename_channel = 124;
+        RenameChannelResponse rename_channel_response = 125;
 
-        JoinChannelBuffer join_channel_buffer = 124;
-        JoinChannelBufferResponse join_channel_buffer_response = 125;
-        UpdateChannelBuffer update_channel_buffer = 126;
-        LeaveChannelBuffer leave_channel_buffer = 127;
-        UpdateChannelBufferCollaborators update_channel_buffer_collaborators = 128;
-        RejoinChannelBuffers rejoin_channel_buffers = 129;
-        RejoinChannelBuffersResponse rejoin_channel_buffers_response = 130;
-        AckBufferOperation ack_buffer_operation = 143;
+        JoinChannelBuffer join_channel_buffer = 126;
+        JoinChannelBufferResponse join_channel_buffer_response = 127;
+        UpdateChannelBuffer update_channel_buffer = 128;
+        LeaveChannelBuffer leave_channel_buffer = 129;
+        UpdateChannelBufferCollaborators update_channel_buffer_collaborators = 130;
+        RejoinChannelBuffers rejoin_channel_buffers = 131;
+        RejoinChannelBuffersResponse rejoin_channel_buffers_response = 132;
+        AckBufferOperation ack_buffer_operation = 145;
 
-        JoinChannelChat join_channel_chat = 131;
-        JoinChannelChatResponse join_channel_chat_response = 132;
-        LeaveChannelChat leave_channel_chat = 133;
-        SendChannelMessage send_channel_message = 134;
-        SendChannelMessageResponse send_channel_message_response = 135;
-        ChannelMessageSent channel_message_sent = 136;
-        GetChannelMessages get_channel_messages = 137;
-        GetChannelMessagesResponse get_channel_messages_response = 138;
-        RemoveChannelMessage remove_channel_message = 139;
-        AckChannelMessage ack_channel_message = 144;
+        JoinChannelChat join_channel_chat = 133;
+        JoinChannelChatResponse join_channel_chat_response = 134;
+        LeaveChannelChat leave_channel_chat = 135;
+        SendChannelMessage send_channel_message = 136;
+        SendChannelMessageResponse send_channel_message_response = 137;
+        ChannelMessageSent channel_message_sent = 138;
+        GetChannelMessages get_channel_messages = 139;
+        GetChannelMessagesResponse get_channel_messages_response = 140;
+        RemoveChannelMessage remove_channel_message = 141;
+        AckChannelMessage ack_channel_message = 146;
 
-        LinkChannel link_channel = 140;
-        UnlinkChannel unlink_channel = 141;
-        MoveChannel move_channel = 142; // current max: 144
+        LinkChannel link_channel = 142;
+        UnlinkChannel unlink_channel = 143;
+        MoveChannel move_channel = 144; // current max: 146
     }
 }
 
@@ -830,6 +832,17 @@ message ResolveState {
         string value = 1;
         uint64 server_id = 2;
     }
+}
+
+message ResolveCompletionDocumentation {
+    uint64 project_id = 1;
+    uint64 language_server_id = 2;
+    bytes lsp_completion = 3;
+}
+
+message ResolveCompletionDocumentationResponse {
+    string text = 1;
+    bool is_markdown = 2;
 }
 
 message ResolveInlayHint {

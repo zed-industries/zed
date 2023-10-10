@@ -1466,12 +1466,14 @@ impl LspCommand for GetCompletions {
                         }
 
                         let documentation = if let Some(lsp_docs) = &lsp_completion.documentation {
-                            prepare_completion_documentation(
-                                lsp_docs,
-                                &language_registry,
-                                language.clone(),
+                            Some(
+                                prepare_completion_documentation(
+                                    lsp_docs,
+                                    &language_registry,
+                                    language.clone(),
+                                )
+                                .await,
                             )
-                            .await
                         } else {
                             None
                         };

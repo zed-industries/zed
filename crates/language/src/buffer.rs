@@ -149,28 +149,28 @@ pub async fn prepare_completion_documentation(
     documentation: &lsp::Documentation,
     language_registry: &Arc<LanguageRegistry>,
     language: Option<Arc<Language>>,
-) -> Option<Documentation> {
+) -> Documentation {
     match documentation {
         lsp::Documentation::String(text) => {
             if text.lines().count() <= 1 {
-                Some(Documentation::SingleLine(text.clone()))
+                Documentation::SingleLine(text.clone())
             } else {
-                Some(Documentation::MultiLinePlainText(text.clone()))
+                Documentation::MultiLinePlainText(text.clone())
             }
         }
 
         lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
             lsp::MarkupKind::PlainText => {
                 if value.lines().count() <= 1 {
-                    Some(Documentation::SingleLine(value.clone()))
+                    Documentation::SingleLine(value.clone())
                 } else {
-                    Some(Documentation::MultiLinePlainText(value.clone()))
+                    Documentation::MultiLinePlainText(value.clone())
                 }
             }
 
             lsp::MarkupKind::Markdown => {
                 let parsed = parse_markdown(value, language_registry, language).await;
-                Some(Documentation::MultiLineMarkdown(parsed))
+                Documentation::MultiLineMarkdown(parsed)
             }
         },
     }
@@ -178,6 +178,7 @@ pub async fn prepare_completion_documentation(
 
 #[derive(Clone, Debug)]
 pub enum Documentation {
+    Undocumented,
     SingleLine(String),
     MultiLinePlainText(String),
     MultiLineMarkdown(ParsedMarkdown),

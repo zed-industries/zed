@@ -60,10 +60,10 @@ use itertools::Itertools;
 pub use language::{char_kind, CharKind};
 use language::{
     language_settings::{self, all_language_settings, InlayHintSettings},
-    point_from_lsp, AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel, Completion,
-    CursorShape, Diagnostic, DiagnosticSeverity, Documentation, File, IndentKind, IndentSize,
-    Language, LanguageServerName, OffsetRangeExt, OffsetUtf16, Point, Selection, SelectionGoal,
-    TransactionId,
+    markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel,
+    Completion, CursorShape, Diagnostic, DiagnosticSeverity, Documentation, File, IndentKind,
+    IndentSize, Language, LanguageServerName, OffsetRangeExt, OffsetUtf16, Point, Selection,
+    SelectionGoal, TransactionId,
 };
 use link_go_to_definition::{
     hide_link_definition, show_link_definition, GoToDefinitionLink, InlayHighlight,
@@ -80,7 +80,7 @@ use ordered_float::OrderedFloat;
 use parking_lot::RwLock;
 use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
 use rand::{seq::SliceRandom, thread_rng};
-use rpc::proto::PeerId;
+use rpc::proto::{self, PeerId};
 use scroll::{
     autoscroll::Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide,
 };
@@ -999,13 +999,64 @@ impl CompletionsMenu {
         let completions = self.completions.clone();
         let completions_guard = completions.read();
         let completion = &completions_guard[index];
-        if completion.lsp_completion.documentation.is_some() {
+        if completion.documentation.is_some() {
             return;
         }
 
         let server_id = completion.server_id;
         let completion = completion.lsp_completion.clone();
         drop(completions_guard);
+
+        if project.read(cx).is_remote() {
+            let Some(project_id) = project.read(cx).remote_id() else {
+                log::error!("Remote project without remote_id");
+                return;
+            };
+
+            let client = project.read(cx).client();
+            let request = proto::ResolveCompletionDocumentation {
+                project_id,
+                language_server_id: server_id.0 as u64,
+                lsp_completion: serde_json::to_string(&completion).unwrap().into_bytes(),
+            };
+
+            cx.spawn(|this, mut cx| async move {
+                let Some(response) = client
+                    .request(request)
+                    .await
+                    .context("completion documentation resolve proto request")
+                    .log_err()
+                else {
+                    return;
+                };
+
+                if response.text.is_empty() {
+                    let mut completions = completions.write();
+                    let completion = &mut completions[index];
+                    completion.documentation = Some(Documentation::Undocumented);
+                }
+
+                let documentation = if response.is_markdown {
+                    Documentation::MultiLineMarkdown(
+                        markdown::parse_markdown(&response.text, &language_registry, None).await,
+                    )
+                } else if response.text.lines().count() <= 1 {
+                    Documentation::SingleLine(response.text)
+                } else {
+                    Documentation::MultiLinePlainText(response.text)
+                };
+
+                let mut completions = completions.write();
+                let completion = &mut completions[index];
+                completion.documentation = Some(documentation);
+                drop(completions);
+
+                _ = this.update(&mut cx, |_, cx| cx.notify());
+            })
+            .detach();
+
+            return;
+        }
 
         let Some(server) = project.read(cx).language_server_for_id(server_id) else {
             return;
@@ -1037,11 +1088,14 @@ impl CompletionsMenu {
 
                 let mut completions = completions.write();
                 let completion = &mut completions[index];
-                completion.documentation = documentation;
-                completion.lsp_completion.documentation = Some(lsp_documentation);
+                completion.documentation = Some(documentation);
                 drop(completions);
 
                 _ = this.update(&mut cx, |_, cx| cx.notify());
+            } else {
+                let mut completions = completions.write();
+                let completion = &mut completions[index];
+                completion.documentation = Some(Documentation::Undocumented);
             }
         })
         .detach();
@@ -1061,10 +1115,10 @@ impl CompletionsMenu {
             .max_by_key(|(_, mat)| {
                 let completions = self.completions.read();
                 let completion = &completions[mat.candidate_id];
-                let documentation = &completion.lsp_completion.documentation;
+                let documentation = &completion.documentation;
 
                 let mut len = completion.label.text.chars().count();
-                if let Some(lsp::Documentation::String(text)) = documentation {
+                if let Some(Documentation::SingleLine(text)) = documentation {
                     len += text.chars().count();
                 }
 
