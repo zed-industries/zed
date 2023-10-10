@@ -1,7 +1,20 @@
 use std::marker::PhantomData;
+use std::sync::Arc;
+
+use gpui3::{Interactive, MouseButton};
 
 use crate::prelude::*;
 use crate::{theme, Icon, IconColor, IconElement};
+
+struct IconButtonHandlers<S: 'static + Send + Sync> {
+    click: Option<Arc<dyn Fn(&mut S, &mut ViewContext<S>) + 'static + Send + Sync>>,
+}
+
+impl<S: 'static + Send + Sync> Default for IconButtonHandlers<S> {
+    fn default() -> Self {
+        Self { click: None }
+    }
+}
 
 #[derive(Element)]
 pub struct IconButton<S: 'static + Send + Sync> {
@@ -10,6 +23,7 @@ pub struct IconButton<S: 'static + Send + Sync> {
     color: IconColor,
     variant: ButtonVariant,
     state: InteractionState,
+    handlers: IconButtonHandlers<S>,
 }
 
 impl<S: 'static + Send + Sync> IconButton<S> {
@@ -20,6 +34,7 @@ impl<S: 'static + Send + Sync> IconButton<S> {
             color: IconColor::default(),
             variant: ButtonVariant::default(),
             state: InteractionState::default(),
+            handlers: IconButtonHandlers::default(),
         }
     }
 
@@ -43,6 +58,14 @@ impl<S: 'static + Send + Sync> IconButton<S> {
         self
     }
 
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&mut S, &mut ViewContext<S>) + 'static + Send + Sync,
+    ) -> Self {
+        self.handlers.click = Some(Arc::new(handler));
+        self
+    }
+
     fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
         let theme = theme(cx);
 
@@ -54,6 +77,12 @@ impl<S: 'static + Send + Sync> IconButton<S> {
         let mut div = div();
         if self.variant == ButtonVariant::Filled {
             div = div.fill(theme.highest.on.default.background);
+        }
+
+        if let Some(click_handler) = self.handlers.click.clone() {
+            div = div.on_click(MouseButton::Left, move |state, event, cx| {
+                click_handler(state, cx);
+            });
         }
 
         div.w_7()
