@@ -802,7 +802,7 @@ impl Database {
                 let result = room::Entity::insert(room::ActiveModel {
                     channel_id: ActiveValue::Set(Some(channel_id)),
                     live_kit_room: ActiveValue::Set(live_kit_room.to_string()),
-                    release_channel: ActiveValue::Set(Some(enviroment.to_string())),
+                    enviroment: ActiveValue::Set(Some(enviroment.to_string())),
                     ..Default::default()
                 })
                 .exec(&*tx)

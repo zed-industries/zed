@@ -1,1 +1,1 @@
-ALTER TABLE rooms ADD COLUMN release_channel TEXT;
+ALTER TABLE rooms ADD COLUMN enviroment TEXT;
