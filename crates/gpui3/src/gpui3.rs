@@ -167,6 +167,9 @@ impl<T> Flatten<T> for Result<T> {
 #[derive(Clone, Eq, PartialEq, Hash)]
 pub struct SharedString(ArcCow<'static, str>);
 
+#[derive(Clone, Eq, PartialEq, Hash)]
+pub struct ElementId(ArcCow<'static, [u8]>);
+
 impl Default for SharedString {
     fn default() -> Self {
         Self(ArcCow::Owned("".into()))
