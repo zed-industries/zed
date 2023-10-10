@@ -33,6 +33,12 @@ pub trait Element: 'static {
     }
 }
 
+pub trait StatefulElement: Element {
+    fn element_id(&self) -> ElementId {
+        Element::element_id(self).unwrap()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ElementId(ArcCow<'static, [u8]>);
 

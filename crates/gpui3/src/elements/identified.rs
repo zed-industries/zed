@@ -1,11 +1,5 @@
-use crate::{BorrowWindow, Bounds, Element, ElementId, LayoutId, ViewContext};
+use crate::{BorrowWindow, Bounds, Element, ElementId, LayoutId, StatefulElement, ViewContext};
 use anyhow::Result;
-
-pub trait Stateful: Element {
-    fn element_id(&self) -> ElementId {
-        Element::element_id(self).unwrap()
-    }
-}
 
 pub struct Identified<E> {
     pub(crate) element: E,
@@ -41,4 +35,4 @@ impl<E: Element> Element for Identified<E> {
     }
 }
 
-impl<E: Element> Stateful for Identified<E> {}
+impl<E: Element> StatefulElement for Identified<E> {}

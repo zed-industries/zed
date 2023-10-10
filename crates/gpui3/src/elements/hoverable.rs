@@ -1,6 +1,6 @@
 use crate::{
     AnyElement, Bounds, DispatchPhase, Element, ElementId, Interactive, MouseEventListeners,
-    MouseMoveEvent, ParentElement, Pixels, Stateful, Styled, ViewContext,
+    MouseMoveEvent, ParentElement, Pixels, StatefulElement, Styled, ViewContext,
 };
 use anyhow::Result;
 use refineable::{CascadeSlot, Refineable, RefinementCascade};
@@ -100,4 +100,4 @@ impl<E: ParentElement + Styled> ParentElement for Hoverable<E> {
     }
 }
 
-impl<E: Stateful + Styled> Stateful for Hoverable<E> {}
+impl<E: StatefulElement + Styled> StatefulElement for Hoverable<E> {}
