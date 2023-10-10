@@ -23,16 +23,14 @@ pub enum ElementStory {
 
 impl ElementStory {
     pub fn story<S: 'static + Send + Sync + Clone>(&self) -> AnyElement<S> {
-        use crate::stories::elements;
-
         match self {
-            Self::Avatar => elements::avatar::AvatarStory::new().into_any(),
-            Self::Button => elements::button::ButtonStory::new().into_any(),
-            Self::Details => elements::details::DetailsStory::new().into_any(),
-            Self::Icon => elements::icon::IconStory::new().into_any(),
-            Self::Input => elements::input::InputStory::new().into_any(),
-            Self::Label => elements::label::LabelStory::new().into_any(),
-            Self::ZIndex => elements::z_index::ZIndexStory::new().into_any(),
+            Self::Avatar => ui::AvatarStory::new().into_any(),
+            Self::Button => ui::ButtonStory::new().into_any(),
+            Self::Details => ui::DetailsStory::new().into_any(),
+            Self::Icon => ui::IconStory::new().into_any(),
+            Self::Input => ui::InputStory::new().into_any(),
+            Self::Label => ui::LabelStory::new().into_any(),
+            Self::ZIndex => crate::stories::z_index::ZIndexStory::new().into_any(),
         }
     }
 }

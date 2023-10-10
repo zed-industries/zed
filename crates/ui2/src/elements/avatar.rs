@@ -42,3 +42,40 @@ impl<S: 'static + Send + Sync> Avatar<S> {
             .fill(theme.middle.warning.default.foreground)
     }
 }
+
+#[cfg(feature = "stories")]
+pub use stories::*;
+
+#[cfg(feature = "stories")]
+mod stories {
+    use crate::Story;
+
+    use super::*;
+
+    #[derive(Element)]
+    pub struct AvatarStory<S: 'static + Send + Sync> {
+        state_type: PhantomData<S>,
+    }
+
+    impl<S: 'static + Send + Sync> AvatarStory<S> {
+        pub fn new() -> Self {
+            Self {
+                state_type: PhantomData,
+            }
+        }
+
+        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+            Story::container(cx)
+                .child(Story::title_for::<_, Avatar<S>>(cx))
+                .child(Story::label(cx, "Default"))
+                .child(Avatar::new(
+                    "https://avatars.githubusercontent.com/u/1714999?v=4",
+                ))
+                .child(Story::label(cx, "Rounded rectangle"))
+                .child(
+                    Avatar::new("https://avatars.githubusercontent.com/u/1714999?v=4")
+                        .shape(Shape::RoundedRectangle),
+                )
+        }
+    }
+}

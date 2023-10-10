@@ -182,3 +182,37 @@ impl<S: 'static + Send + Sync> IconElement<S> {
         sized_svg.flex_none().path(self.icon.path()).fill(fill)
     }
 }
+
+#[cfg(feature = "stories")]
+pub use stories::*;
+
+#[cfg(feature = "stories")]
+mod stories {
+    use strum::IntoEnumIterator;
+
+    use crate::Story;
+
+    use super::*;
+
+    #[derive(Element, Default)]
+    pub struct IconStory<S: 'static + Send + Sync> {
+        state_type: PhantomData<S>,
+    }
+
+    impl<S: 'static + Send + Sync> IconStory<S> {
+        pub fn new() -> Self {
+            Self {
+                state_type: PhantomData,
+            }
+        }
+
+        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+            let icons = Icon::iter();
+
+            Story::container(cx)
+                .child(Story::title_for::<_, IconElement<S>>(cx))
+                .child(Story::label(cx, "All Icons"))
+                .child(div().flex().gap_3().children(icons.map(IconElement::new)))
+        }
+    }
+}
