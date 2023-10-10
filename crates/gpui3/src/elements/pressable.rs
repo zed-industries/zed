@@ -90,6 +90,9 @@ impl<E: Element + Identified + Styled> Element for Pressable<E> {
             }
         });
 
+        cx.frame_state::<Self>(self.id().to_global(cx))
+        // cx.frame_state
+
         self.child.paint(bounds, state, frame_state, cx)?;
         Ok(())
     }
