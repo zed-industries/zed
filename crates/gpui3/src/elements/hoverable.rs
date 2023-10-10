@@ -1,6 +1,6 @@
 use crate::{
-    AnyElement, Bounds, DispatchPhase, Element, Interactive, MouseEventListeners, MouseMoveEvent,
-    ParentElement, Pixels, Styled, ViewContext,
+    AnyElement, Bounds, DispatchPhase, Element, ElementId, Interactive, MouseEventListeners,
+    MouseMoveEvent, ParentElement, Pixels, StatefulElement, Styled, ViewContext,
 };
 use anyhow::Result;
 use refineable::{CascadeSlot, Refineable, RefinementCascade};
@@ -53,6 +53,10 @@ impl<E: Element + Styled> Element for Hoverable<E> {
     type State = E::State;
     type FrameState = E::FrameState;
 
+    fn element_id(&self) -> Option<ElementId> {
+        self.child.element_id()
+    }
+
     fn layout(
         &mut self,
         state: &mut Self::State,
@@ -95,3 +99,5 @@ impl<E: ParentElement + Styled> ParentElement for Hoverable<E> {
         self.child.children_mut()
     }
 }
+
+impl<E: StatefulElement + Styled> StatefulElement for Hoverable<E> {}

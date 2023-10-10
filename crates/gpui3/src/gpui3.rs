@@ -39,21 +39,22 @@ pub use serde;
 pub use serde_json;
 pub use smallvec;
 pub use smol::Timer;
-use std::{
-    mem,
-    ops::{Deref, DerefMut},
-    sync::Arc,
-};
 pub use style::*;
 pub use style_helpers::*;
 pub use styled::*;
 pub use svg_renderer::*;
-use taffy::TaffyLayoutEngine;
 pub use taffy::{AvailableSpace, LayoutId};
 pub use text_system::*;
 pub use util::arc_cow::ArcCow;
 pub use view::*;
 pub use window::*;
+
+use std::{
+    mem,
+    ops::{Deref, DerefMut},
+    sync::Arc,
+};
+use taffy::TaffyLayoutEngine;
 
 pub trait Context {
     type EntityContext<'a, 'w, T: 'static + Send + Sync>;

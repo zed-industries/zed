@@ -1,12 +1,12 @@
 use crate::{
     image_cache::RenderImageParams, px, size, AnyView, AppContext, AsyncWindowContext,
     AvailableSpace, BorrowAppContext, Bounds, BoxShadow, Context, Corners, DevicePixels, DisplayId,
-    Edges, Effect, Element, EntityId, Event, FontId, GlyphId, Handle, Hsla, ImageData, IsZero,
-    LayoutId, MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path, Pixels,
-    PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams,
-    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style,
-    TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle, WindowOptions,
-    SUBPIXEL_VARIANTS,
+    Edges, Effect, Element, ElementId, EntityId, Event, FontId, GlobalElementId, GlyphId, Handle,
+    Hsla, ImageData, IsZero, LayoutId, MainThread, MainThreadOnly, MonochromeSprite,
+    MouseMoveEvent, Path, Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad,
+    Reference, RenderGlyphParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow,
+    SharedString, Size, Style, TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle,
+    WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -51,7 +51,8 @@ pub struct Window {
     content_size: Size<Pixels>,
     layout_engine: TaffyLayoutEngine,
     pub(crate) root_view: Option<AnyView<()>>,
-    current_stacking_order: StackingOrder,
+    pub(crate) element_id_stack: GlobalElementId,
+    z_index_stack: StackingOrder,
     content_mask_stack: Vec<ContentMask<Pixels>>,
     mouse_event_handlers: HashMap<TypeId, Vec<(StackingOrder, MouseEventHandler)>>,
     propagate_event: bool,
@@ -112,7 +113,8 @@ impl Window {
             content_size,
             layout_engine: TaffyLayoutEngine::new(),
             root_view: None,
-            current_stacking_order: StackingOrder(SmallVec::new()),
+            element_id_stack: GlobalElementId::default(),
+            z_index_stack: StackingOrder(SmallVec::new()),
             content_mask_stack: Vec::new(),
             mouse_event_handlers: HashMap::default(),
             propagate_event: true,
@@ -287,7 +289,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         &mut self,
         handler: impl Fn(&Event, DispatchPhase, &mut WindowContext) + Send + Sync + 'static,
     ) {
-        let order = self.window.current_stacking_order.clone();
+        let order = self.window.z_index_stack.clone();
         self.window
             .mouse_event_handlers
             .entry(TypeId::of::<Event>())
@@ -305,9 +307,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 
     pub fn stack<R>(&mut self, order: u32, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.window.current_stacking_order.push(order);
+        self.window.z_index_stack.push(order);
         let result = f(self);
-        self.window.current_stacking_order.pop();
+        self.window.z_index_stack.pop();
         result
     }
 
@@ -325,7 +327,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             shadow_bounds.origin += shadow.offset;
             shadow_bounds.dilate(shadow.spread_radius);
             window.scene_builder.insert(
-                &window.current_stacking_order,
+                &window.z_index_stack,
                 Shadow {
                     order: 0,
                     bounds: shadow_bounds.scale(scale_factor),
@@ -351,7 +353,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
         let window = &mut *self.window;
         window.scene_builder.insert(
-            &window.current_stacking_order,
+            &window.z_index_stack,
             Quad {
                 order: 0,
                 bounds: bounds.scale(scale_factor),
@@ -372,7 +374,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         let window = &mut *self.window;
         window
             .scene_builder
-            .insert(&window.current_stacking_order, path.scale(scale_factor));
+            .insert(&window.z_index_stack, path.scale(scale_factor));
     }
 
     pub fn paint_underline(
@@ -394,7 +396,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         let content_mask = self.content_mask();
         let window = &mut *self.window;
         window.scene_builder.insert(
-            &window.current_stacking_order,
+            &window.z_index_stack,
             Underline {
                 order: 0,
                 bounds: bounds.scale(scale_factor),
@@ -446,7 +448,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             let content_mask = self.content_mask().scale(scale_factor);
             let window = &mut *self.window;
             window.scene_builder.insert(
-                &window.current_stacking_order,
+                &window.z_index_stack,
                 MonochromeSprite {
                     order: 0,
                     bounds,
@@ -495,7 +497,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             let window = &mut *self.window;
 
             window.scene_builder.insert(
-                &window.current_stacking_order,
+                &window.z_index_stack,
                 PolychromeSprite {
                     order: 0,
                     bounds,
@@ -536,7 +538,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
         let window = &mut *self.window;
         window.scene_builder.insert(
-            &window.current_stacking_order,
+            &window.z_index_stack,
             MonochromeSprite {
                 order: 0,
                 bounds,
@@ -571,7 +573,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
         let window = &mut *self.window;
         window.scene_builder.insert(
-            &window.current_stacking_order,
+            &window.z_index_stack,
             PolychromeSprite {
                 order: 0,
                 bounds,
@@ -728,6 +730,17 @@ pub trait BorrowWindow: BorrowAppContext {
     fn window(&self) -> &Window;
     fn window_mut(&mut self) -> &mut Window;
 
+    fn with_element_id<R>(
+        &mut self,
+        id: impl Into<ElementId>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.window_mut().element_id_stack.push(id.into());
+        let result = f(self);
+        self.window_mut().element_id_stack.pop();
+        result
+    }
+
     fn with_content_mask<R>(
         &mut self,
         mask: ContentMask<Pixels>,
@@ -824,9 +837,9 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
     }
 
     pub fn stack<R>(&mut self, order: u32, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.window.current_stacking_order.push(order);
+        self.window.z_index_stack.push(order);
         let result = f(self);
-        self.window.current_stacking_order.pop();
+        self.window.z_index_stack.pop();
         result
     }
 
@@ -912,16 +925,6 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
                 handler(view, event, phase, cx);
             })
         });
-    }
-
-    pub(crate) fn erase_state<R>(&mut self, f: impl FnOnce(&mut ViewContext<()>) -> R) -> R {
-        let entity_id = self.unit_entity.id;
-        let mut cx = ViewContext::mutable(
-            &mut *self.window_cx.app,
-            &mut *self.window_cx.window,
-            entity_id,
-        );
-        f(&mut cx)
     }
 }
 
