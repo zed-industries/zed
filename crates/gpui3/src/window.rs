@@ -926,16 +926,6 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
             })
         });
     }
-
-    pub(crate) fn erase_state<R>(&mut self, f: impl FnOnce(&mut ViewContext<()>) -> R) -> R {
-        let entity_id = self.unit_entity.id;
-        let mut cx = ViewContext::mutable(
-            &mut *self.window_cx.app,
-            &mut *self.window_cx.window,
-            entity_id,
-        );
-        f(&mut cx)
-    }
 }
 
 impl<'a, 'w, S> Context for ViewContext<'a, 'w, S> {
