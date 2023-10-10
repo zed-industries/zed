@@ -1,18 +1,24 @@
 use crate::{BorrowWindow, Bounds, Element, ElementId, LayoutId, ViewContext};
 use anyhow::Result;
 
-pub trait Identified {
-    fn id(&self) -> ElementId;
+pub trait Stateful: Element {
+    fn element_id(&self) -> ElementId {
+        Element::element_id(self).unwrap()
+    }
 }
 
-pub struct ElementWithId<E> {
+pub struct Identified<E> {
     pub(crate) element: E,
     pub(crate) id: ElementId,
 }
 
-impl<E: Element> Element for ElementWithId<E> {
+impl<E: Element> Element for Identified<E> {
     type State = E::State;
     type FrameState = E::FrameState;
+
+    fn element_id(&self) -> Option<ElementId> {
+        Some(self.id.clone())
+    }
 
     fn layout(
         &mut self,
@@ -35,8 +41,4 @@ impl<E: Element> Element for ElementWithId<E> {
     }
 }
 
-impl<E> Identified for ElementWithId<E> {
-    fn id(&self) -> ElementId {
-        self.id.clone()
-    }
-}
+impl<E: Element> Stateful for Identified<E> {}

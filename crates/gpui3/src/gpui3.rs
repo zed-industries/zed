@@ -6,7 +6,6 @@ mod elements;
 mod events;
 mod executor;
 mod geometry;
-mod identified;
 mod image_cache;
 mod interactive;
 mod platform;
@@ -31,7 +30,6 @@ pub use events::*;
 pub use executor::*;
 pub use geometry::*;
 pub use gpui3_macros::*;
-pub use identified::*;
 pub use image_cache::*;
 pub use interactive::*;
 pub use platform::*;
@@ -51,7 +49,6 @@ pub use util::arc_cow::ArcCow;
 pub use view::*;
 pub use window::*;
 
-use derive_more::{Deref, DerefMut};
 use std::{
     mem,
     ops::{Deref, DerefMut},
@@ -170,12 +167,6 @@ impl<T> Flatten<T> for Result<T> {
 
 #[derive(Clone, Eq, PartialEq, Hash)]
 pub struct SharedString(ArcCow<'static, str>);
-
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub struct ElementId(ArcCow<'static, [u8]>);
-
-#[derive(Default, Deref, DerefMut, Clone, Debug)]
-pub(crate) struct GlobalElementId(SmallVec<[ElementId; 8]>);
 
 impl Default for SharedString {
     fn default() -> Self {

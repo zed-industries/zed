@@ -1,11 +1,15 @@
-use crate::{Bounds, ElementId, ElementWithId};
-
-use super::{LayoutId, Pixels, Point, Result, ViewContext};
+use crate::{Bounds, Identified, LayoutId, Pixels, Point, Result, ViewContext};
+use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
+use util::arc_cow::ArcCow;
 
 pub trait Element: 'static {
     type State;
     type FrameState;
+
+    fn element_id(&self) -> Option<ElementId> {
+        None
+    }
 
     fn layout(
         &mut self,
@@ -21,13 +25,19 @@ pub trait Element: 'static {
         cx: &mut ViewContext<Self::State>,
     ) -> Result<()>;
 
-    fn id(self, id: ElementId) -> ElementWithId<Self>
+    fn id(self, id: ElementId) -> Identified<Self>
     where
         Self: Sized,
     {
-        ElementWithId { element: self, id }
+        Identified { element: self, id }
     }
 }
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct ElementId(ArcCow<'static, [u8]>);
+
+#[derive(Deref, DerefMut, Default, Clone, Debug)]
+pub(crate) struct GlobalElementId(SmallVec<[ElementId; 8]>);
 
 pub trait ParentElement {
     type State;
