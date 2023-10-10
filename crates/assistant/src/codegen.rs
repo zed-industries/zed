@@ -1,9 +1,7 @@
 use crate::streaming_diff::{Hunk, StreamingDiff};
 use ai::completion::{CompletionProvider, OpenAIRequest};
 use anyhow::Result;
-use editor::{
-    multi_buffer, Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
-};
+use editor::{multi_buffer, Anchor, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
 use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
 use gpui::{Entity, ModelContext, ModelHandle, Task};
 use language::{Rope, TransactionId};
@@ -40,26 +38,11 @@ impl Entity for Codegen {
 impl Codegen {
     pub fn new(
         buffer: ModelHandle<MultiBuffer>,
-        mut kind: CodegenKind,
+        kind: CodegenKind,
         provider: Arc<dyn CompletionProvider>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let snapshot = buffer.read(cx).snapshot(cx);
-        match &mut kind {
-            CodegenKind::Transform { range } => {
-                let mut point_range = range.to_point(&snapshot);
-                point_range.start.column = 0;
-                if point_range.end.column > 0 || point_range.start.row == point_range.end.row {
-                    point_range.end.column = snapshot.line_len(point_range.end.row);
-                }
-                range.start = snapshot.anchor_before(point_range.start);
-                range.end = snapshot.anchor_after(point_range.end);
-            }
-            CodegenKind::Generate { position } => {
-                *position = position.bias_right(&snapshot);
-            }
-        }
-
         Self {
             provider,
             buffer: buffer.clone(),
@@ -386,7 +369,7 @@ mod tests {
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
-            snapshot.anchor_before(Point::new(1, 4))..snapshot.anchor_after(Point::new(4, 4))
+            snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(4, 5))
         });
         let provider = Arc::new(TestCompletionProvider::new());
         let codegen = cx.add_model(|cx| {
