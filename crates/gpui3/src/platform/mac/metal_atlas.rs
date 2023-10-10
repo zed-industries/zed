@@ -99,12 +99,24 @@ impl MetalAtlasState {
         let texture_descriptor = metal::TextureDescriptor::new();
         texture_descriptor.set_width(size.width.into());
         texture_descriptor.set_height(size.height.into());
-        let pixel_format = match kind {
-            AtlasTextureKind::Monochrome => metal::MTLPixelFormat::A8Unorm,
-            AtlasTextureKind::Polychrome => metal::MTLPixelFormat::BGRA8Unorm,
-            AtlasTextureKind::Path => metal::MTLPixelFormat::R16Float,
-        };
+        let pixel_format;
+        let usage;
+        match kind {
+            AtlasTextureKind::Monochrome => {
+                pixel_format = metal::MTLPixelFormat::A8Unorm;
+                usage = metal::MTLTextureUsage::ShaderRead;
+            }
+            AtlasTextureKind::Polychrome => {
+                pixel_format = metal::MTLPixelFormat::BGRA8Unorm;
+                usage = metal::MTLTextureUsage::ShaderRead;
+            }
+            AtlasTextureKind::Path => {
+                pixel_format = metal::MTLPixelFormat::R16Float;
+                usage = metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead;
+            }
+        }
         texture_descriptor.set_pixel_format(pixel_format);
+        texture_descriptor.set_usage(usage);
         let metal_texture = self.device.new_texture(&texture_descriptor);
 
         let textures = match kind {

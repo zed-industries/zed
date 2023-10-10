@@ -50,6 +50,8 @@ fn generate_shader_bindings() -> PathBuf {
         "ContentMask".into(),
         "Uniforms".into(),
         "AtlasTile".into(),
+        "PathRasterizationInputIndex".into(),
+        "PathVertex_ScaledPixels".into(),
         "ShadowInputIndex".into(),
         "Shadow".into(),
         "QuadInputIndex".into(),
@@ -59,6 +61,7 @@ fn generate_shader_bindings() -> PathBuf {
         "SpriteInputIndex".into(),
         "MonochromeSprite".into(),
         "PolychromeSprite".into(),
+        "PathSprite".into(),
     ]);
     config.no_includes = true;
     config.enumeration.prefix_with_name = true;

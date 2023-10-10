@@ -363,12 +363,11 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         );
     }
 
-    pub fn paint_path(&mut self, mut path: Path<Pixels>) {
+    pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Hsla>) {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
-        for vertex in &mut path.vertices {
-            vertex.content_mask = content_mask.clone();
-        }
+        path.content_mask = content_mask;
+        path.color = color.into();
         let window = &mut *self.window;
         window
             .scene_builder

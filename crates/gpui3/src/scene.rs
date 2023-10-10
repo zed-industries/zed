@@ -8,7 +8,9 @@ use plane_split::{BspSplitter, Polygon as BspPolygon};
 use std::{fmt::Debug, iter::Peekable, mem, slice};
 
 // Exported to metal
-pub type PointF = Point<f32>;
+pub(crate) type PointF = Point<f32>;
+#[allow(non_camel_case_types, unused)]
+pub(crate) type PathVertex_ScaledPixels = PathVertex<ScaledPixels>;
 
 pub type LayerId = u32;
 
@@ -60,6 +62,12 @@ impl SceneBuilder {
             let z = layer_z_values[quad.order as LayerId as usize];
             self.splitter
                 .add(quad.bounds.to_bsp_polygon(z, (PrimitiveKind::Quad, ix)));
+        }
+
+        for (ix, path) in self.paths.iter().enumerate() {
+            let z = layer_z_values[path.order as LayerId as usize];
+            self.splitter
+                .add(path.bounds.to_bsp_polygon(z, (PrimitiveKind::Path, ix)));
         }
 
         for (ix, underline) in self.underlines.iter().enumerate() {
@@ -131,6 +139,16 @@ impl SceneBuilder {
     }
 
     pub fn insert(&mut self, order: &StackingOrder, primitive: impl Into<Primitive>) {
+        let primitive = primitive.into();
+        let clipped_bounds = primitive
+            .bounds()
+            .intersect(&primitive.content_mask().bounds);
+        if clipped_bounds.size.width <= ScaledPixels(0.)
+            || clipped_bounds.size.height <= ScaledPixels(0.)
+        {
+            return;
+        }
+
         let layer_id = if let Some(layer_id) = self.layers_by_order.get(order) {
             *layer_id
         } else {
@@ -139,7 +157,6 @@ impl SceneBuilder {
             next_id
         };
 
-        let primitive = primitive.into();
         match primitive {
             Primitive::Shadow(mut shadow) => {
                 shadow.order = layer_id;
@@ -240,6 +257,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                 PrimitiveKind::Shadow,
             ),
             (self.quads_iter.peek().map(|q| q.order), PrimitiveKind::Quad),
+            (self.paths_iter.peek().map(|q| q.order), PrimitiveKind::Path),
             (
                 self.underlines_iter.peek().map(|u| u.order),
                 PrimitiveKind::Underline,
@@ -380,6 +398,30 @@ pub enum Primitive {
     Underline(Underline),
     MonochromeSprite(MonochromeSprite),
     PolychromeSprite(PolychromeSprite),
+}
+
+impl Primitive {
+    pub fn bounds(&self) -> &Bounds<ScaledPixels> {
+        match self {
+            Primitive::Shadow(shadow) => &shadow.bounds,
+            Primitive::Quad(quad) => &quad.bounds,
+            Primitive::Path(path) => &path.bounds,
+            Primitive::Underline(underline) => &underline.bounds,
+            Primitive::MonochromeSprite(sprite) => &sprite.bounds,
+            Primitive::PolychromeSprite(sprite) => &sprite.bounds,
+        }
+    }
+
+    pub fn content_mask(&self) -> &ContentMask<ScaledPixels> {
+        match self {
+            Primitive::Shadow(shadow) => &shadow.content_mask,
+            Primitive::Quad(quad) => &quad.content_mask,
+            Primitive::Path(path) => &path.content_mask,
+            Primitive::Underline(underline) => &underline.content_mask,
+            Primitive::MonochromeSprite(sprite) => &sprite.content_mask,
+            Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -557,20 +599,29 @@ pub struct Path<P: Clone + Debug> {
     pub(crate) id: PathId,
     order: u32,
     pub(crate) bounds: Bounds<P>,
+    pub(crate) content_mask: ContentMask<P>,
     pub(crate) vertices: Vec<PathVertex<P>>,
-    start: Option<Point<P>>,
+    pub(crate) color: Hsla,
+    start: Point<P>,
     current: Point<P>,
+    contour_count: usize,
 }
 
 impl Path<Pixels> {
-    pub fn new() -> Self {
+    pub fn new(start: Point<Pixels>) -> Self {
         Self {
             id: PathId(0),
             order: 0,
             vertices: Vec::new(),
-            start: Default::default(),
-            current: Default::default(),
-            bounds: Default::default(),
+            start,
+            current: start,
+            bounds: Bounds {
+                origin: start,
+                size: Default::default(),
+            },
+            content_mask: Default::default(),
+            color: Default::default(),
+            contour_count: 0,
         }
     }
 
@@ -579,6 +630,7 @@ impl Path<Pixels> {
             id: self.id,
             order: self.order,
             bounds: self.bounds.scale(factor),
+            content_mask: self.content_mask.scale(factor),
             vertices: self
                 .vertices
                 .iter()
@@ -586,27 +638,36 @@ impl Path<Pixels> {
                 .collect(),
             start: self.start.map(|start| start.scale(factor)),
             current: self.current.scale(factor),
+            contour_count: self.contour_count,
+            color: self.color,
         }
     }
 
     pub fn line_to(&mut self, to: Point<Pixels>) {
-        if let Some(start) = self.start {
+        self.contour_count += 1;
+        if self.contour_count > 1 {
             self.push_triangle(
-                (start, self.current, to),
+                (self.start, self.current, to),
                 (point(0., 1.), point(0., 1.), point(0., 1.)),
             );
-        } else {
-            self.start = Some(to);
         }
         self.current = to;
     }
 
     pub fn curve_to(&mut self, to: Point<Pixels>, ctrl: Point<Pixels>) {
-        self.line_to(to);
+        self.contour_count += 1;
+        if self.contour_count > 1 {
+            self.push_triangle(
+                (self.start, self.current, to),
+                (point(0., 1.), point(0., 1.), point(0., 1.)),
+            );
+        }
+
         self.push_triangle(
             (self.current, ctrl, to),
             (point(0., 0.), point(0.5, 0.), point(1., 1.)),
         );
+        self.current = to;
     }
 
     fn push_triangle(
@@ -614,12 +675,6 @@ impl Path<Pixels> {
         xy: (Point<Pixels>, Point<Pixels>, Point<Pixels>),
         st: (Point<f32>, Point<f32>, Point<f32>),
     ) {
-        if self.vertices.is_empty() {
-            self.bounds = Bounds {
-                origin: xy.0,
-                size: Default::default(),
-            };
-        }
         self.bounds = self
             .bounds
             .union(&Bounds {
