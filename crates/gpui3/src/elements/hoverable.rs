@@ -1,6 +1,6 @@
 use crate::{
-    AnyElement, Bounds, DispatchPhase, Element, Interactive, MouseEventListeners, MouseMoveEvent,
-    ParentElement, Pixels, Styled, ViewContext,
+    AnyElement, Bounds, DispatchPhase, Element, ElementId, Identified, Interactive,
+    MouseEventListeners, MouseMoveEvent, ParentElement, Pixels, Styled, ViewContext,
 };
 use anyhow::Result;
 use refineable::{CascadeSlot, Refineable, RefinementCascade};
@@ -93,5 +93,11 @@ impl<E: ParentElement + Styled> ParentElement for Hoverable<E> {
 
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::State>; 2]> {
         self.child.children_mut()
+    }
+}
+
+impl<E: Identified + Styled> Identified for Hoverable<E> {
+    fn id(&self) -> ElementId {
+        self.child.id()
     }
 }

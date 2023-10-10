@@ -1,12 +1,12 @@
 use crate::{
     image_cache::RenderImageParams, px, size, AnyView, AppContext, AsyncWindowContext,
     AvailableSpace, BorrowAppContext, Bounds, BoxShadow, Context, Corners, DevicePixels, DisplayId,
-    Edges, Effect, Element, ElementId, EntityId, Event, FontId, GlyphId, Handle, Hsla, ImageData,
-    IsZero, LayoutId, MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path, Pixels,
-    PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams,
-    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style,
-    TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle, WindowOptions,
-    SUBPIXEL_VARIANTS,
+    Edges, Effect, Element, ElementId, EntityId, Event, FontId, GlobalElementId, GlyphId, Handle,
+    Hsla, ImageData, IsZero, LayoutId, MainThread, MainThreadOnly, MonochromeSprite,
+    MouseMoveEvent, Path, Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad,
+    Reference, RenderGlyphParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow,
+    SharedString, Size, Style, TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle,
+    WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -21,7 +21,7 @@ use std::{
     mem,
     sync::Arc,
 };
-use util::{arc_cow::ArcCow, ResultExt};
+use util::ResultExt;
 
 #[derive(Deref, DerefMut, Ord, PartialOrd, Eq, PartialEq, Clone, Default)]
 pub struct StackingOrder(pub(crate) SmallVec<[u32; 16]>);
@@ -51,7 +51,7 @@ pub struct Window {
     content_size: Size<Pixels>,
     layout_engine: TaffyLayoutEngine,
     pub(crate) root_view: Option<AnyView<()>>,
-    element_id_stack: SmallVec<[ElementId; 8]>,
+    pub(crate) element_id_stack: GlobalElementId,
     z_index_stack: StackingOrder,
     content_mask_stack: Vec<ContentMask<Pixels>>,
     mouse_event_handlers: HashMap<TypeId, Vec<(StackingOrder, MouseEventHandler)>>,
@@ -113,6 +113,7 @@ impl Window {
             content_size,
             layout_engine: TaffyLayoutEngine::new(),
             root_view: None,
+            element_id_stack: GlobalElementId::default(),
             z_index_stack: StackingOrder(SmallVec::new()),
             content_mask_stack: Vec::new(),
             mouse_event_handlers: HashMap::default(),
@@ -728,6 +729,17 @@ impl BorrowAppContext for WindowContext<'_, '_> {
 pub trait BorrowWindow: BorrowAppContext {
     fn window(&self) -> &Window;
     fn window_mut(&mut self) -> &mut Window;
+
+    fn with_element_id<R>(
+        &mut self,
+        id: impl Into<ElementId>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.window_mut().element_id_stack.push(id.into());
+        let result = f(self);
+        self.window_mut().element_id_stack.pop();
+        result
+    }
 
     fn with_content_mask<R>(
         &mut self,

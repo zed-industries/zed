@@ -6,6 +6,7 @@ mod elements;
 mod events;
 mod executor;
 mod geometry;
+mod identified;
 mod image_cache;
 mod interactive;
 mod platform;
@@ -30,6 +31,7 @@ pub use events::*;
 pub use executor::*;
 pub use geometry::*;
 pub use gpui3_macros::*;
+pub use identified::*;
 pub use image_cache::*;
 pub use interactive::*;
 pub use platform::*;
@@ -39,21 +41,23 @@ pub use serde;
 pub use serde_json;
 pub use smallvec;
 pub use smol::Timer;
-use std::{
-    mem,
-    ops::{Deref, DerefMut},
-    sync::Arc,
-};
 pub use style::*;
 pub use style_helpers::*;
 pub use styled::*;
 pub use svg_renderer::*;
-use taffy::TaffyLayoutEngine;
 pub use taffy::{AvailableSpace, LayoutId};
 pub use text_system::*;
 pub use util::arc_cow::ArcCow;
 pub use view::*;
 pub use window::*;
+
+use derive_more::{Deref, DerefMut};
+use std::{
+    mem,
+    ops::{Deref, DerefMut},
+    sync::Arc,
+};
+use taffy::TaffyLayoutEngine;
 
 pub trait Context {
     type EntityContext<'a, 'w, T: 'static + Send + Sync>;
@@ -167,8 +171,11 @@ impl<T> Flatten<T> for Result<T> {
 #[derive(Clone, Eq, PartialEq, Hash)]
 pub struct SharedString(ArcCow<'static, str>);
 
-#[derive(Clone, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ElementId(ArcCow<'static, [u8]>);
+
+#[derive(Default, Deref, DerefMut, Clone, Debug)]
+pub(crate) struct GlobalElementId(SmallVec<[ElementId; 8]>);
 
 impl Default for SharedString {
     fn default() -> Self {

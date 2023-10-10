@@ -1,16 +1,16 @@
-use crate::{ElementId, Element, Bounds, ViewContext, LayoutId};
+use crate::{BorrowWindow, Bounds, Element, ElementId, LayoutId, ViewContext};
 use anyhow::Result;
-use derive_more::{Deref, DerefMut}
 
-#[derive(Deref, DerefMut)]
-pub struct Identified<E> {
-    #[deref]
-    #[deref_mut]
-    element: E,
-    id: ElementId,
+pub trait Identified {
+    fn id(&self) -> ElementId;
 }
 
-impl<E: Element> Element for Identified<E> {
+pub struct ElementWithId<E> {
+    pub(crate) element: E,
+    pub(crate) id: ElementId,
+}
+
+impl<E: Element> Element for ElementWithId<E> {
     type State = E::State;
     type FrameState = E::FrameState;
 
@@ -29,8 +29,14 @@ impl<E: Element> Element for Identified<E> {
         frame_state: &mut Self::FrameState,
         cx: &mut ViewContext<Self::State>,
     ) -> Result<()> {
-        cx.with_element_id(self.id, |cx| {
+        cx.with_element_id(self.id.clone(), |cx| {
             self.element.paint(bounds, state, frame_state, cx)
         })
+    }
+}
+
+impl<E> Identified for ElementWithId<E> {
+    fn id(&self) -> ElementId {
+        self.id.clone()
     }
 }

@@ -1,4 +1,4 @@
-use crate::Bounds;
+use crate::{Bounds, ElementId, ElementWithId};
 
 use super::{LayoutId, Pixels, Point, Result, ViewContext};
 pub(crate) use smallvec::SmallVec;
@@ -20,6 +20,13 @@ pub trait Element: 'static {
         frame_state: &mut Self::FrameState,
         cx: &mut ViewContext<Self::State>,
     ) -> Result<()>;
+
+    fn id(self, id: ElementId) -> ElementWithId<Self>
+    where
+        Self: Sized,
+    {
+        ElementWithId { element: self, id }
+    }
 }
 
 pub trait ParentElement {
