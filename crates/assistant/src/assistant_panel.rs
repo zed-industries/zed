@@ -578,10 +578,7 @@ impl AssistantPanel {
 
         let codegen_kind = codegen.read(cx).kind().clone();
         let user_prompt = user_prompt.to_string();
-        let prompt = cx.background().spawn(async move {
-            let language_name = language_name.as_deref();
-            generate_content_prompt(user_prompt, language_name, &buffer, range, codegen_kind)
-        });
+
         let mut messages = Vec::new();
         let mut model = settings::get::<AssistantSettings>(cx)
             .default_open_ai_model
@@ -596,6 +593,11 @@ impl AssistantPanel {
             );
             model = conversation.model.clone();
         }
+
+        let prompt = cx.background().spawn(async move {
+            let language_name = language_name.as_deref();
+            generate_content_prompt(user_prompt, language_name, &buffer, range, codegen_kind)
+        });
 
         cx.spawn(|_, mut cx| async move {
             let prompt = prompt.await;
