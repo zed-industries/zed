@@ -1,7 +1,8 @@
 use std::marker::PhantomData;
+use std::sync::atomic::Ordering;
 
 use crate::prelude::*;
-use crate::{Button, ClickHandler, Icon, IconButton, IconColor, ToolDivider};
+use crate::{get_workspace_state, Button, ClickHandler, Icon, IconButton, IconColor, ToolDivider};
 
 #[derive(Default, PartialEq)]
 pub enum Tool {
@@ -104,7 +105,28 @@ impl<S: 'static + Send + Sync + Clone> StatusBar<S> {
             .flex()
             .items_center()
             .gap_1()
-            .child(IconButton::new(Icon::FileTree).color(IconColor::Accent))
+            .child(
+                IconButton::new(Icon::FileTree)
+                    .color(IconColor::Accent)
+                    .on_click(|_, cx| {
+                        let workspace_state = get_workspace_state();
+
+                        let is_showing_project_panel =
+                            workspace_state.show_project_panel.load(Ordering::SeqCst);
+
+                        workspace_state
+                            .show_project_panel
+                            .compare_exchange(
+                                is_showing_project_panel,
+                                !is_showing_project_panel,
+                                Ordering::SeqCst,
+                                Ordering::SeqCst,
+                            )
+                            .unwrap();
+
+                        cx.notify();
+                    }),
+            )
             .child(IconButton::new(Icon::Hash))
             .child(ToolDivider::new())
             .child(IconButton::new(Icon::XCircle))
@@ -145,10 +167,24 @@ impl<S: 'static + Send + Sync + Clone> StatusBar<S> {
                     .items_center()
                     .gap_1()
                     .child(IconButton::new(Icon::Terminal))
-                    .child(
-                        IconButton::new(Icon::MessageBubbles)
-                            .on_click(|_, _| println!("Chat Panel clicked.")),
-                    )
+                    .child(IconButton::new(Icon::MessageBubbles).on_click(|_, cx| {
+                        let workspace_state = get_workspace_state();
+
+                        let is_showing_chat_panel =
+                            workspace_state.show_chat_panel.load(Ordering::SeqCst);
+
+                        workspace_state
+                            .show_chat_panel
+                            .compare_exchange(
+                                is_showing_chat_panel,
+                                !is_showing_chat_panel,
+                                Ordering::SeqCst,
+                                Ordering::SeqCst,
+                            )
+                            .unwrap();
+
+                        cx.notify();
+                    }))
                     .child(IconButton::new(Icon::Ai)),
             )
     }

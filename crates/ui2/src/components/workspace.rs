@@ -14,6 +14,8 @@ use crate::{
 };
 
 pub struct WorkspaceState {
+    pub show_project_panel: Arc<AtomicBool>,
+    pub show_chat_panel: Arc<AtomicBool>,
     pub show_language_selector: Arc<AtomicBool>,
 }
 
@@ -21,8 +23,10 @@ pub struct WorkspaceState {
 /// I can get an explainer on how we should actually be managing state.
 static WORKSPACE_STATE: OnceLock<WorkspaceState> = OnceLock::new();
 
-fn get_workspace_state() -> &'static WorkspaceState {
+pub fn get_workspace_state() -> &'static WorkspaceState {
     let state = WORKSPACE_STATE.get_or_init(|| WorkspaceState {
+        show_project_panel: Arc::new(AtomicBool::new(true)),
+        show_chat_panel: Arc::new(AtomicBool::new(true)),
         show_language_selector: Arc::new(AtomicBool::new(false)),
     });
 
@@ -136,13 +140,18 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
                     .border_t()
                     .border_b()
                     .border_color(theme.lowest.base.default.border)
-                    .child(
-                        Panel::new(
-                            self.left_panel_scroll_state.clone(),
-                            |_, payload| vec![ProjectPanel::new(ScrollState::default()).into_any()],
-                            Box::new(()),
+                    .children(
+                        Some(
+                            Panel::new(
+                                self.left_panel_scroll_state.clone(),
+                                |_, payload| {
+                                    vec![ProjectPanel::new(ScrollState::default()).into_any()]
+                                },
+                                Box::new(()),
+                            )
+                            .side(PanelSide::Left),
                         )
-                        .side(PanelSide::Left),
+                        .filter(|_| workspace_state.show_project_panel.load(Ordering::SeqCst)),
                     )
                     .child(
                         v_stack()
@@ -169,36 +178,39 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
                                 .side(PanelSide::Bottom),
                             ),
                     )
-                    .child(
-                        Panel::new(
-                            self.right_panel_scroll_state.clone(),
-                            |_, payload| {
-                                vec![ChatPanel::new(ScrollState::default())
-                                    .with_messages(vec![
-                                        ChatMessage::new(
-                                            "osiewicz".to_string(),
-                                            "is this thing on?".to_string(),
-                                            DateTime::parse_from_rfc3339(
-                                                "2023-09-27T15:40:52.707Z",
-                                            )
-                                            .unwrap()
-                                            .naive_local(),
-                                        ),
-                                        ChatMessage::new(
-                                            "maxdeviant".to_string(),
-                                            "Reading you loud and clear!".to_string(),
-                                            DateTime::parse_from_rfc3339(
-                                                "2023-09-28T15:40:52.707Z",
-                                            )
-                                            .unwrap()
-                                            .naive_local(),
-                                        ),
-                                    ])
-                                    .into_any()]
-                            },
-                            Box::new(()),
+                    .children(
+                        Some(
+                            Panel::new(
+                                self.right_panel_scroll_state.clone(),
+                                |_, payload| {
+                                    vec![ChatPanel::new(ScrollState::default())
+                                        .with_messages(vec![
+                                            ChatMessage::new(
+                                                "osiewicz".to_string(),
+                                                "is this thing on?".to_string(),
+                                                DateTime::parse_from_rfc3339(
+                                                    "2023-09-27T15:40:52.707Z",
+                                                )
+                                                .unwrap()
+                                                .naive_local(),
+                                            ),
+                                            ChatMessage::new(
+                                                "maxdeviant".to_string(),
+                                                "Reading you loud and clear!".to_string(),
+                                                DateTime::parse_from_rfc3339(
+                                                    "2023-09-28T15:40:52.707Z",
+                                                )
+                                                .unwrap()
+                                                .naive_local(),
+                                            ),
+                                        ])
+                                        .into_any()]
+                                },
+                                Box::new(()),
+                            )
+                            .side(PanelSide::Right),
                         )
-                        .side(PanelSide::Right),
+                        .filter(|_| workspace_state.show_chat_panel.load(Ordering::SeqCst)),
                     ),
             )
             .child(StatusBar::new(Arc::new(move |_, cx| {
