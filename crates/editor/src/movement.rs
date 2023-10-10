@@ -107,7 +107,6 @@ pub fn up_by_rows(
         SelectionGoal::HorizontalPosition(x) => x,
         SelectionGoal::WrappedHorizontalPosition((_, x)) => x,
         SelectionGoal::HorizontalRange { end, .. } => end,
-        SelectionGoal::WrappedHorizontalRange { end: (_, end), .. } => end,
         _ => map.x_for_point(start, text_layout_details),
     };
 
@@ -144,7 +143,6 @@ pub fn down_by_rows(
         SelectionGoal::HorizontalPosition(x) => x,
         SelectionGoal::WrappedHorizontalPosition((_, x)) => x,
         SelectionGoal::HorizontalRange { end, .. } => end,
-        SelectionGoal::WrappedHorizontalRange { end: (_, end), .. } => end,
         _ => map.x_for_point(start, text_layout_details),
     };
 

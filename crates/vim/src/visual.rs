@@ -145,16 +145,18 @@ pub fn visual_block_motion(
         let map = &s.display_map();
         let mut head = s.newest_anchor().head().to_display_point(map);
         let mut tail = s.oldest_anchor().tail().to_display_point(map);
+        dbg!(head, tail);
+        dbg!(s.newest_anchor().goal);
 
         let (start, end) = match s.newest_anchor().goal {
             SelectionGoal::HorizontalRange { start, end } if preserve_goal => (start, end),
-            SelectionGoal::HorizontalPosition(start) if preserve_goal => (start, start + 10.0),
+            SelectionGoal::HorizontalPosition(start) if preserve_goal => (start, start),
             _ => (
                 map.x_for_point(tail, &text_layout_details),
                 map.x_for_point(head, &text_layout_details),
             ),
         };
-        let goal = SelectionGoal::HorizontalRange { start, end };
+        let mut goal = SelectionGoal::HorizontalRange { start, end };
 
         let was_reversed = tail.column() > head.column();
         if !was_reversed && !preserve_goal {
@@ -179,35 +181,44 @@ pub fn visual_block_motion(
         let positions = if is_reversed {
             map.x_for_point(head, &text_layout_details)..map.x_for_point(tail, &text_layout_details)
         } else if head.column() == tail.column() {
-            map.x_for_point(head, &text_layout_details)
-                ..map.x_for_point(head, &text_layout_details) + 10.0
+            let head_forward = movement::saturating_right(map, head);
+            map.x_for_point(head, &text_layout_details)..map.x_for_point(head, &text_layout_details)
         } else {
             map.x_for_point(tail, &text_layout_details)..map.x_for_point(head, &text_layout_details)
         };
+
+        if !preserve_goal {
+            goal = SelectionGoal::HorizontalRange {
+                start: positions.start,
+                end: positions.end,
+            };
+        }
 
         let mut selections = Vec::new();
         let mut row = tail.row();
 
         loop {
-            let start = map.clip_point(
-                DisplayPoint::new(
-                    row,
-                    map.column_for_x(row, positions.start, &text_layout_details),
-                ),
-                Bias::Left,
+            let layed_out_line = map.lay_out_line_for_row(row, &text_layout_details);
+            let start = DisplayPoint::new(
+                row,
+                layed_out_line.closest_index_for_x(positions.start) as u32,
             );
-            let end = map.clip_point(
-                DisplayPoint::new(
-                    row,
-                    map.column_for_x(row, positions.end, &text_layout_details),
-                ),
-                Bias::Left,
+            let mut end = DisplayPoint::new(
+                row,
+                layed_out_line.closest_index_for_x(positions.end) as u32,
             );
+            if end <= start {
+                if start.column() == map.line_len(start.row()) {
+                    end = start;
+                } else {
+                    end = movement::saturating_right(map, start);
+                }
+            }
+
             if positions.start
-                <= map.x_for_point(
-                    DisplayPoint::new(row, map.line_len(row)),
-                    &text_layout_details,
-                )
+                <=
+                //map.x_for_point(DisplayPoint::new(row, map.line_len(row)), &text_layout_details)
+                layed_out_line.width()
             {
                 let selection = Selection {
                     id: s.new_selection_id(),
@@ -909,6 +920,28 @@ mod test {
             "The «qˇ»uick brown
 
             fox «jˇ»umps over
+            the lazy dog
+            "
+        })
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_visual_block_issue_2123(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {
+            "The ˇquick brown
+            fox jumps over
+            the lazy dog
+            "
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["ctrl-v", "right", "down"])
+            .await;
+        cx.assert_shared_state(indoc! {
+            "The «quˇ»ick brown
+            fox «juˇ»mps over
             the lazy dog
             "
         })

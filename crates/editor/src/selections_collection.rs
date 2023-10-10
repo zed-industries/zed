@@ -313,10 +313,12 @@ impl SelectionsCollection {
         let is_empty = positions.start == positions.end;
         let line_len = display_map.line_len(row);
 
-        let start_col = display_map.column_for_x(row, positions.start, text_layout_details);
+        let layed_out_line = display_map.lay_out_line_for_row(row, &text_layout_details);
+
+        let start_col = layed_out_line.closest_index_for_x(positions.start) as u32;
         if start_col < line_len || (is_empty && start_col == line_len) {
             let start = DisplayPoint::new(row, start_col);
-            let end_col = display_map.column_for_x(row, positions.end, text_layout_details);
+            let end_col = layed_out_line.closest_index_for_x(positions.end) as u32;
             let end = DisplayPoint::new(row, end_col);
 
             Some(Selection {

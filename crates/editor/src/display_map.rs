@@ -509,11 +509,12 @@ impl DisplaySnapshot {
     pub fn highlighted_chunks<'a>(
         &'a self,
         display_rows: Range<u32>,
+        language_aware: bool,
         style: &'a EditorStyle,
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
         self.chunks(
             display_rows,
-            true,
+            language_aware,
             Some(style.theme.hint),
             Some(style.theme.suggestion),
         )
@@ -562,7 +563,7 @@ impl DisplaySnapshot {
         })
     }
 
-    fn layout_line_for_row(
+    pub fn lay_out_line_for_row(
         &self,
         display_row: u32,
         TextLayoutDetails {
@@ -575,7 +576,7 @@ impl DisplaySnapshot {
         let mut line = String::new();
 
         let range = display_row..display_row + 1;
-        for chunk in self.highlighted_chunks(range, editor_style) {
+        for chunk in self.highlighted_chunks(range, false, editor_style) {
             line.push_str(chunk.chunk);
 
             let text_style = if let Some(style) = chunk.style {
@@ -607,7 +608,7 @@ impl DisplaySnapshot {
         display_point: DisplayPoint,
         text_layout_details: &TextLayoutDetails,
     ) -> f32 {
-        let layout_line = self.layout_line_for_row(display_point.row(), text_layout_details);
+        let layout_line = self.lay_out_line_for_row(display_point.row(), text_layout_details);
         layout_line.x_for_index(display_point.column() as usize)
     }
 
@@ -617,7 +618,7 @@ impl DisplaySnapshot {
         x_coordinate: f32,
         text_layout_details: &TextLayoutDetails,
     ) -> u32 {
-        let layout_line = self.layout_line_for_row(display_row, text_layout_details);
+        let layout_line = self.lay_out_line_for_row(display_row, text_layout_details);
         layout_line.closest_index_for_x(x_coordinate) as u32
     }
 

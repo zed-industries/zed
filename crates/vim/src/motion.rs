@@ -568,7 +568,6 @@ fn up_down_buffer_rows(
 
     let (goal_wrap, goal_x) = match goal {
         SelectionGoal::WrappedHorizontalPosition((row, x)) => (row, x),
-        SelectionGoal::WrappedHorizontalRange { end: (row, x), .. } => (row, x),
         SelectionGoal::HorizontalRange { end, .. } => (select_nth_wrapped_row, end),
         SelectionGoal::HorizontalPosition(x) => (select_nth_wrapped_row, x),
         _ => {

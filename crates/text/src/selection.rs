@@ -8,7 +8,6 @@ pub enum SelectionGoal {
     HorizontalPosition(f32),
     HorizontalRange { start: f32, end: f32 },
     WrappedHorizontalPosition((u32, f32)),
-    WrappedHorizontalRange { start: (u32, f32), end: (u32, f32) },
 }
 
 #[derive(Clone, Debug, PartialEq)]

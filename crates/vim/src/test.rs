@@ -653,6 +653,7 @@ async fn test_selection_goal(cx: &mut gpui::TestAppContext) {
         .await;
 }
 
+#[gpui::test]
 async fn test_wrapped_motions(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
 

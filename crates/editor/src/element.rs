@@ -1583,7 +1583,7 @@ impl EditorElement {
                 .collect()
         } else {
             let style = &self.style;
-            let chunks = snapshot.highlighted_chunks(rows.clone(), style);
+            let chunks = snapshot.highlighted_chunks(rows.clone(), true, style);
 
             LineWithInvisibles::from_chunks(
                 chunks,
