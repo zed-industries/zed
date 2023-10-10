@@ -45,7 +45,7 @@ async fn test_channels(db: &Arc<Database>) {
         .unwrap()
         .user_id;
 
-    let zed_id = db.create_root_channel("zed", "1", a_id).await.unwrap();
+    let zed_id = db.create_root_channel("zed", a_id).await.unwrap();
 
     // Make sure that people cannot read channels they haven't been invited to
     assert!(db.get_channel(zed_id, b_id).await.unwrap().is_none());
@@ -58,16 +58,13 @@ async fn test_channels(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    let crdb_id = db
-        .create_channel("crdb", Some(zed_id), "2", a_id)
-        .await
-        .unwrap();
+    let crdb_id = db.create_channel("crdb", Some(zed_id), a_id).await.unwrap();
     let livestreaming_id = db
-        .create_channel("livestreaming", Some(zed_id), "3", a_id)
+        .create_channel("livestreaming", Some(zed_id), a_id)
         .await
         .unwrap();
     let replace_id = db
-        .create_channel("replace", Some(zed_id), "4", a_id)
+        .create_channel("replace", Some(zed_id), a_id)
         .await
         .unwrap();
 
@@ -75,14 +72,14 @@ async fn test_channels(db: &Arc<Database>) {
     members.sort();
     assert_eq!(members, &[a_id, b_id]);
 
-    let rust_id = db.create_root_channel("rust", "5", a_id).await.unwrap();
+    let rust_id = db.create_root_channel("rust", a_id).await.unwrap();
     let cargo_id = db
-        .create_channel("cargo", Some(rust_id), "6", a_id)
+        .create_channel("cargo", Some(rust_id), a_id)
         .await
         .unwrap();
 
     let cargo_ra_id = db
-        .create_channel("cargo-ra", Some(cargo_id), "7", a_id)
+        .create_channel("cargo-ra", Some(cargo_id), a_id)
         .await
         .unwrap();
 
@@ -202,11 +199,11 @@ async fn test_joining_channels(db: &Arc<Database>) {
         .unwrap()
         .user_id;
 
-    let channel_1 = db
-        .create_root_channel("channel_1", "1", user_1)
+    let channel_1 = db.create_root_channel("channel_1", user_1).await.unwrap();
+    let room_1 = db
+        .get_or_create_channel_room(channel_1, "1", TEST_RELEASE_CHANNEL)
         .await
         .unwrap();
-    let room_1 = db.room_id_for_channel(channel_1).await.unwrap();
 
     // can join a room with membership to its channel
     let joined_room = db
@@ -283,15 +280,9 @@ async fn test_channel_invites(db: &Arc<Database>) {
         .unwrap()
         .user_id;
 
-    let channel_1_1 = db
-        .create_root_channel("channel_1", "1", user_1)
-        .await
-        .unwrap();
+    let channel_1_1 = db.create_root_channel("channel_1", user_1).await.unwrap();
 
-    let channel_1_2 = db
-        .create_root_channel("channel_2", "2", user_1)
-        .await
-        .unwrap();
+    let channel_1_2 = db.create_root_channel("channel_2", user_1).await.unwrap();
 
     db.invite_channel_member(channel_1_1, user_2, user_1, false)
         .await
@@ -353,7 +344,7 @@ async fn test_channel_invites(db: &Arc<Database>) {
         .unwrap();
 
     let channel_1_3 = db
-        .create_channel("channel_3", Some(channel_1_1), "1", user_1)
+        .create_channel("channel_3", Some(channel_1_1), user_1)
         .await
         .unwrap();
 
@@ -415,7 +406,7 @@ async fn test_channel_renames(db: &Arc<Database>) {
         .unwrap()
         .user_id;
 
-    let zed_id = db.create_root_channel("zed", "1", user_1).await.unwrap();
+    let zed_id = db.create_root_channel("zed", user_1).await.unwrap();
 
     db.rename_channel(zed_id, user_1, "#zed-archive")
         .await
@@ -460,25 +451,22 @@ async fn test_db_channel_moving(db: &Arc<Database>) {
         .unwrap()
         .user_id;
 
-    let zed_id = db.create_root_channel("zed", "1", a_id).await.unwrap();
+    let zed_id = db.create_root_channel("zed", a_id).await.unwrap();
 
-    let crdb_id = db
-        .create_channel("crdb", Some(zed_id), "2", a_id)
-        .await
-        .unwrap();
+    let crdb_id = db.create_channel("crdb", Some(zed_id), a_id).await.unwrap();
 
     let gpui2_id = db
-        .create_channel("gpui2", Some(zed_id), "3", a_id)
+        .create_channel("gpui2", Some(zed_id), a_id)
         .await
         .unwrap();
 
     let livestreaming_id = db
-        .create_channel("livestreaming", Some(crdb_id), "4", a_id)
+        .create_channel("livestreaming", Some(crdb_id), a_id)
         .await
         .unwrap();
 
     let livestreaming_dag_id = db
-        .create_channel("livestreaming_dag", Some(livestreaming_id), "5", a_id)
+        .create_channel("livestreaming_dag", Some(livestreaming_id), a_id)
         .await
         .unwrap();
 
@@ -531,12 +519,7 @@ async fn test_db_channel_moving(db: &Arc<Database>) {
     // ========================================================================
     // Create a new channel below a channel with multiple parents
     let livestreaming_dag_sub_id = db
-        .create_channel(
-            "livestreaming_dag_sub",
-            Some(livestreaming_dag_id),
-            "6",
-            a_id,
-        )
+        .create_channel("livestreaming_dag_sub", Some(livestreaming_dag_id), a_id)
         .await
         .unwrap();
 
@@ -826,15 +809,15 @@ async fn test_db_channel_moving_bugs(db: &Arc<Database>) {
         .unwrap()
         .user_id;
 
-    let zed_id = db.create_root_channel("zed", "1", user_id).await.unwrap();
+    let zed_id = db.create_root_channel("zed", user_id).await.unwrap();
 
     let projects_id = db
-        .create_channel("projects", Some(zed_id), "2", user_id)
+        .create_channel("projects", Some(zed_id), user_id)
         .await
         .unwrap();
 
     let livestreaming_id = db
-        .create_channel("livestreaming", Some(projects_id), "3", user_id)
+        .create_channel("livestreaming", Some(projects_id), user_id)
         .await
         .unwrap();
 
