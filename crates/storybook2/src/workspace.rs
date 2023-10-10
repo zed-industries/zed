@@ -2,7 +2,7 @@ use gpui3::{
     div, img, svg, view, Context, Element, ParentElement, RootView, StyleHelpers, View,
     ViewContext, WindowContext,
 };
-use ui::{prelude::*};
+use ui::prelude::*;
 use ui::{themed, Panel, Stack};
 
 use crate::{
@@ -182,8 +182,8 @@ impl Titlebar {
                             .justify_center()
                             .px_2()
                             .rounded_md()
-                            // .hover()
-                            // .fill(theme.lowest.base.hovered.background)
+                            .hover()
+                            .fill(theme.lowest.base.hovered.background)
                             // .active()
                             // .fill(theme.lowest.base.pressed.background)
                             .child(div().text_sm().child("project")),
@@ -197,8 +197,8 @@ impl Titlebar {
                             .px_2()
                             .rounded_md()
                             .text_color(theme.lowest.variant.default.foreground)
-                            // .hover()
-                            // .fill(theme.lowest.base.hovered.background)
+                            .hover()
+                            .fill(theme.lowest.base.hovered.background)
                             // .active()
                             // .fill(theme.lowest.base.pressed.background)
                             .child(
@@ -253,8 +253,8 @@ impl Titlebar {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                // .hover()
-                                // .fill(theme.lowest.base.hovered.background)
+                                .hover()
+                                .fill(theme.lowest.base.hovered.background)
                                 // .active()
                                 // .fill(theme.lowest.base.pressed.background)
                                 .child(
@@ -273,8 +273,8 @@ impl Titlebar {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                // .hover()
-                                // .fill(theme.lowest.base.hovered.background)
+                                .hover()
+                                .fill(theme.lowest.base.hovered.background)
                                 // .active()
                                 // .fill(theme.lowest.base.pressed.background)
                                 .child(
@@ -293,8 +293,8 @@ impl Titlebar {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                // .hover()
-                                // .fill(theme.lowest.base.hovered.background)
+                                .hover()
+                                .fill(theme.lowest.base.hovered.background)
                                 // .active()
                                 // .fill(theme.lowest.base.pressed.background)
                                 .child(
@@ -318,8 +318,8 @@ impl Titlebar {
                         .justify_center()
                         .rounded_md()
                         .gap_0p5()
-                        // .hover()
-                        // .fill(theme.lowest.base.hovered.background)
+                        .hover()
+                        .fill(theme.lowest.base.hovered.background)
                         // .active()
                         // .fill(theme.lowest.base.pressed.background)
                         .child(
@@ -435,8 +435,8 @@ mod statusbar {
                             .gap_0p5()
                             .px_1()
                             .text_color(theme.lowest.variant.default.foreground)
-                            // .hover()
-                            // .fill(theme.lowest.base.hovered.background)
+                            .hover()
+                            .fill(theme.lowest.base.hovered.background)
                             // .active()
                             // .fill(theme.lowest.base.pressed.background)
                             .child(

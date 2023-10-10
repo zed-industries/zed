@@ -137,8 +137,8 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
             .px_2()
             .flex()
             .items_center()
-            // .hover()
-            // .fill(theme.lowest.variant.hovered.background)
+            .hover()
+            .fill(theme.lowest.variant.hovered.background)
             // .active()
             // .fill(theme.lowest.variant.pressed.background)
             .child(
