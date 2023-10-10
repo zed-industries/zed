@@ -277,7 +277,8 @@ impl Server {
             .add_message_handler(update_diff_base)
             .add_request_handler(get_private_user_info)
             .add_message_handler(acknowledge_channel_message)
-            .add_message_handler(acknowledge_buffer_version);
+            .add_message_handler(acknowledge_buffer_version)
+            .add_request_handler(set_room_public);
 
         Arc::new(server)
     }
@@ -2600,6 +2601,23 @@ async fn respond_to_channel_invite(
     session.peer.send(session.connection_id, update)?;
     response.send(proto::Ack {})?;
 
+    Ok(())
+}
+
+async fn set_room_public(
+    request: proto::SetRoomPublic,
+    response: Response<proto::SetRoomPublic>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+    let room_id = RoomId::from_proto(request.room_id);
+    //TODO public
+    let room = db
+        .set_public(session.connection_id, room_id, request.is_public)
+        .await?;
+
+    room_updated(&room, &session.peer);
+    response.send(proto::Ack {})?;
     Ok(())
 }
 

@@ -58,6 +58,7 @@ pub struct Room {
     channel_id: Option<u64>,
     live_kit: Option<LiveKitRoom>,
     status: RoomStatus,
+    is_public: bool,
     shared_projects: HashSet<WeakModelHandle<Project>>,
     joined_projects: HashSet<WeakModelHandle<Project>>,
     local_participant: LocalParticipant,
@@ -220,6 +221,7 @@ impl Room {
             channel_id,
             live_kit: live_kit_room,
             status: RoomStatus::Online,
+            is_public: Default::default(),
             shared_projects: Default::default(),
             joined_projects: Default::default(),
             participant_user_ids: Default::default(),
@@ -358,6 +360,25 @@ impl Room {
         cx.notify();
         cx.emit(Event::Left);
         self.leave_internal(cx)
+    }
+
+    pub fn is_public(&self) -> bool {
+        self.is_public
+    }
+
+    pub fn set_public(&mut self, is_public: bool, cx: &mut ModelContext<Self>) {
+        cx.notify();
+
+        let request = self.client.request(proto::SetRoomPublic {
+            room_id: self.id,
+            is_public,
+        });
+        cx.background()
+            .spawn(async move {
+                request.await?;
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx)
     }
 
     fn leave_internal(&mut self, cx: &mut AppContext) -> Task<Result<()>> {
@@ -691,6 +712,7 @@ impl Room {
                 futures::join!(remote_participants, pending_participants);
 
             this.update(&mut cx, |this, cx| {
+                this.is_public = room.is_public;
                 this.participant_user_ids.clear();
 
                 if let Some(participant) = local_participant {

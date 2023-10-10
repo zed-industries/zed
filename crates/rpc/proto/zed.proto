@@ -170,7 +170,8 @@ message Envelope {
 
         LinkChannel link_channel = 140;
         UnlinkChannel unlink_channel = 141;
-        MoveChannel move_channel = 142; // current max: 144
+        MoveChannel move_channel = 142;
+        SetRoomPublic set_room_public = 145; // current max: 145
     }
 }
 
@@ -251,6 +252,7 @@ message Room {
     repeated PendingParticipant pending_participants = 3;
     repeated Follower followers = 4;
     string live_kit_room = 5;
+    bool is_public = 6;
 }
 
 message Participant {
@@ -1113,6 +1115,11 @@ message MoveChannel {
     uint64 channel_id = 1;
     uint64 from = 2;
     uint64 to = 3;
+}
+
+message SetRoomPublic {
+    uint64 room_id = 1;
+    bool is_public = 2;
 }
 
 message JoinChannelBuffer {

@@ -1038,8 +1038,8 @@ impl Database {
         &self,
         connection_id: ConnectionId,
         room_id: RoomId,
-        public: bool,
-    ) -> Result<RoomGuard<()>> {
+        is_public: bool,
+    ) -> Result<RoomGuard<proto::Room>> {
         self.room_transaction(room_id, |tx| async move {
             room_participant::Entity::find()
                 .filter(
@@ -1053,13 +1053,13 @@ impl Database {
 
             room::Entity::update(room::ActiveModel {
                 id: ActiveValue::Unchanged(room_id),
-                public: ActiveValue::set(public),
+                is_public: ActiveValue::set(is_public),
                 ..Default::default()
             })
             .exec(&*tx)
             .await?;
 
-            Ok(())
+            self.get_room(room_id, &tx).await
         })
         .await
     }
@@ -1185,6 +1185,8 @@ impl Database {
                 live_kit_room: db_room.live_kit_room,
                 participants: participants.into_values().collect(),
                 pending_participants,
+                // TODO: Publicity
+                is_public: db_room.is_public,
                 followers,
             },
         ))

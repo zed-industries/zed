@@ -273,6 +273,7 @@ messages!(
     (UpdateChannelBufferCollaborators, Foreground),
     (AckBufferOperation, Background),
     (AckChannelMessage, Background),
+    (SetRoomPublic, Foreground),
 );
 
 request_messages!(
@@ -349,7 +350,8 @@ request_messages!(
     (UpdateProject, Ack),
     (UpdateWorktree, Ack),
     (JoinChannelBuffer, JoinChannelBufferResponse),
-    (LeaveChannelBuffer, Ack)
+    (LeaveChannelBuffer, Ack),
+    (SetRoomPublic, Ack),
 );
 
 entity_messages!(

@@ -147,6 +147,7 @@ actions!(
         StartLinkChannel,
         MoveOrLinkToSelected,
         InsertSpace,
+        ToggleRoomPublic,
     ]
 );
 
@@ -212,6 +213,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(CollabPanel::open_channel_notes);
     cx.add_action(CollabPanel::join_channel_chat);
     cx.add_action(CollabPanel::copy_channel_link);
+    cx.add_action(CollabPanel::toggle_room_public);
 
     cx.add_action(
         |panel: &mut CollabPanel, action: &ToggleSelectedIx, cx: &mut ViewContext<CollabPanel>| {
@@ -420,6 +422,9 @@ enum ListEntry {
         user: Arc<User>,
         peer_id: Option<PeerId>,
         is_pending: bool,
+    },
+    CallIsPublicIndicator {
+        is_public: bool,
     },
     ParticipantProject {
         project_id: u64,
@@ -638,6 +643,9 @@ impl CollabPanel {
                         }
                         ListEntry::ContactPlaceholder => {
                             this.render_contact_placeholder(&theme.collab_panel, is_selected, cx)
+                        }
+                        ListEntry::CallIsPublicIndicator { is_public } => {
+                            this.render_call_public_indicator(&theme, is_public, cx)
                         }
                     }
                 });
@@ -2252,6 +2260,28 @@ impl CollabPanel {
         .into_any()
     }
 
+    fn render_call_public_indicator(
+        &self,
+        theme: &theme::Theme,
+        is_public: bool,
+    ) -> AnyElement<Self> {
+        Flex::row().with_child(
+            Label::new(
+                if is_public {
+                    "Livestreaming: ON"
+                } else {
+                    "Livestreaming: OFF"
+                },
+                theme.collab_panel.channel_name.text.clone(),
+            )
+            .contained()
+            .with_style(theme.collab_panel.channel_name.container)
+            .aligned()
+            .left()
+            .flex(1., true),
+        )
+    }
+
     fn render_channel_notes(
         &self,
         channel_id: ChannelId,
@@ -2280,7 +2310,7 @@ impl CollabPanel {
                     cx.font_cache(),
                 ))
                 .with_child(
-                    Svg::new("icons/file.svg")
+                    Svg::new("icons/file.svg}")
                         .with_color(theme.channel_hash.color)
                         .constrained()
                         .with_width(theme.channel_hash.width)
@@ -2800,6 +2830,9 @@ impl CollabPanel {
                         }
                     }
                     ListEntry::ContactPlaceholder => self.toggle_contact_finder(cx),
+                    ListEntry::CallIsPublicIndicator { .. } => {
+                        self.toggle_room_public(&Default::default(), cx)
+                    }
                     _ => {}
                 }
             }
@@ -3239,6 +3272,17 @@ impl CollabPanel {
         let item = ClipboardItem::new(channel.link());
         cx.write_to_clipboard(item)
     }
+
+    fn toggle_room_public(&mut self, _: &ToggleRoomPublic, cx: &mut ViewContext<Self>) {
+        ActiveCall::global(cx).update(cx, |active_call, cx| {
+            let Some(room) = active_call.room() else {
+                return;
+            };
+            room.update(cx, |room, cx| {
+                room.set_public(!room.is_public(), cx);
+            })
+        })
+    }
 }
 
 fn render_tree_branch(
@@ -3450,6 +3494,14 @@ impl PartialEq for ListEntry {
             ListEntry::CallParticipant { user: user_1, .. } => {
                 if let ListEntry::CallParticipant { user: user_2, .. } = other {
                     return user_1.id == user_2.id;
+                }
+            }
+            ListEntry::CallIsPublicIndicator { is_public } => {
+                if let ListEntry::CallIsPublicIndicator {
+                    is_public: is_public_2,
+                } = other
+                {
+                    return is_public_2 == is_public;
                 }
             }
             ListEntry::ParticipantProject {
