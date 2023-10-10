@@ -17,7 +17,7 @@ use editor::{
         BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, ToDisplayPoint,
     },
     scroll::autoscroll::{Autoscroll, AutoscrollStrategy},
-    Anchor, Editor, MoveDown, MoveUp, MultiBufferSnapshot, ToOffset,
+    Anchor, Editor, MoveDown, MoveUp, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 use fs::Fs;
 use futures::StreamExt;
@@ -278,22 +278,36 @@ impl AssistantPanel {
         if selection.start.excerpt_id() != selection.end.excerpt_id() {
             return;
         }
+        let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+
+        // Extend the selection to the start and the end of the line.
+        let mut point_selection = selection.map(|selection| selection.to_point(&snapshot));
+        if point_selection.end > point_selection.start {
+            point_selection.start.column = 0;
+            // If the selection ends at the start of the line, we don't want to include it.
+            if point_selection.end.column == 0 {
+                point_selection.end.row -= 1;
+            }
+            point_selection.end.column = snapshot.line_len(point_selection.end.row);
+        }
+
+        let codegen_kind = if point_selection.start == point_selection.end {
+            CodegenKind::Generate {
+                position: snapshot.anchor_after(point_selection.start),
+            }
+        } else {
+            CodegenKind::Transform {
+                range: snapshot.anchor_before(point_selection.start)
+                    ..snapshot.anchor_after(point_selection.end),
+            }
+        };
 
         let inline_assist_id = post_inc(&mut self.next_inline_assist_id);
-        let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
         let provider = Arc::new(OpenAICompletionProvider::new(
             api_key,
             cx.background().clone(),
         ));
-        let codegen_kind = if editor.read(cx).selections.newest::<usize>(cx).is_empty() {
-            CodegenKind::Generate {
-                position: selection.start,
-            }
-        } else {
-            CodegenKind::Transform {
-                range: selection.start..selection.end,
-            }
-        };
+
         let codegen = cx.add_model(|cx| {
             Codegen::new(editor.read(cx).buffer().clone(), codegen_kind, provider, cx)
         });
@@ -319,7 +333,7 @@ impl AssistantPanel {
             editor.insert_blocks(
                 [BlockProperties {
                     style: BlockStyle::Flex,
-                    position: selection.head().bias_left(&snapshot),
+                    position: snapshot.anchor_before(point_selection.head()),
                     height: 2,
                     render: Arc::new({
                         let inline_assistant = inline_assistant.clone();

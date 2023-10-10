@@ -4,6 +4,7 @@ use std::cmp::{self, Reverse};
 use std::fmt::Write;
 use std::ops::Range;
 
+#[allow(dead_code)]
 fn summarize(buffer: &BufferSnapshot, selected_range: Range<impl ToOffset>) -> String {
     #[derive(Debug)]
     struct Match {
