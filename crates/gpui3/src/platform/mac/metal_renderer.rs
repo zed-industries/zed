@@ -1,22 +1,27 @@
 use crate::{
-    point, size, AtlasTextureId, DevicePixels, MetalAtlas, MonochromeSprite, PolychromeSprite,
-    PrimitiveBatch, Quad, Scene, Shadow, Size, Underline,
+    point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels,
+    Hsla, MetalAtlas, MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch,
+    Quad, ScaledPixels, Scene, Shadow, Size, Underline,
 };
 use cocoa::{
     base::{NO, YES},
     foundation::NSUInteger,
     quartzcore::AutoresizingMask,
 };
+use collections::HashMap;
 use metal::{CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
 use objc::{self, msg_send, sel, sel_impl};
+use smallvec::SmallVec;
 use std::{ffi::c_void, mem, ptr, sync::Arc};
 
 const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
 const INSTANCE_BUFFER_SIZE: usize = 8192 * 1024; // This is an arbitrary decision. There's probably a more optimal value.
 
-pub struct MetalRenderer {
+pub(crate) struct MetalRenderer {
     layer: metal::MetalLayer,
     command_queue: CommandQueue,
+    paths_rasterization_pipeline_state: metal::RenderPipelineState,
+    path_sprites_pipeline_state: metal::RenderPipelineState,
     shadows_pipeline_state: metal::RenderPipelineState,
     quads_pipeline_state: metal::RenderPipelineState,
     underlines_pipeline_state: metal::RenderPipelineState,
@@ -29,8 +34,6 @@ pub struct MetalRenderer {
 
 impl MetalRenderer {
     pub fn new(is_opaque: bool) -> Self {
-        const PIXEL_FORMAT: MTLPixelFormat = MTLPixelFormat::BGRA8Unorm;
-
         let device: metal::Device = if let Some(device) = metal::Device::system_default() {
             device
         } else {
@@ -40,7 +43,7 @@ impl MetalRenderer {
 
         let layer = metal::MetalLayer::new();
         layer.set_device(&device);
-        layer.set_pixel_format(PIXEL_FORMAT);
+        layer.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
         layer.set_presents_with_transaction(true);
         layer.set_opaque(is_opaque);
         unsafe {
@@ -84,13 +87,29 @@ impl MetalRenderer {
             MTLResourceOptions::StorageModeManaged,
         );
 
+        let paths_rasterization_pipeline_state = build_pipeline_state(
+            &device,
+            &library,
+            "paths_rasterization",
+            "path_rasterization_vertex",
+            "path_rasterization_fragment",
+            MTLPixelFormat::R16Float,
+        );
+        let path_sprites_pipeline_state = build_pipeline_state(
+            &device,
+            &library,
+            "path_sprites",
+            "path_sprite_vertex",
+            "path_sprite_fragment",
+            MTLPixelFormat::BGRA8Unorm,
+        );
         let shadows_pipeline_state = build_pipeline_state(
             &device,
             &library,
             "shadows",
             "shadow_vertex",
             "shadow_fragment",
-            PIXEL_FORMAT,
+            MTLPixelFormat::BGRA8Unorm,
         );
         let quads_pipeline_state = build_pipeline_state(
             &device,
@@ -98,7 +117,7 @@ impl MetalRenderer {
             "quads",
             "quad_vertex",
             "quad_fragment",
-            PIXEL_FORMAT,
+            MTLPixelFormat::BGRA8Unorm,
         );
         let underlines_pipeline_state = build_pipeline_state(
             &device,
@@ -106,7 +125,7 @@ impl MetalRenderer {
             "underlines",
             "underline_vertex",
             "underline_fragment",
-            PIXEL_FORMAT,
+            MTLPixelFormat::BGRA8Unorm,
         );
         let monochrome_sprites_pipeline_state = build_pipeline_state(
             &device,
@@ -114,7 +133,7 @@ impl MetalRenderer {
             "monochrome_sprites",
             "monochrome_sprite_vertex",
             "monochrome_sprite_fragment",
-            PIXEL_FORMAT,
+            MTLPixelFormat::BGRA8Unorm,
         );
         let polychrome_sprites_pipeline_state = build_pipeline_state(
             &device,
@@ -122,7 +141,7 @@ impl MetalRenderer {
             "polychrome_sprites",
             "polychrome_sprite_vertex",
             "polychrome_sprite_fragment",
-            PIXEL_FORMAT,
+            MTLPixelFormat::BGRA8Unorm,
         );
 
         let command_queue = device.new_command_queue();
@@ -131,6 +150,8 @@ impl MetalRenderer {
         Self {
             layer,
             command_queue,
+            paths_rasterization_pipeline_state,
+            path_sprites_pipeline_state,
             shadows_pipeline_state,
             quads_pipeline_state,
             underlines_pipeline_state,
@@ -150,7 +171,7 @@ impl MetalRenderer {
         &self.sprite_atlas
     }
 
-    pub fn draw(&mut self, scene: &mut Scene) {
+    pub fn draw(&mut self, scene: &Scene) {
         let layer = self.layer.clone();
         let viewport_size = layer.drawable_size();
         let viewport_size: Size<DevicePixels> = size(
@@ -168,6 +189,9 @@ impl MetalRenderer {
         };
         let command_queue = self.command_queue.clone();
         let command_buffer = command_queue.new_command_buffer();
+        let mut instance_offset = 0;
+
+        let path_tiles = self.rasterize_paths(scene.paths(), &mut instance_offset, &command_buffer);
 
         let render_pass_descriptor = metal::RenderPassDescriptor::new();
         let color_attachment = render_pass_descriptor
@@ -190,8 +214,6 @@ impl MetalRenderer {
             znear: 0.0,
             zfar: 1.0,
         });
-
-        let mut instance_offset = 0;
         for batch in scene.batches() {
             match batch {
                 PrimitiveBatch::Shadows(shadows) => {
@@ -204,6 +226,15 @@ impl MetalRenderer {
                 }
                 PrimitiveBatch::Quads(quads) => {
                     self.draw_quads(quads, &mut instance_offset, viewport_size, command_encoder);
+                }
+                PrimitiveBatch::Paths(paths) => {
+                    self.draw_paths(
+                        paths,
+                        &path_tiles,
+                        &mut instance_offset,
+                        viewport_size,
+                        command_encoder,
+                    );
                 }
                 PrimitiveBatch::Underlines(underlines) => {
                     self.draw_underlines(
@@ -248,8 +279,95 @@ impl MetalRenderer {
         });
 
         command_buffer.commit();
+        self.sprite_atlas.clear_textures(AtlasTextureKind::Path);
         command_buffer.wait_until_completed();
         drawable.present();
+    }
+
+    fn rasterize_paths(
+        &mut self,
+        paths: &[Path<ScaledPixels>],
+        offset: &mut usize,
+        command_buffer: &metal::CommandBufferRef,
+    ) -> HashMap<PathId, AtlasTile> {
+        let mut tiles = HashMap::default();
+        let mut vertices_by_texture_id = HashMap::default();
+        for path in paths {
+            let clipped_bounds = path.bounds.intersect(&path.content_mask.bounds);
+
+            let tile = self
+                .sprite_atlas
+                .allocate(clipped_bounds.size.map(Into::into), AtlasTextureKind::Path);
+            vertices_by_texture_id
+                .entry(tile.texture_id)
+                .or_insert(Vec::new())
+                .extend(path.vertices.iter().map(|vertex| PathVertex {
+                    xy_position: vertex.xy_position - path.bounds.origin
+                        + tile.bounds.origin.map(Into::into),
+                    st_position: vertex.st_position,
+                    content_mask: ContentMask {
+                        bounds: tile.bounds.map(Into::into),
+                    },
+                }));
+            tiles.insert(path.id, tile);
+        }
+
+        for (texture_id, vertices) in vertices_by_texture_id {
+            align_offset(offset);
+            let next_offset = *offset + vertices.len() * mem::size_of::<PathVertex<ScaledPixels>>();
+            assert!(
+                next_offset <= INSTANCE_BUFFER_SIZE,
+                "instance buffer exhausted"
+            );
+
+            let render_pass_descriptor = metal::RenderPassDescriptor::new();
+            let color_attachment = render_pass_descriptor
+                .color_attachments()
+                .object_at(0)
+                .unwrap();
+
+            let texture = self.sprite_atlas.metal_texture(texture_id);
+            color_attachment.set_texture(Some(&texture));
+            color_attachment.set_load_action(metal::MTLLoadAction::Clear);
+            color_attachment.set_store_action(metal::MTLStoreAction::Store);
+            color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., 1.));
+            let command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
+            command_encoder.set_render_pipeline_state(&self.paths_rasterization_pipeline_state);
+            command_encoder.set_vertex_buffer(
+                PathRasterizationInputIndex::Vertices as u64,
+                Some(&self.instances),
+                *offset as u64,
+            );
+            let texture_size = Size {
+                width: DevicePixels::from(texture.width()),
+                height: DevicePixels::from(texture.height()),
+            };
+            command_encoder.set_vertex_bytes(
+                PathRasterizationInputIndex::AtlasTextureSize as u64,
+                mem::size_of_val(&texture_size) as u64,
+                &texture_size as *const Size<DevicePixels> as *const _,
+            );
+
+            let vertices_bytes_len = mem::size_of::<PathVertex<ScaledPixels>>() * vertices.len();
+            let buffer_contents = unsafe { (self.instances.contents() as *mut u8).add(*offset) };
+            unsafe {
+                ptr::copy_nonoverlapping(
+                    vertices.as_ptr() as *const u8,
+                    buffer_contents,
+                    vertices_bytes_len,
+                );
+            }
+
+            command_encoder.draw_primitives(
+                metal::MTLPrimitiveType::Triangle,
+                0,
+                vertices.len() as u64,
+            );
+            command_encoder.end_encoding();
+            *offset = next_offset;
+        }
+
+        tiles
     }
 
     fn draw_shadows(
@@ -368,6 +486,112 @@ impl MetalRenderer {
         *offset = next_offset;
     }
 
+    fn draw_paths(
+        &mut self,
+        paths: &[Path<ScaledPixels>],
+        tiles_by_path_id: &HashMap<PathId, AtlasTile>,
+        offset: &mut usize,
+        viewport_size: Size<DevicePixels>,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) {
+        if paths.is_empty() {
+            return;
+        }
+
+        command_encoder.set_render_pipeline_state(&self.path_sprites_pipeline_state);
+        command_encoder.set_vertex_buffer(
+            SpriteInputIndex::Vertices as u64,
+            Some(&self.unit_vertices),
+            0,
+        );
+        command_encoder.set_vertex_bytes(
+            SpriteInputIndex::ViewportSize as u64,
+            mem::size_of_val(&viewport_size) as u64,
+            &viewport_size as *const Size<DevicePixels> as *const _,
+        );
+
+        let mut prev_texture_id = None;
+        let mut sprites = SmallVec::<[_; 1]>::new();
+        let mut paths_and_tiles = paths
+            .into_iter()
+            .map(|path| (path, tiles_by_path_id.get(&path.id).unwrap()))
+            .peekable();
+
+        loop {
+            if let Some((path, tile)) = paths_and_tiles.peek() {
+                if prev_texture_id.map_or(true, |texture_id| texture_id == tile.texture_id) {
+                    prev_texture_id = Some(tile.texture_id);
+                    sprites.push(PathSprite {
+                        bounds: Bounds {
+                            origin: path.bounds.origin.map(|p| p.floor()),
+                            size: tile.bounds.size.map(Into::into),
+                        },
+                        color: path.color,
+                        tile: (*tile).clone(),
+                    });
+                    paths_and_tiles.next();
+                    continue;
+                }
+            }
+
+            if sprites.is_empty() {
+                break;
+            } else {
+                align_offset(offset);
+                let texture_id = prev_texture_id.take().unwrap();
+                let texture: metal::Texture = self.sprite_atlas.metal_texture(texture_id);
+                let texture_size = size(
+                    DevicePixels(texture.width() as i32),
+                    DevicePixels(texture.height() as i32),
+                );
+
+                command_encoder.set_vertex_buffer(
+                    SpriteInputIndex::Sprites as u64,
+                    Some(&self.instances),
+                    *offset as u64,
+                );
+                command_encoder.set_vertex_bytes(
+                    SpriteInputIndex::AtlasTextureSize as u64,
+                    mem::size_of_val(&texture_size) as u64,
+                    &texture_size as *const Size<DevicePixels> as *const _,
+                );
+                command_encoder.set_fragment_buffer(
+                    SpriteInputIndex::Sprites as u64,
+                    Some(&self.instances),
+                    *offset as u64,
+                );
+                command_encoder
+                    .set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(&texture));
+
+                let sprite_bytes_len = mem::size_of::<MonochromeSprite>() * sprites.len();
+                let buffer_contents =
+                    unsafe { (self.instances.contents() as *mut u8).add(*offset) };
+                unsafe {
+                    ptr::copy_nonoverlapping(
+                        sprites.as_ptr() as *const u8,
+                        buffer_contents,
+                        sprite_bytes_len,
+                    );
+                }
+
+                let next_offset = *offset + sprite_bytes_len;
+                assert!(
+                    next_offset <= INSTANCE_BUFFER_SIZE,
+                    "instance buffer exhausted"
+                );
+
+                command_encoder.draw_primitives_instanced(
+                    metal::MTLPrimitiveType::Triangle,
+                    0,
+                    6,
+                    sprites.len() as u64,
+                );
+                *offset = next_offset;
+                sprites.clear();
+            }
+        }
+    }
+
     fn draw_underlines(
         &mut self,
         underlines: &[Underline],
@@ -441,7 +665,7 @@ impl MetalRenderer {
         }
         align_offset(offset);
 
-        let texture = self.sprite_atlas.texture(texture_id);
+        let texture = self.sprite_atlas.metal_texture(texture_id);
         let texture_size = size(
             DevicePixels(texture.width() as i32),
             DevicePixels(texture.height() as i32),
@@ -512,7 +736,7 @@ impl MetalRenderer {
         }
         align_offset(offset);
 
-        let texture = self.sprite_atlas.texture(texture_id);
+        let texture = self.sprite_atlas.metal_texture(texture_id);
         let texture_size = size(
             DevicePixels(texture.width() as i32),
             DevicePixels(texture.height() as i32),
@@ -639,4 +863,18 @@ enum SpriteInputIndex {
     ViewportSize = 2,
     AtlasTextureSize = 3,
     AtlasTexture = 4,
+}
+
+#[repr(C)]
+enum PathRasterizationInputIndex {
+    Vertices = 0,
+    AtlasTextureSize = 1,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[repr(C)]
+pub struct PathSprite {
+    pub bounds: Bounds<ScaledPixels>,
+    pub color: Hsla,
+    pub tile: AtlasTile,
 }

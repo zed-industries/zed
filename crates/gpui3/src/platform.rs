@@ -1,4 +1,3 @@
-mod events;
 mod keystroke;
 #[cfg(target_os = "macos")]
 mod mac;
@@ -6,9 +5,9 @@ mod mac;
 mod test;
 
 use crate::{
-    AnyWindowHandle, Bounds, DevicePixels, Executor, Font, FontId, FontMetrics, GlobalPixels,
-    GlyphId, Pixels, Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Result, Scene,
-    ShapedLine, SharedString, Size,
+    AnyWindowHandle, Bounds, DevicePixels, Event, Executor, Font, FontId, FontMetrics,
+    GlobalPixels, GlyphId, Pixels, Point, RenderGlyphParams, RenderImageParams, RenderSvgParams,
+    Result, Scene, ShapedLine, SharedString, Size,
 };
 use anyhow::anyhow;
 use async_task::Runnable;
@@ -27,7 +26,6 @@ use std::{
     sync::Arc,
 };
 
-pub use events::*;
 pub use keystroke::*;
 #[cfg(target_os = "macos")]
 pub use mac::*;
@@ -40,7 +38,7 @@ pub(crate) fn current_platform() -> Arc<dyn Platform> {
     Arc::new(MacPlatform::new())
 }
 
-pub trait Platform: 'static {
+pub(crate) trait Platform: 'static {
     fn executor(&self) -> Executor;
     fn display_linker(&self) -> Arc<dyn PlatformDisplayLinker>;
     fn text_system(&self) -> Arc<dyn PlatformTextSystem>;
@@ -113,7 +111,7 @@ impl Debug for DisplayId {
 
 unsafe impl Send for DisplayId {}
 
-pub trait PlatformWindow {
+pub(crate) trait PlatformWindow {
     fn bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
     fn scale_factor(&self) -> f32;
@@ -194,11 +192,17 @@ pub enum AtlasKey {
 }
 
 impl AtlasKey {
-    pub fn is_monochrome(&self) -> bool {
+    pub(crate) fn texture_kind(&self) -> AtlasTextureKind {
         match self {
-            AtlasKey::Glyph(params) => !params.is_emoji,
-            AtlasKey::Svg(_) => true,
-            AtlasKey::Image(_) => false,
+            AtlasKey::Glyph(params) => {
+                if params.is_emoji {
+                    AtlasTextureKind::Polychrome
+                } else {
+                    AtlasTextureKind::Monochrome
+                }
+            }
+            AtlasKey::Svg(_) => AtlasTextureKind::Monochrome,
+            AtlasKey::Image(_) => AtlasTextureKind::Polychrome,
         }
     }
 }
@@ -239,9 +243,21 @@ pub struct AtlasTile {
     pub(crate) bounds: Bounds<DevicePixels>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(C)]
-pub(crate) struct AtlasTextureId(pub(crate) u32); // We use u32 instead of usize for Metal Shader Language compatibility
+pub(crate) struct AtlasTextureId {
+    // We use u32 instead of usize for Metal Shader Language compatibility
+    pub(crate) index: u32,
+    pub(crate) kind: AtlasTextureKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(C)]
+pub(crate) enum AtlasTextureKind {
+    Monochrome = 0,
+    Polychrome = 1,
+    Path = 2,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(C)]

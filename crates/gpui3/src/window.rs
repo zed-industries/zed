@@ -1,18 +1,46 @@
 use crate::{
     image_cache::RenderImageParams, px, size, AnyView, AppContext, AsyncWindowContext,
-    AvailableSpace, BorrowAppContext, Bounds, Context, Corners, DevicePixels, DisplayId, Effect,
-    Element, EntityId, FontId, GlyphId, Handle, Hsla, ImageData, IsZero, LayoutId, MainThread,
-    MainThreadOnly, MonochromeSprite, Pixels, PlatformAtlas, PlatformWindow, Point,
-    PolychromeSprite, Reference, RenderGlyphParams, RenderSvgParams, ScaledPixels, Scene,
-    SharedString, Size, StackingOrder, Style, TaffyLayoutEngine, Task, Underline, UnderlineStyle,
-    WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
+    AvailableSpace, BorrowAppContext, Bounds, BoxShadow, Context, Corners, DevicePixels, DisplayId,
+    Edges, Effect, Element, EntityId, Event, FontId, GlyphId, Handle, Hsla, ImageData, IsZero,
+    LayoutId, MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path, Pixels,
+    PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams,
+    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style,
+    TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle, WindowOptions,
+    SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
+use collections::HashMap;
+use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
-use std::{any::TypeId, borrow::Cow, future::Future, marker::PhantomData, mem, sync::Arc};
+use std::{
+    any::{Any, TypeId},
+    borrow::Cow,
+    fmt::Debug,
+    future::Future,
+    marker::PhantomData,
+    mem,
+    sync::Arc,
+};
 use util::ResultExt;
 
-pub struct AnyWindow {}
+#[derive(Deref, DerefMut, Ord, PartialOrd, Eq, PartialEq, Clone, Default)]
+pub struct StackingOrder(pub(crate) SmallVec<[u32; 16]>);
+
+#[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
+pub enum DispatchPhase {
+    /// After the capture phase comes the bubble phase, in which event handlers are
+    /// invoked front to back. This is the phase you'll usually want to use for event handlers.
+    #[default]
+    Bubble,
+    /// During the initial capture phase, event handlers are invoked back to front. This phase
+    /// is used for special purposes such as clearing the "pressed" state for click events. If
+    /// you stop event propagation during this phase, you need to know what you're doing. Handlers
+    /// outside of the immediate region may rely on detecting non-local events during this phase.
+    Capture,
+}
+
+type MouseEventHandler =
+    Arc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
 
 pub struct Window {
     handle: AnyWindowHandle,
@@ -23,10 +51,13 @@ pub struct Window {
     content_size: Size<Pixels>,
     layout_engine: TaffyLayoutEngine,
     pub(crate) root_view: Option<AnyView<()>>,
-    mouse_position: Point<Pixels>,
     current_stacking_order: StackingOrder,
-    content_mask_stack: Vec<ContentMask>,
-    pub(crate) scene: Scene,
+    content_mask_stack: Vec<ContentMask<Pixels>>,
+    mouse_event_handlers: HashMap<TypeId, Vec<(StackingOrder, MouseEventHandler)>>,
+    propagate_event: bool,
+    mouse_position: Point<Pixels>,
+    scale_factor: f32,
+    pub(crate) scene_builder: SceneBuilder,
     pub(crate) dirty: bool,
 }
 
@@ -43,11 +74,11 @@ impl Window {
         let content_size = platform_window.content_size();
         let scale_factor = platform_window.scale_factor();
         platform_window.on_resize(Box::new({
-            let handle = handle;
             let cx = cx.to_async();
             move |content_size, scale_factor| {
                 cx.update_window(handle, |cx| {
-                    cx.window.scene = Scene::new(scale_factor);
+                    cx.window.scale_factor = scale_factor;
+                    cx.window.scene_builder = SceneBuilder::new();
                     cx.window.content_size = content_size;
                     cx.window.display_id = cx
                         .window
@@ -61,6 +92,15 @@ impl Window {
             }
         }));
 
+        platform_window.on_event({
+            let cx = cx.to_async();
+            Box::new(move |event| {
+                cx.update_window(handle, |cx| cx.dispatch_event(event))
+                    .log_err()
+                    .unwrap_or(true)
+            })
+        });
+
         let platform_window = MainThreadOnly::new(Arc::new(platform_window), cx.executor.clone());
 
         Window {
@@ -72,23 +112,27 @@ impl Window {
             content_size,
             layout_engine: TaffyLayoutEngine::new(),
             root_view: None,
-            mouse_position,
-            current_stacking_order: SmallVec::new(),
+            current_stacking_order: StackingOrder(SmallVec::new()),
             content_mask_stack: Vec::new(),
-            scene: Scene::new(scale_factor),
+            mouse_event_handlers: HashMap::default(),
+            propagate_event: true,
+            mouse_position,
+            scale_factor,
+            scene_builder: SceneBuilder::new(),
             dirty: true,
         }
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct ContentMask {
-    pub bounds: Bounds<Pixels>,
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[repr(C)]
+pub struct ContentMask<P: Clone + Debug> {
+    pub bounds: Bounds<P>,
 }
 
-impl ContentMask {
-    pub fn scale(&self, factor: f32) -> ScaledContentMask {
-        ScaledContentMask {
+impl ContentMask<Pixels> {
+    pub fn scale(&self, factor: f32) -> ContentMask<ScaledPixels> {
+        ContentMask {
             bounds: self.bounds.scale(factor),
         }
     }
@@ -97,12 +141,6 @@ impl ContentMask {
         let bounds = self.bounds.intersect(&other.bounds);
         ContentMask { bounds }
     }
-}
-
-#[derive(Default, Clone, Debug, PartialEq, Eq)]
-#[repr(C)]
-pub struct ScaledContentMask {
-    bounds: Bounds<ScaledPixels>,
 }
 
 pub struct WindowContext<'a, 'w> {
@@ -234,19 +272,36 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 
     pub fn scale_factor(&self) -> f32 {
-        self.window.scene.scale_factor
+        self.window.scale_factor
     }
 
     pub fn rem_size(&self) -> Pixels {
         self.window.rem_size
     }
 
-    pub fn mouse_position(&self) -> Point<Pixels> {
-        self.window.mouse_position
+    pub fn stop_propagation(&mut self) {
+        self.window.propagate_event = false;
     }
 
-    pub fn scene(&mut self) -> &mut Scene {
-        &mut self.window.scene
+    pub fn on_mouse_event<Event: 'static>(
+        &mut self,
+        handler: impl Fn(&Event, DispatchPhase, &mut WindowContext) + Send + Sync + 'static,
+    ) {
+        let order = self.window.current_stacking_order.clone();
+        self.window
+            .mouse_event_handlers
+            .entry(TypeId::of::<Event>())
+            .or_default()
+            .push((
+                order,
+                Arc::new(move |event: &dyn Any, phase, cx| {
+                    handler(event.downcast_ref().unwrap(), phase, cx)
+                }),
+            ))
+    }
+
+    pub fn mouse_position(&self) -> Point<Pixels> {
+        self.window.mouse_position
     }
 
     pub fn stack<R>(&mut self, order: u32, f: impl FnOnce(&mut Self) -> R) -> R {
@@ -256,8 +311,68 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         result
     }
 
-    pub fn current_stacking_order(&self) -> StackingOrder {
-        self.window.current_stacking_order.clone()
+    pub fn paint_shadows(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        corner_radii: Corners<Pixels>,
+        shadows: &[BoxShadow],
+    ) {
+        let scale_factor = self.scale_factor();
+        let content_mask = self.content_mask();
+        let window = &mut *self.window;
+        for shadow in shadows {
+            let mut shadow_bounds = bounds;
+            shadow_bounds.origin += shadow.offset;
+            shadow_bounds.dilate(shadow.spread_radius);
+            window.scene_builder.insert(
+                &window.current_stacking_order,
+                Shadow {
+                    order: 0,
+                    bounds: shadow_bounds.scale(scale_factor),
+                    content_mask: content_mask.scale(scale_factor),
+                    corner_radii: corner_radii.scale(scale_factor),
+                    color: shadow.color,
+                    blur_radius: shadow.blur_radius.scale(scale_factor),
+                },
+            );
+        }
+    }
+
+    pub fn paint_quad(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        corner_radii: Corners<Pixels>,
+        background: impl Into<Hsla>,
+        border_widths: Edges<Pixels>,
+        border_color: impl Into<Hsla>,
+    ) {
+        let scale_factor = self.scale_factor();
+        let content_mask = self.content_mask();
+
+        let window = &mut *self.window;
+        window.scene_builder.insert(
+            &window.current_stacking_order,
+            Quad {
+                order: 0,
+                bounds: bounds.scale(scale_factor),
+                content_mask: content_mask.scale(scale_factor),
+                background: background.into(),
+                border_color: border_color.into(),
+                corner_radii: corner_radii.scale(scale_factor),
+                border_widths: border_widths.scale(scale_factor),
+            },
+        );
+    }
+
+    pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Hsla>) {
+        let scale_factor = self.scale_factor();
+        let content_mask = self.content_mask();
+        path.content_mask = content_mask;
+        path.color = color.into();
+        let window = &mut *self.window;
+        window
+            .scene_builder
+            .insert(&window.current_stacking_order, path.scale(scale_factor));
     }
 
     pub fn paint_underline(
@@ -277,9 +392,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             size: size(width, height),
         };
         let content_mask = self.content_mask();
-        let layer_id = self.current_stacking_order();
-        self.window.scene.insert(
-            layer_id,
+        let window = &mut *self.window;
+        window.scene_builder.insert(
+            &window.current_stacking_order,
             Underline {
                 order: 0,
                 bounds: bounds.scale(scale_factor),
@@ -317,7 +432,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
         if !raster_bounds.is_zero() {
-            let layer_id = self.current_stacking_order();
             let tile =
                 self.window
                     .sprite_atlas
@@ -330,9 +444,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.content_mask().scale(scale_factor);
-
-            self.window.scene.insert(
-                layer_id,
+            let window = &mut *self.window;
+            window.scene_builder.insert(
+                &window.current_stacking_order,
                 MonochromeSprite {
                     order: 0,
                     bounds,
@@ -366,7 +480,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
         if !raster_bounds.is_zero() {
-            let layer_id = self.current_stacking_order();
             let tile =
                 self.window
                     .sprite_atlas
@@ -379,9 +492,10 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.content_mask().scale(scale_factor);
+            let window = &mut *self.window;
 
-            self.window.scene.insert(
-                layer_id,
+            window.scene_builder.insert(
+                &window.current_stacking_order,
                 PolychromeSprite {
                     order: 0,
                     bounds,
@@ -411,7 +525,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 .map(|pixels| DevicePixels::from((pixels.0 * 2.).ceil() as i32)),
         };
 
-        let layer_id = self.current_stacking_order();
         let tile =
             self.window
                 .sprite_atlas
@@ -421,8 +534,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 })?;
         let content_mask = self.content_mask().scale(scale_factor);
 
-        self.window.scene.insert(
-            layer_id,
+        let window = &mut *self.window;
+        window.scene_builder.insert(
+            &window.current_stacking_order,
             MonochromeSprite {
                 order: 0,
                 bounds,
@@ -446,7 +560,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         let bounds = bounds.scale(scale_factor);
         let params = RenderImageParams { image_id: data.id };
 
-        let order = self.current_stacking_order();
         let tile = self
             .window
             .sprite_atlas
@@ -456,8 +569,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         let content_mask = self.content_mask().scale(scale_factor);
         let corner_radii = corner_radii.scale(scale_factor);
 
-        self.window.scene.insert(
-            order,
+        let window = &mut *self.window;
+        window.scene_builder.insert(
+            &window.current_stacking_order,
             PolychromeSprite {
                 order: 0,
                 bounds,
@@ -467,13 +581,17 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 grayscale,
             },
         );
-
         Ok(())
     }
 
     pub(crate) fn draw(&mut self) -> Result<()> {
         let unit_entity = self.unit_entity.clone();
         self.update_entity(&unit_entity, |view, cx| {
+            cx.window
+                .mouse_event_handlers
+                .values_mut()
+                .for_each(Vec::clear);
+
             let mut root_view = cx.window.root_view.take().unwrap();
             let (root_layout_id, mut frame_state) = root_view.layout(&mut (), cx)?;
             let available_space = cx.window.content_size.map(Into::into);
@@ -485,7 +603,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
             root_view.paint(layout, &mut (), &mut frame_state, cx)?;
             cx.window.root_view = Some(root_view);
-            let scene = cx.window.scene.take();
+            let scene = cx.window.scene_builder.build();
 
             cx.run_on_main(view, |_, cx| {
                 cx.window
@@ -498,6 +616,59 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
             Ok(())
         })
+    }
+
+    fn dispatch_event(&mut self, event: Event) -> bool {
+        if let Some(any_mouse_event) = event.mouse_event() {
+            if let Some(MouseMoveEvent { position, .. }) = any_mouse_event.downcast_ref() {
+                self.window.mouse_position = *position;
+            }
+
+            if let Some(mut handlers) = self
+                .window
+                .mouse_event_handlers
+                .remove(&any_mouse_event.type_id())
+            {
+                // Because handlers may add other handlers, we sort every time.
+                handlers.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+                // Handlers may set this to false by calling `stop_propagation`
+                self.window.propagate_event = true;
+
+                // Capture phase, events bubble from back to front. Handlers for this phase are used for
+                // special purposes, such as detecting events outside of a given Bounds.
+                for (_, handler) in &handlers {
+                    handler(any_mouse_event, DispatchPhase::Capture, self);
+                    if !self.window.propagate_event {
+                        break;
+                    }
+                }
+
+                // Bubble phase, where most normal handlers do their work.
+                if self.window.propagate_event {
+                    for (_, handler) in handlers.iter().rev() {
+                        handler(any_mouse_event, DispatchPhase::Bubble, self);
+                        if !self.window.propagate_event {
+                            break;
+                        }
+                    }
+                }
+
+                // Just in case any handlers added new handlers, which is weird, but possible.
+                handlers.extend(
+                    self.window
+                        .mouse_event_handlers
+                        .get_mut(&any_mouse_event.type_id())
+                        .into_iter()
+                        .flat_map(|handlers| handlers.drain(..)),
+                );
+                self.window
+                    .mouse_event_handlers
+                    .insert(any_mouse_event.type_id(), handlers);
+            }
+        }
+
+        true
     }
 }
 
@@ -557,7 +728,11 @@ pub trait BorrowWindow: BorrowAppContext {
     fn window(&self) -> &Window;
     fn window_mut(&mut self) -> &mut Window;
 
-    fn with_content_mask<R>(&mut self, mask: ContentMask, f: impl FnOnce(&mut Self) -> R) -> R {
+    fn with_content_mask<R>(
+        &mut self,
+        mask: ContentMask<Pixels>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
         let mask = mask.intersect(&self.content_mask());
         self.window_mut().content_mask_stack.push(mask);
         let result = f(self);
@@ -565,7 +740,7 @@ pub trait BorrowWindow: BorrowAppContext {
         result
     }
 
-    fn content_mask(&self) -> ContentMask {
+    fn content_mask(&self) -> ContentMask<Pixels> {
         self.window()
             .content_mask_stack
             .last()
@@ -727,6 +902,18 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
         })
     }
 
+    pub fn on_mouse_event<Event: 'static>(
+        &mut self,
+        handler: impl Fn(&mut S, &Event, DispatchPhase, &mut ViewContext<S>) + Send + Sync + 'static,
+    ) {
+        let handle = self.handle().upgrade(self).unwrap();
+        self.window_cx.on_mouse_event(move |event, phase, cx| {
+            handle.update(cx, |view, cx| {
+                handler(view, event, phase, cx);
+            })
+        });
+    }
+
     pub(crate) fn erase_state<R>(&mut self, f: impl FnOnce(&mut ViewContext<()>) -> R) -> R {
         let entity_id = self.unit_entity.id;
         let mut cx = ViewContext::mutable(
@@ -814,4 +1001,11 @@ impl<S: 'static> Into<AnyWindowHandle> for WindowHandle<S> {
 pub struct AnyWindowHandle {
     pub(crate) id: WindowId,
     state_type: TypeId,
+}
+
+#[cfg(any(test, feature = "test"))]
+impl From<SmallVec<[u32; 16]>> for StackingOrder {
+    fn from(small_vec: SmallVec<[u32; 16]>) -> Self {
+        StackingOrder(small_vec)
+    }
 }

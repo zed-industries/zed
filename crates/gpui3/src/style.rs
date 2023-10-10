@@ -1,8 +1,8 @@
 use crate::{
     phi, point, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners,
     CornersRefinement, DefiniteLength, Edges, EdgesRefinement, Font, FontFeatures, FontStyle,
-    FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Quad, Rems, Result, RunStyle, Shadow,
-    SharedString, Size, SizeRefinement, ViewContext, WindowContext,
+    FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rems, Result, RunStyle, SharedString,
+    Size, SizeRefinement, ViewContext, WindowContext,
 };
 use refineable::Refineable;
 use smallvec::SmallVec;
@@ -245,51 +245,24 @@ impl Style {
     /// Paints the background of an element styled with this style.
     pub fn paint<V: 'static>(&self, bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
         let rem_size = cx.rem_size();
-        let scale = cx.scale_factor();
 
-        for shadow in &self.box_shadow {
-            let content_mask = cx.content_mask();
-            let mut shadow_bounds = bounds;
-            shadow_bounds.origin += shadow.offset;
-            shadow_bounds.dilate(shadow.spread_radius);
-            cx.stack(0, |cx| {
-                let layer_id = cx.current_stacking_order();
-                cx.scene().insert(
-                    layer_id,
-                    Shadow {
-                        order: 0,
-                        bounds: shadow_bounds.scale(scale),
-                        content_mask: content_mask.scale(scale),
-                        corner_radii: self
-                            .corner_radii
-                            .to_pixels(shadow_bounds.size, rem_size)
-                            .scale(scale),
-                        color: shadow.color,
-                        blur_radius: shadow.blur_radius.scale(scale),
-                    },
-                );
-            })
-        }
+        cx.stack(0, |cx| {
+            cx.paint_shadows(
+                bounds,
+                self.corner_radii.to_pixels(bounds.size, rem_size),
+                &self.box_shadow,
+            );
+        });
 
         let background_color = self.fill.as_ref().and_then(Fill::color);
         if background_color.is_some() || self.is_border_visible() {
-            let content_mask = cx.content_mask();
             cx.stack(1, |cx| {
-                let order = cx.current_stacking_order();
-                cx.scene().insert(
-                    order,
-                    Quad {
-                        order: 0,
-                        bounds: bounds.scale(scale),
-                        content_mask: content_mask.scale(scale),
-                        background: background_color.unwrap_or_default(),
-                        border_color: self.border_color.unwrap_or_default(),
-                        corner_radii: self
-                            .corner_radii
-                            .to_pixels(bounds.size, rem_size)
-                            .scale(scale),
-                        border_widths: self.border_widths.to_pixels(rem_size).scale(scale),
-                    },
+                cx.paint_quad(
+                    bounds,
+                    self.corner_radii.to_pixels(bounds.size, rem_size),
+                    background_color.unwrap_or_default(),
+                    self.border_widths.to_pixels(rem_size),
+                    self.border_color.unwrap_or_default(),
                 );
             });
         }

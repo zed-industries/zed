@@ -1,6 +1,7 @@
 use gpui3::{
-    div, img, svg, view, AppContext, Context, Element, IntoAnyElement, ParentElement, ScrollState,
-    SharedString, StyleHelpers, View, ViewContext, WindowContext,
+    div, img, svg, view, AppContext, Context, Element, Interactive, IntoAnyElement, MouseButton,
+    ParentElement, ScrollState, SharedString, StyleHelpers, Styled, View, ViewContext,
+    WindowContext,
 };
 use ui::{theme, Theme};
 
@@ -44,6 +45,9 @@ impl CollabPanel {
                     // List Container
                     .child(
                         div()
+                            .on_click(MouseButton::Left, |_, _, _| {
+                                dbg!("click!");
+                            })
                             .fill(theme.lowest.base.default.background)
                             .pb_1()
                             .border_color(theme.lowest.base.default.border)
@@ -126,6 +130,8 @@ impl CollabPanel {
             .flex()
             .justify_between()
             .items_center()
+            .hover()
+            .fill(theme.lowest.base.active.background)
             .child(div().flex().gap_1().text_sm().child(label))
             .child(
                 div().flex().h_full().gap_1().items_center().child(

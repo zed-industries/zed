@@ -1,6 +1,7 @@
 use crate::{
-    AnyElement, Bounds, Element, LayoutId, Overflow, ParentElement, Pixels, Point, Refineable,
-    RefinementCascade, Result, Style, StyleHelpers, Styled, ViewContext,
+    AnyElement, Bounds, Element, Interactive, LayoutId, MouseEventListeners, Overflow,
+    ParentElement, Pixels, Point, Refineable, RefinementCascade, Result, Style, Styled,
+    ViewContext,
 };
 use parking_lot::Mutex;
 use smallvec::SmallVec;
@@ -9,7 +10,7 @@ use util::ResultExt;
 
 pub struct Div<S: 'static> {
     styles: RefinementCascade<Style>,
-    // handlers: InteractionHandlers<V>,
+    listeners: MouseEventListeners<S>,
     children: SmallVec<[AnyElement<S>; 2]>,
     scroll_state: Option<ScrollState>,
 }
@@ -17,7 +18,7 @@ pub struct Div<S: 'static> {
 pub fn div<S>() -> Div<S> {
     Div {
         styles: Default::default(),
-        // handlers: Default::default(),
+        listeners: Default::default(),
         children: Default::default(),
         scroll_state: None,
     }
@@ -42,7 +43,7 @@ impl<S: 'static + Send + Sync> Element for Div<S> {
         &mut self,
         bounds: Bounds<Pixels>,
         state: &mut S,
-        child_layouts: &mut Self::FrameState,
+        child_layout_ids: &mut Self::FrameState,
         cx: &mut ViewContext<S>,
     ) -> Result<()> {
         let style = self.computed_style();
@@ -52,10 +53,13 @@ impl<S: 'static + Send + Sync> Element for Div<S> {
         let overflow = &style.overflow;
         style.apply_text_style(cx, |cx| {
             cx.stack(z_index + 1, |cx| {
-                style.apply_overflow(bounds, cx, |cx| self.paint_children(overflow, state, cx))
+                style.apply_overflow(bounds, cx, |cx| {
+                    self.listeners.paint(bounds, cx);
+                    self.paint_children(overflow, state, cx)
+                })
             })
         })?;
-        self.handle_scroll(bounds, style.overflow.clone(), child_layouts, cx);
+        self.handle_scroll(bounds, style.overflow.clone(), child_layout_ids, cx);
 
         // todo!("enable inspector")
         // if cx.is_inspector_enabled() {
@@ -251,16 +255,16 @@ impl<V> Styled for Div<V> {
     }
 }
 
-impl<V> StyleHelpers for Div<V> {}
+impl<V: Send + Sync + 'static> Interactive<V> for Div<V> {
+    fn listeners(&mut self) -> &mut MouseEventListeners<V> {
+        &mut self.listeners
+    }
+}
 
-// impl<V> Interactive<V> for Div<V> {
-//     fn interaction_handlers(&mut self) -> &mut InteractionHandlers<V> {
-//         &mut self.handlers
-//     }
-// }
+impl<S: 'static> ParentElement for Div<S> {
+    type State = S;
 
-impl<V: 'static> ParentElement<V> for Div<V> {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<S>; 2]> {
         &mut self.children
     }
 }

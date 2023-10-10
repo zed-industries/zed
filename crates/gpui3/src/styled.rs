@@ -1,4 +1,4 @@
-use crate::{Refineable, RefinementCascade};
+use crate::{Hoverable, Refineable, RefinementCascade};
 
 pub trait Styled {
     type Style: Refineable + Default;
@@ -10,12 +10,12 @@ pub trait Styled {
         Self::Style::from_refinement(&self.style_cascade().merged())
     }
 
-    // fn hover(self) -> Hoverable<Self>
-    // where
-    //     Self: Sized,
-    // {
-    //     hoverable(self)
-    // }
+    fn hover(self) -> Hoverable<Self>
+    where
+        Self: Sized,
+    {
+        Hoverable::new(self)
+    }
 
     // fn active(self) -> Pressable<Self>
     // where

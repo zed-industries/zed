@@ -1,4 +1,4 @@
-use crate::{Bounds, Element, LayoutId, Pixels, Result, SharedString, Style, StyleHelpers, Styled};
+use crate::{Bounds, Element, LayoutId, Pixels, Result, SharedString, Style, Styled};
 use refineable::RefinementCascade;
 use std::marker::PhantomData;
 
@@ -68,5 +68,3 @@ impl<S> Styled for Svg<S> {
         self.style.base()
     }
 }
-
-impl<S> StyleHelpers for Svg<S> {}

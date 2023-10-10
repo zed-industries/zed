@@ -360,3 +360,5 @@ pub trait StyleHelpers: Sized + Styled<Style = Style> {
         self
     }
 }
+
+impl<E: Styled<Style = Style>> StyleHelpers for E {}

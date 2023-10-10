@@ -34,6 +34,83 @@ pub enum TouchPhase {
     Ended,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct MouseDownEvent {
+    pub button: MouseButton,
+    pub position: Point<Pixels>,
+    pub modifiers: Modifiers,
+    pub click_count: usize,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MouseUpEvent {
+    pub button: MouseButton,
+    pub position: Point<Pixels>,
+    pub modifiers: Modifiers,
+    pub click_count: usize,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+    Navigate(NavigationDirection),
+}
+
+impl MouseButton {
+    pub fn all() -> Vec<Self> {
+        vec![
+            MouseButton::Left,
+            MouseButton::Right,
+            MouseButton::Middle,
+            MouseButton::Navigate(NavigationDirection::Back),
+            MouseButton::Navigate(NavigationDirection::Forward),
+        ]
+    }
+}
+
+impl Default for MouseButton {
+    fn default() -> Self {
+        Self::Left
+    }
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
+pub enum NavigationDirection {
+    Back,
+    Forward,
+}
+
+impl Default for NavigationDirection {
+    fn default() -> Self {
+        Self::Back
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MouseMoveEvent {
+    pub position: Point<Pixels>,
+    pub pressed_button: Option<MouseButton>,
+    pub modifiers: Modifiers,
+}
+
+#[derive(Clone, Debug)]
+pub struct ScrollWheelEvent {
+    pub position: Point<Pixels>,
+    pub delta: ScrollDelta,
+    pub modifiers: Modifiers,
+    pub touch_phase: TouchPhase,
+}
+
+impl Deref for ScrollWheelEvent {
+    type Target = Modifiers;
+
+    fn deref(&self) -> &Self::Target {
+        &self.modifiers
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum ScrollDelta {
     Pixels(Point<Pixels>),
@@ -63,99 +140,13 @@ impl ScrollDelta {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct ScrollWheelEvent {
-    pub position: Point<Pixels>,
-    pub delta: ScrollDelta,
-    pub modifiers: Modifiers,
-    /// If the platform supports returning the phase of a scroll wheel event, it will be stored here
-    pub phase: Option<TouchPhase>,
-}
-
-impl Deref for ScrollWheelEvent {
-    type Target = Modifiers;
-
-    fn deref(&self) -> &Self::Target {
-        &self.modifiers
-    }
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
-pub enum NavigationDirection {
-    Back,
-    Forward,
-}
-
-impl Default for NavigationDirection {
-    fn default() -> Self {
-        Self::Back
-    }
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
-pub enum MouseButton {
-    Left,
-    Right,
-    Middle,
-    Navigate(NavigationDirection),
-}
-
-impl MouseButton {
-    pub fn all() -> Vec<Self> {
-        vec![
-            MouseButton::Left,
-            MouseButton::Right,
-            MouseButton::Middle,
-            MouseButton::Navigate(NavigationDirection::Back),
-            MouseButton::Navigate(NavigationDirection::Forward),
-        ]
-    }
-}
-
-impl Default for MouseButton {
-    fn default() -> Self {
-        Self::Left
-    }
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct MouseDownEvent {
-    pub button: MouseButton,
-    pub position: Point<Pixels>,
-    pub modifiers: Modifiers,
-    pub click_count: usize,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct MouseUpEvent {
-    pub button: MouseButton,
-    pub position: Point<Pixels>,
-    pub modifiers: Modifiers,
-    pub click_count: usize,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct MouseUp {
-    pub button: MouseButton,
-    pub position: Point<Pixels>,
-    pub modifiers: Modifiers,
-    pub click_count: usize,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct MouseMovedEvent {
+pub struct MouseExitEvent {
     pub position: Point<Pixels>,
     pub pressed_button: Option<MouseButton>,
     pub modifiers: Modifiers,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct MouseExitedEvent {
-    pub position: Point<Pixels>,
-    pub pressed_button: Option<MouseButton>,
-    pub modifiers: Modifiers,
-}
-
-impl Deref for MouseExitedEvent {
+impl Deref for MouseExitEvent {
     type Target = Modifiers;
 
     fn deref(&self) -> &Self::Target {
@@ -170,8 +161,8 @@ pub enum Event {
     ModifiersChanged(ModifiersChangedEvent),
     MouseDown(MouseDownEvent),
     MouseUp(MouseUpEvent),
-    MouseMoved(MouseMovedEvent),
-    MouseExited(MouseExitedEvent),
+    MouseMoved(MouseMoveEvent),
+    MouseExited(MouseExitEvent),
     ScrollWheel(ScrollWheelEvent),
 }
 

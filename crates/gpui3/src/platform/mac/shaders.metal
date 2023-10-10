@@ -336,6 +336,94 @@ fragment float4 polychrome_sprite_fragment(
   return color;
 }
 
+struct PathRasterizationVertexOutput {
+  float4 position [[position]];
+  float2 st_position;
+  float clip_rect_distance [[clip_distance]][4];
+};
+
+struct PathRasterizationFragmentInput {
+  float4 position [[position]];
+  float2 st_position;
+};
+
+vertex PathRasterizationVertexOutput path_rasterization_vertex(
+    uint vertex_id [[vertex_id]],
+    constant PathVertex_ScaledPixels *vertices
+    [[buffer(PathRasterizationInputIndex_Vertices)]],
+    constant Size_DevicePixels *atlas_size
+    [[buffer(PathRasterizationInputIndex_AtlasTextureSize)]]) {
+  PathVertex_ScaledPixels v = vertices[vertex_id];
+  float2 vertex_position = float2(v.xy_position.x, v.xy_position.y);
+  float2 viewport_size = float2(atlas_size->width, atlas_size->height);
+  return PathRasterizationVertexOutput{
+      float4(vertex_position / viewport_size * float2(2., -2.) +
+                 float2(-1., 1.),
+             0., 1.),
+      float2(v.st_position.x, v.st_position.y),
+      {v.xy_position.x - v.content_mask.bounds.origin.x,
+       v.content_mask.bounds.origin.x + v.content_mask.bounds.size.width -
+           v.xy_position.x,
+       v.xy_position.y - v.content_mask.bounds.origin.y,
+       v.content_mask.bounds.origin.y + v.content_mask.bounds.size.height -
+           v.xy_position.y}};
+}
+
+fragment float4 path_rasterization_fragment(PathRasterizationFragmentInput input
+                                            [[stage_in]]) {
+  float2 dx = dfdx(input.st_position);
+  float2 dy = dfdy(input.st_position);
+  float2 gradient = float2((2. * input.st_position.x) * dx.x - dx.y,
+                           (2. * input.st_position.x) * dy.x - dy.y);
+  float f = (input.st_position.x * input.st_position.x) - input.st_position.y;
+  float distance = f / length(gradient);
+  float alpha = saturate(0.5 - distance);
+  return float4(alpha, 0., 0., 1.);
+}
+
+struct PathSpriteVertexOutput {
+  float4 position [[position]];
+  float2 tile_position;
+  float4 color [[flat]];
+  uint sprite_id [[flat]];
+};
+
+vertex PathSpriteVertexOutput path_sprite_vertex(
+    uint unit_vertex_id [[vertex_id]], uint sprite_id [[instance_id]],
+    constant float2 *unit_vertices [[buffer(SpriteInputIndex_Vertices)]],
+    constant PathSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
+    constant Size_DevicePixels *viewport_size
+    [[buffer(SpriteInputIndex_ViewportSize)]],
+    constant Size_DevicePixels *atlas_size
+    [[buffer(SpriteInputIndex_AtlasTextureSize)]]) {
+
+  float2 unit_vertex = unit_vertices[unit_vertex_id];
+  PathSprite sprite = sprites[sprite_id];
+  // Don't apply content mask because it was already accounted for when
+  // rasterizing the path.
+  float4 device_position = to_device_position(unit_vertex, sprite.bounds,
+                                              sprite.bounds, viewport_size);
+  float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
+  float4 color = hsla_to_rgba(sprite.color);
+  return PathSpriteVertexOutput{device_position, tile_position, color,
+                                sprite_id};
+}
+
+fragment float4 path_sprite_fragment(
+    PathSpriteVertexOutput input [[stage_in]],
+    constant PathSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
+    texture2d<float> atlas_texture [[texture(SpriteInputIndex_AtlasTexture)]]) {
+  PathSprite sprite = sprites[input.sprite_id];
+  constexpr sampler atlas_texture_sampler(mag_filter::linear,
+                                          min_filter::linear);
+  float4 sample =
+      atlas_texture.sample(atlas_texture_sampler, input.tile_position);
+  float mask = 1. - abs(1. - fmod(sample.r, 2.));
+  float4 color = input.color;
+  color.a *= mask;
+  return color;
+}
+
 float4 hsla_to_rgba(Hsla hsla) {
   float h = hsla.h * 6.0; // Now, it's an angle but scaled in [0, 6) range
   float s = hsla.s;

@@ -22,10 +22,12 @@ pub trait Element: 'static {
     ) -> Result<()>;
 }
 
-pub trait ParentElement<S> {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<S>; 2]>;
+pub trait ParentElement {
+    type State;
 
-    fn child(mut self, child: impl IntoAnyElement<S>) -> Self
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::State>; 2]>;
+
+    fn child(mut self, child: impl IntoAnyElement<Self::State>) -> Self
     where
         Self: Sized,
     {
@@ -33,7 +35,7 @@ pub trait ParentElement<S> {
         self
     }
 
-    fn children(mut self, iter: impl IntoIterator<Item = impl IntoAnyElement<S>>) -> Self
+    fn children(mut self, iter: impl IntoIterator<Item = impl IntoAnyElement<Self::State>>) -> Self
     where
         Self: Sized,
     {
