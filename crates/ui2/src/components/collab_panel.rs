@@ -158,3 +158,33 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
             )
     }
 }
+
+#[cfg(feature = "stories")]
+pub use stories::*;
+
+#[cfg(feature = "stories")]
+mod stories {
+    use crate::Story;
+
+    use super::*;
+
+    #[derive(Element)]
+    pub struct CollabPanelStory<S: 'static + Send + Sync + Clone> {
+        state_type: PhantomData<S>,
+    }
+
+    impl<S: 'static + Send + Sync + Clone> CollabPanelStory<S> {
+        pub fn new() -> Self {
+            Self {
+                state_type: PhantomData,
+            }
+        }
+
+        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+            Story::container(cx)
+                .child(Story::title_for::<_, CollabPanel<S>>(cx))
+                .child(Story::label(cx, "Default"))
+                .child(CollabPanel::new(ScrollState::default()))
+        }
+    }
+}

@@ -56,3 +56,37 @@ impl<S: 'static + Send + Sync + Clone> ProjectPanel<S> {
             )
     }
 }
+
+#[cfg(feature = "stories")]
+pub use stories::*;
+
+#[cfg(feature = "stories")]
+mod stories {
+    use crate::{Panel, Story};
+
+    use super::*;
+
+    #[derive(Element)]
+    pub struct ProjectPanelStory<S: 'static + Send + Sync + Clone> {
+        state_type: PhantomData<S>,
+    }
+
+    impl<S: 'static + Send + Sync + Clone> ProjectPanelStory<S> {
+        pub fn new() -> Self {
+            Self {
+                state_type: PhantomData,
+            }
+        }
+
+        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+            Story::container(cx)
+                .child(Story::title_for::<_, ProjectPanel<S>>(cx))
+                .child(Story::label(cx, "Default"))
+                .child(Panel::new(
+                    ScrollState::default(),
+                    |_, _| vec![ProjectPanel::new(ScrollState::default()).into_any()],
+                    Box::new(()),
+                ))
+        }
+    }
+}

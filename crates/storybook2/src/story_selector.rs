@@ -68,39 +68,31 @@ pub enum ComponentStory {
 
 impl ComponentStory {
     pub fn story<S: 'static + Send + Sync + Clone>(&self) -> AnyElement<S> {
-        use crate::stories::components;
-
         match self {
             Self::AssistantPanel => ui::AssistantPanelStory::new().into_any(),
-            Self::Buffer => components::buffer::BufferStory::new().into_any(),
-            Self::Breadcrumb => components::breadcrumb::BreadcrumbStory::new().into_any(),
-            Self::ChatPanel => components::chat_panel::ChatPanelStory::new().into_any(),
-            Self::CollabPanel => components::collab_panel::CollabPanelStory::new().into_any(),
-            Self::CommandPalette => {
-                components::command_palette::CommandPaletteStory::new().into_any()
-            }
-            Self::ContextMenu => components::context_menu::ContextMenuStory::new().into_any(),
-            Self::Facepile => components::facepile::FacepileStory::new().into_any(),
-            Self::Keybinding => components::keybinding::KeybindingStory::new().into_any(),
-            Self::LanguageSelector => {
-                components::language_selector::LanguageSelectorStory::new().into_any()
-            }
-            Self::MultiBuffer => components::multi_buffer::MultiBufferStory::new().into_any(),
-            Self::Palette => components::palette::PaletteStory::new().into_any(),
-            Self::Panel => components::panel::PanelStory::new().into_any(),
-            Self::ProjectPanel => components::project_panel::ProjectPanelStory::new().into_any(),
-            Self::RecentProjects => {
-                components::recent_projects::RecentProjectsStory::new().into_any()
-            }
-            Self::Tab => components::tab::TabStory::new().into_any(),
-            Self::TabBar => components::tab_bar::TabBarStory::new().into_any(),
-            Self::Terminal => components::terminal::TerminalStory::new().into_any(),
-            Self::ThemeSelector => components::theme_selector::ThemeSelectorStory::new().into_any(),
-            Self::TitleBar => components::title_bar::TitleBarStory::new().into_any(),
-            Self::Toast => components::toast::ToastStory::new().into_any(),
-            Self::Toolbar => components::toolbar::ToolbarStory::new().into_any(),
-            Self::TrafficLights => components::traffic_lights::TrafficLightsStory::new().into_any(),
-            Self::Workspace => components::workspace::WorkspaceStory::new().into_any(),
+            Self::Buffer => ui::BufferStory::new().into_any(),
+            Self::Breadcrumb => ui::BreadcrumbStory::new().into_any(),
+            Self::ChatPanel => ui::ChatPanelStory::new().into_any(),
+            Self::CollabPanel => ui::CollabPanelStory::new().into_any(),
+            Self::CommandPalette => ui::CommandPaletteStory::new().into_any(),
+            Self::ContextMenu => ui::ContextMenuStory::new().into_any(),
+            Self::Facepile => ui::FacepileStory::new().into_any(),
+            Self::Keybinding => ui::KeybindingStory::new().into_any(),
+            Self::LanguageSelector => ui::LanguageSelectorStory::new().into_any(),
+            Self::MultiBuffer => ui::MultiBufferStory::new().into_any(),
+            Self::Palette => ui::PaletteStory::new().into_any(),
+            Self::Panel => ui::PanelStory::new().into_any(),
+            Self::ProjectPanel => ui::ProjectPanelStory::new().into_any(),
+            Self::RecentProjects => ui::RecentProjectsStory::new().into_any(),
+            Self::Tab => ui::TabStory::new().into_any(),
+            Self::TabBar => ui::TabBarStory::new().into_any(),
+            Self::Terminal => ui::TerminalStory::new().into_any(),
+            Self::ThemeSelector => ui::ThemeSelectorStory::new().into_any(),
+            Self::TitleBar => ui::TitleBarStory::new().into_any(),
+            Self::Toast => ui::ToastStory::new().into_any(),
+            Self::Toolbar => ui::ToolbarStory::new().into_any(),
+            Self::TrafficLights => ui::TrafficLightsStory::new().into_any(),
+            Self::Workspace => ui::WorkspaceStory::new().into_any(),
         }
     }
 }

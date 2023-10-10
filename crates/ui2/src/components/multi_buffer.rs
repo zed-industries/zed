@@ -40,3 +40,41 @@ impl<S: 'static + Send + Sync + Clone> MultiBuffer<S> {
             }))
     }
 }
+
+#[cfg(feature = "stories")]
+pub use stories::*;
+
+#[cfg(feature = "stories")]
+mod stories {
+    use crate::{hello_world_rust_buffer_example, Story};
+
+    use super::*;
+
+    #[derive(Element)]
+    pub struct MultiBufferStory<S: 'static + Send + Sync + Clone> {
+        state_type: PhantomData<S>,
+    }
+
+    impl<S: 'static + Send + Sync + Clone> MultiBufferStory<S> {
+        pub fn new() -> Self {
+            Self {
+                state_type: PhantomData,
+            }
+        }
+
+        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+            let theme = theme(cx);
+
+            Story::container(cx)
+                .child(Story::title_for::<_, MultiBuffer<S>>(cx))
+                .child(Story::label(cx, "Default"))
+                .child(MultiBuffer::new(vec![
+                    hello_world_rust_buffer_example(&theme),
+                    hello_world_rust_buffer_example(&theme),
+                    hello_world_rust_buffer_example(&theme),
+                    hello_world_rust_buffer_example(&theme),
+                    hello_world_rust_buffer_example(&theme),
+                ]))
+        }
+    }
+}

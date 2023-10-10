@@ -94,7 +94,7 @@ pub use stories::*;
 
 #[cfg(feature = "stories")]
 mod stories {
-    use crate::story::Story;
+    use crate::Story;
 
     use super::*;
 

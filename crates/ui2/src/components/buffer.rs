@@ -236,3 +236,54 @@ impl<S: 'static + Send + Sync + Clone> Buffer<S> {
             .children(rows)
     }
 }
+
+#[cfg(feature = "stories")]
+pub use stories::*;
+
+#[cfg(feature = "stories")]
+mod stories {
+    use gpui3::rems;
+
+    use crate::{
+        empty_buffer_example, hello_world_rust_buffer_example,
+        hello_world_rust_buffer_with_status_example, Story,
+    };
+
+    use super::*;
+
+    #[derive(Element)]
+    pub struct BufferStory<S: 'static + Send + Sync + Clone> {
+        state_type: PhantomData<S>,
+    }
+
+    impl<S: 'static + Send + Sync + Clone> BufferStory<S> {
+        pub fn new() -> Self {
+            Self {
+                state_type: PhantomData,
+            }
+        }
+
+        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+            let theme = theme(cx);
+
+            Story::container(cx)
+                .child(Story::title_for::<_, Buffer<S>>(cx))
+                .child(Story::label(cx, "Default"))
+                .child(div().w(rems(64.)).h_96().child(empty_buffer_example()))
+                .child(Story::label(cx, "Hello World (Rust)"))
+                .child(
+                    div()
+                        .w(rems(64.))
+                        .h_96()
+                        .child(hello_world_rust_buffer_example(&theme)),
+                )
+                .child(Story::label(cx, "Hello World (Rust) with Status"))
+                .child(
+                    div()
+                        .w(rems(64.))
+                        .h_96()
+                        .child(hello_world_rust_buffer_with_status_example(&theme)),
+                )
+        }
+    }
+}
