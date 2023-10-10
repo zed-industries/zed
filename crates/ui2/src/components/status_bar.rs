@@ -119,7 +119,9 @@ impl<S: 'static + Send + Sync + Clone> StatusBar<S> {
                     .items_center()
                     .gap_1()
                     .child(Button::new("116:25"))
-                    .child(Button::new("Rust")),
+                    .child(
+                        Button::new("Rust").on_click(|_, _| println!("Select Language clicked.")),
+                    ),
             )
             .child(ToolDivider::new())
             .child(
@@ -127,8 +129,14 @@ impl<S: 'static + Send + Sync + Clone> StatusBar<S> {
                     .flex()
                     .items_center()
                     .gap_1()
-                    .child(IconButton::new(Icon::Copilot))
-                    .child(IconButton::new(Icon::Envelope)),
+                    .child(
+                        IconButton::new(Icon::Copilot)
+                            .on_click(|_, _| println!("Copilot clicked.")),
+                    )
+                    .child(
+                        IconButton::new(Icon::Envelope)
+                            .on_click(|_, _| println!("Send Feedback clicked.")),
+                    ),
             )
             .child(ToolDivider::new())
             .child(
@@ -137,7 +145,10 @@ impl<S: 'static + Send + Sync + Clone> StatusBar<S> {
                     .items_center()
                     .gap_1()
                     .child(IconButton::new(Icon::Terminal))
-                    .child(IconButton::new(Icon::MessageBubbles))
+                    .child(
+                        IconButton::new(Icon::MessageBubbles)
+                            .on_click(|_, _| println!("Chat Panel clicked.")),
+                    )
                     .child(IconButton::new(Icon::Ai)),
             )
     }
