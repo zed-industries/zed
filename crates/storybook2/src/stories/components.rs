@@ -1,4 +1,3 @@
-pub mod assistant_panel;
 pub mod breadcrumb;
 pub mod buffer;
 pub mod chat_panel;

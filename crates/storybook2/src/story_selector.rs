@@ -71,9 +71,7 @@ impl ComponentStory {
         use crate::stories::components;
 
         match self {
-            Self::AssistantPanel => {
-                components::assistant_panel::AssistantPanelStory::new().into_any()
-            }
+            Self::AssistantPanel => ui::AssistantPanelStory::new().into_any(),
             Self::Buffer => components::buffer::BufferStory::new().into_any(),
             Self::Breadcrumb => components::breadcrumb::BreadcrumbStory::new().into_any(),
             Self::ChatPanel => components::chat_panel::ChatPanelStory::new().into_any(),
