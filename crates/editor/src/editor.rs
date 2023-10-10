@@ -1332,6 +1332,7 @@ impl CompletionsMenu {
         }
 
         self.matches = matches.into();
+        self.selected_item = 0;
     }
 }
 
