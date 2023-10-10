@@ -18,7 +18,7 @@ use live_kit_client::{
     LocalAudioTrack, LocalTrackPublication, LocalVideoTrack, RemoteAudioTrackUpdate,
     RemoteVideoTrackUpdate,
 };
-use postage::stream::Stream;
+use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
 use std::{future::Future, mem, pin::Pin, sync::Arc, time::Duration};
 use util::{post_inc, ResultExt, TryFutureExt};
@@ -70,6 +70,8 @@ pub struct Room {
     user_store: ModelHandle<UserStore>,
     follows_by_leader_id_project_id: HashMap<(PeerId, u64), Vec<PeerId>>,
     subscriptions: Vec<client::Subscription>,
+    room_update_completed_tx: watch::Sender<Option<()>>,
+    room_update_completed_rx: watch::Receiver<Option<()>>,
     pending_room_update: Option<Task<()>>,
     maintain_connection: Option<Task<Option<()>>>,
 }
@@ -211,6 +213,8 @@ impl Room {
 
         Audio::play_sound(Sound::Joined, cx);
 
+        let (room_update_completed_tx, room_update_completed_rx) = watch::channel();
+
         Self {
             id,
             channel_id,
@@ -230,6 +234,8 @@ impl Room {
             user_store,
             follows_by_leader_id_project_id: Default::default(),
             maintain_connection: Some(maintain_connection),
+            room_update_completed_tx,
+            room_update_completed_rx,
         }
     }
 
@@ -599,7 +605,7 @@ impl Room {
     }
 
     /// Returns the most 'active' projects, defined as most people in the project
-    pub fn most_active_project(&self) -> Option<(u64, u64)> {
+    pub fn most_active_project(&self, cx: &AppContext) -> Option<(u64, u64)> {
         let mut project_hosts_and_guest_counts = HashMap::<u64, (Option<u64>, u32)>::default();
         for participant in self.remote_participants.values() {
             match participant.location {
@@ -616,6 +622,15 @@ impl Room {
                     .entry(project.id)
                     .or_default()
                     .0 = Some(participant.user.id);
+            }
+        }
+
+        if let Some(user) = self.user_store.read(cx).current_user() {
+            for project in &self.local_participant.projects {
+                project_hosts_and_guest_counts
+                    .entry(project.id)
+                    .or_default()
+                    .0 = Some(user.id);
             }
         }
 
@@ -858,12 +873,24 @@ impl Room {
                 });
 
                 this.check_invariants();
+                this.room_update_completed_tx.try_send(Some(())).ok();
                 cx.notify();
             });
         }));
 
         cx.notify();
         Ok(())
+    }
+
+    pub fn room_update_completed(&mut self) -> impl Future<Output = ()> {
+        let mut done_rx = self.room_update_completed_rx.clone();
+        async move {
+            while let Some(result) = done_rx.next().await {
+                if result.is_some() {
+                    break;
+                }
+            }
+        }
     }
 
     fn remote_video_track_updated(

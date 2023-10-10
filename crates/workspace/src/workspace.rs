@@ -14,7 +14,7 @@ use anyhow::{anyhow, Context, Result};
 use call::ActiveCall;
 use client::{
     proto::{self, PeerId},
-    Client, TypedEnvelope, UserStore,
+    Client, Status, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use drag_and_drop::DragAndDrop;
@@ -35,9 +35,9 @@ use gpui::{
         CursorStyle, ModifiersChangedEvent, MouseButton, PathPromptOptions, Platform, PromptLevel,
         WindowBounds, WindowOptions,
     },
-    AnyModelHandle, AnyViewHandle, AnyWeakViewHandle, AppContext, AsyncAppContext, Entity,
-    ModelContext, ModelHandle, SizeConstraint, Subscription, Task, View, ViewContext, ViewHandle,
-    WeakViewHandle, WindowContext, WindowHandle,
+    AnyModelHandle, AnyViewHandle, AnyWeakViewHandle, AnyWindowHandle, AppContext, AsyncAppContext,
+    Entity, ModelContext, ModelHandle, SizeConstraint, Subscription, Task, View, ViewContext,
+    ViewHandle, WeakViewHandle, WindowContext, WindowHandle,
 };
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 use itertools::Itertools;
@@ -4137,6 +4137,188 @@ pub fn activate_workspace_for_project(
 
 pub async fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
     DB.last_workspace().await.log_err().flatten()
+}
+
+async fn join_channel_internal(
+    channel_id: u64,
+    app_state: &Arc<AppState>,
+    requesting_window: Option<WindowHandle<Workspace>>,
+    active_call: &ModelHandle<ActiveCall>,
+    cx: &mut AsyncAppContext,
+) -> Result<bool> {
+    let (should_prompt, open_room) = active_call.read_with(cx, |active_call, cx| {
+        let Some(room) = active_call.room().map(|room| room.read(cx)) else {
+            return (false, None);
+        };
+
+        let already_in_channel = room.channel_id() == Some(channel_id);
+        let should_prompt = room.is_sharing_project()
+            && room.remote_participants().len() > 0
+            && !already_in_channel;
+        let open_room = if already_in_channel {
+            active_call.room().cloned()
+        } else {
+            None
+        };
+        (should_prompt, open_room)
+    });
+
+    if let Some(room) = open_room {
+        let task = room.update(cx, |room, cx| {
+            if let Some((project, host)) = room.most_active_project(cx) {
+                return Some(join_remote_project(project, host, app_state.clone(), cx));
+            }
+
+            None
+        });
+        if let Some(task) = task {
+            task.await?;
+        }
+        return anyhow::Ok(true);
+    }
+
+    if should_prompt {
+        if let Some(workspace) = requesting_window {
+            if let Some(window) = workspace.update(cx, |cx| cx.window()) {
+                let answer = window.prompt(
+                    PromptLevel::Warning,
+                    "Leaving this call will unshare your current project.\nDo you want to switch channels?",
+                    &["Yes, Join Channel", "Cancel"],
+                    cx,
+                );
+
+                if let Some(mut answer) = answer {
+                    if answer.next().await == Some(1) {
+                        return Ok(false);
+                    }
+                }
+            } else {
+                return Ok(false); // unreachable!() hopefully
+            }
+        } else {
+            return Ok(false); // unreachable!() hopefully
+        }
+    }
+
+    let client = cx.read(|cx| active_call.read(cx).client());
+
+    let mut client_status = client.status();
+
+    // this loop will terminate within client::CONNECTION_TIMEOUT seconds.
+    'outer: loop {
+        let Some(status) = client_status.recv().await else {
+            return Err(anyhow!("error connecting"));
+        };
+
+        match status {
+            Status::Connecting
+            | Status::Authenticating
+            | Status::Reconnecting
+            | Status::Reauthenticating => continue,
+            Status::Connected { .. } => break 'outer,
+            Status::SignedOut => return Err(anyhow!("not signed in")),
+            Status::UpgradeRequired => return Err(anyhow!("zed is out of date")),
+            Status::ConnectionError | Status::ConnectionLost | Status::ReconnectionError { .. } => {
+                return Err(anyhow!("zed is offline"))
+            }
+        }
+    }
+
+    let room = active_call
+        .update(cx, |active_call, cx| {
+            active_call.join_channel(channel_id, cx)
+        })
+        .await?;
+
+    room.update(cx, |room, _| room.room_update_completed())
+        .await;
+
+    let task = room.update(cx, |room, cx| {
+        if let Some((project, host)) = room.most_active_project(cx) {
+            return Some(join_remote_project(project, host, app_state.clone(), cx));
+        }
+
+        None
+    });
+    if let Some(task) = task {
+        task.await?;
+        return anyhow::Ok(true);
+    }
+    anyhow::Ok(false)
+}
+
+pub fn join_channel(
+    channel_id: u64,
+    app_state: Arc<AppState>,
+    requesting_window: Option<WindowHandle<Workspace>>,
+    cx: &mut AppContext,
+) -> Task<Result<()>> {
+    let active_call = ActiveCall::global(cx);
+    cx.spawn(|mut cx| async move {
+        let result = join_channel_internal(
+            channel_id,
+            &app_state,
+            requesting_window,
+            &active_call,
+            &mut cx,
+        )
+        .await;
+
+        // join channel succeeded, and opened a window
+        if matches!(result, Ok(true)) {
+            return anyhow::Ok(());
+        }
+
+        if requesting_window.is_some() {
+            return anyhow::Ok(());
+        }
+
+        // find an existing workspace to focus and show call controls
+        let mut active_window = activate_any_workspace_window(&mut cx);
+        if active_window.is_none() {
+            // no open workspaces, make one to show the error in (blergh)
+            cx.update(|cx| Workspace::new_local(vec![], app_state.clone(), requesting_window, cx))
+                .await;
+        }
+
+        active_window = activate_any_workspace_window(&mut cx);
+        if active_window.is_none() {
+            return result.map(|_| ()); // unreachable!() assuming new_local always opens a window
+        }
+
+        if let Err(err) = result {
+            let prompt = active_window.unwrap().prompt(
+                PromptLevel::Critical,
+                &format!("Failed to join channel: {}", err),
+                &["Ok"],
+                &mut cx,
+            );
+            if let Some(mut prompt) = prompt {
+                prompt.next().await;
+            } else {
+                return Err(err);
+            }
+        }
+
+        // return ok, we showed the error to the user.
+        return anyhow::Ok(());
+    })
+}
+
+pub fn activate_any_workspace_window(cx: &mut AsyncAppContext) -> Option<AnyWindowHandle> {
+    for window in cx.windows() {
+        let found = window.update(cx, |cx| {
+            let is_workspace = cx.root_view().clone().downcast::<Workspace>().is_some();
+            if is_workspace {
+                cx.activate_window();
+            }
+            is_workspace
+        });
+        if found == Some(true) {
+            return Some(window);
+        }
+    }
+    None
 }
 
 #[allow(clippy::type_complexity)]

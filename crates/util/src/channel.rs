@@ -41,4 +41,36 @@ impl ReleaseChannel {
             ReleaseChannel::Stable => "stable",
         }
     }
+
+    pub fn url_scheme(&self) -> &'static str {
+        match self {
+            ReleaseChannel::Dev => "zed-dev://",
+            ReleaseChannel::Preview => "zed-preview://",
+            ReleaseChannel::Stable => "zed://",
+        }
+    }
+
+    pub fn link_prefix(&self) -> &'static str {
+        match self {
+            ReleaseChannel::Dev => "https://zed.dev/dev/",
+            ReleaseChannel::Preview => "https://zed.dev/preview/",
+            ReleaseChannel::Stable => "https://zed.dev/",
+        }
+    }
+}
+
+pub fn parse_zed_link(link: &str) -> Option<&str> {
+    for release in [
+        ReleaseChannel::Dev,
+        ReleaseChannel::Preview,
+        ReleaseChannel::Stable,
+    ] {
+        if let Some(stripped) = link.strip_prefix(release.link_prefix()) {
+            return Some(stripped);
+        }
+        if let Some(stripped) = link.strip_prefix(release.url_scheme()) {
+            return Some(stripped);
+        }
+    }
+    None
 }

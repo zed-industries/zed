@@ -5,6 +5,7 @@ use anyhow::{anyhow, Result};
 use channel_index::ChannelIndex;
 use client::{Client, Subscription, User, UserId, UserStore};
 use collections::{hash_map, HashMap, HashSet};
+use db::RELEASE_CHANNEL;
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
 use rpc::{
@@ -50,6 +51,26 @@ pub struct Channel {
     pub name: String,
     pub unseen_note_version: Option<(u64, clock::Global)>,
     pub unseen_message_id: Option<u64>,
+}
+
+impl Channel {
+    pub fn link(&self) -> String {
+        RELEASE_CHANNEL.link_prefix().to_owned()
+            + "channel/"
+            + &self.slug()
+            + "-"
+            + &self.id.to_string()
+    }
+
+    pub fn slug(&self) -> String {
+        let slug: String = self
+            .name
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '-' })
+            .collect();
+
+        slug.trim_matches(|c| c == '-').to_string()
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
