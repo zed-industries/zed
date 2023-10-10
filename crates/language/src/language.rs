@@ -346,6 +346,12 @@ pub trait LspAdapter: 'static + Send + Sync {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BundledFormatter {
     Prettier {
+        // See https://prettier.io/docs/en/options.html#parser for a list of valid values.
+        // Usually, every language has a single parser (standard or plugin-provided), hence `Some("parser_name")` can be used.
+        // There can not be multiple parsers for a single language, in case of a conflict, we would attempt to select the one with most plugins.
+        //
+        // But exceptions like Tailwind CSS exist, which uses standard parsers for CSS/JS/HTML/etc. but require an extra plugin to be installed.
+        // For those cases, `None` will install the plugin but apply other, regular parser defined for the language, and this would not be a conflict.
         parser_name: Option<&'static str>,
         plugin_names: Vec<&'static str>,
     },

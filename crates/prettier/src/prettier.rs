@@ -47,7 +47,6 @@ const PRETTIER_PACKAGE_NAME: &str = "prettier";
 const TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME: &str = "prettier-plugin-tailwindcss";
 
 impl Prettier {
-    // This was taken from the prettier-vscode extension.
     pub const CONFIG_FILE_NAMES: &'static [&'static str] = &[
         ".prettierrc",
         ".prettierrc.json",

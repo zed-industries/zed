@@ -1574,8 +1574,8 @@ message PrettierInstanceForBufferResponse {
 
 message InvokePrettierForBuffer {
     uint64 project_id = 1;
-    optional uint64 buffer_id = 3;
     string prettier_path = 2;
+    optional uint64 buffer_id = 3;
     optional uint64 worktree_id = 4;
     string method = 5;
 }

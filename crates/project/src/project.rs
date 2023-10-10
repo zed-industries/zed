@@ -8496,6 +8496,7 @@ impl Project {
                                     .insert(new_server_id, (name, Arc::clone(prettier_server)));
                                 // TODO kb could there be a race with multiple default prettier instances added?
                                 // also, clean up prettiers for dropped workspaces (e.g. external files that got closed)
+                                // also, is there a way to speed up initial prettier startup? now it takes a 1s or so on the first formatting attempt.
                                 cx.emit(Event::LanguageServerAdded(new_server_id));
                             });
                         }
