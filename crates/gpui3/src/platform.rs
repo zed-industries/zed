@@ -1,4 +1,3 @@
-mod events;
 mod keystroke;
 #[cfg(target_os = "macos")]
 mod mac;
@@ -6,9 +5,9 @@ mod mac;
 mod test;
 
 use crate::{
-    AnyWindowHandle, Bounds, DevicePixels, Executor, Font, FontId, FontMetrics, GlobalPixels,
-    GlyphId, Pixels, Point, RenderGlyphParams, RenderImageParams, RenderSvgParams, Result, Scene,
-    ShapedLine, SharedString, Size,
+    AnyWindowHandle, Bounds, DevicePixels, Event, Executor, Font, FontId, FontMetrics,
+    GlobalPixels, GlyphId, Pixels, Point, RenderGlyphParams, RenderImageParams, RenderSvgParams,
+    Result, Scene, ShapedLine, SharedString, Size,
 };
 use anyhow::anyhow;
 use async_task::Runnable;
@@ -27,7 +26,6 @@ use std::{
     sync::Arc,
 };
 
-pub use events::*;
 pub use keystroke::*;
 #[cfg(target_os = "macos")]
 pub use mac::*;
