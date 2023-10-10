@@ -1,9 +1,9 @@
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use chrono::DateTime;
-use gpui3::{relative, rems, Size};
+use gpui3::{px, relative, rems, Size};
 
 use crate::prelude::*;
 use crate::{
@@ -13,6 +13,22 @@ use crate::{
     TitleBar, Toast, ToastOrigin,
 };
 
+pub struct WorkspaceState {
+    pub show_language_selector: Arc<AtomicBool>,
+}
+
+/// HACK: This is just a temporary way to start hooking up interactivity until
+/// I can get an explainer on how we should actually be managing state.
+static WORKSPACE_STATE: OnceLock<WorkspaceState> = OnceLock::new();
+
+fn get_workspace_state() -> &'static WorkspaceState {
+    let state = WORKSPACE_STATE.get_or_init(|| WorkspaceState {
+        show_language_selector: Arc::new(AtomicBool::new(false)),
+    });
+
+    state
+}
+
 #[derive(Element)]
 pub struct WorkspaceElement<S: 'static + Send + Sync + Clone> {
     state_type: PhantomData<S>,
@@ -20,7 +36,6 @@ pub struct WorkspaceElement<S: 'static + Send + Sync + Clone> {
     right_panel_scroll_state: ScrollState,
     tab_bar_scroll_state: ScrollState,
     bottom_panel_scroll_state: ScrollState,
-    show_language_selector: Arc<AtomicBool>,
 }
 
 impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
@@ -31,14 +46,13 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
             right_panel_scroll_state: ScrollState::default(),
             tab_bar_scroll_state: ScrollState::default(),
             bottom_panel_scroll_state: ScrollState::default(),
-            show_language_selector: Arc::new(AtomicBool::new(false)),
         }
     }
 
     pub fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
         let theme = theme(cx).clone();
 
-        let show_language_selector = self.show_language_selector.clone();
+        let workspace_state = get_workspace_state();
 
         let temp_size = rems(36.).into();
 
@@ -188,9 +202,12 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
                     ),
             )
             .child(StatusBar::new(Arc::new(move |_, cx| {
-                let is_showing_language_selector = show_language_selector.load(Ordering::SeqCst);
+                let is_showing_language_selector = workspace_state
+                    .show_language_selector
+                    .load(Ordering::SeqCst);
 
-                show_language_selector
+                workspace_state
+                    .show_language_selector
                     .compare_exchange(
                         is_showing_language_selector,
                         !is_showing_language_selector,
@@ -205,12 +222,16 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
                 Some(
                     div()
                         .absolute()
-                        .top_0()
-                        .left_0()
+                        .top(px(50.))
+                        .left(px(640.))
                         .z_index(999)
                         .child(LanguageSelector::new()),
                 )
-                .filter(|_| self.show_language_selector.load(Ordering::SeqCst)),
+                .filter(|_| {
+                    workspace_state
+                        .show_language_selector
+                        .load(Ordering::SeqCst)
+                }),
             )
             .child(Toast::new(
                 ToastOrigin::Bottom,
