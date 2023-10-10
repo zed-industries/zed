@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
-use std::rc::Rc;
+use std::sync::Arc;
 
-use gpui3::{DefiniteLength, Hsla, MouseButton, WindowContext};
+use gpui3::{DefiniteLength, Hsla, Interactive, MouseButton, WindowContext};
 
 use crate::prelude::*;
 use crate::{h_stack, theme, Icon, IconColor, IconElement, Label, LabelColor, LabelSize};
@@ -20,15 +20,15 @@ pub enum ButtonVariant {
     Filled,
 }
 
-// struct ButtonHandlers<V> {
-//     click: Option<Rc<dyn Fn(&mut V, &mut EventContext<V>)>>,
-// }
+struct ButtonHandlers<S: 'static + Send + Sync> {
+    click: Option<Arc<dyn Fn(&mut S, &mut ViewContext<S>) + 'static + Send + Sync>>,
+}
 
-// impl<V> Default for ButtonHandlers<V> {
-//     fn default() -> Self {
-//         Self { click: None }
-//     }
-// }
+impl<S: 'static + Send + Sync> Default for ButtonHandlers<S> {
+    fn default() -> Self {
+        Self { click: None }
+    }
+}
 
 #[derive(Element)]
 pub struct Button<S: 'static + Send + Sync + Clone> {
@@ -39,7 +39,7 @@ pub struct Button<S: 'static + Send + Sync + Clone> {
     icon: Option<Icon>,
     icon_position: Option<IconPosition>,
     width: Option<DefiniteLength>,
-    // handlers: ButtonHandlers<S>,
+    handlers: ButtonHandlers<S>,
 }
 
 impl<S: 'static + Send + Sync + Clone> Button<S> {
@@ -55,7 +55,7 @@ impl<S: 'static + Send + Sync + Clone> Button<S> {
             icon: None,
             icon_position: None,
             width: Default::default(),
-            // handlers: ButtonHandlers::default(),
+            handlers: ButtonHandlers::default(),
         }
     }
 
@@ -94,10 +94,13 @@ impl<S: 'static + Send + Sync + Clone> Button<S> {
         self
     }
 
-    // pub fn on_click(mut self, handler: impl Fn(&mut S, &mut EventContext<S>) + 'static) -> Self {
-    //     self.handlers.click = Some(Rc::new(handler));
-    //     self
-    // }
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&mut S, &mut ViewContext<S>) + 'static + Send + Sync,
+    ) -> Self {
+        self.handlers.click = Some(Arc::new(handler));
+        self
+    }
 
     fn background_color(&self, cx: &mut ViewContext<S>) -> Hsla {
         let theme = theme(cx);
@@ -193,11 +196,11 @@ impl<S: 'static + Send + Sync + Clone> Button<S> {
             el = el.w(width).justify_center();
         }
 
-        // if let Some(click_handler) = self.handlers.click.clone() {
-        //     el = el.on_mouse_down(MouseButton::Left, move |view, event, cx| {
-        //         click_handler(view, cx);
-        //     });
-        // }
+        if let Some(click_handler) = self.handlers.click.clone() {
+            el = el.on_click(MouseButton::Left, move |state, event, cx| {
+                click_handler(state, cx);
+            });
+        }
 
         el
     }
@@ -398,9 +401,9 @@ mod stories {
                 )
                 .child(Story::label(cx, "Button with `on_click`"))
                 .child(
-                    Button::new("Label").variant(ButtonVariant::Ghost), // NOTE: There currently appears to be a bug in GPUI2 where only the last event handler will fire.
-                                                                        // So adding additional buttons with `on_click`s after this one will cause this `on_click` to not fire.
-                                                                        // .on_click(|_view, _cx| println!("Button clicked.")),
+                    Button::new("Label")
+                        .variant(ButtonVariant::Ghost)
+                        .on_click(|_view, _cx| println!("Button clicked.")),
                 )
         }
     }
