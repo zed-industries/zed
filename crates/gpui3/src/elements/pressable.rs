@@ -85,8 +85,6 @@ impl<V: 'static, E: Element<V> + Styleable> Element<V> for Pressable<E> {
     }
 }
 
-impl<E: Styleable<Style = Style>> StyleHelpers for Pressable<E> {}
-
 impl<V: 'static, E: Interactive<V> + Styleable> Interactive<V> for Pressable<E> {
     fn interaction_handlers(&mut self) -> &mut InteractionHandlers<V> {
         self.child.interaction_handlers()

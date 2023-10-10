@@ -6,6 +6,7 @@ mod svg;
 mod text;
 
 pub use div::*;
+pub use hoverable::*;
 pub use img::*;
 pub use stateless::*;
 pub use svg::*;

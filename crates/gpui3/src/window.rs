@@ -2,10 +2,11 @@ use crate::{
     image_cache::RenderImageParams, px, size, AnyView, AppContext, AsyncWindowContext,
     AvailableSpace, BorrowAppContext, Bounds, BoxShadow, Context, Corners, DevicePixels, DisplayId,
     Edges, Effect, Element, EntityId, Event, FontId, GlyphId, Handle, Hsla, ImageData, IsZero,
-    LayoutId, MainThread, MainThreadOnly, MonochromeSprite, Path, Pixels, PlatformAtlas,
-    PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderSvgParams,
-    ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, TaffyLayoutEngine, Task,
-    Underline, UnderlineStyle, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
+    LayoutId, MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path, Pixels,
+    PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams,
+    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style,
+    TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle, WindowOptions,
+    SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -619,6 +620,10 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     fn dispatch_event(&mut self, event: Event) -> bool {
         if let Some(any_mouse_event) = event.mouse_event() {
+            if let Some(MouseMoveEvent { position, .. }) = any_mouse_event.downcast_ref() {
+                self.window.mouse_position = *position;
+            }
+
             if let Some(mut handlers) = self
                 .window
                 .mouse_event_handlers

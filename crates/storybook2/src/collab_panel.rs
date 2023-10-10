@@ -1,7 +1,8 @@
 use crate::theme::{theme, Theme};
 use gpui3::{
     div, img, svg, view, AppContext, Context, Element, Interactive, IntoAnyElement, MouseButton,
-    ParentElement, ScrollState, SharedString, StyleHelpers, View, ViewContext, WindowContext,
+    ParentElement, ScrollState, SharedString, StyleHelpers, Styled, View, ViewContext,
+    WindowContext,
 };
 
 pub struct CollabPanel {
@@ -129,6 +130,8 @@ impl CollabPanel {
             .flex()
             .justify_between()
             .items_center()
+            .hover()
+            .fill(theme.lowest.base.active.background)
             .child(div().flex().gap_1().text_sm().child(label))
             .child(
                 div().flex().h_full().gap_1().items_center().child(

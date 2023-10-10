@@ -1,6 +1,6 @@
 use crate::{
-    BorrowWindow, Bounds, Element, LayoutId, Pixels, Result, SharedString, Style, StyleHelpers,
-    Styled, ViewContext,
+    BorrowWindow, Bounds, Element, LayoutId, Pixels, Result, SharedString, Style, Styled,
+    ViewContext,
 };
 use futures::FutureExt;
 use refineable::RefinementCascade;
@@ -98,5 +98,3 @@ impl<S> Styled for Img<S> {
         self.style.base()
     }
 }
-
-impl<S> StyleHelpers for Img<S> {}

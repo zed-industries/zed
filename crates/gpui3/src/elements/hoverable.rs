@@ -1,24 +1,31 @@
 use crate::{
-    Bounds, Element, Interactive, MouseEventListeners, Pixels, Style, Styled, ViewContext,
+    AnyElement, Bounds, DispatchPhase, Element, Interactive, MouseEventListeners, MouseMoveEvent,
+    ParentElement, Pixels, Styled, ViewContext,
 };
 use anyhow::Result;
-use refineable::{CascadeSlot, RefinementCascade};
-use std::{cell::Cell, rc::Rc};
-
-pub fn hoverable<E: Styled>(mut child: E) -> Hoverable<E> {
-    Hoverable {
-        hovered: Rc::new(Cell::new(false)),
-        cascade_slot: child.style_cascade().reserve(),
-        hovered_style: Default::default(),
-        child,
-    }
-}
+use refineable::{CascadeSlot, Refineable, RefinementCascade};
+use smallvec::SmallVec;
+use std::sync::{
+    atomic::{AtomicBool, Ordering::SeqCst},
+    Arc,
+};
 
 pub struct Hoverable<E: Styled> {
-    hovered: Rc<Cell<bool>>,
+    hovered: Arc<AtomicBool>,
     cascade_slot: CascadeSlot,
-    hovered_style: RefinementCascade<E::Style>,
+    hovered_style: <E::Style as Refineable>::Refinement,
     child: E,
+}
+
+impl<E: Styled> Hoverable<E> {
+    pub fn new(mut child: E) -> Self {
+        Self {
+            hovered: Arc::new(AtomicBool::new(false)),
+            cascade_slot: child.style_cascade().reserve(),
+            hovered_style: Default::default(),
+            child,
+        }
+    }
 }
 
 impl<E> Styled for Hoverable<E>
@@ -61,22 +68,30 @@ impl<E: Element + Styled> Element for Hoverable<E> {
         frame_state: &mut Self::FrameState,
         cx: &mut ViewContext<Self::State>,
     ) -> Result<()> {
-        todo!()
-        // self.hovered.set(bounds.contains_point(cx.mouse_position()));
+        let hovered = bounds.contains_point(cx.mouse_position());
+        let slot = self.cascade_slot;
+        let style = hovered.then_some(self.hovered_style.clone());
+        self.style_cascade().set(slot, style);
+        self.hovered.store(hovered, SeqCst);
 
-        // let slot = self.cascade_slot;
-        // let style = self.hovered.get().then_some(self.hovered_style.clone());
-        // self.style_cascade().set(slot, style);
+        let hovered = self.hovered.clone();
+        cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
+            if phase == DispatchPhase::Capture {
+                if bounds.contains_point(event.position) != hovered.load(SeqCst) {
+                    cx.notify();
+                }
+            }
+        });
 
-        // let hovered = self.hovered.clone();
-        // cx.on_event(layout.order, move |_view, _: &MouseMovedEvent, cx| {
-        //     cx.bubble_event();
-        //     if bounds.contains_point(cx.mouse_position()) != hovered.get() {
-        //         cx.repaint();
-        //     }
-        // });
+        self.child.paint(bounds, state, frame_state, cx)?;
+        Ok(())
+    }
+}
 
-        // self.child
-        //     .paint(view, parent_origin, layout, paint_state, cx);
+impl<E: ParentElement + Styled> ParentElement for Hoverable<E> {
+    type State = E::State;
+
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::State>; 2]> {
+        self.child.children_mut()
     }
 }
