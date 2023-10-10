@@ -50,7 +50,7 @@ pub trait ParentElement {
     // We'll (hopefully) be moving away from this in the future.
     fn children_any<I>(mut self, children: I) -> Self
     where
-        I: IntoIterator<Item = AnyElement<S>>,
+        I: IntoIterator<Item = AnyElement<Self::State>>,
         Self: Sized,
     {
         self.children_mut().extend(children.into_iter());
@@ -61,7 +61,7 @@ pub trait ParentElement {
     // of building UI on top of the current version of gpui2.
     //
     // We'll (hopefully) be moving away from this in the future.
-    fn child_any(mut self, children: AnyElement<S>) -> Self
+    fn child_any(mut self, children: AnyElement<Self::State>) -> Self
     where
         Self: Sized,
     {
