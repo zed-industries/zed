@@ -34,61 +34,20 @@ pub enum TouchPhase {
     Ended,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum ScrollDelta {
-    Pixels(Point<Pixels>),
-    Lines(Point<f32>),
-}
-
-impl Default for ScrollDelta {
-    fn default() -> Self {
-        Self::Lines(Default::default())
-    }
-}
-
-impl ScrollDelta {
-    pub fn precise(&self) -> bool {
-        match self {
-            ScrollDelta::Pixels(_) => true,
-            ScrollDelta::Lines(_) => false,
-        }
-    }
-
-    pub fn pixel_delta(&self, line_height: Pixels) -> Point<Pixels> {
-        match self {
-            ScrollDelta::Pixels(delta) => *delta,
-            ScrollDelta::Lines(delta) => point(line_height * delta.x, line_height * delta.y),
-        }
-    }
+#[derive(Clone, Debug, Default)]
+pub struct MouseDownEvent {
+    pub button: MouseButton,
+    pub position: Point<Pixels>,
+    pub modifiers: Modifiers,
+    pub click_count: usize,
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct ScrollWheelEvent {
+pub struct MouseUpEvent {
+    pub button: MouseButton,
     pub position: Point<Pixels>,
-    pub delta: ScrollDelta,
     pub modifiers: Modifiers,
-    /// If the platform supports returning the phase of a scroll wheel event, it will be stored here
-    pub phase: Option<TouchPhase>,
-}
-
-impl Deref for ScrollWheelEvent {
-    type Target = Modifiers;
-
-    fn deref(&self) -> &Self::Target {
-        &self.modifiers
-    }
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
-pub enum NavigationDirection {
-    Back,
-    Forward,
-}
-
-impl Default for NavigationDirection {
-    fn default() -> Self {
-        Self::Back
-    }
+    pub click_count: usize,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
@@ -117,28 +76,16 @@ impl Default for MouseButton {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct MouseDownEvent {
-    pub button: MouseButton,
-    pub position: Point<Pixels>,
-    pub modifiers: Modifiers,
-    pub click_count: usize,
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
+pub enum NavigationDirection {
+    Back,
+    Forward,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct MouseUpEvent {
-    pub button: MouseButton,
-    pub position: Point<Pixels>,
-    pub modifiers: Modifiers,
-    pub click_count: usize,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct MouseUp {
-    pub button: MouseButton,
-    pub position: Point<Pixels>,
-    pub modifiers: Modifiers,
-    pub click_count: usize,
+impl Default for NavigationDirection {
+    fn default() -> Self {
+        Self::Back
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -146,6 +93,50 @@ pub struct MouseMovedEvent {
     pub position: Point<Pixels>,
     pub pressed_button: Option<MouseButton>,
     pub modifiers: Modifiers,
+}
+
+#[derive(Clone, Debug)]
+pub struct ScrollWheelEvent {
+    pub position: Point<Pixels>,
+    pub delta: ScrollDelta,
+    pub modifiers: Modifiers,
+    pub touch_phase: TouchPhase,
+}
+
+impl Deref for ScrollWheelEvent {
+    type Target = Modifiers;
+
+    fn deref(&self) -> &Self::Target {
+        &self.modifiers
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum ScrollDelta {
+    Pixels(Point<Pixels>),
+    Lines(Point<f32>),
+}
+
+impl Default for ScrollDelta {
+    fn default() -> Self {
+        Self::Lines(Default::default())
+    }
+}
+
+impl ScrollDelta {
+    pub fn precise(&self) -> bool {
+        match self {
+            ScrollDelta::Pixels(_) => true,
+            ScrollDelta::Lines(_) => false,
+        }
+    }
+
+    pub fn pixel_delta(&self, line_height: Pixels) -> Point<Pixels> {
+        match self {
+            ScrollDelta::Pixels(delta) => *delta,
+            ScrollDelta::Lines(delta) => point(line_height * delta.x, line_height * delta.y),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]

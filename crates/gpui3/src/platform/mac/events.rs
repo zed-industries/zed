@@ -161,10 +161,10 @@ impl Event {
             NSEventType::NSScrollWheel => window_height.map(|window_height| {
                 let phase = match native_event.phase() {
                     NSEventPhase::NSEventPhaseMayBegin | NSEventPhase::NSEventPhaseBegan => {
-                        Some(TouchPhase::Started)
+                        TouchPhase::Started
                     }
-                    NSEventPhase::NSEventPhaseEnded => Some(TouchPhase::Ended),
-                    _ => Some(TouchPhase::Moved),
+                    NSEventPhase::NSEventPhaseEnded => TouchPhase::Ended,
+                    _ => TouchPhase::Moved,
                 };
 
                 let raw_data = point(
@@ -184,7 +184,7 @@ impl Event {
                         window_height - px(native_event.locationInWindow().y as f32),
                     ),
                     delta,
-                    phase,
+                    touch_phase: phase,
                     modifiers: read_modifiers(native_event),
                 })
             }),
