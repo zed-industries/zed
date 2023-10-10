@@ -1,20 +1,45 @@
 use crate::{
     image_cache::RenderImageParams, px, size, AnyView, AppContext, AsyncWindowContext,
     AvailableSpace, BorrowAppContext, Bounds, BoxShadow, Context, Corners, DevicePixels, DisplayId,
-    Edges, Effect, Element, EntityId, FontId, GlyphId, Handle, Hsla, ImageData, IsZero, LayoutId,
-    MainThread, MainThreadOnly, MonochromeSprite, Path, Pixels, PlatformAtlas, PlatformWindow,
-    Point, PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderSvgParams, ScaledPixels,
-    SceneBuilder, Shadow, SharedString, Size, StackingOrder, Style, TaffyLayoutEngine, Task,
+    Edges, Effect, Element, EntityId, Event, FontId, GlyphId, Handle, Hsla, ImageData, IsZero,
+    LayoutId, MainThread, MainThreadOnly, MonochromeSprite, Path, Pixels, PlatformAtlas,
+    PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderSvgParams,
+    ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, TaffyLayoutEngine, Task,
     Underline, UnderlineStyle, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
+use collections::HashMap;
+use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
 use std::{
-    any::TypeId, borrow::Cow, fmt::Debug, future::Future, marker::PhantomData, mem, sync::Arc,
+    any::{Any, TypeId},
+    borrow::Cow,
+    fmt::Debug,
+    future::Future,
+    marker::PhantomData,
+    mem,
+    sync::Arc,
 };
 use util::ResultExt;
 
-pub struct AnyWindow {}
+#[derive(Deref, DerefMut, Ord, PartialOrd, Eq, PartialEq, Clone, Default)]
+pub struct StackingOrder(pub(crate) SmallVec<[u32; 16]>);
+
+#[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
+pub enum DispatchPhase {
+    /// After the capture phase comes the bubble phase, in which event handlers are
+    /// invoked front to back. This is the phase you'll usually want to use for event handlers.
+    #[default]
+    Bubble,
+    /// During the initial capture phase, event handlers are invoked back to front. This phase
+    /// is used for special purposes such as clearing the "pressed" state for click events. If
+    /// you stop event propagation during this phase, you need to know what you're doing. Handlers
+    /// outside of the immediate region may rely on detecting non-local events during this phase.
+    Capture,
+}
+
+type MouseEventHandler =
+    Arc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
 
 pub struct Window {
     handle: AnyWindowHandle,
@@ -25,9 +50,11 @@ pub struct Window {
     content_size: Size<Pixels>,
     layout_engine: TaffyLayoutEngine,
     pub(crate) root_view: Option<AnyView<()>>,
-    mouse_position: Point<Pixels>,
     current_stacking_order: StackingOrder,
     content_mask_stack: Vec<ContentMask<Pixels>>,
+    mouse_event_handlers: HashMap<TypeId, Vec<(StackingOrder, MouseEventHandler)>>,
+    propagate_event: bool,
+    mouse_position: Point<Pixels>,
     scale_factor: f32,
     pub(crate) scene_builder: SceneBuilder,
     pub(crate) dirty: bool,
@@ -46,7 +73,6 @@ impl Window {
         let content_size = platform_window.content_size();
         let scale_factor = platform_window.scale_factor();
         platform_window.on_resize(Box::new({
-            let handle = handle;
             let cx = cx.to_async();
             move |content_size, scale_factor| {
                 cx.update_window(handle, |cx| {
@@ -65,6 +91,15 @@ impl Window {
             }
         }));
 
+        platform_window.on_event({
+            let cx = cx.to_async();
+            Box::new(move |event| {
+                cx.update_window(handle, |cx| cx.dispatch_event(event))
+                    .log_err()
+                    .unwrap_or(true)
+            })
+        });
+
         let platform_window = MainThreadOnly::new(Arc::new(platform_window), cx.executor.clone());
 
         Window {
@@ -76,9 +111,11 @@ impl Window {
             content_size,
             layout_engine: TaffyLayoutEngine::new(),
             root_view: None,
-            mouse_position,
-            current_stacking_order: SmallVec::new(),
+            current_stacking_order: StackingOrder(SmallVec::new()),
             content_mask_stack: Vec::new(),
+            mouse_event_handlers: HashMap::default(),
+            propagate_event: true,
+            mouse_position,
             scale_factor,
             scene_builder: SceneBuilder::new(),
             dirty: true,
@@ -239,6 +276,27 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub fn rem_size(&self) -> Pixels {
         self.window.rem_size
+    }
+
+    pub fn stop_event_propagation(&mut self) {
+        self.window.propagate_event = false;
+    }
+
+    pub fn on_mouse_event<Event: 'static>(
+        &mut self,
+        handler: impl Fn(&Event, DispatchPhase, &mut WindowContext) + Send + Sync + 'static,
+    ) {
+        let order = self.window.current_stacking_order.clone();
+        self.window
+            .mouse_event_handlers
+            .entry(TypeId::of::<Event>())
+            .or_default()
+            .push((
+                order,
+                Arc::new(move |event: &dyn Any, phase, cx| {
+                    handler(event.downcast_ref().unwrap(), phase, cx)
+                }),
+            ))
     }
 
     pub fn mouse_position(&self) -> Point<Pixels> {
@@ -529,6 +587,11 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     pub(crate) fn draw(&mut self) -> Result<()> {
         let unit_entity = self.unit_entity.clone();
         self.update_entity(&unit_entity, |view, cx| {
+            cx.window
+                .mouse_event_handlers
+                .values_mut()
+                .for_each(Vec::clear);
+
             let mut root_view = cx.window.root_view.take().unwrap();
             let (root_layout_id, mut frame_state) = root_view.layout(&mut (), cx)?;
             let available_space = cx.window.content_size.map(Into::into);
@@ -553,6 +616,54 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
             Ok(())
         })
+    }
+
+    fn dispatch_event(&mut self, event: Event) -> bool {
+        if let Some(any_mouse_event) = event.mouse_event() {
+            if let Some(mut handlers) = self
+                .window
+                .mouse_event_handlers
+                .remove(&any_mouse_event.type_id())
+            {
+                // We sort these every time, because handlers may add handlers. Probably fast enough.
+                handlers.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+                // Handlers may set this to false by calling `stop_propagation`;
+                self.window.propagate_event = true;
+
+                // Capture phase, events bubble from back to front. Handlers for this phase are used for
+                // special purposes, such as detecting events outside of a given Bounds.
+                for (_, handler) in &handlers {
+                    handler(any_mouse_event, DispatchPhase::Capture, self);
+                    if !self.window.propagate_event {
+                        break;
+                    }
+                }
+
+                // Bubble phase
+                if self.window.propagate_event {
+                    for (_, handler) in handlers.iter().rev() {
+                        handler(any_mouse_event, DispatchPhase::Bubble, self);
+                        if !self.window.propagate_event {
+                            break;
+                        }
+                    }
+                }
+
+                handlers.extend(
+                    self.window
+                        .mouse_event_handlers
+                        .get_mut(&any_mouse_event.type_id())
+                        .into_iter()
+                        .flat_map(|handlers| handlers.drain(..)),
+                );
+                self.window
+                    .mouse_event_handlers
+                    .insert(any_mouse_event.type_id(), handlers);
+            }
+        }
+
+        true
     }
 }
 
@@ -786,6 +897,18 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
         })
     }
 
+    pub fn on_mouse_event<Event: 'static>(
+        &mut self,
+        handler: impl Fn(&mut S, &Event, DispatchPhase, &mut ViewContext<S>) + Send + Sync + 'static,
+    ) {
+        let handle = self.handle().upgrade(self).unwrap();
+        self.window_cx.on_mouse_event(move |event, phase, cx| {
+            handle.update(cx, |view, cx| {
+                handler(view, event, phase, cx);
+            })
+        });
+    }
+
     pub(crate) fn erase_state<R>(&mut self, f: impl FnOnce(&mut ViewContext<()>) -> R) -> R {
         let entity_id = self.unit_entity.id;
         let mut cx = ViewContext::mutable(
@@ -873,4 +996,11 @@ impl<S: 'static> Into<AnyWindowHandle> for WindowHandle<S> {
 pub struct AnyWindowHandle {
     pub(crate) id: WindowId,
     state_type: TypeId,
+}
+
+#[cfg(any(test, feature = "test"))]
+impl From<SmallVec<[u32; 16]>> for StackingOrder {
+    fn from(small_vec: SmallVec<[u32; 16]>) -> Self {
+        StackingOrder(small_vec)
+    }
 }

@@ -27,6 +27,7 @@ impl MetalAtlas {
         self.0.lock().texture(id).metal_texture.clone()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn allocate(
         &self,
         size: Size<DevicePixels>,

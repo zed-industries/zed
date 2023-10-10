@@ -1,17 +1,17 @@
 use crate::{
     point, AtlasTextureId, AtlasTile, Bounds, ContentMask, Corners, Edges, Hsla, Pixels, Point,
-    ScaledPixels,
+    ScaledPixels, StackingOrder,
 };
 use collections::BTreeMap;
 use etagere::euclid::{Point3D, Vector3D};
 use plane_split::{BspSplitter, Polygon as BspPolygon};
-use smallvec::SmallVec;
 use std::{fmt::Debug, iter::Peekable, mem, slice};
 
 // Exported to metal
 pub type PointF = Point<f32>;
-pub type StackingOrder = SmallVec<[u32; 16]>;
+
 pub type LayerId = u32;
+
 pub type DrawOrder = u32;
 
 pub(crate) struct SceneBuilder {
@@ -180,6 +180,7 @@ pub(crate) struct Scene {
 }
 
 impl Scene {
+    #[allow(dead_code)]
     pub fn paths(&self) -> &[Path<ScaledPixels>] {
         &self.paths
     }
@@ -731,9 +732,9 @@ mod tests {
         let mut scene = SceneBuilder::new();
         assert_eq!(scene.layers_by_order.len(), 0);
 
-        scene.insert(&smallvec![1], quad());
-        scene.insert(&smallvec![2], shadow());
-        scene.insert(&smallvec![3], quad());
+        scene.insert(&smallvec![1].into(), quad());
+        scene.insert(&smallvec![2].into(), shadow());
+        scene.insert(&smallvec![3].into(), quad());
 
         let mut batches_count = 0;
         for _ in scene.build().batches() {

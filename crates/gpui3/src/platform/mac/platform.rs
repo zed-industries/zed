@@ -923,7 +923,7 @@ extern "C" fn send_event(this: &mut Object, _sel: Sel, native_event: id) {
         if let Some(event) = Event::from_native(native_event, None) {
             let platform = get_foreground_platform(this);
             if let Some(callback) = platform.0.lock().event.as_mut() {
-                if callback(event) {
+                if !callback(event) {
                     return;
                 }
             }

@@ -172,7 +172,7 @@ impl MetalRenderer {
         let command_buffer = command_queue.new_command_buffer();
         let mut instance_offset = 0;
 
-        let path_tiles = self.rasterize_paths(scene.paths(), &mut instance_offset, &command_buffer);
+        // let path_tiles = self.rasterize_paths(scene.paths(), &mut instance_offset, &command_buffer);
 
         let render_pass_descriptor = metal::RenderPassDescriptor::new();
         let color_attachment = render_pass_descriptor
@@ -208,7 +208,7 @@ impl MetalRenderer {
                 PrimitiveBatch::Quads(quads) => {
                     self.draw_quads(quads, &mut instance_offset, viewport_size, command_encoder);
                 }
-                PrimitiveBatch::Paths(paths) => {
+                PrimitiveBatch::Paths(_paths) => {
                     // self.draw_paths(paths, &mut instance_offset, viewport_size, command_encoder);
                 }
                 PrimitiveBatch::Underlines(underlines) => {
@@ -258,11 +258,12 @@ impl MetalRenderer {
         drawable.present();
     }
 
+    #[allow(dead_code)]
     fn rasterize_paths(
         &mut self,
         paths: &[Path<ScaledPixels>],
-        offset: &mut usize,
-        command_buffer: &metal::CommandBufferRef,
+        _offset: &mut usize,
+        _command_buffer: &metal::CommandBufferRef,
     ) -> HashMap<PathId, AtlasTile> {
         let mut tiles = HashMap::default();
         let mut vertices_by_texture_id = HashMap::default();
@@ -288,7 +289,7 @@ impl MetalRenderer {
             tiles.insert(path.id, tile);
         }
 
-        for (texture_id, vertices) in vertices_by_texture_id {
+        for (_texture_id, _vertices) in vertices_by_texture_id {
             todo!();
             // align_offset(offset);
             // let next_offset = *offset + vertices.len() * mem::size_of::<PathVertex<ScaledPixels>>();
