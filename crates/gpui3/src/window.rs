@@ -21,7 +21,7 @@ use std::{
     mem,
     sync::Arc,
 };
-use util::{arc_cow::ArcCow, ResultExt};
+use util::ResultExt;
 
 #[derive(Deref, DerefMut, Ord, PartialOrd, Eq, PartialEq, Clone, Default)]
 pub struct StackingOrder(pub(crate) SmallVec<[u32; 16]>);
@@ -1110,22 +1110,19 @@ impl From<SmallVec<[u32; 16]>> for StackingOrder {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub struct ElementId(ArcCow<'static, [u8]>);
+pub enum ElementId {
+    View(EntityId),
+    Number(usize),
+}
 
 impl From<usize> for ElementId {
     fn from(id: usize) -> Self {
-        Self(id.to_ne_bytes().to_vec().into())
+        ElementId::Number(id)
     }
 }
 
 impl From<i32> for ElementId {
     fn from(id: i32) -> Self {
-        Self(id.to_ne_bytes().to_vec().into())
-    }
-}
-
-impl From<&'static str> for ElementId {
-    fn from(id: &'static str) -> Self {
-        Self(id.into())
+        Self::Number(id as usize)
     }
 }

@@ -1,5 +1,5 @@
 use crate::{
-    AnyElement, Bounds, Element, ElementId, IdentifiedElement, Interactive, LayoutId,
+    AnyElement, BorrowWindow, Bounds, Element, ElementId, IdentifiedElement, Interactive, LayoutId,
     MouseEventListeners, Overflow, ParentElement, Pixels, Point, Refineable, RefinementCascade,
     Style, Styled, ViewContext,
 };
@@ -44,7 +44,9 @@ impl<S: 'static + Send + Sync, Marker: 'static + Send + Sync> Element for Div<S,
         cx: &mut ViewContext<S>,
     ) -> (LayoutId, Self::ElementState) {
         let style = self.computed_style();
-        let child_layout_ids = style.apply_text_style(cx, |cx| self.layout_children(view, cx));
+        let child_layout_ids = style.apply_text_style(cx, |cx| {
+            self.with_element_id(cx, |this, cx| this.layout_children(view, cx))
+        });
         let layout_id = cx.request_layout(style.into(), child_layout_ids.clone());
         (layout_id, ())
     }
@@ -60,11 +62,14 @@ impl<S: 'static + Send + Sync, Marker: 'static + Send + Sync> Element for Div<S,
         cx.stack(0, |cx| style.paint(bounds, cx));
 
         let overflow = &style.overflow;
+
         style.apply_text_style(cx, |cx| {
             cx.stack(1, |cx| {
                 style.apply_overflow(bounds, cx, |cx| {
-                    self.listeners.paint(bounds, cx);
-                    self.paint_children(overflow, state, cx)
+                    self.with_element_id(cx, |this, cx| {
+                        this.listeners.paint(bounds, cx);
+                        this.paint_children(overflow, state, cx)
+                    });
                 })
             })
         });
@@ -155,6 +160,18 @@ where
         let scroll_offset = self.scroll_offset(overflow);
         for child in &mut self.children {
             child.paint(state, Some(scroll_offset), cx);
+        }
+    }
+
+    fn with_element_id<R>(
+        &mut self,
+        cx: &mut ViewContext<S>,
+        f: impl FnOnce(&mut Self, &mut ViewContext<S>) -> R,
+    ) -> R {
+        if let Some(element_id) = self.element_id() {
+            cx.with_element_id(element_id, |cx| f(self, cx))
+        } else {
+            f(self, cx)
         }
     }
 }

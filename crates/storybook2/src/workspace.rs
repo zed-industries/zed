@@ -47,7 +47,8 @@ impl Workspace {
                         .flex_row()
                         .overflow_hidden()
                         .child(self.left_panel.clone())
-                        .child(div().h_full().flex_1()), // .child(self.right_panel.clone()),
+                        .child(div().h_full().flex_1())
+                        .child(self.right_panel.clone()),
                 )
                 .child(statusbar::statusbar(cx))
         })
