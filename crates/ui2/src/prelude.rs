@@ -60,7 +60,7 @@ pub struct ThemeColor {
     pub border_focused: Hsla,
     /// The background color of an elevated surface, like a modal, tooltip or toast.
     pub elevated_surface: Hsla,
-    pub panel_surface: Hsla,
+    pub surface: Hsla,
 }
 
 impl ThemeColor {
@@ -72,7 +72,7 @@ impl ThemeColor {
             border_variant: theme.lowest.variant.default.border,
             border_focused: theme.lowest.accent.default.border,
             elevated_surface: theme.middle.base.default.background,
-            panel_surface: theme.middle.base.default.background,
+            surface: theme.middle.base.default.background,
         }
     }
 }

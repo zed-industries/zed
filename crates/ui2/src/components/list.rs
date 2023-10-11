@@ -49,7 +49,7 @@ impl<S: 'static + Send + Sync + Clone> ListHeader<S> {
         self
     }
 
-    pub fn left_icon(mut self, left_icon: Option<Icon>) -> Self {
+    pub fn set_left_icon(mut self, left_icon: Option<Icon>) -> Self {
         self.left_icon = left_icon;
         self
     }
@@ -78,18 +78,6 @@ impl<S: 'static + Send + Sync + Clone> ListHeader<S> {
         }
     }
 
-    fn background_color(&self, cx: &WindowContext) -> Hsla {
-        let theme = theme(cx);
-        let system_color = SystemColor::new();
-
-        match self.state {
-            InteractionState::Hovered => theme.lowest.base.hovered.background,
-            InteractionState::Active => theme.lowest.base.pressed.background,
-            InteractionState::Enabled => theme.lowest.on.default.background,
-            _ => system_color.transparent,
-        }
-    }
-
     fn label_color(&self) -> LabelColor {
         match self.state {
             InteractionState::Disabled => LabelColor::Disabled,
@@ -108,7 +96,7 @@ impl<S: 'static + Send + Sync + Clone> ListHeader<S> {
         let theme = theme(cx);
         let token = token();
         let system_color = SystemColor::new();
-        let background_color = self.background_color(cx);
+        let color = ThemeColor::new(cx);
 
         let is_toggleable = self.toggleable != Toggleable::NotToggleable;
         let is_toggled = Toggleable::is_toggled(&self.toggleable);
@@ -118,10 +106,9 @@ impl<S: 'static + Send + Sync + Clone> ListHeader<S> {
         h_stack()
             .flex_1()
             .w_full()
-            .fill(background_color)
+            .fill(color.surface)
             .when(self.state == InteractionState::Focused, |this| {
-                this.border()
-                    .border_color(theme.lowest.accent.default.border)
+                this.border().border_color(color.border_focused)
             })
             .relative()
             .child(
@@ -133,7 +120,6 @@ impl<S: 'static + Send + Sync + Clone> ListHeader<S> {
                     .w_full()
                     .gap_1()
                     .items_center()
-                    .justify_between()
                     .child(
                         div()
                             .flex()
@@ -145,7 +131,7 @@ impl<S: 'static + Send + Sync + Clone> ListHeader<S> {
                                     .size(IconSize::Small)
                             }))
                             .child(
-                                Label::new(self.label.clone())
+                                Label::new(self.label)
                                     .color(LabelColor::Muted)
                                     .size(LabelSize::Small),
                             ),
@@ -203,7 +189,7 @@ impl<S: 'static + Send + Sync + Clone> ListSubHeader<S> {
                                 .size(IconSize::Small)
                         }))
                         .child(
-                            Label::new(self.label.clone())
+                            Label::new(self.label)
                                 .color(LabelColor::Muted)
                                 .size(LabelSize::Small),
                         ),
@@ -346,18 +332,6 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
         self
     }
 
-    fn background_color(&self, cx: &WindowContext) -> Hsla {
-        let theme = theme(cx);
-        let system_color = SystemColor::new();
-
-        match self.state {
-            InteractionState::Hovered => theme.lowest.base.hovered.background,
-            InteractionState::Active => theme.lowest.base.pressed.background,
-            InteractionState::Enabled => theme.lowest.on.default.background,
-            _ => system_color.transparent,
-        }
-    }
-
     fn label_color(&self) -> LabelColor {
         match self.state {
             InteractionState::Disabled => LabelColor::Disabled,
@@ -420,7 +394,7 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
 
         div()
             .relative()
-            .fill(self.background_color(cx))
+            .fill(color.surface)
             .when(self.state == InteractionState::Focused, |this| {
                 this.border().border_color(color.border_focused)
             })

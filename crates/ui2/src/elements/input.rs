@@ -55,7 +55,6 @@ impl<S: 'static + Send + Sync> Input<S> {
 
         let mut border_color_default = theme.middle.base.default.border;
         let mut border_color_hover = theme.middle.base.hovered.border;
-        let mut border_color_active = theme.middle.base.pressed.border;
         let border_color_focus = theme.middle.base.pressed.background;
 
         match self.variant {
@@ -72,7 +71,6 @@ impl<S: 'static + Send + Sync> Input<S> {
         if self.state == InteractionState::Focused {
             border_color_default = theme.players[0].cursor;
             border_color_hover = theme.players[0].cursor;
-            border_color_active = theme.players[0].cursor;
         }
 
         if self.state == InteractionState::Focused || self.state == InteractionState::Active {

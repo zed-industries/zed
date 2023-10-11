@@ -25,11 +25,11 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
 
     fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
         let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         v_stack()
-            .w_64()
             .h_full()
-            .fill(theme.middle.base.default.background)
+            .fill(color.surface)
             .child(
                 v_stack()
                     .w_full()
@@ -44,7 +44,7 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
                                 List::new(static_collab_panel_current_call())
                                     .header(
                                         ListHeader::new("CRDB")
-                                            .left_icon(Icon::Hash.into())
+                                            .set_left_icon(Icon::Hash.into())
                                             .set_toggle(ToggleState::Toggled),
                                     )
                                     .set_toggle(ToggleState::Toggled),
