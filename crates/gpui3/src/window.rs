@@ -2,7 +2,7 @@ use crate::{
     px, size, AnyBox, AnyView, AppContext, AsyncWindowContext, AvailableSpace, BorrowAppContext,
     Bounds, BoxShadow, Context, Corners, DevicePixels, DisplayId, Edges, Effect, Element, EntityId,
     Event, EventEmitter, FontId, GlobalElementId, GlyphId, Handle, Hsla, ImageData, IsZero,
-    LayoutId, MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path, Pixels,
+    LayoutId, MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path, Pixels, Platform,
     PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams,
     RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
     Style, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle,
@@ -190,17 +190,17 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     pub fn on_next_frame(&mut self, f: impl FnOnce(&mut WindowContext) + Send + 'static) {
         let f = Box::new(f);
         let display_id = self.window.display_id;
-        let async_cx = self.to_async();
-        let app_cx = self.app_mut();
-        match app_cx.next_frame_callbacks.entry(display_id) {
-            collections::hash_map::Entry::Occupied(mut entry) => {
-                if entry.get().is_empty() {
-                    app_cx.display_linker.start(display_id);
+        self.run_on_main(move |cx| {
+            if let Some(callbacks) = cx.next_frame_callbacks.get_mut(&display_id) {
+                callbacks.push(f);
+                // If there was already a callback, it means that we already scheduled a frame.
+                if callbacks.len() > 1 {
+                    return;
                 }
-                entry.get_mut().push(f);
-            }
-            collections::hash_map::Entry::Vacant(entry) => {
-                app_cx.display_linker.set_output_callback(
+            } else {
+                let async_cx = cx.to_async();
+                cx.next_frame_callbacks.insert(display_id, vec![f]);
+                cx.platform().set_display_link_output_callback(
                     display_id,
                     Box::new(move |_current_time, _output_time| {
                         let _ = async_cx.update(|cx| {
@@ -214,16 +214,20 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                                 callback(cx);
                             }
 
-                            if cx.next_frame_callbacks.get(&display_id).unwrap().is_empty() {
-                                cx.display_linker.stop(display_id);
-                            }
+                            cx.run_on_main(move |cx| {
+                                if cx.next_frame_callbacks.get(&display_id).unwrap().is_empty() {
+                                    cx.platform().stop_display_link(display_id);
+                                }
+                            })
+                            .detach();
                         });
                     }),
                 );
-                app_cx.display_linker.start(display_id);
-                entry.insert(vec![f]);
             }
-        }
+
+            cx.platform().start_display_link(display_id);
+        })
+        .detach();
     }
 
     pub fn spawn<Fut, R>(
@@ -706,6 +710,12 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         }
 
         true
+    }
+}
+
+impl<'a, 'w> MainThread<WindowContext<'a, 'w>> {
+    fn platform(&self) -> &dyn Platform {
+        self.platform.borrow_on_main_thread()
     }
 }
 

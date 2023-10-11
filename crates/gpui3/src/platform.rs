@@ -40,7 +40,6 @@ pub(crate) fn current_platform() -> Arc<dyn Platform> {
 
 pub(crate) trait Platform: 'static {
     fn executor(&self) -> Executor;
-    fn display_linker(&self) -> Arc<dyn PlatformDisplayLinker>;
     fn text_system(&self) -> Arc<dyn PlatformTextSystem>;
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>);
@@ -59,6 +58,14 @@ pub(crate) trait Platform: 'static {
         handle: AnyWindowHandle,
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow>;
+
+    fn set_display_link_output_callback(
+        &self,
+        display_id: DisplayId,
+        callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp)>,
+    );
+    fn start_display_link(&self, display_id: DisplayId);
+    fn stop_display_link(&self, display_id: DisplayId);
     // fn add_status_item(&self, _handle: AnyWindowHandle) -> Box<dyn PlatformWindow>;
 
     fn open_url(&self, url: &str);
@@ -152,16 +159,6 @@ pub trait PlatformDispatcher: Send + Sync {
     fn is_main_thread(&self) -> bool;
     fn dispatch(&self, task: Runnable);
     fn dispatch_on_main_thread(&self, task: Runnable);
-}
-
-pub trait PlatformDisplayLinker: Send + Sync {
-    fn set_output_callback(
-        &self,
-        display_id: DisplayId,
-        callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp)>,
-    );
-    fn start(&self, display_id: DisplayId);
-    fn stop(&self, display_id: DisplayId);
 }
 
 pub trait PlatformTextSystem: Send + Sync {

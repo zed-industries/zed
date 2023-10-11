@@ -15,10 +15,6 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
-    fn display_linker(&self) -> std::sync::Arc<dyn crate::PlatformDisplayLinker> {
-        unimplemented!()
-    }
-
     fn text_system(&self) -> std::sync::Arc<dyn crate::PlatformTextSystem> {
         unimplemented!()
     }
@@ -68,6 +64,22 @@ impl Platform for TestPlatform {
         _handle: crate::AnyWindowHandle,
         _options: crate::WindowOptions,
     ) -> Box<dyn crate::PlatformWindow> {
+        unimplemented!()
+    }
+
+    fn set_display_link_output_callback(
+        &self,
+        _display_id: DisplayId,
+        _callback: Box<dyn FnMut(&crate::VideoTimestamp, &crate::VideoTimestamp)>,
+    ) {
+        unimplemented!()
+    }
+
+    fn start_display_link(&self, _display_id: DisplayId) {
+        unimplemented!()
+    }
+
+    fn stop_display_link(&self, _display_id: DisplayId) {
         unimplemented!()
     }
 

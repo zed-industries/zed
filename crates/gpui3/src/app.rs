@@ -9,9 +9,8 @@ use refineable::Refineable;
 
 use crate::{
     current_platform, image_cache::ImageCache, AssetSource, Context, DisplayId, Executor, LayoutId,
-    MainThread, MainThreadOnly, Platform, PlatformDisplayLinker, RootView, SubscriberSet,
-    SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, Window, WindowContext,
-    WindowHandle, WindowId,
+    MainThread, MainThreadOnly, Platform, RootView, SubscriberSet, SvgRenderer, Task, TextStyle,
+    TextStyleRefinement, TextSystem, Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, VecDeque};
@@ -55,7 +54,6 @@ impl App {
                 this: this.clone(),
                 text_system: Arc::new(TextSystem::new(platform.text_system())),
                 pending_updates: 0,
-                display_linker: platform.display_linker(),
                 next_frame_callbacks: Default::default(),
                 platform: MainThreadOnly::new(platform, executor.clone()),
                 executor,
@@ -94,10 +92,9 @@ type FrameCallback = Box<dyn FnOnce(&mut WindowContext) + Send>;
 
 pub struct AppContext {
     this: Weak<Mutex<AppContext>>,
-    platform: MainThreadOnly<dyn Platform>,
+    pub(crate) platform: MainThreadOnly<dyn Platform>,
     text_system: Arc<TextSystem>,
     pending_updates: usize,
-    pub(crate) display_linker: Arc<dyn PlatformDisplayLinker>,
     pub(crate) next_frame_callbacks: HashMap<DisplayId, Vec<FrameCallback>>,
     pub(crate) executor: Executor,
     pub(crate) svg_renderer: SvgRenderer,
