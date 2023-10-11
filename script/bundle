@@ -145,7 +145,12 @@ if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTAR
     security import /tmp/zed-certificate.p12 -k zed.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
     rm /tmp/zed-certificate.p12
     security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_CERTIFICATE_PASSWORD" zed.keychain
-    /usr/bin/codesign --force --deep --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "Zed Industries, Inc." "${app_path}" -v
+
+    # sequence of codesign commands modeled after this example: https://developer.apple.com/forums/thread/701514
+    /usr/bin/codesign --force --timestamp --sign "Zed Industries, Inc." "${app_path}/Contents/Frameworks" -v
+    /usr/bin/codesign --force --timestamp --options runtime --sign "Zed Industries, Inc." "${app_path}/Contents/MacOS/cli" -v
+    /usr/bin/codesign --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "Zed Industries, Inc." "${app_path}/Contents/MacOS/zed" -v
+
     security default-keychain -s login.keychain
 else
     echo "One or more of the following variables are missing: MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, APPLE_NOTARIZATION_USERNAME, APPLE_NOTARIZATION_PASSWORD"
