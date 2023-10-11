@@ -3,8 +3,8 @@ mod connection_pool;
 use crate::{
     auth,
     db::{
-        self, BufferId, ChannelId, ChannelsForUser, Database, MessageId, ProjectId, RoomId,
-        ServerId, User, UserId,
+        self, BufferId, ChannelId, ChannelRole, ChannelsForUser, Database, MessageId, ProjectId,
+        RoomId, ServerId, User, UserId,
     },
     executor::Executor,
     AppState, Result,
@@ -2282,7 +2282,12 @@ async fn invite_channel_member(
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
     let invitee_id = UserId::from_proto(request.user_id);
-    db.invite_channel_member(channel_id, invitee_id, session.user_id, request.admin)
+    let role = if request.admin {
+        ChannelRole::Admin
+    } else {
+        ChannelRole::Member
+    };
+    db.invite_channel_member(channel_id, invitee_id, session.user_id, role)
         .await?;
 
     let (channel, _) = db
@@ -2342,7 +2347,12 @@ async fn set_channel_member_admin(
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
     let member_id = UserId::from_proto(request.user_id);
-    db.set_channel_member_admin(channel_id, session.user_id, member_id, request.admin)
+    let role = if request.admin {
+        ChannelRole::Admin
+    } else {
+        ChannelRole::Member
+    };
+    db.set_channel_member_role(channel_id, session.user_id, member_id, role)
         .await?;
 
     let (channel, has_accepted) = db

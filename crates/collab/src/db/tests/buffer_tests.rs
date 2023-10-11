@@ -56,7 +56,7 @@ async fn test_channel_buffers(db: &Arc<Database>) {
 
     let zed_id = db.create_root_channel("zed", a_id).await.unwrap();
 
-    db.invite_channel_member(zed_id, b_id, a_id, false)
+    db.invite_channel_member(zed_id, b_id, a_id, ChannelRole::Member)
         .await
         .unwrap();
 
@@ -211,7 +211,7 @@ async fn test_channel_buffers_last_operations(db: &Database) {
             .await
             .unwrap();
 
-        db.invite_channel_member(channel, observer_id, user_id, false)
+        db.invite_channel_member(channel, observer_id, user_id, ChannelRole::Member)
             .await
             .unwrap();
         db.respond_to_channel_invite(channel, observer_id, true)

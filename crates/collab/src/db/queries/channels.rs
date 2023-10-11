@@ -74,11 +74,12 @@ impl Database {
             }
 
             channel_member::ActiveModel {
+                id: ActiveValue::NotSet,
                 channel_id: ActiveValue::Set(channel.id),
                 user_id: ActiveValue::Set(creator_id),
                 accepted: ActiveValue::Set(true),
                 admin: ActiveValue::Set(true),
-                ..Default::default()
+                role: ActiveValue::Set(Some(ChannelRole::Admin)),
             }
             .insert(&*tx)
             .await?;
@@ -160,18 +161,19 @@ impl Database {
         channel_id: ChannelId,
         invitee_id: UserId,
         inviter_id: UserId,
-        is_admin: bool,
+        role: ChannelRole,
     ) -> Result<()> {
         self.transaction(move |tx| async move {
             self.check_user_is_channel_admin(channel_id, inviter_id, &*tx)
                 .await?;
 
             channel_member::ActiveModel {
+                id: ActiveValue::NotSet,
                 channel_id: ActiveValue::Set(channel_id),
                 user_id: ActiveValue::Set(invitee_id),
                 accepted: ActiveValue::Set(false),
-                admin: ActiveValue::Set(is_admin),
-                ..Default::default()
+                admin: ActiveValue::Set(role == ChannelRole::Admin),
+                role: ActiveValue::Set(Some(role)),
             }
             .insert(&*tx)
             .await?;
@@ -417,7 +419,13 @@ impl Database {
 
         let channels_with_admin_privileges = channel_memberships
             .iter()
-            .filter_map(|membership| membership.admin.then_some(membership.channel_id))
+            .filter_map(|membership| {
+                if membership.role == Some(ChannelRole::Admin) || membership.admin {
+                    Some(membership.channel_id)
+                } else {
+                    None
+                }
+            })
             .collect();
 
         let graph = self
@@ -470,12 +478,12 @@ impl Database {
             .await
     }
 
-    pub async fn set_channel_member_admin(
+    pub async fn set_channel_member_role(
         &self,
         channel_id: ChannelId,
         from: UserId,
         for_user: UserId,
-        admin: bool,
+        role: ChannelRole,
     ) -> Result<()> {
         self.transaction(|tx| async move {
             self.check_user_is_channel_admin(channel_id, from, &*tx)
@@ -488,7 +496,8 @@ impl Database {
                         .and(channel_member::Column::UserId.eq(for_user)),
                 )
                 .set(channel_member::ActiveModel {
-                    admin: ActiveValue::set(admin),
+                    admin: ActiveValue::set(role == ChannelRole::Admin),
+                    role: ActiveValue::set(Some(role)),
                     ..Default::default()
                 })
                 .exec(&*tx)
@@ -516,6 +525,7 @@ impl Database {
             enum QueryMemberDetails {
                 UserId,
                 Admin,
+                Role,
                 IsDirectMember,
                 Accepted,
             }
@@ -528,6 +538,7 @@ impl Database {
                 .select_only()
                 .column(channel_member::Column::UserId)
                 .column(channel_member::Column::Admin)
+                .column(channel_member::Column::Role)
                 .column_as(
                     channel_member::Column::ChannelId.eq(channel_id),
                     QueryMemberDetails::IsDirectMember,
@@ -540,9 +551,10 @@ impl Database {
 
             let mut rows = Vec::<proto::ChannelMember>::new();
             while let Some(row) = stream.next().await {
-                let (user_id, is_admin, is_direct_member, is_invite_accepted): (
+                let (user_id, is_admin, channel_role, is_direct_member, is_invite_accepted): (
                     UserId,
                     bool,
+                    Option<ChannelRole>,
                     bool,
                     bool,
                 ) = row?;
@@ -558,7 +570,7 @@ impl Database {
                     if last_row.user_id == user_id {
                         if is_direct_member {
                             last_row.kind = kind;
-                            last_row.admin = is_admin;
+                            last_row.admin = channel_role == Some(ChannelRole::Admin) || is_admin;
                         }
                         continue;
                     }
@@ -566,7 +578,7 @@ impl Database {
                 rows.push(proto::ChannelMember {
                     user_id,
                     kind,
-                    admin: is_admin,
+                    admin: channel_role == Some(ChannelRole::Admin) || is_admin,
                 });
             }
 

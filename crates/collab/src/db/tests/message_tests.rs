@@ -1,5 +1,5 @@
 use crate::{
-    db::{Database, MessageId, NewUserParams},
+    db::{ChannelRole, Database, MessageId, NewUserParams},
     test_both_dbs,
 };
 use std::sync::Arc;
@@ -155,7 +155,7 @@ async fn test_channel_message_new_notification(db: &Arc<Database>) {
 
     let channel_2 = db.create_channel("channel-2", None, user).await.unwrap();
 
-    db.invite_channel_member(channel_1, observer, user, false)
+    db.invite_channel_member(channel_1, observer, user, ChannelRole::Member)
         .await
         .unwrap();
 
@@ -163,7 +163,7 @@ async fn test_channel_message_new_notification(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    db.invite_channel_member(channel_2, observer, user, false)
+    db.invite_channel_member(channel_2, observer, user, ChannelRole::Member)
         .await
         .unwrap();
 

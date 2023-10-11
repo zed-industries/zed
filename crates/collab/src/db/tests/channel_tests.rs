@@ -8,7 +8,7 @@ use crate::{
     db::{
         queries::channels::ChannelGraph,
         tests::{graph, TEST_RELEASE_CHANNEL},
-        ChannelId, Database, NewUserParams,
+        ChannelId, ChannelRole, Database, NewUserParams,
     },
     test_both_dbs,
 };
@@ -50,7 +50,7 @@ async fn test_channels(db: &Arc<Database>) {
     // Make sure that people cannot read channels they haven't been invited to
     assert!(db.get_channel(zed_id, b_id).await.unwrap().is_none());
 
-    db.invite_channel_member(zed_id, b_id, a_id, false)
+    db.invite_channel_member(zed_id, b_id, a_id, ChannelRole::Member)
         .await
         .unwrap();
 
@@ -125,9 +125,13 @@ async fn test_channels(db: &Arc<Database>) {
     );
 
     // Update member permissions
-    let set_subchannel_admin = db.set_channel_member_admin(crdb_id, a_id, b_id, true).await;
+    let set_subchannel_admin = db
+        .set_channel_member_role(crdb_id, a_id, b_id, ChannelRole::Admin)
+        .await;
     assert!(set_subchannel_admin.is_err());
-    let set_channel_admin = db.set_channel_member_admin(zed_id, a_id, b_id, true).await;
+    let set_channel_admin = db
+        .set_channel_member_role(zed_id, a_id, b_id, ChannelRole::Admin)
+        .await;
     assert!(set_channel_admin.is_ok());
 
     let result = db.get_channels_for_user(b_id).await.unwrap();
@@ -284,13 +288,13 @@ async fn test_channel_invites(db: &Arc<Database>) {
 
     let channel_1_2 = db.create_root_channel("channel_2", user_1).await.unwrap();
 
-    db.invite_channel_member(channel_1_1, user_2, user_1, false)
+    db.invite_channel_member(channel_1_1, user_2, user_1, ChannelRole::Member)
         .await
         .unwrap();
-    db.invite_channel_member(channel_1_2, user_2, user_1, false)
+    db.invite_channel_member(channel_1_2, user_2, user_1, ChannelRole::Member)
         .await
         .unwrap();
-    db.invite_channel_member(channel_1_1, user_3, user_1, true)
+    db.invite_channel_member(channel_1_1, user_3, user_1, ChannelRole::Admin)
         .await
         .unwrap();
 

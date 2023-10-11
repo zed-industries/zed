@@ -80,3 +80,14 @@ id_type!(SignupId);
 id_type!(UserId);
 id_type!(ChannelBufferCollaboratorId);
 id_type!(FlagId);
+
+#[derive(Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum)]
+#[sea_orm(rs_type = "String", db_type = "String(None)")]
+pub enum ChannelRole {
+    #[sea_orm(string_value = "admin")]
+    Admin,
+    #[sea_orm(string_value = "member")]
+    Member,
+    #[sea_orm(string_value = "guest")]
+    Guest,
+}
