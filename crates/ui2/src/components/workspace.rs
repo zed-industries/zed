@@ -8,16 +8,57 @@ use gpui3::{px, relative, rems, Size};
 use crate::prelude::*;
 use crate::{
     hello_world_rust_editor_with_status_example, random_players_with_call_status, theme, v_stack,
-    ChatMessage, ChatPanel, EditorPane, Label, LanguageSelector, Livestream, Pane, PaneGroup,
-    Panel, PanelAllowedSides, PanelSide, ProjectPanel, SplitDirection, StatusBar, Terminal,
-    TitleBar, Toast, ToastOrigin,
+    ChatMessage, ChatPanel, CollabPanel, EditorPane, Label, LanguageSelector, Livestream, Pane,
+    PaneGroup, Panel, PanelAllowedSides, PanelSide, ProjectPanel, SplitDirection, StatusBar,
+    Terminal, TitleBar, Toast, ToastOrigin,
 };
 
 pub struct WorkspaceState {
     pub show_project_panel: Arc<AtomicBool>,
+    pub show_collab_panel: Arc<AtomicBool>,
     pub show_chat_panel: Arc<AtomicBool>,
     pub show_terminal: Arc<AtomicBool>,
     pub show_language_selector: Arc<AtomicBool>,
+}
+
+impl WorkspaceState {
+    pub fn is_project_panel_open(&self) -> bool {
+        self.show_project_panel.load(Ordering::SeqCst)
+    }
+
+    pub fn toggle_project_panel(&self) {
+        let is_showing_project_panel = self.show_project_panel.load(Ordering::SeqCst);
+
+        self.show_project_panel
+            .compare_exchange(
+                is_showing_project_panel,
+                !is_showing_project_panel,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .unwrap();
+
+        self.show_collab_panel.store(false, Ordering::SeqCst);
+    }
+
+    pub fn is_collab_panel_open(&self) -> bool {
+        self.show_collab_panel.load(Ordering::SeqCst)
+    }
+
+    pub fn toggle_collab_panel(&self) {
+        let is_showing_collab_panel = self.show_collab_panel.load(Ordering::SeqCst);
+
+        self.show_collab_panel
+            .compare_exchange(
+                is_showing_collab_panel,
+                !is_showing_collab_panel,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .unwrap();
+
+        self.show_project_panel.store(false, Ordering::SeqCst);
+    }
 }
 
 /// HACK: This is just a temporary way to start hooking up interactivity until
@@ -27,6 +68,7 @@ static WORKSPACE_STATE: OnceLock<WorkspaceState> = OnceLock::new();
 pub fn get_workspace_state() -> &'static WorkspaceState {
     let state = WORKSPACE_STATE.get_or_init(|| WorkspaceState {
         show_project_panel: Arc::new(AtomicBool::new(true)),
+        show_collab_panel: Arc::new(AtomicBool::new(false)),
         show_chat_panel: Arc::new(AtomicBool::new(true)),
         show_terminal: Arc::new(AtomicBool::new(true)),
         show_language_selector: Arc::new(AtomicBool::new(false)),
@@ -154,6 +196,19 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
                             .side(PanelSide::Left),
                         )
                         .filter(|_| workspace_state.show_project_panel.load(Ordering::SeqCst)),
+                    )
+                    .children(
+                        Some(
+                            Panel::new(
+                                self.left_panel_scroll_state.clone(),
+                                |_, payload| {
+                                    vec![CollabPanel::new(ScrollState::default()).into_any()]
+                                },
+                                Box::new(()),
+                            )
+                            .side(PanelSide::Left),
+                        )
+                        .filter(|_| workspace_state.show_collab_panel.load(Ordering::SeqCst)),
                     )
                     .child(
                         v_stack()

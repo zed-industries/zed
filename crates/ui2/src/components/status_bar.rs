@@ -108,28 +108,24 @@ impl<S: 'static + Send + Sync + Clone> StatusBar<S> {
             .gap_1()
             .child(
                 IconButton::new(Icon::FileTree)
-                    .when(
-                        workspace_state.show_project_panel.load(Ordering::SeqCst),
-                        |this| this.color(IconColor::Accent),
-                    )
+                    .when(workspace_state.is_project_panel_open(), |this| {
+                        this.color(IconColor::Accent)
+                    })
                     .on_click(|_, cx| {
-                        let is_showing_project_panel =
-                            workspace_state.show_project_panel.load(Ordering::SeqCst);
-
-                        workspace_state
-                            .show_project_panel
-                            .compare_exchange(
-                                is_showing_project_panel,
-                                !is_showing_project_panel,
-                                Ordering::SeqCst,
-                                Ordering::SeqCst,
-                            )
-                            .unwrap();
-
+                        workspace_state.toggle_project_panel();
                         cx.notify();
                     }),
             )
-            .child(IconButton::new(Icon::Hash))
+            .child(
+                IconButton::new(Icon::Hash)
+                    .when(workspace_state.is_collab_panel_open(), |this| {
+                        this.color(IconColor::Accent)
+                    })
+                    .on_click(|_, cx| {
+                        workspace_state.toggle_collab_panel();
+                        cx.notify();
+                    }),
+            )
             .child(ToolDivider::new())
             .child(IconButton::new(Icon::XCircle))
     }
