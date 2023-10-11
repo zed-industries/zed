@@ -1,5 +1,4 @@
 use std::marker::PhantomData;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::prelude::*;
@@ -144,20 +143,7 @@ impl<S: 'static + Send + Sync + Clone> StatusBar<S> {
                     .gap_1()
                     .child(Button::new("116:25"))
                     .child(Button::new("Rust").on_click(Arc::new(|_, cx| {
-                        let is_showing_language_selector = workspace_state
-                            .show_language_selector
-                            .load(Ordering::SeqCst);
-
-                        workspace_state
-                            .show_language_selector
-                            .compare_exchange(
-                                is_showing_language_selector,
-                                !is_showing_language_selector,
-                                Ordering::SeqCst,
-                                Ordering::SeqCst,
-                            )
-                            .unwrap();
-
+                        workspace_state.toggle_language_selector();
                         cx.notify();
                     }))),
             )
@@ -184,47 +170,21 @@ impl<S: 'static + Send + Sync + Clone> StatusBar<S> {
                     .gap_1()
                     .child(
                         IconButton::new(Icon::Terminal)
-                            .when(
-                                workspace_state.show_terminal.load(Ordering::SeqCst),
-                                |this| this.color(IconColor::Accent),
-                            )
+                            .when(workspace_state.is_terminal_open(), |this| {
+                                this.color(IconColor::Accent)
+                            })
                             .on_click(|_, cx| {
-                                let is_showing_terminal =
-                                    workspace_state.show_terminal.load(Ordering::SeqCst);
-
-                                workspace_state
-                                    .show_terminal
-                                    .compare_exchange(
-                                        is_showing_terminal,
-                                        !is_showing_terminal,
-                                        Ordering::SeqCst,
-                                        Ordering::SeqCst,
-                                    )
-                                    .unwrap();
-
+                                workspace_state.toggle_terminal();
                                 cx.notify();
                             }),
                     )
                     .child(
                         IconButton::new(Icon::MessageBubbles)
-                            .when(
-                                workspace_state.show_chat_panel.load(Ordering::SeqCst),
-                                |this| this.color(IconColor::Accent),
-                            )
+                            .when(workspace_state.is_chat_panel_open(), |this| {
+                                this.color(IconColor::Accent)
+                            })
                             .on_click(|_, cx| {
-                                let is_showing_chat_panel =
-                                    workspace_state.show_chat_panel.load(Ordering::SeqCst);
-
-                                workspace_state
-                                    .show_chat_panel
-                                    .compare_exchange(
-                                        is_showing_chat_panel,
-                                        !is_showing_chat_panel,
-                                        Ordering::SeqCst,
-                                        Ordering::SeqCst,
-                                    )
-                                    .unwrap();
-
+                                workspace_state.toggle_chat_panel();
                                 cx.notify();
                             }),
                     )

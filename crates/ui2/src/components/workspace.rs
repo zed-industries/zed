@@ -22,21 +22,20 @@ pub struct WorkspaceState {
 }
 
 impl WorkspaceState {
+    fn toggle_value(current_value: &AtomicBool) {
+        let value = current_value.load(Ordering::SeqCst);
+
+        current_value
+            .compare_exchange(value, !value, Ordering::SeqCst, Ordering::SeqCst)
+            .unwrap();
+    }
+
     pub fn is_project_panel_open(&self) -> bool {
         self.show_project_panel.load(Ordering::SeqCst)
     }
 
     pub fn toggle_project_panel(&self) {
-        let is_showing_project_panel = self.show_project_panel.load(Ordering::SeqCst);
-
-        self.show_project_panel
-            .compare_exchange(
-                is_showing_project_panel,
-                !is_showing_project_panel,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            )
-            .unwrap();
+        Self::toggle_value(&self.show_project_panel);
 
         self.show_collab_panel.store(false, Ordering::SeqCst);
     }
@@ -46,18 +45,33 @@ impl WorkspaceState {
     }
 
     pub fn toggle_collab_panel(&self) {
-        let is_showing_collab_panel = self.show_collab_panel.load(Ordering::SeqCst);
-
-        self.show_collab_panel
-            .compare_exchange(
-                is_showing_collab_panel,
-                !is_showing_collab_panel,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            )
-            .unwrap();
+        Self::toggle_value(&self.show_collab_panel);
 
         self.show_project_panel.store(false, Ordering::SeqCst);
+    }
+
+    pub fn is_terminal_open(&self) -> bool {
+        self.show_terminal.load(Ordering::SeqCst)
+    }
+
+    pub fn toggle_terminal(&self) {
+        Self::toggle_value(&self.show_terminal);
+    }
+
+    pub fn is_chat_panel_open(&self) -> bool {
+        self.show_chat_panel.load(Ordering::SeqCst)
+    }
+
+    pub fn toggle_chat_panel(&self) {
+        Self::toggle_value(&self.show_chat_panel);
+    }
+
+    pub fn is_language_selector_open(&self) -> bool {
+        self.show_language_selector.load(Ordering::SeqCst)
+    }
+
+    pub fn toggle_language_selector(&self) {
+        Self::toggle_value(&self.show_language_selector);
     }
 }
 
