@@ -7,8 +7,8 @@
 ((tag_name) @type
  (#match? @type "^[A-Z]"))
 
-((attribute_name) @keyword
- (#match? @keyword "-"))
+((directive_name) @keyword
+ (#match? @keyword "^v-"))
 
 (start_tag) @tag
 (end_tag) @tag
