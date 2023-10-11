@@ -1,8 +1,9 @@
 use std::marker::PhantomData;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use crate::prelude::*;
-use crate::{get_workspace_state, Button, ClickHandler, Icon, IconButton, IconColor, ToolDivider};
+use crate::{get_workspace_state, Button, Icon, IconButton, IconColor, ToolDivider};
 
 #[derive(Default, PartialEq)]
 pub enum Tool {
@@ -35,17 +36,15 @@ pub struct StatusBar<S: 'static + Send + Sync + Clone> {
     left_tools: Option<ToolGroup>,
     right_tools: Option<ToolGroup>,
     bottom_tools: Option<ToolGroup>,
-    on_select_language: ClickHandler<S>,
 }
 
 impl<S: 'static + Send + Sync + Clone> StatusBar<S> {
-    pub fn new(on_select_language: ClickHandler<S>) -> Self {
+    pub fn new() -> Self {
         Self {
             state_type: PhantomData,
             left_tools: None,
             right_tools: None,
             bottom_tools: None,
-            on_select_language,
         }
     }
 
@@ -148,7 +147,23 @@ impl<S: 'static + Send + Sync + Clone> StatusBar<S> {
                     .items_center()
                     .gap_1()
                     .child(Button::new("116:25"))
-                    .child(Button::new("Rust").on_click(self.on_select_language.clone())),
+                    .child(Button::new("Rust").on_click(Arc::new(|_, cx| {
+                        let is_showing_language_selector = workspace_state
+                            .show_language_selector
+                            .load(Ordering::SeqCst);
+
+                        workspace_state
+                            .show_language_selector
+                            .compare_exchange(
+                                is_showing_language_selector,
+                                !is_showing_language_selector,
+                                Ordering::SeqCst,
+                                Ordering::SeqCst,
+                            )
+                            .unwrap();
+
+                        cx.notify();
+                    }))),
             )
             .child(ToolDivider::new())
             .child(

@@ -218,23 +218,7 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
                         .filter(|_| workspace_state.show_chat_panel.load(Ordering::SeqCst)),
                     ),
             )
-            .child(StatusBar::new(Arc::new(move |_, cx| {
-                let is_showing_language_selector = workspace_state
-                    .show_language_selector
-                    .load(Ordering::SeqCst);
-
-                workspace_state
-                    .show_language_selector
-                    .compare_exchange(
-                        is_showing_language_selector,
-                        !is_showing_language_selector,
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                    )
-                    .unwrap();
-
-                cx.notify();
-            })))
+            .child(StatusBar::new())
             .children(
                 Some(
                     div()
