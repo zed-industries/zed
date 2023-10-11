@@ -39,8 +39,6 @@ CREATE TABLE "rooms" (
     "live_kit_room" VARCHAR NOT NULL,
     "enviroment" VARCHAR,
     "channel_id" INTEGER REFERENCES channels (id) ON DELETE CASCADE
-    "release_channel" VARCHAR,
-    "channel_id" INTEGER REFERENCES channels (id) ON DELETE CASCADE,
     "is_public" BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE UNIQUE INDEX "index_rooms_on_channel_id" ON "rooms" ("channel_id");
