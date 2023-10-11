@@ -154,7 +154,7 @@ pub fn render_parsed_markdown<Tag: 'static>(
                 });
                 cx.scene().push_mouse_region(
                     MouseRegion::new::<(RenderedMarkdown, Tag)>(view_id, region_id, bounds)
-                        .on_click::<Editor, _>(MouseButton::Left, move |_, _, cx| {
+                        .on_down::<Editor, _>(MouseButton::Left, move |_, _, cx| {
                             cx.platform().open_url(&url)
                         }),
                 );
