@@ -34,6 +34,10 @@ impl<S: 'static + Send + Sync> Element for Text<S> {
     type ViewState = S;
     type ElementState = Arc<Mutex<Option<TextElementState>>>;
 
+    fn element_id(&self) -> Option<crate::ElementId> {
+        None
+    }
+
     fn layout(
         &mut self,
         _view: &mut S,

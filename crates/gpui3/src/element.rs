@@ -1,4 +1,4 @@
-use crate::{BorrowWindow, Bounds, ElementId, Identified, LayoutId, Pixels, Point, ViewContext};
+use crate::{BorrowWindow, Bounds, ElementId, LayoutId, Pixels, Point, ViewContext};
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
 
@@ -6,9 +6,7 @@ pub trait Element: 'static + Send + Sync {
     type ViewState: 'static + Send + Sync;
     type ElementState: 'static + Send + Sync;
 
-    fn element_id(&self) -> Option<ElementId> {
-        None
-    }
+    fn element_id(&self) -> Option<ElementId>;
 
     fn layout(
         &mut self,
@@ -24,16 +22,6 @@ pub trait Element: 'static + Send + Sync {
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<Self::ViewState>,
     );
-
-    fn id(self, id: impl Into<ElementId>) -> Identified<Self>
-    where
-        Self: Sized,
-    {
-        Identified {
-            element: self,
-            id: id.into(),
-        }
-    }
 }
 
 pub trait StatefulElement: Element {

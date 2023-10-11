@@ -1,7 +1,7 @@
 use crate::theme::{theme, Theme};
 use gpui3::{
-    div, img, svg, view, AppContext, Context, Element, ElementId, Interactive, IntoAnyElement,
-    MouseButton, ParentElement, ScrollState, SharedString, StyleHelpers, Styled, View, ViewContext,
+    div, img, svg, view, AppContext, Context, Element, ElementId, IntoAnyElement, MouseButton,
+    ParentElement, ScrollState, SharedString, StyleHelpers, Styled, View, ViewContext,
     WindowContext,
 };
 

@@ -53,6 +53,10 @@ impl<S: 'static + Send + Sync, P: 'static + Send + Sync> Element for View<S, P> 
     type ViewState = P;
     type ElementState = AnyElement<S>;
 
+    fn element_id(&self) -> Option<crate::ElementId> {
+        None
+    }
+
     fn layout(
         &mut self,
         _: &mut Self::ViewState,
@@ -109,6 +113,10 @@ pub struct AnyView<S> {
 impl<S: 'static + Send + Sync> Element for AnyView<S> {
     type ViewState = ();
     type ElementState = AnyBox;
+
+    fn element_id(&self) -> Option<crate::ElementId> {
+        None
+    }
 
     fn layout(
         &mut self,

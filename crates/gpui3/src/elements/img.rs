@@ -38,6 +38,10 @@ impl<S: Send + Sync + 'static> Element for Img<S> {
     type ViewState = S;
     type ElementState = ();
 
+    fn element_id(&self) -> Option<crate::ElementId> {
+        None
+    }
+
     fn layout(
         &mut self,
         _: &mut Self::ViewState,
