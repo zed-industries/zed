@@ -1,3 +1,4 @@
+mod clickable;
 mod div;
 mod hoverable;
 mod identified;
@@ -6,6 +7,7 @@ mod pressable;
 mod svg;
 mod text;
 
+pub use clickable::*;
 pub use div::*;
 pub use hoverable::*;
 pub use identified::*;

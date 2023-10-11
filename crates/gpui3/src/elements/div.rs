@@ -1,7 +1,7 @@
 use crate::{
-    AnyElement, Bounds, Element, ElementId, Interactive, LayoutId, MouseEventListeners, Overflow,
-    ParentElement, Pixels, Point, Refineable, RefinementCascade, StatefulElement, Style, Styled,
-    ViewContext,
+    AnyElement, Bounds, Element, ElementId, IdentifiedElement, Interactive, LayoutId,
+    MouseEventListeners, Overflow, ParentElement, Pixels, Point, Refineable, RefinementCascade,
+    Style, Styled, ViewContext,
 };
 use parking_lot::Mutex;
 use smallvec::SmallVec;
@@ -171,7 +171,7 @@ impl<V: 'static + Send + Sync, Marker: 'static + Send + Sync> Styled for Div<V, 
     }
 }
 
-impl<V: Send + Sync + 'static> StatefulElement for Div<V, HasId> {}
+impl<V: Send + Sync + 'static> IdentifiedElement for Div<V, HasId> {}
 
 impl<V: Send + Sync + 'static> Interactive<V> for Div<V, HasId> {
     fn listeners(&mut self) -> &mut MouseEventListeners<V> {
@@ -179,10 +179,10 @@ impl<V: Send + Sync + 'static> Interactive<V> for Div<V, HasId> {
     }
 }
 
-impl<S: 'static> ParentElement for Div<S> {
-    type State = S;
+impl<V: 'static, Marker: 'static + Send + Sync> ParentElement for Div<V, Marker> {
+    type State = V;
 
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<S>; 2]> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         &mut self.children
     }
 }

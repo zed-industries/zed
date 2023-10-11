@@ -1,6 +1,6 @@
 use crate::{
-    AnyElement, Bounds, DispatchPhase, Element, Interactive, MouseDownEvent, MouseEventListeners,
-    MouseUpEvent, ParentElement, Pixels, StatefulElement, Styled, ViewContext,
+    AnyElement, Bounds, DispatchPhase, Element, IdentifiedElement, Interactive, MouseDownEvent,
+    MouseEventListeners, MouseUpEvent, ParentElement, Pixels, Styled, ViewContext,
 };
 use refineable::{CascadeSlot, Refineable, RefinementCascade};
 use smallvec::SmallVec;
@@ -53,7 +53,7 @@ impl<S: 'static + Send + Sync, E: Interactive<S> + Styled> Interactive<S> for Pr
 
 impl<E> Element for Pressable<E>
 where
-    E: Styled + StatefulElement,
+    E: Styled + IdentifiedElement,
     <E as Styled>::Style: 'static + Refineable + Send + Sync + Default,
     <<E as Styled>::Style as Refineable>::Refinement: 'static + Refineable + Send + Sync + Default,
 {
@@ -61,7 +61,7 @@ where
     type ElementState = PressableState<E::ElementState>;
 
     fn element_id(&self) -> Option<crate::ElementId> {
-        Some(StatefulElement::element_id(&self.child))
+        Some(IdentifiedElement::element_id(&self.child))
     }
 
     fn layout(
@@ -127,7 +127,10 @@ where
     }
 }
 
-impl<E: ParentElement + Styled> ParentElement for Pressable<E> {
+impl<E> ParentElement for Pressable<E>
+where
+    E: ParentElement + IdentifiedElement + Styled,
+{
     type State = E::State;
 
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::State>; 2]> {
@@ -135,9 +138,9 @@ impl<E: ParentElement + Styled> ParentElement for Pressable<E> {
     }
 }
 
-impl<E> StatefulElement for Pressable<E>
+impl<E> IdentifiedElement for Pressable<E>
 where
-    E: StatefulElement + Styled,
+    E: IdentifiedElement + Styled,
     <E as Styled>::Style: 'static + Refineable + Send + Sync + Default,
     <<E as Styled>::Style as Refineable>::Refinement: 'static + Refineable + Send + Sync + Default,
 {

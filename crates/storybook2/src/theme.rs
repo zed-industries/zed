@@ -147,6 +147,10 @@ impl<E: Element> Element for Themed<E> {
     type ViewState = E::ViewState;
     type ElementState = E::ElementState;
 
+    fn element_id(&self) -> Option<gpui3::ElementId> {
+        None
+    }
+
     fn layout(
         &mut self,
         state: &mut E::ViewState,

@@ -2,8 +2,8 @@ use refineable::{Refineable, RefinementCascade};
 use smallvec::SmallVec;
 
 use crate::{
-    AnyElement, BorrowWindow, Bounds, Element, ElementId, LayoutId, ParentElement, StatefulElement,
-    Styled, ViewContext,
+    AnyElement, BorrowWindow, Bounds, Element, ElementId, IdentifiedElement, LayoutId,
+    ParentElement, Styled, ViewContext,
 };
 
 pub struct Identified<E> {
@@ -41,7 +41,7 @@ impl<E: Element> Element for Identified<E> {
     }
 }
 
-impl<E: Element> StatefulElement for Identified<E> {}
+impl<E: Element> IdentifiedElement for Identified<E> {}
 
 impl<E: Styled> Styled for Identified<E> {
     type Style = E::Style;

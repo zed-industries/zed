@@ -1,6 +1,6 @@
 use crate::{
-    AnyElement, Bounds, DispatchPhase, Element, ElementId, Interactive, MouseEventListeners,
-    MouseMoveEvent, ParentElement, Pixels, StatefulElement, Styled, ViewContext,
+    AnyElement, Bounds, DispatchPhase, Element, ElementId, IdentifiedElement, Interactive,
+    MouseEventListeners, MouseMoveEvent, ParentElement, Pixels, Styled, ViewContext,
 };
 use refineable::{CascadeSlot, Refineable, RefinementCascade};
 use smallvec::SmallVec;
@@ -104,9 +104,9 @@ impl<E: ParentElement + Styled> ParentElement for Hoverable<E> {
     }
 }
 
-impl<E> StatefulElement for Hoverable<E>
+impl<E> IdentifiedElement for Hoverable<E>
 where
-    E: StatefulElement + Styled,
+    E: IdentifiedElement + Styled,
     <E as Styled>::Style: 'static + Refineable + Send + Sync + Default,
     <<E as Styled>::Style as Refineable>::Refinement: 'static + Refineable + Send + Sync + Default,
 {

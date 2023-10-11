@@ -1,4 +1,9 @@
-use crate::{BorrowWindow, Bounds, ElementId, LayoutId, Pixels, Point, ViewContext};
+use std::sync::Arc;
+
+use crate::{
+    BorrowWindow, Bounds, Clickable, ElementId, LayoutId, MouseDownEvent, MouseUpEvent, Pixels,
+    Point, ViewContext,
+};
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
 
@@ -24,9 +29,25 @@ pub trait Element: 'static + Send + Sync {
     );
 }
 
-pub trait StatefulElement: Element {
+pub trait IdentifiedElement: Element {
     fn element_id(&self) -> ElementId {
         Element::element_id(self).unwrap()
+    }
+
+    fn on_click(
+        self,
+        listener: impl Fn(
+                &mut Self::ViewState,
+                (&MouseDownEvent, &MouseUpEvent),
+                &mut ViewContext<Self::ViewState>,
+            ) + Send
+            + Sync
+            + 'static,
+    ) -> Clickable<Self>
+    where
+        Self: Sized,
+    {
+        Clickable::new(self, Arc::from(listener))
     }
 }
 
