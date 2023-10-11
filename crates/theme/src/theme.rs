@@ -867,10 +867,12 @@ pub struct AutocompleteStyle {
     pub selected_item: ContainerStyle,
     pub hovered_item: ContainerStyle,
     pub match_highlight: HighlightStyle,
+    pub completion_min_width: f32,
+    pub completion_max_width: f32,
     pub inline_docs_container: ContainerStyle,
     pub inline_docs_color: Color,
     pub inline_docs_size_percent: f32,
-    pub alongside_docs_width: f32,
+    pub alongside_docs_max_width: f32,
     pub alongside_docs_container: ContainerStyle,
 }
 

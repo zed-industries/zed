@@ -206,10 +206,12 @@ export default function editor(): any {
                 match_highlight: foreground(theme.middle, "accent", "active"),
                 background: background(theme.middle, "active"),
             },
+            completion_min_width: 300,
+            completion_max_width: 700,
             inline_docs_container: { padding: { left: 40 } },
             inline_docs_color: text(theme.middle, "sans", "disabled", {}).color,
             inline_docs_size_percent: 0.75,
-            alongside_docs_width: 700,
+            alongside_docs_max_width: 700,
             alongside_docs_container: { padding: autocomplete_item.padding }
         },
         diagnostic_header: {

@@ -1240,6 +1240,9 @@ impl CompletionsMenu {
                             )
                             .map(|task| task.detach());
                         })
+                        .constrained()
+                        .with_min_width(style.autocomplete.completion_min_width)
+                        .with_max_width(style.autocomplete.completion_max_width)
                         .into_any(),
                     );
                 }
@@ -1250,7 +1253,7 @@ impl CompletionsMenu {
         enum MultiLineDocumentation {}
 
         Flex::row()
-            .with_child(list)
+            .with_child(list.flex(1., false))
             .with_children({
                 let mat = &self.matches[selected_item];
                 let completions = self.completions.read();
@@ -1263,7 +1266,12 @@ impl CompletionsMenu {
                             .scrollable::<MultiLineDocumentation>(0, None, cx)
                             .with_child(
                                 Text::new(text.clone(), style.text.clone()).with_soft_wrap(true),
-                            ),
+                            )
+                            .contained()
+                            .with_style(style.autocomplete.alongside_docs_container)
+                            .constrained()
+                            .with_max_width(style.autocomplete.alongside_docs_max_width)
+                            .flex(1., false),
                     ),
 
                     Some(Documentation::MultiLineMarkdown(parsed)) => Some(
@@ -1271,7 +1279,12 @@ impl CompletionsMenu {
                             .scrollable::<MultiLineDocumentation>(0, None, cx)
                             .with_child(render_parsed_markdown::<MultiLineDocumentation>(
                                 parsed, &style, cx,
-                            )),
+                            ))
+                            .contained()
+                            .with_style(style.autocomplete.alongside_docs_container)
+                            .constrained()
+                            .with_max_width(style.autocomplete.alongside_docs_max_width)
+                            .flex(1., false),
                     ),
 
                     _ => None,
