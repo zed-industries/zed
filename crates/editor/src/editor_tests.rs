@@ -19,8 +19,8 @@ use gpui::{
 use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent},
-    BracketPairConfig, FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageRegistry,
-    Override, Point,
+    BracketPairConfig, BundledFormatter, FakeLspAdapter, LanguageConfig, LanguageConfigOverride,
+    LanguageRegistry, Override, Point,
 };
 use parking_lot::Mutex;
 use project::project_settings::{LspSettings, ProjectSettings};
@@ -7813,6 +7813,68 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
             panic!("expected completion menu to be open");
         }
     });
+}
+
+#[gpui::test]
+async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.formatter = Some(language_settings::Formatter::Prettier)
+    });
+
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    );
+
+    let _ = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            enabled_formatters: vec![BundledFormatter::Prettier {
+                parser_name: Some("test_parser"),
+                plugin_names: vec!["test_plugin"],
+            }],
+            ..Default::default()
+        }))
+        .await;
+
+    let fs = FakeFs::new(cx.background());
+    fs.insert_file("/file.rs", Default::default()).await;
+
+    // TODO kb have to specify some test node runtime
+    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
+    project.update(cx, |project, _| project.languages().add(Arc::new(language)));
+    let buffer = project
+        .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
+        .await
+        .unwrap();
+
+    let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+    let editor = cx.add_window(|cx| build_editor(buffer, cx)).root(cx);
+    editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
+
+    let format = editor.update(cx, |editor, cx| {
+        editor.perform_format(project.clone(), FormatTrigger::Manual, cx)
+    });
+    format.await.unwrap();
+    assert_eq!(
+        editor.read_with(cx, |editor, cx| editor.text(cx)),
+        "one, two\nthree\n"
+    );
+
+    editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
+    let format = editor.update(cx, |editor, cx| {
+        editor.perform_format(project, FormatTrigger::Manual, cx)
+    });
+    cx.foreground().advance_clock(super::FORMAT_TIMEOUT);
+    cx.foreground().start_waiting();
+    format.await.unwrap();
+    assert_eq!(
+        editor.read_with(cx, |editor, cx| editor.text(cx)),
+        "one\ntwo\nthree\n"
+    );
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {

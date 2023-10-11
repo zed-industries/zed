@@ -11,7 +11,7 @@ use language::language_settings::language_settings;
 use language::proto::deserialize_diff;
 use language::{Buffer, BundledFormatter, Diff};
 use lsp::request::Request;
-use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId};
+use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
 use util::paths::DEFAULT_PRETTIER_DIR;
@@ -19,6 +19,8 @@ use util::paths::DEFAULT_PRETTIER_DIR;
 pub enum Prettier {
     Local(Local),
     Remote(Remote),
+    #[cfg(any(test, feature = "test-support"))]
+    Test(TestPrettier),
 }
 
 pub struct Local {
@@ -33,6 +35,13 @@ pub struct Remote {
     worktree_id: Option<usize>,
     prettier_dir: PathBuf,
     client: Arc<Client>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub struct TestPrettier {
+    worktree_id: Option<usize>,
+    prettier_dir: PathBuf,
+    default: bool,
 }
 
 #[derive(Debug)]
@@ -180,6 +189,22 @@ impl Prettier {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn start(
+        worktree_id: Option<usize>,
+        _: LanguageServerId,
+        prettier_dir: PathBuf,
+        _: Arc<dyn NodeRuntime>,
+        _: AsyncAppContext,
+    ) -> anyhow::Result<Self> {
+        Ok(Self::Test(TestPrettier {
+            worktree_id,
+            default: prettier_dir == DEFAULT_PRETTIER_DIR.as_path(),
+            prettier_dir,
+        }))
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
     pub async fn start(
         worktree_id: Option<usize>,
         server_id: LanguageServerId,
@@ -400,6 +425,12 @@ impl Prettier {
                 .diff
                 .map(deserialize_diff)
                 .context("missing diff after prettier diff invocation"),
+            Self::Test(_) => Ok(buffer
+                .read_with(cx, |buffer, cx| {
+                    let formatted_text = buffer.text() + "\nformatted by test prettier";
+                    buffer.diff(formatted_text, cx)
+                })
+                .await),
         }
     }
 
@@ -427,34 +458,39 @@ impl Prettier {
                     )
                 })
                 .context("prettier invoke clear cache"),
+            Self::Test(_) => Ok(()),
         }
     }
 
     pub fn server(&self) -> Option<&Arc<LanguageServer>> {
         match self {
-            Prettier::Local(local) => Some(&local.server),
-            Prettier::Remote(_) => None,
+            Self::Local(local) => Some(&local.server),
+            Self::Remote(_) => None,
+            Self::Test(_) => None,
         }
     }
 
     pub fn is_default(&self) -> bool {
         match self {
-            Prettier::Local(local) => local.default,
-            Prettier::Remote(_) => false,
+            Self::Local(local) => local.default,
+            Self::Remote(_) => false,
+            Self::Test(test_prettier) => test_prettier.default,
         }
     }
 
     pub fn prettier_dir(&self) -> &Path {
         match self {
-            Prettier::Local(local) => &local.prettier_dir,
-            Prettier::Remote(remote) => &remote.prettier_dir,
+            Self::Local(local) => &local.prettier_dir,
+            Self::Remote(remote) => &remote.prettier_dir,
+            Self::Test(test_prettier) => &test_prettier.prettier_dir,
         }
     }
 
     pub fn worktree_id(&self) -> Option<usize> {
         match self {
-            Prettier::Local(local) => local.worktree_id,
-            Prettier::Remote(remote) => remote.worktree_id,
+            Self::Local(local) => local.worktree_id,
+            Self::Remote(remote) => remote.worktree_id,
+            Self::Test(test_prettier) => test_prettier.worktree_id,
         }
     }
 }

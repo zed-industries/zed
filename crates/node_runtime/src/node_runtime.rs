@@ -230,19 +230,32 @@ impl FakeNodeRuntime {
 
 #[async_trait::async_trait]
 impl NodeRuntime for FakeNodeRuntime {
-    async fn binary_path(&self) -> Result<PathBuf> {
-        unreachable!()
+    async fn binary_path(&self) -> anyhow::Result<PathBuf> {
+        // TODO kb move away into a separate type + a Project's setter (for test code)
+        Ok(PathBuf::from("prettier_fake_node"))
     }
 
     async fn run_npm_subcommand(&self, _: Option<&Path>, _: &str, _: &[&str]) -> Result<Output> {
         unreachable!()
     }
 
-    async fn npm_package_latest_version(&self, _: &str) -> Result<String> {
-        unreachable!()
+    async fn npm_package_latest_version(&self, name: &str) -> anyhow::Result<String> {
+        if name == "prettier" {
+            Ok("0.0.1".to_string())
+        } else {
+            unreachable!()
+        }
     }
 
-    async fn npm_install_packages(&self, _: &Path, _: &[(&str, &str)]) -> Result<()> {
-        unreachable!()
+    async fn npm_install_packages(
+        &self,
+        _: &Path,
+        packages: &[(&str, &str)],
+    ) -> anyhow::Result<()> {
+        if packages == [("prettier", "0.0.1")] {
+            Ok(())
+        } else {
+            unreachable!()
+        }
     }
 }

@@ -6,6 +6,9 @@ edition = "2021"
 [lib]
 path = "src/prettier.rs"
 
+[features]
+test-support = []
+
 [dependencies]
 client = { path = "../client" }
 collections = { path = "../collections"}

@@ -15,6 +15,7 @@ test-support = [
     "language/test-support",
     "settings/test-support",
     "text/test-support",
+    "prettier/test-support",
 ]
 
 [dependencies]
@@ -75,6 +76,7 @@ gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
+prettier = { path = "../prettier", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
 git2.workspace = true

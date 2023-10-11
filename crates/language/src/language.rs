@@ -498,6 +498,7 @@ pub struct FakeLspAdapter {
     pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub disk_based_diagnostics_sources: Vec<String>,
+    pub enabled_formatters: Vec<BundledFormatter>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1760,6 +1761,7 @@ impl Default for FakeLspAdapter {
             disk_based_diagnostics_progress_token: None,
             initialization_options: None,
             disk_based_diagnostics_sources: Vec::new(),
+            enabled_formatters: Vec::new(),
         }
     }
 }
@@ -1815,6 +1817,10 @@ impl LspAdapter for Arc<FakeLspAdapter> {
 
     async fn initialization_options(&self) -> Option<Value> {
         self.initialization_options.clone()
+    }
+
+    fn enabled_formatters(&self) -> Vec<BundledFormatter> {
+        self.enabled_formatters.clone()
     }
 }
 
