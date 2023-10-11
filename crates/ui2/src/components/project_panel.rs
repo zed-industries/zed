@@ -22,17 +22,17 @@ impl<S: 'static + Send + Sync + Clone> ProjectPanel<S> {
 
     fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
         let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         div()
             .flex()
             .flex_col()
             .w_full()
             .h_full()
-            .px_2()
-            .fill(theme.middle.base.default.background)
+            .fill(color.panel_surface)
             .child(
                 div()
-                    .w_56()
+                    .w_full()
                     .flex()
                     .flex_col()
                     .overflow_y_scroll(ScrollState::default())

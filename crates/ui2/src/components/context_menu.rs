@@ -14,9 +14,9 @@ impl<S: 'static + Send + Sync + Clone> ContextMenuItem<S> {
     fn to_list_item(self) -> ListItem<S> {
         match self {
             ContextMenuItem::Header(label) => ListSubHeader::new(label).into(),
-            ContextMenuItem::Entry(label) => {
-                ListEntry::new(label).variant(ListItemVariant::Inset).into()
-            }
+            ContextMenuItem::Entry(label) => ListEntry::new(label)
+                .set_variant(ListItemVariant::Inset)
+                .into(),
             ContextMenuItem::Separator => ListSeparator::new().into(),
         }
     }

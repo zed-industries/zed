@@ -12,8 +12,8 @@ use crate::{
 #[derive(Clone, Copy, Default, Debug, PartialEq)]
 pub enum ListItemVariant {
     /// The list item extends to the far left and right of the list.
-    #[default]
     FullWidth,
+    #[default]
     Inset,
 }
 
@@ -35,7 +35,7 @@ impl<S: 'static + Send + Sync + Clone> ListHeader<S> {
             left_icon: None,
             variant: ListItemVariant::default(),
             state: InteractionState::default(),
-            toggleable: Toggleable::default(),
+            toggleable: Toggleable::Toggleable(ToggleState::Toggled),
         }
     }
 
@@ -65,8 +65,16 @@ impl<S: 'static + Send + Sync + Clone> ListHeader<S> {
 
         match (is_toggleable, is_toggled) {
             (false, _) => div(),
-            (_, true) => div().child(IconElement::new(Icon::ChevronRight).color(IconColor::Muted)),
-            (_, false) => div().child(IconElement::new(Icon::ChevronDown).size(IconSize::Small)),
+            (_, true) => div().child(
+                IconElement::new(Icon::ChevronDown)
+                    .color(IconColor::Muted)
+                    .size(IconSize::Small),
+            ),
+            (_, false) => div().child(
+                IconElement::new(Icon::ChevronRight)
+                    .color(IconColor::Muted)
+                    .size(IconSize::Small),
+            ),
         }
     }
 
@@ -116,10 +124,9 @@ impl<S: 'static + Send + Sync + Clone> ListHeader<S> {
                     .border_color(theme.lowest.accent.default.border)
             })
             .relative()
-            .py_1()
             .child(
                 div()
-                    .h_6()
+                    .h_5()
                     .when(self.variant == ListItemVariant::Inset, |this| this.px_2())
                     .flex()
                     .flex_1()
@@ -287,14 +294,16 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
             left_content: None,
             size: ListEntrySize::default(),
             state: InteractionState::default(),
+            // TODO: Should use Toggleable::NotToggleable
+            // or remove Toggleable::NotToggleable from the system
             toggle: None,
         }
     }
-    pub fn variant(mut self, variant: ListItemVariant) -> Self {
+    pub fn set_variant(mut self, variant: ListItemVariant) -> Self {
         self.variant = variant;
         self
     }
-    pub fn indent_level(mut self, indent_level: u32) -> Self {
+    pub fn set_indent_level(mut self, indent_level: u32) -> Self {
         self.indent_level = indent_level;
         self
     }
@@ -304,32 +313,32 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
         self
     }
 
-    pub fn left_content(mut self, left_content: LeftContent) -> Self {
+    pub fn set_left_content(mut self, left_content: LeftContent) -> Self {
         self.left_content = Some(left_content);
         self
     }
 
-    pub fn left_icon(mut self, left_icon: Icon) -> Self {
+    pub fn set_left_icon(mut self, left_icon: Icon) -> Self {
         self.left_content = Some(LeftContent::Icon(left_icon));
         self
     }
 
-    pub fn left_avatar(mut self, left_avatar: &'static str) -> Self {
+    pub fn set_left_avatar(mut self, left_avatar: &'static str) -> Self {
         self.left_content = Some(LeftContent::Avatar(left_avatar));
         self
     }
 
-    pub fn state(mut self, state: InteractionState) -> Self {
+    pub fn set_state(mut self, state: InteractionState) -> Self {
         self.state = state;
         self
     }
 
-    pub fn size(mut self, size: ListEntrySize) -> Self {
+    pub fn set_size(mut self, size: ListEntrySize) -> Self {
         self.size = size;
         self
     }
 
-    pub fn disclosure_control_style(
+    pub fn set_disclosure_control_style(
         mut self,
         disclosure_control_style: DisclosureControlVisibility,
     ) -> Self {
@@ -390,12 +399,16 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
         let theme = theme(cx);
         let token = token();
         let system_color = SystemColor::new();
-        let background_color = self.background_color(cx);
+        let color = ThemeColor::new(cx);
 
         let left_content = match self.left_content {
-            Some(LeftContent::Icon(i)) => {
-                Some(h_stack().child(IconElement::new(i).size(IconSize::Small)))
-            }
+            Some(LeftContent::Icon(i)) => Some(
+                h_stack().child(
+                    IconElement::new(i)
+                        .size(IconSize::Small)
+                        .color(IconColor::Muted),
+                ),
+            ),
             Some(LeftContent::Avatar(src)) => Some(h_stack().child(Avatar::new(src))),
             None => None,
         };
@@ -406,13 +419,11 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
         };
 
         div()
-            .fill(background_color)
-            .when(self.state == InteractionState::Focused, |this| {
-                this.border()
-                    .border_color(theme.lowest.accent.default.border)
-            })
             .relative()
-            .py_1()
+            .fill(self.background_color(cx))
+            .when(self.state == InteractionState::Focused, |this| {
+                this.border().border_color(color.border_focused)
+            })
             .child(
                 sized_item
                     .when(self.variant == ListItemVariant::Inset, |this| this.px_2())
@@ -423,9 +434,11 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
                             .h_full()
                             .flex()
                             .justify_center()
-                            .child(h_stack().child(div().w_px().h_full()).child(
-                                div().w_px().h_full().fill(theme.middle.base.default.border),
-                            ))
+                            .child(
+                                h_stack()
+                                    .child(div().w_px().h_full())
+                                    .child(div().w_px().h_full().fill(color.border)),
+                            )
                     }))
                     .flex()
                     .gap_1()
@@ -451,9 +464,9 @@ impl<S: 'static + Send + Sync> ListSeparator<S> {
     }
 
     fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
-        div().h_px().w_full().fill(theme.lowest.base.default.border)
+        div().h_px().w_full().fill(color.border)
     }
 }
 

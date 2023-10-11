@@ -324,124 +324,124 @@ pub fn static_players_with_call_status() -> Vec<PlayerWithCallStatus> {
 pub fn static_project_panel_project_items<S: 'static + Send + Sync + Clone>() -> Vec<ListItem<S>> {
     vec![
         ListEntry::new(Label::new("zed"))
-            .left_icon(Icon::FolderOpen.into())
-            .indent_level(0)
+            .set_left_icon(Icon::FolderOpen.into())
+            .set_indent_level(0)
             .set_toggle(ToggleState::Toggled),
         ListEntry::new(Label::new(".cargo"))
-            .left_icon(Icon::Folder.into())
-            .indent_level(1),
+            .set_left_icon(Icon::Folder.into())
+            .set_indent_level(1),
         ListEntry::new(Label::new(".config"))
-            .left_icon(Icon::Folder.into())
-            .indent_level(1),
+            .set_left_icon(Icon::Folder.into())
+            .set_indent_level(1),
         ListEntry::new(Label::new(".git").color(LabelColor::Hidden))
-            .left_icon(Icon::Folder.into())
-            .indent_level(1),
+            .set_left_icon(Icon::Folder.into())
+            .set_indent_level(1),
         ListEntry::new(Label::new(".cargo"))
-            .left_icon(Icon::Folder.into())
-            .indent_level(1),
+            .set_left_icon(Icon::Folder.into())
+            .set_indent_level(1),
         ListEntry::new(Label::new(".idea").color(LabelColor::Hidden))
-            .left_icon(Icon::Folder.into())
-            .indent_level(1),
+            .set_left_icon(Icon::Folder.into())
+            .set_indent_level(1),
         ListEntry::new(Label::new("assets"))
-            .left_icon(Icon::Folder.into())
-            .indent_level(1)
+            .set_left_icon(Icon::Folder.into())
+            .set_indent_level(1)
             .set_toggle(ToggleState::Toggled),
         ListEntry::new(Label::new("cargo-target").color(LabelColor::Hidden))
-            .left_icon(Icon::Folder.into())
-            .indent_level(1),
+            .set_left_icon(Icon::Folder.into())
+            .set_indent_level(1),
         ListEntry::new(Label::new("crates"))
-            .left_icon(Icon::FolderOpen.into())
-            .indent_level(1)
+            .set_left_icon(Icon::FolderOpen.into())
+            .set_indent_level(1)
             .set_toggle(ToggleState::Toggled),
         ListEntry::new(Label::new("activity_indicator"))
-            .left_icon(Icon::Folder.into())
-            .indent_level(2),
+            .set_left_icon(Icon::Folder.into())
+            .set_indent_level(2),
         ListEntry::new(Label::new("ai"))
-            .left_icon(Icon::Folder.into())
-            .indent_level(2),
+            .set_left_icon(Icon::Folder.into())
+            .set_indent_level(2),
         ListEntry::new(Label::new("audio"))
-            .left_icon(Icon::Folder.into())
-            .indent_level(2),
+            .set_left_icon(Icon::Folder.into())
+            .set_indent_level(2),
         ListEntry::new(Label::new("auto_update"))
-            .left_icon(Icon::Folder.into())
-            .indent_level(2),
+            .set_left_icon(Icon::Folder.into())
+            .set_indent_level(2),
         ListEntry::new(Label::new("breadcrumbs"))
-            .left_icon(Icon::Folder.into())
-            .indent_level(2),
+            .set_left_icon(Icon::Folder.into())
+            .set_indent_level(2),
         ListEntry::new(Label::new("call"))
-            .left_icon(Icon::Folder.into())
-            .indent_level(2),
+            .set_left_icon(Icon::Folder.into())
+            .set_indent_level(2),
         ListEntry::new(Label::new("sqlez").color(LabelColor::Modified))
-            .left_icon(Icon::Folder.into())
-            .indent_level(2)
+            .set_left_icon(Icon::Folder.into())
+            .set_indent_level(2)
             .set_toggle(ToggleState::NotToggled),
         ListEntry::new(Label::new("gpui2"))
-            .left_icon(Icon::FolderOpen.into())
-            .indent_level(2)
+            .set_left_icon(Icon::FolderOpen.into())
+            .set_indent_level(2)
             .set_toggle(ToggleState::Toggled),
         ListEntry::new(Label::new("src"))
-            .left_icon(Icon::FolderOpen.into())
-            .indent_level(3)
+            .set_left_icon(Icon::FolderOpen.into())
+            .set_indent_level(3)
             .set_toggle(ToggleState::Toggled),
         ListEntry::new(Label::new("derive_element.rs"))
-            .left_icon(Icon::FileRust.into())
-            .indent_level(4),
+            .set_left_icon(Icon::FileRust.into())
+            .set_indent_level(4),
         ListEntry::new(Label::new("storybook").color(LabelColor::Modified))
-            .left_icon(Icon::FolderOpen.into())
-            .indent_level(1)
+            .set_left_icon(Icon::FolderOpen.into())
+            .set_indent_level(1)
             .set_toggle(ToggleState::Toggled),
         ListEntry::new(Label::new("docs").color(LabelColor::Default))
-            .left_icon(Icon::Folder.into())
-            .indent_level(2)
+            .set_left_icon(Icon::Folder.into())
+            .set_indent_level(2)
             .set_toggle(ToggleState::Toggled),
         ListEntry::new(Label::new("src").color(LabelColor::Modified))
-            .left_icon(Icon::FolderOpen.into())
-            .indent_level(3)
+            .set_left_icon(Icon::FolderOpen.into())
+            .set_indent_level(3)
             .set_toggle(ToggleState::Toggled),
         ListEntry::new(Label::new("ui").color(LabelColor::Modified))
-            .left_icon(Icon::FolderOpen.into())
-            .indent_level(4)
+            .set_left_icon(Icon::FolderOpen.into())
+            .set_indent_level(4)
             .set_toggle(ToggleState::Toggled),
         ListEntry::new(Label::new("component").color(LabelColor::Created))
-            .left_icon(Icon::FolderOpen.into())
-            .indent_level(5)
+            .set_left_icon(Icon::FolderOpen.into())
+            .set_indent_level(5)
             .set_toggle(ToggleState::Toggled),
         ListEntry::new(Label::new("facepile.rs").color(LabelColor::Default))
-            .left_icon(Icon::FileRust.into())
-            .indent_level(6),
+            .set_left_icon(Icon::FileRust.into())
+            .set_indent_level(6),
         ListEntry::new(Label::new("follow_group.rs").color(LabelColor::Default))
-            .left_icon(Icon::FileRust.into())
-            .indent_level(6),
+            .set_left_icon(Icon::FileRust.into())
+            .set_indent_level(6),
         ListEntry::new(Label::new("list_item.rs").color(LabelColor::Created))
-            .left_icon(Icon::FileRust.into())
-            .indent_level(6),
+            .set_left_icon(Icon::FileRust.into())
+            .set_indent_level(6),
         ListEntry::new(Label::new("tab.rs").color(LabelColor::Default))
-            .left_icon(Icon::FileRust.into())
-            .indent_level(6),
+            .set_left_icon(Icon::FileRust.into())
+            .set_indent_level(6),
         ListEntry::new(Label::new("target").color(LabelColor::Hidden))
-            .left_icon(Icon::Folder.into())
-            .indent_level(1),
+            .set_left_icon(Icon::Folder.into())
+            .set_indent_level(1),
         ListEntry::new(Label::new(".dockerignore"))
-            .left_icon(Icon::FileGeneric.into())
-            .indent_level(1),
+            .set_left_icon(Icon::FileGeneric.into())
+            .set_indent_level(1),
         ListEntry::new(Label::new(".DS_Store").color(LabelColor::Hidden))
-            .left_icon(Icon::FileGeneric.into())
-            .indent_level(1),
+            .set_left_icon(Icon::FileGeneric.into())
+            .set_indent_level(1),
         ListEntry::new(Label::new("Cargo.lock"))
-            .left_icon(Icon::FileLock.into())
-            .indent_level(1),
+            .set_left_icon(Icon::FileLock.into())
+            .set_indent_level(1),
         ListEntry::new(Label::new("Cargo.toml"))
-            .left_icon(Icon::FileToml.into())
-            .indent_level(1),
+            .set_left_icon(Icon::FileToml.into())
+            .set_indent_level(1),
         ListEntry::new(Label::new("Dockerfile"))
-            .left_icon(Icon::FileGeneric.into())
-            .indent_level(1),
+            .set_left_icon(Icon::FileGeneric.into())
+            .set_indent_level(1),
         ListEntry::new(Label::new("Procfile"))
-            .left_icon(Icon::FileGeneric.into())
-            .indent_level(1),
+            .set_left_icon(Icon::FileGeneric.into())
+            .set_indent_level(1),
         ListEntry::new(Label::new("README.md"))
-            .left_icon(Icon::FileDoc.into())
-            .indent_level(1),
+            .set_left_icon(Icon::FileDoc.into())
+            .set_indent_level(1),
     ]
     .into_iter()
     .map(From::from)
@@ -451,14 +451,14 @@ pub fn static_project_panel_project_items<S: 'static + Send + Sync + Clone>() ->
 pub fn static_project_panel_single_items<S: 'static + Send + Sync + Clone>() -> Vec<ListItem<S>> {
     vec![
         ListEntry::new(Label::new("todo.md"))
-            .left_icon(Icon::FileDoc.into())
-            .indent_level(0),
+            .set_left_icon(Icon::FileDoc.into())
+            .set_indent_level(0),
         ListEntry::new(Label::new("README.md"))
-            .left_icon(Icon::FileDoc.into())
-            .indent_level(0),
+            .set_left_icon(Icon::FileDoc.into())
+            .set_indent_level(0),
         ListEntry::new(Label::new("config.json"))
-            .left_icon(Icon::FileGeneric.into())
-            .indent_level(0),
+            .set_left_icon(Icon::FileGeneric.into())
+            .set_indent_level(0),
     ]
     .into_iter()
     .map(From::from)
@@ -467,11 +467,11 @@ pub fn static_project_panel_single_items<S: 'static + Send + Sync + Clone>() -> 
 
 pub fn static_collab_panel_current_call<S: 'static + Send + Sync + Clone>() -> Vec<ListItem<S>> {
     vec![
-        ListEntry::new(Label::new("as-cii")).left_avatar("http://github.com/as-cii.png?s=50"),
+        ListEntry::new(Label::new("as-cii")).set_left_avatar("http://github.com/as-cii.png?s=50"),
         ListEntry::new(Label::new("nathansobo"))
-            .left_avatar("http://github.com/nathansobo.png?s=50"),
+            .set_left_avatar("http://github.com/nathansobo.png?s=50"),
         ListEntry::new(Label::new("maxbrunsfeld"))
-            .left_avatar("http://github.com/maxbrunsfeld.png?s=50"),
+            .set_left_avatar("http://github.com/maxbrunsfeld.png?s=50"),
     ]
     .into_iter()
     .map(From::from)
@@ -481,61 +481,61 @@ pub fn static_collab_panel_current_call<S: 'static + Send + Sync + Clone>() -> V
 pub fn static_collab_panel_channels<S: 'static + Send + Sync + Clone>() -> Vec<ListItem<S>> {
     vec![
         ListEntry::new(Label::new("zed"))
-            .left_icon(Icon::Hash.into())
-            .size(ListEntrySize::Medium)
-            .indent_level(0),
+            .set_left_icon(Icon::Hash.into())
+            .set_size(ListEntrySize::Medium)
+            .set_indent_level(0),
         ListEntry::new(Label::new("community"))
-            .left_icon(Icon::Hash.into())
-            .size(ListEntrySize::Medium)
-            .indent_level(1),
+            .set_left_icon(Icon::Hash.into())
+            .set_size(ListEntrySize::Medium)
+            .set_indent_level(1),
         ListEntry::new(Label::new("dashboards"))
-            .left_icon(Icon::Hash.into())
-            .size(ListEntrySize::Medium)
-            .indent_level(2),
+            .set_left_icon(Icon::Hash.into())
+            .set_size(ListEntrySize::Medium)
+            .set_indent_level(2),
         ListEntry::new(Label::new("feedback"))
-            .left_icon(Icon::Hash.into())
-            .size(ListEntrySize::Medium)
-            .indent_level(2),
+            .set_left_icon(Icon::Hash.into())
+            .set_size(ListEntrySize::Medium)
+            .set_indent_level(2),
         ListEntry::new(Label::new("teams-in-channels-alpha"))
-            .left_icon(Icon::Hash.into())
-            .size(ListEntrySize::Medium)
-            .indent_level(2),
+            .set_left_icon(Icon::Hash.into())
+            .set_size(ListEntrySize::Medium)
+            .set_indent_level(2),
         ListEntry::new(Label::new("current-projects"))
-            .left_icon(Icon::Hash.into())
-            .size(ListEntrySize::Medium)
-            .indent_level(1),
+            .set_left_icon(Icon::Hash.into())
+            .set_size(ListEntrySize::Medium)
+            .set_indent_level(1),
         ListEntry::new(Label::new("codegen"))
-            .left_icon(Icon::Hash.into())
-            .size(ListEntrySize::Medium)
-            .indent_level(2),
+            .set_left_icon(Icon::Hash.into())
+            .set_size(ListEntrySize::Medium)
+            .set_indent_level(2),
         ListEntry::new(Label::new("gpui2"))
-            .left_icon(Icon::Hash.into())
-            .size(ListEntrySize::Medium)
-            .indent_level(2),
+            .set_left_icon(Icon::Hash.into())
+            .set_size(ListEntrySize::Medium)
+            .set_indent_level(2),
         ListEntry::new(Label::new("livestreaming"))
-            .left_icon(Icon::Hash.into())
-            .size(ListEntrySize::Medium)
-            .indent_level(2),
+            .set_left_icon(Icon::Hash.into())
+            .set_size(ListEntrySize::Medium)
+            .set_indent_level(2),
         ListEntry::new(Label::new("open-source"))
-            .left_icon(Icon::Hash.into())
-            .size(ListEntrySize::Medium)
-            .indent_level(2),
+            .set_left_icon(Icon::Hash.into())
+            .set_size(ListEntrySize::Medium)
+            .set_indent_level(2),
         ListEntry::new(Label::new("replace"))
-            .left_icon(Icon::Hash.into())
-            .size(ListEntrySize::Medium)
-            .indent_level(2),
+            .set_left_icon(Icon::Hash.into())
+            .set_size(ListEntrySize::Medium)
+            .set_indent_level(2),
         ListEntry::new(Label::new("semantic-index"))
-            .left_icon(Icon::Hash.into())
-            .size(ListEntrySize::Medium)
-            .indent_level(2),
+            .set_left_icon(Icon::Hash.into())
+            .set_size(ListEntrySize::Medium)
+            .set_indent_level(2),
         ListEntry::new(Label::new("vim"))
-            .left_icon(Icon::Hash.into())
-            .size(ListEntrySize::Medium)
-            .indent_level(2),
+            .set_left_icon(Icon::Hash.into())
+            .set_size(ListEntrySize::Medium)
+            .set_indent_level(2),
         ListEntry::new(Label::new("web-tech"))
-            .left_icon(Icon::Hash.into())
-            .size(ListEntrySize::Medium)
-            .indent_level(2),
+            .set_left_icon(Icon::Hash.into())
+            .set_size(ListEntrySize::Medium)
+            .set_indent_level(2),
     ]
     .into_iter()
     .map(From::from)
