@@ -16,6 +16,7 @@ use crate::{
 pub struct WorkspaceState {
     pub show_project_panel: Arc<AtomicBool>,
     pub show_chat_panel: Arc<AtomicBool>,
+    pub show_terminal: Arc<AtomicBool>,
     pub show_language_selector: Arc<AtomicBool>,
 }
 
@@ -27,6 +28,7 @@ pub fn get_workspace_state() -> &'static WorkspaceState {
     let state = WORKSPACE_STATE.get_or_init(|| WorkspaceState {
         show_project_panel: Arc::new(AtomicBool::new(true)),
         show_chat_panel: Arc::new(AtomicBool::new(true)),
+        show_terminal: Arc::new(AtomicBool::new(true)),
         show_language_selector: Arc::new(AtomicBool::new(false)),
     });
 
@@ -168,14 +170,17 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
                                     .h_px()
                                     .child(root_group),
                             )
-                            .child(
-                                Panel::new(
-                                    self.bottom_panel_scroll_state.clone(),
-                                    |_, _| vec![Terminal::new().into_any()],
-                                    Box::new(()),
+                            .children(
+                                Some(
+                                    Panel::new(
+                                        self.bottom_panel_scroll_state.clone(),
+                                        |_, _| vec![Terminal::new().into_any()],
+                                        Box::new(()),
+                                    )
+                                    .allowed_sides(PanelAllowedSides::BottomOnly)
+                                    .side(PanelSide::Bottom),
                                 )
-                                .allowed_sides(PanelAllowedSides::BottomOnly)
-                                .side(PanelSide::Bottom),
+                                .filter(|_| workspace_state.show_terminal.load(Ordering::SeqCst)),
                             ),
                     )
                     .children(

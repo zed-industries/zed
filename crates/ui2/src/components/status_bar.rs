@@ -166,7 +166,24 @@ impl<S: 'static + Send + Sync + Clone> StatusBar<S> {
                     .flex()
                     .items_center()
                     .gap_1()
-                    .child(IconButton::new(Icon::Terminal))
+                    .child(IconButton::new(Icon::Terminal).on_click(|_, cx| {
+                        let workspace_state = get_workspace_state();
+
+                        let is_showing_terminal =
+                            workspace_state.show_terminal.load(Ordering::SeqCst);
+
+                        workspace_state
+                            .show_terminal
+                            .compare_exchange(
+                                is_showing_terminal,
+                                !is_showing_terminal,
+                                Ordering::SeqCst,
+                                Ordering::SeqCst,
+                            )
+                            .unwrap();
+
+                        cx.notify();
+                    }))
                     .child(IconButton::new(Icon::MessageBubbles).on_click(|_, cx| {
                         let workspace_state = get_workspace_state();
 
