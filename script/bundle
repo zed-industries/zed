@@ -134,6 +134,8 @@ else
     cp -R target/${target_dir}/WebRTC.framework "${app_path}/Contents/Frameworks/"
 fi
 
+cp crates/zed/contents/embedded.provisionprofile "${app_path}/Contents/"
+
 if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
     echo "Signing bundle with Apple-issued certificate"
     security create-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain || echo ""
