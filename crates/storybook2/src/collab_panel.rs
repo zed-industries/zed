@@ -1,7 +1,7 @@
 use crate::theme::{theme, Theme};
 use gpui3::{
-    div, img, svg, view, AppContext, Context, Element, Interactive, IntoAnyElement, MouseButton,
-    ParentElement, ScrollState, SharedString, StyleHelpers, Styled, View, ViewContext,
+    div, img, svg, view, AppContext, Context, Element, ElementId, Interactive, IntoAnyElement,
+    MouseButton, ParentElement, ScrollState, SharedString, StyleHelpers, Styled, View, ViewContext,
     WindowContext,
 };
 
@@ -55,7 +55,7 @@ impl CollabPanel {
                             //:: https://tailwindcss.com/docs/hover-focus-and-other-states#styling-based-on-parent-state
                             // .group()
                             // List Section Header
-                            .child(self.list_section_header("#CRDB 🗃️", true, theme))
+                            .child(self.list_section_header(0, "#CRDB 🗃️", true, theme))
                             // List Item Large
                             .child(self.list_item(
                                 "http://github.com/maxbrunsfeld.png?s=50",
@@ -68,14 +68,14 @@ impl CollabPanel {
                             .py_2()
                             .flex()
                             .flex_col()
-                            .child(self.list_section_header("CHANNELS", true, theme)),
+                            .child(self.list_section_header(1, "CHANNELS", true, theme)),
                     )
                     .child(
                         div()
                             .py_2()
                             .flex()
                             .flex_col()
-                            .child(self.list_section_header("CONTACTS", true, theme))
+                            .child(self.list_section_header(2, "CONTACTS", true, theme))
                             .children(
                                 std::iter::repeat_with(|| {
                                     vec![
@@ -120,11 +120,13 @@ impl CollabPanel {
 
     fn list_section_header(
         &self,
+        id: impl Into<ElementId>,
         label: impl IntoAnyElement<Self>,
         expanded: bool,
         theme: &Theme,
     ) -> impl Element<ViewState = Self> {
         div()
+            .id(id)
             .h_7()
             .px_2()
             .flex()
@@ -132,6 +134,8 @@ impl CollabPanel {
             .items_center()
             .hover()
             .fill(theme.lowest.base.active.background)
+            .active()
+            .fill(theme.highest.accent.default.background)
             .child(div().flex().gap_1().text_sm().child(label))
             .child(
                 div().flex().h_full().gap_1().items_center().child(

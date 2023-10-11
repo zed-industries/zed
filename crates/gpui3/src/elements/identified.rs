@@ -1,4 +1,10 @@
-use crate::{BorrowWindow, Bounds, Element, ElementId, LayoutId, StatefulElement, ViewContext};
+use refineable::{Refineable, RefinementCascade};
+use smallvec::SmallVec;
+
+use crate::{
+    AnyElement, BorrowWindow, Bounds, Element, ElementId, LayoutId, ParentElement, StatefulElement,
+    Styled, ViewContext,
+};
 
 pub struct Identified<E> {
     pub(crate) element: E,
@@ -36,3 +42,22 @@ impl<E: Element> Element for Identified<E> {
 }
 
 impl<E: Element> StatefulElement for Identified<E> {}
+
+impl<E: Styled> Styled for Identified<E> {
+    type Style = E::Style;
+
+    fn style_cascade(&mut self) -> &mut RefinementCascade<Self::Style> {
+        self.element.style_cascade()
+    }
+    fn declared_style(&mut self) -> &mut <Self::Style as Refineable>::Refinement {
+        self.element.declared_style()
+    }
+}
+
+impl<E: ParentElement> ParentElement for Identified<E> {
+    type State = E::State;
+
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::State>; 2]> {
+        self.element.children_mut()
+    }
+}

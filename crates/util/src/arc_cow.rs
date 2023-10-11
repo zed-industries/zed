@@ -57,6 +57,18 @@ impl<'a> From<Cow<'a, str>> for ArcCow<'a, str> {
     }
 }
 
+impl<T> From<Vec<T>> for ArcCow<'_, [T]> {
+    fn from(vec: Vec<T>) -> Self {
+        ArcCow::Owned(Arc::from(vec))
+    }
+}
+
+impl<'a> From<&'a str> for ArcCow<'a, [u8]> {
+    fn from(s: &'a str) -> Self {
+        ArcCow::Borrowed(s.as_bytes())
+    }
+}
+
 impl<'a, T: ?Sized + ToOwned> std::borrow::Borrow<T> for ArcCow<'a, T> {
     fn borrow(&self) -> &T {
         match self {

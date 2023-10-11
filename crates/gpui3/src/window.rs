@@ -1061,3 +1061,21 @@ impl From<SmallVec<[u32; 16]>> for StackingOrder {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ElementId(ArcCow<'static, [u8]>);
+
+impl From<usize> for ElementId {
+    fn from(id: usize) -> Self {
+        Self(id.to_ne_bytes().to_vec().into())
+    }
+}
+
+impl From<i32> for ElementId {
+    fn from(id: i32) -> Self {
+        Self(id.to_ne_bytes().to_vec().into())
+    }
+}
+
+impl From<&'static str> for ElementId {
+    fn from(id: &'static str) -> Self {
+        Self(id.into())
+    }
+}

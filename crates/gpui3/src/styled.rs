@@ -1,4 +1,4 @@
-use crate::{Hoverable, Refineable, RefinementCascade};
+use crate::{Hoverable, Pressable, Refineable, RefinementCascade};
 
 pub trait Styled {
     type Style: 'static + Refineable + Send + Sync + Default;
@@ -19,10 +19,12 @@ pub trait Styled {
         Hoverable::new(self)
     }
 
-    // fn active(self) -> Pressable<Self>
-    // where
-    //     Self: Sized,
-    // {
-    //     pressable(self)
-    // }
+    fn active(self) -> Pressable<Self>
+    where
+        Self: 'static + Sized + Send + Sync,
+        Self::Style: 'static + Refineable + Default + Send + Sync,
+        <Self::Style as Refineable>::Refinement: 'static + Default + Send + Sync,
+    {
+        Pressable::new(self)
+    }
 }

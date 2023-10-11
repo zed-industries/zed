@@ -92,25 +92,29 @@ where
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<Self::ViewState>,
     ) {
-        let slot = self.cascade_slot;
         let style = element_state
             .pressed
             .load(SeqCst)
             .then_some(self.pressed_style.clone());
+        let slot = self.cascade_slot;
         self.style_cascade().set(slot, style);
 
         let pressed = element_state.pressed.clone();
         cx.on_mouse_event(move |_, event: &MouseDownEvent, phase, cx| {
             if phase == DispatchPhase::Capture {
-                if bounds.contains_point(event.position) != pressed.load(SeqCst) {
+                if bounds.contains_point(event.position) {
+                    dbg!("pressed");
+                    pressed.store(true, SeqCst);
                     cx.notify();
                 }
             }
         });
-        let hovered = element_state.pressed.clone();
-        cx.on_mouse_event(move |_, event: &MouseUpEvent, phase, cx| {
+        let pressed = element_state.pressed.clone();
+        cx.on_mouse_event(move |_, _: &MouseUpEvent, phase, cx| {
             if phase == DispatchPhase::Capture {
-                if bounds.contains_point(event.position) != hovered.load(SeqCst) {
+                if pressed.load(SeqCst) {
+                    dbg!("released");
+                    pressed.store(false, SeqCst);
                     cx.notify();
                 }
             }

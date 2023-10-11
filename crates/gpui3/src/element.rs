@@ -25,11 +25,14 @@ pub trait Element: 'static + Send + Sync {
         cx: &mut ViewContext<Self::ViewState>,
     );
 
-    fn id(self, id: ElementId) -> Identified<Self>
+    fn id(self, id: impl Into<ElementId>) -> Identified<Self>
     where
         Self: Sized,
     {
-        Identified { element: self, id }
+        Identified {
+            element: self,
+            id: id.into(),
+        }
     }
 }
 

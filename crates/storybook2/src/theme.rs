@@ -150,12 +150,15 @@ impl<E: Element> Element for Themed<E> {
     fn layout(
         &mut self,
         state: &mut E::ViewState,
+        element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<E::ViewState>,
-    ) -> anyhow::Result<(LayoutId, Self::ElementState)>
+    ) -> (LayoutId, Self::ElementState)
     where
         Self: Sized,
     {
-        cx.with_state(self.theme.clone(), |cx| self.child.layout(state, cx))
+        cx.with_state(self.theme.clone(), |cx| {
+            self.child.layout(state, element_state, cx)
+        })
     }
 
     fn paint(
@@ -164,31 +167,14 @@ impl<E: Element> Element for Themed<E> {
         state: &mut Self::ViewState,
         frame_state: &mut Self::ElementState,
         cx: &mut ViewContext<Self::ViewState>,
-    ) -> Result<()>
-    where
+    ) where
         Self: Sized,
     {
         cx.with_state(self.theme.clone(), |cx| {
-            self.child.paint(bounds, state, frame_state, cx)
-        })
+            self.child.paint(bounds, state, frame_state, cx);
+        });
     }
 }
-
-// fn preferred_theme<V: 'static>(cx: &AppContext) -> Theme {
-//     settings::get::<ThemeSettings>(cx)
-//         .theme
-//         .deserialized_base_theme
-//         .lock()
-//         .get_or_insert_with(|| {
-//             let theme: Theme =
-//                 serde_json::from_value(settings::get::<ThemeSettings>(cx).theme.base_theme.clone())
-//                     .unwrap();
-//             Box::new(theme)
-//         })
-//         .downcast_ref::<Theme>()
-//         .unwrap()
-//         .clone()
-// }
 
 pub fn theme<'a>(cx: &'a WindowContext) -> &'a Theme {
     cx.state()
