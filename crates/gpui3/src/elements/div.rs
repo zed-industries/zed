@@ -1,12 +1,10 @@
 use crate::{
     AnyElement, Bounds, Element, Interactive, LayoutId, MouseEventListeners, Overflow,
-    ParentElement, Pixels, Point, Refineable, RefinementCascade, Result, Style, Styled,
-    ViewContext,
+    ParentElement, Pixels, Point, Refineable, RefinementCascade, Style, Styled, ViewContext,
 };
 use parking_lot::Mutex;
 use smallvec::SmallVec;
 use std::sync::Arc;
-use util::ResultExt;
 
 pub struct Div<S: 'static> {
     styles: RefinementCascade<Style>,
@@ -25,27 +23,28 @@ pub fn div<S>() -> Div<S> {
 }
 
 impl<S: 'static + Send + Sync> Element for Div<S> {
-    type State = S;
-    type FrameState = Vec<LayoutId>;
+    type ViewState = S;
+    type ElementState = Vec<LayoutId>;
 
     fn layout(
         &mut self,
         view: &mut S,
+        _: Option<Self::ElementState>,
         cx: &mut ViewContext<S>,
-    ) -> Result<(LayoutId, Self::FrameState)> {
+    ) -> (LayoutId, Self::ElementState) {
         let style = self.computed_style();
-        let child_layout_ids = style.apply_text_style(cx, |cx| self.layout_children(view, cx))?;
-        let layout_id = cx.request_layout(style.into(), child_layout_ids.clone())?;
-        Ok((layout_id, child_layout_ids))
+        let child_layout_ids = style.apply_text_style(cx, |cx| self.layout_children(view, cx));
+        let layout_id = cx.request_layout(style.into(), child_layout_ids.clone());
+        (layout_id, child_layout_ids)
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
         state: &mut S,
-        child_layout_ids: &mut Self::FrameState,
+        child_layout_ids: &mut Self::ElementState,
         cx: &mut ViewContext<S>,
-    ) -> Result<()> {
+    ) {
         let style = self.computed_style();
         cx.stack(0, |cx| style.paint(bounds, cx));
 
@@ -57,7 +56,7 @@ impl<S: 'static + Send + Sync> Element for Div<S> {
                     self.paint_children(overflow, state, cx)
                 })
             })
-        })?;
+        });
         self.handle_scroll(bounds, style.overflow.clone(), child_layout_ids, cx);
 
         // todo!("enable inspector")
@@ -65,12 +64,10 @@ impl<S: 'static + Send + Sync> Element for Div<S> {
         //     self.paint_inspector(parent_origin, layout, cx);
         // }
         //
-
-        Ok(())
     }
 }
 
-impl<S: 'static> Div<S> {
+impl<S: 'static + Send + Sync> Div<S> {
     pub fn overflow_hidden(mut self) -> Self {
         self.declared_style().overflow.x = Some(Overflow::Hidden);
         self.declared_style().overflow.y = Some(Overflow::Hidden);
@@ -118,11 +115,11 @@ impl<S: 'static> Div<S> {
         offset
     }
 
-    fn layout_children(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> Result<Vec<LayoutId>> {
+    fn layout_children(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> Vec<LayoutId> {
         self.children
             .iter_mut()
             .map(|child| child.layout(view, cx))
-            .collect::<Result<Vec<LayoutId>>>()
+            .collect()
     }
 
     fn paint_children(
@@ -130,12 +127,11 @@ impl<S: 'static> Div<S> {
         overflow: &Point<Overflow>,
         state: &mut S,
         cx: &mut ViewContext<S>,
-    ) -> Result<()> {
+    ) {
         let scroll_offset = self.scroll_offset(overflow);
         for child in &mut self.children {
-            child.paint(state, Some(scroll_offset), cx)?;
+            child.paint(state, Some(scroll_offset), cx);
         }
-        Ok(())
     }
 
     fn handle_scroll(
@@ -148,9 +144,8 @@ impl<S: 'static> Div<S> {
         if overflow.y == Overflow::Scroll || overflow.x == Overflow::Scroll {
             let mut scroll_max = Point::default();
             for child_layout_id in child_layout_ids {
-                if let Some(child_bounds) = cx.layout_bounds(*child_layout_id).log_err() {
-                    scroll_max = scroll_max.max(&child_bounds.lower_right());
-                }
+                let child_bounds = cx.layout_bounds(*child_layout_id);
+                scroll_max = scroll_max.max(&child_bounds.lower_right());
             }
             scroll_max -= bounds.size;
 
@@ -237,7 +232,7 @@ impl<S: 'static> Div<S> {
     //
 }
 
-impl<V> Styled for Div<V> {
+impl<V: 'static + Send + Sync> Styled for Div<V> {
     type Style = Style;
 
     fn style_cascade(&mut self) -> &mut RefinementCascade<Self::Style> {

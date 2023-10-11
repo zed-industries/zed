@@ -1,5 +1,4 @@
 use crate::{BorrowWindow, Bounds, Element, ElementId, LayoutId, StatefulElement, ViewContext};
-use anyhow::Result;
 
 pub struct Identified<E> {
     pub(crate) element: E,
@@ -7,8 +6,8 @@ pub struct Identified<E> {
 }
 
 impl<E: Element> Element for Identified<E> {
-    type State = E::State;
-    type FrameState = E::FrameState;
+    type ViewState = E::ViewState;
+    type ElementState = E::ElementState;
 
     fn element_id(&self) -> Option<ElementId> {
         Some(self.id.clone())
@@ -16,21 +15,22 @@ impl<E: Element> Element for Identified<E> {
 
     fn layout(
         &mut self,
-        state: &mut Self::State,
-        cx: &mut ViewContext<Self::State>,
-    ) -> Result<(LayoutId, Self::FrameState)> {
-        self.element.layout(state, cx)
+        state: &mut Self::ViewState,
+        element_state: Option<Self::ElementState>,
+        cx: &mut ViewContext<Self::ViewState>,
+    ) -> (LayoutId, Self::ElementState) {
+        self.element.layout(state, element_state, cx)
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<crate::Pixels>,
-        state: &mut Self::State,
-        frame_state: &mut Self::FrameState,
-        cx: &mut ViewContext<Self::State>,
-    ) -> Result<()> {
+        state: &mut Self::ViewState,
+        element_state: &mut Self::ElementState,
+        cx: &mut ViewContext<Self::ViewState>,
+    ) {
         cx.with_element_id(self.id.clone(), |cx| {
-            self.element.paint(bounds, state, frame_state, cx)
+            self.element.paint(bounds, state, element_state, cx)
         })
     }
 }

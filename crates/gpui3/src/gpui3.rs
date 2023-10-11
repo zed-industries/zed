@@ -50,11 +50,14 @@ pub use view::*;
 pub use window::*;
 
 use std::{
+    any::Any,
     mem,
     ops::{Deref, DerefMut},
     sync::Arc,
 };
 use taffy::TaffyLayoutEngine;
+
+type AnyBox = Box<dyn Any + Send + Sync + 'static>;
 
 pub trait Context {
     type EntityContext<'a, 'w, T: 'static + Send + Sync>;

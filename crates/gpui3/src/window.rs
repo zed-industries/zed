@@ -1,12 +1,12 @@
 use crate::{
-    image_cache::RenderImageParams, px, size, AnyView, AppContext, AsyncWindowContext,
-    AvailableSpace, BorrowAppContext, Bounds, BoxShadow, Context, Corners, DevicePixels, DisplayId,
-    Edges, Effect, Element, ElementId, EntityId, Event, FontId, GlobalElementId, GlyphId, Handle,
-    Hsla, ImageData, IsZero, LayoutId, MainThread, MainThreadOnly, MonochromeSprite,
-    MouseMoveEvent, Path, Pixels, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad,
-    Reference, RenderGlyphParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow,
-    SharedString, Size, Style, TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle,
-    WindowOptions, SUBPIXEL_VARIANTS,
+    px, size, AnyBox, AnyView, AppContext, AsyncWindowContext, AvailableSpace, BorrowAppContext,
+    Bounds, BoxShadow, Context, Corners, DevicePixels, DisplayId, Edges, Effect, Element, EntityId,
+    Event, FontId, GlobalElementId, GlyphId, Handle, Hsla, ImageData, IsZero, LayoutId, MainThread,
+    MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path, Pixels, PlatformAtlas, PlatformWindow,
+    Point, PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderImageParams,
+    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style,
+    TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle, WindowOptions,
+    SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -21,7 +21,7 @@ use std::{
     mem,
     sync::Arc,
 };
-use util::ResultExt;
+use util::{arc_cow::ArcCow, ResultExt};
 
 #[derive(Deref, DerefMut, Ord, PartialOrd, Eq, PartialEq, Clone, Default)]
 pub struct StackingOrder(pub(crate) SmallVec<[u32; 16]>);
@@ -52,6 +52,8 @@ pub struct Window {
     layout_engine: TaffyLayoutEngine,
     pub(crate) root_view: Option<AnyView<()>>,
     pub(crate) element_id_stack: GlobalElementId,
+    prev_element_states: HashMap<GlobalElementId, AnyBox>,
+    element_states: HashMap<GlobalElementId, AnyBox>,
     z_index_stack: StackingOrder,
     content_mask_stack: Vec<ContentMask<Pixels>>,
     mouse_event_handlers: HashMap<TypeId, Vec<(StackingOrder, MouseEventHandler)>>,
@@ -114,6 +116,8 @@ impl Window {
             layout_engine: TaffyLayoutEngine::new(),
             root_view: None,
             element_id_stack: GlobalElementId::default(),
+            prev_element_states: HashMap::default(),
+            element_states: HashMap::default(),
             z_index_stack: StackingOrder(SmallVec::new()),
             content_mask_stack: Vec::new(),
             mouse_event_handlers: HashMap::default(),
@@ -147,7 +151,7 @@ impl ContentMask<Pixels> {
 
 pub struct WindowContext<'a, 'w> {
     app: Reference<'a, AppContext>,
-    window: Reference<'w, Window>,
+    pub(crate) window: Reference<'w, Window>,
 }
 
 impl<'a, 'w> WindowContext<'a, 'w> {
@@ -242,7 +246,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         &mut self,
         style: Style,
         children: impl IntoIterator<Item = LayoutId>,
-    ) -> Result<LayoutId> {
+    ) -> LayoutId {
         self.app.layout_id_buffer.clear();
         self.app.layout_id_buffer.extend(children.into_iter());
         let rem_size = self.rem_size();
@@ -259,18 +263,17 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         style: Style,
         rem_size: Pixels,
         measure: F,
-    ) -> Result<LayoutId> {
+    ) -> LayoutId {
         self.window
             .layout_engine
             .request_measured_layout(style, rem_size, measure)
     }
 
-    pub fn layout_bounds(&mut self, layout_id: LayoutId) -> Result<Bounds<Pixels>> {
-        Ok(self
-            .window
+    pub fn layout_bounds(&mut self, layout_id: LayoutId) -> Bounds<Pixels> {
+        self.window
             .layout_engine
             .layout_bounds(layout_id)
-            .map(Into::into)?)
+            .map(Into::into)
     }
 
     pub fn scale_factor(&self) -> f32 {
@@ -586,27 +589,25 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         Ok(())
     }
 
-    pub(crate) fn draw(&mut self) -> Result<()> {
+    pub(crate) fn draw(&mut self) {
         let unit_entity = self.unit_entity.clone();
         self.update_entity(&unit_entity, |view, cx| {
-            cx.window
-                .mouse_event_handlers
-                .values_mut()
-                .for_each(Vec::clear);
+            cx.start_frame();
 
             let mut root_view = cx.window.root_view.take().unwrap();
-            let (root_layout_id, mut frame_state) = root_view.layout(&mut (), cx)?;
-            let available_space = cx.window.content_size.map(Into::into);
 
-            cx.window
-                .layout_engine
-                .compute_layout(root_layout_id, available_space)?;
-            let layout = cx.window.layout_engine.layout_bounds(root_layout_id)?;
+            if let Some(element_id) = root_view.element_id() {
+                cx.with_element_state(element_id, |element_state, cx| {
+                    let element_state = draw_with_element_state(&mut root_view, element_state, cx);
+                    ((), element_state)
+                });
+            } else {
+                draw_with_element_state(&mut root_view, None, cx);
+            };
 
-            root_view.paint(layout, &mut (), &mut frame_state, cx)?;
             cx.window.root_view = Some(root_view);
-            let scene = cx.window.scene_builder.build();
 
+            let scene = cx.window.scene_builder.build();
             cx.run_on_main(view, |_, cx| {
                 cx.window
                     .platform_window
@@ -615,9 +616,38 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 cx.window.dirty = false;
             })
             .detach();
+        });
 
-            Ok(())
-        })
+        fn draw_with_element_state(
+            root_view: &mut AnyView<()>,
+            element_state: Option<AnyBox>,
+            cx: &mut ViewContext<()>,
+        ) -> AnyBox {
+            let (layout_id, mut element_state) = root_view.layout(&mut (), element_state, cx);
+            let available_space = cx.window.content_size.map(Into::into);
+            cx.window
+                .layout_engine
+                .compute_layout(layout_id, available_space);
+            let bounds = cx.window.layout_engine.layout_bounds(layout_id);
+            root_view.paint(bounds, &mut (), &mut element_state, cx);
+            element_state
+        }
+    }
+
+    fn start_frame(&mut self) {
+        // Make the current element states the previous, and then clear the current.
+        // The empty element states map will be populated for any element states we
+        // reference during the upcoming frame.
+        let window = &mut *self.window;
+        mem::swap(&mut window.element_states, &mut window.prev_element_states);
+        self.window.element_states.clear();
+
+        // Clear mouse event listeners, because elements add new element listeners
+        // when the upcoming frame is painted.
+        self.window
+            .mouse_event_handlers
+            .values_mut()
+            .for_each(Vec::clear);
     }
 
     fn dispatch_event(&mut self, event: Event) -> bool {
@@ -753,6 +783,42 @@ pub trait BorrowWindow: BorrowAppContext {
         result
     }
 
+    fn with_element_state<S: 'static + Send + Sync, R>(
+        &mut self,
+        id: ElementId,
+        f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
+    ) -> R {
+        self.window_mut().element_id_stack.push(id);
+        let global_id = self.window_mut().element_id_stack.clone();
+
+        if let Some(any) = self
+            .window_mut()
+            .element_states
+            .remove(&global_id)
+            .or_else(|| self.window_mut().prev_element_states.remove(&global_id))
+        {
+            // Using the extra inner option to avoid needing to reallocate a new box.
+            let mut state_box = any
+                .downcast::<Option<S>>()
+                .expect("invalid element state type for id");
+            let state = state_box
+                .take()
+                .expect("element state is already on the stack");
+            let (result, state) = f(Some(state), self);
+            state_box.replace(state);
+            self.window_mut()
+                .element_states
+                .insert(global_id, state_box);
+            result
+        } else {
+            let (result, state) = f(None, self);
+            self.window_mut()
+                .element_states
+                .insert(global_id, Box::new(Some(state)));
+            result
+        }
+    }
+
     fn content_mask(&self) -> ContentMask<Pixels> {
         self.window()
             .content_mask_stack
@@ -790,26 +856,6 @@ pub struct ViewContext<'a, 'w, S> {
 impl<S> BorrowAppContext for ViewContext<'_, '_, S> {
     fn app_mut(&mut self) -> &mut AppContext {
         &mut *self.window_cx.app
-    }
-
-    fn with_text_style<F, R>(&mut self, style: crate::TextStyleRefinement, f: F) -> R
-    where
-        F: FnOnce(&mut Self) -> R,
-    {
-        self.window_cx.app.push_text_style(style);
-        let result = f(self);
-        self.window_cx.app.pop_text_style();
-        result
-    }
-
-    fn with_state<T: Send + Sync + 'static, F, R>(&mut self, state: T, f: F) -> R
-    where
-        F: FnOnce(&mut Self) -> R,
-    {
-        self.window_cx.app.push_state(state);
-        let result = f(self);
-        self.window_cx.app.pop_state::<T>();
-        result
     }
 }
 
@@ -1012,3 +1058,6 @@ impl From<SmallVec<[u32; 16]>> for StackingOrder {
         StackingOrder(small_vec)
     }
 }
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct ElementId(ArcCow<'static, [u8]>);

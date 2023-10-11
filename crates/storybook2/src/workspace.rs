@@ -25,7 +25,7 @@ impl Workspace {
         }
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<State = Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
         themed(rose_pine_dawn(), cx, |cx| {
             let theme = theme(cx);
             div()
@@ -57,7 +57,7 @@ impl Workspace {
 
 struct Titlebar;
 
-pub fn titlebar<S: 'static + Send + Sync>(cx: &mut ViewContext<S>) -> impl Element<State = S> {
+pub fn titlebar<S: 'static + Send + Sync>(cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
     let ref mut this = Titlebar;
     let theme = theme(cx);
     div()
@@ -75,7 +75,7 @@ impl Titlebar {
     fn render<V: 'static + Send + Sync>(
         &mut self,
         cx: &mut ViewContext<V>,
-    ) -> impl Element<State = V> {
+    ) -> impl Element<ViewState = V> {
         let theme = theme(cx);
         div()
             .flex()
@@ -91,7 +91,7 @@ impl Titlebar {
     fn left_group<S: 'static + Send + Sync>(
         &mut self,
         cx: &mut ViewContext<S>,
-    ) -> impl Element<State = S> {
+    ) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         div()
             .flex()
@@ -174,7 +174,7 @@ impl Titlebar {
     fn right_group<S: 'static + Send + Sync>(
         &mut self,
         cx: &mut ViewContext<S>,
-    ) -> impl Element<State = S> {
+    ) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         div()
             .flex()
@@ -306,7 +306,9 @@ mod statusbar {
 
     use super::*;
 
-    pub fn statusbar<S: 'static + Send + Sync>(cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    pub fn statusbar<S: 'static + Send + Sync>(
+        cx: &mut ViewContext<S>,
+    ) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         div()
             .flex()
@@ -319,7 +321,9 @@ mod statusbar {
         // .child(right_group(cx))
     }
 
-    fn left_group<V: 'static + Send + Sync>(cx: &mut ViewContext<V>) -> impl Element<State = V> {
+    fn left_group<V: 'static + Send + Sync>(
+        cx: &mut ViewContext<V>,
+    ) -> impl Element<ViewState = V> {
         let theme = theme(cx);
         div()
             .flex()
@@ -416,7 +420,9 @@ mod statusbar {
             )
     }
 
-    fn right_group<S: 'static + Send + Sync>(cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    fn right_group<S: 'static + Send + Sync>(
+        cx: &mut ViewContext<S>,
+    ) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         div()
             .flex()

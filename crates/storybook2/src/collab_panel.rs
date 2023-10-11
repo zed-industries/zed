@@ -22,7 +22,7 @@ impl CollabPanel {
 }
 
 impl CollabPanel {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<State = Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
         let theme = theme(cx);
 
         // Panel
@@ -123,7 +123,7 @@ impl CollabPanel {
         label: impl IntoAnyElement<Self>,
         expanded: bool,
         theme: &Theme,
-    ) -> impl Element<State = Self> {
+    ) -> impl Element<ViewState = Self> {
         div()
             .h_7()
             .px_2()
@@ -153,7 +153,7 @@ impl CollabPanel {
         avatar_uri: impl Into<SharedString>,
         label: impl IntoAnyElement<Self>,
         theme: &Theme,
-    ) -> impl Element<State = Self> {
+    ) -> impl Element<ViewState = Self> {
         div()
             .h_7()
             .px_2()

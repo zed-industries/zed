@@ -23,10 +23,7 @@ use std::{
     mem,
     sync::{Arc, Weak},
 };
-use util::{
-    http::{self, HttpClient},
-    ResultExt,
-};
+use util::http::{self, HttpClient};
 
 #[derive(Clone)]
 pub struct App(Arc<Mutex<AppContext>>);
@@ -169,9 +166,7 @@ impl AppContext {
             .collect::<Vec<_>>();
 
         for dirty_window_id in dirty_window_ids {
-            self.update_window(dirty_window_id, |cx| cx.draw())
-                .unwrap()
-                .log_err();
+            self.update_window(dirty_window_id, |cx| cx.draw()).unwrap();
         }
     }
 

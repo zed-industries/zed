@@ -1,7 +1,7 @@
 use crate::{Hoverable, Refineable, RefinementCascade};
 
 pub trait Styled {
-    type Style: Refineable + Default;
+    type Style: 'static + Refineable + Send + Sync + Default;
 
     fn style_cascade(&mut self) -> &mut RefinementCascade<Self::Style>;
     fn declared_style(&mut self) -> &mut <Self::Style as Refineable>::Refinement;
@@ -12,7 +12,9 @@ pub trait Styled {
 
     fn hover(self) -> Hoverable<Self>
     where
-        Self: Sized,
+        Self: 'static + Sized + Send + Sync,
+        Self::Style: 'static + Refineable + Default + Send + Sync,
+        <Self::Style as Refineable>::Refinement: 'static + Default + Send + Sync,
     {
         Hoverable::new(self)
     }

@@ -1,6 +1,5 @@
 use crate::{
-    BorrowWindow, Bounds, Element, LayoutId, Pixels, Result, SharedString, Style, Styled,
-    ViewContext,
+    BorrowWindow, Bounds, Element, LayoutId, Pixels, SharedString, Style, Styled, ViewContext,
 };
 use futures::FutureExt;
 use refineable::RefinementCascade;
@@ -36,29 +35,30 @@ impl<S> Img<S> {
 }
 
 impl<S: Send + Sync + 'static> Element for Img<S> {
-    type State = S;
-    type FrameState = ();
+    type ViewState = S;
+    type ElementState = ();
 
     fn layout(
         &mut self,
-        _: &mut Self::State,
-        cx: &mut ViewContext<Self::State>,
-    ) -> anyhow::Result<(LayoutId, Self::FrameState)>
+        _: &mut Self::ViewState,
+        _: Option<Self::ElementState>,
+        cx: &mut ViewContext<Self::ViewState>,
+    ) -> (LayoutId, Self::ElementState)
     where
         Self: Sized,
     {
         let style = self.computed_style();
-        let layout_id = cx.request_layout(style, [])?;
-        Ok((layout_id, ()))
+        let layout_id = cx.request_layout(style, []);
+        (layout_id, ())
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _: &mut Self::State,
-        _: &mut Self::FrameState,
-        cx: &mut ViewContext<Self::State>,
-    ) -> Result<()> {
+        _: &mut Self::ViewState,
+        _: &mut Self::ElementState,
+        cx: &mut ViewContext<Self::ViewState>,
+    ) {
         let style = self.computed_style();
 
         style.paint(bounds, cx);
@@ -73,7 +73,8 @@ impl<S: Send + Sync + 'static> Element for Img<S> {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
                 cx.stack(1, |cx| {
                     cx.paint_image(bounds, corner_radii, data, self.grayscale)
-                })?;
+                        .log_err()
+                });
             } else {
                 cx.spawn(|_, mut cx| async move {
                     if image_future.await.log_err().is_some() {
@@ -83,7 +84,6 @@ impl<S: Send + Sync + 'static> Element for Img<S> {
                 .detach()
             }
         }
-        Ok(())
     }
 }
 
