@@ -9,15 +9,15 @@ use refineable::Refineable;
 
 use crate::{
     current_platform, image_cache::ImageCache, AssetSource, Context, DisplayId, Executor, LayoutId,
-    MainThread, MainThreadOnly, Platform, PlatformDisplayLinker, RootView, SvgRenderer, Task,
-    TextStyle, TextStyleRefinement, TextSystem, Window, WindowContext, WindowHandle, WindowId,
+    MainThread, MainThreadOnly, Platform, PlatformDisplayLinker, RootView, SubscriberSet,
+    SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, Window, WindowContext,
+    WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, VecDeque};
 use futures::Future;
 use parking_lot::Mutex;
 use slotmap::SlotMap;
-use smallvec::SmallVec;
 use std::{
     any::{type_name, Any, TypeId},
     mem,
@@ -67,8 +67,8 @@ impl App {
                 entities,
                 windows: SlotMap::with_key(),
                 pending_effects: Default::default(),
-                observers: Default::default(),
-                event_handlers: Default::default(),
+                observers: SubscriberSet::new(),
+                event_handlers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
             })
         }))
@@ -88,9 +88,8 @@ impl App {
     }
 }
 
-type Handlers = SmallVec<[Arc<dyn Fn(&mut AppContext) -> bool + Send + Sync + 'static>; 2]>;
-type EventHandlers =
-    SmallVec<[Arc<dyn Fn(&dyn Any, &mut AppContext) -> bool + Send + Sync + 'static>; 2]>;
+type Handler = Arc<dyn Fn(&mut AppContext) -> bool + Send + Sync + 'static>;
+type EventHandler = Arc<dyn Fn(&dyn Any, &mut AppContext) -> bool + Send + Sync + 'static>;
 type FrameCallback = Box<dyn FnOnce(&mut WindowContext) + Send>;
 
 pub struct AppContext {
@@ -109,8 +108,8 @@ pub struct AppContext {
     pub(crate) entities: EntityMap,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) pending_effects: VecDeque<Effect>,
-    pub(crate) observers: HashMap<EntityId, Handlers>,
-    pub(crate) event_handlers: HashMap<EntityId, EventHandlers>,
+    pub(crate) observers: SubscriberSet<EntityId, Handler>,
+    pub(crate) event_handlers: SubscriberSet<EntityId, EventHandler>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
 }
 
@@ -176,23 +175,15 @@ impl AppContext {
     }
 
     fn apply_notify_effect(&mut self, updated_entity: EntityId) {
-        if let Some(mut handlers) = self.observers.remove(&updated_entity) {
-            handlers.retain(|handler| handler(self));
-            if let Some(new_handlers) = self.observers.remove(&updated_entity) {
-                handlers.extend(new_handlers);
-            }
-            self.observers.insert(updated_entity, handlers);
-        }
+        self.observers
+            .clone()
+            .retain(&updated_entity, |handler| handler(self));
     }
 
     fn apply_emit_effect(&mut self, updated_entity: EntityId, event: Box<dyn Any>) {
-        if let Some(mut handlers) = self.event_handlers.remove(&updated_entity) {
-            handlers.retain(|handler| handler(&event, self));
-            if let Some(new_handlers) = self.event_handlers.remove(&updated_entity) {
-                handlers.extend(new_handlers);
-            }
-            self.event_handlers.insert(updated_entity, handlers);
-        }
+        self.event_handlers
+            .clone()
+            .retain(&updated_entity, |handler| handler(&event, self));
     }
 
     pub fn to_async(&self) -> AsyncAppContext {

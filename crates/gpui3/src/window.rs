@@ -5,8 +5,8 @@ use crate::{
     LayoutId, MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path, Pixels,
     PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams,
     RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
-    Style, TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle, WindowOptions,
-    SUBPIXEL_VARIANTS,
+    Style, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle,
+    WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -903,15 +903,13 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
         &mut self,
         handle: &Handle<E>,
         on_notify: impl Fn(&mut S, Handle<E>, &mut ViewContext<'_, '_, S>) + Send + Sync + 'static,
-    ) {
+    ) -> Subscription {
         let this = self.handle();
         let handle = handle.downgrade();
         let window_handle = self.window.handle;
-        self.app
-            .observers
-            .entry(handle.id)
-            .or_default()
-            .push(Arc::new(move |cx| {
+        self.app.observers.insert(
+            handle.id,
+            Arc::new(move |cx| {
                 cx.update_window(window_handle.id, |cx| {
                     if let Some(handle) = handle.upgrade(cx) {
                         this.update(cx, |this, cx| on_notify(this, handle, cx))
@@ -921,7 +919,8 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
                     }
                 })
                 .unwrap_or(false)
-            }));
+            }),
+        )
     }
 
     pub fn subscribe<E: EventEmitter + Send + Sync + 'static>(
@@ -931,15 +930,13 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
             + Send
             + Sync
             + 'static,
-    ) {
+    ) -> Subscription {
         let this = self.handle();
         let handle = handle.downgrade();
         let window_handle = self.window.handle;
-        self.app
-            .event_handlers
-            .entry(handle.id)
-            .or_default()
-            .push(Arc::new(move |event, cx| {
+        self.app.event_handlers.insert(
+            handle.id,
+            Arc::new(move |event, cx| {
                 cx.update_window(window_handle.id, |cx| {
                     if let Some(handle) = handle.upgrade(cx) {
                         let event = event.downcast_ref().expect("invalid event type");
@@ -950,7 +947,8 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
                     }
                 })
                 .unwrap_or(false)
-            }));
+            }),
+        )
     }
 
     pub fn notify(&mut self) {

@@ -1,4 +1,7 @@
-use crate::{AppContext, Context, Effect, EntityId, EventEmitter, Handle, Reference, WeakHandle};
+use crate::{
+    AppContext, Context, Effect, EntityId, EventEmitter, Handle, Reference, Subscription,
+    WeakHandle,
+};
 use std::{marker::PhantomData, sync::Arc};
 
 pub struct ModelContext<'a, T> {
@@ -42,21 +45,20 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         &mut self,
         handle: &Handle<E>,
         on_notify: impl Fn(&mut T, Handle<E>, &mut ModelContext<'_, T>) + Send + Sync + 'static,
-    ) {
+    ) -> Subscription {
         let this = self.handle();
         let handle = handle.downgrade();
-        self.app
-            .observers
-            .entry(handle.id)
-            .or_default()
-            .push(Arc::new(move |cx| {
+        self.app.observers.insert(
+            handle.id,
+            Arc::new(move |cx| {
                 if let Some((this, handle)) = this.upgrade(cx).zip(handle.upgrade(cx)) {
                     this.update(cx, |this, cx| on_notify(this, handle, cx));
                     true
                 } else {
                     false
                 }
-            }));
+            }),
+        )
     }
 
     pub fn subscribe<E: EventEmitter + Send + Sync + 'static>(
@@ -66,14 +68,12 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
             + Send
             + Sync
             + 'static,
-    ) {
+    ) -> Subscription {
         let this = self.handle();
         let handle = handle.downgrade();
-        self.app
-            .event_handlers
-            .entry(handle.id)
-            .or_default()
-            .push(Arc::new(move |event, cx| {
+        self.app.event_handlers.insert(
+            handle.id,
+            Arc::new(move |event, cx| {
                 let event = event.downcast_ref().expect("invalid event type");
                 if let Some((this, handle)) = this.upgrade(cx).zip(handle.upgrade(cx)) {
                     this.update(cx, |this, cx| on_event(this, handle, event, cx));
@@ -81,7 +81,8 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
                 } else {
                     false
                 }
-            }));
+            }),
+        )
     }
 
     pub fn notify(&mut self) {
