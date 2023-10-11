@@ -911,7 +911,8 @@ impl Project {
         }
 
         for (worktree, language, settings) in language_formatters_to_check {
-            self.install_default_formatters(worktree, &language, &settings, cx);
+            self.install_default_formatters(worktree, &language, &settings, cx)
+                .detach_and_log_err(cx);
         }
 
         // Start all the newly-enabled language servers.
@@ -2666,7 +2667,20 @@ impl Project {
         let settings = language_settings(Some(&new_language), buffer_file.as_ref(), cx).clone();
         let buffer_file = File::from_dyn(buffer_file.as_ref());
         let worktree = buffer_file.as_ref().map(|f| f.worktree_id(cx));
-        self.install_default_formatters(worktree, &new_language, &settings, cx);
+
+        let task_buffer = buffer.clone();
+        let prettier_installation_task =
+            self.install_default_formatters(worktree, &new_language, &settings, cx);
+        cx.spawn(|project, mut cx| async move {
+            prettier_installation_task.await?;
+            let _ = project
+                .update(&mut cx, |project, cx| {
+                    project.prettier_instance_for_buffer(&task_buffer, cx)
+                })
+                .await;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
 
         if let Some(file) = buffer_file {
             let worktree = file.worktree.clone();
@@ -8393,7 +8407,7 @@ impl Project {
             let Some(node) = self.node.as_ref().map(Arc::clone) else {
                 return Task::ready(None);
             };
-            let task = cx.spawn(|this, mut cx| async move {
+            cx.spawn(|this, mut cx| async move {
                 let fs = this.update(&mut cx, |project, _| Arc::clone(&project.fs));
                 let prettier_dir = match cx
                     .background()
@@ -8494,9 +8508,6 @@ impl Project {
                                 project
                                     .supplementary_language_servers
                                     .insert(new_server_id, (name, Arc::clone(prettier_server)));
-                                // TODO kb could there be a race with multiple default prettier instances added?
-                                // also, clean up prettiers for dropped workspaces (e.g. external files that got closed)
-                                // also, is there a way to speed up initial prettier startup? now it takes a 1s or so on the first formatting attempt.
                                 cx.emit(Event::LanguageServerAdded(new_server_id));
                             });
                         }
@@ -8509,15 +8520,14 @@ impl Project {
                         .insert((worktree_id, prettier_dir), new_prettier_task.clone());
                 });
                 Some(new_prettier_task)
-            });
-            task
+            })
         } else if let Some(project_id) = self.remote_id() {
             let client = self.client.clone();
             let request = proto::PrettierInstanceForBuffer {
                 project_id,
                 buffer_id: buffer.remote_id(),
             };
-            let task = cx.spawn(|this, mut cx| async move {
+            cx.spawn(|this, mut cx| async move {
                 match client.request(request).await {
                     Ok(response) => {
                         response
@@ -8548,9 +8558,7 @@ impl Project {
                         None
                     }
                 }
-            });
-
-            task
+            })
         } else {
             Task::ready(Some(
                 Task::ready(Err(Arc::new(anyhow!("project does not have a remote id")))).shared(),
@@ -8564,13 +8572,13 @@ impl Project {
         new_language: &Language,
         language_settings: &LanguageSettings,
         cx: &mut ModelContext<Self>,
-    ) {
+    ) -> Task<anyhow::Result<()>> {
         match &language_settings.formatter {
             Formatter::Prettier { .. } | Formatter::Auto => {}
-            Formatter::LanguageServer | Formatter::External { .. } => return,
+            Formatter::LanguageServer | Formatter::External { .. } => return Task::ready(Ok(())),
         };
         let Some(node) = self.node.as_ref().cloned() else {
-            return;
+            return Task::ready(Ok(()));
         };
 
         let mut prettier_plugins = None;
@@ -8586,7 +8594,7 @@ impl Project {
             }
         }
         let Some(prettier_plugins) = prettier_plugins else {
-            return;
+            return Task::ready(Ok(()));
         };
 
         let default_prettier_dir = DEFAULT_PRETTIER_DIR.as_path();
@@ -8634,7 +8642,6 @@ impl Project {
 
                 anyhow::Ok(())
             })
-            .detach_and_log_err(cx);
     }
 }
 
