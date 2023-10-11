@@ -219,7 +219,7 @@ impl AppContext {
         f: impl FnOnce(&mut MainThread<AppContext>) -> F + Send + 'static,
     ) -> Task<R>
     where
-        F: Future<Output = R> + Send + 'static,
+        F: Future<Output = R> + 'static,
         R: Send + 'static,
     {
         let this = self.this.upgrade().unwrap();
