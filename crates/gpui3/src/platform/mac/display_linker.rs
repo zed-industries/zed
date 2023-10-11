@@ -4,25 +4,27 @@ use std::{
     sync::{Arc, Weak},
 };
 
-use crate::{DisplayId, PlatformDisplayLinker};
+use crate::{DisplayId, Executor, MainThreadOnly, PlatformDisplayLinker};
 use collections::HashMap;
 use parking_lot::Mutex;
 pub use sys::CVTimeStamp as VideoTimestamp;
 
 pub struct MacDisplayLinker {
     links: Mutex<HashMap<DisplayId, MacDisplayLink>>,
+    executor: Executor,
 }
 
 struct MacDisplayLink {
-    system_link: Mutex<sys::DisplayLink>,
+    system_link: MainThreadOnly<sys::DisplayLink>,
     _output_callback: Arc<OutputCallback>,
 }
 
 unsafe impl Send for MacDisplayLink {}
 
 impl MacDisplayLinker {
-    pub fn new() -> Self {
+    pub fn new(executor: Executor) -> Self {
         MacDisplayLinker {
+            executor,
             links: Default::default(),
         }
     }
@@ -45,7 +47,7 @@ impl PlatformDisplayLinker for MacDisplayLinker {
                 display_id,
                 MacDisplayLink {
                     _output_callback: callback,
-                    system_link: Mutex::new(system_link),
+                    system_link: MainThreadOnly::new(Arc::new(system_link), self.executor.clone()),
                 },
             );
         } else {
@@ -57,7 +59,10 @@ impl PlatformDisplayLinker for MacDisplayLinker {
     fn start(&self, display_id: DisplayId) {
         if let Some(link) = self.links.lock().get_mut(&display_id) {
             unsafe {
-                link.system_link.lock().start();
+                let system_link = link.system_link.clone();
+                self.executor
+                    .run_on_main(move || system_link.borrow_on_main_thread().start())
+                    .detach();
             }
         } else {
             log::warn!("No DisplayLink callback registered for {:?}", display_id)
@@ -67,7 +72,10 @@ impl PlatformDisplayLinker for MacDisplayLinker {
     fn stop(&self, display_id: DisplayId) {
         if let Some(link) = self.links.lock().get_mut(&display_id) {
             unsafe {
-                link.system_link.lock().stop();
+                let system_link = link.system_link.clone();
+                self.executor
+                    .run_on_main(move || system_link.borrow_on_main_thread().stop())
+                    .detach();
             }
         } else {
             log::warn!("No DisplayLink callback registered for {:?}", display_id)
@@ -210,16 +218,16 @@ mod sys {
             display_link_out: *mut *mut CVDisplayLink,
         ) -> i32;
         pub fn CVDisplayLinkSetOutputCallback(
-            display_link: &mut DisplayLinkRef,
+            display_link: &DisplayLinkRef,
             callback: CVDisplayLinkOutputCallback,
             user_info: *mut c_void,
         ) -> i32;
         pub fn CVDisplayLinkSetCurrentCGDisplay(
-            display_link: &mut DisplayLinkRef,
+            display_link: &DisplayLinkRef,
             display_id: u32,
         ) -> i32;
-        pub fn CVDisplayLinkStart(display_link: &mut DisplayLinkRef) -> i32;
-        pub fn CVDisplayLinkStop(display_link: &mut DisplayLinkRef) -> i32;
+        pub fn CVDisplayLinkStart(display_link: &DisplayLinkRef) -> i32;
+        pub fn CVDisplayLinkStop(display_link: &DisplayLinkRef) -> i32;
         pub fn CVDisplayLinkRelease(display_link: *mut CVDisplayLink);
         pub fn CVDisplayLinkRetain(display_link: *mut CVDisplayLink) -> *mut CVDisplayLink;
     }
@@ -264,12 +272,12 @@ mod sys {
         }
 
         /// Apple docs: [CVDisplayLinkStart](https://developer.apple.com/documentation/corevideo/1457193-cvdisplaylinkstart?language=objc)
-        pub unsafe fn start(&mut self) {
+        pub unsafe fn start(&self) {
             assert_eq!(CVDisplayLinkStart(self), 0);
         }
 
         /// Apple docs: [CVDisplayLinkStop](https://developer.apple.com/documentation/corevideo/1457281-cvdisplaylinkstop?language=objc)
-        pub unsafe fn stop(&mut self) {
+        pub unsafe fn stop(&self) {
             assert_eq!(CVDisplayLinkStop(self), 0);
         }
     }

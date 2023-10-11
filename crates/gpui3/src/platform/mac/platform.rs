@@ -349,7 +349,7 @@ impl Platform for MacPlatform {
     }
 
     fn display_linker(&self) -> Arc<dyn PlatformDisplayLinker> {
-        Arc::new(MacDisplayLinker::new())
+        Arc::new(MacDisplayLinker::new(self.executor()))
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
