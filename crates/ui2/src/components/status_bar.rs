@@ -101,16 +101,19 @@ impl<S: 'static + Send + Sync + Clone> StatusBar<S> {
     }
 
     fn left_tools(&self, theme: &Theme) -> impl Element<State = S> {
+        let workspace_state = get_workspace_state();
+
         div()
             .flex()
             .items_center()
             .gap_1()
             .child(
                 IconButton::new(Icon::FileTree)
-                    .color(IconColor::Accent)
+                    .when(
+                        workspace_state.show_project_panel.load(Ordering::SeqCst),
+                        |this| this.color(IconColor::Accent),
+                    )
                     .on_click(|_, cx| {
-                        let workspace_state = get_workspace_state();
-
                         let is_showing_project_panel =
                             workspace_state.show_project_panel.load(Ordering::SeqCst);
 
@@ -133,6 +136,8 @@ impl<S: 'static + Send + Sync + Clone> StatusBar<S> {
     }
 
     fn right_tools(&self, theme: &Theme) -> impl Element<State = S> {
+        let workspace_state = get_workspace_state();
+
         div()
             .flex()
             .items_center()
@@ -166,42 +171,52 @@ impl<S: 'static + Send + Sync + Clone> StatusBar<S> {
                     .flex()
                     .items_center()
                     .gap_1()
-                    .child(IconButton::new(Icon::Terminal).on_click(|_, cx| {
-                        let workspace_state = get_workspace_state();
-
-                        let is_showing_terminal =
-                            workspace_state.show_terminal.load(Ordering::SeqCst);
-
-                        workspace_state
-                            .show_terminal
-                            .compare_exchange(
-                                is_showing_terminal,
-                                !is_showing_terminal,
-                                Ordering::SeqCst,
-                                Ordering::SeqCst,
+                    .child(
+                        IconButton::new(Icon::Terminal)
+                            .when(
+                                workspace_state.show_terminal.load(Ordering::SeqCst),
+                                |this| this.color(IconColor::Accent),
                             )
-                            .unwrap();
+                            .on_click(|_, cx| {
+                                let is_showing_terminal =
+                                    workspace_state.show_terminal.load(Ordering::SeqCst);
 
-                        cx.notify();
-                    }))
-                    .child(IconButton::new(Icon::MessageBubbles).on_click(|_, cx| {
-                        let workspace_state = get_workspace_state();
+                                workspace_state
+                                    .show_terminal
+                                    .compare_exchange(
+                                        is_showing_terminal,
+                                        !is_showing_terminal,
+                                        Ordering::SeqCst,
+                                        Ordering::SeqCst,
+                                    )
+                                    .unwrap();
 
-                        let is_showing_chat_panel =
-                            workspace_state.show_chat_panel.load(Ordering::SeqCst);
-
-                        workspace_state
-                            .show_chat_panel
-                            .compare_exchange(
-                                is_showing_chat_panel,
-                                !is_showing_chat_panel,
-                                Ordering::SeqCst,
-                                Ordering::SeqCst,
+                                cx.notify();
+                            }),
+                    )
+                    .child(
+                        IconButton::new(Icon::MessageBubbles)
+                            .when(
+                                workspace_state.show_chat_panel.load(Ordering::SeqCst),
+                                |this| this.color(IconColor::Accent),
                             )
-                            .unwrap();
+                            .on_click(|_, cx| {
+                                let is_showing_chat_panel =
+                                    workspace_state.show_chat_panel.load(Ordering::SeqCst);
 
-                        cx.notify();
-                    }))
+                                workspace_state
+                                    .show_chat_panel
+                                    .compare_exchange(
+                                        is_showing_chat_panel,
+                                        !is_showing_chat_panel,
+                                        Ordering::SeqCst,
+                                        Ordering::SeqCst,
+                                    )
+                                    .unwrap();
+
+                                cx.notify();
+                            }),
+                    )
                     .child(IconButton::new(Icon::Ai)),
             )
     }
