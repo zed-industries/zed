@@ -2,7 +2,7 @@ use crate::{
     AppContext, Context, Effect, EntityId, EventEmitter, Handle, Reference, Subscription,
     WeakHandle,
 };
-use std::{marker::PhantomData, sync::Arc};
+use std::marker::PhantomData;
 
 pub struct ModelContext<'a, T> {
     app: Reference<'a, AppContext>,
@@ -50,7 +50,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         let handle = handle.downgrade();
         self.app.observers.insert(
             handle.id,
-            Arc::new(move |cx| {
+            Box::new(move |cx| {
                 if let Some((this, handle)) = this.upgrade(cx).zip(handle.upgrade(cx)) {
                     this.update(cx, |this, cx| on_notify(this, handle, cx));
                     true
@@ -73,7 +73,7 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         let handle = handle.downgrade();
         self.app.event_handlers.insert(
             handle.id,
-            Arc::new(move |event, cx| {
+            Box::new(move |event, cx| {
                 let event = event.downcast_ref().expect("invalid event type");
                 if let Some((this, handle)) = this.upgrade(cx).zip(handle.upgrade(cx)) {
                     this.update(cx, |this, cx| on_event(this, handle, event, cx));

@@ -3,10 +3,15 @@ use parking_lot::Mutex;
 use std::{fmt::Debug, mem, sync::Arc};
 use util::post_inc;
 
-#[derive(Clone)]
 pub(crate) struct SubscriberSet<EmitterKey, Callback>(
     Arc<Mutex<SubscriberSetState<EmitterKey, Callback>>>,
 );
+
+impl<EmitterKey, Callback> Clone for SubscriberSet<EmitterKey, Callback> {
+    fn clone(&self) -> Self {
+        SubscriberSet(self.0.clone())
+    }
+}
 
 struct SubscriberSetState<EmitterKey, Callback> {
     subscribers: BTreeMap<EmitterKey, BTreeMap<usize, Callback>>,

@@ -88,8 +88,8 @@ impl App {
     }
 }
 
-type Handler = Arc<dyn Fn(&mut AppContext) -> bool + Send + Sync + 'static>;
-type EventHandler = Arc<dyn Fn(&dyn Any, &mut AppContext) -> bool + Send + Sync + 'static>;
+type Handler = Box<dyn Fn(&mut AppContext) -> bool + Send + Sync + 'static>;
+type EventHandler = Box<dyn Fn(&dyn Any, &mut AppContext) -> bool + Send + Sync + 'static>;
 type FrameCallback = Box<dyn FnOnce(&mut WindowContext) + Send>;
 
 pub struct AppContext {
