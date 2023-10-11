@@ -173,8 +173,8 @@ impl TextSystem {
         Ok(Line::new(layout.clone(), runs))
     }
 
-    pub fn finish_frame(&self) {
-        self.text_layout_cache.finish_frame()
+    pub fn end_frame(&self) {
+        self.text_layout_cache.end_frame()
     }
 
     pub fn line_wrapper(

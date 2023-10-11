@@ -9,10 +9,7 @@ use std::sync::{
     Arc,
 };
 
-pub struct Hoverable<E: Styled>
-// where
-// <E::Style as Refineable>::Refinement: 'static + Send + Sync,
-{
+pub struct Hoverable<E: Styled> {
     hovered: Arc<AtomicBool>,
     cascade_slot: CascadeSlot,
     hovered_style: <E::Style as Refineable>::Refinement,

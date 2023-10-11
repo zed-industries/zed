@@ -606,8 +606,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             };
 
             cx.window.root_view = Some(root_view);
-
             let scene = cx.window.scene_builder.build();
+            cx.end_frame();
+
             cx.run_on_main(view, |_, cx| {
                 cx.window
                     .platform_window
@@ -648,6 +649,10 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             .mouse_event_handlers
             .values_mut()
             .for_each(Vec::clear);
+    }
+
+    fn end_frame(&mut self) {
+        self.text_system().end_frame();
     }
 
     fn dispatch_event(&mut self, event: Event) -> bool {
@@ -791,7 +796,7 @@ pub trait BorrowWindow: BorrowAppContext {
         self.window_mut().element_id_stack.push(id);
         let global_id = self.window_mut().element_id_stack.clone();
 
-        if let Some(any) = self
+        let result = if let Some(any) = self
             .window_mut()
             .element_states
             .remove(&global_id)
@@ -816,7 +821,11 @@ pub trait BorrowWindow: BorrowAppContext {
                 .element_states
                 .insert(global_id, Box::new(Some(state)));
             result
-        }
+        };
+
+        self.window_mut().element_id_stack.pop();
+
+        result
     }
 
     fn content_mask(&self) -> ContentMask<Pixels> {
