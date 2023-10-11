@@ -11,6 +11,7 @@ pub struct Executor {
     dispatcher: Arc<dyn PlatformDispatcher>,
 }
 
+#[must_use]
 pub enum Task<T> {
     Ready(Option<T>),
     Spawned(async_task::Task<T>),
