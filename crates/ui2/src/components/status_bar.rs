@@ -188,7 +188,16 @@ impl<S: 'static + Send + Sync + Clone> StatusBar<S> {
                                 cx.notify();
                             }),
                     )
-                    .child(IconButton::new(Icon::Ai)),
+                    .child(
+                        IconButton::new(Icon::Ai)
+                            .when(workspace_state.is_assistant_panel_open(), |this| {
+                                this.color(IconColor::Accent)
+                            })
+                            .on_click(|_, cx| {
+                                workspace_state.toggle_assistant_panel();
+                                cx.notify();
+                            }),
+                    ),
             )
     }
 }

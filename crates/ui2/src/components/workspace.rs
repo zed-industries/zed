@@ -8,15 +8,16 @@ use gpui3::{px, relative, rems, Size};
 use crate::prelude::*;
 use crate::{
     hello_world_rust_editor_with_status_example, random_players_with_call_status, theme, v_stack,
-    ChatMessage, ChatPanel, CollabPanel, EditorPane, Label, LanguageSelector, Livestream, Pane,
-    PaneGroup, Panel, PanelAllowedSides, PanelSide, ProjectPanel, SplitDirection, StatusBar,
-    Terminal, TitleBar, Toast, ToastOrigin,
+    AssistantPanel, ChatMessage, ChatPanel, CollabPanel, EditorPane, Label, LanguageSelector,
+    Livestream, Pane, PaneGroup, Panel, PanelAllowedSides, PanelSide, ProjectPanel, SplitDirection,
+    StatusBar, Terminal, TitleBar, Toast, ToastOrigin,
 };
 
 pub struct WorkspaceState {
     pub show_project_panel: Arc<AtomicBool>,
     pub show_collab_panel: Arc<AtomicBool>,
     pub show_chat_panel: Arc<AtomicBool>,
+    pub show_assistant_panel: Arc<AtomicBool>,
     pub show_terminal: Arc<AtomicBool>,
     pub show_language_selector: Arc<AtomicBool>,
 }
@@ -64,6 +65,18 @@ impl WorkspaceState {
 
     pub fn toggle_chat_panel(&self) {
         Self::toggle_value(&self.show_chat_panel);
+
+        self.show_assistant_panel.store(false, Ordering::SeqCst);
+    }
+
+    pub fn is_assistant_panel_open(&self) -> bool {
+        self.show_assistant_panel.load(Ordering::SeqCst)
+    }
+
+    pub fn toggle_assistant_panel(&self) {
+        Self::toggle_value(&self.show_assistant_panel);
+
+        self.show_chat_panel.store(false, Ordering::SeqCst);
     }
 
     pub fn is_language_selector_open(&self) -> bool {
@@ -84,6 +97,7 @@ pub fn get_workspace_state() -> &'static WorkspaceState {
         show_project_panel: Arc::new(AtomicBool::new(true)),
         show_collab_panel: Arc::new(AtomicBool::new(false)),
         show_chat_panel: Arc::new(AtomicBool::new(true)),
+        show_assistant_panel: Arc::new(AtomicBool::new(false)),
         show_terminal: Arc::new(AtomicBool::new(true)),
         show_language_selector: Arc::new(AtomicBool::new(false)),
     });
@@ -209,7 +223,7 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
                             )
                             .side(PanelSide::Left),
                         )
-                        .filter(|_| workspace_state.show_project_panel.load(Ordering::SeqCst)),
+                        .filter(|_| workspace_state.is_project_panel_open()),
                     )
                     .children(
                         Some(
@@ -222,7 +236,7 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
                             )
                             .side(PanelSide::Left),
                         )
-                        .filter(|_| workspace_state.show_collab_panel.load(Ordering::SeqCst)),
+                        .filter(|_| workspace_state.is_collab_panel_open()),
                     )
                     .child(
                         v_stack()
@@ -284,7 +298,15 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
                             )
                             .side(PanelSide::Right),
                         )
-                        .filter(|_| workspace_state.show_chat_panel.load(Ordering::SeqCst)),
+                        .filter(|_| workspace_state.is_chat_panel_open()),
+                    )
+                    .children(
+                        Some(Panel::new(
+                            self.right_panel_scroll_state.clone(),
+                            |_, _| vec![AssistantPanel::new().into_any()],
+                            Box::new(()),
+                        ))
+                        .filter(|_| workspace_state.is_assistant_panel_open()),
                     ),
             )
             .child(StatusBar::new())
@@ -297,11 +319,7 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
                         .z_index(999)
                         .child(LanguageSelector::new()),
                 )
-                .filter(|_| {
-                    workspace_state
-                        .show_language_selector
-                        .load(Ordering::SeqCst)
-                }),
+                .filter(|_| workspace_state.is_language_selector_open()),
             )
             .child(Toast::new(
                 ToastOrigin::Bottom,
