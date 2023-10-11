@@ -134,7 +134,7 @@ where
     E: Element,
     F: FnOnce(&mut ViewContext<E::ViewState>) -> E,
 {
-    let child = cx.with_state(theme.clone(), |cx| build_child(cx));
+    let child = cx.with_global(theme.clone(), |cx| build_child(cx));
     Themed { theme, child }
 }
 
@@ -160,7 +160,7 @@ impl<E: Element> Element for Themed<E> {
     where
         Self: Sized,
     {
-        cx.with_state(self.theme.clone(), |cx| {
+        cx.with_global(self.theme.clone(), |cx| {
             self.child.layout(state, element_state, cx)
         })
     }
@@ -174,12 +174,12 @@ impl<E: Element> Element for Themed<E> {
     ) where
         Self: Sized,
     {
-        cx.with_state(self.theme.clone(), |cx| {
+        cx.with_global(self.theme.clone(), |cx| {
             self.child.paint(bounds, state, frame_state, cx);
         });
     }
 }
 
 pub fn theme<'a>(cx: &'a WindowContext) -> &'a Theme {
-    cx.state()
+    cx.global()
 }

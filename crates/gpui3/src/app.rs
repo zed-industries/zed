@@ -60,7 +60,7 @@ impl App {
                 svg_renderer: SvgRenderer::new(asset_source),
                 image_cache: ImageCache::new(http_client),
                 text_style_stack: Vec::new(),
-                state_stacks_by_type: HashMap::default(),
+                global_stacks_by_type: HashMap::default(),
                 unit_entity,
                 entities,
                 windows: SlotMap::with_key(),
@@ -100,7 +100,7 @@ pub struct AppContext {
     pub(crate) svg_renderer: SvgRenderer,
     pub(crate) image_cache: ImageCache,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
-    pub(crate) state_stacks_by_type: HashMap<TypeId, Vec<Box<dyn Any + Send + Sync>>>,
+    pub(crate) global_stacks_by_type: HashMap<TypeId, Vec<Box<dyn Any + Send + Sync>>>,
     pub(crate) unit_entity: Handle<()>,
     pub(crate) entities: EntityMap,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
@@ -252,22 +252,47 @@ impl AppContext {
         style
     }
 
-    pub fn state<S: 'static>(&self) -> &S {
-        self.state_stacks_by_type
-            .get(&TypeId::of::<S>())
+    pub fn global<G: 'static>(&self) -> &G {
+        self.global_stacks_by_type
+            .get(&TypeId::of::<G>())
             .and_then(|stack| stack.last())
-            .and_then(|any_state| any_state.downcast_ref::<S>())
-            .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<S>()))
+            .and_then(|any_state| any_state.downcast_ref::<G>())
+            .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<G>()))
             .unwrap()
     }
 
-    pub fn state_mut<S: 'static>(&mut self) -> &mut S {
-        self.state_stacks_by_type
-            .get_mut(&TypeId::of::<S>())
+    pub fn global_mut<G: 'static>(&mut self) -> &mut G {
+        self.global_stacks_by_type
+            .get_mut(&TypeId::of::<G>())
             .and_then(|stack| stack.last_mut())
-            .and_then(|any_state| any_state.downcast_mut::<S>())
-            .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<S>()))
+            .and_then(|any_state| any_state.downcast_mut::<G>())
+            .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<G>()))
             .unwrap()
+    }
+
+    pub fn default_global<G: 'static + Default + Sync + Send>(&mut self) -> &mut G {
+        let stack = self
+            .global_stacks_by_type
+            .entry(TypeId::of::<G>())
+            .or_default();
+        if stack.is_empty() {
+            stack.push(Box::new(G::default()));
+        }
+        stack.last_mut().unwrap().downcast_mut::<G>().unwrap()
+    }
+
+    pub(crate) fn push_global<T: Send + Sync + 'static>(&mut self, state: T) {
+        self.global_stacks_by_type
+            .entry(TypeId::of::<T>())
+            .or_default()
+            .push(Box::new(state));
+    }
+
+    pub(crate) fn pop_global<T: 'static>(&mut self) {
+        self.global_stacks_by_type
+            .get_mut(&TypeId::of::<T>())
+            .and_then(|stack| stack.pop())
+            .expect("state stack underflow");
     }
 
     pub(crate) fn push_text_style(&mut self, text_style: TextStyleRefinement) {
@@ -276,20 +301,6 @@ impl AppContext {
 
     pub(crate) fn pop_text_style(&mut self) {
         self.text_style_stack.pop();
-    }
-
-    pub(crate) fn push_state<T: Send + Sync + 'static>(&mut self, state: T) {
-        self.state_stacks_by_type
-            .entry(TypeId::of::<T>())
-            .or_default()
-            .push(Box::new(state));
-    }
-
-    pub(crate) fn pop_state<T: 'static>(&mut self) {
-        self.state_stacks_by_type
-            .get_mut(&TypeId::of::<T>())
-            .and_then(|stack| stack.pop())
-            .expect("state stack underflow");
     }
 }
 

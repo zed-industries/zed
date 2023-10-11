@@ -1,6 +1,7 @@
 use crate::{
-    AnyElement, Bounds, DispatchPhase, Element, ElementId, IdentifiedElement, Interactive,
-    MouseEventListeners, MouseMoveEvent, ParentElement, Pixels, Styled, ViewContext,
+    element_group_bounds, AnyElement, Bounds, DispatchPhase, Element, ElementId, IdentifiedElement,
+    Interactive, MouseEventListeners, MouseMoveEvent, ParentElement, Pixels, SharedString, Styled,
+    ViewContext,
 };
 use refineable::{CascadeSlot, Refineable, RefinementCascade};
 use smallvec::SmallVec;
@@ -10,6 +11,7 @@ use std::sync::{
 };
 
 pub struct Hoverable<E: Styled> {
+    hover_group: Option<SharedString>,
     hovered: Arc<AtomicBool>,
     cascade_slot: CascadeSlot,
     hovered_style: <E::Style as Refineable>::Refinement,
@@ -17,8 +19,9 @@ pub struct Hoverable<E: Styled> {
 }
 
 impl<E: Styled> Hoverable<E> {
-    pub fn new(mut child: E) -> Self {
+    pub fn new(mut child: E, hover_group: Option<SharedString>) -> Self {
         Self {
+            hover_group,
             hovered: Arc::new(AtomicBool::new(false)),
             cascade_slot: child.style_cascade().reserve(),
             hovered_style: Default::default(),
@@ -77,17 +80,26 @@ where
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<Self::ViewState>,
     ) {
+        let bounds = self
+            .hover_group
+            .as_ref()
+            .and_then(|group| element_group_bounds(group, cx))
+            .unwrap_or(bounds);
         let hovered = bounds.contains_point(cx.mouse_position());
+
         let slot = self.cascade_slot;
         let style = hovered.then_some(self.hovered_style.clone());
         self.style_cascade().set(slot, style);
         self.hovered.store(hovered, SeqCst);
 
-        let hovered = self.hovered.clone();
-        cx.on_mouse_event(move |_, event: &MouseMoveEvent, phase, cx| {
-            if phase == DispatchPhase::Capture {
-                if bounds.contains_point(event.position) != hovered.load(SeqCst) {
-                    cx.notify();
+        cx.on_mouse_event({
+            let hovered = self.hovered.clone();
+
+            move |_, event: &MouseMoveEvent, phase, cx| {
+                if phase == DispatchPhase::Capture {
+                    if bounds.contains_point(event.position) != hovered.load(SeqCst) {
+                        cx.notify();
+                    }
                 }
             }
         });

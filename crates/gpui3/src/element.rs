@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    BorrowWindow, Bounds, Clickable, ElementId, LayoutId, MouseDownEvent, MouseUpEvent, Pixels,
-    Point, ViewContext,
+    BorrowWindow, Bounds, Clickable, ElementGroup, ElementId, LayoutId, MouseDownEvent,
+    MouseUpEvent, Pixels, Point, SharedString, ViewContext,
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
@@ -27,6 +27,13 @@ pub trait Element: 'static + Send + Sync {
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<Self::ViewState>,
     );
+
+    fn group(self, name: impl Into<SharedString>) -> ElementGroup<Self>
+    where
+        Self: Sized,
+    {
+        ElementGroup::new(name.into(), self)
+    }
 }
 
 pub trait IdentifiedElement: Element {

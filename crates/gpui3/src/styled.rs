@@ -1,4 +1,4 @@
-use crate::{Hoverable, Pressable, Refineable, RefinementCascade};
+use crate::{Hoverable, Pressable, Refineable, RefinementCascade, SharedString};
 
 pub trait Styled {
     type Style: 'static + Refineable + Send + Sync + Default;
@@ -16,7 +16,16 @@ pub trait Styled {
         Self::Style: 'static + Refineable + Default + Send + Sync,
         <Self::Style as Refineable>::Refinement: 'static + Default + Send + Sync,
     {
-        Hoverable::new(self)
+        Hoverable::new(self, None)
+    }
+
+    fn group_hover(self, group_name: impl Into<SharedString>) -> Hoverable<Self>
+    where
+        Self: 'static + Sized + Send + Sync,
+        Self::Style: 'static + Refineable + Default + Send + Sync,
+        <Self::Style as Refineable>::Refinement: 'static + Default + Send + Sync,
+    {
+        Hoverable::new(self, Some(group_name.into()))
     }
 
     fn active(self) -> Pressable<Self>

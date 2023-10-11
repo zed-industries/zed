@@ -52,7 +52,7 @@ pub use view::*;
 pub use window::*;
 
 use std::{
-    any::Any,
+    any::{Any, TypeId},
     mem,
     ops::{Deref, DerefMut},
     sync::Arc,
@@ -75,6 +75,12 @@ pub trait Context {
         handle: &Handle<T>,
         update: impl FnOnce(&mut T, &mut Self::EntityContext<'_, '_, T>) -> R,
     ) -> Self::Result<R>;
+}
+
+pub enum GlobalKey {
+    Numeric(usize),
+    View(EntityId),
+    Type(TypeId),
 }
 
 #[repr(transparent)]
@@ -143,13 +149,13 @@ pub trait BorrowAppContext {
         result
     }
 
-    fn with_state<T: Send + Sync + 'static, F, R>(&mut self, state: T, f: F) -> R
+    fn with_global<T: Send + Sync + 'static, F, R>(&mut self, state: T, f: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
     {
-        self.app_mut().push_state(state);
+        self.app_mut().push_global(state);
         let result = f(self);
-        self.app_mut().pop_state::<T>();
+        self.app_mut().pop_global::<T>();
         result
     }
 }
