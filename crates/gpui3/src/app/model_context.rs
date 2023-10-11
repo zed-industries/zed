@@ -1,4 +1,4 @@
-use crate::{AppContext, Context, Effect, EntityId, Handle, Reference, WeakHandle};
+use crate::{AppContext, Context, Effect, EntityId, EventEmitter, Handle, Reference, WeakHandle};
 use std::{marker::PhantomData, sync::Arc};
 
 pub struct ModelContext<'a, T> {
@@ -59,10 +59,44 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
             }));
     }
 
+    pub fn subscribe<E: EventEmitter + Send + Sync + 'static>(
+        &mut self,
+        handle: &Handle<E>,
+        on_event: impl Fn(&mut T, Handle<E>, &E::Event, &mut ModelContext<'_, T>)
+            + Send
+            + Sync
+            + 'static,
+    ) {
+        let this = self.handle();
+        let handle = handle.downgrade();
+        self.app
+            .event_handlers
+            .entry(handle.id)
+            .or_default()
+            .push(Arc::new(move |event, cx| {
+                let event = event.downcast_ref().expect("invalid event type");
+                if let Some((this, handle)) = this.upgrade(cx).zip(handle.upgrade(cx)) {
+                    this.update(cx, |this, cx| on_event(this, handle, event, cx));
+                    true
+                } else {
+                    false
+                }
+            }));
+    }
+
     pub fn notify(&mut self) {
         self.app
             .pending_effects
             .push_back(Effect::Notify(self.entity_id));
+    }
+}
+
+impl<'a, T: EventEmitter + Send + Sync + 'static> ModelContext<'a, T> {
+    pub fn emit(&mut self, event: T::Event) {
+        self.app.pending_effects.push_back(Effect::Emit {
+            entity_id: self.entity_id,
+            event: Box::new(event),
+        });
     }
 }
 

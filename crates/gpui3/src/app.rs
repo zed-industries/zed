@@ -68,6 +68,7 @@ impl App {
                 windows: SlotMap::with_key(),
                 pending_effects: Default::default(),
                 observers: Default::default(),
+                event_handlers: Default::default(),
                 layout_id_buffer: Default::default(),
             })
         }))
@@ -88,6 +89,8 @@ impl App {
 }
 
 type Handlers = SmallVec<[Arc<dyn Fn(&mut AppContext) -> bool + Send + Sync + 'static>; 2]>;
+type EventHandlers =
+    SmallVec<[Arc<dyn Fn(&dyn Any, &mut AppContext) -> bool + Send + Sync + 'static>; 2]>;
 type FrameCallback = Box<dyn FnOnce(&mut WindowContext) + Send>;
 
 pub struct AppContext {
@@ -107,6 +110,7 @@ pub struct AppContext {
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) pending_effects: VecDeque<Effect>,
     pub(crate) observers: HashMap<EntityId, Handlers>,
+    pub(crate) event_handlers: HashMap<EntityId, EventHandlers>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
 }
 
@@ -149,6 +153,7 @@ impl AppContext {
         while let Some(effect) = self.pending_effects.pop_front() {
             match effect {
                 Effect::Notify(entity_id) => self.apply_notify_effect(entity_id),
+                Effect::Emit { entity_id, event } => self.apply_emit_effect(entity_id, event),
             }
         }
 
@@ -177,6 +182,16 @@ impl AppContext {
                 handlers.extend(new_handlers);
             }
             self.observers.insert(updated_entity, handlers);
+        }
+    }
+
+    fn apply_emit_effect(&mut self, updated_entity: EntityId, event: Box<dyn Any>) {
+        if let Some(mut handlers) = self.event_handlers.remove(&updated_entity) {
+            handlers.retain(|handler| handler(&event, self));
+            if let Some(new_handlers) = self.event_handlers.remove(&updated_entity) {
+                handlers.extend(new_handlers);
+            }
+            self.event_handlers.insert(updated_entity, handlers);
         }
     }
 
@@ -367,6 +382,10 @@ impl MainThread<AppContext> {
 
 pub(crate) enum Effect {
     Notify(EntityId),
+    Emit {
+        entity_id: EntityId,
+        event: Box<dyn Any + Send + Sync + 'static>,
+    },
 }
 
 #[cfg(test)]

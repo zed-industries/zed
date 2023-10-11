@@ -152,6 +152,10 @@ pub trait BorrowAppContext {
     }
 }
 
+pub trait EventEmitter {
+    type Event: Any + Send + Sync + 'static;
+}
+
 pub trait Flatten<T> {
     fn flatten(self) -> Result<T>;
 }

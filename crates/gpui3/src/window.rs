@@ -1,11 +1,11 @@
 use crate::{
     px, size, AnyBox, AnyView, AppContext, AsyncWindowContext, AvailableSpace, BorrowAppContext,
     Bounds, BoxShadow, Context, Corners, DevicePixels, DisplayId, Edges, Effect, Element, EntityId,
-    Event, FontId, GlobalElementId, GlyphId, Handle, Hsla, ImageData, IsZero, LayoutId, MainThread,
-    MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path, Pixels, PlatformAtlas, PlatformWindow,
-    Point, PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style,
-    TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle, WindowOptions,
+    Event, EventEmitter, FontId, GlobalElementId, GlyphId, Handle, Hsla, ImageData, IsZero,
+    LayoutId, MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path, Pixels,
+    PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
+    Style, TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle, WindowOptions,
     SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
@@ -930,6 +930,35 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
             }));
     }
 
+    pub fn subscribe<E: EventEmitter + Send + Sync + 'static>(
+        &mut self,
+        handle: &Handle<E>,
+        on_event: impl Fn(&mut S, Handle<E>, &E::Event, &mut ViewContext<'_, '_, S>)
+            + Send
+            + Sync
+            + 'static,
+    ) {
+        let this = self.handle();
+        let handle = handle.downgrade();
+        let window_handle = self.window.handle;
+        self.app
+            .event_handlers
+            .entry(handle.id)
+            .or_default()
+            .push(Arc::new(move |event, cx| {
+                cx.update_window(window_handle.id, |cx| {
+                    if let Some(handle) = handle.upgrade(cx) {
+                        let event = event.downcast_ref().expect("invalid event type");
+                        this.update(cx, |this, cx| on_event(this, handle, event, cx))
+                            .is_ok()
+                    } else {
+                        false
+                    }
+                })
+                .unwrap_or(false)
+            }));
+    }
+
     pub fn notify(&mut self) {
         self.window_cx.notify();
         self.window_cx
@@ -979,6 +1008,16 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
             handle.update(cx, |view, cx| {
                 handler(view, event, phase, cx);
             })
+        });
+    }
+}
+
+impl<'a, 'w, S: EventEmitter + Send + Sync + 'static> ViewContext<'a, 'w, S> {
+    pub fn emit(&mut self, event: S::Event) {
+        let entity_id = self.entity_id;
+        self.app.pending_effects.push_back(Effect::Emit {
+            entity_id,
+            event: Box::new(event),
         });
     }
 }
