@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 pub use language::*;
-use lsp::LanguageServerBinary;
+use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use serde_json::Value;
@@ -71,6 +71,13 @@ impl super::LspAdapter for VueLspAdapter {
                 "tsdk": typescript_sdk_path
             }
         }))
+    }
+    fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
+        Some(vec![
+            CodeActionKind::EMPTY,
+            CodeActionKind::QUICKFIX,
+            CodeActionKind::REFACTOR_REWRITE,
+        ])
     }
     async fn fetch_server_binary(
         &self,
