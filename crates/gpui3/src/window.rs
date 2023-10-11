@@ -793,39 +793,33 @@ pub trait BorrowWindow: BorrowAppContext {
         id: ElementId,
         f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
     ) -> R {
-        self.window_mut().element_id_stack.push(id);
-        let global_id = self.window_mut().element_id_stack.clone();
-
-        let result = if let Some(any) = self
-            .window_mut()
-            .element_states
-            .remove(&global_id)
-            .or_else(|| self.window_mut().prev_element_states.remove(&global_id))
-        {
-            // Using the extra inner option to avoid needing to reallocate a new box.
-            let mut state_box = any
-                .downcast::<Option<S>>()
-                .expect("invalid element state type for id");
-            let state = state_box
-                .take()
-                .expect("element state is already on the stack");
-            let (result, state) = f(Some(state), self);
-            state_box.replace(state);
-            self.window_mut()
+        self.with_element_id(id, |cx| {
+            let global_id = cx.window_mut().element_id_stack.clone();
+            if let Some(any) = cx
+                .window_mut()
                 .element_states
-                .insert(global_id, state_box);
-            result
-        } else {
-            let (result, state) = f(None, self);
-            self.window_mut()
-                .element_states
-                .insert(global_id, Box::new(Some(state)));
-            result
-        };
-
-        self.window_mut().element_id_stack.pop();
-
-        result
+                .remove(&global_id)
+                .or_else(|| cx.window_mut().prev_element_states.remove(&global_id))
+            {
+                // Using the extra inner option to avoid needing to reallocate a new box.
+                let mut state_box = any
+                    .downcast::<Option<S>>()
+                    .expect("invalid element state type for id");
+                let state = state_box
+                    .take()
+                    .expect("element state is already on the stack");
+                let (result, state) = f(Some(state), cx);
+                state_box.replace(state);
+                cx.window_mut().element_states.insert(global_id, state_box);
+                result
+            } else {
+                let (result, state) = f(None, cx);
+                cx.window_mut()
+                    .element_states
+                    .insert(global_id, Box::new(Some(state)));
+                result
+            }
+        })
     }
 
     fn content_mask(&self) -> ContentMask<Pixels> {
