@@ -494,6 +494,7 @@ fn main() {
                             let project = cx.update(|cx| {
                                 Project::local(
                                     client.clone(),
+                                    node_runtime::FakeNodeRuntime::new(),
                                     user_store.clone(),
                                     languages.clone(),
                                     fs.clone(),

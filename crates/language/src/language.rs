@@ -227,6 +227,10 @@ impl CachedLspAdapter {
     ) -> Option<CodeLabel> {
         self.adapter.label_for_symbol(name, kind, language).await
     }
+
+    pub fn enabled_formatters(&self) -> Vec<BundledFormatter> {
+        self.adapter.enabled_formatters()
+    }
 }
 
 pub trait LspAdapterDelegate: Send + Sync {
@@ -332,6 +336,33 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     async fn language_ids(&self) -> HashMap<String, String> {
         Default::default()
+    }
+
+    fn enabled_formatters(&self) -> Vec<BundledFormatter> {
+        Vec::new()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BundledFormatter {
+    Prettier {
+        // See https://prettier.io/docs/en/options.html#parser for a list of valid values.
+        // Usually, every language has a single parser (standard or plugin-provided), hence `Some("parser_name")` can be used.
+        // There can not be multiple parsers for a single language, in case of a conflict, we would attempt to select the one with most plugins.
+        //
+        // But exceptions like Tailwind CSS exist, which uses standard parsers for CSS/JS/HTML/etc. but require an extra plugin to be installed.
+        // For those cases, `None` will install the plugin but apply other, regular parser defined for the language, and this would not be a conflict.
+        parser_name: Option<&'static str>,
+        plugin_names: Vec<&'static str>,
+    },
+}
+
+impl BundledFormatter {
+    pub fn prettier(parser_name: &'static str) -> Self {
+        Self::Prettier {
+            parser_name: Some(parser_name),
+            plugin_names: Vec::new(),
+        }
     }
 }
 
@@ -467,6 +498,7 @@ pub struct FakeLspAdapter {
     pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub disk_based_diagnostics_sources: Vec<String>,
+    pub enabled_formatters: Vec<BundledFormatter>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1729,6 +1761,7 @@ impl Default for FakeLspAdapter {
             disk_based_diagnostics_progress_token: None,
             initialization_options: None,
             disk_based_diagnostics_sources: Vec::new(),
+            enabled_formatters: Vec::new(),
         }
     }
 }
@@ -1784,6 +1817,10 @@ impl LspAdapter for Arc<FakeLspAdapter> {
 
     async fn initialization_options(&self) -> Option<Value> {
         self.initialization_options.clone()
+    }
+
+    fn enabled_formatters(&self) -> Vec<BundledFormatter> {
+        self.enabled_formatters.clone()
     }
 }
 

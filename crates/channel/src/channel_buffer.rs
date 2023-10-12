@@ -99,6 +99,10 @@ impl ChannelBuffer {
         }))
     }
 
+    pub fn remote_id(&self, cx: &AppContext) -> u64 {
+        self.buffer.read(cx).remote_id()
+    }
+
     pub fn user_store(&self) -> &ModelHandle<UserStore> {
         &self.user_store
     }

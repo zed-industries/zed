@@ -20,7 +20,7 @@ use futures::{
         mpsc::{self, UnboundedReceiver},
         oneshot,
     },
-    future::{try_join_all, Shared},
+    future::{self, try_join_all, Shared},
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
 };
@@ -31,17 +31,19 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{
-    language_settings::{language_settings, FormatOnSave, Formatter, InlayHintKind},
+    language_settings::{
+        language_settings, FormatOnSave, Formatter, InlayHintKind, LanguageSettings,
+    },
     point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
         serialize_anchor, serialize_version, split_operations,
     },
-    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeAction,
-    CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Event as BufferEvent,
-    File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapterDelegate,
-    OffsetRangeExt, Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot,
-    ToOffset, ToPointUtf16, Transaction, Unclipped,
+    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, BundledFormatter, CachedLspAdapter,
+    CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff,
+    Event as BufferEvent, File as _, Language, LanguageRegistry, LanguageServerName, LocalFile,
+    LspAdapterDelegate, OffsetRangeExt, Operation, Patch, PendingLanguageServer, PointUtf16,
+    TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use log::error;
 use lsp::{
@@ -49,7 +51,9 @@ use lsp::{
     DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId, OneOf,
 };
 use lsp_command::*;
+use node_runtime::NodeRuntime;
 use postage::watch;
+use prettier::{LocateStart, Prettier, PRETTIER_SERVER_FILE, PRETTIER_SERVER_JS};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use search::SearchQuery;
@@ -75,10 +79,13 @@ use std::{
     time::{Duration, Instant},
 };
 use terminals::Terminals;
-use text::Anchor;
+use text::{Anchor, LineEnding, Rope};
 use util::{
-    debug_panic, defer, http::HttpClient, merge_json_value_into,
-    paths::LOCAL_SETTINGS_RELATIVE_PATH, post_inc, ResultExt, TryFutureExt as _,
+    debug_panic, defer,
+    http::HttpClient,
+    merge_json_value_into,
+    paths::{DEFAULT_PRETTIER_DIR, LOCAL_SETTINGS_RELATIVE_PATH},
+    post_inc, ResultExt, TryFutureExt as _,
 };
 
 pub use fs::*;
@@ -152,6 +159,11 @@ pub struct Project {
     copilot_lsp_subscription: Option<gpui::Subscription>,
     copilot_log_subscription: Option<lsp::Subscription>,
     current_lsp_settings: HashMap<Arc<str>, LspSettings>,
+    node: Option<Arc<dyn NodeRuntime>>,
+    prettier_instances: HashMap<
+        (Option<WorktreeId>, PathBuf),
+        Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>,
+    >,
 }
 
 struct DelayedDebounced {
@@ -605,6 +617,7 @@ impl Project {
 
     pub fn local(
         client: Arc<Client>,
+        node: Arc<dyn NodeRuntime>,
         user_store: ModelHandle<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
@@ -660,6 +673,8 @@ impl Project {
                 copilot_lsp_subscription,
                 copilot_log_subscription: None,
                 current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
+                node: Some(node),
+                prettier_instances: HashMap::default(),
             }
         })
     }
@@ -757,6 +772,8 @@ impl Project {
                 copilot_lsp_subscription,
                 copilot_log_subscription: None,
                 current_lsp_settings: settings::get::<ProjectSettings>(cx).lsp.clone(),
+                node: None,
+                prettier_instances: HashMap::default(),
             };
             for worktree in worktrees {
                 let _ = this.add_worktree(&worktree, cx);
@@ -795,8 +812,16 @@ impl Project {
         let http_client = util::http::FakeHttpClient::with_404_response();
         let client = cx.update(|cx| client::Client::new(http_client.clone(), cx));
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        let project =
-            cx.update(|cx| Project::local(client, user_store, Arc::new(languages), fs, cx));
+        let project = cx.update(|cx| {
+            Project::local(
+                client,
+                node_runtime::FakeNodeRuntime::new(),
+                user_store,
+                Arc::new(languages),
+                fs,
+                cx,
+            )
+        });
         for path in root_paths {
             let (tree, _) = project
                 .update(cx, |project, cx| {
@@ -810,19 +835,37 @@ impl Project {
         project
     }
 
+    /// Enables a prettier mock that avoids interacting with node runtime, prettier LSP wrapper, or any real file changes.
+    /// Instead, if appends the suffix to every input, this suffix is returned by this method.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn enable_test_prettier(&mut self, plugins: &[&'static str]) -> &'static str {
+        self.node = Some(node_runtime::FakeNodeRuntime::with_prettier_support(
+            plugins,
+        ));
+        Prettier::FORMAT_SUFFIX
+    }
+
     fn on_settings_changed(&mut self, cx: &mut ModelContext<Self>) {
         let mut language_servers_to_start = Vec::new();
+        let mut language_formatters_to_check = Vec::new();
         for buffer in self.opened_buffers.values() {
             if let Some(buffer) = buffer.upgrade(cx) {
                 let buffer = buffer.read(cx);
-                if let Some((file, language)) = buffer.file().zip(buffer.language()) {
-                    let settings = language_settings(Some(language), Some(file), cx);
+                let buffer_file = File::from_dyn(buffer.file());
+                let buffer_language = buffer.language();
+                let settings = language_settings(buffer_language, buffer.file(), cx);
+                if let Some(language) = buffer_language {
                     if settings.enable_language_server {
-                        if let Some(file) = File::from_dyn(Some(file)) {
+                        if let Some(file) = buffer_file {
                             language_servers_to_start
-                                .push((file.worktree.clone(), language.clone()));
+                                .push((file.worktree.clone(), Arc::clone(language)));
                         }
                     }
+                    language_formatters_to_check.push((
+                        buffer_file.map(|f| f.worktree_id(cx)),
+                        Arc::clone(language),
+                        settings.clone(),
+                    ));
                 }
             }
         }
@@ -873,6 +916,11 @@ impl Project {
         for (worktree_id, adapter_name) in language_servers_to_stop {
             self.stop_language_server(worktree_id, adapter_name, cx)
                 .detach();
+        }
+
+        for (worktree, language, settings) in language_formatters_to_check {
+            self.install_default_formatters(worktree, &language, &settings, cx)
+                .detach_and_log_err(cx);
         }
 
         // Start all the newly-enabled language servers.
@@ -2623,7 +2671,26 @@ impl Project {
             }
         });
 
-        if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
+        let buffer_file = buffer.read(cx).file().cloned();
+        let settings = language_settings(Some(&new_language), buffer_file.as_ref(), cx).clone();
+        let buffer_file = File::from_dyn(buffer_file.as_ref());
+        let worktree = buffer_file.as_ref().map(|f| f.worktree_id(cx));
+
+        let task_buffer = buffer.clone();
+        let prettier_installation_task =
+            self.install_default_formatters(worktree, &new_language, &settings, cx);
+        cx.spawn(|project, mut cx| async move {
+            prettier_installation_task.await?;
+            let _ = project
+                .update(&mut cx, |project, cx| {
+                    project.prettier_instance_for_buffer(&task_buffer, cx)
+                })
+                .await;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+
+        if let Some(file) = buffer_file {
             let worktree = file.worktree.clone();
             if let Some(tree) = worktree.read(cx).as_local() {
                 self.start_language_servers(&worktree, tree.abs_path().clone(), new_language, cx);
@@ -3949,7 +4016,7 @@ impl Project {
         push_to_history: bool,
         trigger: FormatTrigger,
         cx: &mut ModelContext<Project>,
-    ) -> Task<Result<ProjectTransaction>> {
+    ) -> Task<anyhow::Result<ProjectTransaction>> {
         if self.is_local() {
             let mut buffers_with_paths_and_servers = buffers
                 .into_iter()
@@ -4027,6 +4094,7 @@ impl Project {
                     enum FormatOperation {
                         Lsp(Vec<(Range<Anchor>, String)>),
                         External(Diff),
+                        Prettier(Diff),
                     }
 
                     // Apply language-specific formatting using either a language server
@@ -4062,8 +4130,8 @@ impl Project {
                         | (_, FormatOnSave::External { command, arguments }) => {
                             if let Some(buffer_abs_path) = buffer_abs_path {
                                 format_operation = Self::format_via_external_command(
-                                    &buffer,
-                                    &buffer_abs_path,
+                                    buffer,
+                                    buffer_abs_path,
                                     &command,
                                     &arguments,
                                     &mut cx,
@@ -4075,6 +4143,69 @@ impl Project {
                                 ))?
                                 .map(FormatOperation::External);
                             }
+                        }
+                        (Formatter::Auto, FormatOnSave::On | FormatOnSave::Off) => {
+                            if let Some(prettier_task) = this
+                                .update(&mut cx, |project, cx| {
+                                    project.prettier_instance_for_buffer(buffer, cx)
+                                }).await {
+                                    match prettier_task.await
+                                    {
+                                        Ok(prettier) => {
+                                            let buffer_path = buffer.read_with(&cx, |buffer, cx| {
+                                                File::from_dyn(buffer.file()).map(|file| file.abs_path(cx))
+                                            });
+                                            format_operation = Some(FormatOperation::Prettier(
+                                                prettier
+                                                    .format(buffer, buffer_path, &cx)
+                                                    .await
+                                                    .context("formatting via prettier")?,
+                                            ));
+                                        }
+                                        Err(e) => anyhow::bail!(
+                                            "Failed to create prettier instance for buffer during autoformatting: {e:#}"
+                                        ),
+                                    }
+                            } else if let Some((language_server, buffer_abs_path)) =
+                                language_server.as_ref().zip(buffer_abs_path.as_ref())
+                            {
+                                format_operation = Some(FormatOperation::Lsp(
+                                    Self::format_via_lsp(
+                                        &this,
+                                        &buffer,
+                                        buffer_abs_path,
+                                        &language_server,
+                                        tab_size,
+                                        &mut cx,
+                                    )
+                                    .await
+                                    .context("failed to format via language server")?,
+                                ));
+                            }
+                        }
+                        (Formatter::Prettier { .. }, FormatOnSave::On | FormatOnSave::Off) => {
+                            if let Some(prettier_task) = this
+                                .update(&mut cx, |project, cx| {
+                                    project.prettier_instance_for_buffer(buffer, cx)
+                                }).await {
+                                    match prettier_task.await
+                                    {
+                                        Ok(prettier) => {
+                                            let buffer_path = buffer.read_with(&cx, |buffer, cx| {
+                                                File::from_dyn(buffer.file()).map(|file| file.abs_path(cx))
+                                            });
+                                            format_operation = Some(FormatOperation::Prettier(
+                                                prettier
+                                                    .format(buffer, buffer_path, &cx)
+                                                    .await
+                                                    .context("formatting via prettier")?,
+                                            ));
+                                        }
+                                        Err(e) => anyhow::bail!(
+                                            "Failed to create prettier instance for buffer during formatting: {e:#}"
+                                        ),
+                                    }
+                                }
                         }
                     };
 
@@ -4098,6 +4229,9 @@ impl Project {
                                     b.edit(edits, None, cx);
                                 }
                                 FormatOperation::External(diff) => {
+                                    b.apply_diff(diff, cx);
+                                }
+                                FormatOperation::Prettier(diff) => {
                                     b.apply_diff(diff, cx);
                                 }
                             }
@@ -5873,6 +6007,7 @@ impl Project {
                     this.update_local_worktree_buffers(&worktree, changes, cx);
                     this.update_local_worktree_language_servers(&worktree, changes, cx);
                     this.update_local_worktree_settings(&worktree, changes, cx);
+                    this.update_prettier_settings(&worktree, changes, cx);
                     cx.emit(Event::WorktreeUpdatedEntries(
                         worktree.read(cx).id(),
                         changes.clone(),
@@ -6250,6 +6385,69 @@ impl Project {
             });
         })
         .detach();
+    }
+
+    fn update_prettier_settings(
+        &self,
+        worktree: &ModelHandle<Worktree>,
+        changes: &[(Arc<Path>, ProjectEntryId, PathChange)],
+        cx: &mut ModelContext<'_, Project>,
+    ) {
+        let prettier_config_files = Prettier::CONFIG_FILE_NAMES
+            .iter()
+            .map(Path::new)
+            .collect::<HashSet<_>>();
+
+        let prettier_config_file_changed = changes
+            .iter()
+            .filter(|(_, _, change)| !matches!(change, PathChange::Loaded))
+            .filter(|(path, _, _)| {
+                !path
+                    .components()
+                    .any(|component| component.as_os_str().to_string_lossy() == "node_modules")
+            })
+            .find(|(path, _, _)| prettier_config_files.contains(path.as_ref()));
+        let current_worktree_id = worktree.read(cx).id();
+        if let Some((config_path, _, _)) = prettier_config_file_changed {
+            log::info!(
+                "Prettier config file {config_path:?} changed, reloading prettier instances for worktree {current_worktree_id}"
+            );
+            let prettiers_to_reload = self
+                .prettier_instances
+                .iter()
+                .filter_map(|((worktree_id, prettier_path), prettier_task)| {
+                    if worktree_id.is_none() || worktree_id == &Some(current_worktree_id) {
+                        Some((*worktree_id, prettier_path.clone(), prettier_task.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            cx.background()
+                .spawn(async move {
+                    for task_result in future::join_all(prettiers_to_reload.into_iter().map(|(worktree_id, prettier_path, prettier_task)| {
+                        async move {
+                            prettier_task.await?
+                                .clear_cache()
+                                .await
+                                .with_context(|| {
+                                    format!(
+                                        "clearing prettier {prettier_path:?} cache for worktree {worktree_id:?} on prettier settings update"
+                                    )
+                                })
+                                .map_err(Arc::new)
+                        }
+                    }))
+                    .await
+                    {
+                        if let Err(e) = task_result {
+                            log::error!("Failed to clear cache for prettier: {e:#}");
+                        }
+                    }
+                })
+                .detach();
+        }
     }
 
     pub fn set_active_path(&mut self, entry: Option<ProjectPath>, cx: &mut ModelContext<Self>) {
@@ -8108,6 +8306,236 @@ impl Project {
         } else {
             Vec::new()
         }
+    }
+
+    fn prettier_instance_for_buffer(
+        &mut self,
+        buffer: &ModelHandle<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Option<Shared<Task<Result<Arc<Prettier>, Arc<anyhow::Error>>>>>> {
+        let buffer = buffer.read(cx);
+        let buffer_file = buffer.file();
+        let Some(buffer_language) = buffer.language() else {
+            return Task::ready(None);
+        };
+        if !buffer_language
+            .lsp_adapters()
+            .iter()
+            .flat_map(|adapter| adapter.enabled_formatters())
+            .any(|formatter| matches!(formatter, BundledFormatter::Prettier { .. }))
+        {
+            return Task::ready(None);
+        }
+
+        let buffer_file = File::from_dyn(buffer_file);
+        let buffer_path = buffer_file.map(|file| Arc::clone(file.path()));
+        let worktree_path = buffer_file
+            .as_ref()
+            .and_then(|file| Some(file.worktree.read(cx).abs_path()));
+        let worktree_id = buffer_file.map(|file| file.worktree_id(cx));
+        if self.is_local() || worktree_id.is_none() || worktree_path.is_none() {
+            let Some(node) = self.node.as_ref().map(Arc::clone) else {
+                return Task::ready(None);
+            };
+            cx.spawn(|this, mut cx| async move {
+                let fs = this.update(&mut cx, |project, _| Arc::clone(&project.fs));
+                let prettier_dir = match cx
+                    .background()
+                    .spawn(Prettier::locate(
+                        worktree_path.zip(buffer_path).map(
+                            |(worktree_root_path, starting_path)| LocateStart {
+                                worktree_root_path,
+                                starting_path,
+                            },
+                        ),
+                        fs,
+                    ))
+                    .await
+                {
+                    Ok(path) => path,
+                    Err(e) => {
+                        return Some(
+                            Task::ready(Err(Arc::new(e.context(
+                                "determining prettier path for worktree {worktree_path:?}",
+                            ))))
+                            .shared(),
+                        );
+                    }
+                };
+
+                if let Some(existing_prettier) = this.update(&mut cx, |project, _| {
+                    project
+                        .prettier_instances
+                        .get(&(worktree_id, prettier_dir.clone()))
+                        .cloned()
+                }) {
+                    return Some(existing_prettier);
+                }
+
+                log::info!("Found prettier in {prettier_dir:?}, starting.");
+                let task_prettier_dir = prettier_dir.clone();
+                let weak_project = this.downgrade();
+                let new_server_id =
+                    this.update(&mut cx, |this, _| this.languages.next_language_server_id());
+                let new_prettier_task = cx
+                    .spawn(|mut cx| async move {
+                        let prettier = Prettier::start(
+                            worktree_id.map(|id| id.to_usize()),
+                            new_server_id,
+                            task_prettier_dir,
+                            node,
+                            cx.clone(),
+                        )
+                        .await
+                        .context("prettier start")
+                        .map_err(Arc::new)?;
+                        log::info!("Started prettier in {:?}", prettier.prettier_dir());
+
+                        if let Some((project, prettier_server)) =
+                            weak_project.upgrade(&mut cx).zip(prettier.server())
+                        {
+                            project.update(&mut cx, |project, cx| {
+                                let name = if prettier.is_default() {
+                                    LanguageServerName(Arc::from("prettier (default)"))
+                                } else {
+                                    let prettier_dir = prettier.prettier_dir();
+                                    let worktree_path = prettier
+                                        .worktree_id()
+                                        .map(WorktreeId::from_usize)
+                                        .and_then(|id| project.worktree_for_id(id, cx))
+                                        .map(|worktree| worktree.read(cx).abs_path());
+                                    match worktree_path {
+                                        Some(worktree_path) => {
+                                            if worktree_path.as_ref() == prettier_dir {
+                                                LanguageServerName(Arc::from(format!(
+                                                    "prettier ({})",
+                                                    prettier_dir
+                                                        .file_name()
+                                                        .and_then(|name| name.to_str())
+                                                        .unwrap_or_default()
+                                                )))
+                                            } else {
+                                                let dir_to_display = match prettier_dir
+                                                    .strip_prefix(&worktree_path)
+                                                    .ok()
+                                                {
+                                                    Some(relative_path) => relative_path,
+                                                    None => prettier_dir,
+                                                };
+                                                LanguageServerName(Arc::from(format!(
+                                                    "prettier ({})",
+                                                    dir_to_display.display(),
+                                                )))
+                                            }
+                                        }
+                                        None => LanguageServerName(Arc::from(format!(
+                                            "prettier ({})",
+                                            prettier_dir.display(),
+                                        ))),
+                                    }
+                                };
+
+                                project
+                                    .supplementary_language_servers
+                                    .insert(new_server_id, (name, Arc::clone(prettier_server)));
+                                cx.emit(Event::LanguageServerAdded(new_server_id));
+                            });
+                        }
+                        Ok(Arc::new(prettier)).map_err(Arc::new)
+                    })
+                    .shared();
+                this.update(&mut cx, |project, _| {
+                    project
+                        .prettier_instances
+                        .insert((worktree_id, prettier_dir), new_prettier_task.clone());
+                });
+                Some(new_prettier_task)
+            })
+        } else if self.remote_id().is_some() {
+            return Task::ready(None);
+        } else {
+            Task::ready(Some(
+                Task::ready(Err(Arc::new(anyhow!("project does not have a remote id")))).shared(),
+            ))
+        }
+    }
+
+    fn install_default_formatters(
+        &self,
+        worktree: Option<WorktreeId>,
+        new_language: &Language,
+        language_settings: &LanguageSettings,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        match &language_settings.formatter {
+            Formatter::Prettier { .. } | Formatter::Auto => {}
+            Formatter::LanguageServer | Formatter::External { .. } => return Task::ready(Ok(())),
+        };
+        let Some(node) = self.node.as_ref().cloned() else {
+            return Task::ready(Ok(()));
+        };
+
+        let mut prettier_plugins = None;
+        for formatter in new_language
+            .lsp_adapters()
+            .into_iter()
+            .flat_map(|adapter| adapter.enabled_formatters())
+        {
+            match formatter {
+                BundledFormatter::Prettier { plugin_names, .. } => prettier_plugins
+                    .get_or_insert_with(|| HashSet::default())
+                    .extend(plugin_names),
+            }
+        }
+        let Some(prettier_plugins) = prettier_plugins else {
+            return Task::ready(Ok(()));
+        };
+
+        let default_prettier_dir = DEFAULT_PRETTIER_DIR.as_path();
+        let already_running_prettier = self
+            .prettier_instances
+            .get(&(worktree, default_prettier_dir.to_path_buf()))
+            .cloned();
+
+        let fs = Arc::clone(&self.fs);
+        cx.background()
+            .spawn(async move {
+                let prettier_wrapper_path = default_prettier_dir.join(PRETTIER_SERVER_FILE);
+                // method creates parent directory if it doesn't exist
+                fs.save(&prettier_wrapper_path, &Rope::from(PRETTIER_SERVER_JS), LineEnding::Unix).await
+                .with_context(|| format!("writing {PRETTIER_SERVER_FILE} file at {prettier_wrapper_path:?}"))?;
+
+                let packages_to_versions = future::try_join_all(
+                    prettier_plugins
+                        .iter()
+                        .chain(Some(&"prettier"))
+                        .map(|package_name| async {
+                            let returned_package_name = package_name.to_string();
+                            let latest_version = node.npm_package_latest_version(package_name)
+                                .await
+                                .with_context(|| {
+                                    format!("fetching latest npm version for package {returned_package_name}")
+                                })?;
+                            anyhow::Ok((returned_package_name, latest_version))
+                        }),
+                )
+                .await
+                .context("fetching latest npm versions")?;
+
+                log::info!("Fetching default prettier and plugins: {packages_to_versions:?}");
+                let borrowed_packages = packages_to_versions.iter().map(|(package, version)| {
+                    (package.as_str(), version.as_str())
+                }).collect::<Vec<_>>();
+                node.npm_install_packages(default_prettier_dir, &borrowed_packages).await.context("fetching formatter packages")?;
+
+                if !prettier_plugins.is_empty() {
+                    if let Some(prettier) = already_running_prettier {
+                        prettier.await.map_err(|e| anyhow::anyhow!("Default prettier startup await failure: {e:#}"))?.clear_cache().await.context("clearing default prettier cache after plugins install")?;
+                    }
+                }
+
+                anyhow::Ok(())
+            })
     }
 }
 

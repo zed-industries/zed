@@ -199,7 +199,12 @@
   //         "arguments": ["--stdin-filepath", "{buffer_path}"]
   //       }
   //     }
-  "formatter": "language_server",
+  // 3. Format code using Zed's Prettier integration:
+  //     "formatter": "prettier"
+  // 4. Default. Format files using Zed's Prettier integration (if applicable),
+  //    or falling back to formatting via language server:
+  //     "formatter": "auto"
+  "formatter": "auto",
   // How to soft-wrap long lines of text. This setting can take
   // three values:
   //
@@ -428,6 +433,16 @@
     "JSON": {
       "tab_size": 2
     }
+  },
+  // Zed's Prettier integration settings.
+  // If Prettier is enabled, Zed will use this its Prettier instance for any applicable file, if
+  // project has no other Prettier installed.
+  "prettier": {
+    // Use regular Prettier json configuration:
+    // "trailingComma": "es5",
+    // "tabWidth": 4,
+    // "semi": false,
+    // "singleQuote": true
   },
   // LSP Specific settings.
   "lsp": {
