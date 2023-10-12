@@ -25,7 +25,7 @@ use ::git::diff::DiffHunk;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context, Result};
 use blink_manager::BlinkManager;
-use client::{ClickhouseEvent, Collaborator, ParticipantIndex, TelemetrySettings};
+use client::{ClickhouseEvent, Client, Collaborator, ParticipantIndex, TelemetrySettings};
 use clock::{Global, ReplicaId};
 use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
@@ -62,8 +62,8 @@ use language::{
     language_settings::{self, all_language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, CodeAction, CodeLabel,
     Completion, CursorShape, Diagnostic, DiagnosticSeverity, Documentation, File, IndentKind,
-    IndentSize, Language, LanguageServerName, OffsetRangeExt, OffsetUtf16, Point, Selection,
-    SelectionGoal, TransactionId,
+    IndentSize, Language, LanguageRegistry, LanguageServerName, OffsetRangeExt, OffsetUtf16, Point,
+    Selection, SelectionGoal, TransactionId,
 };
 use link_go_to_definition::{
     hide_link_definition, show_link_definition, GoToDefinitionLink, InlayHighlight,
@@ -954,7 +954,7 @@ impl CompletionsMenu {
     ) {
         self.selected_item = 0;
         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-        self.attempt_resolve_selected_completion(project, cx);
+        self.attempt_resolve_selected_completion_documentation(project, cx);
         cx.notify();
     }
 
@@ -967,7 +967,7 @@ impl CompletionsMenu {
             self.selected_item -= 1;
             self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         }
-        self.attempt_resolve_selected_completion(project, cx);
+        self.attempt_resolve_selected_completion_documentation(project, cx);
         cx.notify();
     }
 
@@ -980,7 +980,7 @@ impl CompletionsMenu {
             self.selected_item += 1;
             self.list.scroll_to(ScrollTarget::Show(self.selected_item));
         }
-        self.attempt_resolve_selected_completion(project, cx);
+        self.attempt_resolve_selected_completion_documentation(project, cx);
         cx.notify();
     }
 
@@ -991,16 +991,99 @@ impl CompletionsMenu {
     ) {
         self.selected_item = self.matches.len() - 1;
         self.list.scroll_to(ScrollTarget::Show(self.selected_item));
-        self.attempt_resolve_selected_completion(project, cx);
+        self.attempt_resolve_selected_completion_documentation(project, cx);
         cx.notify();
     }
 
-    fn attempt_resolve_selected_completion(
+    fn pre_resolve_completion_documentation(
+        &self,
+        project: Option<ModelHandle<Project>>,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let Some(project) = project else {
+            return;
+        };
+        let client = project.read(cx).client();
+        let language_registry = project.read(cx).languages().clone();
+
+        let is_remote = project.read(cx).is_remote();
+        let project_id = project.read(cx).remote_id();
+
+        let completions = self.completions.clone();
+        let completion_indices: Vec<_> = self.matches.iter().map(|m| m.candidate_id).collect();
+
+        cx.spawn(move |this, mut cx| async move {
+            if is_remote {
+                let Some(project_id) = project_id else {
+                    log::error!("Remote project without remote_id");
+                    return;
+                };
+
+                for completion_index in completion_indices {
+                    let completions_guard = completions.read();
+                    let completion = &completions_guard[completion_index];
+                    if completion.documentation.is_some() {
+                        continue;
+                    }
+
+                    let server_id = completion.server_id;
+                    let completion = completion.lsp_completion.clone();
+                    drop(completions_guard);
+
+                    Self::resolve_completion_documentation_remote(
+                        project_id,
+                        server_id,
+                        completions.clone(),
+                        completion_index,
+                        completion,
+                        client.clone(),
+                        language_registry.clone(),
+                    )
+                    .await;
+
+                    _ = this.update(&mut cx, |_, cx| cx.notify());
+                }
+            } else {
+                for completion_index in completion_indices {
+                    let completions_guard = completions.read();
+                    let completion = &completions_guard[completion_index];
+                    if completion.documentation.is_some() {
+                        continue;
+                    }
+
+                    let server_id = completion.server_id;
+                    let completion = completion.lsp_completion.clone();
+                    drop(completions_guard);
+
+                    let server = project.read_with(&mut cx, |project, _| {
+                        project.language_server_for_id(server_id)
+                    });
+                    let Some(server) = server else {
+                        return;
+                    };
+
+                    Self::resolve_completion_documentation_local(
+                        server,
+                        completions.clone(),
+                        completion_index,
+                        completion,
+                        language_registry.clone(),
+                    )
+                    .await;
+
+                    _ = this.update(&mut cx, |_, cx| cx.notify());
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn attempt_resolve_selected_completion_documentation(
         &mut self,
         project: Option<&ModelHandle<Project>>,
         cx: &mut ViewContext<Editor>,
     ) {
-        let index = self.matches[self.selected_item].candidate_id;
+        let completion_index = self.matches[self.selected_item].candidate_id;
         let Some(project) = project else {
             return;
         };
@@ -1008,7 +1091,7 @@ impl CompletionsMenu {
 
         let completions = self.completions.clone();
         let completions_guard = completions.read();
-        let completion = &completions_guard[index];
+        let completion = &completions_guard[completion_index];
         if completion.documentation.is_some() {
             return;
         }
@@ -1024,54 +1107,95 @@ impl CompletionsMenu {
             };
 
             let client = project.read(cx).client();
-            let request = proto::ResolveCompletionDocumentation {
-                project_id,
-                language_server_id: server_id.0 as u64,
-                lsp_completion: serde_json::to_string(&completion).unwrap().into_bytes(),
-            };
 
-            cx.spawn(|this, mut cx| async move {
-                let Some(response) = client
-                    .request(request)
-                    .await
-                    .context("completion documentation resolve proto request")
-                    .log_err()
-                else {
-                    return;
-                };
-
-                if response.text.is_empty() {
-                    let mut completions = completions.write();
-                    let completion = &mut completions[index];
-                    completion.documentation = Some(Documentation::Undocumented);
-                }
-
-                let documentation = if response.is_markdown {
-                    Documentation::MultiLineMarkdown(
-                        markdown::parse_markdown(&response.text, &language_registry, None).await,
-                    )
-                } else if response.text.lines().count() <= 1 {
-                    Documentation::SingleLine(response.text)
-                } else {
-                    Documentation::MultiLinePlainText(response.text)
-                };
-
-                let mut completions = completions.write();
-                let completion = &mut completions[index];
-                completion.documentation = Some(documentation);
-                drop(completions);
+            cx.spawn(move |this, mut cx| async move {
+                Self::resolve_completion_documentation_remote(
+                    project_id,
+                    server_id,
+                    completions.clone(),
+                    completion_index,
+                    completion,
+                    client,
+                    language_registry.clone(),
+                )
+                .await;
 
                 _ = this.update(&mut cx, |_, cx| cx.notify());
             })
             .detach();
+        } else {
+            let Some(server) = project.read(cx).language_server_for_id(server_id) else {
+                return;
+            };
 
-            return;
+            cx.spawn(move |this, mut cx| async move {
+                Self::resolve_completion_documentation_local(
+                    server,
+                    completions,
+                    completion_index,
+                    completion,
+                    language_registry,
+                )
+                .await;
+
+                _ = this.update(&mut cx, |_, cx| cx.notify());
+            })
+            .detach();
         }
+    }
 
-        let Some(server) = project.read(cx).language_server_for_id(server_id) else {
+    async fn resolve_completion_documentation_remote(
+        project_id: u64,
+        server_id: LanguageServerId,
+        completions: Arc<RwLock<Box<[Completion]>>>,
+        completion_index: usize,
+        completion: lsp::CompletionItem,
+        client: Arc<Client>,
+        language_registry: Arc<LanguageRegistry>,
+    ) {
+        let request = proto::ResolveCompletionDocumentation {
+            project_id,
+            language_server_id: server_id.0 as u64,
+            lsp_completion: serde_json::to_string(&completion).unwrap().into_bytes(),
+        };
+
+        let Some(response) = client
+            .request(request)
+            .await
+            .context("completion documentation resolve proto request")
+            .log_err()
+        else {
             return;
         };
 
+        if response.text.is_empty() {
+            let mut completions = completions.write();
+            let completion = &mut completions[completion_index];
+            completion.documentation = Some(Documentation::Undocumented);
+        }
+
+        let documentation = if response.is_markdown {
+            Documentation::MultiLineMarkdown(
+                markdown::parse_markdown(&response.text, &language_registry, None).await,
+            )
+        } else if response.text.lines().count() <= 1 {
+            Documentation::SingleLine(response.text)
+        } else {
+            Documentation::MultiLinePlainText(response.text)
+        };
+
+        let mut completions = completions.write();
+        let completion = &mut completions[completion_index];
+        completion.documentation = Some(documentation);
+    }
+
+    async fn resolve_completion_documentation_local(
+        server: Arc<lsp::LanguageServer>,
+        completions: Arc<RwLock<Box<[Completion]>>>,
+        completion_index: usize,
+        completion: lsp::CompletionItem,
+        language_registry: Arc<LanguageRegistry>,
+    ) {
         let can_resolve = server
             .capabilities()
             .completion_provider
@@ -1082,33 +1206,27 @@ impl CompletionsMenu {
             return;
         }
 
-        cx.spawn(|this, mut cx| async move {
-            let request = server.request::<lsp::request::ResolveCompletionItem>(completion);
-            let Some(completion_item) = request.await.log_err() else {
-                return;
-            };
+        let request = server.request::<lsp::request::ResolveCompletionItem>(completion);
+        let Some(completion_item) = request.await.log_err() else {
+            return;
+        };
 
-            if let Some(lsp_documentation) = completion_item.documentation {
-                let documentation = language::prepare_completion_documentation(
-                    &lsp_documentation,
-                    &language_registry,
-                    None, // TODO: Try to reasonably work out which language the completion is for
-                )
-                .await;
+        if let Some(lsp_documentation) = completion_item.documentation {
+            let documentation = language::prepare_completion_documentation(
+                &lsp_documentation,
+                &language_registry,
+                None, // TODO: Try to reasonably work out which language the completion is for
+            )
+            .await;
 
-                let mut completions = completions.write();
-                let completion = &mut completions[index];
-                completion.documentation = Some(documentation);
-                drop(completions);
-
-                _ = this.update(&mut cx, |_, cx| cx.notify());
-            } else {
-                let mut completions = completions.write();
-                let completion = &mut completions[index];
-                completion.documentation = Some(Documentation::Undocumented);
-            }
-        })
-        .detach();
+            let mut completions = completions.write();
+            let completion = &mut completions[completion_index];
+            completion.documentation = Some(documentation);
+        } else {
+            let mut completions = completions.write();
+            let completion = &mut completions[completion_index];
+            completion.documentation = Some(Documentation::Undocumented);
+        }
     }
 
     fn visible(&self) -> bool {
@@ -3450,7 +3568,7 @@ impl Editor {
                         None
                     } else {
                         _ = this.update(&mut cx, |editor, cx| {
-                            menu.attempt_resolve_selected_completion(editor.project.as_ref(), cx);
+                            menu.pre_resolve_completion_documentation(editor.project.clone(), cx);
                         });
                         Some(menu)
                     }
