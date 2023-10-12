@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use gpui3::{div, Div, Hsla, WindowContext};
+use gpui3::{div, Div};
 
 use crate::prelude::*;
 use crate::theme::theme;

@@ -1,4 +1,3 @@
-use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
@@ -116,7 +115,7 @@ pub struct Workspace {
     bottom_panel_scroll_state: ScrollState,
 }
 
-fn workspace<P: 'static>(cx: &mut WindowContext) -> View<Workspace> {
+fn workspace(cx: &mut WindowContext) -> View<Workspace> {
     view(cx.entity(|cx| Workspace::new()), Workspace::render)
 }
 
@@ -372,23 +371,16 @@ pub use stories::*;
 mod stories {
     use super::*;
 
-    // #[derive(Element)]
-    // pub struct WorkspaceStory<S: 'static + Send + Sync + Clone> {
-    //     state_type: PhantomData<S>,
-    // }
-
     pub struct WorkspaceStory {
         workspace: View<Workspace>,
     }
 
     pub fn workspace_story(cx: &mut WindowContext) -> View<WorkspaceStory> {
-        todo!()
-        // let workspace = workspace::<P>(cx);
-        // view(
-        //     cx.entity(|cx| WorkspaceStory {
-        //         workspace,
-        //     }),
-        //     |view, cx| view.workspace.clone(),
-        // )
+        view(
+            cx.entity(|cx| WorkspaceStory {
+                workspace: workspace(cx),
+            }),
+            |view, cx| view.workspace.clone(),
+        )
     }
 }

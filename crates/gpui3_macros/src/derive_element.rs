@@ -41,6 +41,14 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
     let (impl_generics, ty_generics, where_clause) = ast.generics.split_for_impl();
 
     let gen = quote! {
+        impl #impl_generics gpui3::IntoAnyElement<#state_type> for #type_name #ty_generics
+        #where_clause
+        {
+            fn into_any(self) -> gpui3::AnyElement<#state_type> {
+                gpui3::AnyElement::new(self)
+            }
+        }
+
         impl #impl_generics gpui3::Element for #type_name #ty_generics
         #where_clause
         {

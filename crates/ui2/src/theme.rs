@@ -3,7 +3,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use gpui3::{
-    BorrowAppContext, Bounds, Element, Hsla, LayoutId, Pixels, Result, ViewContext, WindowContext,
+    AnyElement, BorrowAppContext, Bounds, Element, Hsla, IntoAnyElement, LayoutId, Pixels, Result,
+    ViewContext, WindowContext,
 };
 use serde::{de::Visitor, Deserialize, Deserializer};
 
@@ -144,6 +145,15 @@ where
 pub struct Themed<E> {
     pub(crate) theme: Theme,
     pub(crate) child: E,
+}
+
+impl<E> IntoAnyElement<E::ViewState> for Themed<E>
+where
+    E: Element,
+{
+    fn into_any(self) -> AnyElement<E::ViewState> {
+        AnyElement::new(self)
+    }
 }
 
 impl<E: Element> Element for Themed<E> {
