@@ -911,7 +911,7 @@ mod tests {
                 // Links
                 Row {
                     blocks: vec![HoverBlock {
-                        text: "one [two](the-url) three".to_string(),
+                        text: "one [two](https://the-url) three".to_string(),
                         kind: HoverBlockKind::Markdown,
                     }],
                     expected_marked_text: "one «two» three".to_string(),
@@ -932,7 +932,7 @@ mod tests {
                                 - a
                                 - b
                             * two
-                                - [c](the-url)
+                                - [c](https://the-url)
                                 - d"
                         .unindent(),
                         kind: HoverBlockKind::Markdown,
