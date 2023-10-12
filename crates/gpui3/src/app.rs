@@ -13,7 +13,7 @@ use crate::{
     TextStyleRefinement, TextSystem, Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
-use collections::{HashMap, VecDeque};
+use collections::{HashMap, HashSet, VecDeque};
 use futures::Future;
 use parking_lot::Mutex;
 use slotmap::SlotMap;
@@ -64,6 +64,7 @@ impl App {
                 unit_entity,
                 entities,
                 windows: SlotMap::with_key(),
+                pending_notifications: Default::default(),
                 pending_effects: Default::default(),
                 observers: SubscriberSet::new(),
                 event_handlers: SubscriberSet::new(),
@@ -106,7 +107,8 @@ pub struct AppContext {
     pub(crate) unit_entity: Handle<()>,
     pub(crate) entities: EntityMap,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
-    pub(crate) pending_effects: VecDeque<Effect>,
+    pub(crate) pending_notifications: HashSet<EntityId>,
+    pending_effects: VecDeque<Effect>,
     pub(crate) observers: SubscriberSet<EntityId, Handler>,
     pub(crate) event_handlers: SubscriberSet<EntityId, EventHandler>,
     pub(crate) release_handlers: SubscriberSet<EntityId, ReleaseHandler>,
@@ -146,6 +148,17 @@ impl AppContext {
 
             Ok(result)
         })
+    }
+
+    pub(crate) fn push_effect(&mut self, effect: Effect) {
+        match &effect {
+            Effect::Notify { emitter } => {
+                if self.pending_notifications.insert(*emitter) {
+                    self.pending_effects.push_back(effect);
+                }
+            }
+            Effect::Emit { .. } => self.pending_effects.push_back(effect),
+        }
     }
 
     fn flush_effects(&mut self) {
@@ -197,6 +210,7 @@ impl AppContext {
     }
 
     fn apply_notify_effect(&mut self, emitter: EntityId) {
+        self.pending_notifications.remove(&emitter);
         self.observers
             .clone()
             .retain(&emitter, |handler| handler(self));

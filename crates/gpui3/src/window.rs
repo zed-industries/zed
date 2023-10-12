@@ -997,12 +997,9 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
 
     pub fn notify(&mut self) {
         self.window_cx.notify();
-        self.window_cx
-            .app
-            .pending_effects
-            .push_back(Effect::Notify {
-                emitter: self.entity_id,
-            });
+        self.window_cx.app.push_effect(Effect::Notify {
+            emitter: self.entity_id,
+        });
     }
 
     pub fn run_on_main<R>(
@@ -1052,7 +1049,7 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
 
 impl<'a, 'w, S: EventEmitter + Send + Sync + 'static> ViewContext<'a, 'w, S> {
     pub fn emit(&mut self, event: S::Event) {
-        self.window_cx.app.pending_effects.push_back(Effect::Emit {
+        self.window_cx.app.push_effect(Effect::Emit {
             emitter: self.entity_id,
             event: Box::new(event),
         });
