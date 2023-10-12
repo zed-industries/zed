@@ -34,6 +34,15 @@ pub trait Styled {
         Self::Style: 'static + Refineable + Default + Send + Sync,
         <Self::Style as Refineable>::Refinement: 'static + Default + Send + Sync,
     {
-        Pressable::new(self)
+        Pressable::new(self, None)
+    }
+
+    fn group_active(self, group_name: impl Into<SharedString>) -> Pressable<Self>
+    where
+        Self: 'static + Sized + Send + Sync,
+        Self::Style: 'static + Refineable + Default + Send + Sync,
+        <Self::Style as Refineable>::Refinement: 'static + Default + Send + Sync,
+    {
+        Pressable::new(self, Some(group_name.into()))
     }
 }

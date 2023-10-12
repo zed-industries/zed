@@ -175,6 +175,7 @@ impl CollabPanel {
                     .text_sm()
                     .child(
                         div()
+                            .id(0)
                             // .uri(avatar_uri)
                             .size_3p5()
                             .rounded_full()
@@ -183,7 +184,9 @@ impl CollabPanel {
                             .group_hover("")
                             .fill(theme.middle.negative.default.foreground)
                             .hover()
-                            .fill(theme.middle.warning.default.foreground),
+                            .fill(theme.middle.warning.default.foreground)
+                            .group_active("")
+                            .fill(theme.middle.accent.default.foreground),
                     )
                     .child(label),
             )

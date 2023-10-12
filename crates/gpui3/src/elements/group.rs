@@ -9,7 +9,7 @@ use smallvec::SmallVec;
 #[derive(Default)]
 struct GroupBounds(HashMap<SharedString, SmallVec<[Bounds<Pixels>; 1]>>);
 
-pub fn element_group_bounds(name: &SharedString, cx: &mut AppContext) -> Option<Bounds<Pixels>> {
+pub fn group_bounds(name: &SharedString, cx: &mut AppContext) -> Option<Bounds<Pixels>> {
     cx.default_global::<GroupBounds>()
         .0
         .get(name)

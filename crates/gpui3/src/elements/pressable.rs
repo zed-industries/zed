@@ -1,6 +1,7 @@
 use crate::{
-    AnyElement, Bounds, DispatchPhase, Element, IdentifiedElement, Interactive, MouseDownEvent,
-    MouseEventListeners, MouseUpEvent, ParentElement, Pixels, Styled, ViewContext,
+    group_bounds, AnyElement, Bounds, DispatchPhase, Element, IdentifiedElement, Interactive,
+    MouseDownEvent, MouseEventListeners, MouseUpEvent, ParentElement, Pixels, SharedString, Styled,
+    ViewContext,
 };
 use refineable::{Cascade, CascadeSlot, Refineable};
 use smallvec::SmallVec;
@@ -10,6 +11,7 @@ use std::sync::{
 };
 
 pub struct Pressable<E: Styled> {
+    group: Option<SharedString>,
     cascade_slot: CascadeSlot,
     pressed_style: <E::Style as Refineable>::Refinement,
     child: E,
@@ -21,8 +23,9 @@ pub struct PressableState<S> {
 }
 
 impl<E: Styled> Pressable<E> {
-    pub fn new(mut child: E) -> Self {
+    pub fn new(mut child: E, group: Option<SharedString>) -> Self {
         Self {
+            group,
             cascade_slot: child.style_cascade().reserve(),
             pressed_style: Default::default(),
             child,
@@ -96,6 +99,12 @@ where
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<Self::ViewState>,
     ) {
+        let target_bounds = self
+            .group
+            .as_ref()
+            .and_then(|group| group_bounds(group, cx))
+            .unwrap_or(bounds);
+
         let style = element_state
             .pressed
             .load(SeqCst)
@@ -105,8 +114,8 @@ where
 
         let pressed = element_state.pressed.clone();
         cx.on_mouse_event(move |_, event: &MouseDownEvent, phase, cx| {
-            if phase == DispatchPhase::Capture {
-                if bounds.contains_point(event.position) {
+            if phase == DispatchPhase::Bubble {
+                if target_bounds.contains_point(event.position) {
                     pressed.store(true, SeqCst);
                     cx.notify();
                 }

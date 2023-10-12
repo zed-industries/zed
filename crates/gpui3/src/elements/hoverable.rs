@@ -1,5 +1,5 @@
 use crate::{
-    element_group_bounds, AnyElement, Bounds, DispatchPhase, Element, ElementId, IdentifiedElement,
+    group_bounds, AnyElement, Bounds, DispatchPhase, Element, ElementId, IdentifiedElement,
     Interactive, MouseEventListeners, MouseMoveEvent, ParentElement, Pixels, SharedString, Styled,
     ViewContext,
 };
@@ -11,7 +11,7 @@ use std::sync::{
 };
 
 pub struct Hoverable<E: Styled> {
-    hover_group: Option<SharedString>,
+    group: Option<SharedString>,
     hovered: Arc<AtomicBool>,
     cascade_slot: CascadeSlot,
     hovered_style: <E::Style as Refineable>::Refinement,
@@ -21,7 +21,7 @@ pub struct Hoverable<E: Styled> {
 impl<E: Styled> Hoverable<E> {
     pub fn new(mut child: E, hover_group: Option<SharedString>) -> Self {
         Self {
-            hover_group,
+            group: hover_group,
             hovered: Arc::new(AtomicBool::new(false)),
             cascade_slot: child.style_cascade().reserve(),
             hovered_style: Default::default(),
@@ -80,13 +80,13 @@ where
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<Self::ViewState>,
     ) {
-        let hover_bounds = self
-            .hover_group
+        let target_bounds = self
+            .group
             .as_ref()
-            .and_then(|group| element_group_bounds(group, cx))
+            .and_then(|group| group_bounds(group, cx))
             .unwrap_or(bounds);
 
-        let hovered = hover_bounds.contains_point(cx.mouse_position());
+        let hovered = target_bounds.contains_point(cx.mouse_position());
 
         let slot = self.cascade_slot;
         let style = hovered.then_some(self.hovered_style.clone());
@@ -98,7 +98,7 @@ where
 
             move |_, event: &MouseMoveEvent, phase, cx| {
                 if phase == DispatchPhase::Capture {
-                    if hover_bounds.contains_point(event.position) != hovered.load(SeqCst) {
+                    if target_bounds.contains_point(event.position) != hovered.load(SeqCst) {
                         cx.notify();
                     }
                 }
