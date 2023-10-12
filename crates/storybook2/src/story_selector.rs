@@ -90,7 +90,7 @@ impl ComponentStory {
             Self::Toast => ui::ToastStory::new().into_any(),
             Self::Toolbar => ui::ToolbarStory::new().into_any(),
             Self::TrafficLights => ui::TrafficLightsStory::new().into_any(),
-            Self::Workspace => ui::workspace_story(cx).into_any().into_any(),
+            Self::Workspace => todo!(),
         }
     }
 }

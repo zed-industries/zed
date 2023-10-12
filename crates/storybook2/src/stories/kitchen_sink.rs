@@ -20,7 +20,7 @@ impl<S: 'static + Send + Sync + Clone> KitchenSinkStory<S> {
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let element_stories = ElementStory::iter().map(|selector| selector.story());
-        let component_stories = ComponentStory::iter().map(|selector| selector.story(cx));
+        let component_stories = ComponentStory::iter().map(|selector| selector.story(cx)).collect::<Vec<_>>();
 
         Story::container(cx)
             .overflow_y_scroll(ScrollState::default())
