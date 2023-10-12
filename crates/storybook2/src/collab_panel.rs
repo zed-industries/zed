@@ -1,8 +1,8 @@
-use crate::theme::{theme, Theme};
 use gpui3::{
     div, svg, view, AppContext, Context, Element, ElementId, IntoAnyElement, ParentElement,
     ScrollState, SharedString, StyleHelpers, Styled, View, ViewContext, WindowContext,
 };
+use ui::{theme, Theme};
 
 pub struct CollabPanel {
     scroll_state: ScrollState,
@@ -68,21 +68,21 @@ impl CollabPanel {
                             .py_2()
                             .flex()
                             .flex_col()
-                            .child(self.list_section_header(1, "CHANNELS", true, theme)),
+                            .child(self.list_section_header(1, "CHANNELS", true, &theme)),
                     )
                     .child(
                         div()
                             .py_2()
                             .flex()
                             .flex_col()
-                            .child(self.list_section_header(2, "CONTACTS", true, theme))
+                            .child(self.list_section_header(2, "CONTACTS", true, &theme))
                             .children(
                                 std::iter::repeat_with(|| {
                                     vec![
                                         self.list_item(
                                             "http://github.com/as-cii.png?s=50",
                                             "as-cii",
-                                            theme,
+                                            &theme,
                                         ),
                                         // self.list_item(
                                         //     "http://github.com/nathansobo.png?s=50",

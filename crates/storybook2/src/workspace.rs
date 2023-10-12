@@ -1,12 +1,12 @@
 use crate::{
     collab_panel::{collab_panel, CollabPanel},
-    theme::{theme, themed},
     themes::rose_pine,
 };
 use gpui3::{
     div, img, svg, view, Context, Element, ParentElement, RootView, StyleHelpers, Styled, View,
     ViewContext, WindowContext,
 };
+use ui::{theme, themed};
 
 pub struct Workspace {
     left_panel: View<CollabPanel, Self>,

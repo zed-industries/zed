@@ -87,7 +87,7 @@ trait Styles: StyleHelpers {
     }
 }
 
-impl<S> Styles for Div<S> {}
+impl<S: 'static + Send + Sync> Styles for Div<S> {}
 
 #[derive(Element)]
 struct ZIndexExample<S: 'static + Send + Sync> {

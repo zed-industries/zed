@@ -102,7 +102,7 @@ impl StoryWrapper {
         Self { selector, theme }
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<State = Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
         themed(self.theme.clone(), cx, |cx| {
             div()
                 .flex()
