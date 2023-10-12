@@ -285,10 +285,14 @@ impl FollowableItem for ChannelView {
     }
 
     fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant> {
-        let channel = self.channel_buffer.read(cx).channel();
+        let channel_buffer = self.channel_buffer.read(cx);
+        if !channel_buffer.is_connected() {
+            return None;
+        }
+
         Some(proto::view::Variant::ChannelView(
             proto::view::ChannelView {
-                channel_id: channel.id,
+                channel_id: channel_buffer.channel().id,
                 editor: if let Some(proto::view::Variant::Editor(proto)) =
                     self.editor.read(cx).to_state_proto(cx)
                 {
