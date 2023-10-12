@@ -26,7 +26,7 @@ fn test_update_channels(cx: &mut AppContext) {
             ],
             channel_permissions: vec![proto::ChannelPermission {
                 channel_id: 1,
-                is_admin: true,
+                role: proto::ChannelRole::Admin.into(),
             }],
             ..Default::default()
         },
@@ -114,7 +114,7 @@ fn test_dangling_channel_paths(cx: &mut AppContext) {
             ],
             channel_permissions: vec![proto::ChannelPermission {
                 channel_id: 0,
-                is_admin: true,
+                role: proto::ChannelRole::Admin.into(),
             }],
             ..Default::default()
         },

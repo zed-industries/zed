@@ -1,4 +1,5 @@
 use crate::Result;
+use rpc::proto;
 use sea_orm::{entity::prelude::*, DbErr};
 use serde::{Deserialize, Serialize};
 
@@ -90,4 +91,31 @@ pub enum ChannelRole {
     Member,
     #[sea_orm(string_value = "guest")]
     Guest,
+}
+
+impl From<proto::ChannelRole> for ChannelRole {
+    fn from(value: proto::ChannelRole) -> Self {
+        match value {
+            proto::ChannelRole::Admin => ChannelRole::Admin,
+            proto::ChannelRole::Member => ChannelRole::Member,
+            proto::ChannelRole::Guest => ChannelRole::Guest,
+        }
+    }
+}
+
+impl Into<proto::ChannelRole> for ChannelRole {
+    fn into(self) -> proto::ChannelRole {
+        match self {
+            ChannelRole::Admin => proto::ChannelRole::Admin,
+            ChannelRole::Member => proto::ChannelRole::Member,
+            ChannelRole::Guest => proto::ChannelRole::Guest,
+        }
+    }
+}
+
+impl Into<i32> for ChannelRole {
+    fn into(self) -> i32 {
+        let proto: proto::ChannelRole = self.into();
+        proto.into()
+    }
 }

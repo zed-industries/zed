@@ -564,13 +564,18 @@ impl Database {
                     (false, true) => proto::channel_member::Kind::AncestorMember,
                     (false, false) => continue,
                 };
+                let channel_role = channel_role.unwrap_or(if is_admin {
+                    ChannelRole::Admin
+                } else {
+                    ChannelRole::Member
+                });
                 let user_id = user_id.to_proto();
                 let kind = kind.into();
                 if let Some(last_row) = rows.last_mut() {
                     if last_row.user_id == user_id {
                         if is_direct_member {
                             last_row.kind = kind;
-                            last_row.admin = channel_role == Some(ChannelRole::Admin) || is_admin;
+                            last_row.role = channel_role.into()
                         }
                         continue;
                     }
@@ -578,7 +583,7 @@ impl Database {
                 rows.push(proto::ChannelMember {
                     user_id,
                     kind,
-                    admin: channel_role == Some(ChannelRole::Admin) || is_admin,
+                    role: channel_role.into(),
                 });
             }
 
@@ -851,10 +856,11 @@ impl Database {
         &self,
         user: UserId,
         channel: ChannelId,
-        to: ChannelId,
+        new_parent: ChannelId,
         tx: &DatabaseTransaction,
     ) -> Result<ChannelGraph> {
-        self.check_user_is_channel_admin(to, user, &*tx).await?;
+        self.check_user_is_channel_admin(new_parent, user, &*tx)
+            .await?;
 
         let paths = channel_path::Entity::find()
             .filter(channel_path::Column::IdPath.like(&format!("%/{}/%", channel)))
@@ -872,7 +878,7 @@ impl Database {
         }
 
         let paths_to_new_parent = channel_path::Entity::find()
-            .filter(channel_path::Column::ChannelId.eq(to))
+            .filter(channel_path::Column::ChannelId.eq(new_parent))
             .all(tx)
             .await?;
 
@@ -906,7 +912,7 @@ impl Database {
         if let Some(channel) = channel_descendants.get_mut(&channel) {
             // Remove the other parents
             channel.clear();
-            channel.insert(to);
+            channel.insert(new_parent);
         }
 
         let channels = self

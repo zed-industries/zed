@@ -3,8 +3,8 @@ mod connection_pool;
 use crate::{
     auth,
     db::{
-        self, BufferId, ChannelId, ChannelRole, ChannelsForUser, Database, MessageId, ProjectId,
-        RoomId, ServerId, User, UserId,
+        self, BufferId, ChannelId, ChannelsForUser, Database, MessageId, ProjectId, RoomId,
+        ServerId, User, UserId,
     },
     executor::Executor,
     AppState, Result,
@@ -254,7 +254,7 @@ impl Server {
             .add_request_handler(delete_channel)
             .add_request_handler(invite_channel_member)
             .add_request_handler(remove_channel_member)
-            .add_request_handler(set_channel_member_admin)
+            .add_request_handler(set_channel_member_role)
             .add_request_handler(rename_channel)
             .add_request_handler(join_channel_buffer)
             .add_request_handler(leave_channel_buffer)
@@ -2282,13 +2282,13 @@ async fn invite_channel_member(
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
     let invitee_id = UserId::from_proto(request.user_id);
-    let role = if request.admin {
-        ChannelRole::Admin
-    } else {
-        ChannelRole::Member
-    };
-    db.invite_channel_member(channel_id, invitee_id, session.user_id, role)
-        .await?;
+    db.invite_channel_member(
+        channel_id,
+        invitee_id,
+        session.user_id,
+        request.role().into(),
+    )
+    .await?;
 
     let (channel, _) = db
         .get_channel(channel_id, session.user_id)
@@ -2339,21 +2339,21 @@ async fn remove_channel_member(
     Ok(())
 }
 
-async fn set_channel_member_admin(
-    request: proto::SetChannelMemberAdmin,
-    response: Response<proto::SetChannelMemberAdmin>,
+async fn set_channel_member_role(
+    request: proto::SetChannelMemberRole,
+    response: Response<proto::SetChannelMemberRole>,
     session: Session,
 ) -> Result<()> {
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
     let member_id = UserId::from_proto(request.user_id);
-    let role = if request.admin {
-        ChannelRole::Admin
-    } else {
-        ChannelRole::Member
-    };
-    db.set_channel_member_role(channel_id, session.user_id, member_id, role)
-        .await?;
+    db.set_channel_member_role(
+        channel_id,
+        session.user_id,
+        member_id,
+        request.role().into(),
+    )
+    .await?;
 
     let (channel, has_accepted) = db
         .get_channel(channel_id, member_id)
@@ -2364,7 +2364,7 @@ async fn set_channel_member_admin(
     if has_accepted {
         update.channel_permissions.push(proto::ChannelPermission {
             channel_id: channel.id.to_proto(),
-            is_admin: request.admin,
+            role: request.role,
         });
     }
 
@@ -2603,7 +2603,7 @@ async fn respond_to_channel_invite(
                     .into_iter()
                     .map(|channel_id| proto::ChannelPermission {
                         channel_id: channel_id.to_proto(),
-                        is_admin: true,
+                        role: proto::ChannelRole::Admin.into(),
                     }),
             );
     }
@@ -3106,7 +3106,7 @@ fn build_initial_channels_update(
                 .into_iter()
                 .map(|id| proto::ChannelPermission {
                     channel_id: id.to_proto(),
-                    is_admin: true,
+                    role: proto::ChannelRole::Admin.into(),
                 }),
         );
 

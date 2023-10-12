@@ -68,7 +68,12 @@ async fn test_core_channels(
         .update(cx_a, |store, cx| {
             assert!(!store.has_pending_channel_invite(channel_a_id, client_b.user_id().unwrap()));
 
-            let invite = store.invite_member(channel_a_id, client_b.user_id().unwrap(), false, cx);
+            let invite = store.invite_member(
+                channel_a_id,
+                client_b.user_id().unwrap(),
+                proto::ChannelRole::Member,
+                cx,
+            );
 
             // Make sure we're synchronously storing the pending invite
             assert!(store.has_pending_channel_invite(channel_a_id, client_b.user_id().unwrap()));
@@ -103,12 +108,12 @@ async fn test_core_channels(
         &[
             (
                 client_a.user_id().unwrap(),
-                true,
+                proto::ChannelRole::Admin,
                 proto::channel_member::Kind::Member,
             ),
             (
                 client_b.user_id().unwrap(),
-                false,
+                proto::ChannelRole::Member,
                 proto::channel_member::Kind::Invitee,
             ),
         ],
@@ -183,7 +188,12 @@ async fn test_core_channels(
     client_a
         .channel_store()
         .update(cx_a, |store, cx| {
-            store.set_member_admin(channel_a_id, client_b.user_id().unwrap(), true, cx)
+            store.set_member_role(
+                channel_a_id,
+                client_b.user_id().unwrap(),
+                proto::ChannelRole::Admin,
+                cx,
+            )
         })
         .await
         .unwrap();
@@ -305,12 +315,12 @@ fn assert_participants_eq(participants: &[Arc<User>], expected_partitipants: &[u
 #[track_caller]
 fn assert_members_eq(
     members: &[ChannelMembership],
-    expected_members: &[(u64, bool, proto::channel_member::Kind)],
+    expected_members: &[(u64, proto::ChannelRole, proto::channel_member::Kind)],
 ) {
     assert_eq!(
         members
             .iter()
-            .map(|member| (member.user.id, member.admin, member.kind))
+            .map(|member| (member.user.id, member.role, member.kind))
             .collect::<Vec<_>>(),
         expected_members
     );
@@ -611,7 +621,12 @@ async fn test_permissions_update_while_invited(
     client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
-            channel_store.invite_member(rust_id, client_b.user_id().unwrap(), false, cx)
+            channel_store.invite_member(
+                rust_id,
+                client_b.user_id().unwrap(),
+                proto::ChannelRole::Member,
+                cx,
+            )
         })
         .await
         .unwrap();
@@ -634,7 +649,12 @@ async fn test_permissions_update_while_invited(
     client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
-            channel_store.set_member_admin(rust_id, client_b.user_id().unwrap(), true, cx)
+            channel_store.set_member_role(
+                rust_id,
+                client_b.user_id().unwrap(),
+                proto::ChannelRole::Admin,
+                cx,
+            )
         })
         .await
         .unwrap();
@@ -803,7 +823,12 @@ async fn test_lost_channel_creation(
     client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
-            channel_store.invite_member(channel_id, client_b.user_id().unwrap(), false, cx)
+            channel_store.invite_member(
+                channel_id,
+                client_b.user_id().unwrap(),
+                proto::ChannelRole::Member,
+                cx,
+            )
         })
         .await
         .unwrap();

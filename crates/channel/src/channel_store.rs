@@ -9,7 +9,7 @@ use db::RELEASE_CHANNEL;
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
 use rpc::{
-    proto::{self, ChannelEdge, ChannelPermission},
+    proto::{self, ChannelEdge, ChannelPermission, ChannelRole},
     TypedEnvelope,
 };
 use serde_derive::{Deserialize, Serialize};
@@ -79,7 +79,7 @@ pub struct ChannelPath(Arc<[ChannelId]>);
 pub struct ChannelMembership {
     pub user: Arc<User>,
     pub kind: proto::channel_member::Kind,
-    pub admin: bool,
+    pub role: proto::ChannelRole,
 }
 
 pub enum ChannelEvent {
@@ -436,7 +436,7 @@ impl ChannelStore {
                         insert_edge: parent_edge,
                         channel_permissions: vec![ChannelPermission {
                             channel_id,
-                            is_admin: true,
+                            role: ChannelRole::Admin.into(),
                         }],
                         ..Default::default()
                     },
@@ -512,7 +512,7 @@ impl ChannelStore {
         &mut self,
         channel_id: ChannelId,
         user_id: UserId,
-        admin: bool,
+        role: proto::ChannelRole,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         if !self.outgoing_invites.insert((channel_id, user_id)) {
@@ -526,7 +526,7 @@ impl ChannelStore {
                 .request(proto::InviteChannelMember {
                     channel_id,
                     user_id,
-                    admin,
+                    role: role.into(),
                 })
                 .await;
 
@@ -570,11 +570,11 @@ impl ChannelStore {
         })
     }
 
-    pub fn set_member_admin(
+    pub fn set_member_role(
         &mut self,
         channel_id: ChannelId,
         user_id: UserId,
-        admin: bool,
+        role: proto::ChannelRole,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         if !self.outgoing_invites.insert((channel_id, user_id)) {
@@ -585,10 +585,10 @@ impl ChannelStore {
         let client = self.client.clone();
         cx.spawn(|this, mut cx| async move {
             let result = client
-                .request(proto::SetChannelMemberAdmin {
+                .request(proto::SetChannelMemberRole {
                     channel_id,
                     user_id,
-                    admin,
+                    role: role.into(),
                 })
                 .await;
 
@@ -676,8 +676,8 @@ impl ChannelStore {
                 .filter_map(|(user, member)| {
                     Some(ChannelMembership {
                         user,
-                        admin: member.admin,
-                        kind: proto::channel_member::Kind::from_i32(member.kind)?,
+                        role: member.role(),
+                        kind: member.kind(),
                     })
                 })
                 .collect())
@@ -935,7 +935,7 @@ impl ChannelStore {
         }
 
         for permission in payload.channel_permissions {
-            if permission.is_admin {
+            if permission.role() == proto::ChannelRole::Admin {
                 self.channels_with_admin_privileges
                     .insert(permission.channel_id);
             } else {

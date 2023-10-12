@@ -144,7 +144,7 @@ message Envelope {
         DeleteChannel delete_channel = 118;
         GetChannelMembers get_channel_members = 119;
         GetChannelMembersResponse get_channel_members_response = 120;
-        SetChannelMemberAdmin set_channel_member_admin = 121;
+        SetChannelMemberRole set_channel_member_role = 145;
         RenameChannel rename_channel = 122;
         RenameChannelResponse rename_channel_response = 123;
 
@@ -170,7 +170,7 @@ message Envelope {
 
         LinkChannel link_channel = 140;
         UnlinkChannel unlink_channel = 141;
-        MoveChannel move_channel = 142; // current max: 144
+        MoveChannel move_channel = 142; // current max: 145
     }
 }
 
@@ -979,7 +979,7 @@ message ChannelEdge {
 
 message ChannelPermission {
     uint64 channel_id = 1;
-    bool is_admin = 2;
+    ChannelRole role = 3;
 }
 
 message ChannelParticipants {
@@ -1005,8 +1005,8 @@ message GetChannelMembersResponse {
 
 message ChannelMember {
     uint64 user_id = 1;
-    bool admin = 2;
     Kind kind = 3;
+    ChannelRole role = 4;
 
     enum Kind {
         Member = 0;
@@ -1028,7 +1028,7 @@ message CreateChannelResponse {
 message InviteChannelMember {
     uint64 channel_id = 1;
     uint64 user_id = 2;
-    bool admin = 3;
+    ChannelRole role = 4;
 }
 
 message RemoveChannelMember {
@@ -1036,10 +1036,16 @@ message RemoveChannelMember {
     uint64 user_id = 2;
 }
 
-message SetChannelMemberAdmin {
+enum ChannelRole {
+    Admin = 0;
+    Member = 1;
+    Guest = 2;
+}
+
+message SetChannelMemberRole {
     uint64 channel_id = 1;
     uint64 user_id = 2;
-    bool admin = 3;
+    ChannelRole role = 3;
 }
 
 message RenameChannel {

@@ -328,17 +328,17 @@ async fn test_channel_invites(db: &Arc<Database>) {
             proto::ChannelMember {
                 user_id: user_1.to_proto(),
                 kind: proto::channel_member::Kind::Member.into(),
-                admin: true,
+                role: proto::ChannelRole::Admin.into(),
             },
             proto::ChannelMember {
                 user_id: user_2.to_proto(),
                 kind: proto::channel_member::Kind::Invitee.into(),
-                admin: false,
+                role: proto::ChannelRole::Member.into(),
             },
             proto::ChannelMember {
                 user_id: user_3.to_proto(),
                 kind: proto::channel_member::Kind::Invitee.into(),
-                admin: true,
+                role: proto::ChannelRole::Admin.into(),
             },
         ]
     );
@@ -362,12 +362,12 @@ async fn test_channel_invites(db: &Arc<Database>) {
             proto::ChannelMember {
                 user_id: user_1.to_proto(),
                 kind: proto::channel_member::Kind::Member.into(),
-                admin: true,
+                role: proto::ChannelRole::Admin.into(),
             },
             proto::ChannelMember {
                 user_id: user_2.to_proto(),
                 kind: proto::channel_member::Kind::AncestorMember.into(),
-                admin: false,
+                role: proto::ChannelRole::Member.into(),
             },
         ]
     );
