@@ -19,8 +19,8 @@ use gpui::{
 use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent},
-    BracketPairConfig, FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageRegistry,
-    Override, Point,
+    BracketPairConfig, BundledFormatter, FakeLspAdapter, LanguageConfig, LanguageConfigOverride,
+    LanguageRegistry, Override, Point,
 };
 use parking_lot::Mutex;
 use project::project_settings::{LspSettings, ProjectSettings};
@@ -5076,7 +5076,9 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
-    init_test(cx, |_| {});
+    init_test(cx, |settings| {
+        settings.defaults.formatter = Some(language_settings::Formatter::LanguageServer)
+    });
 
     let mut language = Language::new(
         LanguageConfig {
@@ -5092,6 +5094,12 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
                 document_formatting_provider: Some(lsp::OneOf::Left(true)),
                 ..Default::default()
             },
+            // Enable Prettier formatting for the same buffer, and ensure
+            // LSP is called instead of Prettier.
+            enabled_formatters: vec![BundledFormatter::Prettier {
+                parser_name: Some("test_parser"),
+                plugin_names: Vec::new(),
+            }],
             ..Default::default()
         }))
         .await;
@@ -5100,7 +5108,10 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     fs.insert_file("/file.rs", Default::default()).await;
 
     let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
-    project.update(cx, |project, _| project.languages().add(Arc::new(language)));
+    project.update(cx, |project, _| {
+        project.enable_test_prettier(&[]);
+        project.languages().add(Arc::new(language));
+    });
     let buffer = project
         .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
         .await
@@ -5218,7 +5229,9 @@ async fn test_concurrent_format_requests(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_strip_whitespace_and_format_via_lsp(cx: &mut gpui::TestAppContext) {
-    init_test(cx, |_| {});
+    init_test(cx, |settings| {
+        settings.defaults.formatter = Some(language_settings::Formatter::Auto)
+    });
 
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
@@ -7813,6 +7826,75 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
             panic!("expected completion menu to be open");
         }
     });
+}
+
+#[gpui::test]
+async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.formatter = Some(language_settings::Formatter::Prettier)
+    });
+
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    );
+
+    let test_plugin = "test_plugin";
+    let _ = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            enabled_formatters: vec![BundledFormatter::Prettier {
+                parser_name: Some("test_parser"),
+                plugin_names: vec![test_plugin],
+            }],
+            ..Default::default()
+        }))
+        .await;
+
+    let fs = FakeFs::new(cx.background());
+    fs.insert_file("/file.rs", Default::default()).await;
+
+    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
+    let prettier_format_suffix = project.update(cx, |project, _| {
+        let suffix = project.enable_test_prettier(&[test_plugin]);
+        project.languages().add(Arc::new(language));
+        suffix
+    });
+    let buffer = project
+        .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
+        .await
+        .unwrap();
+
+    let buffer_text = "one\ntwo\nthree\n";
+    let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+    let editor = cx.add_window(|cx| build_editor(buffer, cx)).root(cx);
+    editor.update(cx, |editor, cx| editor.set_text(buffer_text, cx));
+
+    let format = editor.update(cx, |editor, cx| {
+        editor.perform_format(project.clone(), FormatTrigger::Manual, cx)
+    });
+    format.await.unwrap();
+    assert_eq!(
+        editor.read_with(cx, |editor, cx| editor.text(cx)),
+        buffer_text.to_string() + prettier_format_suffix,
+        "Test prettier formatting was not applied to the original buffer text",
+    );
+
+    update_test_language_settings(cx, |settings| {
+        settings.defaults.formatter = Some(language_settings::Formatter::Auto)
+    });
+    let format = editor.update(cx, |editor, cx| {
+        editor.perform_format(project.clone(), FormatTrigger::Manual, cx)
+    });
+    format.await.unwrap();
+    assert_eq!(
+        editor.read_with(cx, |editor, cx| editor.text(cx)),
+        buffer_text.to_string() + prettier_format_suffix + "\n" + prettier_format_suffix,
+        "Autoformatting (via test prettier) was not applied to the original buffer text",
+    );
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {

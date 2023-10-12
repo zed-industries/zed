@@ -1501,6 +1501,7 @@ dependencies = [
  "log",
  "lsp",
  "nanoid",
+ "node_runtime",
  "parking_lot 0.11.2",
  "pretty_assertions",
  "project",
@@ -5518,6 +5519,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
 
 [[package]]
+name = "prettier"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "collections",
+ "fs",
+ "futures 0.3.28",
+ "gpui",
+ "language",
+ "log",
+ "lsp",
+ "node_runtime",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "util",
+]
+
+[[package]]
 name = "pretty_assertions"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5629,8 +5650,10 @@ dependencies = [
  "lazy_static",
  "log",
  "lsp",
+ "node_runtime",
  "parking_lot 0.11.2",
  "postage",
+ "prettier",
  "pretty_assertions",
  "rand 0.8.5",
  "regex",
@@ -9986,6 +10009,7 @@ dependencies = [
  "lazy_static",
  "log",
  "menu",
+ "node_runtime",
  "parking_lot 0.11.2",
  "postage",
  "project",

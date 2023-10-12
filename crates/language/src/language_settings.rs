@@ -50,6 +50,7 @@ pub struct LanguageSettings {
     pub remove_trailing_whitespace_on_save: bool,
     pub ensure_final_newline_on_save: bool,
     pub formatter: Formatter,
+    pub prettier: HashMap<String, serde_json::Value>,
     pub enable_language_server: bool,
     pub show_copilot_suggestions: bool,
     pub show_whitespaces: ShowWhitespaceSetting,
@@ -97,6 +98,8 @@ pub struct LanguageSettingsContent {
     pub ensure_final_newline_on_save: Option<bool>,
     #[serde(default)]
     pub formatter: Option<Formatter>,
+    #[serde(default)]
+    pub prettier: Option<HashMap<String, serde_json::Value>>,
     #[serde(default)]
     pub enable_language_server: Option<bool>,
     #[serde(default)]
@@ -149,10 +152,13 @@ pub enum ShowWhitespaceSetting {
     All,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Formatter {
+    #[default]
+    Auto,
     LanguageServer,
+    Prettier,
     External {
         command: Arc<str>,
         arguments: Arc<[String]>,
@@ -392,6 +398,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         src.preferred_line_length,
     );
     merge(&mut settings.formatter, src.formatter.clone());
+    merge(&mut settings.prettier, src.prettier.clone());
     merge(&mut settings.format_on_save, src.format_on_save.clone());
     merge(
         &mut settings.remove_trailing_whitespace_on_save,

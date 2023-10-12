@@ -85,7 +85,7 @@ pub struct RemoveOptions {
     pub ignore_if_not_exists: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Metadata {
     pub inode: u64,
     pub mtime: SystemTime,
