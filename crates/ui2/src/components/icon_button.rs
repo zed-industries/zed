@@ -80,9 +80,9 @@ impl<S: 'static + Send + Sync> IconButton<S> {
         }
 
         if let Some(click_handler) = self.handlers.click.clone() {
-            div = div.on_click(MouseButton::Left, move |state, event, cx| {
-                click_handler(state, cx);
-            });
+            // div = div.on_click(MouseButton::Left, move |state, event, cx| {
+            //     click_handler(state, cx);
+            // });
         }
 
         div.w_7()

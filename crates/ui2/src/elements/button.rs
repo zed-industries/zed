@@ -196,9 +196,9 @@ impl<S: 'static + Send + Sync + Clone> Button<S> {
         }
 
         if let Some(click_handler) = self.handlers.click.clone() {
-            el = el.on_click(MouseButton::Left, move |state, event, cx| {
-                click_handler(state, cx);
-            });
+            // el = el.on_click(MouseButton::Left, move |state, event, cx| {
+            //     click_handler(state, cx);
+            // });
         }
 
         el
