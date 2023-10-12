@@ -283,9 +283,11 @@ impl Prettier {
                         let prettier_plugin_dir = prettier_node_modules.join(plugin_name);
                         for possible_plugin_path in [
                             prettier_plugin_dir.join("dist").join("index.mjs"),
+                            prettier_plugin_dir.join("dist").join("index.js"),
+                            prettier_plugin_dir.join("dist").join("plugin.js"),
                             prettier_plugin_dir.join("index.mjs"),
-                            prettier_plugin_dir.join("plugin.js"),
                             prettier_plugin_dir.join("index.js"),
+                            prettier_plugin_dir.join("plugin.js"),
                             prettier_plugin_dir,
                         ] {
                             if possible_plugin_path.is_file() {
