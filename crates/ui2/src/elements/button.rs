@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use gpui3::{DefiniteLength, Hsla, WindowContext};
+use gpui3::{DefiniteLength, Hsla, Interactive, MouseButton, WindowContext};
 
 use crate::prelude::*;
 use crate::{h_stack, theme, Icon, IconColor, IconElement, Label, LabelColor, LabelSize};
@@ -195,20 +195,11 @@ impl<S: 'static + Send + Sync + Clone> Button<S> {
             el = el.w(width).justify_center();
         }
 
-        // el.when_some(self.handlers.click.clone(), |el, click_handler| {
-        //     el.id(0)
-        //         .on_click(MouseButton::Left, move |state, event, cx| {
-        //             click_handler(state, cx);
-        //         })
-        // });
-
-        // if let Some(click_handler) = self.handlers.click.clone() {
-        //     el = el
-        //         .id(0)
-        //         .on_click(MouseButton::Left, move |state, event, cx| {
-        //             click_handler(state, cx);
-        //         });
-        // }
+        if let Some(click_handler) = self.handlers.click.clone() {
+            el = el.on_mouse_down(MouseButton::Left, move |state, event, cx| {
+                click_handler(state, cx);
+            });
+        }
 
         el
     }
