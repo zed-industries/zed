@@ -6,7 +6,6 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     let type_name = ast.ident;
 
-    let mut logme = false;
     let mut state_type = quote! { () };
 
     for param in &ast.generics.params {
@@ -27,7 +26,6 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
                             if nv.path.is_ident("view_state") {
                                 if let syn::Lit::Str(lit_str) = nv.lit {
                                     state_type = lit_str.value().parse().unwrap();
-                                    logme = true;
                                 }
                             }
                         }
@@ -84,10 +82,6 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
             }
         }
     };
-
-    if logme {
-        println!(">>>>>>>>>>>>>>>>>>>>>>\n{}", gen);
-    }
 
     gen.into()
 }
