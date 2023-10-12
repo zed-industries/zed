@@ -114,12 +114,21 @@ impl ChannelStore {
         let watch_connection_status = cx.spawn_weak(|this, mut cx| async move {
             while let Some(status) = connection_status.next().await {
                 let this = this.upgrade(&cx)?;
+                match status {
+                    client::Status::Connected { .. } => {
+                        this.update(&mut cx, |this, cx| this.handle_connect(cx))
+                            .await
+                            .log_err()?;
+                    }
+                    client::Status::SignedOut | client::Status::UpgradeRequired => {
+                        this.update(&mut cx, |this, cx| this.handle_disconnect(false, cx));
+                    }
+                    _ => {
+                        this.update(&mut cx, |this, cx| this.handle_disconnect(true, cx));
+                    }
+                }
                 if status.is_connected() {
-                    this.update(&mut cx, |this, cx| this.handle_connect(cx))
-                        .await
-                        .log_err()?;
                 } else {
-                    this.update(&mut cx, |this, cx| this.handle_disconnect(cx));
                 }
             }
             Some(())
@@ -823,7 +832,7 @@ impl ChannelStore {
         })
     }
 
-    fn handle_disconnect(&mut self, cx: &mut ModelContext<Self>) {
+    fn handle_disconnect(&mut self, wait_for_reconnect: bool, cx: &mut ModelContext<Self>) {
         self.channel_index.clear();
         self.channel_invitations.clear();
         self.channel_participants.clear();
@@ -834,7 +843,10 @@ impl ChannelStore {
 
         self.disconnect_channel_buffers_task.get_or_insert_with(|| {
             cx.spawn_weak(|this, mut cx| async move {
-                cx.background().timer(RECONNECT_TIMEOUT).await;
+                if wait_for_reconnect {
+                    cx.background().timer(RECONNECT_TIMEOUT).await;
+                }
+
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| {
                         for (_, buffer) in this.opened_buffers.drain() {
