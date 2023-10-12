@@ -1,3 +1,6 @@
+use gpui3::AnyElement;
+use smallvec::SmallVec;
+
 use crate::prelude::*;
 use crate::theme;
 
@@ -6,25 +9,50 @@ pub struct ToolbarItem {}
 
 #[derive(Element)]
 pub struct Toolbar<S: 'static + Send + Sync> {
-    left_items: HackyChildren<S>,
-    left_items_payload: HackyChildrenPayload,
-    right_items: HackyChildren<S>,
-    right_items_payload: HackyChildrenPayload,
+    left_items: SmallVec<[AnyElement<S>; 2]>,
+    right_items: SmallVec<[AnyElement<S>; 2]>,
 }
 
 impl<S: 'static + Send + Sync> Toolbar<S> {
-    pub fn new(
-        left_items: HackyChildren<S>,
-        left_items_payload: HackyChildrenPayload,
-        right_items: HackyChildren<S>,
-        right_items_payload: HackyChildrenPayload,
-    ) -> Self {
+    pub fn new() -> Self {
         Self {
-            left_items,
-            left_items_payload,
-            right_items,
-            right_items_payload,
+            left_items: SmallVec::new(),
+            right_items: SmallVec::new(),
         }
+    }
+
+    pub fn left_item(mut self, child: impl IntoAnyElement<S>) -> Self
+    where
+        Self: Sized,
+    {
+        self.left_items.push(child.into_any());
+        self
+    }
+
+    pub fn left_items(mut self, iter: impl IntoIterator<Item = impl IntoAnyElement<S>>) -> Self
+    where
+        Self: Sized,
+    {
+        self.left_items
+            .extend(iter.into_iter().map(|item| item.into_any()));
+        self
+    }
+
+    pub fn right_item(mut self, child: impl IntoAnyElement<S>) -> Self
+    where
+        Self: Sized,
+    {
+        self.right_items.push(child.into_any());
+        self
+    }
+
+    pub fn right_items(mut self, iter: impl IntoIterator<Item = impl IntoAnyElement<S>>) -> Self
+    where
+        Self: Sized,
+    {
+        self.right_items
+            .extend(iter.into_iter().map(|item| item.into_any()));
+        self
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
@@ -35,16 +63,8 @@ impl<S: 'static + Send + Sync> Toolbar<S> {
             .p_2()
             .flex()
             .justify_between()
-            .child(
-                div()
-                    .flex()
-                    .children_any((self.left_items)(cx, self.left_items_payload.as_ref())),
-            )
-            .child(
-                div()
-                    .flex()
-                    .children_any((self.right_items)(cx, self.right_items_payload.as_ref())),
-            )
+            .child(div().flex().children(self.left_items.drain(..)))
+            .child(div().flex().children(self.right_items.drain(..)))
     }
 }
 
@@ -56,7 +76,6 @@ mod stories {
     use std::marker::PhantomData;
     use std::path::PathBuf;
     use std::str::FromStr;
-    use std::sync::Arc;
 
     use crate::{Breadcrumb, HighlightedText, Icon, IconButton, Story, Symbol};
 
@@ -74,23 +93,19 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             let theme = theme(cx);
-
-            struct LeftItemsPayload {
-                pub theme: Arc<Theme>,
-            }
 
             Story::container(cx)
                 .child(Story::title_for::<_, Toolbar<S>>(cx))
                 .child(Story::label(cx, "Default"))
-                .child(Toolbar::new(
-                    |_, payload| {
-                        let payload = payload.downcast_ref::<LeftItemsPayload>().unwrap();
-
-                        let theme = payload.theme.clone();
-
-                        vec![Breadcrumb::new(
+                .child(
+                    Toolbar::new()
+                        .left_item(Breadcrumb::new(
                             PathBuf::from_str("crates/ui/src/components/toolbar.rs").unwrap(),
                             vec![
                                 Symbol(vec![
@@ -114,21 +129,13 @@ mod stories {
                                     },
                                 ]),
                             ],
-                        )
-                        .into_any()]
-                    },
-                    Box::new(LeftItemsPayload {
-                        theme: theme.clone(),
-                    }),
-                    |_, _| {
-                        vec![
-                            IconButton::new(Icon::InlayHint).into_any(),
-                            IconButton::new(Icon::MagnifyingGlass).into_any(),
-                            IconButton::new(Icon::MagicWand).into_any(),
-                        ]
-                    },
-                    Box::new(()),
-                ))
+                        ))
+                        .right_items(vec![
+                            IconButton::new(Icon::InlayHint),
+                            IconButton::new(Icon::MagnifyingGlass),
+                            IconButton::new(Icon::MagicWand),
+                        ]),
+                )
         }
     }
 }

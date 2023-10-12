@@ -29,10 +29,6 @@ impl<S: 'static + Send + Sync + Clone> AssistantPanel<S> {
     fn render(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
 
-        struct PanelPayload {
-            pub scroll_state: ScrollState,
-        }
-
         Panel::new(self.scroll_state.clone())
             .children(vec![div()
                 .flex()
