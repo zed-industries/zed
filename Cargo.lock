@@ -1502,6 +1502,7 @@ dependencies = [
  "lsp",
  "nanoid",
  "node_runtime",
+ "notifications",
  "parking_lot 0.11.2",
  "pretty_assertions",
  "project",

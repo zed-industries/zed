@@ -192,7 +192,7 @@ CREATE INDEX "index_followers_on_room_id" ON "followers" ("room_id");
 CREATE TABLE "channels" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "name" VARCHAR NOT NULL,
-    "created_at" TIMESTAMP NOT NULL DEFAULT now
+    "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS "channel_chat_participants" (
@@ -315,15 +315,15 @@ CREATE UNIQUE INDEX "index_observed_channel_messages_user_and_channel_id" ON "ob
 
 CREATE TABLE "notification_kinds" (
     "id" INTEGER PRIMARY KEY NOT NULL,
-    "name" VARCHAR NOT NULL,
+    "name" VARCHAR NOT NULL
 );
 
 CREATE UNIQUE INDEX "index_notification_kinds_on_name" ON "notification_kinds" ("name");
 
 CREATE TABLE "notifications" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "created_at" TIMESTAMP NOT NULL default now,
-    "recipent_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    "created_at" TIMESTAMP NOT NULL default CURRENT_TIMESTAMP,
+    "recipient_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     "kind" INTEGER NOT NULL REFERENCES notification_kinds (id),
     "is_read" BOOLEAN NOT NULL DEFAULT FALSE,
     "entity_id_1" INTEGER,

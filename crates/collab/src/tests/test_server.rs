@@ -231,7 +231,8 @@ impl TestServer {
             workspace::init(app_state.clone(), cx);
             audio::init((), cx);
             call::init(client.clone(), user_store.clone(), cx);
-            channel::init(&client, user_store, cx);
+            channel::init(&client, user_store.clone(), cx);
+            notifications::init(client.clone(), user_store, cx);
         });
 
         client
