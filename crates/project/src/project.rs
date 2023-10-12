@@ -37,7 +37,7 @@ use language::{
     point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_fingerprint, deserialize_line_ending, deserialize_version,
-        serialize_anchor, serialize_diff, serialize_version, split_operations,
+        serialize_anchor, serialize_version, split_operations,
     },
     range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, BundledFormatter, CachedLspAdapter,
     CodeAction, CodeLabel, Completion, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff,
@@ -613,8 +613,6 @@ impl Project {
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
         client.add_model_request_handler(Self::handle_save_buffer);
         client.add_model_message_handler(Self::handle_update_diff_base);
-        client.add_model_request_handler(Self::handle_prettier_instance_for_buffer);
-        client.add_model_request_handler(Self::handle_invoke_prettier);
     }
 
     pub fn local(
@@ -8310,84 +8308,6 @@ impl Project {
         }
     }
 
-    async fn handle_prettier_instance_for_buffer(
-        this: ModelHandle<Self>,
-        envelope: TypedEnvelope<proto::PrettierInstanceForBuffer>,
-        _: Arc<Client>,
-        mut cx: AsyncAppContext,
-    ) -> anyhow::Result<proto::PrettierInstanceForBufferResponse> {
-        let prettier_instance_for_buffer_task = this.update(&mut cx, |this, cx| {
-            let buffer = this
-                .opened_buffers
-                .get(&envelope.payload.buffer_id)
-                .and_then(|buffer| buffer.upgrade(cx))
-                .with_context(|| format!("unknown buffer id {}", envelope.payload.buffer_id))?;
-            anyhow::Ok(this.prettier_instance_for_buffer(&buffer, cx))
-        })?;
-
-        let prettier_path = match prettier_instance_for_buffer_task.await {
-            Some(prettier) => match prettier.await {
-                Ok(prettier) => Some(prettier.prettier_dir().display().to_string()),
-                Err(e) => {
-                    anyhow::bail!("Failed to create prettier instance for remote request: {e:#}")
-                }
-            },
-            None => None,
-        };
-        Ok(proto::PrettierInstanceForBufferResponse { prettier_path })
-    }
-
-    async fn handle_invoke_prettier(
-        this: ModelHandle<Self>,
-        envelope: TypedEnvelope<proto::InvokePrettierForBuffer>,
-        _: Arc<Client>,
-        mut cx: AsyncAppContext,
-    ) -> anyhow::Result<proto::InvokePrettierForBufferResponse> {
-        let prettier = this
-            .read_with(&cx, |this, _| {
-                this.prettier_instances
-                    .get(&(
-                        envelope.payload.worktree_id.map(WorktreeId::from_proto),
-                        PathBuf::from(&envelope.payload.prettier_path),
-                    ))
-                    .cloned()
-            })
-            .with_context(|| {
-                format!(
-                    "Missing prettier for worktree {:?} and path {:?}",
-                    envelope.payload.worktree_id, envelope.payload.prettier_path,
-                )
-            })?
-            .await;
-        let prettier = match prettier {
-            Ok(prettier) => prettier,
-            Err(e) => anyhow::bail!("Prettier instance failed to start: {e:#}"),
-        };
-
-        let buffer = this.update(&mut cx, |this, cx| {
-            envelope
-                .payload
-                .buffer_id
-                .and_then(|id| this.opened_buffers.get(&id))
-                .and_then(|buffer| buffer.upgrade(cx))
-        });
-
-        let buffer_path = buffer.as_ref().and_then(|buffer| {
-            buffer.read_with(&cx, |buffer, cx| {
-                File::from_dyn(buffer.file()).map(|f| f.full_path(cx))
-            })
-        });
-
-        let diff = prettier
-            .invoke(buffer.as_ref(), buffer_path, &envelope.payload.method, &cx)
-            .await
-            .with_context(|| format!("prettier invoke method {}", &envelope.payload.method))?;
-
-        Ok(proto::InvokePrettierForBufferResponse {
-            diff: diff.map(serialize_diff),
-        })
-    }
-
     fn prettier_instance_for_buffer(
         &mut self,
         buffer: &ModelHandle<Buffer>,
@@ -8531,44 +8451,8 @@ impl Project {
                 });
                 Some(new_prettier_task)
             })
-        } else if let Some(project_id) = self.remote_id() {
-            let client = self.client.clone();
-            let request = proto::PrettierInstanceForBuffer {
-                project_id,
-                buffer_id: buffer.remote_id(),
-            };
-            cx.spawn(|this, mut cx| async move {
-                match client.request(request).await {
-                    Ok(response) => {
-                        response
-                            .prettier_path
-                            .map(PathBuf::from)
-                            .map(|prettier_path| {
-                                let prettier_task = Task::ready(
-                                    Ok(Arc::new(Prettier::remote(
-                                        project_id,
-                                        worktree_id.map(|id| id.to_usize()),
-                                        prettier_path.clone(),
-                                        client,
-                                    )))
-                                    .map_err(Arc::new),
-                                )
-                                .shared();
-                                this.update(&mut cx, |project, _| {
-                                    project.prettier_instances.insert(
-                                        (worktree_id, prettier_path),
-                                        prettier_task.clone(),
-                                    );
-                                });
-                                prettier_task
-                            })
-                    }
-                    Err(e) => {
-                        log::error!("Prettier init remote request failed: {e:#}");
-                        None
-                    }
-                }
-            })
+        } else if self.remote_id().is_some() {
+            return Task::ready(None);
         } else {
             Task::ready(Some(
                 Task::ready(Err(Arc::new(anyhow!("project does not have a remote id")))).shared(),

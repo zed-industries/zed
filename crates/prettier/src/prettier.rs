@@ -3,38 +3,27 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
-use client::{proto, Client};
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use gpui::{AsyncAppContext, ModelHandle};
 use language::language_settings::language_settings;
-use language::proto::deserialize_diff;
 use language::{Buffer, BundledFormatter, Diff};
-use lsp::request::Request;
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
 use util::paths::DEFAULT_PRETTIER_DIR;
 
 pub enum Prettier {
-    Local(Local),
-    Remote(Remote),
+    Real(RealPrettier),
     #[cfg(any(test, feature = "test-support"))]
     Test(TestPrettier),
 }
 
-pub struct Local {
+pub struct RealPrettier {
     worktree_id: Option<usize>,
     default: bool,
     prettier_dir: PathBuf,
     server: Arc<LanguageServer>,
-}
-
-pub struct Remote {
-    project_id: u64,
-    worktree_id: Option<usize>,
-    prettier_dir: PathBuf,
-    client: Arc<Client>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -73,20 +62,6 @@ impl Prettier {
 
     #[cfg(any(test, feature = "test-support"))]
     pub const FORMAT_SUFFIX: &str = "\nformatted by test prettier";
-
-    pub fn remote(
-        project_id: u64,
-        worktree_id: Option<usize>,
-        prettier_dir: PathBuf,
-        client: Arc<Client>,
-    ) -> Self {
-        Self::Remote(Remote {
-            project_id,
-            worktree_id,
-            prettier_dir,
-            client,
-        })
-    }
 
     pub async fn locate(
         starting_path: Option<LocateStart>,
@@ -249,37 +224,12 @@ impl Prettier {
             .spawn(server.initialize(None))
             .await
             .context("prettier server initialization")?;
-        Ok(Self::Local(Local {
+        Ok(Self::Real(RealPrettier {
             worktree_id,
             server,
             default: prettier_dir == DEFAULT_PRETTIER_DIR.as_path(),
             prettier_dir,
         }))
-    }
-
-    pub async fn invoke(
-        &self,
-        buffer: Option<&ModelHandle<Buffer>>,
-        buffer_path: Option<PathBuf>,
-        method: &str,
-        cx: &AsyncAppContext,
-    ) -> anyhow::Result<Option<Diff>> {
-        match method {
-            Format::METHOD => self
-                .format(
-                    buffer.expect("missing buffer for format invocation"),
-                    buffer_path,
-                    cx,
-                )
-                .await
-                .context("invoke method")
-                .map(Some),
-            ClearCache::METHOD => {
-                self.clear_cache().await.context("invoke method")?;
-                Ok(None)
-            }
-            unknown => anyhow::bail!("Unknown method {unknown}"),
-        }
     }
 
     pub async fn format(
@@ -289,7 +239,7 @@ impl Prettier {
         cx: &AsyncAppContext,
     ) -> anyhow::Result<Diff> {
         match self {
-            Self::Local(local) => {
+            Self::Real(local) => {
                 let params = buffer.read_with(cx, |buffer, cx| {
                     let buffer_language = buffer.language();
                     let parsers_with_plugins = buffer_language
@@ -418,21 +368,6 @@ impl Prettier {
                 let diff_task = buffer.read_with(cx, |buffer, cx| buffer.diff(response.text, cx));
                 Ok(diff_task.await)
             }
-            Self::Remote(remote) => buffer
-                .read_with(cx, |buffer, _| {
-                    remote.client.request(proto::InvokePrettierForBuffer {
-                        buffer_id: Some(buffer.remote_id()),
-                        worktree_id: self.worktree_id().map(|id| id as u64),
-                        method: Format::METHOD.to_string(),
-                        project_id: remote.project_id,
-                        prettier_path: remote.prettier_dir.to_string_lossy().to_string(),
-                    })
-                })
-                .await
-                .context("prettier diff invoke")?
-                .diff
-                .map(deserialize_diff)
-                .context("missing diff after prettier diff invocation"),
             #[cfg(any(test, feature = "test-support"))]
             Self::Test(_) => Ok(buffer
                 .read_with(cx, |buffer, cx| {
@@ -445,28 +380,11 @@ impl Prettier {
 
     pub async fn clear_cache(&self) -> anyhow::Result<()> {
         match self {
-            Self::Local(local) => local
+            Self::Real(local) => local
                 .server
                 .request::<ClearCache>(())
                 .await
                 .context("prettier clear cache"),
-            Self::Remote(remote) => remote
-                .client
-                .request(proto::InvokePrettierForBuffer {
-                    buffer_id: None,
-                    worktree_id: self.worktree_id().map(|id| id as u64),
-                    method: ClearCache::METHOD.to_string(),
-                    project_id: remote.project_id,
-                    prettier_path: remote.prettier_dir.to_string_lossy().to_string(),
-                })
-                .await
-                .map(|response| {
-                    debug_assert!(
-                        response.diff.is_none(),
-                        "Cleare cache invocation returned diff data"
-                    )
-                })
-                .context("prettier invoke clear cache"),
             #[cfg(any(test, feature = "test-support"))]
             Self::Test(_) => Ok(()),
         }
@@ -474,8 +392,7 @@ impl Prettier {
 
     pub fn server(&self) -> Option<&Arc<LanguageServer>> {
         match self {
-            Self::Local(local) => Some(&local.server),
-            Self::Remote(_) => None,
+            Self::Real(local) => Some(&local.server),
             #[cfg(any(test, feature = "test-support"))]
             Self::Test(_) => None,
         }
@@ -483,8 +400,7 @@ impl Prettier {
 
     pub fn is_default(&self) -> bool {
         match self {
-            Self::Local(local) => local.default,
-            Self::Remote(_) => false,
+            Self::Real(local) => local.default,
             #[cfg(any(test, feature = "test-support"))]
             Self::Test(test_prettier) => test_prettier.default,
         }
@@ -492,8 +408,7 @@ impl Prettier {
 
     pub fn prettier_dir(&self) -> &Path {
         match self {
-            Self::Local(local) => &local.prettier_dir,
-            Self::Remote(remote) => &remote.prettier_dir,
+            Self::Real(local) => &local.prettier_dir,
             #[cfg(any(test, feature = "test-support"))]
             Self::Test(test_prettier) => &test_prettier.prettier_dir,
         }
@@ -501,8 +416,7 @@ impl Prettier {
 
     pub fn worktree_id(&self) -> Option<usize> {
         match self {
-            Self::Local(local) => local.worktree_id,
-            Self::Remote(remote) => remote.worktree_id,
+            Self::Real(local) => local.worktree_id,
             #[cfg(any(test, feature = "test-support"))]
             Self::Test(test_prettier) => test_prettier.worktree_id,
         }

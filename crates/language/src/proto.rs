@@ -1,6 +1,6 @@
 use crate::{
     diagnostic_set::DiagnosticEntry, CodeAction, CodeLabel, Completion, CursorShape, Diagnostic,
-    Diff, Language,
+    Language,
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
@@ -586,43 +586,4 @@ pub fn serialize_version(version: &clock::Global) -> Vec<proto::VectorClockEntry
             timestamp: entry.value,
         })
         .collect()
-}
-
-pub fn serialize_diff(diff: Diff) -> proto::Diff {
-    proto::Diff {
-        version: serialize_version(&diff.base_version),
-        line_ending: serialize_line_ending(diff.line_ending) as i32,
-        edits: diff
-            .edits
-            .into_iter()
-            .map(|(range, edit)| proto::DiffEdit {
-                range: Some(proto::Range {
-                    start: range.start as u64,
-                    end: range.end as u64,
-                }),
-                edit: edit.to_string(),
-            })
-            .collect(),
-    }
-}
-
-pub fn deserialize_diff(diff: proto::Diff) -> Diff {
-    Diff {
-        base_version: deserialize_version(&diff.version),
-        line_ending: deserialize_line_ending(
-            rpc::proto::LineEnding::from_i32(diff.line_ending)
-                .unwrap_or_else(|| panic!("invalid line ending {}", diff.line_ending)),
-        ),
-        edits: diff
-            .edits
-            .into_iter()
-            .map(|edit| {
-                let range = edit.range.expect("incorrect edit without a range");
-                (
-                    range.start as usize..range.end as usize,
-                    Arc::from(edit.edit.as_str()),
-                )
-            })
-            .collect(),
-    }
 }

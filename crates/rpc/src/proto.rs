@@ -273,10 +273,6 @@ messages!(
     (UpdateChannelBufferCollaborators, Foreground),
     (AckBufferOperation, Background),
     (AckChannelMessage, Background),
-    (PrettierInstanceForBuffer, Background),
-    (InvokePrettierForBuffer, Background),
-    (PrettierInstanceForBufferResponse, Background),
-    (InvokePrettierForBufferResponse, Background),
 );
 
 request_messages!(
@@ -354,8 +350,6 @@ request_messages!(
     (UpdateWorktree, Ack),
     (JoinChannelBuffer, JoinChannelBufferResponse),
     (LeaveChannelBuffer, Ack),
-    (PrettierInstanceForBuffer, PrettierInstanceForBufferResponse),
-    (InvokePrettierForBuffer, InvokePrettierForBufferResponse),
 );
 
 entity_messages!(
@@ -407,8 +401,6 @@ entity_messages!(
     UpdateWorktree,
     UpdateWorktreeSettings,
     UpdateDiffBase,
-    PrettierInstanceForBuffer,
-    InvokePrettierForBuffer,
 );
 
 entity_messages!(
