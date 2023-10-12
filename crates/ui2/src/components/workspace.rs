@@ -329,12 +329,14 @@ mod stories {
         workspace: View<Workspace>,
     }
 
-    pub fn workspace_story(cx: &mut WindowContext) -> View<WorkspaceStory> {
-        view(
-            cx.entity(|cx| WorkspaceStory {
-                workspace: workspace(cx),
-            }),
-            |view, cx| view.workspace.clone(),
-        )
+    impl WorkspaceStory {
+        pub fn view(cx: &mut WindowContext) -> View<Self> {
+            view(
+                cx.entity(|cx| Self {
+                    workspace: workspace(cx),
+                }),
+                |view, cx| view.workspace.clone(),
+            )
+        }
     }
 }

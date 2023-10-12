@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use gpui3::AnyElement;
 use smallvec::SmallVec;
 

@@ -1,5 +1,4 @@
 use std::marker::PhantomData;
-use std::sync::Arc;
 
 use gpui3::{relative, rems, Size};
 

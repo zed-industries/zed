@@ -1,26 +1,24 @@
-use std::marker::PhantomData;
-
+use gpui3::{view, Context, View};
 use strum::IntoEnumIterator;
 use ui::prelude::*;
 
 use crate::story::Story;
 use crate::story_selector::{ComponentStory, ElementStory};
 
-#[derive(Element)]
-pub struct KitchenSinkStory<S: 'static + Send + Sync + Clone> {
-    state_type: PhantomData<S>,
-}
+pub struct KitchenSinkStory {}
 
-impl<S: 'static + Send + Sync + Clone> KitchenSinkStory<S> {
+impl KitchenSinkStory {
     pub fn new() -> Self {
-        Self {
-            state_type: PhantomData,
-        }
+        Self {}
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    pub fn view(cx: &mut WindowContext) -> View<Self> {
+        view(cx.entity(|cx| Self::new()), Self::render)
+    }
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
         let element_stories = ElementStory::iter()
-            .map(|selector| selector.story())
+            .map(|selector| selector.story(cx))
             .collect::<Vec<_>>();
         let component_stories = ComponentStory::iter()
             .map(|selector| selector.story(cx))

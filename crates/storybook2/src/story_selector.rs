@@ -1,13 +1,13 @@
 use std::str::FromStr;
 use std::sync::OnceLock;
 
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
 use clap::builder::PossibleValue;
 use clap::ValueEnum;
-use gpui3::AnyElement;
+use gpui3::{view, AnyView, Context};
 use strum::{EnumIter, EnumString, IntoEnumIterator};
 
-use ui::{prelude::*, AssistantPanelStory};
+use ui::prelude::*;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, strum::Display, EnumString, EnumIter)]
 #[strum(serialize_all = "snake_case")]
@@ -22,15 +22,31 @@ pub enum ElementStory {
 }
 
 impl ElementStory {
-    pub fn story<S: 'static + Send + Sync + Clone>(&self) -> AnyElement<S> {
+    pub fn story(&self, cx: &mut WindowContext) -> AnyView {
         match self {
-            Self::Avatar => ui::AvatarStory::new().into_any(),
-            Self::Button => ui::ButtonStory::new().into_any(),
-            Self::Details => ui::DetailsStory::new().into_any(),
-            Self::Icon => ui::IconStory::new().into_any(),
-            Self::Input => ui::InputStory::new().into_any(),
-            Self::Label => ui::LabelStory::new().into_any(),
-            Self::ZIndex => crate::stories::z_index::ZIndexStory::new().into_any(),
+            Self::Avatar => {
+                view(cx.entity(|cx| ()), |_, _| ui::AvatarStory::new().into_any()).into_any()
+            }
+            Self::Button => {
+                view(cx.entity(|cx| ()), |_, _| ui::ButtonStory::new().into_any()).into_any()
+            }
+            Self::Details => view(cx.entity(|cx| ()), |_, _| {
+                ui::DetailsStory::new().into_any()
+            })
+            .into_any(),
+            Self::Icon => {
+                view(cx.entity(|cx| ()), |_, _| ui::IconStory::new().into_any()).into_any()
+            }
+            Self::Input => {
+                view(cx.entity(|cx| ()), |_, _| ui::InputStory::new().into_any()).into_any()
+            }
+            Self::Label => {
+                view(cx.entity(|cx| ()), |_, _| ui::LabelStory::new().into_any()).into_any()
+            }
+            Self::ZIndex => view(cx.entity(|cx| ()), |_, _| {
+                crate::stories::z_index::ZIndexStory::new().into_any()
+            })
+            .into_any(),
         }
     }
 }
@@ -65,32 +81,94 @@ pub enum ComponentStory {
 }
 
 impl ComponentStory {
-    pub fn story<S: 'static + Send + Sync + Clone>(&self, cx: &mut WindowContext) -> AnyElement<S> {
+    pub fn story(&self, cx: &mut WindowContext) -> AnyView {
         match self {
-            Self::AssistantPanel => ui::AssistantPanelStory::new().into_any(),
-            Self::Buffer => ui::BufferStory::new().into_any(),
-            Self::Breadcrumb => ui::BreadcrumbStory::new().into_any(),
-            Self::ChatPanel => ui::ChatPanelStory::new().into_any(),
-            Self::CollabPanel => ui::CollabPanelStory::new().into_any(),
-            Self::CommandPalette => ui::CommandPaletteStory::new().into_any(),
-            Self::ContextMenu => ui::ContextMenuStory::new().into_any(),
-            Self::Facepile => ui::FacepileStory::new().into_any(),
-            Self::Keybinding => ui::KeybindingStory::new().into_any(),
-            Self::LanguageSelector => ui::LanguageSelectorStory::new().into_any(),
-            Self::MultiBuffer => ui::MultiBufferStory::new().into_any(),
-            Self::Palette => ui::PaletteStory::new().into_any(),
-            Self::Panel => ui::PanelStory::new().into_any(),
-            Self::ProjectPanel => ui::ProjectPanelStory::new().into_any(),
-            Self::RecentProjects => ui::RecentProjectsStory::new().into_any(),
-            Self::Tab => ui::TabStory::new().into_any(),
-            Self::TabBar => ui::TabBarStory::new().into_any(),
-            Self::Terminal => ui::TerminalStory::new().into_any(),
-            Self::ThemeSelector => ui::ThemeSelectorStory::new().into_any(),
-            Self::TitleBar => ui::TitleBarStory::new().into_any(),
-            Self::Toast => ui::ToastStory::new().into_any(),
-            Self::Toolbar => ui::ToolbarStory::new().into_any(),
-            Self::TrafficLights => ui::TrafficLightsStory::new().into_any(),
-            Self::Workspace => ui::workspace_story(cx).into_any().into_any(),
+            Self::AssistantPanel => view(cx.entity(|cx| ()), |_, _| {
+                ui::AssistantPanelStory::new().into_any()
+            })
+            .into_any(),
+            Self::Buffer => {
+                view(cx.entity(|cx| ()), |_, _| ui::BufferStory::new().into_any()).into_any()
+            }
+            Self::Breadcrumb => view(cx.entity(|cx| ()), |_, _| {
+                ui::BreadcrumbStory::new().into_any()
+            })
+            .into_any(),
+            Self::ChatPanel => view(cx.entity(|cx| ()), |_, _| {
+                ui::ChatPanelStory::new().into_any()
+            })
+            .into_any(),
+            Self::CollabPanel => view(cx.entity(|cx| ()), |_, _| {
+                ui::CollabPanelStory::new().into_any()
+            })
+            .into_any(),
+            Self::CommandPalette => view(cx.entity(|cx| ()), |_, _| {
+                ui::CommandPaletteStory::new().into_any()
+            })
+            .into_any(),
+            Self::ContextMenu => view(cx.entity(|cx| ()), |_, _| {
+                ui::ContextMenuStory::new().into_any()
+            })
+            .into_any(),
+            Self::Facepile => view(cx.entity(|cx| ()), |_, _| {
+                ui::FacepileStory::new().into_any()
+            })
+            .into_any(),
+            Self::Keybinding => view(cx.entity(|cx| ()), |_, _| {
+                ui::KeybindingStory::new().into_any()
+            })
+            .into_any(),
+            Self::LanguageSelector => view(cx.entity(|cx| ()), |_, _| {
+                ui::LanguageSelectorStory::new().into_any()
+            })
+            .into_any(),
+            Self::MultiBuffer => view(cx.entity(|cx| ()), |_, _| {
+                ui::MultiBufferStory::new().into_any()
+            })
+            .into_any(),
+            Self::Palette => view(cx.entity(|cx| ()), |_, _| {
+                ui::PaletteStory::new().into_any()
+            })
+            .into_any(),
+            Self::Panel => {
+                view(cx.entity(|cx| ()), |_, _| ui::PanelStory::new().into_any()).into_any()
+            }
+            Self::ProjectPanel => view(cx.entity(|cx| ()), |_, _| {
+                ui::ProjectPanelStory::new().into_any()
+            })
+            .into_any(),
+            Self::RecentProjects => view(cx.entity(|cx| ()), |_, _| {
+                ui::RecentProjectsStory::new().into_any()
+            })
+            .into_any(),
+            Self::Tab => view(cx.entity(|cx| ()), |_, _| ui::TabStory::new().into_any()).into_any(),
+            Self::TabBar => {
+                view(cx.entity(|cx| ()), |_, _| ui::TabBarStory::new().into_any()).into_any()
+            }
+            Self::Terminal => view(cx.entity(|cx| ()), |_, _| {
+                ui::TerminalStory::new().into_any()
+            })
+            .into_any(),
+            Self::ThemeSelector => view(cx.entity(|cx| ()), |_, _| {
+                ui::ThemeSelectorStory::new().into_any()
+            })
+            .into_any(),
+            Self::TitleBar => view(cx.entity(|cx| ()), |_, _| {
+                ui::TitleBarStory::new().into_any()
+            })
+            .into_any(),
+            Self::Toast => {
+                view(cx.entity(|cx| ()), |_, _| ui::ToastStory::new().into_any()).into_any()
+            }
+            Self::Toolbar => view(cx.entity(|cx| ()), |_, _| {
+                ui::ToolbarStory::new().into_any()
+            })
+            .into_any(),
+            Self::TrafficLights => view(cx.entity(|cx| ()), |_, _| {
+                ui::TrafficLightsStory::new().into_any()
+            })
+            .into_any(),
+            Self::Workspace => ui::WorkspaceStory::view(cx).into_any(),
         }
     }
 }
@@ -106,6 +184,8 @@ impl FromStr for StorySelector {
     type Err = anyhow::Error;
 
     fn from_str(raw_story_name: &str) -> std::result::Result<Self, Self::Err> {
+        use anyhow::Context;
+
         let story = raw_story_name.to_ascii_lowercase();
 
         if story == "kitchen_sink" {
@@ -131,11 +211,13 @@ impl FromStr for StorySelector {
 }
 
 impl StorySelector {
-    pub fn story<S: 'static + Send + Sync + Clone>(&self, cx: &mut WindowContext) -> AnyElement<S> {
+    pub fn story(&self, cx: &mut WindowContext) -> AnyView {
         match self {
-            Self::Element(element_story) => element_story.story(),
+            Self::Element(element_story) => element_story.story(cx),
             Self::Component(component_story) => component_story.story(cx),
-            Self::KitchenSink => crate::stories::kitchen_sink::KitchenSinkStory::new().into_any(),
+            Self::KitchenSink => {
+                crate::stories::kitchen_sink::KitchenSinkStory::view(cx).into_any()
+            }
         }
     }
 }
