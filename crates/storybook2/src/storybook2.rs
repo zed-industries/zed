@@ -1,13 +1,10 @@
 #![allow(dead_code, unused_variables)]
 
 use assets::Assets;
-use gpui3::{
-    div, px, size, Bounds, Element, StyleHelpers, WindowBounds, WindowContext, WindowOptions,
-};
+use gpui3::{px, size, Bounds, WindowBounds, WindowOptions};
 use log::LevelFilter;
 use simplelog::SimpleLogger;
 use std::sync::Arc;
-use themes::rose_pine;
 use workspace::workspace;
 
 mod assets;

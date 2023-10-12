@@ -86,16 +86,16 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
     }
 
     pub fn notify(&mut self) {
-        self.app
-            .pending_effects
-            .push_back(Effect::Notify(self.entity_id));
+        self.app.pending_effects.push_back(Effect::Notify {
+            emitter: self.entity_id,
+        });
     }
 }
 
 impl<'a, T: EventEmitter + Send + Sync + 'static> ModelContext<'a, T> {
     pub fn emit(&mut self, event: T::Event) {
         self.app.pending_effects.push_back(Effect::Emit {
-            entity_id: self.entity_id,
+            emitter: self.entity_id,
             event: Box::new(event),
         });
     }

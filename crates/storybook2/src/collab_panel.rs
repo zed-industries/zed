@@ -1,8 +1,7 @@
 use crate::theme::{theme, Theme};
 use gpui3::{
-    div, img, svg, view, AppContext, Context, Element, ElementId, IdentifiedElement,
-    IntoAnyElement, ParentElement, ScrollState, SharedString, StyleHelpers, Styled, View,
-    ViewContext, WindowContext,
+    div, svg, view, AppContext, Context, Element, ElementId, IntoAnyElement, ParentElement,
+    ScrollState, SharedString, StyleHelpers, Styled, View, ViewContext, WindowContext,
 };
 
 pub struct CollabPanel {

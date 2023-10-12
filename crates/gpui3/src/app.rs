@@ -148,8 +148,8 @@ impl AppContext {
     fn flush_effects(&mut self) {
         while let Some(effect) = self.pending_effects.pop_front() {
             match effect {
-                Effect::Notify(entity_id) => self.apply_notify_effect(entity_id),
-                Effect::Emit { entity_id, event } => self.apply_emit_effect(entity_id, event),
+                Effect::Notify { emitter } => self.apply_notify_effect(emitter),
+                Effect::Emit { emitter, event } => self.apply_emit_effect(emitter, event),
             }
         }
 
@@ -171,16 +171,16 @@ impl AppContext {
         }
     }
 
-    fn apply_notify_effect(&mut self, updated_entity: EntityId) {
+    fn apply_notify_effect(&mut self, emitter: EntityId) {
         self.observers
             .clone()
-            .retain(&updated_entity, |handler| handler(self));
+            .retain(&emitter, |handler| handler(self));
     }
 
-    fn apply_emit_effect(&mut self, updated_entity: EntityId, event: Box<dyn Any>) {
+    fn apply_emit_effect(&mut self, emitter: EntityId, event: Box<dyn Any>) {
         self.event_handlers
             .clone()
-            .retain(&updated_entity, |handler| handler(&event, self));
+            .retain(&emitter, |handler| handler(&event, self));
     }
 
     pub fn to_async(&self) -> AsyncAppContext {
@@ -380,9 +380,11 @@ impl MainThread<AppContext> {
 }
 
 pub(crate) enum Effect {
-    Notify(EntityId),
+    Notify {
+        emitter: EntityId,
+    },
     Emit {
-        entity_id: EntityId,
+        emitter: EntityId,
         event: Box<dyn Any + Send + Sync + 'static>,
     },
 }
