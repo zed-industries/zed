@@ -23,10 +23,6 @@ pub struct Workspace {
     bottom_panel_scroll_state: ScrollState,
 }
 
-fn workspace(cx: &mut WindowContext) -> View<Workspace> {
-    view(cx.entity(|cx| Workspace::new()), Workspace::render)
-}
-
 impl Workspace {
     pub fn new() -> Self {
         Self {
@@ -107,6 +103,10 @@ impl Workspace {
         self.show_language_selector = !self.show_language_selector;
 
         cx.notify();
+    }
+
+    pub fn view(cx: &mut WindowContext) -> View<Self> {
+        view(cx.entity(|cx| Self::new()), Self::render)
     }
 
     pub fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
@@ -285,7 +285,7 @@ mod stories {
         pub fn view(cx: &mut WindowContext) -> View<Self> {
             view(
                 cx.entity(|cx| Self {
-                    workspace: workspace(cx),
+                    workspace: Workspace::view(cx),
                 }),
                 |view, cx| view.workspace.clone(),
             )
