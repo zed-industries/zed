@@ -116,7 +116,7 @@ pub struct Workspace {
     bottom_panel_scroll_state: ScrollState,
 }
 
-fn workspace<P: 'static>(cx: &mut WindowContext) -> View<Workspace, P> {
+fn workspace<P: 'static>(cx: &mut WindowContext) -> View<Workspace> {
     view(cx.entity(|cx| Workspace::new()), Workspace::render)
 }
 
@@ -377,11 +377,11 @@ mod stories {
     //     state_type: PhantomData<S>,
     // }
 
-    pub struct WorkspaceStory<P> {
-        workspace: View<Workspace, P>,
+    pub struct WorkspaceStory {
+        workspace: View<Workspace>,
     }
 
-    pub fn workspace_story<P: 'static + Send + Sync>(cx: &mut WindowContext) -> View<WorkspaceStory<P>, P> {
+    pub fn workspace_story(cx: &mut WindowContext) -> View<WorkspaceStory> {
         todo!()
         // let workspace = workspace::<P>(cx);
         // view(

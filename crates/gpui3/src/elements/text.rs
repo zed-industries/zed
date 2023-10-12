@@ -42,6 +42,12 @@ pub struct Text<S> {
     state_type: PhantomData<S>,
 }
 
+impl<S: 'static + Send + Sync> IntoAnyElement<S> for Text<S> {
+    fn into_any(self) -> AnyElement<S> {
+        AnyElement::new(self)
+    }
+}
+
 impl<S: 'static + Send + Sync> Element for Text<S> {
     type ViewState = S;
     type ElementState = Arc<Mutex<Option<TextElementState>>>;

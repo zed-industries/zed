@@ -1,6 +1,6 @@
 use crate::{
-    AnyElement, Bounds, DispatchPhase, Element, IdentifiedElement, Interactive, MouseDownEvent,
-    MouseEventListeners, MouseUpEvent, ParentElement, Pixels, Styled, ViewContext,
+    AnyElement, Bounds, DispatchPhase, Element, IdentifiedElement, Interactive, IntoAnyElement,
+    MouseDownEvent, MouseEventListeners, MouseUpEvent, ParentElement, Pixels, Styled, ViewContext,
 };
 use parking_lot::Mutex;
 use refineable::Cascade;
@@ -48,6 +48,12 @@ where
 {
     fn listeners(&mut self) -> &mut MouseEventListeners<S> {
         self.child.listeners()
+    }
+}
+
+impl<E: IdentifiedElement> IntoAnyElement<E::ViewState> for Clickable<E> {
+    fn into_any(self) -> AnyElement<E::ViewState> {
+        AnyElement::new(self)
     }
 }
 

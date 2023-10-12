@@ -1,7 +1,7 @@
 use crate::{
     AnyElement, BorrowWindow, Bounds, Cascade, Element, ElementId, IdentifiedElement, Interactive,
-    LayoutId, MouseEventListeners, Overflow, ParentElement, Pixels, Point, Refineable, Style,
-    Styled, ViewContext,
+    IntoAnyElement, LayoutId, MouseEventListeners, Overflow, ParentElement, Pixels, Point,
+    Refineable, Style, Styled, ViewContext,
 };
 use parking_lot::Mutex;
 use smallvec::SmallVec;
@@ -29,7 +29,21 @@ pub fn div<S>() -> Div<S> {
     }
 }
 
-impl<S: 'static + Send + Sync, Marker: 'static + Send + Sync> Element for Div<S, Marker> {
+impl<S, Marker> IntoAnyElement<S> for Div<S, Marker>
+where
+    S: 'static + Send + Sync,
+    Marker: 'static + Send + Sync,
+{
+    fn into_any(self) -> AnyElement<S> {
+        AnyElement::new(self)
+    }
+}
+
+impl<S, Marker> Element for Div<S, Marker>
+where
+    S: 'static + Send + Sync,
+    Marker: 'static + Send + Sync,
+{
     type ViewState = S;
     type ElementState = ();
 

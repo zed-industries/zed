@@ -50,7 +50,7 @@ pub struct Window {
     rem_size: Pixels,
     content_size: Size<Pixels>,
     layout_engine: TaffyLayoutEngine,
-    pub(crate) root_view: Option<AnyView<()>>,
+    pub(crate) root_view: Option<AnyView>,
     pub(crate) element_id_stack: GlobalElementId,
     prev_element_states: HashMap<GlobalElementId, AnyBox>,
     element_states: HashMap<GlobalElementId, AnyBox>,
@@ -624,7 +624,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         });
 
         fn draw_with_element_state(
-            root_view: &mut AnyView<()>,
+            root_view: &mut AnyView,
             element_state: Option<AnyBox>,
             cx: &mut ViewContext<()>,
         ) -> AnyBox {

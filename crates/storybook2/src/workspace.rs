@@ -3,17 +3,17 @@ use crate::{
     themes::rose_pine,
 };
 use gpui3::{
-    div, img, svg, view, Context, Element, ParentElement, RootView, StyleHelpers, Styled, View,
-    ViewContext, WindowContext,
+    div, img, svg, view, Context, Element, ParentElement, StyleHelpers, Styled, View, ViewContext,
+    WindowContext,
 };
 use ui::{theme, themed};
 
 pub struct Workspace {
-    left_panel: View<CollabPanel, Self>,
-    right_panel: View<CollabPanel, Self>,
+    left_panel: View<CollabPanel>,
+    right_panel: View<CollabPanel>,
 }
 
-pub fn workspace(cx: &mut WindowContext) -> RootView<Workspace> {
+pub fn workspace(cx: &mut WindowContext) -> View<Workspace> {
     view(cx.entity(|cx| Workspace::new(cx)), Workspace::render)
 }
 

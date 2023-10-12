@@ -9,8 +9,8 @@ use refineable::Refineable;
 
 use crate::{
     current_platform, image_cache::ImageCache, AssetSource, Context, DisplayId, Executor, LayoutId,
-    MainThread, MainThreadOnly, Platform, RootView, SubscriberSet, SvgRenderer, Task, TextStyle,
-    TextStyleRefinement, TextSystem, Window, WindowContext, WindowHandle, WindowId,
+    MainThread, MainThreadOnly, Platform, SubscriberSet, SvgRenderer, Task, TextStyle,
+    TextStyleRefinement, TextSystem, View, Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -404,7 +404,7 @@ impl MainThread<AppContext> {
     pub fn open_window<S: 'static + Send + Sync>(
         &mut self,
         options: crate::WindowOptions,
-        build_root_view: impl FnOnce(&mut WindowContext) -> RootView<S> + Send + 'static,
+        build_root_view: impl FnOnce(&mut WindowContext) -> View<S> + Send + 'static,
     ) -> WindowHandle<S> {
         self.update(|cx| {
             let id = cx.windows.insert(None);

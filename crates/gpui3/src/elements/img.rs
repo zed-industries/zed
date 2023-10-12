@@ -1,5 +1,6 @@
 use crate::{
-    BorrowWindow, Bounds, Element, LayoutId, Pixels, SharedString, Style, Styled, ViewContext,
+    AnyElement, BorrowWindow, Bounds, Element, IntoAnyElement, LayoutId, Pixels, SharedString,
+    Style, Styled, ViewContext,
 };
 use futures::FutureExt;
 use refineable::Cascade;
@@ -31,6 +32,15 @@ impl<S> Img<S> {
     pub fn grayscale(mut self, grayscale: bool) -> Self {
         self.grayscale = grayscale;
         self
+    }
+}
+
+impl<S> IntoAnyElement<S> for Img<S>
+where
+    S: 'static + Send + Sync,
+{
+    fn into_any(self) -> AnyElement<S> {
+        AnyElement::new(self)
     }
 }
 

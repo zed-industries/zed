@@ -1,7 +1,7 @@
 use crate::{
     group_bounds, AnyElement, Bounds, DispatchPhase, Element, ElementId, IdentifiedElement,
-    Interactive, MouseEventListeners, MouseMoveEvent, ParentElement, Pixels, SharedString, Styled,
-    ViewContext,
+    Interactive, IntoAnyElement, MouseEventListeners, MouseMoveEvent, ParentElement, Pixels,
+    SharedString, Styled, ViewContext,
 };
 use refineable::{Cascade, CascadeSlot, Refineable};
 use smallvec::SmallVec;
@@ -48,6 +48,17 @@ where
 impl<S: 'static + Send + Sync, E: Interactive<S> + Styled> Interactive<S> for Hoverable<E> {
     fn listeners(&mut self) -> &mut MouseEventListeners<S> {
         self.child.listeners()
+    }
+}
+
+impl<E> IntoAnyElement<E::ViewState> for Hoverable<E>
+where
+    E: Element + Styled,
+    <E as Styled>::Style: 'static + Refineable + Send + Sync + Default,
+    <<E as Styled>::Style as Refineable>::Refinement: 'static + Refineable + Send + Sync + Default,
+{
+    fn into_any(self) -> AnyElement<E::ViewState> {
+        AnyElement::new(self)
     }
 }
 

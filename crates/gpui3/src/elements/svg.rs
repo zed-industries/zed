@@ -1,4 +1,6 @@
-use crate::{Bounds, Element, LayoutId, Pixels, SharedString, Style, Styled};
+use crate::{
+    AnyElement, Bounds, Element, IntoAnyElement, LayoutId, Pixels, SharedString, Style, Styled,
+};
 use refineable::Cascade;
 use std::marker::PhantomData;
 use util::ResultExt;
@@ -21,6 +23,15 @@ impl<S> Svg<S> {
     pub fn path(mut self, path: impl Into<SharedString>) -> Self {
         self.path = Some(path.into());
         self
+    }
+}
+
+impl<S> IntoAnyElement<S> for Svg<S>
+where
+    S: 'static + Send + Sync,
+{
+    fn into_any(self) -> AnyElement<S> {
+        AnyElement::new(self)
     }
 }
 

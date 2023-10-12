@@ -2,13 +2,19 @@ use refineable::{Cascade, Refineable};
 use smallvec::SmallVec;
 
 use crate::{
-    AnyElement, BorrowWindow, Bounds, Element, ElementId, IdentifiedElement, LayoutId,
-    ParentElement, Styled, ViewContext,
+    AnyElement, BorrowWindow, Bounds, Element, ElementId, IdentifiedElement, IntoAnyElement,
+    LayoutId, ParentElement, Styled, ViewContext,
 };
 
 pub struct Identified<E> {
     pub(crate) element: E,
     pub(crate) id: ElementId,
+}
+
+impl<E: Element> IntoAnyElement<E::ViewState> for Identified<E> {
+    fn into_any(self) -> AnyElement<E::ViewState> {
+        AnyElement::new(self)
+    }
 }
 
 impl<E: Element> Element for Identified<E> {

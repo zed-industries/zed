@@ -8,7 +8,7 @@ pub struct CollabPanel {
     scroll_state: ScrollState,
 }
 
-pub fn collab_panel<S: 'static>(cx: &mut WindowContext) -> View<CollabPanel, S> {
+pub fn collab_panel(cx: &mut WindowContext) -> View<CollabPanel> {
     view(cx.entity(|cx| CollabPanel::new(cx)), CollabPanel::render)
 }
 

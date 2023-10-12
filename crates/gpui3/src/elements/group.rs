@@ -1,6 +1,6 @@
 use crate::{
     AnyElement, AppContext, Bounds, Element, ElementId, IdentifiedElement, Interactive,
-    MouseEventListeners, ParentElement, Pixels, SharedString, Styled, ViewContext,
+    IntoAnyElement, MouseEventListeners, ParentElement, Pixels, SharedString, Styled, ViewContext,
 };
 use collections::HashMap;
 use refineable::Cascade;
@@ -24,6 +24,12 @@ pub struct Group<E> {
 impl<E> Group<E> {
     pub fn new(name: SharedString, child: E) -> Self {
         Group { name, child }
+    }
+}
+
+impl<E: Element> IntoAnyElement<E::ViewState> for Group<E> {
+    fn into_any(self) -> AnyElement<E::ViewState> {
+        AnyElement::new(self)
     }
 }
 
