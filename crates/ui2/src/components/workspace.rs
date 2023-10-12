@@ -125,7 +125,7 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
         }
     }
 
-    pub fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    pub fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx).clone();
 
         let workspace_state = get_workspace_state();
@@ -353,7 +353,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
             // Just render the workspace without any story boilerplate.
             WorkspaceElement::new()
         }

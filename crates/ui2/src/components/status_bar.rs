@@ -83,7 +83,7 @@ impl<S: 'static + Send + Sync + Clone> StatusBar<S> {
         self
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
 
         div()
@@ -98,7 +98,7 @@ impl<S: 'static + Send + Sync + Clone> StatusBar<S> {
             .child(self.right_tools(&theme))
     }
 
-    fn left_tools(&self, theme: &Theme) -> impl Element<State = S> {
+    fn left_tools(&self, theme: &Theme) -> impl Element<ViewState = S> {
         let workspace_state = get_workspace_state();
 
         div()
@@ -129,7 +129,7 @@ impl<S: 'static + Send + Sync + Clone> StatusBar<S> {
             .child(IconButton::new(Icon::XCircle))
     }
 
-    fn right_tools(&self, theme: &Theme) -> impl Element<State = S> {
+    fn right_tools(&self, theme: &Theme) -> impl Element<ViewState = S> {
         let workspace_state = get_workspace_state();
 
         div()

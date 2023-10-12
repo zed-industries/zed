@@ -160,7 +160,7 @@ impl<S: 'static + Send + Sync + Clone> Button<S> {
         self.icon.map(|i| IconElement::new(i).color(icon_color))
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         let icon_color = self.icon_color();
         let system_color = SystemColor::new();
@@ -229,7 +229,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
             let states = InteractionState::iter();
 
             Story::container(cx)

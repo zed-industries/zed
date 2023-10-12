@@ -1,6 +1,6 @@
 use gpui3::Element;
 
-pub trait ElementExt<S: 'static + Send + Sync>: Element<State = S> {
+pub trait ElementExt<S: 'static + Send + Sync>: Element<ViewState = S> {
     /// Applies a given function `then` to the current element if `condition` is true.
     /// This function is used to conditionally modify the element based on a given condition.
     /// If `condition` is false, it just returns the current element as it is.
@@ -15,4 +15,4 @@ pub trait ElementExt<S: 'static + Send + Sync>: Element<State = S> {
     }
 }
 
-impl<S: 'static + Send + Sync, E: Element<State = S>> ElementExt<S> for E {}
+impl<S: 'static + Send + Sync, E: Element<ViewState = S>> ElementExt<S> for E {}

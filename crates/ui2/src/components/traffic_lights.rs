@@ -26,7 +26,7 @@ impl<S: 'static + Send + Sync> TrafficLight<S> {
         }
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         let system_color = SystemColor::new();
 
@@ -60,7 +60,7 @@ impl<S: 'static + Send + Sync> TrafficLights<S> {
         self
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         let token = token();
 
@@ -104,7 +104,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, TrafficLights<S>>(cx))
                 .child(Story::label(cx, "Default"))

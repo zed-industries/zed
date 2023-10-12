@@ -162,7 +162,7 @@ impl<S: 'static + Send + Sync + Clone> Buffer<S> {
         self
     }
 
-    fn render_row(row: BufferRow, cx: &WindowContext) -> impl Element<State = S> {
+    fn render_row(row: BufferRow, cx: &WindowContext) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         let system_color = SystemColor::new();
 
@@ -213,7 +213,7 @@ impl<S: 'static + Send + Sync + Clone> Buffer<S> {
             }))
     }
 
-    fn render_rows(&self, cx: &WindowContext) -> Vec<impl Element<State = S>> {
+    fn render_rows(&self, cx: &WindowContext) -> Vec<impl Element<ViewState = S>> {
         match &self.rows {
             Some(rows) => rows
                 .rows
@@ -224,7 +224,7 @@ impl<S: 'static + Send + Sync + Clone> Buffer<S> {
         }
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         let rows = self.render_rows(cx);
 
@@ -263,7 +263,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
             let theme = theme(cx);
 
             Story::container(cx)

@@ -17,7 +17,7 @@ impl<S: 'static + Send + Sync + Clone> LanguageSelector<S> {
         }
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         div().child(
             Palette::new(self.scroll_state.clone())
                 .items(vec![
@@ -60,7 +60,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, LanguageSelector<S>>(cx))
                 .child(Story::label(cx, "Default"))

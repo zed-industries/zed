@@ -46,7 +46,7 @@ impl<S: 'static + Send + Sync + Clone> TitleBar<S> {
         self
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         // let has_focus = cx.window_is_active();
         let has_focus = true;
@@ -139,7 +139,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, TitleBar<S>>(cx))
                 .child(Story::label(cx, "Default"))

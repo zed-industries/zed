@@ -92,7 +92,7 @@ impl<S: 'static + Send + Sync + Clone> ListHeader<S> {
         }
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         let token = token();
         let system_color = SystemColor::new();
@@ -164,7 +164,7 @@ impl<S: 'static + Send + Sync + Clone> ListSubHeader<S> {
         self
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         let token = token();
 
@@ -237,7 +237,7 @@ impl<S: 'static + Send + Sync + Clone> From<ListSubHeader<S>> for ListItem<S> {
 }
 
 impl<S: 'static + Send + Sync + Clone> ListItem<S> {
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         match self {
             ListItem::Entry(entry) => div().child(entry.render(cx)),
             ListItem::Separator(separator) => div().child(separator.render(cx)),
@@ -346,7 +346,7 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
         }
     }
 
-    fn disclosure_control(&mut self, cx: &mut ViewContext<S>) -> Option<impl Element<State = S>> {
+    fn disclosure_control(&mut self, cx: &mut ViewContext<S>) -> Option<impl Element<ViewState = S>> {
         let theme = theme(cx);
         let token = token();
 
@@ -369,7 +369,7 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
         }
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         let token = token();
         let system_color = SystemColor::new();
@@ -437,7 +437,7 @@ impl<S: 'static + Send + Sync> ListSeparator<S> {
         }
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let color = ThemeColor::new(cx);
 
         div().h_px().w_full().fill(color.border)
@@ -477,7 +477,7 @@ impl<S: 'static + Send + Sync + Clone> List<S> {
         self
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         let token = token();
         let is_toggleable = self.toggleable != Toggleable::NotToggleable;

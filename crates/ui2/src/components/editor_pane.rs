@@ -20,7 +20,7 @@ impl<S: 'static + Send + Sync + Clone> EditorPane<S> {
         Self { editor }
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         struct LeftItemsPayload {
             path: PathBuf,
             symbols: Vec<Symbol>,

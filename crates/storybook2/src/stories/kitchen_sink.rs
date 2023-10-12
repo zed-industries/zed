@@ -18,7 +18,7 @@ impl<S: 'static + Send + Sync + Clone> KitchenSinkStory<S> {
         }
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let element_stories = ElementStory::iter().map(|selector| selector.story());
         let component_stories = ComponentStory::iter().map(|selector| selector.story());
 

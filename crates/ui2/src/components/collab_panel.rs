@@ -23,7 +23,7 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
         }
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         let color = ThemeColor::new(cx);
 
@@ -103,7 +103,7 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
         label: impl Into<ArcCow<'static, str>>,
         expanded: bool,
         theme: &Theme,
-    ) -> impl Element<State = S> {
+    ) -> impl Element<ViewState = S> {
         div()
             .h_7()
             .px_2()
@@ -131,7 +131,7 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
         avatar_uri: impl Into<ArcCow<'static, str>>,
         label: impl Into<ArcCow<'static, str>>,
         theme: &Theme,
-    ) -> impl Element<State = S> {
+    ) -> impl Element<ViewState = S> {
         div()
             .h_7()
             .px_2()
@@ -180,7 +180,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, CollabPanel<S>>(cx))
                 .child(Story::label(cx, "Default"))

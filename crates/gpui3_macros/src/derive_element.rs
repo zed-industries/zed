@@ -21,30 +21,35 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
         impl #impl_generics gpui3::Element for #type_name #ty_generics
         #where_clause
         {
-            type State = #state_type;
-            type FrameState = gpui3::AnyElement<#state_type>;
+            type ViewState = #state_type;
+            type ElementState = gpui3::AnyElement<#state_type>;
+
+            fn element_id(&self) -> Option<gpui3::ElementId> {
+                None
+            }
 
             fn layout(
                 &mut self,
                 state: &mut #state_type,
-                cx: &mut gpui3::ViewContext<Self::State>,
-            ) -> anyhow::Result<(gpui3::LayoutId, Self::FrameState)> {
+                element_state: Option<Self::ElementState>,
+                cx: &mut gpui3::ViewContext<Self::ViewState>,
+            ) -> (gpui3::LayoutId, Self::ElementState) {
                 use gpui3::IntoAnyElement;
 
                 let mut rendered_element = self.render(cx).into_any();
-                let layout_id = rendered_element.layout(state, cx)?;
-                Ok((layout_id, rendered_element))
+                let layout_id = rendered_element.layout(state, cx);
+                (layout_id, rendered_element)
             }
 
             fn paint(
                 &mut self,
                 bounds: gpui3::Bounds<gpui3::Pixels>,
-                state: &mut Self::State,
-                rendered_element: &mut Self::FrameState,
-                cx: &mut gpui3::ViewContext<Self::State>,
-            ) -> anyhow::Result<()> {
+                state: &mut Self::ViewState,
+                element_state: &mut Self::ElementState,
+                cx: &mut gpui3::ViewContext<Self::ViewState>,
+            ) {
                 // TODO: Where do we get the `offset` from?
-                rendered_element.paint(state, None, cx)
+                element_state.paint(state, None, cx)
             }
         }
     };

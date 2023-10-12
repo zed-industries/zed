@@ -31,7 +31,7 @@ impl<S: 'static + Send + Sync + Clone> Breadcrumb<S> {
             .text_color(HighlightColor::Default.hsla(theme))
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
 
         let symbols_len = self.symbols.len();
@@ -99,7 +99,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<State = S> {
+        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
             let theme = theme(cx);
 
             Story::container(cx)
