@@ -9,24 +9,20 @@ use refineable::Refineable;
 
 use crate::{
     current_platform, image_cache::ImageCache, AssetSource, Context, DisplayId, Executor, LayoutId,
-    MainThread, MainThreadOnly, Platform, PlatformDisplayLinker, RootView, SvgRenderer, Task,
-    TextStyle, TextStyleRefinement, TextSystem, Window, WindowContext, WindowHandle, WindowId,
+    MainThread, MainThreadOnly, Platform, RootView, SubscriberSet, SvgRenderer, Task, TextStyle,
+    TextStyleRefinement, TextSystem, Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
-use collections::{HashMap, VecDeque};
+use collections::{HashMap, HashSet, VecDeque};
 use futures::Future;
 use parking_lot::Mutex;
 use slotmap::SlotMap;
-use smallvec::SmallVec;
 use std::{
     any::{type_name, Any, TypeId},
     mem,
     sync::{Arc, Weak},
 };
-use util::{
-    http::{self, HttpClient},
-    ResultExt,
-};
+use util::http::{self, HttpClient};
 
 #[derive(Clone)]
 pub struct App(Arc<Mutex<AppContext>>);
@@ -58,19 +54,21 @@ impl App {
                 this: this.clone(),
                 text_system: Arc::new(TextSystem::new(platform.text_system())),
                 pending_updates: 0,
-                display_linker: platform.display_linker(),
                 next_frame_callbacks: Default::default(),
                 platform: MainThreadOnly::new(platform, executor.clone()),
                 executor,
                 svg_renderer: SvgRenderer::new(asset_source),
                 image_cache: ImageCache::new(http_client),
                 text_style_stack: Vec::new(),
-                state_stacks_by_type: HashMap::default(),
+                global_stacks_by_type: HashMap::default(),
                 unit_entity,
                 entities,
                 windows: SlotMap::with_key(),
+                pending_notifications: Default::default(),
                 pending_effects: Default::default(),
-                observers: Default::default(),
+                observers: SubscriberSet::new(),
+                event_handlers: SubscriberSet::new(),
+                release_handlers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
             })
         }))
@@ -90,26 +88,30 @@ impl App {
     }
 }
 
-type Handlers = SmallVec<[Arc<dyn Fn(&mut AppContext) -> bool + Send + Sync + 'static>; 2]>;
+type Handler = Box<dyn Fn(&mut AppContext) -> bool + Send + Sync + 'static>;
+type EventHandler = Box<dyn Fn(&dyn Any, &mut AppContext) -> bool + Send + Sync + 'static>;
+type ReleaseHandler = Box<dyn Fn(&mut dyn Any, &mut AppContext) + Send + Sync + 'static>;
 type FrameCallback = Box<dyn FnOnce(&mut WindowContext) + Send>;
 
 pub struct AppContext {
     this: Weak<Mutex<AppContext>>,
-    platform: MainThreadOnly<dyn Platform>,
+    pub(crate) platform: MainThreadOnly<dyn Platform>,
     text_system: Arc<TextSystem>,
     pending_updates: usize,
-    pub(crate) display_linker: Arc<dyn PlatformDisplayLinker>,
     pub(crate) next_frame_callbacks: HashMap<DisplayId, Vec<FrameCallback>>,
     pub(crate) executor: Executor,
     pub(crate) svg_renderer: SvgRenderer,
     pub(crate) image_cache: ImageCache,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
-    pub(crate) state_stacks_by_type: HashMap<TypeId, Vec<Box<dyn Any + Send + Sync>>>,
+    pub(crate) global_stacks_by_type: HashMap<TypeId, Vec<Box<dyn Any + Send + Sync>>>,
     pub(crate) unit_entity: Handle<()>,
     pub(crate) entities: EntityMap,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
-    pub(crate) pending_effects: VecDeque<Effect>,
-    pub(crate) observers: HashMap<EntityId, Handlers>,
+    pub(crate) pending_notifications: HashSet<EntityId>,
+    pending_effects: VecDeque<Effect>,
+    pub(crate) observers: SubscriberSet<EntityId, Handler>,
+    pub(crate) event_handlers: SubscriberSet<EntityId, EventHandler>,
+    pub(crate) release_handlers: SubscriberSet<EntityId, ReleaseHandler>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
 }
 
@@ -148,10 +150,27 @@ impl AppContext {
         })
     }
 
+    pub(crate) fn push_effect(&mut self, effect: Effect) {
+        match &effect {
+            Effect::Notify { emitter } => {
+                if self.pending_notifications.insert(*emitter) {
+                    self.pending_effects.push_back(effect);
+                }
+            }
+            Effect::Emit { .. } => self.pending_effects.push_back(effect),
+        }
+    }
+
     fn flush_effects(&mut self) {
-        while let Some(effect) = self.pending_effects.pop_front() {
-            match effect {
-                Effect::Notify(entity_id) => self.apply_notify_effect(entity_id),
+        loop {
+            self.release_dropped_entities();
+            if let Some(effect) = self.pending_effects.pop_front() {
+                match effect {
+                    Effect::Notify { emitter } => self.apply_notify_effect(emitter),
+                    Effect::Emit { emitter, event } => self.apply_emit_effect(emitter, event),
+                }
+            } else {
+                break;
             }
         }
 
@@ -169,20 +188,38 @@ impl AppContext {
             .collect::<Vec<_>>();
 
         for dirty_window_id in dirty_window_ids {
-            self.update_window(dirty_window_id, |cx| cx.draw())
-                .unwrap()
-                .log_err();
+            self.update_window(dirty_window_id, |cx| cx.draw()).unwrap();
         }
     }
 
-    fn apply_notify_effect(&mut self, updated_entity: EntityId) {
-        if let Some(mut handlers) = self.observers.remove(&updated_entity) {
-            handlers.retain(|handler| handler(self));
-            if let Some(new_handlers) = self.observers.remove(&updated_entity) {
-                handlers.extend(new_handlers);
+    fn release_dropped_entities(&mut self) {
+        loop {
+            let dropped = self.entities.take_dropped();
+            if dropped.is_empty() {
+                break;
             }
-            self.observers.insert(updated_entity, handlers);
+
+            for (entity_id, mut entity) in dropped {
+                self.observers.remove(&entity_id);
+                self.event_handlers.remove(&entity_id);
+                for release_callback in self.release_handlers.remove(&entity_id) {
+                    release_callback(&mut entity, self);
+                }
+            }
         }
+    }
+
+    fn apply_notify_effect(&mut self, emitter: EntityId) {
+        self.pending_notifications.remove(&emitter);
+        self.observers
+            .clone()
+            .retain(&emitter, |handler| handler(self));
+    }
+
+    fn apply_emit_effect(&mut self, emitter: EntityId, event: Box<dyn Any>) {
+        self.event_handlers
+            .clone()
+            .retain(&emitter, |handler| handler(&event, self));
     }
 
     pub fn to_async(&self) -> AsyncAppContext {
@@ -218,7 +255,7 @@ impl AppContext {
         f: impl FnOnce(&mut MainThread<AppContext>) -> F + Send + 'static,
     ) -> Task<R>
     where
-        F: Future<Output = R> + Send + 'static,
+        F: Future<Output = R> + 'static,
         R: Send + 'static,
     {
         let this = self.this.upgrade().unwrap();
@@ -254,22 +291,47 @@ impl AppContext {
         style
     }
 
-    pub fn state<S: 'static>(&self) -> &S {
-        self.state_stacks_by_type
-            .get(&TypeId::of::<S>())
+    pub fn global<G: 'static>(&self) -> &G {
+        self.global_stacks_by_type
+            .get(&TypeId::of::<G>())
             .and_then(|stack| stack.last())
-            .and_then(|any_state| any_state.downcast_ref::<S>())
-            .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<S>()))
+            .and_then(|any_state| any_state.downcast_ref::<G>())
+            .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<G>()))
             .unwrap()
     }
 
-    pub fn state_mut<S: 'static>(&mut self) -> &mut S {
-        self.state_stacks_by_type
-            .get_mut(&TypeId::of::<S>())
+    pub fn global_mut<G: 'static>(&mut self) -> &mut G {
+        self.global_stacks_by_type
+            .get_mut(&TypeId::of::<G>())
             .and_then(|stack| stack.last_mut())
-            .and_then(|any_state| any_state.downcast_mut::<S>())
-            .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<S>()))
+            .and_then(|any_state| any_state.downcast_mut::<G>())
+            .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<G>()))
             .unwrap()
+    }
+
+    pub fn default_global<G: 'static + Default + Sync + Send>(&mut self) -> &mut G {
+        let stack = self
+            .global_stacks_by_type
+            .entry(TypeId::of::<G>())
+            .or_default();
+        if stack.is_empty() {
+            stack.push(Box::new(G::default()));
+        }
+        stack.last_mut().unwrap().downcast_mut::<G>().unwrap()
+    }
+
+    pub(crate) fn push_global<T: Send + Sync + 'static>(&mut self, state: T) {
+        self.global_stacks_by_type
+            .entry(TypeId::of::<T>())
+            .or_default()
+            .push(Box::new(state));
+    }
+
+    pub(crate) fn pop_global<T: 'static>(&mut self) {
+        self.global_stacks_by_type
+            .get_mut(&TypeId::of::<T>())
+            .and_then(|stack| stack.pop())
+            .expect("state stack underflow");
     }
 
     pub(crate) fn push_text_style(&mut self, text_style: TextStyleRefinement) {
@@ -278,20 +340,6 @@ impl AppContext {
 
     pub(crate) fn pop_text_style(&mut self) {
         self.text_style_stack.pop();
-    }
-
-    pub(crate) fn push_state<T: Send + Sync + 'static>(&mut self, state: T) {
-        self.state_stacks_by_type
-            .entry(TypeId::of::<T>())
-            .or_default()
-            .push(Box::new(state));
-    }
-
-    pub(crate) fn pop_state<T: 'static>(&mut self) {
-        self.state_stacks_by_type
-            .get_mut(&TypeId::of::<T>())
-            .and_then(|stack| stack.pop())
-            .expect("state stack underflow");
     }
 }
 
@@ -371,7 +419,13 @@ impl MainThread<AppContext> {
 }
 
 pub(crate) enum Effect {
-    Notify(EntityId),
+    Notify {
+        emitter: EntityId,
+    },
+    Emit {
+        emitter: EntityId,
+        event: Box<dyn Any + Send + Sync + 'static>,
+    },
 }
 
 #[cfg(test)]

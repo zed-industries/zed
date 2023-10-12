@@ -182,6 +182,7 @@ impl Bundle {
                         kCFStringEncodingUTF8,
                         ptr::null(),
                     ));
+                    // equivalent to: open zed-cli:... -a /Applications/Zed\ Preview.app
                     let urls_to_open = CFArray::from_copyable(&[url_to_open.as_concrete_TypeRef()]);
                     LSOpenFromURLSpec(
                         &LSLaunchURLSpec {

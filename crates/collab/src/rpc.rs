@@ -63,6 +63,7 @@ use time::OffsetDateTime;
 use tokio::sync::{watch, Semaphore};
 use tower::ServiceBuilder;
 use tracing::{info_span, instrument, Instrument};
+use util::channel::RELEASE_CHANNEL_NAME;
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -937,11 +938,6 @@ async fn create_room(
         util::async_iife!({
             let live_kit = live_kit?;
 
-            live_kit
-                .create_room(live_kit_room.clone())
-                .await
-                .trace_err()?;
-
             let token = live_kit
                 .room_token(&live_kit_room, &session.user_id.to_string())
                 .trace_err()?;
@@ -957,7 +953,12 @@ async fn create_room(
     let room = session
         .db()
         .await
-        .create_room(session.user_id, session.connection_id, &live_kit_room)
+        .create_room(
+            session.user_id,
+            session.connection_id,
+            &live_kit_room,
+            RELEASE_CHANNEL_NAME.as_str(),
+        )
         .await?;
 
     response.send(proto::CreateRoomResponse {
@@ -979,7 +980,12 @@ async fn join_room(
         let room = session
             .db()
             .await
-            .join_room(room_id, session.user_id, session.connection_id)
+            .join_room(
+                room_id,
+                session.user_id,
+                session.connection_id,
+                RELEASE_CHANNEL_NAME.as_str(),
+            )
             .await?;
         room_updated(&room.room, &session.peer);
         room.into_inner()
@@ -2195,15 +2201,10 @@ async fn create_channel(
     session: Session,
 ) -> Result<()> {
     let db = session.db().await;
-    let live_kit_room = format!("channel-{}", nanoid::nanoid!(30));
-
-    if let Some(live_kit) = session.live_kit_client.as_ref() {
-        live_kit.create_room(live_kit_room.clone()).await?;
-    }
 
     let parent_id = request.parent_id.map(|id| ChannelId::from_proto(id));
     let id = db
-        .create_channel(&request.name, parent_id, &live_kit_room, session.user_id)
+        .create_channel(&request.name, parent_id, session.user_id)
         .await?;
 
     let channel = proto::Channel {
@@ -2608,15 +2609,23 @@ async fn join_channel(
     session: Session,
 ) -> Result<()> {
     let channel_id = ChannelId::from_proto(request.channel_id);
+    let live_kit_room = format!("channel-{}", nanoid::nanoid!(30));
 
     let joined_room = {
         leave_room_for_session(&session).await?;
         let db = session.db().await;
 
-        let room_id = db.room_id_for_channel(channel_id).await?;
+        let room_id = db
+            .get_or_create_channel_room(channel_id, &live_kit_room, &*RELEASE_CHANNEL_NAME)
+            .await?;
 
         let joined_room = db
-            .join_room(room_id, session.user_id, session.connection_id)
+            .join_room(
+                room_id,
+                session.user_id,
+                session.connection_id,
+                RELEASE_CHANNEL_NAME.as_str(),
+            )
             .await?;
 
         let live_kit_connection_info = session.live_kit_client.as_ref().and_then(|live_kit| {

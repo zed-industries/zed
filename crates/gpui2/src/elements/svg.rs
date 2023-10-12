@@ -4,20 +4,20 @@ use crate::{
     Element, IntoElement, Layout, LayoutId, Rgba,
 };
 use gpui::geometry::vector::Vector2F;
-use refineable::RefinementCascade;
+use refineable::Cascade;
 use std::borrow::Cow;
 use util::ResultExt;
 
 #[derive(IntoElement)]
 pub struct Svg {
     path: Option<Cow<'static, str>>,
-    style: RefinementCascade<Style>,
+    style: Cascade<Style>,
 }
 
 pub fn svg() -> Svg {
     Svg {
         path: None,
-        style: RefinementCascade::<Style>::default(),
+        style: Cascade::<Style>::default(),
     }
 }
 
@@ -72,7 +72,7 @@ impl<V: 'static> Element<V> for Svg {
 impl Styleable for Svg {
     type Style = Style;
 
-    fn style_cascade(&mut self) -> &mut refineable::RefinementCascade<Self::Style> {
+    fn style_cascade(&mut self) -> &mut refineable::Cascade<Self::Style> {
         &mut self.style
     }
 

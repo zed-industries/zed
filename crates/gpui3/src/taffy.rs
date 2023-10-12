@@ -1,6 +1,4 @@
-use super::{
-    AbsoluteLength, Bounds, DefiniteLength, Edges, Length, Pixels, Point, Result, Size, Style,
-};
+use super::{AbsoluteLength, Bounds, DefiniteLength, Edges, Length, Pixels, Point, Size, Style};
 use collections::HashMap;
 use std::fmt::Debug;
 use taffy::{
@@ -16,6 +14,9 @@ pub struct TaffyLayoutEngine {
     absolute_layout_bounds: HashMap<LayoutId, Bounds<Pixels>>,
 }
 
+static EXPECT_MESSAGE: &'static str =
+    "we should avoid taffy layout errors by construction if possible";
+
 impl TaffyLayoutEngine {
     pub fn new() -> Self {
         TaffyLayoutEngine {
@@ -30,20 +31,21 @@ impl TaffyLayoutEngine {
         style: Style,
         rem_size: Pixels,
         children: &[LayoutId],
-    ) -> Result<LayoutId> {
+    ) -> LayoutId {
         let style = style.to_taffy(rem_size);
         if children.is_empty() {
-            Ok(self.taffy.new_leaf(style)?.into())
+            self.taffy.new_leaf(style).expect(EXPECT_MESSAGE).into()
         } else {
             let parent_id = self
                 .taffy
                 // This is safe because LayoutId is repr(transparent) to taffy::tree::NodeId.
-                .new_with_children(style, unsafe { std::mem::transmute(children) })?
+                .new_with_children(style, unsafe { std::mem::transmute(children) })
+                .expect(EXPECT_MESSAGE)
                 .into();
             for child_id in children {
                 self.children_to_parents.insert(*child_id, parent_id);
             }
-            Ok(parent_id)
+            parent_id
         }
     }
 
@@ -55,14 +57,14 @@ impl TaffyLayoutEngine {
             + Send
             + Sync
             + 'static,
-    ) -> Result<LayoutId> {
+    ) -> LayoutId {
         let style = style.to_taffy(rem_size);
 
         let measurable = Box::new(Measureable(measure)) as Box<dyn Measurable>;
-        Ok(self
-            .taffy
-            .new_leaf_with_measure(style, MeasureFunc::Boxed(measurable))?
-            .into())
+        self.taffy
+            .new_leaf_with_measure(style, MeasureFunc::Boxed(measurable))
+            .expect(EXPECT_MESSAGE)
+            .into()
     }
 
     fn count_all_children(&self, parent: LayoutId) -> Result<u32> {
@@ -106,11 +108,7 @@ impl TaffyLayoutEngine {
         Ok(edges)
     }
 
-    pub fn compute_layout(
-        &mut self,
-        id: LayoutId,
-        available_space: Size<AvailableSpace>,
-    ) -> Result<()> {
+    pub fn compute_layout(&mut self, id: LayoutId, available_space: Size<AvailableSpace>) {
         // println!("Laying out {} children", self.count_all_children(id)?);
         // println!("Max layout depth: {}", self.max_depth(0, id)?);
 
@@ -123,29 +121,29 @@ impl TaffyLayoutEngine {
 
         let started_at = std::time::Instant::now();
         self.taffy
-            .compute_layout(id.into(), available_space.into())?;
+            .compute_layout(id.into(), available_space.into())
+            .expect(EXPECT_MESSAGE);
         println!("compute_layout took {:?}", started_at.elapsed());
-        Ok(())
     }
 
-    pub fn layout_bounds(&mut self, id: LayoutId) -> Result<Bounds<Pixels>> {
+    pub fn layout_bounds(&mut self, id: LayoutId) -> Bounds<Pixels> {
         if let Some(layout) = self.absolute_layout_bounds.get(&id).cloned() {
-            return Ok(layout);
+            return layout;
         }
 
-        let layout = self.taffy.layout(id.into())?;
+        let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
         let mut bounds = Bounds {
             origin: layout.location.into(),
             size: layout.size.into(),
         };
 
         if let Some(parent_id) = self.children_to_parents.get(&id).copied() {
-            let parent_bounds = self.layout_bounds(parent_id)?;
+            let parent_bounds = self.layout_bounds(parent_id);
             bounds.origin += parent_bounds.origin;
         }
         self.absolute_layout_bounds.insert(id, bounds);
 
-        Ok(bounds)
+        bounds
     }
 }
 

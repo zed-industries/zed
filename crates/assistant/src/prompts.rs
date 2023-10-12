@@ -4,6 +4,7 @@ use std::cmp::{self, Reverse};
 use std::fmt::Write;
 use std::ops::Range;
 
+#[allow(dead_code)]
 fn summarize(buffer: &BufferSnapshot, selected_range: Range<impl ToOffset>) -> String {
     #[derive(Debug)]
     struct Match {
@@ -121,6 +122,7 @@ pub fn generate_content_prompt(
     range: Range<impl ToOffset>,
     kind: CodegenKind,
 ) -> String {
+    let range = range.to_offset(buffer);
     let mut prompt = String::new();
 
     // General Preamble
@@ -130,17 +132,29 @@ pub fn generate_content_prompt(
         writeln!(prompt, "You're an expert engineer.\n").unwrap();
     }
 
-    let outline = summarize(buffer, range);
+    let mut content = String::new();
+    content.extend(buffer.text_for_range(0..range.start));
+    if range.start == range.end {
+        content.push_str("<|START|>");
+    } else {
+        content.push_str("<|START|");
+    }
+    content.extend(buffer.text_for_range(range.clone()));
+    if range.start != range.end {
+        content.push_str("|END|>");
+    }
+    content.extend(buffer.text_for_range(range.end..buffer.len()));
+
     writeln!(
         prompt,
-        "The file you are currently working on has the following outline:"
+        "The file you are currently working on has the following content:"
     )
     .unwrap();
     if let Some(language_name) = language_name {
         let language_name = language_name.to_lowercase();
-        writeln!(prompt, "```{language_name}\n{outline}\n```").unwrap();
+        writeln!(prompt, "```{language_name}\n{content}\n```").unwrap();
     } else {
-        writeln!(prompt, "```\n{outline}\n```").unwrap();
+        writeln!(prompt, "```\n{content}\n```").unwrap();
     }
 
     match kind {

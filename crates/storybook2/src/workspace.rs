@@ -1,13 +1,11 @@
-use gpui3::{
-    div, img, svg, view, Context, Element, ParentElement, RootView, StyleHelpers, View,
-    ViewContext, WindowContext,
-};
-use ui::prelude::*;
-use ui::{themed, Panel, Stack};
-
 use crate::{
     collab_panel::{collab_panel, CollabPanel},
-    themes::rose_pine_dawn,
+    theme::{theme, themed},
+    themes::rose_pine,
+};
+use gpui3::{
+    div, img, svg, view, Context, Element, ParentElement, RootView, StyleHelpers, Styled, View,
+    ViewContext, WindowContext,
 };
 
 pub struct Workspace {
@@ -27,78 +25,64 @@ impl Workspace {
         }
     }
 
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<State = Self> {
-        themed(rose_pine_dawn(), cx, |cx| {
-            let theme = theme(cx);
+    fn hover_test(&self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
+        let theme = theme(cx);
 
+        div().size_full().child(
+            div()
+                .group("")
+                .w_full()
+                .h_5()
+                .mt_10()
+                .fill(theme.middle.warning.default.foreground)
+                .flex()
+                .flex_row()
+                .justify_center()
+                .child(
+                    div()
+                        .size_5()
+                        .fill(theme.middle.negative.default.foreground)
+                        .group_hover("")
+                        .fill(theme.middle.positive.default.foreground)
+                        .hover()
+                        .fill(theme.middle.variant.default.foreground),
+                ),
+        )
+    }
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
+        themed(rose_pine(), cx, |cx| {
+            // self.hover_test(cx)
+            let theme = theme(cx);
             div()
                 .size_full()
-                .v_stack()
-                .fill(theme.lowest.base.default.background)
-                .child(Panel::new(
-                    ScrollState::default(),
-                    |_, _| {
-                        vec![div()
-                            .font("Courier")
-                            .text_color(gpui3::hsla(1., 1., 1., 1.))
-                            .child("Hello world")
-                            .into_any()]
-                    },
-                    Box::new(()),
-                ))
+                .flex()
+                .flex_col()
+                .font("Courier")
+                .gap_0()
+                .justify_start()
+                .items_start()
+                .text_color(theme.lowest.base.default.foreground)
+                .fill(theme.middle.base.default.background)
+                .child(titlebar(cx))
                 .child(
                     div()
-                        .size_full()
-                        .h_stack()
-                        .gap_3()
-                        .children((0..4).map(|i| {
-                            div().size_full().flex().fill(gpui3::hsla(
-                                0. + (i as f32 / 7.),
-                                0. + (i as f32 / 5.),
-                                0.5,
-                                1.,
-                            ))
-                        })),
-                )
-                .child(
-                    div()
-                        .size_full()
+                        .flex_1()
+                        .w_full()
                         .flex()
-                        .fill(theme.middle.negative.default.background),
+                        .flex_row()
+                        .overflow_hidden()
+                        .child(self.left_panel.clone())
+                        .child(div().h_full().flex_1()), // .child(self.right_panel.clone()),
                 )
+                .child(statusbar::statusbar(cx))
         })
-
-        // themed(rose_pine_dawn(), cx, |cx| {
-        //     div()
-        //         .size_full()
-        //         .flex()
-        //         .flex_col()
-        //         .font("Courier")
-        //         .gap_0()
-        //         .justify_start()
-        //         .items_start()
-        //         .text_color(theme.lowest.base.default.foreground)
-        //         .fill(theme.middle.base.default.background)
-        //         .child(titlebar(cx))
-        //         .child(
-        //             div()
-        //                 .flex_1()
-        //                 .w_full()
-        //                 .flex()
-        //                 .flex_row()
-        //                 .overflow_hidden()
-        //                 .child(self.left_panel.clone())
-        //                 .child(div().h_full().flex_1())
-        //                 .child(self.right_panel.clone()),
-        //         )
-        //         .child(statusbar::statusbar(cx))
-        // })
     }
 }
 
 struct Titlebar;
 
-pub fn titlebar<S: 'static + Send + Sync>(cx: &mut ViewContext<S>) -> impl Element<State = S> {
+pub fn titlebar<S: 'static + Send + Sync>(cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
     let ref mut this = Titlebar;
     let theme = theme(cx);
     div()
@@ -116,7 +100,7 @@ impl Titlebar {
     fn render<V: 'static + Send + Sync>(
         &mut self,
         cx: &mut ViewContext<V>,
-    ) -> impl Element<State = V> {
+    ) -> impl Element<ViewState = V> {
         let theme = theme(cx);
         div()
             .flex()
@@ -132,7 +116,7 @@ impl Titlebar {
     fn left_group<S: 'static + Send + Sync>(
         &mut self,
         cx: &mut ViewContext<S>,
-    ) -> impl Element<State = S> {
+    ) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         div()
             .flex()
@@ -182,8 +166,8 @@ impl Titlebar {
                             .justify_center()
                             .px_2()
                             .rounded_md()
-                            .hover()
-                            .fill(theme.lowest.base.hovered.background)
+                            // .hover()
+                            // .fill(theme.lowest.base.hovered.background)
                             // .active()
                             // .fill(theme.lowest.base.pressed.background)
                             .child(div().text_sm().child("project")),
@@ -197,8 +181,8 @@ impl Titlebar {
                             .px_2()
                             .rounded_md()
                             .text_color(theme.lowest.variant.default.foreground)
-                            .hover()
-                            .fill(theme.lowest.base.hovered.background)
+                            // .hover()
+                            // .fill(theme.lowest.base.hovered.background)
                             // .active()
                             // .fill(theme.lowest.base.pressed.background)
                             .child(
@@ -215,7 +199,7 @@ impl Titlebar {
     fn right_group<S: 'static + Send + Sync>(
         &mut self,
         cx: &mut ViewContext<S>,
-    ) -> impl Element<State = S> {
+    ) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         div()
             .flex()
@@ -253,8 +237,8 @@ impl Titlebar {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .hover()
-                                .fill(theme.lowest.base.hovered.background)
+                                // .hover()
+                                // .fill(theme.lowest.base.hovered.background)
                                 // .active()
                                 // .fill(theme.lowest.base.pressed.background)
                                 .child(
@@ -273,8 +257,8 @@ impl Titlebar {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .hover()
-                                .fill(theme.lowest.base.hovered.background)
+                                // .hover()
+                                // .fill(theme.lowest.base.hovered.background)
                                 // .active()
                                 // .fill(theme.lowest.base.pressed.background)
                                 .child(
@@ -293,8 +277,8 @@ impl Titlebar {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .hover()
-                                .fill(theme.lowest.base.hovered.background)
+                                // .hover()
+                                // .fill(theme.lowest.base.hovered.background)
                                 // .active()
                                 // .fill(theme.lowest.base.pressed.background)
                                 .child(
@@ -318,8 +302,8 @@ impl Titlebar {
                         .justify_center()
                         .rounded_md()
                         .gap_0p5()
-                        .hover()
-                        .fill(theme.lowest.base.hovered.background)
+                        // .hover()
+                        // .fill(theme.lowest.base.hovered.background)
                         // .active()
                         // .fill(theme.lowest.base.pressed.background)
                         .child(
@@ -347,7 +331,9 @@ mod statusbar {
 
     use super::*;
 
-    pub fn statusbar<S: 'static + Send + Sync>(cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    pub fn statusbar<S: 'static + Send + Sync>(
+        cx: &mut ViewContext<S>,
+    ) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         div()
             .flex()
@@ -360,7 +346,9 @@ mod statusbar {
         // .child(right_group(cx))
     }
 
-    fn left_group<V: 'static + Send + Sync>(cx: &mut ViewContext<V>) -> impl Element<State = V> {
+    fn left_group<V: 'static + Send + Sync>(
+        cx: &mut ViewContext<V>,
+    ) -> impl Element<ViewState = V> {
         let theme = theme(cx);
         div()
             .flex()
@@ -435,8 +423,8 @@ mod statusbar {
                             .gap_0p5()
                             .px_1()
                             .text_color(theme.lowest.variant.default.foreground)
-                            .hover()
-                            .fill(theme.lowest.base.hovered.background)
+                            // .hover()
+                            // .fill(theme.lowest.base.hovered.background)
                             // .active()
                             // .fill(theme.lowest.base.pressed.background)
                             .child(
@@ -457,7 +445,9 @@ mod statusbar {
             )
     }
 
-    fn right_group<S: 'static + Send + Sync>(cx: &mut ViewContext<S>) -> impl Element<State = S> {
+    fn right_group<S: 'static + Send + Sync>(
+        cx: &mut ViewContext<S>,
+    ) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         div()
             .flex()

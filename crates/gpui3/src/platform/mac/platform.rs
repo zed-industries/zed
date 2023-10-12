@@ -2,8 +2,8 @@ use super::BoolExt;
 use crate::{
     AnyWindowHandle, ClipboardItem, CursorStyle, DisplayId, Event, Executor, MacDispatcher,
     MacDisplay, MacDisplayLinker, MacTextSystem, MacWindow, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformDisplayLinker, PlatformTextSystem, PlatformWindow, Result,
-    SemanticVersion, WindowOptions,
+    PlatformDisplay, PlatformTextSystem, PlatformWindow, Result, SemanticVersion, VideoTimestamp,
+    WindowOptions,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -145,6 +145,7 @@ pub struct MacPlatform(Mutex<MacPlatformState>);
 pub struct MacPlatformState {
     executor: Executor,
     text_system: Arc<MacTextSystem>,
+    display_linker: MacDisplayLinker,
     pasteboard: id,
     text_hash_pasteboard_type: id,
     metadata_pasteboard_type: id,
@@ -166,6 +167,7 @@ impl MacPlatform {
         Self(Mutex::new(MacPlatformState {
             executor: Executor::new(Arc::new(MacDispatcher)),
             text_system: Arc::new(MacTextSystem::new()),
+            display_linker: MacDisplayLinker::new(),
             pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },
             text_hash_pasteboard_type: unsafe { ns_string("zed-text-hash") },
             metadata_pasteboard_type: unsafe { ns_string("zed-metadata") },
@@ -348,10 +350,6 @@ impl Platform for MacPlatform {
         self.0.lock().executor.clone()
     }
 
-    fn display_linker(&self) -> Arc<dyn PlatformDisplayLinker> {
-        Arc::new(MacDisplayLinker::new())
-    }
-
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
         self.0.lock().text_system.clone()
     }
@@ -485,6 +483,25 @@ impl Platform for MacPlatform {
         options: WindowOptions,
     ) -> Box<dyn PlatformWindow> {
         Box::new(MacWindow::open(handle, options, self.executor()))
+    }
+
+    fn set_display_link_output_callback(
+        &self,
+        display_id: DisplayId,
+        callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp)>,
+    ) {
+        self.0
+            .lock()
+            .display_linker
+            .set_output_callback(display_id, callback);
+    }
+
+    fn start_display_link(&self, display_id: DisplayId) {
+        self.0.lock().display_linker.start(display_id);
+    }
+
+    fn stop_display_link(&self, display_id: DisplayId) {
+        self.0.lock().display_linker.stop(display_id);
     }
 
     fn open_url(&self, url: &str) {
@@ -675,6 +692,32 @@ impl Platform for MacPlatform {
         }
     }
 
+    // fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn Action)>) {
+    //     self.0.lock().menu_command = Some(callback);
+    // }
+
+    // fn on_will_open_menu(&self, callback: Box<dyn FnMut()>) {
+    //     self.0.lock().will_open_menu = Some(callback);
+    // }
+
+    // fn on_validate_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
+    //     self.0.lock().validate_menu_command = Some(callback);
+    // }
+
+    // fn set_menus(&self, menus: Vec<Menu>, keystroke_matcher: &KeymapMatcher) {
+    //     unsafe {
+    //         let app: id = msg_send![APP_CLASS, sharedApplication];
+    //         let mut state = self.0.lock();
+    //         let actions = &mut state.menu_actions;
+    //         app.setMainMenu_(self.create_menu_bar(
+    //             menus,
+    //             app.delegate(),
+    //             actions,
+    //             keystroke_matcher,
+    //         ));
+    //     }
+    // }
+
     fn set_cursor_style(&self, style: CursorStyle) {
         unsafe {
             let new_cursor: id = match style {
@@ -740,32 +783,6 @@ impl Platform for MacPlatform {
             }
         }
     }
-
-    // fn on_menu_command(&self, callback: Box<dyn FnMut(&dyn Action)>) {
-    //     self.0.lock().menu_command = Some(callback);
-    // }
-
-    // fn on_will_open_menu(&self, callback: Box<dyn FnMut()>) {
-    //     self.0.lock().will_open_menu = Some(callback);
-    // }
-
-    // fn on_validate_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
-    //     self.0.lock().validate_menu_command = Some(callback);
-    // }
-
-    // fn set_menus(&self, menus: Vec<Menu>, keystroke_matcher: &KeymapMatcher) {
-    //     unsafe {
-    //         let app: id = msg_send![APP_CLASS, sharedApplication];
-    //         let mut state = self.0.lock();
-    //         let actions = &mut state.menu_actions;
-    //         app.setMainMenu_(self.create_menu_bar(
-    //             menus,
-    //             app.delegate(),
-    //             actions,
-    //             keystroke_matcher,
-    //         ));
-    //     }
-    // }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         let state = self.0.lock();

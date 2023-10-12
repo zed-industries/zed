@@ -1,8 +1,8 @@
 use parking_lot::Mutex;
 
 use crate::{
-    AnyElement, Bounds, Element, Handle, IntoAnyElement, LayoutId, Pixels, Result, ViewContext,
-    WindowContext,
+    AnyBox, AnyElement, BorrowWindow, Bounds, Element, ElementId, Handle, IdentifiedElement,
+    IntoAnyElement, LayoutId, Pixels, ViewContext, WindowContext,
 };
 use std::{any::Any, marker::PhantomData, sync::Arc};
 
@@ -12,7 +12,7 @@ pub struct View<S: Send + Sync, P> {
     parent_state_type: PhantomData<P>,
 }
 
-impl<S: 'static + Send + Sync, P: 'static + Send> View<S, P> {
+impl<S: 'static + Send + Sync, P: 'static + Send + Sync> View<S, P> {
     pub fn into_any(self) -> AnyView<P> {
         AnyView {
             view: Arc::new(Mutex::new(self)),
@@ -40,7 +40,7 @@ pub fn view<S, P, E>(
 where
     S: 'static + Send + Sync,
     P: 'static,
-    E: Element<State = S>,
+    E: Element<ViewState = S>,
 {
     View {
         state,
@@ -49,64 +49,65 @@ where
     }
 }
 
-impl<S: Send + Sync + 'static, P: Send + 'static> Element for View<S, P> {
-    type State = P;
-    type FrameState = AnyElement<S>;
+impl<S: 'static + Send + Sync, P: 'static + Send + Sync> Element for View<S, P> {
+    type ViewState = P;
+    type ElementState = AnyElement<S>;
+
+    fn element_id(&self) -> Option<crate::ElementId> {
+        Some(ElementId::View(self.state.id))
+    }
 
     fn layout(
         &mut self,
-        _: &mut Self::State,
-        cx: &mut ViewContext<Self::State>,
-    ) -> Result<(LayoutId, Self::FrameState)> {
+        _: &mut Self::ViewState,
+        _: Option<Self::ElementState>,
+        cx: &mut ViewContext<Self::ViewState>,
+    ) -> (LayoutId, Self::ElementState) {
         self.state.update(cx, |state, cx| {
             let mut element = (self.render)(state, cx);
-            let layout_id = element.layout(state, cx)?;
-            Ok((layout_id, element))
+            let layout_id = element.layout(state, cx);
+            (layout_id, element)
         })
     }
 
     fn paint(
         &mut self,
         _: Bounds<Pixels>,
-        _: &mut Self::State,
-        element: &mut Self::FrameState,
-        cx: &mut ViewContext<Self::State>,
-    ) -> Result<()> {
+        _: &mut Self::ViewState,
+        element: &mut Self::ElementState,
+        cx: &mut ViewContext<Self::ViewState>,
+    ) {
         self.state
             .update(cx, |state, cx| element.paint(state, None, cx))
     }
 }
 
 trait ViewObject: Send + 'static {
-    fn layout(&mut self, cx: &mut WindowContext) -> Result<(LayoutId, Box<dyn Any>)>;
-    fn paint(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        element: &mut dyn Any,
-        cx: &mut WindowContext,
-    ) -> Result<()>;
+    fn layout(&mut self, cx: &mut WindowContext) -> (LayoutId, AnyBox);
+    fn paint(&mut self, bounds: Bounds<Pixels>, element: &mut dyn Any, cx: &mut WindowContext);
 }
 
-impl<S: Send + Sync + 'static, P: Send + 'static> ViewObject for View<S, P> {
-    fn layout(&mut self, cx: &mut WindowContext) -> Result<(LayoutId, Box<dyn Any>)> {
-        self.state.update(cx, |state, cx| {
-            let mut element = (self.render)(state, cx);
-            let layout_id = element.layout(state, cx)?;
-            let element = Box::new(element) as Box<dyn Any>;
-            Ok((layout_id, element))
+impl<S: Send + Sync + 'static, P: Send + Sync + 'static> IdentifiedElement for View<S, P> {}
+
+impl<S: Send + Sync + 'static, P: Send + Sync + 'static> ViewObject for View<S, P> {
+    fn layout(&mut self, cx: &mut WindowContext) -> (LayoutId, AnyBox) {
+        cx.with_element_id(IdentifiedElement::element_id(self), |cx| {
+            self.state.update(cx, |state, cx| {
+                let mut element = (self.render)(state, cx);
+                let layout_id = element.layout(state, cx);
+                let element = Box::new(element) as AnyBox;
+                (layout_id, element)
+            })
         })
     }
 
-    fn paint(
-        &mut self,
-        _: Bounds<Pixels>,
-        element: &mut dyn Any,
-        cx: &mut WindowContext,
-    ) -> Result<()> {
-        self.state.update(cx, |state, cx| {
-            let element = element.downcast_mut::<AnyElement<S>>().unwrap();
-            element.paint(state, None, cx)
-        })
+    fn paint(&mut self, _: Bounds<Pixels>, element: &mut dyn Any, cx: &mut WindowContext) {
+        cx.with_element_id(IdentifiedElement::element_id(self), |cx| {
+            self.state.update(cx, |state, cx| {
+                let element = element.downcast_mut::<AnyElement<S>>().unwrap();
+                element.paint(state, None, cx);
+            });
+        });
     }
 }
 
@@ -115,15 +116,20 @@ pub struct AnyView<S> {
     parent_state_type: PhantomData<S>,
 }
 
-impl<S: 'static> Element for AnyView<S> {
-    type State = ();
-    type FrameState = Box<dyn Any>;
+impl<S: 'static + Send + Sync> Element for AnyView<S> {
+    type ViewState = ();
+    type ElementState = AnyBox;
+
+    fn element_id(&self) -> Option<crate::ElementId> {
+        None
+    }
 
     fn layout(
         &mut self,
-        _: &mut Self::State,
-        cx: &mut ViewContext<Self::State>,
-    ) -> Result<(LayoutId, Self::FrameState)> {
+        _: &mut Self::ViewState,
+        _: Option<Self::ElementState>,
+        cx: &mut ViewContext<Self::ViewState>,
+    ) -> (LayoutId, Self::ElementState) {
         self.view.lock().layout(cx)
     }
 
@@ -131,9 +137,9 @@ impl<S: 'static> Element for AnyView<S> {
         &mut self,
         bounds: Bounds<Pixels>,
         _: &mut (),
-        element: &mut Box<dyn Any>,
-        cx: &mut ViewContext<Self::State>,
-    ) -> Result<()> {
+        element: &mut AnyBox,
+        cx: &mut ViewContext<Self::ViewState>,
+    ) {
         self.view.lock().paint(bounds, element.as_mut(), cx)
     }
 }

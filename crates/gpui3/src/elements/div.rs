@@ -1,77 +1,103 @@
 use crate::{
-    AnyElement, Bounds, Element, Interactive, LayoutId, MouseEventListeners, Overflow,
-    ParentElement, Pixels, Point, Refineable, RefinementCascade, Result, Style, Styled,
-    ViewContext,
+    AnyElement, BorrowWindow, Bounds, Cascade, Element, ElementId, IdentifiedElement, Interactive,
+    LayoutId, MouseEventListeners, Overflow, ParentElement, Pixels, Point, Refineable, Style,
+    Styled, ViewContext,
 };
 use parking_lot::Mutex;
 use smallvec::SmallVec;
-use std::sync::Arc;
-use util::ResultExt;
+use std::{marker::PhantomData, sync::Arc};
 
-pub struct Div<S: 'static> {
-    styles: RefinementCascade<Style>,
+pub enum HasId {}
+
+pub struct Div<S: 'static, I = ()> {
+    styles: Cascade<Style>,
+    id: Option<ElementId>,
     listeners: MouseEventListeners<S>,
     children: SmallVec<[AnyElement<S>; 2]>,
     scroll_state: Option<ScrollState>,
+    identified: PhantomData<I>,
 }
 
 pub fn div<S>() -> Div<S> {
     Div {
         styles: Default::default(),
+        id: None,
         listeners: Default::default(),
         children: Default::default(),
         scroll_state: None,
+        identified: PhantomData,
     }
 }
 
-impl<S: 'static + Send + Sync> Element for Div<S> {
-    type State = S;
-    type FrameState = Vec<LayoutId>;
+impl<S: 'static + Send + Sync, Marker: 'static + Send + Sync> Element for Div<S, Marker> {
+    type ViewState = S;
+    type ElementState = ();
+
+    fn element_id(&self) -> Option<ElementId> {
+        self.id.clone()
+    }
 
     fn layout(
         &mut self,
         view: &mut S,
+        _: Option<Self::ElementState>,
         cx: &mut ViewContext<S>,
-    ) -> Result<(LayoutId, Self::FrameState)> {
+    ) -> (LayoutId, Self::ElementState) {
         let style = self.computed_style();
-        let child_layout_ids = style.apply_text_style(cx, |cx| self.layout_children(view, cx))?;
-        let layout_id = cx.request_layout(style.into(), child_layout_ids.clone())?;
-        Ok((layout_id, child_layout_ids))
+        let child_layout_ids = style.apply_text_style(cx, |cx| {
+            self.with_element_id(cx, |this, cx| this.layout_children(view, cx))
+        });
+        let layout_id = cx.request_layout(style.into(), child_layout_ids.clone());
+        (layout_id, ())
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
         state: &mut S,
-        child_layout_ids: &mut Self::FrameState,
+        _: &mut (),
         cx: &mut ViewContext<S>,
-    ) -> Result<()> {
+    ) {
         let style = self.computed_style();
         let z_index = style.z_index.unwrap_or(0);
         cx.stack(z_index, |cx| style.paint(bounds, cx));
 
         let overflow = &style.overflow;
+
         style.apply_text_style(cx, |cx| {
             cx.stack(z_index + 1, |cx| {
                 style.apply_overflow(bounds, cx, |cx| {
-                    self.listeners.paint(bounds, cx);
-                    self.paint_children(overflow, state, cx)
+                    self.with_element_id(cx, |this, cx| {
+                        this.listeners.paint(bounds, cx);
+                        this.paint_children(overflow, state, cx)
+                    });
                 })
             })
-        })?;
-        self.handle_scroll(bounds, style.overflow.clone(), child_layout_ids, cx);
-
-        // todo!("enable inspector")
-        // if cx.is_inspector_enabled() {
-        //     self.paint_inspector(parent_origin, layout, cx);
-        // }
-        //
-
-        Ok(())
+        });
     }
 }
 
-impl<S: 'static> Div<S> {
+impl<S> Div<S, ()>
+where
+    S: 'static + Send + Sync,
+{
+    pub fn id(self, id: impl Into<ElementId>) -> Div<S, HasId> {
+        Div {
+            styles: self.styles,
+            id: Some(id.into()),
+            listeners: self.listeners,
+            children: self.children,
+            scroll_state: self.scroll_state,
+            identified: PhantomData,
+        }
+    }
+}
+
+impl<S, Marker> Div<S, Marker>
+where
+    S: 'static + Send + Sync,
+    Marker: 'static + Send + Sync,
+{
     pub fn z_index(mut self, z_index: u32) -> Self {
         self.declared_style().z_index = Some(z_index);
         self
@@ -124,11 +150,11 @@ impl<S: 'static> Div<S> {
         offset
     }
 
-    fn layout_children(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> Result<Vec<LayoutId>> {
+    fn layout_children(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> Vec<LayoutId> {
         self.children
             .iter_mut()
             .map(|child| child.layout(view, cx))
-            .collect::<Result<Vec<LayoutId>>>()
+            .collect()
     }
 
     fn paint_children(
@@ -136,117 +162,30 @@ impl<S: 'static> Div<S> {
         overflow: &Point<Overflow>,
         state: &mut S,
         cx: &mut ViewContext<S>,
-    ) -> Result<()> {
+    ) {
         let scroll_offset = self.scroll_offset(overflow);
         for child in &mut self.children {
-            child.paint(state, Some(scroll_offset), cx)?;
+            child.paint(state, Some(scroll_offset), cx);
         }
-        Ok(())
     }
 
-    fn handle_scroll(
+    fn with_element_id<R>(
         &mut self,
-        bounds: Bounds<Pixels>,
-        overflow: Point<Overflow>,
-        child_layout_ids: &[LayoutId],
         cx: &mut ViewContext<S>,
-    ) {
-        if overflow.y == Overflow::Scroll || overflow.x == Overflow::Scroll {
-            let mut scroll_max = Point::default();
-            for child_layout_id in child_layout_ids {
-                if let Some(child_bounds) = cx.layout_bounds(*child_layout_id).log_err() {
-                    scroll_max = scroll_max.max(&child_bounds.lower_right());
-                }
-            }
-            scroll_max -= bounds.size;
-
-            // todo!("handle scroll")
-            // let scroll_state = self.scroll_state.as_ref().unwrap().clone();
-            // cx.on_event(order, move |_, event: &ScrollWheelEvent, cx| {
-            //     if bounds.contains_point(event.position) {
-            //         let scroll_delta = match event.delta {
-            //             ScrollDelta::Pixels(delta) => delta,
-            //             ScrollDelta::Lines(delta) => cx.text_style().font_size * delta,
-            //         };
-            //         if overflow.x == Overflow::Scroll {
-            //             scroll_state.set_x(
-            //                 (scroll_state.x() - scroll_delta.x())
-            //                     .max(px(0.))
-            //                     .min(scroll_max.x),
-            //             );
-            //         }
-            //         if overflow.y == Overflow::Scroll {
-            //             scroll_state.set_y(
-            //                 (scroll_state.y() - scroll_delta.y())
-            //                     .max(px(0.))
-            //                     .min(scroll_max.y),
-            //             );
-            //         }
-            //         cx.repaint();
-            //     } else {
-            //         cx.bubble_event();
-            //     }
-            // })
+        f: impl FnOnce(&mut Self, &mut ViewContext<S>) -> R,
+    ) -> R {
+        if let Some(element_id) = self.element_id() {
+            cx.with_element_id(element_id, |cx| f(self, cx))
+        } else {
+            f(self, cx)
         }
     }
-
-    // fn paint_inspector(
-    //     &self,
-    //     parent_origin: Point<Pixels>,
-    //     layout: &Layout,
-    //     cx: &mut ViewContext<V>,
-    // ) {
-    //     let style = self.styles.merged();
-    //     let bounds = layout.bounds;
-
-    //     let hovered = bounds.contains_point(cx.mouse_position());
-    //     if hovered {
-    //         let rem_size = cx.rem_size();
-    //         // cx.scene().push_quad(scene::Quad {
-    //         //     bounds,
-    //         //     background: Some(hsla(0., 0., 1., 0.05).into()),
-    //         //     border: gpui::Border {
-    //         //         color: hsla(0., 0., 1., 0.2).into(),
-    //         //         top: 1.,
-    //         //         right: 1.,
-    //         //         bottom: 1.,
-    //         //         left: 1.,
-    //         //     },
-    //         //     corner_radii: CornerRadii::default()
-    //         //         .refined(&style.corner_radii)
-    //         //         .to_gpui(bounds.size(), rem_size),
-    //         // })
-    //     }
-
-    //     // let pressed = Cell::new(hovered && cx.is_mouse_down(MouseButton::Left));
-    //     // cx.on_event(layout.order, move |_, event: &MouseButtonEvent, _| {
-    //     //     if bounds.contains_point(event.position) {
-    //     //         if event.is_down {
-    //     //             pressed.set(true);
-    //     //         } else if pressed.get() {
-    //     //             pressed.set(false);
-    //     //             eprintln!("clicked div {:?} {:#?}", bounds, style);
-    //     //         }
-    //     //     }
-    //     // });
-
-    //     // let hovered = Cell::new(hovered);
-    //     // cx.on_event(layout.order, move |_, event: &MouseMovedEvent, cx| {
-    //     //     cx.bubble_event();
-    //     //     let hovered_now = bounds.contains_point(event.position);
-    //     //     if hovered.get() != hovered_now {
-    //     //         hovered.set(hovered_now);
-    //     //         cx.repaint();
-    //     //     }
-    //     // });
-    // }
-    //
 }
 
-impl<V> Styled for Div<V> {
+impl<V: 'static + Send + Sync, Marker: 'static + Send + Sync> Styled for Div<V, Marker> {
     type Style = Style;
 
-    fn style_cascade(&mut self) -> &mut RefinementCascade<Self::Style> {
+    fn style_cascade(&mut self) -> &mut Cascade<Self::Style> {
         &mut self.styles
     }
 
@@ -255,16 +194,18 @@ impl<V> Styled for Div<V> {
     }
 }
 
-impl<V: Send + Sync + 'static> Interactive<V> for Div<V> {
+impl<V: Send + Sync + 'static> IdentifiedElement for Div<V, HasId> {}
+
+impl<V: Send + Sync + 'static> Interactive<V> for Div<V, HasId> {
     fn listeners(&mut self) -> &mut MouseEventListeners<V> {
         &mut self.listeners
     }
 }
 
-impl<S: 'static> ParentElement for Div<S> {
-    type State = S;
+impl<V: 'static, Marker: 'static + Send + Sync> ParentElement for Div<V, Marker> {
+    type State = V;
 
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<S>; 2]> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         &mut self.children
     }
 }

@@ -234,7 +234,7 @@ pub fn start_of_paragraph(
 ) -> DisplayPoint {
     let point = display_point.to_point(map);
     if point.row == 0 {
-        return map.max_point();
+        return DisplayPoint::zero();
     }
 
     let mut found_non_blank_line = false;
@@ -261,7 +261,7 @@ pub fn end_of_paragraph(
 ) -> DisplayPoint {
     let point = display_point.to_point(map);
     if point.row == map.max_buffer_row() {
-        return DisplayPoint::zero();
+        return map.max_point();
     }
 
     let mut found_non_blank_line = false;

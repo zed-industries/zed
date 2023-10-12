@@ -4,21 +4,19 @@ use std::{
     sync::{Arc, Weak},
 };
 
-use crate::{DisplayId, PlatformDisplayLinker};
+use crate::DisplayId;
 use collections::HashMap;
 use parking_lot::Mutex;
 pub use sys::CVTimeStamp as VideoTimestamp;
 
-pub struct MacDisplayLinker {
-    links: Mutex<HashMap<DisplayId, MacDisplayLink>>,
+pub(crate) struct MacDisplayLinker {
+    links: HashMap<DisplayId, MacDisplayLink>,
 }
 
 struct MacDisplayLink {
-    system_link: Mutex<sys::DisplayLink>,
+    system_link: sys::DisplayLink,
     _output_callback: Arc<OutputCallback>,
 }
-
-unsafe impl Send for MacDisplayLink {}
 
 impl MacDisplayLinker {
     pub fn new() -> Self {
@@ -30,9 +28,9 @@ impl MacDisplayLinker {
 
 type OutputCallback = Mutex<Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp)>>;
 
-impl PlatformDisplayLinker for MacDisplayLinker {
-    fn set_output_callback(
-        &self,
+impl MacDisplayLinker {
+    pub fn set_output_callback(
+        &mut self,
         display_id: DisplayId,
         output_callback: Box<dyn FnMut(&VideoTimestamp, &VideoTimestamp)>,
     ) {
@@ -41,11 +39,11 @@ impl PlatformDisplayLinker for MacDisplayLinker {
             let weak_callback_ptr: *const OutputCallback = Arc::downgrade(&callback).into_raw();
             unsafe { system_link.set_output_callback(trampoline, weak_callback_ptr as *mut c_void) }
 
-            self.links.lock().insert(
+            self.links.insert(
                 display_id,
                 MacDisplayLink {
                     _output_callback: callback,
-                    system_link: Mutex::new(system_link),
+                    system_link,
                 },
             );
         } else {
@@ -54,20 +52,20 @@ impl PlatformDisplayLinker for MacDisplayLinker {
         }
     }
 
-    fn start(&self, display_id: DisplayId) {
-        if let Some(link) = self.links.lock().get_mut(&display_id) {
+    pub fn start(&mut self, display_id: DisplayId) {
+        if let Some(link) = self.links.get_mut(&display_id) {
             unsafe {
-                link.system_link.lock().start();
+                link.system_link.start();
             }
         } else {
             log::warn!("No DisplayLink callback registered for {:?}", display_id)
         }
     }
 
-    fn stop(&self, display_id: DisplayId) {
-        if let Some(link) = self.links.lock().get_mut(&display_id) {
+    pub fn stop(&mut self, display_id: DisplayId) {
+        if let Some(link) = self.links.get_mut(&display_id) {
             unsafe {
-                link.system_link.lock().stop();
+                link.system_link.stop();
             }
         } else {
             log::warn!("No DisplayLink callback registered for {:?}", display_id)

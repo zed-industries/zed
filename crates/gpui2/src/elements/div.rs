@@ -13,12 +13,12 @@ use gpui::{
     scene::{self},
     LayoutId,
 };
-use refineable::{Refineable, RefinementCascade};
+use refineable::{Cascade, Refineable};
 use smallvec::SmallVec;
 use util::ResultExt;
 
 pub struct Div<V: 'static> {
-    styles: RefinementCascade<Style>,
+    styles: Cascade<Style>,
     handlers: InteractionHandlers<V>,
     children: SmallVec<[AnyElement<V>; 2]>,
     scroll_state: Option<ScrollState>,
@@ -263,7 +263,7 @@ impl<V: 'static> Div<V> {
 impl<V> Styleable for Div<V> {
     type Style = Style;
 
-    fn style_cascade(&mut self) -> &mut RefinementCascade<Self::Style> {
+    fn style_cascade(&mut self) -> &mut Cascade<Self::Style> {
         &mut self.styles
     }
 

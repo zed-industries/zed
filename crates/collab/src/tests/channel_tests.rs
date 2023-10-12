@@ -380,6 +380,8 @@ async fn test_channel_room(
 
     // Give everyone a chance to observe user A joining
     deterministic.run_until_parked();
+    let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
+    room_a.read_with(cx_a, |room, _| assert!(room.is_connected()));
 
     client_a.channel_store().read_with(cx_a, |channels, _| {
         assert_participants_eq(

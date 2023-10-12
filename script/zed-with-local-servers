@@ -1,6 +1,0 @@
-#!/bin/bash
-
-: "${ZED_IMPERSONATE:=as-cii}"
-export ZED_IMPERSONATE
-
-ZED_ADMIN_API_TOKEN=secret ZED_SERVER_URL=http://localhost:8080 cargo run $@

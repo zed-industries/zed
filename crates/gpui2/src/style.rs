@@ -19,7 +19,7 @@ use gpui::{
     scene, taffy, WindowContext,
 };
 use gpui2_macros::styleable_helpers;
-use refineable::{Refineable, RefinementCascade};
+use refineable::{Cascade, Refineable};
 use std::sync::Arc;
 
 #[derive(Clone, Refineable, Debug)]
@@ -292,7 +292,7 @@ impl CornerRadii {
 pub trait Styleable {
     type Style: Refineable + Default;
 
-    fn style_cascade(&mut self) -> &mut RefinementCascade<Self::Style>;
+    fn style_cascade(&mut self) -> &mut Cascade<Self::Style>;
     fn declared_style(&mut self) -> &mut <Self::Style as Refineable>::Refinement;
 
     fn computed_style(&mut self) -> Self::Style {

@@ -81,7 +81,7 @@ impl ChatPanel {
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> ViewHandle<Self> {
         let fs = workspace.app_state().fs.clone();
         let client = workspace.app_state().client.clone();
-        let channel_store = workspace.app_state().channel_store.clone();
+        let channel_store = ChannelStore::global(cx);
         let languages = workspace.app_state().languages.clone();
 
         let input_editor = cx.add_view(|cx| {

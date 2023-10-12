@@ -132,12 +132,12 @@ where
     deserializer.deserialize_map(SyntaxVisitor)
 }
 
-pub fn themed<E, F>(theme: Theme, cx: &mut ViewContext<E::State>, build_child: F) -> Themed<E>
+pub fn themed<E, F>(theme: Theme, cx: &mut ViewContext<E::ViewState>, build_child: F) -> Themed<E>
 where
     E: Element,
-    F: FnOnce(&mut ViewContext<E::State>) -> E,
+    F: FnOnce(&mut ViewContext<E::ViewState>) -> E,
 {
-    let child = cx.with_state(theme.clone(), |cx| build_child(cx));
+    let child = cx.with_global(theme.clone(), |cx| build_child(cx));
     Themed { theme, child }
 }
 
@@ -147,36 +147,42 @@ pub struct Themed<E> {
 }
 
 impl<E: Element> Element for Themed<E> {
-    type State = E::State;
-    type FrameState = E::FrameState;
+    type ViewState = E::ViewState;
+    type ElementState = E::ElementState;
+
+    fn element_id(&self) -> Option<gpui3::ElementId> {
+        None
+    }
 
     fn layout(
         &mut self,
-        state: &mut E::State,
-        cx: &mut ViewContext<E::State>,
-    ) -> anyhow::Result<(LayoutId, Self::FrameState)>
+        state: &mut E::ViewState,
+        element_state: Option<Self::ElementState>,
+        cx: &mut ViewContext<E::ViewState>,
+    ) -> (LayoutId, Self::ElementState)
     where
         Self: Sized,
     {
-        cx.with_state(self.theme.clone(), |cx| self.child.layout(state, cx))
+        cx.with_global(self.theme.clone(), |cx| {
+            self.child.layout(state, element_state, cx)
+        })
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        state: &mut Self::State,
-        frame_state: &mut Self::FrameState,
-        cx: &mut ViewContext<Self::State>,
-    ) -> Result<()>
-    where
+        state: &mut Self::ViewState,
+        frame_state: &mut Self::ElementState,
+        cx: &mut ViewContext<Self::ViewState>,
+    ) where
         Self: Sized,
     {
-        cx.with_state(self.theme.clone(), |cx| {
-            self.child.paint(bounds, state, frame_state, cx)
-        })
+        cx.with_global(self.theme.clone(), |cx| {
+            self.child.paint(bounds, state, frame_state, cx);
+        });
     }
 }
 
 pub fn theme(cx: &WindowContext) -> Arc<Theme> {
-    Arc::new(cx.state::<Theme>().clone())
+    Arc::new(cx.global::<Theme>().clone())
 }

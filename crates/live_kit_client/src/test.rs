@@ -91,9 +91,8 @@ impl TestServer {
         let identity = claims.sub.unwrap().to_string();
         let room_name = claims.video.room.unwrap();
         let mut server_rooms = self.rooms.lock();
-        let room = server_rooms
-            .get_mut(&*room_name)
-            .ok_or_else(|| anyhow!("room {:?} does not exist", room_name))?;
+        let room = (*server_rooms).entry(room_name.to_string()).or_default();
+
         if room.client_rooms.contains_key(&identity) {
             Err(anyhow!(
                 "{:?} attempted to join room {:?} twice",

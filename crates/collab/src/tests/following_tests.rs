@@ -184,20 +184,12 @@ async fn test_basic_following(
 
     // All clients see that clients B and C are following client A.
     cx_c.foreground().run_until_parked();
-    for (name, active_call, cx) in [
-        ("A", &active_call_a, &cx_a),
-        ("B", &active_call_b, &cx_b),
-        ("C", &active_call_c, &cx_c),
-        ("D", &active_call_d, &cx_d),
-    ] {
-        active_call.read_with(*cx, |call, cx| {
-            let room = call.room().unwrap().read(cx);
-            assert_eq!(
-                room.followers_for(peer_id_a, project_id),
-                &[peer_id_b, peer_id_c],
-                "checking followers for A as {name}"
-            );
-        });
+    for (name, cx) in [("A", &cx_a), ("B", &cx_b), ("C", &cx_c), ("D", &cx_d)] {
+        assert_eq!(
+            followers_by_leader(project_id, cx),
+            &[(peer_id_a, vec![peer_id_b, peer_id_c])],
+            "followers seen by {name}"
+        );
     }
 
     // Client C unfollows client A.
@@ -207,46 +199,39 @@ async fn test_basic_following(
 
     // All clients see that clients B is following client A.
     cx_c.foreground().run_until_parked();
-    for (name, active_call, cx) in [
-        ("A", &active_call_a, &cx_a),
-        ("B", &active_call_b, &cx_b),
-        ("C", &active_call_c, &cx_c),
-        ("D", &active_call_d, &cx_d),
-    ] {
-        active_call.read_with(*cx, |call, cx| {
-            let room = call.room().unwrap().read(cx);
-            assert_eq!(
-                room.followers_for(peer_id_a, project_id),
-                &[peer_id_b],
-                "checking followers for A as {name}"
-            );
-        });
+    for (name, cx) in [("A", &cx_a), ("B", &cx_b), ("C", &cx_c), ("D", &cx_d)] {
+        assert_eq!(
+            followers_by_leader(project_id, cx),
+            &[(peer_id_a, vec![peer_id_b])],
+            "followers seen by {name}"
+        );
     }
 
     // Client C re-follows client A.
-    workspace_c.update(cx_c, |workspace, cx| {
-        workspace.follow(peer_id_a, cx);
-    });
+    workspace_c
+        .update(cx_c, |workspace, cx| {
+            workspace.follow(peer_id_a, cx).unwrap()
+        })
+        .await
+        .unwrap();
 
     // All clients see that clients B and C are following client A.
     cx_c.foreground().run_until_parked();
-    for (name, active_call, cx) in [
-        ("A", &active_call_a, &cx_a),
-        ("B", &active_call_b, &cx_b),
-        ("C", &active_call_c, &cx_c),
-        ("D", &active_call_d, &cx_d),
-    ] {
-        active_call.read_with(*cx, |call, cx| {
-            let room = call.room().unwrap().read(cx);
-            assert_eq!(
-                room.followers_for(peer_id_a, project_id),
-                &[peer_id_b, peer_id_c],
-                "checking followers for A as {name}"
-            );
-        });
+    for (name, cx) in [("A", &cx_a), ("B", &cx_b), ("C", &cx_c), ("D", &cx_d)] {
+        assert_eq!(
+            followers_by_leader(project_id, cx),
+            &[(peer_id_a, vec![peer_id_b, peer_id_c])],
+            "followers seen by {name}"
+        );
     }
 
-    // Client D follows client C.
+    // Client D follows client B, then switches to following client C.
+    workspace_d
+        .update(cx_d, |workspace, cx| {
+            workspace.follow(peer_id_b, cx).unwrap()
+        })
+        .await
+        .unwrap();
     workspace_d
         .update(cx_d, |workspace, cx| {
             workspace.follow(peer_id_c, cx).unwrap()
@@ -256,20 +241,15 @@ async fn test_basic_following(
 
     // All clients see that D is following C
     cx_d.foreground().run_until_parked();
-    for (name, active_call, cx) in [
-        ("A", &active_call_a, &cx_a),
-        ("B", &active_call_b, &cx_b),
-        ("C", &active_call_c, &cx_c),
-        ("D", &active_call_d, &cx_d),
-    ] {
-        active_call.read_with(*cx, |call, cx| {
-            let room = call.room().unwrap().read(cx);
-            assert_eq!(
-                room.followers_for(peer_id_c, project_id),
-                &[peer_id_d],
-                "checking followers for C as {name}"
-            );
-        });
+    for (name, cx) in [("A", &cx_a), ("B", &cx_b), ("C", &cx_c), ("D", &cx_d)] {
+        assert_eq!(
+            followers_by_leader(project_id, cx),
+            &[
+                (peer_id_a, vec![peer_id_b, peer_id_c]),
+                (peer_id_c, vec![peer_id_d])
+            ],
+            "followers seen by {name}"
+        );
     }
 
     // Client C closes the project.
@@ -278,32 +258,12 @@ async fn test_basic_following(
 
     // Clients A and B see that client B is following A, and client C is not present in the followers.
     cx_c.foreground().run_until_parked();
-    for (name, active_call, cx) in [("A", &active_call_a, &cx_a), ("B", &active_call_b, &cx_b)] {
-        active_call.read_with(*cx, |call, cx| {
-            let room = call.room().unwrap().read(cx);
-            assert_eq!(
-                room.followers_for(peer_id_a, project_id),
-                &[peer_id_b],
-                "checking followers for A as {name}"
-            );
-        });
-    }
-
-    // All clients see that no-one is following C
-    for (name, active_call, cx) in [
-        ("A", &active_call_a, &cx_a),
-        ("B", &active_call_b, &cx_b),
-        ("C", &active_call_c, &cx_c),
-        ("D", &active_call_d, &cx_d),
-    ] {
-        active_call.read_with(*cx, |call, cx| {
-            let room = call.room().unwrap().read(cx);
-            assert_eq!(
-                room.followers_for(peer_id_c, project_id),
-                &[],
-                "checking followers for C as {name}"
-            );
-        });
+    for (name, cx) in [("A", &cx_a), ("B", &cx_b), ("C", &cx_c), ("D", &cx_d)] {
+        assert_eq!(
+            followers_by_leader(project_id, cx),
+            &[(peer_id_a, vec![peer_id_b]),],
+            "followers seen by {name}"
+        );
     }
 
     // When client A activates a different editor, client B does so as well.
@@ -1665,6 +1625,30 @@ struct PaneSummary {
     active: bool,
     leader: Option<PeerId>,
     items: Vec<(bool, String)>,
+}
+
+fn followers_by_leader(project_id: u64, cx: &TestAppContext) -> Vec<(PeerId, Vec<PeerId>)> {
+    cx.read(|cx| {
+        let active_call = ActiveCall::global(cx).read(cx);
+        let peer_id = active_call.client().peer_id();
+        let room = active_call.room().unwrap().read(cx);
+        let mut result = room
+            .remote_participants()
+            .values()
+            .map(|participant| participant.peer_id)
+            .chain(peer_id)
+            .filter_map(|peer_id| {
+                let followers = room.followers_for(peer_id, project_id);
+                if followers.is_empty() {
+                    None
+                } else {
+                    Some((peer_id, followers.to_vec()))
+                }
+            })
+            .collect::<Vec<_>>();
+        result.sort_by_key(|e| e.0);
+        result
+    })
 }
 
 fn pane_summaries(workspace: &ViewHandle<Workspace>, cx: &mut TestAppContext) -> Vec<PaneSummary> {

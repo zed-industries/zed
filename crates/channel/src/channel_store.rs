@@ -2,8 +2,10 @@ mod channel_index;
 
 use crate::{channel_buffer::ChannelBuffer, channel_chat::ChannelChat};
 use anyhow::{anyhow, Result};
+use channel_index::ChannelIndex;
 use client::{Client, Subscription, User, UserId, UserStore};
 use collections::{hash_map, HashMap, HashSet};
+use db::RELEASE_CHANNEL;
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
 use rpc::{
@@ -14,7 +16,11 @@ use serde_derive::{Deserialize, Serialize};
 use std::{borrow::Cow, hash::Hash, mem, ops::Deref, sync::Arc, time::Duration};
 use util::ResultExt;
 
-use self::channel_index::ChannelIndex;
+pub fn init(client: &Arc<Client>, user_store: ModelHandle<UserStore>, cx: &mut AppContext) {
+    let channel_store =
+        cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
+    cx.set_global(channel_store);
+}
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -47,6 +53,26 @@ pub struct Channel {
     pub unseen_message_id: Option<u64>,
 }
 
+impl Channel {
+    pub fn link(&self) -> String {
+        RELEASE_CHANNEL.link_prefix().to_owned()
+            + "channel/"
+            + &self.slug()
+            + "-"
+            + &self.id.to_string()
+    }
+
+    pub fn slug(&self) -> String {
+        let slug: String = self
+            .name
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '-' })
+            .collect();
+
+        slug.trim_matches(|c| c == '-').to_string()
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
 pub struct ChannelPath(Arc<[ChannelId]>);
 
@@ -71,6 +97,10 @@ enum OpenedModelHandle<E: Entity> {
 }
 
 impl ChannelStore {
+    pub fn global(cx: &AppContext) -> ModelHandle<Self> {
+        cx.global::<ModelHandle<Self>>().clone()
+    }
+
     pub fn new(
         client: Arc<Client>,
         user_store: ModelHandle<UserStore>,

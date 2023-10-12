@@ -2,7 +2,6 @@ use crate::{
     Bounds, DispatchPhase, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     ScrollWheelEvent, ViewContext,
 };
-use parking_lot::Mutex;
 use smallvec::SmallVec;
 use std::sync::Arc;
 
@@ -91,37 +90,6 @@ pub trait Interactive<S: 'static + Send + Sync> {
                 }
             }));
         self
-    }
-
-    fn on_click(
-        self,
-        button: MouseButton,
-        handler: impl Fn(&mut S, (&MouseDownEvent, &MouseUpEvent), &mut ViewContext<S>)
-            + Send
-            + Sync
-            + 'static,
-    ) -> Self
-    where
-        Self: Sized,
-    {
-        let down_event = Arc::new(Mutex::new(None));
-        self.on_mouse_down(button, {
-            let down_event = down_event.clone();
-            move |_, event, _| {
-                down_event.lock().replace(event.clone());
-            }
-        })
-        .on_mouse_up_out(button, {
-            let down_event = down_event.clone();
-            move |_, _, _| {
-                down_event.lock().take();
-            }
-        })
-        .on_mouse_up(button, move |view, event, cx| {
-            if let Some(down_event) = down_event.lock().take() {
-                handler(view, (&down_event, event), cx);
-            }
-        })
     }
 
     fn on_mouse_move(

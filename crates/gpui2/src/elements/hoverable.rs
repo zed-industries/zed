@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::Result;
 use gpui::{geometry::vector::Vector2F, platform::MouseMovedEvent, LayoutId};
-use refineable::{CascadeSlot, Refineable, RefinementCascade};
+use refineable::{Cascade, CascadeSlot, Refineable};
 use smallvec::SmallVec;
 use std::{cell::Cell, rc::Rc};
 
@@ -29,7 +29,7 @@ pub fn hoverable<E: Styleable>(mut child: E) -> Hoverable<E> {
 impl<E: Styleable> Styleable for Hoverable<E> {
     type Style = E::Style;
 
-    fn style_cascade(&mut self) -> &mut RefinementCascade<Self::Style> {
+    fn style_cascade(&mut self) -> &mut Cascade<Self::Style> {
         self.child.style_cascade()
     }
 

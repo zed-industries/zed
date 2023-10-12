@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::Result;
 use gpui::{geometry::vector::Vector2F, platform::MouseButtonEvent, LayoutId};
-use refineable::{CascadeSlot, Refineable, RefinementCascade};
+use refineable::{Cascade, CascadeSlot, Refineable};
 use smallvec::SmallVec;
 use std::{cell::Cell, rc::Rc};
 
@@ -33,7 +33,7 @@ impl<E: Styleable> Styleable for Pressable<E> {
         &mut self.pressed_style
     }
 
-    fn style_cascade(&mut self) -> &mut RefinementCascade<E::Style> {
+    fn style_cascade(&mut self) -> &mut Cascade<E::Style> {
         self.child.style_cascade()
     }
 }

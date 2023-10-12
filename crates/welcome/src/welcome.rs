@@ -10,6 +10,7 @@ use gpui::{
 };
 use settings::{update_settings_file, SettingsStore};
 use std::{borrow::Cow, sync::Arc};
+use vim::VimModeSetting;
 use workspace::{
     dock::DockPosition, item::Item, open_new, AppState, PaneBackdrop, Welcome, Workspace,
     WorkspaceId,
@@ -65,6 +66,7 @@ impl View for WelcomePage {
         let width = theme.welcome.page_width;
 
         let telemetry_settings = *settings::get::<TelemetrySettings>(cx);
+        let vim_mode_setting = settings::get::<VimModeSetting>(cx).0;
 
         enum Metrics {}
         enum Diagnostics {}
@@ -145,6 +147,27 @@ impl View for WelcomePage {
                 .with_child(
                     Flex::column()
                         .with_child(
+                            theme::ui::checkbox::<Diagnostics, Self, _>(
+                                "Enable vim mode",
+                                &theme.welcome.checkbox,
+                                vim_mode_setting,
+                                0,
+                                cx,
+                                |this, checked, cx| {
+                                    if let Some(workspace) = this.workspace.upgrade(cx) {
+                                        let fs = workspace.read(cx).app_state().fs.clone();
+                                        update_settings_file::<VimModeSetting>(
+                                            fs,
+                                            cx,
+                                            move |setting| *setting = Some(checked),
+                                        )
+                                    }
+                                },
+                            )
+                            .contained()
+                            .with_style(theme.welcome.checkbox_container),
+                        )
+                        .with_child(
                             theme::ui::checkbox_with_label::<Metrics, _, Self, _>(
                                 Flex::column()
                                     .with_child(
@@ -186,7 +209,7 @@ impl View for WelcomePage {
                                 "Send crash reports",
                                 &theme.welcome.checkbox,
                                 telemetry_settings.diagnostics,
-                                0,
+                                1,
                                 cx,
                                 |this, checked, cx| {
                                     if let Some(workspace) = this.workspace.upgrade(cx) {

@@ -1,9 +1,8 @@
+use crate::theme::{theme, Theme};
 use gpui3::{
-    div, img, svg, view, AppContext, Context, Element, Interactive, IntoAnyElement, MouseButton,
-    ParentElement, ScrollState, SharedString, StyleHelpers, Styled, View, ViewContext,
-    WindowContext,
+    div, svg, view, AppContext, Context, Element, ElementId, IntoAnyElement, ParentElement,
+    ScrollState, SharedString, StyleHelpers, Styled, View, ViewContext, WindowContext,
 };
-use ui::{theme, Theme};
 
 pub struct CollabPanel {
     scroll_state: ScrollState,
@@ -22,7 +21,7 @@ impl CollabPanel {
 }
 
 impl CollabPanel {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<State = Self> {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
         let theme = theme(cx);
 
         // Panel
@@ -43,60 +42,61 @@ impl CollabPanel {
                     .flex_col()
                     .overflow_y_scroll(self.scroll_state.clone())
                     // List Container
+                    // .child(
+                    //     div()
+                    //         .id(0)
+                    //         .on_click(|_, _, _| {
+                    //             dbg!("click!");
+                    //         })
+                    //         .fill(theme.lowest.base.default.background)
+                    //         .pb_1()
+                    //         .border_color(theme.lowest.base.default.border)
+                    //         .border_b()
+                    //         //:: https://tailwindcss.com/docs/hover-focus-and-other-states#styling-based-on-parent-state
+                    //         // .group()
+                    //         // List Section Header
+                    //         .child(self.list_section_header(0, "#CRDB 🗃️", true, theme))
+                    //         // List Item Large
+                    //         .child(self.list_item(
+                    //             "http://github.com/maxbrunsfeld.png?s=50",
+                    //             "maxbrunsfeld",
+                    //             theme,
+                    //         )),
+                    // )
                     .child(
                         div()
-                            .on_click(MouseButton::Left, |_, _, _| {
-                                dbg!("click!");
-                            })
-                            .fill(theme.lowest.base.default.background)
-                            .pb_1()
-                            .border_color(theme.lowest.base.default.border)
-                            .border_b()
-                            //:: https://tailwindcss.com/docs/hover-focus-and-other-states#styling-based-on-parent-state
-                            // .group()
-                            // List Section Header
-                            .child(self.list_section_header("#CRDB 🗃️", true, &theme))
-                            // List Item Large
-                            .child(self.list_item(
-                                "http://github.com/maxbrunsfeld.png?s=50",
-                                "maxbrunsfeld",
-                                &theme,
-                            )),
+                            .py_2()
+                            .flex()
+                            .flex_col()
+                            .child(self.list_section_header(1, "CHANNELS", true, theme)),
                     )
                     .child(
                         div()
                             .py_2()
                             .flex()
                             .flex_col()
-                            .child(self.list_section_header("CHANNELS", true, &theme)),
-                    )
-                    .child(
-                        div()
-                            .py_2()
-                            .flex()
-                            .flex_col()
-                            .child(self.list_section_header("CONTACTS", true, &theme))
+                            .child(self.list_section_header(2, "CONTACTS", true, theme))
                             .children(
                                 std::iter::repeat_with(|| {
                                     vec![
                                         self.list_item(
                                             "http://github.com/as-cii.png?s=50",
                                             "as-cii",
-                                            &theme,
+                                            theme,
                                         ),
-                                        self.list_item(
-                                            "http://github.com/nathansobo.png?s=50",
-                                            "nathansobo",
-                                            &theme,
-                                        ),
-                                        self.list_item(
-                                            "http://github.com/maxbrunsfeld.png?s=50",
-                                            "maxbrunsfeld",
-                                            &theme,
-                                        ),
+                                        // self.list_item(
+                                        //     "http://github.com/nathansobo.png?s=50",
+                                        //     "nathansobo",
+                                        //     theme,
+                                        // ),
+                                        // self.list_item(
+                                        //     "http://github.com/maxbrunsfeld.png?s=50",
+                                        //     "maxbrunsfeld",
+                                        //     theme,
+                                        // ),
                                     ]
                                 })
-                                .take(5)
+                                .take(1)
                                 .flatten(),
                             ),
                     ),
@@ -120,18 +120,20 @@ impl CollabPanel {
 
     fn list_section_header(
         &self,
+        id: impl Into<ElementId>,
         label: impl IntoAnyElement<Self>,
         expanded: bool,
         theme: &Theme,
-    ) -> impl Element<State = Self> {
+    ) -> impl Element<ViewState = Self> {
         div()
+            .id(id)
             .h_7()
             .px_2()
             .flex()
             .justify_between()
             .items_center()
-            .hover()
-            .fill(theme.lowest.base.active.background)
+            .active()
+            .fill(theme.highest.accent.default.background)
             .child(div().flex().gap_1().text_sm().child(label))
             .child(
                 div().flex().h_full().gap_1().items_center().child(
@@ -153,14 +155,15 @@ impl CollabPanel {
         avatar_uri: impl Into<SharedString>,
         label: impl IntoAnyElement<Self>,
         theme: &Theme,
-    ) -> impl Element<State = Self> {
+    ) -> impl Element<ViewState = Self> {
         div()
+            .group("")
             .h_7()
             .px_2()
             .flex()
             .items_center()
-            .hover()
-            .fill(theme.lowest.variant.hovered.background)
+            // .hover()
+            // .fill(theme.lowest.variant.hovered.background)
             // .active()
             // .fill(theme.lowest.variant.pressed.background)
             .child(
@@ -170,12 +173,19 @@ impl CollabPanel {
                     .gap_1()
                     .text_sm()
                     .child(
-                        img()
-                            .uri(avatar_uri)
+                        div()
+                            .id(0)
+                            // .uri(avatar_uri)
                             .size_3p5()
                             .rounded_full()
                             .fill(theme.middle.positive.default.foreground)
-                            .shadow_md(),
+                            .shadow()
+                            .group_hover("")
+                            .fill(theme.middle.negative.default.foreground)
+                            .hover()
+                            .fill(theme.middle.warning.default.foreground)
+                            .group_active("")
+                            .fill(theme.middle.accent.default.foreground),
                     )
                     .child(label),
             )

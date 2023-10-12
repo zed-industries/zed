@@ -1,17 +1,18 @@
-use crate::{Bounds, Element, LayoutId, Pixels, Result, SharedString, Style, Styled};
-use refineable::RefinementCascade;
+use crate::{Bounds, Element, LayoutId, Pixels, SharedString, Style, Styled};
+use refineable::Cascade;
 use std::marker::PhantomData;
+use util::ResultExt;
 
 pub struct Svg<S> {
     path: Option<SharedString>,
-    style: RefinementCascade<Style>,
+    style: Cascade<Style>,
     state_type: PhantomData<S>,
 }
 
 pub fn svg<S>() -> Svg<S> {
     Svg {
         path: None,
-        style: RefinementCascade::<Style>::default(),
+        style: Cascade::<Style>::default(),
         state_type: PhantomData,
     }
 }
@@ -23,44 +24,47 @@ impl<S> Svg<S> {
     }
 }
 
-impl<S: 'static> Element for Svg<S> {
-    type State = S;
-    type FrameState = ();
+impl<S: 'static + Send + Sync> Element for Svg<S> {
+    type ViewState = S;
+    type ElementState = ();
+
+    fn element_id(&self) -> Option<crate::ElementId> {
+        None
+    }
 
     fn layout(
         &mut self,
         _: &mut S,
+        _: Option<Self::ElementState>,
         cx: &mut crate::ViewContext<S>,
-    ) -> anyhow::Result<(LayoutId, Self::FrameState)>
+    ) -> (LayoutId, Self::ElementState)
     where
         Self: Sized,
     {
         let style = self.computed_style();
-        Ok((cx.request_layout(style, [])?, ()))
+        (cx.request_layout(style, []), ())
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _: &mut Self::State,
-        _: &mut Self::FrameState,
+        _: &mut Self::ViewState,
+        _: &mut Self::ElementState,
         cx: &mut crate::ViewContext<S>,
-    ) -> Result<()>
-    where
+    ) where
         Self: Sized,
     {
         let fill_color = self.computed_style().fill.and_then(|fill| fill.color());
         if let Some((path, fill_color)) = self.path.as_ref().zip(fill_color) {
-            cx.paint_svg(bounds, path.clone(), fill_color)?;
+            cx.paint_svg(bounds, path.clone(), fill_color).log_err();
         }
-        Ok(())
     }
 }
 
-impl<S> Styled for Svg<S> {
+impl<S: 'static + Send + Sync> Styled for Svg<S> {
     type Style = Style;
 
-    fn style_cascade(&mut self) -> &mut refineable::RefinementCascade<Self::Style> {
+    fn style_cascade(&mut self) -> &mut refineable::Cascade<Self::Style> {
         &mut self.style
     }
 

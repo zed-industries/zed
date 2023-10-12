@@ -1,5 +1,8 @@
-use crate::{AppContext, Context, Effect, EntityId, Handle, Reference, WeakHandle};
-use std::{marker::PhantomData, sync::Arc};
+use crate::{
+    AppContext, Context, Effect, EntityId, EventEmitter, Handle, Reference, Subscription,
+    WeakHandle,
+};
+use std::marker::PhantomData;
 
 pub struct ModelContext<'a, T> {
     app: Reference<'a, AppContext>,
@@ -42,27 +45,89 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         &mut self,
         handle: &Handle<E>,
         on_notify: impl Fn(&mut T, Handle<E>, &mut ModelContext<'_, T>) + Send + Sync + 'static,
-    ) {
+    ) -> Subscription {
         let this = self.handle();
         let handle = handle.downgrade();
-        self.app
-            .observers
-            .entry(handle.id)
-            .or_default()
-            .push(Arc::new(move |cx| {
+        self.app.observers.insert(
+            handle.id,
+            Box::new(move |cx| {
                 if let Some((this, handle)) = this.upgrade(cx).zip(handle.upgrade(cx)) {
                     this.update(cx, |this, cx| on_notify(this, handle, cx));
                     true
                 } else {
                     false
                 }
-            }));
+            }),
+        )
+    }
+
+    pub fn subscribe<E: EventEmitter + Send + Sync + 'static>(
+        &mut self,
+        handle: &Handle<E>,
+        on_event: impl Fn(&mut T, Handle<E>, &E::Event, &mut ModelContext<'_, T>)
+            + Send
+            + Sync
+            + 'static,
+    ) -> Subscription {
+        let this = self.handle();
+        let handle = handle.downgrade();
+        self.app.event_handlers.insert(
+            handle.id,
+            Box::new(move |event, cx| {
+                let event = event.downcast_ref().expect("invalid event type");
+                if let Some((this, handle)) = this.upgrade(cx).zip(handle.upgrade(cx)) {
+                    this.update(cx, |this, cx| on_event(this, handle, event, cx));
+                    true
+                } else {
+                    false
+                }
+            }),
+        )
+    }
+
+    pub fn on_release(
+        &mut self,
+        on_release: impl Fn(&mut T, &mut AppContext) + Send + Sync + 'static,
+    ) -> Subscription {
+        self.app.release_handlers.insert(
+            self.entity_id,
+            Box::new(move |this, cx| {
+                let this = this.downcast_mut().expect("invalid entity type");
+                on_release(this, cx);
+            }),
+        )
+    }
+
+    pub fn observe_release<E: Send + Sync + 'static>(
+        &mut self,
+        handle: &Handle<E>,
+        on_release: impl Fn(&mut T, &mut E, &mut ModelContext<'_, T>) + Send + Sync + 'static,
+    ) -> Subscription {
+        let this = self.handle();
+        self.app.release_handlers.insert(
+            handle.id,
+            Box::new(move |entity, cx| {
+                let entity = entity.downcast_mut().expect("invalid entity type");
+                if let Some(this) = this.upgrade(cx) {
+                    this.update(cx, |this, cx| on_release(this, entity, cx));
+                }
+            }),
+        )
     }
 
     pub fn notify(&mut self) {
-        self.app
-            .pending_effects
-            .push_back(Effect::Notify(self.entity_id));
+        self.app.push_effect(Effect::Notify {
+            emitter: self.entity_id,
+        });
+    }
+}
+
+impl<'a, T: EventEmitter + Send + Sync + 'static> ModelContext<'a, T> {
+    pub fn emit(&mut self, event: T::Event) {
+        self.app.push_effect(Effect::Emit {
+            emitter: self.entity_id,
+            event: Box::new(event),
+        });
     }
 }
 
