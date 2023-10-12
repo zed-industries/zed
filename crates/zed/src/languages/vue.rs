@@ -142,19 +142,34 @@ impl super::LspAdapter for VueLspAdapter {
 
     async fn label_for_completion(
         &self,
-        _: &lsp::CompletionItem,
-        _: &Arc<Language>,
-    ) -> Option<CodeLabel> {
-        None
-    }
+        item: &lsp::CompletionItem,
+        language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
+        use lsp::CompletionItemKind as Kind;
+        let len = item.label.len();
+        let grammar = language.grammar()?;
+        let highlight_id = match item.kind? {
+            Kind::CLASS | Kind::INTERFACE => grammar.highlight_id_for_name("type"),
+            Kind::CONSTRUCTOR => grammar.highlight_id_for_name("type"),
+            Kind::CONSTANT => grammar.highlight_id_for_name("constant"),
+            Kind::FUNCTION | Kind::METHOD => grammar.highlight_id_for_name("function"),
+            Kind::PROPERTY | Kind::FIELD => grammar.highlight_id_for_name("tag"),
+            Kind::VARIABLE => grammar.highlight_id_for_name("type"),
+            Kind::KEYWORD => grammar.highlight_id_for_name("keyword"),
+            Kind::VALUE => grammar.highlight_id_for_name("tag"),
+            _ => None,
+        }?;
 
-    async fn label_for_symbol(
-        &self,
-        _: &str,
-        _: lsp::SymbolKind,
-        _: &Arc<Language>,
-    ) -> Option<CodeLabel> {
-        None
+        let text = match &item.detail {
+            Some(detail) => format!("{} {}", item.label, detail),
+            None => item.label.clone(),
+        };
+
+        Some(language::CodeLabel {
+            text,
+            runs: vec![(0..len, highlight_id)],
+            filter_range: 0..len,
+        })
     }
 }
 
