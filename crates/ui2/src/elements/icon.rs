@@ -170,7 +170,7 @@ impl<S: 'static + Send + Sync> IconElement<S> {
         self
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         let fill = self.color.color(theme);
 
@@ -206,7 +206,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
             let icons = Icon::iter();
 
             Story::container(cx)

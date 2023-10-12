@@ -66,7 +66,7 @@ impl<S: 'static + Send + Sync> IconButton<S> {
         self
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
 
         let icon_color = match (self.state, self.color) {
@@ -80,9 +80,9 @@ impl<S: 'static + Send + Sync> IconButton<S> {
         }
 
         if let Some(click_handler) = self.handlers.click.clone() {
-            // div = div.on_click(MouseButton::Left, move |state, event, cx| {
-            //     click_handler(state, cx);
-            // });
+            div = div.on_mouse_down(MouseButton::Left, move |state, event, cx| {
+                click_handler(state, cx);
+            });
         }
 
         div.w_7()

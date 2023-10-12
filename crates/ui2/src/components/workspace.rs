@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use chrono::DateTime;
-use gpui3::{px, relative, rems, Size};
+use gpui3::{px, relative, rems, view, Context, Size, View};
 
 use crate::prelude::*;
 use crate::{
@@ -105,19 +105,26 @@ pub fn get_workspace_state() -> &'static WorkspaceState {
     state
 }
 
-#[derive(Element)]
-pub struct WorkspaceElement<S: 'static + Send + Sync + Clone> {
-    state_type: PhantomData<S>,
+// #[derive(Element)]
+#[derive(Clone)]
+pub struct Workspace {
+    show_project_panel: bool,
+    show_collab_panel: bool,
     left_panel_scroll_state: ScrollState,
     right_panel_scroll_state: ScrollState,
     tab_bar_scroll_state: ScrollState,
     bottom_panel_scroll_state: ScrollState,
 }
 
-impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
+fn workspace<P: 'static>(cx: &mut WindowContext) -> View<Workspace, P> {
+    view(cx.entity(|cx| Workspace::new()), Workspace::render)
+}
+
+impl Workspace {
     pub fn new() -> Self {
         Self {
-            state_type: PhantomData,
+            show_project_panel: true,
+            show_collab_panel: false,
             left_panel_scroll_state: ScrollState::default(),
             right_panel_scroll_state: ScrollState::default(),
             tab_bar_scroll_state: ScrollState::default(),
@@ -125,7 +132,31 @@ impl<S: 'static + Send + Sync + Clone> WorkspaceElement<S> {
         }
     }
 
-    pub fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    pub fn is_project_panel_open(&self) -> bool {
+        dbg!(self.show_project_panel)
+    }
+
+    pub fn toggle_project_panel(&mut self, cx: &mut ViewContext<Self>) {
+        self.show_project_panel = !self.show_project_panel;
+
+        self.show_collab_panel = false;
+
+        dbg!(self.show_project_panel);
+
+        cx.notify();
+    }
+
+    pub fn is_collab_panel_open(&self) -> bool {
+        self.show_collab_panel
+    }
+
+    pub fn toggle_collab_panel(&mut self) {
+        self.show_collab_panel = !self.show_collab_panel;
+
+        self.show_project_panel = false;
+    }
+
+    pub fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
         let theme = theme(cx).clone();
 
         let workspace_state = get_workspace_state();
@@ -341,21 +372,23 @@ pub use stories::*;
 mod stories {
     use super::*;
 
-    #[derive(Element)]
-    pub struct WorkspaceStory<S: 'static + Send + Sync + Clone> {
-        state_type: PhantomData<S>,
+    // #[derive(Element)]
+    // pub struct WorkspaceStory<S: 'static + Send + Sync + Clone> {
+    //     state_type: PhantomData<S>,
+    // }
+
+    pub struct WorkspaceStory<P> {
+        workspace: View<Workspace, P>,
     }
 
-    impl<S: 'static + Send + Sync + Clone> WorkspaceStory<S> {
-        pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
-        }
-
-        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-            // Just render the workspace without any story boilerplate.
-            WorkspaceElement::new()
-        }
+    pub fn workspace_story<P: 'static + Send + Sync>(cx: &mut WindowContext) -> View<WorkspaceStory<P>, P> {
+        todo!()
+        // let workspace = workspace::<P>(cx);
+        // view(
+        //     cx.entity(|cx| WorkspaceStory {
+        //         workspace,
+        //     }),
+        //     |view, cx| view.workspace.clone(),
+        // )
     }
 }

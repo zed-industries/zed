@@ -48,7 +48,7 @@ impl<S: 'static + Send + Sync> Pane<S> {
         self
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
 
         div()
@@ -89,7 +89,7 @@ impl<S: 'static + Send + Sync> PaneGroup<S> {
         }
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
 
         if !self.panes.is_empty() {
@@ -100,7 +100,7 @@ impl<S: 'static + Send + Sync> PaneGroup<S> {
                 .w_full()
                 .h_full()
                 .fill(theme.lowest.base.default.background)
-                .children(self.panes.iter_mut().map(|pane| pane.render(cx)));
+                .children(self.panes.iter_mut().map(|pane| pane.render(view, cx)));
 
             if self.split_direction == SplitDirection::Horizontal {
                 return el;
@@ -117,7 +117,7 @@ impl<S: 'static + Send + Sync> PaneGroup<S> {
                 .w_full()
                 .h_full()
                 .fill(theme.lowest.base.default.background)
-                .children(self.groups.iter_mut().map(|group| group.render(cx)));
+                .children(self.groups.iter_mut().map(|group| group.render(view, cx)));
 
             if self.split_direction == SplitDirection::Horizontal {
                 return el;

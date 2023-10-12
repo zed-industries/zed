@@ -196,7 +196,7 @@ impl<V: 'static + Send + Sync, Marker: 'static + Send + Sync> Styled for Div<V, 
 
 impl<V: Send + Sync + 'static> IdentifiedElement for Div<V, HasId> {}
 
-impl<V: Send + Sync + 'static> Interactive<V> for Div<V, HasId> {
+impl<V: Send + Sync + 'static, Marker: 'static + Send + Sync> Interactive<V> for Div<V, Marker> {
     fn listeners(&mut self) -> &mut MouseEventListeners<V> {
         &mut self.listeners
     }

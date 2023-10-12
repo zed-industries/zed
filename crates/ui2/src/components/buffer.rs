@@ -224,7 +224,7 @@ impl<S: 'static + Send + Sync + Clone> Buffer<S> {
         }
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         let rows = self.render_rows(cx);
 
@@ -263,7 +263,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
             let theme = theme(cx);
 
             Story::container(cx)

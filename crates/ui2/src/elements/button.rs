@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use gpui3::{DefiniteLength, Hsla, Interactive, MouseButton, WindowContext};
+use gpui3::{DefiniteLength, Hsla, WindowContext};
 
 use crate::prelude::*;
 use crate::{h_stack, theme, Icon, IconColor, IconElement, Label, LabelColor, LabelSize};
@@ -160,7 +160,7 @@ impl<S: 'static + Send + Sync + Clone> Button<S> {
         self.icon.map(|i| IconElement::new(i).color(icon_color))
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         let icon_color = self.icon_color();
         let system_color = SystemColor::new();
@@ -195,11 +195,20 @@ impl<S: 'static + Send + Sync + Clone> Button<S> {
             el = el.w(width).justify_center();
         }
 
-        if let Some(click_handler) = self.handlers.click.clone() {
-            // el = el.on_click(MouseButton::Left, move |state, event, cx| {
-            //     click_handler(state, cx);
-            // });
-        }
+        // el.when_some(self.handlers.click.clone(), |el, click_handler| {
+        //     el.id(0)
+        //         .on_click(MouseButton::Left, move |state, event, cx| {
+        //             click_handler(state, cx);
+        //         })
+        // });
+
+        // if let Some(click_handler) = self.handlers.click.clone() {
+        //     el = el
+        //         .id(0)
+        //         .on_click(MouseButton::Left, move |state, event, cx| {
+        //             click_handler(state, cx);
+        //         });
+        // }
 
         el
     }
@@ -229,7 +238,11 @@ mod stories {
             }
         }
 
-        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             let states = InteractionState::iter();
 
             Story::container(cx)

@@ -25,7 +25,7 @@ impl<S: 'static + Send + Sync + Clone> ChatPanel<S> {
         self
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
 
         div()
@@ -89,7 +89,7 @@ impl<S: 'static + Send + Sync + Clone> ChatMessage<S> {
         }
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         div()
             .flex()
             .flex_col()
@@ -130,7 +130,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, ChatPanel<S>>(cx))
                 .child(Story::label(cx, "Default"))

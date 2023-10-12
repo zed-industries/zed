@@ -6,12 +6,35 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     let type_name = ast.ident;
 
+    let mut logme = false;
     let mut state_type = quote! { () };
 
     for param in &ast.generics.params {
         if let GenericParam::Type(type_param) = param {
             let type_ident = &type_param.ident;
             state_type = quote! {#type_ident};
+            break;
+        }
+    }
+
+    let attrs = &ast.attrs;
+    for attr in attrs {
+        if attr.path.is_ident("element") {
+            match attr.parse_meta() {
+                Ok(syn::Meta::List(i)) => {
+                    for nested_meta in i.nested {
+                        if let syn::NestedMeta::Meta(syn::Meta::NameValue(nv)) = nested_meta {
+                            if nv.path.is_ident("view_state") {
+                                if let syn::Lit::Str(lit_str) = nv.lit {
+                                    state_type = lit_str.value().parse().unwrap();
+                                    logme = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => (),
+            }
         }
     }
 
@@ -30,29 +53,32 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
 
             fn layout(
                 &mut self,
-                state: &mut #state_type,
+                view_state: &mut Self::ViewState,
                 element_state: Option<Self::ElementState>,
                 cx: &mut gpui3::ViewContext<Self::ViewState>,
             ) -> (gpui3::LayoutId, Self::ElementState) {
                 use gpui3::IntoAnyElement;
 
-                let mut rendered_element = self.render(cx).into_any();
-                let layout_id = rendered_element.layout(state, cx);
+                let mut rendered_element = self.render(view_state, cx).into_any();
+                let layout_id = rendered_element.layout(view_state, cx);
                 (layout_id, rendered_element)
             }
 
             fn paint(
                 &mut self,
                 bounds: gpui3::Bounds<gpui3::Pixels>,
-                state: &mut Self::ViewState,
+                view_state: &mut Self::ViewState,
                 element_state: &mut Self::ElementState,
                 cx: &mut gpui3::ViewContext<Self::ViewState>,
             ) {
-                // TODO: Where do we get the `offset` from?
-                element_state.paint(state, None, cx)
+                element_state.paint(view_state, None, cx)
             }
         }
     };
+
+    if logme {
+        println!(">>>>>>>>>>>>>>>>>>>>>>\n{}", gen);
+    }
 
     gen.into()
 }

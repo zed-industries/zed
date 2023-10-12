@@ -23,7 +23,7 @@ impl<S: 'static + Send + Sync + Clone> TabBar<S> {
         self.scroll_state = scroll_state;
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         let can_navigate_back = true;
         let can_navigate_forward = false;
@@ -105,7 +105,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, TabBar<S>>(cx))
                 .child(Story::label(cx, "Default"))

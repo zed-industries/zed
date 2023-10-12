@@ -65,7 +65,7 @@ pub enum ComponentStory {
 }
 
 impl ComponentStory {
-    pub fn story<S: 'static + Send + Sync + Clone>(&self) -> AnyElement<S> {
+    pub fn story<S: 'static + Send + Sync + Clone>(&self, cx: &mut WindowContext) -> AnyElement<S> {
         match self {
             Self::AssistantPanel => ui::AssistantPanelStory::new().into_any(),
             Self::Buffer => ui::BufferStory::new().into_any(),
@@ -90,7 +90,7 @@ impl ComponentStory {
             Self::Toast => ui::ToastStory::new().into_any(),
             Self::Toolbar => ui::ToolbarStory::new().into_any(),
             Self::TrafficLights => ui::TrafficLightsStory::new().into_any(),
-            Self::Workspace => ui::WorkspaceStory::new().into_any(),
+            Self::Workspace => ui::workspace_story(cx).into_any().into_any(),
         }
     }
 }
@@ -131,10 +131,10 @@ impl FromStr for StorySelector {
 }
 
 impl StorySelector {
-    pub fn story<S: 'static + Send + Sync + Clone>(&self) -> AnyElement<S> {
+    pub fn story<S: 'static + Send + Sync + Clone>(&self, cx: &mut WindowContext) -> AnyElement<S> {
         match self {
             Self::Element(element_story) => element_story.story(),
-            Self::Component(component_story) => component_story.story(),
+            Self::Component(component_story) => component_story.story(cx),
             Self::KitchenSink => crate::stories::kitchen_sink::KitchenSinkStory::new().into_any(),
         }
     }

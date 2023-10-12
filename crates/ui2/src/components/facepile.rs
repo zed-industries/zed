@@ -17,7 +17,7 @@ impl<S: 'static + Send + Sync> Facepile<S> {
         }
     }
 
-    fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         let player_count = self.players.len();
         let player_list = self.players.iter().enumerate().map(|(ix, player)| {
@@ -52,7 +52,7 @@ mod stories {
             }
         }
 
-        fn render(&mut self, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
             let players = static_players();
 
             Story::container(cx)
