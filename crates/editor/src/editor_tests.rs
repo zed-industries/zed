@@ -7830,11 +7830,12 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
         Some(tree_sitter_rust::language()),
     );
 
+    let test_plugin = "test_plugin";
     let _ = language
         .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
             enabled_formatters: vec![BundledFormatter::Prettier {
                 parser_name: Some("test_parser"),
-                plugin_names: vec!["test_plugin"],
+                plugin_names: vec![test_plugin],
             }],
             ..Default::default()
         }))
@@ -7843,37 +7844,31 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
     let fs = FakeFs::new(cx.background());
     fs.insert_file("/file.rs", Default::default()).await;
 
-    // TODO kb have to specify some test node runtime
     let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
-    project.update(cx, |project, _| project.languages().add(Arc::new(language)));
+    let prettier_format_suffix = project.update(cx, |project, _| {
+        let suffix = project.enable_test_prettier(&[test_plugin]);
+        project.languages().add(Arc::new(language));
+        suffix
+    });
     let buffer = project
         .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
         .await
         .unwrap();
 
+    let buffer_text = "one\ntwo\nthree\n";
     let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
     let editor = cx.add_window(|cx| build_editor(buffer, cx)).root(cx);
-    editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
+    editor.update(cx, |editor, cx| editor.set_text(buffer_text, cx));
 
     let format = editor.update(cx, |editor, cx| {
         editor.perform_format(project.clone(), FormatTrigger::Manual, cx)
     });
     format.await.unwrap();
-    assert_eq!(
-        editor.read_with(cx, |editor, cx| editor.text(cx)),
-        "one, two\nthree\n"
-    );
 
-    editor.update(cx, |editor, cx| editor.set_text("one\ntwo\nthree\n", cx));
-    let format = editor.update(cx, |editor, cx| {
-        editor.perform_format(project, FormatTrigger::Manual, cx)
-    });
-    cx.foreground().advance_clock(super::FORMAT_TIMEOUT);
-    cx.foreground().start_waiting();
-    format.await.unwrap();
     assert_eq!(
         editor.read_with(cx, |editor, cx| editor.text(cx)),
-        "one\ntwo\nthree\n"
+        buffer_text.to_string() + prettier_format_suffix,
+        "Test prettier formatting was not applied to the original buffer text",
     );
 }
 

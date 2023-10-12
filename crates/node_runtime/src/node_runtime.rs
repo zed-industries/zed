@@ -220,18 +220,83 @@ impl NodeRuntime for RealNodeRuntime {
     }
 }
 
-pub struct FakeNodeRuntime;
+pub struct FakeNodeRuntime(Option<PrettierSupport>);
+
+struct PrettierSupport {
+    plugins: Vec<&'static str>,
+}
 
 impl FakeNodeRuntime {
     pub fn new() -> Arc<dyn NodeRuntime> {
-        Arc::new(FakeNodeRuntime)
+        Arc::new(FakeNodeRuntime(None))
+    }
+
+    pub fn with_prettier_support(plugins: &[&'static str]) -> Arc<dyn NodeRuntime> {
+        Arc::new(FakeNodeRuntime(Some(PrettierSupport::new(plugins))))
     }
 }
 
 #[async_trait::async_trait]
 impl NodeRuntime for FakeNodeRuntime {
     async fn binary_path(&self) -> anyhow::Result<PathBuf> {
-        // TODO kb move away into a separate type + a Project's setter (for test code)
+        if let Some(prettier_support) = &self.0 {
+            prettier_support.binary_path().await
+        } else {
+            unreachable!()
+        }
+    }
+
+    async fn run_npm_subcommand(
+        &self,
+        directory: Option<&Path>,
+        subcommand: &str,
+        args: &[&str],
+    ) -> anyhow::Result<Output> {
+        if let Some(prettier_support) = &self.0 {
+            prettier_support
+                .run_npm_subcommand(directory, subcommand, args)
+                .await
+        } else {
+            unreachable!()
+        }
+    }
+
+    async fn npm_package_latest_version(&self, name: &str) -> anyhow::Result<String> {
+        if let Some(prettier_support) = &self.0 {
+            prettier_support.npm_package_latest_version(name).await
+        } else {
+            unreachable!()
+        }
+    }
+
+    async fn npm_install_packages(
+        &self,
+        directory: &Path,
+        packages: &[(&str, &str)],
+    ) -> anyhow::Result<()> {
+        if let Some(prettier_support) = &self.0 {
+            prettier_support
+                .npm_install_packages(directory, packages)
+                .await
+        } else {
+            unreachable!()
+        }
+    }
+}
+
+impl PrettierSupport {
+    const PACKAGE_VERSION: &str = "0.0.1";
+
+    fn new(plugins: &[&'static str]) -> Self {
+        Self {
+            plugins: plugins.to_vec(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl NodeRuntime for PrettierSupport {
+    async fn binary_path(&self) -> anyhow::Result<PathBuf> {
         Ok(PathBuf::from("prettier_fake_node"))
     }
 
@@ -240,10 +305,10 @@ impl NodeRuntime for FakeNodeRuntime {
     }
 
     async fn npm_package_latest_version(&self, name: &str) -> anyhow::Result<String> {
-        if name == "prettier" {
-            Ok("0.0.1".to_string())
+        if name == "prettier" || self.plugins.contains(&name) {
+            Ok(Self::PACKAGE_VERSION.to_string())
         } else {
-            unreachable!("Unexpected package name: {name}")
+            panic!("Unexpected package name: {name}")
         }
     }
 
@@ -252,10 +317,32 @@ impl NodeRuntime for FakeNodeRuntime {
         _: &Path,
         packages: &[(&str, &str)],
     ) -> anyhow::Result<()> {
-        if packages == [("prettier", "0.0.1")] {
-            Ok(())
-        } else {
-            unreachable!("Unexpected packages to install: {packages:?}")
+        assert_eq!(
+            packages.len(),
+            self.plugins.len() + 1,
+            "Unexpected packages length to install: {:?}, expected `prettier` + {:?}",
+            packages,
+            self.plugins
+        );
+        for (name, version) in packages {
+            assert!(
+                name == &"prettier" || self.plugins.contains(name),
+                "Unexpected package `{}` to install in packages {:?}, expected {} for `prettier` + {:?}",
+                name,
+                packages,
+                Self::PACKAGE_VERSION,
+                self.plugins
+            );
+            assert_eq!(
+                version,
+                &Self::PACKAGE_VERSION,
+                "Unexpected package version `{}` to install in packages {:?}, expected {} for `prettier` + {:?}",
+                version,
+                packages,
+                Self::PACKAGE_VERSION,
+                self.plugins
+            );
         }
+        Ok(())
     }
 }

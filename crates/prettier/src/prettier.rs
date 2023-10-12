@@ -71,6 +71,9 @@ impl Prettier {
         ".editorconfig",
     ];
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub const FORMAT_SUFFIX: &str = "\nformatted by test prettier";
+
     pub fn remote(
         project_id: u64,
         worktree_id: Option<usize>,
@@ -433,7 +436,7 @@ impl Prettier {
             #[cfg(any(test, feature = "test-support"))]
             Self::Test(_) => Ok(buffer
                 .read_with(cx, |buffer, cx| {
-                    let formatted_text = buffer.text() + "\nformatted by test prettier";
+                    let formatted_text = buffer.text() + Self::FORMAT_SUFFIX;
                     buffer.diff(formatted_text, cx)
                 })
                 .await),
