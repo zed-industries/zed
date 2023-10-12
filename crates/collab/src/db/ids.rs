@@ -119,3 +119,38 @@ impl Into<i32> for ChannelRole {
         proto.into()
     }
 }
+
+#[derive(Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Default)]
+#[sea_orm(rs_type = "String", db_type = "String(None)")]
+pub enum ChannelVisibility {
+    #[sea_orm(string_value = "public")]
+    Public,
+    #[sea_orm(string_value = "channel_members")]
+    #[default]
+    ChannelMembers,
+}
+
+impl From<proto::ChannelVisibility> for ChannelVisibility {
+    fn from(value: proto::ChannelVisibility) -> Self {
+        match value {
+            proto::ChannelVisibility::Public => ChannelVisibility::Public,
+            proto::ChannelVisibility::ChannelMembers => ChannelVisibility::ChannelMembers,
+        }
+    }
+}
+
+impl Into<proto::ChannelVisibility> for ChannelVisibility {
+    fn into(self) -> proto::ChannelVisibility {
+        match self {
+            ChannelVisibility::Public => proto::ChannelVisibility::Public,
+            ChannelVisibility::ChannelMembers => proto::ChannelVisibility::ChannelMembers,
+        }
+    }
+}
+
+impl Into<i32> for ChannelVisibility {
+    fn into(self) -> i32 {
+        let proto: proto::ChannelVisibility = self.into();
+        proto.into()
+    }
+}

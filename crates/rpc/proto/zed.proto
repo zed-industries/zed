@@ -1539,9 +1539,15 @@ message Nonce {
     uint64 lower_half = 2;
 }
 
+enum ChannelVisibility {
+    Public = 0;
+    ChannelMembers = 1;
+}
+
 message Channel {
     uint64 id = 1;
     string name = 2;
+    ChannelVisibility visibility = 3;
 }
 
 message Contact {

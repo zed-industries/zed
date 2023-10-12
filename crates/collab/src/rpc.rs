@@ -38,8 +38,8 @@ use lazy_static::lazy_static;
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
-        self, Ack, AnyTypedEnvelope, ChannelEdge, EntityMessage, EnvelopedMessage,
-        LiveKitConnectionInfo, RequestMessage, UpdateChannelBufferCollaborators,
+        self, Ack, AnyTypedEnvelope, ChannelEdge, ChannelVisibility, EntityMessage,
+        EnvelopedMessage, LiveKitConnectionInfo, RequestMessage, UpdateChannelBufferCollaborators,
     },
     Connection, ConnectionId, Peer, Receipt, TypedEnvelope,
 };
@@ -2210,6 +2210,8 @@ async fn create_channel(
     let channel = proto::Channel {
         id: id.to_proto(),
         name: request.name,
+        // TODO: Visibility
+        visibility: proto::ChannelVisibility::ChannelMembers as i32,
     };
 
     response.send(proto::CreateChannelResponse {
@@ -2299,6 +2301,8 @@ async fn invite_channel_member(
     update.channel_invitations.push(proto::Channel {
         id: channel.id.to_proto(),
         name: channel.name,
+        // TODO: Visibility
+        visibility: proto::ChannelVisibility::ChannelMembers as i32,
     });
     for connection_id in session
         .connection_pool()
@@ -2394,6 +2398,8 @@ async fn rename_channel(
     let channel = proto::Channel {
         id: request.channel_id,
         name: new_name,
+        // TODO: Visibility
+        visibility: proto::ChannelVisibility::ChannelMembers as i32,
     };
     response.send(proto::RenameChannelResponse {
         channel: Some(channel.clone()),
@@ -2432,6 +2438,8 @@ async fn link_channel(
             .map(|channel| proto::Channel {
                 id: channel.id.to_proto(),
                 name: channel.name,
+                // TODO: Visibility
+                visibility: proto::ChannelVisibility::ChannelMembers as i32,
             })
             .collect(),
         insert_edge: channels_to_send.edges,
@@ -2523,6 +2531,8 @@ async fn move_channel(
             .map(|channel| proto::Channel {
                 id: channel.id.to_proto(),
                 name: channel.name,
+                // TODO: Visibility
+                visibility: proto::ChannelVisibility::ChannelMembers as i32,
             })
             .collect(),
         insert_edge: channels_to_send.edges,
@@ -2579,6 +2589,8 @@ async fn respond_to_channel_invite(
                     .map(|channel| proto::Channel {
                         id: channel.id.to_proto(),
                         name: channel.name,
+                        // TODO: Visibility
+                        visibility: ChannelVisibility::ChannelMembers.into(),
                     }),
             );
         update.unseen_channel_messages = result.channel_messages;
@@ -3082,6 +3094,8 @@ fn build_initial_channels_update(
         update.channels.push(proto::Channel {
             id: channel.id.to_proto(),
             name: channel.name,
+            // TODO: Visibility
+            visibility: ChannelVisibility::Public.into(),
         });
     }
 
@@ -3114,6 +3128,8 @@ fn build_initial_channels_update(
         update.channel_invitations.push(proto::Channel {
             id: channel.id.to_proto(),
             name: channel.name,
+            // TODO: Visibility
+            visibility: ChannelVisibility::Public.into(),
         });
     }
 
