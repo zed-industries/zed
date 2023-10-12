@@ -55,6 +55,8 @@ let users = [
   'iamnbutler'
 ]
 
+const RUST_LOG = process.env.RUST_LOG || 'info'
+
 // If a user is specified, make sure it's first in the list
 const user = process.env.ZED_IMPERSONATE
 if (user) {
@@ -81,7 +83,8 @@ setTimeout(() => {
         ZED_ALWAYS_ACTIVE: '1',
         ZED_SERVER_URL: 'http://localhost:8080',
         ZED_ADMIN_API_TOKEN: 'secret',
-        ZED_WINDOW_SIZE: `${instanceWidth},${instanceHeight}`
+        ZED_WINDOW_SIZE: `${instanceWidth},${instanceHeight}`,
+        RUST_LOG,
       }
     })
   }
