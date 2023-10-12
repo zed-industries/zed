@@ -27,7 +27,7 @@ impl<V: 'static + Send + Sync> IntoAnyElement<V> for &'static str {
 
 // TODO: Figure out how to pass `String` to `child` without this.
 // This impl doesn't exist in the `gpui2` crate.
-impl<S: 'static> IntoAnyElement<S> for String {
+impl<S: 'static + Send + Sync> IntoAnyElement<S> for String {
     fn into_any(self) -> AnyElement<S> {
         Text {
             text: ArcCow::from(self),
