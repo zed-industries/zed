@@ -2,9 +2,11 @@
 name = "prettier"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [lib]
 path = "src/prettier.rs"
+doctest = false
 
 [features]
 test-support = []
