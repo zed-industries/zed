@@ -172,25 +172,18 @@ impl Workspace {
                                 width: relative(1.).into(),
                                 height: temp_size,
                             },
-                            |_, payload| {
-                                let theme = payload.downcast_ref::<Arc<Theme>>().unwrap();
-
-                                vec![EditorPane::new(hello_world_rust_editor_with_status_example(
-                                    &theme,
-                                ))
-                                .into_any()]
-                            },
-                            Box::new(theme.clone()),
-                        ),
+                        )
+                        .child(EditorPane::new(
+                            hello_world_rust_editor_with_status_example(&theme),
+                        )),
                         Pane::new(
                             ScrollState::default(),
                             Size {
                                 width: relative(1.).into(),
                                 height: temp_size,
                             },
-                            |_, _| vec![Terminal::new().into_any()],
-                            Box::new(()),
-                        ),
+                        )
+                        .child(Terminal::new()),
                     ],
                     SplitDirection::Vertical,
                 ),
@@ -201,16 +194,10 @@ impl Workspace {
                             width: relative(1.).into(),
                             height: relative(1.).into(),
                         },
-                        |_, payload| {
-                            let theme = payload.downcast_ref::<Arc<Theme>>().unwrap();
-
-                            vec![EditorPane::new(hello_world_rust_editor_with_status_example(
-                                &theme,
-                            ))
-                            .into_any()]
-                        },
-                        Box::new(theme.clone()),
-                    )],
+                    )
+                    .child(EditorPane::new(
+                        hello_world_rust_editor_with_status_example(&theme),
+                    ))],
                     SplitDirection::Vertical,
                 ),
             ],
@@ -326,16 +313,8 @@ impl Workspace {
                 )
                 .filter(|_| workspace_state.is_language_selector_open()),
             )
-            .child(Toast::new(
-                ToastOrigin::Bottom,
-                |_, _| vec![Label::new("A toast").into_any()],
-                Box::new(()),
-            ))
-            .child(Toast::new(
-                ToastOrigin::BottomRight,
-                |_, _| vec![Label::new("Another toast").into_any()],
-                Box::new(()),
-            ))
+            .child(Toast::new(ToastOrigin::Bottom).child(Label::new("A toast")))
+            .child(Toast::new(ToastOrigin::BottomRight).child(Label::new("Another toast")))
     }
 }
 

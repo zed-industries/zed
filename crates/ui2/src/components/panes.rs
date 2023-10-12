@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 
-use gpui3::{hsla, Hsla, Length, Size};
+use gpui3::{hsla, AnyElement, Hsla, Length, Size};
+use smallvec::SmallVec;
 
 use crate::prelude::*;
 use crate::theme;
@@ -18,17 +19,11 @@ pub struct Pane<S: 'static + Send + Sync> {
     scroll_state: ScrollState,
     size: Size<Length>,
     fill: Hsla,
-    children: HackyChildren<S>,
-    payload: HackyChildrenPayload,
+    children: SmallVec<[AnyElement<S>; 2]>,
 }
 
 impl<S: 'static + Send + Sync> Pane<S> {
-    pub fn new(
-        scroll_state: ScrollState,
-        size: Size<Length>,
-        children: HackyChildren<S>,
-        payload: HackyChildrenPayload,
-    ) -> Self {
+    pub fn new(scroll_state: ScrollState, size: Size<Length>) -> Self {
         // Fill is only here for debugging purposes, remove before release
         let system_color = SystemColor::new();
 
@@ -38,8 +33,7 @@ impl<S: 'static + Send + Sync> Pane<S> {
             size,
             fill: hsla(0.3, 0.3, 0.3, 1.),
             // fill: system_color.transparent,
-            children,
-            payload,
+            children: SmallVec::new(),
         }
     }
 
@@ -58,7 +52,15 @@ impl<S: 'static + Send + Sync> Pane<S> {
             .w(self.size.width)
             .h(self.size.height)
             .overflow_y_scroll(self.scroll_state.clone())
-            .children_any((self.children)(cx, self.payload.as_ref()))
+            .children(self.children.drain(..))
+    }
+}
+
+impl<S: 'static + Send + Sync> ParentElement for Pane<S> {
+    type State = S;
+
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::State>; 2]> {
+        &mut self.children
     }
 }
 

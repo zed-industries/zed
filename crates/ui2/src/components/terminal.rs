@@ -72,19 +72,16 @@ impl<S: 'static + Send + Sync + Clone> Terminal<S> {
                     ),
             )
             // Terminal Pane.
-            .child(Pane::new(
-                ScrollState::default(),
-                Size {
-                    width: relative(1.).into(),
-                    height: rems(36.).into(),
-                },
-                |_, payload| {
-                    let theme = payload.downcast_ref::<Arc<Theme>>().unwrap();
-
-                    vec![crate::static_data::terminal_buffer(&theme).into_any()]
-                },
-                Box::new(theme),
-            ))
+            .child(
+                Pane::new(
+                    ScrollState::default(),
+                    Size {
+                        width: relative(1.).into(),
+                        height: rems(36.).into(),
+                    },
+                )
+                .child(crate::static_data::terminal_buffer(&theme)),
+            )
     }
 }
 
@@ -109,7 +106,11 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Terminal<S>>(cx))
                 .child(Story::label(cx, "Default"))

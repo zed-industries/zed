@@ -1,3 +1,8 @@
+use std::marker::PhantomData;
+
+use gpui3::AnyElement;
+use smallvec::SmallVec;
+
 use crate::prelude::*;
 
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
@@ -24,20 +29,14 @@ pub enum ToastVariant {
 #[derive(Element)]
 pub struct Toast<S: 'static + Send + Sync> {
     origin: ToastOrigin,
-    children: HackyChildren<S>,
-    payload: HackyChildrenPayload,
+    children: SmallVec<[AnyElement<S>; 2]>,
 }
 
 impl<S: 'static + Send + Sync> Toast<S> {
-    pub fn new(
-        origin: ToastOrigin,
-        children: HackyChildren<S>,
-        payload: HackyChildrenPayload,
-    ) -> Self {
+    pub fn new(origin: ToastOrigin) -> Self {
         Self {
             origin,
-            children,
-            payload,
+            children: SmallVec::new(),
         }
     }
 
@@ -62,7 +61,15 @@ impl<S: 'static + Send + Sync> Toast<S> {
             .rounded_md()
             .fill(color.elevated_surface)
             .max_w_64()
-            .children_any((self.children)(cx, self.payload.as_ref()))
+            .children(self.children.drain(..))
+    }
+}
+
+impl<S: 'static + Send + Sync> ParentElement for Toast<S> {
+    type State = S;
+
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::State>; 2]> {
+        &mut self.children
     }
 }
 
@@ -89,15 +96,15 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Toast<S>>(cx))
                 .child(Story::label(cx, "Default"))
-                .child(Toast::new(
-                    ToastOrigin::Bottom,
-                    |_, _| vec![Label::new("label").into_any()],
-                    Box::new(()),
-                ))
+                .child(Toast::new(ToastOrigin::Bottom).child(Label::new("label")))
         }
     }
 }
