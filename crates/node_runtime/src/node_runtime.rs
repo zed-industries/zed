@@ -243,7 +243,7 @@ impl NodeRuntime for FakeNodeRuntime {
         if name == "prettier" {
             Ok("0.0.1".to_string())
         } else {
-            unreachable!()
+            unreachable!("Unexpected package name: {name}")
         }
     }
 
@@ -255,7 +255,7 @@ impl NodeRuntime for FakeNodeRuntime {
         if packages == [("prettier", "0.0.1")] {
             Ok(())
         } else {
-            unreachable!()
+            unreachable!("Unexpected packages to install: {packages:?}")
         }
     }
 }

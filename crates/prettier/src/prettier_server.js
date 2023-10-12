@@ -39,13 +39,13 @@ class Prettier {
         process.stderr.write(`Failed to load prettier: ${e}\n`);
         process.exit(1);
     }
-    process.stderr.write(`Prettier at path '${prettierPath}' loaded successfully, config: ${config}\n`);
+    process.stderr.write(`Prettier at path '${prettierPath}' loaded successfully, config: ${JSON.stringify(config)}\n`);
     process.stdin.resume();
     handleBuffer(new Prettier(prettierPath, prettier, config));
 })()
 
 async function handleBuffer(prettier) {
-    for await (let messageText of readStdin()) {
+    for await (const messageText of readStdin()) {
         let message;
         try {
             message = JSON.parse(messageText);
@@ -53,6 +53,7 @@ async function handleBuffer(prettier) {
             sendResponse(makeError(`Failed to parse message '${messageText}': ${e}`));
             continue;
         }
+        // allow concurrent request handling by not `await`ing the message handling promise (async function)
         handleMessage(message, prettier).catch(e => {
             sendResponse({ id: message.id, ...makeError(`error during message handling: ${e}`) });
         });
@@ -96,16 +97,18 @@ async function* readStdin() {
                     await once(process.stdin, 'readable');
                 }
                 const headers = buffer.subarray(0, buffer.indexOf(`${headerSeparator}${headerSeparator}`)).toString('ascii');
-                const contentLengthHeader = headers.split(headerSeparator).map(header => header.split(':'))
+                const contentLengthHeader = headers.split(headerSeparator)
+                    .map(header => header.split(':'))
                     .filter(header => header[2] === undefined)
                     .filter(header => (header[1] || '').length > 0)
-                    .find(header => header[0].trim() === contentLengthHeaderName);
-                if (contentLengthHeader === undefined) {
+                    .find(header => (header[0] || '').trim() === contentLengthHeaderName);
+                const contentLength = (contentLengthHeader || [])[1];
+                if (contentLength === undefined) {
                     await handleStreamEnded(`Missing or incorrect ${contentLengthHeaderName} header: ${headers}`);
                     continue main_loop;
                 }
                 headersLength = headers.length + headerSeparator.length * 2;
-                messageLength = parseInt(contentLengthHeader[1], 10);
+                messageLength = parseInt(contentLength, 10);
             }
 
             while (buffer.length < (headersLength + messageLength)) {
@@ -120,6 +123,7 @@ async function* readStdin() {
             const messageEnd = headersLength + messageLength;
             const message = buffer.subarray(headersLength, messageEnd);
             buffer = buffer.subarray(messageEnd);
+            headersLength = null;
             messageLength = null;
             yield message.toString('utf8');
         }
@@ -188,13 +192,12 @@ function makeError(message) {
 }
 
 function sendResponse(response) {
-    let responsePayloadString = JSON.stringify({
+    const responsePayloadString = JSON.stringify({
         jsonrpc: "2.0",
         ...response
     });
-    let headers = `${contentLengthHeaderName}: ${Buffer.byteLength(responsePayloadString)}${headerSeparator}${headerSeparator}`;
-    let dataToSend = headers + responsePayloadString;
-    process.stdout.write(dataToSend);
+    const headers = `${contentLengthHeaderName}: ${Buffer.byteLength(responsePayloadString)}${headerSeparator}${headerSeparator}`;
+    process.stdout.write(headers + responsePayloadString);
 }
 
 function loadPrettier(prettierPath) {

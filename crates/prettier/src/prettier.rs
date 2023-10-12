@@ -197,11 +197,14 @@ impl Prettier {
         _: Arc<dyn NodeRuntime>,
         _: AsyncAppContext,
     ) -> anyhow::Result<Self> {
-        Ok(Self::Test(TestPrettier {
-            worktree_id,
-            default: prettier_dir == DEFAULT_PRETTIER_DIR.as_path(),
-            prettier_dir,
-        }))
+        Ok(
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Test(TestPrettier {
+                worktree_id,
+                default: prettier_dir == DEFAULT_PRETTIER_DIR.as_path(),
+                prettier_dir,
+            }),
+        )
     }
 
     #[cfg(not(any(test, feature = "test-support")))]
@@ -212,6 +215,8 @@ impl Prettier {
         node: Arc<dyn NodeRuntime>,
         cx: AsyncAppContext,
     ) -> anyhow::Result<Self> {
+        use lsp::LanguageServerBinary;
+
         let backgroud = cx.background();
         anyhow::ensure!(
             prettier_dir.is_dir(),
@@ -425,6 +430,7 @@ impl Prettier {
                 .diff
                 .map(deserialize_diff)
                 .context("missing diff after prettier diff invocation"),
+            #[cfg(any(test, feature = "test-support"))]
             Self::Test(_) => Ok(buffer
                 .read_with(cx, |buffer, cx| {
                     let formatted_text = buffer.text() + "\nformatted by test prettier";
@@ -458,6 +464,7 @@ impl Prettier {
                     )
                 })
                 .context("prettier invoke clear cache"),
+            #[cfg(any(test, feature = "test-support"))]
             Self::Test(_) => Ok(()),
         }
     }
@@ -466,6 +473,7 @@ impl Prettier {
         match self {
             Self::Local(local) => Some(&local.server),
             Self::Remote(_) => None,
+            #[cfg(any(test, feature = "test-support"))]
             Self::Test(_) => None,
         }
     }
@@ -474,6 +482,7 @@ impl Prettier {
         match self {
             Self::Local(local) => local.default,
             Self::Remote(_) => false,
+            #[cfg(any(test, feature = "test-support"))]
             Self::Test(test_prettier) => test_prettier.default,
         }
     }
@@ -482,6 +491,7 @@ impl Prettier {
         match self {
             Self::Local(local) => &local.prettier_dir,
             Self::Remote(remote) => &remote.prettier_dir,
+            #[cfg(any(test, feature = "test-support"))]
             Self::Test(test_prettier) => &test_prettier.prettier_dir,
         }
     }
@@ -490,6 +500,7 @@ impl Prettier {
         match self {
             Self::Local(local) => local.worktree_id,
             Self::Remote(remote) => remote.worktree_id,
+            #[cfg(any(test, feature = "test-support"))]
             Self::Test(test_prettier) => test_prettier.worktree_id,
         }
     }
