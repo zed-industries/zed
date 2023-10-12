@@ -656,7 +656,7 @@ pub struct Editor {
     background_highlights: BTreeMap<TypeId, BackgroundHighlight>,
     inlay_background_highlights: TreeMap<Option<TypeId>, InlayBackgroundHighlight>,
     nav_history: Option<ItemNavHistory>,
-    context_menu: Option<ContextMenu>,
+    context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: ViewHandle<context_menu::ContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
     next_completion_id: CompletionId,
@@ -934,12 +934,13 @@ impl ContextMenu {
     }
 }
 
+#[derive(Clone)]
 struct CompletionsMenu {
     id: CompletionId,
     initial_position: Anchor,
     buffer: ModelHandle<Buffer>,
     completions: Arc<RwLock<Box<[Completion]>>>,
-    match_candidates: Vec<StringMatchCandidate>,
+    match_candidates: Arc<[StringMatchCandidate]>,
     matches: Arc<[StringMatch]>,
     selected_item: usize,
     list: UniformListState,
@@ -1333,13 +1334,13 @@ impl CompletionsMenu {
                 .collect()
         };
 
-        //Remove all candidates where the query's start does not match the start of any word in the candidate
+        // Remove all candidates where the query's start does not match the start of any word in the candidate
         if let Some(query) = query {
             if let Some(query_start) = query.chars().next() {
                 matches.retain(|string_match| {
                     split_words(&string_match.string).any(|word| {
-                        //Check that the first codepoint of the word as lowercase matches the first
-                        //codepoint of the query as lowercase
+                        // Check that the first codepoint of the word as lowercase matches the first
+                        // codepoint of the query as lowercase
                         word.chars()
                             .flat_map(|codepoint| codepoint.to_lowercase())
                             .zip(query_start.to_lowercase())
@@ -1805,7 +1806,7 @@ impl Editor {
             background_highlights: Default::default(),
             inlay_background_highlights: Default::default(),
             nav_history: None,
-            context_menu: None,
+            context_menu: RwLock::new(None),
             mouse_context_menu: cx
                 .add_view(|cx| context_menu::ContextMenu::new(editor_view_id, cx)),
             completion_tasks: Default::default(),
@@ -2100,10 +2101,12 @@ impl Editor {
 
         if local {
             let new_cursor_position = self.selections.newest_anchor().head();
-            let completion_menu = match self.context_menu.as_mut() {
+            let mut context_menu = self.context_menu.write();
+            let completion_menu = match context_menu.as_ref() {
                 Some(ContextMenu::Completions(menu)) => Some(menu),
+
                 _ => {
-                    self.context_menu.take();
+                    *context_menu = None;
                     None
                 }
             };
@@ -2115,13 +2118,39 @@ impl Editor {
                 if kind == Some(CharKind::Word)
                     && word_range.to_inclusive().contains(&cursor_position)
                 {
+                    let mut completion_menu = completion_menu.clone();
+                    drop(context_menu);
+
                     let query = Self::completion_query(buffer, cursor_position);
-                    cx.background()
-                        .block(completion_menu.filter(query.as_deref(), cx.background().clone()));
+                    cx.spawn(move |this, mut cx| async move {
+                        completion_menu
+                            .filter(query.as_deref(), cx.background().clone())
+                            .await;
+
+                        this.update(&mut cx, |this, cx| {
+                            let mut context_menu = this.context_menu.write();
+                            let Some(ContextMenu::Completions(menu)) = context_menu.as_ref() else {
+                                return;
+                            };
+
+                            if menu.id > completion_menu.id {
+                                return;
+                            }
+
+                            *context_menu = Some(ContextMenu::Completions(completion_menu));
+                            drop(context_menu);
+                            cx.notify();
+                        })
+                    })
+                    .detach();
+
                     self.show_completions(&ShowCompletions, cx);
                 } else {
+                    drop(context_menu);
                     self.hide_context_menu(cx);
                 }
+            } else {
+                drop(context_menu);
             }
 
             hide_hover(self, cx);
@@ -3432,23 +3461,31 @@ impl Editor {
                 this.update(&mut cx, |this, cx| {
                     this.completion_tasks.retain(|(task_id, _)| *task_id > id);
 
-                    match this.context_menu.as_ref() {
+                    let mut context_menu = this.context_menu.write();
+                    match context_menu.as_ref() {
                         None => {}
+
                         Some(ContextMenu::Completions(prev_menu)) => {
                             if prev_menu.id > id {
                                 return;
                             }
                         }
+
                         _ => return,
                     }
 
                     if this.focused && menu.is_some() {
                         let menu = menu.unwrap();
-                        this.show_context_menu(ContextMenu::Completions(menu), cx);
+                        *context_menu = Some(ContextMenu::Completions(menu));
+                        drop(context_menu);
+                        this.completion_tasks.clear();
+                        this.discard_copilot_suggestion(cx);
+                        cx.notify();
                     } else if this.completion_tasks.is_empty() {
                         // If there are no more completion tasks and the last menu was
                         // empty, we should hide it. If it was already hidden, we should
                         // also show the copilot suggestion when available.
+                        drop(context_menu);
                         if this.hide_context_menu(cx).is_none() {
                             this.update_visible_copilot_suggestion(cx);
                         }
@@ -3593,14 +3630,13 @@ impl Editor {
     }
 
     pub fn toggle_code_actions(&mut self, action: &ToggleCodeActions, cx: &mut ViewContext<Self>) {
-        if matches!(
-            self.context_menu.as_ref(),
-            Some(ContextMenu::CodeActions(_))
-        ) {
-            self.context_menu.take();
+        let mut context_menu = self.context_menu.write();
+        if matches!(context_menu.as_ref(), Some(ContextMenu::CodeActions(_))) {
+            *context_menu = None;
             cx.notify();
             return;
         }
+        drop(context_menu);
 
         let deployed_from_indicator = action.deployed_from_indicator;
         let mut task = self.code_actions_task.take();
@@ -3613,16 +3649,16 @@ impl Editor {
             this.update(&mut cx, |this, cx| {
                 if this.focused {
                     if let Some((buffer, actions)) = this.available_code_actions.clone() {
-                        this.show_context_menu(
-                            ContextMenu::CodeActions(CodeActionsMenu {
+                        this.completion_tasks.clear();
+                        this.discard_copilot_suggestion(cx);
+                        *this.context_menu.write() =
+                            Some(ContextMenu::CodeActions(CodeActionsMenu {
                                 buffer,
                                 actions,
                                 selected_item: Default::default(),
                                 list: Default::default(),
                                 deployed_from_indicator,
-                            }),
-                            cx,
-                        );
+                            }));
                     }
                 }
             })?;
@@ -4086,7 +4122,7 @@ impl Editor {
         let selection = self.selections.newest_anchor();
         let cursor = selection.head();
 
-        if self.context_menu.is_some()
+        if self.context_menu.read().is_some()
             || !self.completion_tasks.is_empty()
             || selection.start != selection.end
         {
@@ -4220,6 +4256,7 @@ impl Editor {
 
     pub fn context_menu_visible(&self) -> bool {
         self.context_menu
+            .read()
             .as_ref()
             .map_or(false, |menu| menu.visible())
     }
@@ -4230,7 +4267,7 @@ impl Editor {
         style: EditorStyle,
         cx: &mut ViewContext<Editor>,
     ) -> Option<(DisplayPoint, AnyElement<Editor>)> {
-        self.context_menu.as_ref().map(|menu| {
+        self.context_menu.read().as_ref().map(|menu| {
             menu.render(
                 cursor_position,
                 style,
@@ -4240,19 +4277,10 @@ impl Editor {
         })
     }
 
-    fn show_context_menu(&mut self, menu: ContextMenu, cx: &mut ViewContext<Self>) {
-        if !matches!(menu, ContextMenu::Completions(_)) {
-            self.completion_tasks.clear();
-        }
-        self.context_menu = Some(menu);
-        self.discard_copilot_suggestion(cx);
-        cx.notify();
-    }
-
     fn hide_context_menu(&mut self, cx: &mut ViewContext<Self>) -> Option<ContextMenu> {
         cx.notify();
         self.completion_tasks.clear();
-        let context_menu = self.context_menu.take();
+        let context_menu = self.context_menu.write().take();
         if context_menu.is_some() {
             self.update_visible_copilot_suggestion(cx);
         }
@@ -5604,6 +5632,7 @@ impl Editor {
 
         if self
             .context_menu
+            .write()
             .as_mut()
             .map(|menu| menu.select_last(self.project.as_ref(), cx))
             .unwrap_or(false)
@@ -5648,25 +5677,25 @@ impl Editor {
     }
 
     pub fn context_menu_first(&mut self, _: &ContextMenuFirst, cx: &mut ViewContext<Self>) {
-        if let Some(context_menu) = self.context_menu.as_mut() {
+        if let Some(context_menu) = self.context_menu.write().as_mut() {
             context_menu.select_first(self.project.as_ref(), cx);
         }
     }
 
     pub fn context_menu_prev(&mut self, _: &ContextMenuPrev, cx: &mut ViewContext<Self>) {
-        if let Some(context_menu) = self.context_menu.as_mut() {
+        if let Some(context_menu) = self.context_menu.write().as_mut() {
             context_menu.select_prev(self.project.as_ref(), cx);
         }
     }
 
     pub fn context_menu_next(&mut self, _: &ContextMenuNext, cx: &mut ViewContext<Self>) {
-        if let Some(context_menu) = self.context_menu.as_mut() {
+        if let Some(context_menu) = self.context_menu.write().as_mut() {
             context_menu.select_next(self.project.as_ref(), cx);
         }
     }
 
     pub fn context_menu_last(&mut self, _: &ContextMenuLast, cx: &mut ViewContext<Self>) {
-        if let Some(context_menu) = self.context_menu.as_mut() {
+        if let Some(context_menu) = self.context_menu.write().as_mut() {
             context_menu.select_last(self.project.as_ref(), cx);
         }
     }
@@ -9164,7 +9193,7 @@ impl View for Editor {
             keymap.add_identifier("renaming");
         }
         if self.context_menu_visible() {
-            match self.context_menu.as_ref() {
+            match self.context_menu.read().as_ref() {
                 Some(ContextMenu::Completions(_)) => {
                     keymap.add_identifier("menu");
                     keymap.add_identifier("showing_completions")

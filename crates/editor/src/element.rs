@@ -2428,7 +2428,7 @@ impl Element<Editor> for EditorElement {
                 }
 
                 let active = matches!(
-                    editor.context_menu,
+                    editor.context_menu.read().as_ref(),
                     Some(crate::ContextMenu::CodeActions(_))
                 );
 
