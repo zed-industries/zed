@@ -3,7 +3,7 @@ use crate::{
     MouseEventListeners, MouseUpEvent, ParentElement, Pixels, Styled, ViewContext,
 };
 use parking_lot::Mutex;
-use refineable::RefinementCascade;
+use refineable::Cascade;
 use smallvec::SmallVec;
 use std::sync::Arc;
 
@@ -32,7 +32,7 @@ where
 {
     type Style = E::Style;
 
-    fn style_cascade(&mut self) -> &mut RefinementCascade<E::Style> {
+    fn style_cascade(&mut self) -> &mut Cascade<E::Style> {
         self.child.style_cascade()
     }
 

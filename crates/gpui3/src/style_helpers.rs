@@ -263,7 +263,7 @@ pub trait StyleHelpers: Styled<Style = Style> {
     {
         self.declared_style().box_shadow = Some(smallvec![
             BoxShadow {
-                color: hsla(0.5, 0., 0., 1.0),
+                color: hsla(0.5, 0., 0., 0.1),
                 offset: point(px(0.), px(4.)),
                 blur_radius: px(6.),
                 spread_radius: px(-1.),

@@ -1,7 +1,7 @@
 use crate::{
-    AnyElement, BorrowWindow, Bounds, Element, ElementId, IdentifiedElement, Interactive, LayoutId,
-    MouseEventListeners, Overflow, ParentElement, Pixels, Point, Refineable, RefinementCascade,
-    Style, Styled, ViewContext,
+    AnyElement, BorrowWindow, Bounds, Cascade, Element, ElementId, IdentifiedElement, Interactive,
+    LayoutId, MouseEventListeners, Overflow, ParentElement, Pixels, Point, Refineable, Style,
+    Styled, ViewContext,
 };
 use parking_lot::Mutex;
 use smallvec::SmallVec;
@@ -10,7 +10,7 @@ use std::{marker::PhantomData, sync::Arc};
 pub enum HasId {}
 
 pub struct Div<S: 'static, I = ()> {
-    styles: RefinementCascade<Style>,
+    styles: Cascade<Style>,
     id: Option<ElementId>,
     listeners: MouseEventListeners<S>,
     children: SmallVec<[AnyElement<S>; 2]>,
@@ -179,7 +179,7 @@ where
 impl<V: 'static + Send + Sync, Marker: 'static + Send + Sync> Styled for Div<V, Marker> {
     type Style = Style;
 
-    fn style_cascade(&mut self) -> &mut RefinementCascade<Self::Style> {
+    fn style_cascade(&mut self) -> &mut Cascade<Self::Style> {
         &mut self.styles
     }
 

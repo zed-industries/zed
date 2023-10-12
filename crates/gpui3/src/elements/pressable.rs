@@ -2,7 +2,7 @@ use crate::{
     AnyElement, Bounds, DispatchPhase, Element, IdentifiedElement, Interactive, MouseDownEvent,
     MouseEventListeners, MouseUpEvent, ParentElement, Pixels, Styled, ViewContext,
 };
-use refineable::{CascadeSlot, Refineable, RefinementCascade};
+use refineable::{Cascade, CascadeSlot, Refineable};
 use smallvec::SmallVec;
 use std::sync::{
     atomic::{AtomicBool, Ordering::SeqCst},
@@ -36,7 +36,7 @@ where
 {
     type Style = E::Style;
 
-    fn style_cascade(&mut self) -> &mut RefinementCascade<E::Style> {
+    fn style_cascade(&mut self) -> &mut Cascade<E::Style> {
         self.child.style_cascade()
     }
 

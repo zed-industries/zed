@@ -1,18 +1,18 @@
 use crate::{Bounds, Element, LayoutId, Pixels, SharedString, Style, Styled};
-use refineable::RefinementCascade;
+use refineable::Cascade;
 use std::marker::PhantomData;
 use util::ResultExt;
 
 pub struct Svg<S> {
     path: Option<SharedString>,
-    style: RefinementCascade<Style>,
+    style: Cascade<Style>,
     state_type: PhantomData<S>,
 }
 
 pub fn svg<S>() -> Svg<S> {
     Svg {
         path: None,
-        style: RefinementCascade::<Style>::default(),
+        style: Cascade::<Style>::default(),
         state_type: PhantomData,
     }
 }
@@ -64,7 +64,7 @@ impl<S: 'static + Send + Sync> Element for Svg<S> {
 impl<S: 'static + Send + Sync> Styled for Svg<S> {
     type Style = Style;
 
-    fn style_cascade(&mut self) -> &mut refineable::RefinementCascade<Self::Style> {
+    fn style_cascade(&mut self) -> &mut refineable::Cascade<Self::Style> {
         &mut self.style
     }
 

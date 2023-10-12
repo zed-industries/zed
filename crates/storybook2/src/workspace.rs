@@ -1,10 +1,10 @@
 use crate::{
     collab_panel::{collab_panel, CollabPanel},
     theme::{theme, themed},
-    themes::rose_pine_dawn,
+    themes::{rose_pine, rose_pine_dawn},
 };
 use gpui3::{
-    div, img, svg, view, Context, Element, ParentElement, RootView, StyleHelpers, View,
+    div, img, svg, view, Context, Element, ParentElement, RootView, StyleHelpers, Styled, View,
     ViewContext, WindowContext,
 };
 
@@ -25,8 +25,34 @@ impl Workspace {
         }
     }
 
+    fn hover_test(&self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
+        let theme = theme(cx);
+
+        div().size_full().child(
+            div()
+                .group("")
+                .w_full()
+                .h_5()
+                .mt_10()
+                .fill(theme.middle.warning.default.foreground)
+                .flex()
+                .flex_row()
+                .justify_center()
+                .child(
+                    div()
+                        .size_5()
+                        .fill(theme.middle.negative.default.foreground)
+                        .group_hover("")
+                        .fill(theme.middle.positive.default.foreground)
+                        .hover()
+                        .fill(theme.middle.variant.default.foreground),
+                ),
+        )
+    }
+
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
-        themed(rose_pine_dawn(), cx, |cx| {
+        themed(rose_pine(), cx, |cx| {
+            // self.hover_test(cx)
             let theme = theme(cx);
             div()
                 .size_full()
@@ -47,8 +73,7 @@ impl Workspace {
                         .flex_row()
                         .overflow_hidden()
                         .child(self.left_panel.clone())
-                        .child(div().h_full().flex_1())
-                        .child(self.right_panel.clone()),
+                        .child(div().h_full().flex_1()), // .child(self.right_panel.clone()),
                 )
                 .child(statusbar::statusbar(cx))
         })

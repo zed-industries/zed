@@ -3,7 +3,7 @@ use crate::{
     Interactive, MouseEventListeners, MouseMoveEvent, ParentElement, Pixels, SharedString, Styled,
     ViewContext,
 };
-use refineable::{CascadeSlot, Refineable, RefinementCascade};
+use refineable::{Cascade, CascadeSlot, Refineable};
 use smallvec::SmallVec;
 use std::sync::{
     atomic::{AtomicBool, Ordering::SeqCst},
@@ -36,7 +36,7 @@ where
 {
     type Style = E::Style;
 
-    fn style_cascade(&mut self) -> &mut RefinementCascade<E::Style> {
+    fn style_cascade(&mut self) -> &mut Cascade<E::Style> {
         self.child.style_cascade()
     }
 
@@ -80,12 +80,13 @@ where
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<Self::ViewState>,
     ) {
-        let bounds = self
+        let hover_bounds = self
             .hover_group
             .as_ref()
             .and_then(|group| element_group_bounds(group, cx))
             .unwrap_or(bounds);
-        let hovered = bounds.contains_point(cx.mouse_position());
+
+        let hovered = hover_bounds.contains_point(cx.mouse_position());
 
         let slot = self.cascade_slot;
         let style = hovered.then_some(self.hovered_style.clone());
@@ -97,7 +98,7 @@ where
 
             move |_, event: &MouseMoveEvent, phase, cx| {
                 if phase == DispatchPhase::Capture {
-                    if bounds.contains_point(event.position) != hovered.load(SeqCst) {
+                    if hover_bounds.contains_point(event.position) != hovered.load(SeqCst) {
                         cx.notify();
                     }
                 }

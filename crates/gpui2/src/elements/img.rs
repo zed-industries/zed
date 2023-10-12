@@ -7,19 +7,19 @@ use futures::FutureExt;
 use gpui::geometry::vector::Vector2F;
 use gpui::scene;
 use gpui2_macros::IntoElement;
-use refineable::RefinementCascade;
+use refineable::Cascade;
 use util::arc_cow::ArcCow;
 use util::ResultExt;
 
 #[derive(IntoElement)]
 pub struct Img {
-    style: RefinementCascade<Style>,
+    style: Cascade<Style>,
     uri: Option<ArcCow<'static, str>>,
 }
 
 pub fn img() -> Img {
     Img {
-        style: RefinementCascade::default(),
+        style: Cascade::default(),
         uri: None,
     }
 }
@@ -98,7 +98,7 @@ impl<V: 'static> Element<V> for Img {
 impl Styleable for Img {
     type Style = Style;
 
-    fn style_cascade(&mut self) -> &mut RefinementCascade<Self::Style> {
+    fn style_cascade(&mut self) -> &mut Cascade<Self::Style> {
         &mut self.style
     }
 

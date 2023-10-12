@@ -43,27 +43,27 @@ impl CollabPanel {
                     .flex_col()
                     .overflow_y_scroll(self.scroll_state.clone())
                     // List Container
-                    .child(
-                        div()
-                            .id(0)
-                            .on_click(|_, _, _| {
-                                dbg!("click!");
-                            })
-                            .fill(theme.lowest.base.default.background)
-                            .pb_1()
-                            .border_color(theme.lowest.base.default.border)
-                            .border_b()
-                            //:: https://tailwindcss.com/docs/hover-focus-and-other-states#styling-based-on-parent-state
-                            // .group()
-                            // List Section Header
-                            .child(self.list_section_header(0, "#CRDB 🗃️", true, theme))
-                            // List Item Large
-                            .child(self.list_item(
-                                "http://github.com/maxbrunsfeld.png?s=50",
-                                "maxbrunsfeld",
-                                theme,
-                            )),
-                    )
+                    // .child(
+                    //     div()
+                    //         .id(0)
+                    //         .on_click(|_, _, _| {
+                    //             dbg!("click!");
+                    //         })
+                    //         .fill(theme.lowest.base.default.background)
+                    //         .pb_1()
+                    //         .border_color(theme.lowest.base.default.border)
+                    //         .border_b()
+                    //         //:: https://tailwindcss.com/docs/hover-focus-and-other-states#styling-based-on-parent-state
+                    //         // .group()
+                    //         // List Section Header
+                    //         .child(self.list_section_header(0, "#CRDB 🗃️", true, theme))
+                    //         // List Item Large
+                    //         .child(self.list_item(
+                    //             "http://github.com/maxbrunsfeld.png?s=50",
+                    //             "maxbrunsfeld",
+                    //             theme,
+                    //         )),
+                    // )
                     .child(
                         div()
                             .py_2()
@@ -85,19 +85,19 @@ impl CollabPanel {
                                             "as-cii",
                                             theme,
                                         ),
-                                        self.list_item(
-                                            "http://github.com/nathansobo.png?s=50",
-                                            "nathansobo",
-                                            theme,
-                                        ),
-                                        self.list_item(
-                                            "http://github.com/maxbrunsfeld.png?s=50",
-                                            "maxbrunsfeld",
-                                            theme,
-                                        ),
+                                        // self.list_item(
+                                        //     "http://github.com/nathansobo.png?s=50",
+                                        //     "nathansobo",
+                                        //     theme,
+                                        // ),
+                                        // self.list_item(
+                                        //     "http://github.com/maxbrunsfeld.png?s=50",
+                                        //     "maxbrunsfeld",
+                                        //     theme,
+                                        // ),
                                     ]
                                 })
-                                .take(5)
+                                .take(1)
                                 .flatten(),
                             ),
                     ),
@@ -133,8 +133,6 @@ impl CollabPanel {
             .flex()
             .justify_between()
             .items_center()
-            .hover()
-            .fill(theme.lowest.base.active.background)
             .active()
             .fill(theme.highest.accent.default.background)
             .child(div().flex().gap_1().text_sm().child(label))
@@ -160,6 +158,7 @@ impl CollabPanel {
         theme: &Theme,
     ) -> impl Element<ViewState = Self> {
         div()
+            .group("")
             .h_7()
             .px_2()
             .flex()
@@ -175,12 +174,16 @@ impl CollabPanel {
                     .gap_1()
                     .text_sm()
                     .child(
-                        img()
-                            .uri(avatar_uri)
+                        div()
+                            // .uri(avatar_uri)
                             .size_3p5()
                             .rounded_full()
                             .fill(theme.middle.positive.default.foreground)
-                            .shadow_md(),
+                            .shadow()
+                            .group_hover("")
+                            .fill(theme.middle.negative.default.foreground)
+                            .hover()
+                            .fill(theme.middle.warning.default.foreground),
                     )
                     .child(label),
             )

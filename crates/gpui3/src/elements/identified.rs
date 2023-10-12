@@ -1,4 +1,4 @@
-use refineable::{Refineable, RefinementCascade};
+use refineable::{Cascade, Refineable};
 use smallvec::SmallVec;
 
 use crate::{
@@ -46,7 +46,7 @@ impl<E: Element> IdentifiedElement for Identified<E> {}
 impl<E: Styled> Styled for Identified<E> {
     type Style = E::Style;
 
-    fn style_cascade(&mut self) -> &mut RefinementCascade<Self::Style> {
+    fn style_cascade(&mut self) -> &mut Cascade<Self::Style> {
         self.element.style_cascade()
     }
     fn declared_style(&mut self) -> &mut <Self::Style as Refineable>::Refinement {

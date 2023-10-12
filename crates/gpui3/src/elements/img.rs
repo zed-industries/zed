@@ -2,12 +2,12 @@ use crate::{
     BorrowWindow, Bounds, Element, LayoutId, Pixels, SharedString, Style, Styled, ViewContext,
 };
 use futures::FutureExt;
-use refineable::RefinementCascade;
+use refineable::Cascade;
 use std::marker::PhantomData;
 use util::ResultExt;
 
 pub struct Img<S> {
-    style: RefinementCascade<Style>,
+    style: Cascade<Style>,
     uri: Option<SharedString>,
     grayscale: bool,
     state_type: PhantomData<S>,
@@ -15,7 +15,7 @@ pub struct Img<S> {
 
 pub fn img<S>() -> Img<S> {
     Img {
-        style: RefinementCascade::default(),
+        style: Cascade::default(),
         uri: None,
         grayscale: false,
         state_type: PhantomData,
@@ -94,7 +94,7 @@ impl<S: Send + Sync + 'static> Element for Img<S> {
 impl<S> Styled for Img<S> {
     type Style = Style;
 
-    fn style_cascade(&mut self) -> &mut RefinementCascade<Self::Style> {
+    fn style_cascade(&mut self) -> &mut Cascade<Self::Style> {
         &mut self.style
     }
 
