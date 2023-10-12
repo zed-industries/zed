@@ -170,7 +170,7 @@ message Envelope {
 
         LinkChannel link_channel = 140;
         UnlinkChannel unlink_channel = 141;
-        MoveChannel move_channel = 142; // Current max: 144
+        MoveChannel move_channel = 142; // current max: 144
     }
 }
 

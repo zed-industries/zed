@@ -317,8 +317,8 @@ pub struct Chunk<'a> {
 
 pub struct Diff {
     pub(crate) base_version: clock::Global,
-    pub(crate) line_ending: LineEnding,
-    pub(crate) edits: Vec<(Range<usize>, Arc<str>)>,
+    line_ending: LineEnding,
+    edits: Vec<(Range<usize>, Arc<str>)>,
 }
 
 #[derive(Clone, Copy)]

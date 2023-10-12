@@ -349,7 +349,7 @@ request_messages!(
     (UpdateProject, Ack),
     (UpdateWorktree, Ack),
     (JoinChannelBuffer, JoinChannelBufferResponse),
-    (LeaveChannelBuffer, Ack),
+    (LeaveChannelBuffer, Ack)
 );
 
 entity_messages!(
@@ -400,7 +400,7 @@ entity_messages!(
     UpdateProjectCollaborator,
     UpdateWorktree,
     UpdateWorktreeSettings,
-    UpdateDiffBase,
+    UpdateDiffBase
 );
 
 entity_messages!(

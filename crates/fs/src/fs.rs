@@ -229,12 +229,11 @@ impl Fs for RealFs {
         } else {
             symlink_metadata
         };
-        let file_type_metadata = metadata.file_type();
         Ok(Some(Metadata {
             inode: metadata.ino(),
             mtime: metadata.modified().unwrap(),
             is_symlink,
-            is_dir: file_type_metadata.is_dir(),
+            is_dir: metadata.file_type().is_dir(),
         }))
     }
 

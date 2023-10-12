@@ -100,7 +100,6 @@ impl LspAdapter for IntelephenseLspAdapter {
     async fn initialization_options(&self) -> Option<serde_json::Value> {
         None
     }
-
     async fn language_ids(&self) -> HashMap<String, String> {
         HashMap::from_iter([("PHP".into(), "php".into())])
     }
