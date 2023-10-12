@@ -13,8 +13,6 @@ use crate::{
 };
 
 pub struct WorkspaceState {
-    pub show_project_panel: Arc<AtomicBool>,
-    pub show_collab_panel: Arc<AtomicBool>,
     pub show_chat_panel: Arc<AtomicBool>,
     pub show_assistant_panel: Arc<AtomicBool>,
     pub show_terminal: Arc<AtomicBool>,
@@ -28,26 +26,6 @@ impl WorkspaceState {
         current_value
             .compare_exchange(value, !value, Ordering::SeqCst, Ordering::SeqCst)
             .unwrap();
-    }
-
-    pub fn is_project_panel_open(&self) -> bool {
-        self.show_project_panel.load(Ordering::SeqCst)
-    }
-
-    pub fn toggle_project_panel(&self) {
-        Self::toggle_value(&self.show_project_panel);
-
-        self.show_collab_panel.store(false, Ordering::SeqCst);
-    }
-
-    pub fn is_collab_panel_open(&self) -> bool {
-        self.show_collab_panel.load(Ordering::SeqCst)
-    }
-
-    pub fn toggle_collab_panel(&self) {
-        Self::toggle_value(&self.show_collab_panel);
-
-        self.show_project_panel.store(false, Ordering::SeqCst);
     }
 
     pub fn is_terminal_open(&self) -> bool {
@@ -93,8 +71,6 @@ static WORKSPACE_STATE: OnceLock<WorkspaceState> = OnceLock::new();
 
 pub fn get_workspace_state() -> &'static WorkspaceState {
     let state = WORKSPACE_STATE.get_or_init(|| WorkspaceState {
-        show_project_panel: Arc::new(AtomicBool::new(true)),
-        show_collab_panel: Arc::new(AtomicBool::new(false)),
         show_chat_panel: Arc::new(AtomicBool::new(true)),
         show_assistant_panel: Arc::new(AtomicBool::new(false)),
         show_terminal: Arc::new(AtomicBool::new(true)),
@@ -104,7 +80,6 @@ pub fn get_workspace_state() -> &'static WorkspaceState {
     state
 }
 
-// #[derive(Element)]
 #[derive(Clone)]
 pub struct Workspace {
     show_project_panel: bool,
@@ -132,15 +107,13 @@ impl Workspace {
     }
 
     pub fn is_project_panel_open(&self) -> bool {
-        dbg!(self.show_project_panel)
+        self.show_project_panel
     }
 
     pub fn toggle_project_panel(&mut self, cx: &mut ViewContext<Self>) {
         self.show_project_panel = !self.show_project_panel;
 
         self.show_collab_panel = false;
-
-        dbg!(self.show_project_panel);
 
         cx.notify();
     }
@@ -235,7 +208,7 @@ impl Workspace {
                                 .side(PanelSide::Left)
                                 .child(ProjectPanel::new(ScrollState::default())),
                         )
-                        .filter(|_| workspace_state.is_project_panel_open()),
+                        .filter(|_| self.is_project_panel_open()),
                     )
                     .children(
                         Some(
@@ -243,7 +216,7 @@ impl Workspace {
                                 .child(CollabPanel::new(ScrollState::default()))
                                 .side(PanelSide::Left),
                         )
-                        .filter(|_| workspace_state.is_collab_panel_open()),
+                        .filter(|_| self.is_collab_panel_open()),
                     )
                     .child(
                         v_stack()
