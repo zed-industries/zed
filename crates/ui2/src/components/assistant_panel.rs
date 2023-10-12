@@ -33,59 +33,50 @@ impl<S: 'static + Send + Sync + Clone> AssistantPanel<S> {
             pub scroll_state: ScrollState,
         }
 
-        Panel::new(
-            self.scroll_state.clone(),
-            |_, payload| {
-                let payload = payload.downcast_ref::<PanelPayload>().unwrap();
-
-                vec![div()
-                    .flex()
-                    .flex_col()
-                    .h_full()
-                    .px_2()
-                    .gap_2()
-                    // Header
-                    .child(
-                        div()
-                            .flex()
-                            .justify_between()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .flex()
-                                    .child(IconButton::new(Icon::Menu))
-                                    .child(Label::new("New Conversation")),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_px()
-                                    .child(IconButton::new(Icon::SplitMessage))
-                                    .child(IconButton::new(Icon::Quote))
-                                    .child(IconButton::new(Icon::MagicWand))
-                                    .child(IconButton::new(Icon::Plus))
-                                    .child(IconButton::new(Icon::Maximize)),
-                            ),
-                    )
-                    // Chat Body
-                    .child(
-                        div()
-                            .w_full()
-                            .flex()
-                            .flex_col()
-                            .gap_3()
-                            .overflow_y_scroll(payload.scroll_state.clone())
-                            .child(Label::new("Is this thing on?")),
-                    )
-                    .into_any()]
-            },
-            Box::new(PanelPayload {
-                scroll_state: self.scroll_state.clone(),
-            }),
-        )
-        .side(self.current_side)
-        .width(AbsoluteLength::Rems(rems(32.)))
+        Panel::new(self.scroll_state.clone())
+            .children(vec![div()
+                .flex()
+                .flex_col()
+                .h_full()
+                .px_2()
+                .gap_2()
+                // Header
+                .child(
+                    div()
+                        .flex()
+                        .justify_between()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex()
+                                .child(IconButton::new(Icon::Menu))
+                                .child(Label::new("New Conversation")),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_px()
+                                .child(IconButton::new(Icon::SplitMessage))
+                                .child(IconButton::new(Icon::Quote))
+                                .child(IconButton::new(Icon::MagicWand))
+                                .child(IconButton::new(Icon::Plus))
+                                .child(IconButton::new(Icon::Maximize)),
+                        ),
+                )
+                // Chat Body
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .overflow_y_scroll(self.scroll_state.clone())
+                        .child(Label::new("Is this thing on?")),
+                )
+                .into_any()])
+            .side(self.current_side)
+            .width(AbsoluteLength::Rems(rems(32.)))
     }
 }
 
@@ -110,7 +101,11 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, AssistantPanel<S>>(cx))
                 .child(Story::label(cx, "Default"))

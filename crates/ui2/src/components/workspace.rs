@@ -244,27 +244,17 @@ impl Workspace {
                     .border_color(theme.lowest.base.default.border)
                     .children(
                         Some(
-                            Panel::new(
-                                self.left_panel_scroll_state.clone(),
-                                |_, payload| {
-                                    vec![ProjectPanel::new(ScrollState::default()).into_any()]
-                                },
-                                Box::new(()),
-                            )
-                            .side(PanelSide::Left),
+                            Panel::new(self.left_panel_scroll_state.clone())
+                                .side(PanelSide::Left)
+                                .child(ProjectPanel::new(ScrollState::default())),
                         )
                         .filter(|_| workspace_state.is_project_panel_open()),
                     )
                     .children(
                         Some(
-                            Panel::new(
-                                self.left_panel_scroll_state.clone(),
-                                |_, payload| {
-                                    vec![CollabPanel::new(ScrollState::default()).into_any()]
-                                },
-                                Box::new(()),
-                            )
-                            .side(PanelSide::Left),
+                            Panel::new(self.left_panel_scroll_state.clone())
+                                .child(CollabPanel::new(ScrollState::default()))
+                                .side(PanelSide::Left),
                         )
                         .filter(|_| workspace_state.is_collab_panel_open()),
                     )
@@ -285,57 +275,42 @@ impl Workspace {
                             )
                             .children(
                                 Some(
-                                    Panel::new(
-                                        self.bottom_panel_scroll_state.clone(),
-                                        |_, _| vec![Terminal::new().into_any()],
-                                        Box::new(()),
-                                    )
-                                    .allowed_sides(PanelAllowedSides::BottomOnly)
-                                    .side(PanelSide::Bottom),
+                                    Panel::new(self.bottom_panel_scroll_state.clone())
+                                        .child(Terminal::new())
+                                        .allowed_sides(PanelAllowedSides::BottomOnly)
+                                        .side(PanelSide::Bottom),
                                 )
                                 .filter(|_| workspace_state.show_terminal.load(Ordering::SeqCst)),
                             ),
                     )
                     .children(
                         Some(
-                            Panel::new(
-                                self.right_panel_scroll_state.clone(),
-                                |_, payload| {
-                                    vec![ChatPanel::new(ScrollState::default())
-                                        .with_messages(vec![
-                                            ChatMessage::new(
-                                                "osiewicz".to_string(),
-                                                "is this thing on?".to_string(),
-                                                DateTime::parse_from_rfc3339(
-                                                    "2023-09-27T15:40:52.707Z",
-                                                )
-                                                .unwrap()
-                                                .naive_local(),
-                                            ),
-                                            ChatMessage::new(
-                                                "maxdeviant".to_string(),
-                                                "Reading you loud and clear!".to_string(),
-                                                DateTime::parse_from_rfc3339(
-                                                    "2023-09-28T15:40:52.707Z",
-                                                )
-                                                .unwrap()
-                                                .naive_local(),
-                                            ),
-                                        ])
-                                        .into_any()]
-                                },
-                                Box::new(()),
-                            )
-                            .side(PanelSide::Right),
+                            Panel::new(self.right_panel_scroll_state.clone())
+                                .side(PanelSide::Right)
+                                .child(ChatPanel::new(ScrollState::default()).messages(vec![
+                                    ChatMessage::new(
+                                        "osiewicz".to_string(),
+                                        "is this thing on?".to_string(),
+                                        DateTime::parse_from_rfc3339("2023-09-27T15:40:52.707Z")
+                                            .unwrap()
+                                            .naive_local(),
+                                    ),
+                                    ChatMessage::new(
+                                        "maxdeviant".to_string(),
+                                        "Reading you loud and clear!".to_string(),
+                                        DateTime::parse_from_rfc3339("2023-09-28T15:40:52.707Z")
+                                            .unwrap()
+                                            .naive_local(),
+                                    ),
+                                ])),
                         )
                         .filter(|_| workspace_state.is_chat_panel_open()),
                     )
                     .children(
-                        Some(Panel::new(
-                            self.right_panel_scroll_state.clone(),
-                            |_, _| vec![AssistantPanel::new().into_any()],
-                            Box::new(()),
-                        ))
+                        Some(
+                            Panel::new(self.right_panel_scroll_state.clone())
+                                .child(AssistantPanel::new()),
+                        )
                         .filter(|_| workspace_state.is_assistant_panel_open()),
                     ),
             )

@@ -78,15 +78,18 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, ProjectPanel<S>>(cx))
                 .child(Story::label(cx, "Default"))
-                .child(Panel::new(
-                    ScrollState::default(),
-                    |_, _| vec![ProjectPanel::new(ScrollState::default()).into_any()],
-                    Box::new(()),
-                ))
+                .child(
+                    Panel::new(ScrollState::default())
+                        .child(ProjectPanel::new(ScrollState::default())),
+                )
         }
     }
 }

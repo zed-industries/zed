@@ -102,10 +102,10 @@ impl<T> core::ops::DerefMut for Lease<T> {
 
 impl<T> Drop for Lease<T> {
     fn drop(&mut self) {
-        assert!(
-            self.entity.is_none(),
-            "Leases must be ended with EntityMap::end_lease"
-        );
+        if self.entity.is_some() {
+            // We don't panic here, because other panics can cause us to drop the lease without ending it cleanly.
+            log::error!("Leases must be ended with EntityMap::end_lease")
+        }
     }
 }
 

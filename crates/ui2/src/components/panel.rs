@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 
-use gpui3::AbsoluteLength;
+use gpui3::{AbsoluteLength, AnyElement};
+use smallvec::SmallVec;
 
 use crate::{prelude::*, theme};
 use crate::{token, v_stack};
@@ -47,16 +48,11 @@ pub struct Panel<S: 'static + Send + Sync> {
     allowed_sides: PanelAllowedSides,
     initial_width: AbsoluteLength,
     width: Option<AbsoluteLength>,
-    children: HackyChildren<S>,
-    payload: HackyChildrenPayload,
+    children: SmallVec<[AnyElement<S>; 2]>,
 }
 
 impl<S: 'static + Send + Sync> Panel<S> {
-    pub fn new(
-        scroll_state: ScrollState,
-        children: HackyChildren<S>,
-        payload: HackyChildrenPayload,
-    ) -> Self {
+    pub fn new(scroll_state: ScrollState) -> Self {
         let token = token();
 
         Self {
@@ -66,8 +62,7 @@ impl<S: 'static + Send + Sync> Panel<S> {
             allowed_sides: PanelAllowedSides::default(),
             initial_width: token.default_panel_size,
             width: None,
-            children,
-            payload,
+            children: SmallVec::new(),
         }
     }
 
@@ -140,7 +135,15 @@ impl<S: 'static + Send + Sync> Panel<S> {
             }
         }
 
-        panel_base.children_any((self.children)(cx, self.payload.as_ref()))
+        panel_base.children(self.children.drain(..))
+    }
+}
+
+impl<S: 'static + Send + Sync> ParentElement for Panel<S> {
+    type State = S;
+
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::State>; 2]> {
+        &mut self.children
     }
 }
 
@@ -165,20 +168,21 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Panel<S>>(cx))
                 .child(Story::label(cx, "Default"))
-                .child(Panel::new(
-                    ScrollState::default(),
-                    |_, _| {
-                        vec![div()
+                .child(
+                    Panel::new(ScrollState::default()).child(
+                        div()
                             .overflow_y_scroll(ScrollState::default())
-                            .children((0..100).map(|ix| Label::new(format!("Item {}", ix + 1))))
-                            .into_any()]
-                    },
-                    Box::new(()),
-                ))
+                            .children((0..100).map(|ix| Label::new(format!("Item {}", ix + 1)))),
+                    ),
+                )
         }
     }
 }

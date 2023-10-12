@@ -33,8 +33,8 @@ pub fn view<S, E>(
     render: impl Fn(&mut S, &mut ViewContext<S>) -> E + Send + Sync + 'static,
 ) -> View<S>
 where
+    E: IntoAnyElement<S>,
     S: 'static + Send + Sync,
-    E: Element<ViewState = S>,
 {
     View {
         state,
@@ -85,6 +85,8 @@ impl<S: 'static + Send + Sync> Element for View<S> {
             .update(cx, |state, cx| element.paint(state, None, cx))
     }
 }
+
+impl<S: Send + Sync + 'static> IdentifiedElement for View<S> {}
 
 struct EraseViewState<ViewState: 'static + Send + Sync, ParentViewState> {
     view: View<ViewState>,
@@ -137,10 +139,8 @@ where
 trait ViewObject: 'static + Send + Sync {
     fn entity_id(&self) -> EntityId;
     fn layout(&mut self, cx: &mut WindowContext) -> (LayoutId, AnyBox);
-    fn paint(&mut self, bounds: Bounds<Pixels>, element: &mut dyn Any, cx: &mut WindowContext);
+    fn paint(&mut self, bounds: Bounds<Pixels>, element: &mut AnyBox, cx: &mut WindowContext);
 }
-
-impl<S: Send + Sync + 'static> IdentifiedElement for View<S> {}
 
 impl<S: Send + Sync + 'static> ViewObject for View<S> {
     fn entity_id(&self) -> EntityId {
@@ -158,7 +158,7 @@ impl<S: Send + Sync + 'static> ViewObject for View<S> {
         })
     }
 
-    fn paint(&mut self, _: Bounds<Pixels>, element: &mut dyn Any, cx: &mut WindowContext) {
+    fn paint(&mut self, _: Bounds<Pixels>, element: &mut AnyBox, cx: &mut WindowContext) {
         cx.with_element_id(IdentifiedElement::element_id(self), |cx| {
             self.state.update(cx, |state, cx| {
                 let element = element.downcast_mut::<AnyElement<S>>().unwrap();
@@ -208,7 +208,7 @@ impl Element for AnyView {
         element: &mut AnyBox,
         cx: &mut ViewContext<Self::ViewState>,
     ) {
-        self.view.lock().paint(bounds, element.as_mut(), cx)
+        self.view.lock().paint(bounds, element, cx)
     }
 }
 

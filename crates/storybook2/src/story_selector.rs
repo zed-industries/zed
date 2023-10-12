@@ -7,7 +7,7 @@ use clap::ValueEnum;
 use gpui3::AnyElement;
 use strum::{EnumIter, EnumString, IntoEnumIterator};
 
-use ui::prelude::*;
+use ui::{prelude::*, AssistantPanelStory};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, strum::Display, EnumString, EnumIter)]
 #[strum(serialize_all = "snake_case")]
@@ -90,7 +90,7 @@ impl ComponentStory {
             Self::Toast => ui::ToastStory::new().into_any(),
             Self::Toolbar => ui::ToolbarStory::new().into_any(),
             Self::TrafficLights => ui::TrafficLightsStory::new().into_any(),
-            Self::Workspace => todo!(),
+            Self::Workspace => ui::workspace_story(cx).into_any().into_any(),
         }
     }
 }

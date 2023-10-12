@@ -56,6 +56,7 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
             type ElementState = gpui3::AnyElement<#state_type>;
 
             fn element_id(&self) -> Option<gpui3::ElementId> {
+                // todo!("What should element_id be here?")
                 None
             }
 

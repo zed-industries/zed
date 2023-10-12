@@ -94,6 +94,7 @@ fn main() {
 #[derive(Clone)]
 pub struct StoryWrapper {
     selector: StorySelector,
+    // story:
     theme: Theme,
 }
 
