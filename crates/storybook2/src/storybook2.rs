@@ -109,7 +109,7 @@ impl StoryWrapper {
                 .flex()
                 .flex_col()
                 .size_full()
-                .child_any(self.selector.story(cx))
+                .child(self.selector.story(cx))
         })
     }
 }
