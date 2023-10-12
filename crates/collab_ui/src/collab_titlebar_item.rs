@@ -2,6 +2,7 @@ use crate::{
     contact_notification::ContactNotification, face_pile::FacePile, toggle_deafen, toggle_mute,
     toggle_screen_sharing, LeaveCall, ToggleDeafen, ToggleMute, ToggleScreenSharing,
 };
+use auto_update::AutoUpdateStatus;
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, Client, ContactEventKind, SignIn, SignOut, User, UserStore};
 use clock::ReplicaId;
@@ -1177,22 +1178,38 @@ impl CollabTitlebarItem {
                     .with_style(theme.titlebar.offline_icon.container)
                     .into_any(),
             ),
-            client::Status::UpgradeRequired => Some(
-                MouseEventHandler::new::<ConnectionStatusButton, _>(0, cx, |_, _| {
-                    Label::new(
-                        "Please update Zed to collaborate",
-                        theme.titlebar.outdated_warning.text.clone(),
-                    )
-                    .contained()
-                    .with_style(theme.titlebar.outdated_warning.container)
-                    .aligned()
-                })
-                .with_cursor_style(CursorStyle::PointingHand)
-                .on_click(MouseButton::Left, |_, _, cx| {
-                    auto_update::check(&Default::default(), cx);
-                })
-                .into_any(),
-            ),
+            client::Status::UpgradeRequired => {
+                let auto_updater = auto_update::AutoUpdater::get(cx);
+                let label = match auto_updater.map(|auto_update| auto_update.read(cx).status()) {
+                    Some(AutoUpdateStatus::Updated) => "Please restart Zed to Collaborate",
+                    Some(AutoUpdateStatus::Installing)
+                    | Some(AutoUpdateStatus::Downloading)
+                    | Some(AutoUpdateStatus::Checking) => "Updating...",
+                    Some(AutoUpdateStatus::Idle) | Some(AutoUpdateStatus::Errored) | None => {
+                        "Please update Zed to Collaborate"
+                    }
+                };
+
+                Some(
+                    MouseEventHandler::new::<ConnectionStatusButton, _>(0, cx, |_, _| {
+                        Label::new(label, theme.titlebar.outdated_warning.text.clone())
+                            .contained()
+                            .with_style(theme.titlebar.outdated_warning.container)
+                            .aligned()
+                    })
+                    .with_cursor_style(CursorStyle::PointingHand)
+                    .on_click(MouseButton::Left, |_, _, cx| {
+                        if let Some(auto_updater) = auto_update::AutoUpdater::get(cx) {
+                            if auto_updater.read(cx).status() == AutoUpdateStatus::Updated {
+                                workspace::restart(&Default::default(), cx);
+                                return;
+                            }
+                        }
+                        auto_update::check(&Default::default(), cx);
+                    })
+                    .into_any(),
+                )
+            }
             _ => None,
         }
     }

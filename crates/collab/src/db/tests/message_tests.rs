@@ -25,10 +25,7 @@ async fn test_channel_message_retrieval(db: &Arc<Database>) {
         .await
         .unwrap()
         .user_id;
-    let channel = db
-        .create_channel("channel", None, "room", user)
-        .await
-        .unwrap();
+    let channel = db.create_channel("channel", None, user).await.unwrap();
 
     let owner_id = db.create_server("test").await.unwrap().0 as u32;
     db.join_channel_chat(channel, rpc::ConnectionId { owner_id, id: 0 }, user)
@@ -90,10 +87,7 @@ async fn test_channel_message_nonces(db: &Arc<Database>) {
         .await
         .unwrap()
         .user_id;
-    let channel = db
-        .create_channel("channel", None, "room", user)
-        .await
-        .unwrap();
+    let channel = db.create_channel("channel", None, user).await.unwrap();
 
     let owner_id = db.create_server("test").await.unwrap().0 as u32;
 
@@ -157,15 +151,9 @@ async fn test_channel_message_new_notification(db: &Arc<Database>) {
         .unwrap()
         .user_id;
 
-    let channel_1 = db
-        .create_channel("channel", None, "room", user)
-        .await
-        .unwrap();
+    let channel_1 = db.create_channel("channel", None, user).await.unwrap();
 
-    let channel_2 = db
-        .create_channel("channel-2", None, "room", user)
-        .await
-        .unwrap();
+    let channel_2 = db.create_channel("channel-2", None, user).await.unwrap();
 
     db.invite_channel_member(channel_1, observer, user, false)
         .await

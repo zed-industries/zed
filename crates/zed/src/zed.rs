@@ -2424,6 +2424,7 @@ mod tests {
             state.build_window_options = build_window_options;
             theme::init((), cx);
             audio::init((), cx);
+            channel::init(&app_state.client, app_state.user_store.clone(), cx);
             call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);

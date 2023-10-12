@@ -37,8 +37,10 @@ CREATE INDEX "index_contacts_user_id_b" ON "contacts" ("user_id_b");
 CREATE TABLE "rooms" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "live_kit_room" VARCHAR NOT NULL,
+    "enviroment" VARCHAR,
     "channel_id" INTEGER REFERENCES channels (id) ON DELETE CASCADE
 );
+CREATE UNIQUE INDEX "index_rooms_on_channel_id" ON "rooms" ("channel_id");
 
 CREATE TABLE "projects" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
