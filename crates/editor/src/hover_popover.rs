@@ -9,7 +9,7 @@ use gpui::{
     actions,
     elements::{Flex, MouseEventHandler, Padding, ParentElement, Text},
     platform::{CursorStyle, MouseButton},
-    AnyElement, AppContext, Element, ModelHandle, Task, ViewContext,
+    AnyElement, AppContext, Element, ModelHandle, Task, ViewContext, WeakViewHandle,
 };
 use language::{
     markdown, Bias, DiagnosticEntry, DiagnosticSeverity, Language, LanguageRegistry, ParsedMarkdown,
@@ -17,6 +17,7 @@ use language::{
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart, Project};
 use std::{ops::Range, sync::Arc, time::Duration};
 use util::TryFutureExt;
+use workspace::Workspace;
 
 pub const HOVER_DELAY_MILLIS: u64 = 350;
 pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
@@ -422,6 +423,7 @@ impl HoverState {
         snapshot: &EditorSnapshot,
         style: &EditorStyle,
         visible_rows: Range<u32>,
+        workspace: Option<WeakViewHandle<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> Option<(DisplayPoint, Vec<AnyElement<Editor>>)> {
         // If there is a diagnostic, position the popovers based on that.
@@ -451,7 +453,7 @@ impl HoverState {
             elements.push(diagnostic_popover.render(style, cx));
         }
         if let Some(info_popover) = self.info_popover.as_mut() {
-            elements.push(info_popover.render(style, cx));
+            elements.push(info_popover.render(style, workspace, cx));
         }
 
         Some((point, elements))
@@ -470,6 +472,7 @@ impl InfoPopover {
     pub fn render(
         &mut self,
         style: &EditorStyle,
+        workspace: Option<WeakViewHandle<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement<Editor> {
         MouseEventHandler::new::<InfoPopover, _>(0, cx, |_, cx| {
@@ -478,6 +481,7 @@ impl InfoPopover {
                 .with_child(crate::render_parsed_markdown::<HoverBlock>(
                     &self.parsed_content,
                     style,
+                    workspace,
                     cx,
                 ))
                 .contained()

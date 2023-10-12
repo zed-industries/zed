@@ -122,6 +122,7 @@ pub const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 pub fn render_parsed_markdown<Tag: 'static>(
     parsed: &language::ParsedMarkdown,
     editor_style: &EditorStyle,
+    workspace: Option<WeakViewHandle<Workspace>>,
     cx: &mut ViewContext<Editor>,
 ) -> Text {
     enum RenderedMarkdown {}
@@ -147,15 +148,22 @@ pub fn render_parsed_markdown<Tag: 'static>(
             region_id += 1;
             let region = parsed.regions[ix].clone();
 
-            if let Some(url) = region.link_url {
+            if let Some(link) = region.link {
                 cx.scene().push_cursor_region(CursorRegion {
                     bounds,
                     style: CursorStyle::PointingHand,
                 });
                 cx.scene().push_mouse_region(
                     MouseRegion::new::<(RenderedMarkdown, Tag)>(view_id, region_id, bounds)
-                        .on_down::<Editor, _>(MouseButton::Left, move |_, _, cx| {
-                            cx.platform().open_url(&url)
+                        .on_down::<Editor, _>(MouseButton::Left, move |_, _, cx| match &link {
+                            markdown::Link::Web { url } => cx.platform().open_url(url),
+                            markdown::Link::Path { path } => {
+                                if let Some(workspace) = &workspace {
+                                    _ = workspace.update(cx, |workspace, cx| {
+                                        workspace.open_abs_path(path.clone(), false, cx).detach();
+                                    });
+                                }
+                            }
                         }),
                 );
             }
@@ -916,10 +924,11 @@ impl ContextMenu {
         &self,
         cursor_position: DisplayPoint,
         style: EditorStyle,
+        workspace: Option<WeakViewHandle<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> (DisplayPoint, AnyElement<Editor>) {
         match self {
-            ContextMenu::Completions(menu) => (cursor_position, menu.render(style, cx)),
+            ContextMenu::Completions(menu) => (cursor_position, menu.render(style, workspace, cx)),
             ContextMenu::CodeActions(menu) => menu.render(cursor_position, style, cx),
         }
     }
@@ -1105,7 +1114,12 @@ impl CompletionsMenu {
         !self.matches.is_empty()
     }
 
-    fn render(&self, style: EditorStyle, cx: &mut ViewContext<Editor>) -> AnyElement<Editor> {
+    fn render(
+        &self,
+        style: EditorStyle,
+        workspace: Option<WeakViewHandle<Workspace>>,
+        cx: &mut ViewContext<Editor>,
+    ) -> AnyElement<Editor> {
         enum CompletionTag {}
 
         let widest_completion_ix = self
@@ -1278,7 +1292,7 @@ impl CompletionsMenu {
                         Flex::column()
                             .scrollable::<MultiLineDocumentation>(0, None, cx)
                             .with_child(render_parsed_markdown::<MultiLineDocumentation>(
-                                parsed, &style, cx,
+                                parsed, &style, workspace, cx,
                             ))
                             .contained()
                             .with_style(style.autocomplete.alongside_docs_container)
@@ -3140,6 +3154,7 @@ impl Editor {
             false
         });
     }
+
     fn completion_query(buffer: &MultiBufferSnapshot, position: impl ToOffset) -> Option<String> {
         let offset = position.to_offset(buffer);
         let (word_range, kind) = buffer.surrounding_word(offset);
@@ -4215,9 +4230,14 @@ impl Editor {
         style: EditorStyle,
         cx: &mut ViewContext<Editor>,
     ) -> Option<(DisplayPoint, AnyElement<Editor>)> {
-        self.context_menu
-            .as_ref()
-            .map(|menu| menu.render(cursor_position, style, cx))
+        self.context_menu.as_ref().map(|menu| {
+            menu.render(
+                cursor_position,
+                style,
+                self.workspace.as_ref().map(|(w, _)| w.clone()),
+                cx,
+            )
+        })
     }
 
     fn show_context_menu(&mut self, menu: ContextMenu, cx: &mut ViewContext<Self>) {

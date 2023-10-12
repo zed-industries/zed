@@ -1,5 +1,5 @@
-use std::ops::Range;
 use std::sync::Arc;
+use std::{ops::Range, path::PathBuf};
 
 use crate::{HighlightId, Language, LanguageRegistry};
 use gpui::fonts::{self, HighlightStyle, Weight};
@@ -58,7 +58,28 @@ pub struct MarkdownHighlightStyle {
 #[derive(Debug, Clone)]
 pub struct ParsedRegion {
     pub code: bool,
-    pub link_url: Option<String>,
+    pub link: Option<Link>,
+}
+
+#[derive(Debug, Clone)]
+pub enum Link {
+    Web { url: String },
+    Path { path: PathBuf },
+}
+
+impl Link {
+    fn identify(text: String) -> Option<Link> {
+        if text.starts_with("http") {
+            return Some(Link::Web { url: text });
+        }
+
+        let path = PathBuf::from(text);
+        if path.is_absolute() {
+            return Some(Link::Path { path });
+        }
+
+        None
+    }
 }
 
 pub async fn parse_markdown(
@@ -115,17 +136,20 @@ pub async fn parse_markdown_block(
                     text.push_str(t.as_ref());
 
                     let mut style = MarkdownHighlightStyle::default();
+
                     if bold_depth > 0 {
                         style.weight = Weight::BOLD;
                     }
+
                     if italic_depth > 0 {
                         style.italic = true;
                     }
-                    if let Some(link_url) = link_url.clone() {
+
+                    if let Some(link) = link_url.clone().and_then(|u| Link::identify(u)) {
                         region_ranges.push(prev_len..text.len());
                         regions.push(ParsedRegion {
-                            link_url: Some(link_url),
                             code: false,
+                            link: Some(link),
                         });
                         style.underline = true;
                     }
@@ -151,7 +175,9 @@ pub async fn parse_markdown_block(
             Event::Code(t) => {
                 text.push_str(t.as_ref());
                 region_ranges.push(prev_len..text.len());
-                if link_url.is_some() {
+
+                let link = link_url.clone().and_then(|u| Link::identify(u));
+                if link.is_some() {
                     highlights.push((
                         prev_len..text.len(),
                         MarkdownHighlight::Style(MarkdownHighlightStyle {
@@ -160,10 +186,7 @@ pub async fn parse_markdown_block(
                         }),
                     ));
                 }
-                regions.push(ParsedRegion {
-                    code: true,
-                    link_url: link_url.clone(),
-                });
+                regions.push(ParsedRegion { code: true, link });
             }
 
             Event::Start(tag) => match tag {
