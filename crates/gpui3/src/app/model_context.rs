@@ -85,6 +85,36 @@ impl<'a, T: Send + Sync + 'static> ModelContext<'a, T> {
         )
     }
 
+    pub fn on_release(
+        &mut self,
+        on_release: impl Fn(&mut T, &mut AppContext) + Send + Sync + 'static,
+    ) -> Subscription {
+        self.app.release_handlers.insert(
+            self.entity_id,
+            Box::new(move |this, cx| {
+                let this = this.downcast_mut().expect("invalid entity type");
+                on_release(this, cx);
+            }),
+        )
+    }
+
+    pub fn observe_release<E: Send + Sync + 'static>(
+        &mut self,
+        handle: &Handle<E>,
+        on_release: impl Fn(&mut T, &mut E, &mut ModelContext<'_, T>) + Send + Sync + 'static,
+    ) -> Subscription {
+        let this = self.handle();
+        self.app.release_handlers.insert(
+            handle.id,
+            Box::new(move |entity, cx| {
+                let entity = entity.downcast_mut().expect("invalid entity type");
+                if let Some(this) = this.upgrade(cx) {
+                    this.update(cx, |this, cx| on_release(this, entity, cx));
+                }
+            }),
+        )
+    }
+
     pub fn notify(&mut self) {
         self.app.pending_effects.push_back(Effect::Notify {
             emitter: self.entity_id,

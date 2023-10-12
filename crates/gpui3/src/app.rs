@@ -67,6 +67,7 @@ impl App {
                 pending_effects: Default::default(),
                 observers: SubscriberSet::new(),
                 event_handlers: SubscriberSet::new(),
+                release_handlers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
             })
         }))
@@ -88,6 +89,7 @@ impl App {
 
 type Handler = Box<dyn Fn(&mut AppContext) -> bool + Send + Sync + 'static>;
 type EventHandler = Box<dyn Fn(&dyn Any, &mut AppContext) -> bool + Send + Sync + 'static>;
+type ReleaseHandler = Box<dyn Fn(&mut dyn Any, &mut AppContext) + Send + Sync + 'static>;
 type FrameCallback = Box<dyn FnOnce(&mut WindowContext) + Send>;
 
 pub struct AppContext {
@@ -107,6 +109,7 @@ pub struct AppContext {
     pub(crate) pending_effects: VecDeque<Effect>,
     pub(crate) observers: SubscriberSet<EntityId, Handler>,
     pub(crate) event_handlers: SubscriberSet<EntityId, EventHandler>,
+    pub(crate) release_handlers: SubscriberSet<EntityId, ReleaseHandler>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
 }
 
@@ -146,10 +149,15 @@ impl AppContext {
     }
 
     fn flush_effects(&mut self) {
-        while let Some(effect) = self.pending_effects.pop_front() {
-            match effect {
-                Effect::Notify { emitter } => self.apply_notify_effect(emitter),
-                Effect::Emit { emitter, event } => self.apply_emit_effect(emitter, event),
+        loop {
+            self.release_dropped_entities();
+            if let Some(effect) = self.pending_effects.pop_front() {
+                match effect {
+                    Effect::Notify { emitter } => self.apply_notify_effect(emitter),
+                    Effect::Emit { emitter, event } => self.apply_emit_effect(emitter, event),
+                }
+            } else {
+                break;
             }
         }
 
@@ -168,6 +176,23 @@ impl AppContext {
 
         for dirty_window_id in dirty_window_ids {
             self.update_window(dirty_window_id, |cx| cx.draw()).unwrap();
+        }
+    }
+
+    fn release_dropped_entities(&mut self) {
+        loop {
+            let dropped = self.entities.take_dropped();
+            if dropped.is_empty() {
+                break;
+            }
+
+            for (entity_id, mut entity) in dropped {
+                self.observers.remove(&entity_id);
+                self.event_handlers.remove(&entity_id);
+                for release_callback in self.release_handlers.remove(&entity_id) {
+                    release_callback(&mut entity, self);
+                }
+            }
         }
     }
 

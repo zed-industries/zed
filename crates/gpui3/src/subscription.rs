@@ -59,6 +59,11 @@ where
         }
     }
 
+    pub fn remove(&self, emitter: &EmitterKey) -> impl IntoIterator<Item = Callback> {
+        let subscribers = self.0.lock().subscribers.remove(&emitter);
+        subscribers.unwrap_or_default().into_values()
+    }
+
     pub fn retain<F>(&self, emitter: &EmitterKey, mut f: F)
     where
         F: FnMut(&mut Callback) -> bool,

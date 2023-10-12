@@ -1,11 +1,12 @@
 use crate::Context;
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use slotmap::{SecondaryMap, SlotMap};
 use std::{
     any::Any,
     marker::PhantomData,
+    mem,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc, Weak,
@@ -14,29 +15,33 @@ use std::{
 
 slotmap::new_key_type! { pub struct EntityId; }
 
-pub(crate) struct EntityMap {
-    ref_counts: Arc<RwLock<RefCounts>>,
-    entities: Arc<Mutex<SecondaryMap<EntityId, Box<dyn Any + Send + Sync>>>>,
+pub(crate) struct EntityMap(Arc<RwLock<EntityMapState>>);
+
+struct EntityMapState {
+    ref_counts: SlotMap<EntityId, AtomicUsize>,
+    entities: SecondaryMap<EntityId, Box<dyn Any + Send + Sync>>,
+    dropped_entities: Vec<(EntityId, Box<dyn Any + Send + Sync>)>,
 }
 
 impl EntityMap {
     pub fn new() -> Self {
-        Self {
-            ref_counts: Arc::new(RwLock::new(SlotMap::with_key())),
-            entities: Arc::new(Mutex::new(SecondaryMap::new())),
-        }
+        Self(Arc::new(RwLock::new(EntityMapState {
+            ref_counts: SlotMap::with_key(),
+            entities: SecondaryMap::new(),
+            dropped_entities: Vec::new(),
+        })))
     }
 
     /// Reserve a slot for an entity, which you can subsequently use with `insert`.
     pub fn reserve<T: 'static + Send + Sync>(&self) -> Slot<T> {
-        let id = self.ref_counts.write().insert(1.into());
-        Slot(Handle::new(id, Arc::downgrade(&self.ref_counts)))
+        let id = self.0.write().ref_counts.insert(1.into());
+        Slot(Handle::new(id, Arc::downgrade(&self.0)))
     }
 
     /// Insert an entity into a slot obtained by calling `reserve`.
     pub fn insert<T: 'static + Any + Send + Sync>(&self, slot: Slot<T>, entity: T) -> Handle<T> {
         let handle = slot.0;
-        self.entities.lock().insert(handle.id, Box::new(entity));
+        self.0.write().entities.insert(handle.id, Box::new(entity));
         handle
     }
 
@@ -44,8 +49,9 @@ impl EntityMap {
     pub fn lease<T: 'static + Send + Sync>(&self, handle: &Handle<T>) -> Lease<T> {
         let id = handle.id;
         let entity = Some(
-            self.entities
-                .lock()
+            self.0
+                .write()
+                .entities
                 .remove(id)
                 .expect("Circular entity lease. Is the entity already being updated?")
                 .downcast::<T>()
@@ -56,8 +62,9 @@ impl EntityMap {
 
     /// Return an entity after moving it to the stack.
     pub fn end_lease<T: 'static + Send + Sync>(&mut self, mut lease: Lease<T>) {
-        self.entities
-            .lock()
+        self.0
+            .write()
+            .entities
             .insert(lease.id, lease.entity.take().unwrap());
     }
 
@@ -65,8 +72,12 @@ impl EntityMap {
         WeakHandle {
             id,
             entity_type: PhantomData,
-            ref_counts: Arc::downgrade(&self.ref_counts),
+            entity_map: Arc::downgrade(&self.0),
         }
+    }
+
+    pub fn take_dropped(&self) -> Vec<(EntityId, Box<dyn Any + Send + Sync>)> {
+        mem::take(&mut self.0.write().dropped_entities)
     }
 }
 
@@ -104,17 +115,15 @@ pub struct Slot<T: Send + Sync + 'static>(Handle<T>);
 pub struct Handle<T: Send + Sync> {
     pub(crate) id: EntityId,
     entity_type: PhantomData<T>,
-    ref_counts: Weak<RwLock<RefCounts>>,
+    entity_map: Weak<RwLock<EntityMapState>>,
 }
 
-type RefCounts = SlotMap<EntityId, AtomicUsize>;
-
 impl<T: 'static + Send + Sync> Handle<T> {
-    pub fn new(id: EntityId, ref_counts: Weak<RwLock<RefCounts>>) -> Self {
+    fn new(id: EntityId, entity_map: Weak<RwLock<EntityMapState>>) -> Self {
         Self {
             id,
             entity_type: PhantomData,
-            ref_counts,
+            entity_map,
         }
     }
 
@@ -122,7 +131,7 @@ impl<T: 'static + Send + Sync> Handle<T> {
         WeakHandle {
             id: self.id,
             entity_type: self.entity_type,
-            ref_counts: self.ref_counts.clone(),
+            entity_map: self.entity_map.clone(),
         }
     }
 
@@ -142,40 +151,66 @@ impl<T: 'static + Send + Sync> Handle<T> {
 
 impl<T: Send + Sync> Clone for Handle<T> {
     fn clone(&self) -> Self {
+        if let Some(entity_map) = self.entity_map.upgrade() {
+            let entity_map = entity_map.read();
+            let count = entity_map
+                .ref_counts
+                .get(self.id)
+                .expect("detected over-release of a handle");
+            let prev_count = count.fetch_add(1, SeqCst);
+            assert_ne!(prev_count, 0, "Detected over-release of a handle.");
+        }
+
         Self {
             id: self.id,
             entity_type: PhantomData,
-            ref_counts: self.ref_counts.clone(),
+            entity_map: self.entity_map.clone(),
         }
     }
 }
 
 impl<T: Send + Sync> Drop for Handle<T> {
     fn drop(&mut self) {
-        if let Some(_ref_counts) = self.ref_counts.upgrade() {
-            // todo!()
-            // if let Some(count) = ref_counts.read().get(self.id) {
-            //     let prev_count = count.fetch_sub(1, SeqCst);
-            //     assert_ne!(prev_count, 0, "Detected over-release of a handle.");
-            // }
+        if let Some(entity_map) = self.entity_map.upgrade() {
+            let entity_map = entity_map.upgradable_read();
+            let count = entity_map
+                .ref_counts
+                .get(self.id)
+                .expect("Detected over-release of a handle.");
+            let prev_count = count.fetch_sub(1, SeqCst);
+            assert_ne!(prev_count, 0, "Detected over-release of a handle.");
+            if prev_count == 1 {
+                // We were the last reference to this entity, so we can remove it.
+                let mut entity_map = RwLockUpgradableReadGuard::upgrade(entity_map);
+                let entity = entity_map
+                    .entities
+                    .remove(self.id)
+                    .expect("entity was removed twice");
+                entity_map.ref_counts.remove(self.id);
+                entity_map.dropped_entities.push((self.id, entity));
+            }
         }
     }
 }
 
 pub struct WeakHandle<T> {
     pub(crate) id: EntityId,
-    pub(crate) entity_type: PhantomData<T>,
-    pub(crate) ref_counts: Weak<RwLock<RefCounts>>,
+    entity_type: PhantomData<T>,
+    entity_map: Weak<RwLock<EntityMapState>>,
 }
 
 impl<T: Send + Sync + 'static> WeakHandle<T> {
     pub fn upgrade(&self, _: &impl Context) -> Option<Handle<T>> {
-        let ref_counts = self.ref_counts.upgrade()?;
-        ref_counts.read().get(self.id).unwrap().fetch_add(1, SeqCst);
+        let entity_map = &self.entity_map.upgrade()?;
+        entity_map
+            .read()
+            .ref_counts
+            .get(self.id)?
+            .fetch_add(1, SeqCst);
         Some(Handle {
             id: self.id,
             entity_type: self.entity_type,
-            ref_counts: self.ref_counts.clone(),
+            entity_map: self.entity_map.clone(),
         })
     }
 

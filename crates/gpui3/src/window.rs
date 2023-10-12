@@ -961,6 +961,40 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
         )
     }
 
+    pub fn on_release(
+        &mut self,
+        on_release: impl Fn(&mut S, &mut WindowContext) + Send + Sync + 'static,
+    ) -> Subscription {
+        let window_handle = self.window.handle;
+        self.app.release_handlers.insert(
+            self.entity_id,
+            Box::new(move |this, cx| {
+                let this = this.downcast_mut().expect("invalid entity type");
+                // todo!("are we okay with silently swallowing the error?")
+                let _ = cx.update_window(window_handle.id, |cx| on_release(this, cx));
+            }),
+        )
+    }
+
+    pub fn observe_release<E: Send + Sync + 'static>(
+        &mut self,
+        handle: &Handle<E>,
+        on_release: impl Fn(&mut S, &mut E, &mut ViewContext<'_, '_, S>) + Send + Sync + 'static,
+    ) -> Subscription {
+        let this = self.handle();
+        let window_handle = self.window.handle;
+        self.app.release_handlers.insert(
+            handle.id,
+            Box::new(move |entity, cx| {
+                let entity = entity.downcast_mut().expect("invalid entity type");
+                // todo!("are we okay with silently swallowing the error?")
+                let _ = cx.update_window(window_handle.id, |cx| {
+                    this.update(cx, |this, cx| on_release(this, entity, cx))
+                });
+            }),
+        )
+    }
+
     pub fn notify(&mut self) {
         self.window_cx.notify();
         self.window_cx
