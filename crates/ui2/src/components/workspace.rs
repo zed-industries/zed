@@ -1,6 +1,3 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
-
 use chrono::DateTime;
 use gpui3::{px, relative, rems, view, Context, Size, View};
 
@@ -12,78 +9,14 @@ use crate::{
     StatusBar, Terminal, TitleBar, Toast, ToastOrigin,
 };
 
-pub struct WorkspaceState {
-    pub show_chat_panel: Arc<AtomicBool>,
-    pub show_assistant_panel: Arc<AtomicBool>,
-    pub show_terminal: Arc<AtomicBool>,
-    pub show_language_selector: Arc<AtomicBool>,
-}
-
-impl WorkspaceState {
-    fn toggle_value(current_value: &AtomicBool) {
-        let value = current_value.load(Ordering::SeqCst);
-
-        current_value
-            .compare_exchange(value, !value, Ordering::SeqCst, Ordering::SeqCst)
-            .unwrap();
-    }
-
-    pub fn is_terminal_open(&self) -> bool {
-        self.show_terminal.load(Ordering::SeqCst)
-    }
-
-    pub fn toggle_terminal(&self) {
-        Self::toggle_value(&self.show_terminal);
-    }
-
-    pub fn is_chat_panel_open(&self) -> bool {
-        self.show_chat_panel.load(Ordering::SeqCst)
-    }
-
-    pub fn toggle_chat_panel(&self) {
-        Self::toggle_value(&self.show_chat_panel);
-
-        self.show_assistant_panel.store(false, Ordering::SeqCst);
-    }
-
-    pub fn is_assistant_panel_open(&self) -> bool {
-        self.show_assistant_panel.load(Ordering::SeqCst)
-    }
-
-    pub fn toggle_assistant_panel(&self) {
-        Self::toggle_value(&self.show_assistant_panel);
-
-        self.show_chat_panel.store(false, Ordering::SeqCst);
-    }
-
-    pub fn is_language_selector_open(&self) -> bool {
-        self.show_language_selector.load(Ordering::SeqCst)
-    }
-
-    pub fn toggle_language_selector(&self) {
-        Self::toggle_value(&self.show_language_selector);
-    }
-}
-
-/// HACK: This is just a temporary way to start hooking up interactivity until
-/// I can get an explainer on how we should actually be managing state.
-static WORKSPACE_STATE: OnceLock<WorkspaceState> = OnceLock::new();
-
-pub fn get_workspace_state() -> &'static WorkspaceState {
-    let state = WORKSPACE_STATE.get_or_init(|| WorkspaceState {
-        show_chat_panel: Arc::new(AtomicBool::new(true)),
-        show_assistant_panel: Arc::new(AtomicBool::new(false)),
-        show_terminal: Arc::new(AtomicBool::new(true)),
-        show_language_selector: Arc::new(AtomicBool::new(false)),
-    });
-
-    state
-}
-
 #[derive(Clone)]
 pub struct Workspace {
     show_project_panel: bool,
     show_collab_panel: bool,
+    show_chat_panel: bool,
+    show_assistant_panel: bool,
+    show_terminal: bool,
+    show_language_selector: bool,
     left_panel_scroll_state: ScrollState,
     right_panel_scroll_state: ScrollState,
     tab_bar_scroll_state: ScrollState,
@@ -99,6 +32,10 @@ impl Workspace {
         Self {
             show_project_panel: true,
             show_collab_panel: false,
+            show_chat_panel: true,
+            show_assistant_panel: false,
+            show_terminal: true,
+            show_language_selector: false,
             left_panel_scroll_state: ScrollState::default(),
             right_panel_scroll_state: ScrollState::default(),
             tab_bar_scroll_state: ScrollState::default(),
@@ -128,10 +65,52 @@ impl Workspace {
         self.show_project_panel = false;
     }
 
+    pub fn is_terminal_open(&self) -> bool {
+        self.show_terminal
+    }
+
+    pub fn toggle_terminal(&mut self, cx: &mut ViewContext<Self>) {
+        self.show_terminal = !self.show_terminal;
+
+        cx.notify();
+    }
+
+    pub fn is_chat_panel_open(&self) -> bool {
+        self.show_chat_panel
+    }
+
+    pub fn toggle_chat_panel(&mut self, cx: &mut ViewContext<Self>) {
+        self.show_chat_panel = !self.show_chat_panel;
+
+        self.show_assistant_panel = false;
+
+        cx.notify();
+    }
+
+    pub fn is_assistant_panel_open(&self) -> bool {
+        self.show_assistant_panel
+    }
+
+    pub fn toggle_assistant_panel(&mut self, cx: &mut ViewContext<Self>) {
+        self.show_assistant_panel = !self.show_assistant_panel;
+
+        self.show_chat_panel = false;
+
+        cx.notify();
+    }
+
+    pub fn is_language_selector_open(&self) -> bool {
+        self.show_language_selector
+    }
+
+    pub fn toggle_language_selector(&mut self, cx: &mut ViewContext<Self>) {
+        self.show_language_selector = !self.show_language_selector;
+
+        cx.notify();
+    }
+
     pub fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
         let theme = theme(cx).clone();
-
-        let workspace_state = get_workspace_state();
 
         let temp_size = rems(36.).into();
 
@@ -240,7 +219,7 @@ impl Workspace {
                                         .allowed_sides(PanelAllowedSides::BottomOnly)
                                         .side(PanelSide::Bottom),
                                 )
-                                .filter(|_| workspace_state.show_terminal.load(Ordering::SeqCst)),
+                                .filter(|_| self.is_terminal_open()),
                             ),
                     )
                     .children(
@@ -264,14 +243,14 @@ impl Workspace {
                                     ),
                                 ])),
                         )
-                        .filter(|_| workspace_state.is_chat_panel_open()),
+                        .filter(|_| self.is_chat_panel_open()),
                     )
                     .children(
                         Some(
                             Panel::new(self.right_panel_scroll_state.clone())
                                 .child(AssistantPanel::new()),
                         )
-                        .filter(|_| workspace_state.is_assistant_panel_open()),
+                        .filter(|_| self.is_assistant_panel_open()),
                     ),
             )
             .child(StatusBar::new())
@@ -284,7 +263,7 @@ impl Workspace {
                         .z_index(999)
                         .child(LanguageSelector::new()),
                 )
-                .filter(|_| workspace_state.is_language_selector_open()),
+                .filter(|_| self.is_language_selector_open()),
             )
             .child(Toast::new(ToastOrigin::Bottom).child(Label::new("A toast")))
             .child(Toast::new(ToastOrigin::BottomRight).child(Label::new("Another toast")))

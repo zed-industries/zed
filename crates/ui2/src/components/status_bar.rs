@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use crate::{get_workspace_state, Button, Icon, IconButton, IconColor, ToolDivider};
-use crate::{prelude::*, Workspace};
+use crate::prelude::*;
+use crate::{Button, Icon, IconButton, IconColor, ToolDivider, Workspace};
 
 #[derive(Default, PartialEq)]
 pub enum Tool {
@@ -98,7 +98,7 @@ impl StatusBar {
             .w_full()
             .fill(theme.lowest.base.default.background)
             .child(self.left_tools(view, &theme))
-            .child(self.right_tools(&theme))
+            .child(self.right_tools(view, &theme))
     }
 
     fn left_tools(
@@ -106,7 +106,7 @@ impl StatusBar {
         workspace: &mut Workspace,
         theme: &Theme,
     ) -> impl Element<ViewState = Workspace> {
-        div::<Workspace>()
+        div()
             .flex()
             .items_center()
             .gap_1()
@@ -126,16 +126,17 @@ impl StatusBar {
                     })
                     .on_click(|workspace, cx| {
                         workspace.toggle_collab_panel();
-                        cx.notify();
                     }),
             )
             .child(ToolDivider::new())
             .child(IconButton::new(Icon::XCircle))
     }
 
-    fn right_tools(&self, theme: &Theme) -> impl Element<ViewState = Workspace> {
-        let workspace_state = get_workspace_state();
-
+    fn right_tools(
+        &self,
+        workspace: &mut Workspace,
+        theme: &Theme,
+    ) -> impl Element<ViewState = Workspace> {
         div()
             .flex()
             .items_center()
@@ -146,10 +147,11 @@ impl StatusBar {
                     .items_center()
                     .gap_1()
                     .child(Button::new("116:25"))
-                    .child(Button::new("Rust").on_click(Arc::new(|_, cx| {
-                        workspace_state.toggle_language_selector();
-                        cx.notify();
-                    }))),
+                    .child(
+                        Button::<Workspace>::new("Rust").on_click(Arc::new(|workspace, cx| {
+                            workspace.toggle_language_selector(cx);
+                        })),
+                    ),
             )
             .child(ToolDivider::new())
             .child(
@@ -173,33 +175,30 @@ impl StatusBar {
                     .items_center()
                     .gap_1()
                     .child(
-                        IconButton::new(Icon::Terminal)
-                            .when(workspace_state.is_terminal_open(), |this| {
+                        IconButton::<Workspace>::new(Icon::Terminal)
+                            .when(workspace.is_terminal_open(), |this| {
                                 this.color(IconColor::Accent)
                             })
-                            .on_click(|_, cx| {
-                                workspace_state.toggle_terminal();
-                                cx.notify();
+                            .on_click(|workspace, cx| {
+                                workspace.toggle_terminal(cx);
                             }),
                     )
                     .child(
-                        IconButton::new(Icon::MessageBubbles)
-                            .when(workspace_state.is_chat_panel_open(), |this| {
+                        IconButton::<Workspace>::new(Icon::MessageBubbles)
+                            .when(workspace.is_chat_panel_open(), |this| {
                                 this.color(IconColor::Accent)
                             })
-                            .on_click(|_, cx| {
-                                workspace_state.toggle_chat_panel();
-                                cx.notify();
+                            .on_click(|workspace, cx| {
+                                workspace.toggle_chat_panel(cx);
                             }),
                     )
                     .child(
-                        IconButton::new(Icon::Ai)
-                            .when(workspace_state.is_assistant_panel_open(), |this| {
+                        IconButton::<Workspace>::new(Icon::Ai)
+                            .when(workspace.is_assistant_panel_open(), |this| {
                                 this.color(IconColor::Accent)
                             })
-                            .on_click(|_, cx| {
-                                workspace_state.toggle_assistant_panel();
-                                cx.notify();
+                            .on_click(|workspace, cx| {
+                                workspace.toggle_assistant_panel(cx);
                             }),
                     ),
             )
