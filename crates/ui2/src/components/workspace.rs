@@ -2,15 +2,16 @@ use chrono::DateTime;
 use gpui3::{px, relative, rems, view, Context, Size, View};
 
 use crate::{
-    hello_world_rust_editor_with_status_example, random_players_with_call_status, theme, v_stack,
-    AssistantPanel, Button, ChatMessage, ChatPanel, CollabPanel, EditorPane, Label,
-    LanguageSelector, Livestream, Pane, PaneGroup, Panel, PanelAllowedSides, PanelSide,
-    ProjectPanel, SplitDirection, StatusBar, Terminal, TitleBar, Toast, ToastOrigin,
+    hello_world_rust_editor_with_status_example, theme, v_stack, AssistantPanel, Button,
+    ChatMessage, ChatPanel, CollabPanel, EditorPane, Label, LanguageSelector, Pane, PaneGroup,
+    Panel, PanelAllowedSides, PanelSide, ProjectPanel, SplitDirection, StatusBar, Terminal,
+    TitleBar, Toast, ToastOrigin,
 };
 use crate::{prelude::*, NotificationToast};
 
 #[derive(Clone)]
 pub struct Workspace {
+    title_bar: View<TitleBar>,
     show_project_panel: bool,
     show_collab_panel: bool,
     show_chat_panel: bool,
@@ -24,8 +25,9 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    pub fn new() -> Self {
+    pub fn new(cx: &mut ViewContext<Self>) -> Self {
         Self {
+            title_bar: TitleBar::view(cx),
             show_project_panel: true,
             show_collab_panel: false,
             show_chat_panel: true,
@@ -106,7 +108,7 @@ impl Workspace {
     }
 
     pub fn view(cx: &mut WindowContext) -> View<Self> {
-        view(cx.entity(|cx| Self::new()), Self::render)
+        view(cx.entity(|cx| Self::new(cx)), Self::render)
     }
 
     pub fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
@@ -167,10 +169,7 @@ impl Workspace {
             .items_start()
             .text_color(theme.lowest.base.default.foreground)
             .fill(theme.lowest.base.default.background)
-            .child(TitleBar::new(cx).set_livestream(Some(Livestream {
-                players: random_players_with_call_status(7),
-                channel: Some("gpui2-ui".to_string()),
-            })))
+            .child(self.title_bar.clone())
             .child(
                 div()
                     .flex_1()

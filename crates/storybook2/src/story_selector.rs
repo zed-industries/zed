@@ -153,10 +153,7 @@ impl ComponentStory {
                 ui::ThemeSelectorStory::new().into_any()
             })
             .into_any(),
-            Self::TitleBar => view(cx.entity(|cx| ()), |_, _| {
-                ui::TitleBarStory::new().into_any()
-            })
-            .into_any(),
+            Self::TitleBar => ui::TitleBarStory::view(cx).into_any(),
             Self::Toast => {
                 view(cx.entity(|cx| ()), |_, _| ui::ToastStory::new().into_any()).into_any()
             }

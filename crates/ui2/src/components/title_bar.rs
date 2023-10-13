@@ -1,11 +1,12 @@
-use std::marker::PhantomData;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use gpui3::{view, Context, View};
+
 use crate::prelude::*;
 use crate::{
-    theme, Avatar, Button, Icon, IconButton, IconColor, PlayerStack, PlayerWithCallStatus,
-    ToolDivider, TrafficLights,
+    random_players_with_call_status, theme, Avatar, Button, Icon, IconButton, IconColor,
+    PlayerStack, PlayerWithCallStatus, ToolDivider, TrafficLights,
 };
 
 #[derive(Clone)]
@@ -15,16 +16,15 @@ pub struct Livestream {
                                  // windows
 }
 
-#[derive(Element)]
-pub struct TitleBar<S: 'static + Send + Sync + Clone> {
-    state_type: PhantomData<S>,
+#[derive(Clone)]
+pub struct TitleBar {
     /// If the window is active from the OS's perspective.
     is_active: Arc<AtomicBool>,
     livestream: Option<Livestream>,
 }
 
-impl<S: 'static + Send + Sync + Clone> TitleBar<S> {
-    pub fn new(cx: &mut ViewContext<S>) -> Self {
+impl TitleBar {
+    pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let is_active = Arc::new(AtomicBool::new(true));
         let active = is_active.clone();
 
@@ -35,7 +35,6 @@ impl<S: 'static + Send + Sync + Clone> TitleBar<S> {
         // .detach();
 
         Self {
-            state_type: PhantomData,
             is_active,
             livestream: None,
         }
@@ -46,7 +45,19 @@ impl<S: 'static + Send + Sync + Clone> TitleBar<S> {
         self
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    pub fn view(cx: &mut WindowContext) -> View<Self> {
+        view(
+            cx.entity(|cx| {
+                Self::new(cx).set_livestream(Some(Livestream {
+                    players: random_players_with_call_status(7),
+                    channel: Some("gpui2-ui".to_string()),
+                }))
+            }),
+            Self::render,
+        )
+    }
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
         let theme = theme(cx);
         // let has_focus = cx.window_is_active();
         let has_focus = true;
@@ -127,23 +138,25 @@ mod stories {
 
     use super::*;
 
-    #[derive(Element)]
-    pub struct TitleBarStory<S: 'static + Send + Sync + Clone> {
-        state_type: PhantomData<S>,
+    pub struct TitleBarStory {
+        title_bar: View<TitleBar>,
     }
 
-    impl<S: 'static + Send + Sync + Clone> TitleBarStory<S> {
-        pub fn new() -> Self {
-            Self {
-                state_type: PhantomData,
-            }
+    impl TitleBarStory {
+        pub fn view(cx: &mut WindowContext) -> View<Self> {
+            view(
+                cx.entity(|cx| Self {
+                    title_bar: TitleBar::view(cx),
+                }),
+                Self::render,
+            )
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
             Story::container(cx)
-                .child(Story::title_for::<_, TitleBar<S>>(cx))
+                .child(Story::title_for::<_, TitleBar>(cx))
                 .child(Story::label(cx, "Default"))
-                .child(TitleBar::new(cx))
+                .child(self.title_bar.clone())
         }
     }
 }
