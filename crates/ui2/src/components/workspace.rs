@@ -3,9 +3,9 @@ use gpui3::{px, relative, rems, view, Context, Size, View};
 
 use crate::{
     hello_world_rust_editor_with_status_example, random_players_with_call_status, theme, v_stack,
-    AssistantPanel, ChatMessage, ChatPanel, CollabPanel, EditorPane, Label, LanguageSelector,
-    Livestream, Pane, PaneGroup, Panel, PanelAllowedSides, PanelSide, ProjectPanel, SplitDirection,
-    StatusBar, Terminal, TitleBar, Toast, ToastOrigin,
+    AssistantPanel, Button, ChatMessage, ChatPanel, CollabPanel, EditorPane, Label,
+    LanguageSelector, Livestream, Pane, PaneGroup, Panel, PanelAllowedSides, PanelSide,
+    ProjectPanel, SplitDirection, StatusBar, Terminal, TitleBar, Toast, ToastOrigin,
 };
 use crate::{prelude::*, NotificationToast};
 
@@ -270,6 +270,7 @@ impl Workspace {
             .child(NotificationToast::new(
                 "A notification",
                 "This is a notification",
+                Button::new("Primary"),
             ))
     }
 }

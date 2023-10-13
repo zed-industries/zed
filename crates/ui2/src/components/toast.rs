@@ -48,10 +48,10 @@ impl<S: 'static + Send + Sync> Toast<S> {
             .flex()
             .py_2()
             .px_1p5()
-            .min_w_40()
+            .min_w_64()
             .rounded_md()
             .fill(color.elevated_surface)
-            .max_w_64()
+            .max_w_96()
             .children(self.children.drain(..))
     }
 }
