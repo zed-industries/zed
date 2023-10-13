@@ -78,8 +78,7 @@ impl Database {
                 channel_id: ActiveValue::Set(channel.id),
                 user_id: ActiveValue::Set(creator_id),
                 accepted: ActiveValue::Set(true),
-                admin: ActiveValue::Set(true),
-                role: ActiveValue::Set(Some(ChannelRole::Admin)),
+                role: ActiveValue::Set(ChannelRole::Admin),
             }
             .insert(&*tx)
             .await?;
@@ -197,8 +196,7 @@ impl Database {
                 channel_id: ActiveValue::Set(channel_id),
                 user_id: ActiveValue::Set(invitee_id),
                 accepted: ActiveValue::Set(false),
-                admin: ActiveValue::Set(role == ChannelRole::Admin),
-                role: ActiveValue::Set(Some(role)),
+                role: ActiveValue::Set(role),
             }
             .insert(&*tx)
             .await?;
@@ -402,14 +400,7 @@ impl Database {
         let mut role_for_channel: HashMap<ChannelId, ChannelRole> = HashMap::default();
 
         for membership in channel_memberships.iter() {
-            role_for_channel.insert(
-                membership.channel_id,
-                membership.role.unwrap_or(if membership.admin {
-                    ChannelRole::Admin
-                } else {
-                    ChannelRole::Member
-                }),
-            );
+            role_for_channel.insert(membership.channel_id, membership.role);
         }
 
         for ChannelEdge {
@@ -561,8 +552,7 @@ impl Database {
                         .and(channel_member::Column::UserId.eq(for_user)),
                 )
                 .set(channel_member::ActiveModel {
-                    admin: ActiveValue::set(role == ChannelRole::Admin),
-                    role: ActiveValue::set(Some(role)),
+                    role: ActiveValue::set(role),
                     ..Default::default()
                 })
                 .exec(&*tx)
@@ -596,7 +586,6 @@ impl Database {
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
             enum QueryMemberDetails {
                 UserId,
-                Admin,
                 Role,
                 IsDirectMember,
                 Accepted,
@@ -610,7 +599,6 @@ impl Database {
                 .filter(channel_member::Column::ChannelId.is_in(ancestor_ids.iter().copied()))
                 .select_only()
                 .column(channel_member::Column::UserId)
-                .column(channel_member::Column::Admin)
                 .column(channel_member::Column::Role)
                 .column_as(
                     channel_member::Column::ChannelId.eq(channel_id),
@@ -629,17 +617,9 @@ impl Database {
             let mut user_details: HashMap<UserId, UserDetail> = HashMap::default();
 
             while let Some(row) = stream.next().await {
-                let (
-                    user_id,
-                    is_admin,
-                    channel_role,
-                    is_direct_member,
-                    is_invite_accepted,
-                    visibility,
-                ): (
+                let (user_id, channel_role, is_direct_member, is_invite_accepted, visibility): (
                     UserId,
-                    bool,
-                    Option<ChannelRole>,
+                    ChannelRole,
                     bool,
                     bool,
                     ChannelVisibility,
@@ -650,11 +630,6 @@ impl Database {
                     (false, true) => proto::channel_member::Kind::AncestorMember,
                     (false, false) => continue,
                 };
-                let channel_role = channel_role.unwrap_or(if is_admin {
-                    ChannelRole::Admin
-                } else {
-                    ChannelRole::Member
-                });
 
                 if channel_role == ChannelRole::Guest
                     && visibility != ChannelVisibility::Public
@@ -797,7 +772,6 @@ impl Database {
         enum QueryChannelMembership {
             ChannelId,
             Role,
-            Admin,
             Visibility,
         }
 
@@ -811,7 +785,6 @@ impl Database {
             .select_only()
             .column(channel_member::Column::ChannelId)
             .column(channel_member::Column::Role)
-            .column(channel_member::Column::Admin)
             .column(channel::Column::Visibility)
             .into_values::<_, QueryChannelMembership>()
             .stream(&*tx)
@@ -826,29 +799,16 @@ impl Database {
         // note these channels are not iterated in any particular order,
         // our current logic takes the highest permission available.
         while let Some(row) = rows.next().await {
-            let (ch_id, role, admin, visibility): (
-                ChannelId,
-                Option<ChannelRole>,
-                bool,
-                ChannelVisibility,
-            ) = row?;
+            let (ch_id, role, visibility): (ChannelId, ChannelRole, ChannelVisibility) = row?;
             match role {
-                Some(ChannelRole::Admin) => is_admin = true,
-                Some(ChannelRole::Member) => is_member = true,
-                Some(ChannelRole::Guest) => {
+                ChannelRole::Admin => is_admin = true,
+                ChannelRole::Member => is_member = true,
+                ChannelRole::Guest => {
                     if visibility == ChannelVisibility::Public {
                         is_participant = true
                     }
                 }
-                Some(ChannelRole::Banned) => is_banned = true,
-                None => {
-                    // rows created from pre-role collab server.
-                    if admin {
-                        is_admin = true
-                    } else {
-                        is_member = true
-                    }
-                }
+                ChannelRole::Banned => is_banned = true,
             }
             if channel_id == ch_id {
                 current_channel_visibility = Some(visibility);

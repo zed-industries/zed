@@ -9,9 +9,7 @@ pub struct Model {
     pub channel_id: ChannelId,
     pub user_id: UserId,
     pub accepted: bool,
-    pub admin: bool,
-    // only optional while migrating
-    pub role: Option<ChannelRole>,
+    pub role: ChannelRole,
 }
 
 impl ActiveModelBehavior for ActiveModel {}
