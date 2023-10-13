@@ -10,6 +10,7 @@ use crate::{
 /// that requires them to take action.
 ///
 /// To simply convey information, use a Status.
+#[derive(Element)]
 pub struct NotificationToast<S: 'static + Send + Sync + Clone> {
     state_type: PhantomData<S>,
     left_icon: Option<Icon>,
