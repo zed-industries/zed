@@ -31,7 +31,7 @@ impl TestDb {
         let mut db = runtime.block_on(async {
             let mut options = ConnectOptions::new(url);
             options.max_connections(5);
-            let db = Database::new(options, Executor::Deterministic(background))
+            let mut db = Database::new(options, Executor::Deterministic(background))
                 .await
                 .unwrap();
             let sql = include_str!(concat!(
@@ -45,6 +45,7 @@ impl TestDb {
                 ))
                 .await
                 .unwrap();
+            db.initialize_notification_enum().await.unwrap();
             db
         });
 
@@ -79,11 +80,12 @@ impl TestDb {
             options
                 .max_connections(5)
                 .idle_timeout(Duration::from_secs(0));
-            let db = Database::new(options, Executor::Deterministic(background))
+            let mut db = Database::new(options, Executor::Deterministic(background))
                 .await
                 .unwrap();
             let migrations_path = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations");
             db.migrate(Path::new(migrations_path), false).await.unwrap();
+            db.initialize_notification_enum().await.unwrap();
             db
         });
 

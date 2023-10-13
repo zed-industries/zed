@@ -1,4 +1,4 @@
-use crate::db::{NotificationId, UserId};
+use crate::db::{NotificationId, NotificationKindId, UserId};
 use sea_orm::entity::prelude::*;
 use time::PrimitiveDateTime;
 
@@ -7,13 +7,12 @@ use time::PrimitiveDateTime;
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: NotificationId,
-    pub recipient_id: UserId,
-    pub kind: i32,
     pub is_read: bool,
     pub created_at: PrimitiveDateTime,
-    pub entity_id_1: Option<i32>,
-    pub entity_id_2: Option<i32>,
-    pub entity_id_3: Option<i32>,
+    pub recipient_id: UserId,
+    pub actor_id: Option<UserId>,
+    pub kind: NotificationKindId,
+    pub content: String,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

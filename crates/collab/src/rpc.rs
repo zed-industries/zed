@@ -291,8 +291,6 @@ impl Server {
         let pool = self.connection_pool.clone();
         let live_kit_client = self.app_state.live_kit_client.clone();
 
-        self.app_state.db.ensure_notification_kinds().await?;
-
         let span = info_span!("start server");
         self.executor.spawn_detached(
             async move {

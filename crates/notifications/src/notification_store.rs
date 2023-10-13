@@ -3,7 +3,7 @@ use channel::{ChannelMessage, ChannelMessageId, ChannelStore};
 use client::{Client, UserStore};
 use collections::HashMap;
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle};
-use rpc::{proto, Notification, NotificationKind, TypedEnvelope};
+use rpc::{proto, AnyNotification, Notification, TypedEnvelope};
 use std::{ops::Range, sync::Arc};
 use sum_tree::{Bias, SumTree};
 use time::OffsetDateTime;
@@ -112,14 +112,11 @@ impl NotificationStore {
                     is_read: message.is_read,
                     timestamp: OffsetDateTime::from_unix_timestamp(message.timestamp as i64)
                         .ok()?,
-                    notification: Notification::from_parts(
-                        NotificationKind::from_i32(message.kind as i32)?,
-                        [
-                            message.entity_id_1,
-                            message.entity_id_2,
-                            message.entity_id_3,
-                        ],
-                    )?,
+                    notification: Notification::from_any(&AnyNotification {
+                        actor_id: message.actor_id,
+                        kind: message.kind.into(),
+                        content: message.content,
+                    })?,
                 })
             })
             .collect::<Vec<_>>();
@@ -129,17 +126,24 @@ impl NotificationStore {
 
         for entry in &notifications {
             match entry.notification {
-                Notification::ChannelInvitation { inviter_id, .. } => {
+                Notification::ChannelInvitation {
+                    actor_id: inviter_id,
+                    ..
+                } => {
                     user_ids.push(inviter_id);
                 }
-                Notification::ContactRequest { requester_id } => {
+                Notification::ContactRequest {
+                    actor_id: requester_id,
+                } => {
                     user_ids.push(requester_id);
                 }
-                Notification::ContactRequestAccepted { contact_id } => {
+                Notification::ContactRequestAccepted {
+                    actor_id: contact_id,
+                } => {
                     user_ids.push(contact_id);
                 }
                 Notification::ChannelMessageMention {
-                    sender_id,
+                    actor_id: sender_id,
                     message_id,
                     ..
                 } => {

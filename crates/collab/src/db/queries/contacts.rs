@@ -165,18 +165,18 @@ impl Database {
             .exec_without_returning(&*tx)
             .await?;
 
-            if rows_affected == 1 {
-                self.create_notification(
-                    receiver_id,
-                    rpc::Notification::ContactRequest {
-                        requester_id: sender_id.to_proto(),
-                    },
-                    &*tx,
-                )
-                .await
-            } else {
-                Err(anyhow!("contact already requested"))?
+            if rows_affected == 0 {
+                Err(anyhow!("contact already requested"))?;
             }
+
+            self.create_notification(
+                receiver_id,
+                rpc::Notification::ContactRequest {
+                    actor_id: sender_id.to_proto(),
+                },
+                &*tx,
+            )
+            .await
         })
         .await
     }
@@ -260,7 +260,7 @@ impl Database {
         responder_id: UserId,
         requester_id: UserId,
         accept: bool,
-    ) -> Result<()> {
+    ) -> Result<proto::Notification> {
         self.transaction(|tx| async move {
             let (id_a, id_b, a_to_b) = if responder_id < requester_id {
                 (responder_id, requester_id, false)
@@ -298,11 +298,18 @@ impl Database {
                 result.rows_affected
             };
 
-            if rows_affected == 1 {
-                Ok(())
-            } else {
+            if rows_affected == 0 {
                 Err(anyhow!("no such contact request"))?
             }
+
+            self.create_notification(
+                requester_id,
+                rpc::Notification::ContactRequestAccepted {
+                    actor_id: responder_id.to_proto(),
+                },
+                &*tx,
+            )
+            .await
         })
         .await
     }

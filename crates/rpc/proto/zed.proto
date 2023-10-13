@@ -1571,10 +1571,9 @@ message AddNotifications {
 
 message Notification {
     uint64 id = 1;
-    uint32 kind = 2;
-    uint64 timestamp = 3;
-    bool is_read = 4;
-    optional uint64 entity_id_1 = 5;
-    optional uint64 entity_id_2 = 6;
-    optional uint64 entity_id_3 = 7;
+    uint64 timestamp = 2;
+    bool is_read = 3;
+    string kind = 4;
+    string content = 5;
+    optional uint64 actor_id = 6;
 }

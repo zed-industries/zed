@@ -6423,6 +6423,7 @@ dependencies = [
  "rsa 0.4.0",
  "serde",
  "serde_derive",
+ "serde_json",
  "smol",
  "smol-timeout",
  "strum",

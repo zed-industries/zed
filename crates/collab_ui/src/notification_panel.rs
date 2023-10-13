@@ -185,18 +185,22 @@ impl NotificationPanel {
         let text;
         let actor;
         match entry.notification {
-            Notification::ContactRequest { requester_id } => {
+            Notification::ContactRequest {
+                actor_id: requester_id,
+            } => {
                 actor = user_store.get_cached_user(requester_id)?;
                 icon = "icons/plus.svg";
                 text = format!("{} wants to add you as a contact", actor.github_login);
             }
-            Notification::ContactRequestAccepted { contact_id } => {
+            Notification::ContactRequestAccepted {
+                actor_id: contact_id,
+            } => {
                 actor = user_store.get_cached_user(contact_id)?;
                 icon = "icons/plus.svg";
                 text = format!("{} accepted your contact invite", actor.github_login);
             }
             Notification::ChannelInvitation {
-                inviter_id,
+                actor_id: inviter_id,
                 channel_id,
             } => {
                 actor = user_store.get_cached_user(inviter_id)?;
@@ -209,7 +213,7 @@ impl NotificationPanel {
                 );
             }
             Notification::ChannelMessageMention {
-                sender_id,
+                actor_id: sender_id,
                 channel_id,
                 message_id,
             } => {

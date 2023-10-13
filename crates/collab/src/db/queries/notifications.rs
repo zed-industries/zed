@@ -1,21 +1,25 @@
 use super::*;
-use rpc::{Notification, NotificationKind};
+use rpc::Notification;
 
 impl Database {
-    pub async fn ensure_notification_kinds(&self) -> Result<()> {
-        self.transaction(|tx| async move {
-            notification_kind::Entity::insert_many(NotificationKind::all().map(|kind| {
-                notification_kind::ActiveModel {
-                    id: ActiveValue::Set(kind as i32),
-                    name: ActiveValue::Set(kind.to_string()),
-                }
-            }))
-            .on_conflict(OnConflict::new().do_nothing().to_owned())
-            .exec(&*tx)
-            .await?;
-            Ok(())
-        })
-        .await
+    pub async fn initialize_notification_enum(&mut self) -> Result<()> {
+        notification_kind::Entity::insert_many(Notification::all_kinds().iter().map(|kind| {
+            notification_kind::ActiveModel {
+                name: ActiveValue::Set(kind.to_string()),
+                ..Default::default()
+            }
+        }))
+        .on_conflict(OnConflict::new().do_nothing().to_owned())
+        .exec_without_returning(&self.pool)
+        .await?;
+
+        let mut rows = notification_kind::Entity::find().stream(&self.pool).await?;
+        while let Some(row) = rows.next().await {
+            let row = row?;
+            self.notification_kinds_by_name.insert(row.name, row.id);
+        }
+
+        Ok(())
     }
 
     pub async fn get_notifications(
@@ -33,14 +37,16 @@ impl Database {
                 .await?;
             while let Some(row) = rows.next().await {
                 let row = row?;
+                let Some(kind) = self.notification_kinds_by_id.get(&row.kind) else {
+                    continue;
+                };
                 result.notifications.push(proto::Notification {
                     id: row.id.to_proto(),
-                    kind: row.kind as u32,
+                    kind: kind.to_string(),
                     timestamp: row.created_at.assume_utc().unix_timestamp() as u64,
                     is_read: row.is_read,
-                    entity_id_1: row.entity_id_1.map(|id| id as u64),
-                    entity_id_2: row.entity_id_2.map(|id| id as u64),
-                    entity_id_3: row.entity_id_3.map(|id| id as u64),
+                    content: row.content,
+                    actor_id: row.actor_id.map(|id| id.to_proto()),
                 });
             }
             result.notifications.reverse();
@@ -55,26 +61,31 @@ impl Database {
         notification: Notification,
         tx: &DatabaseTransaction,
     ) -> Result<proto::Notification> {
-        let (kind, associated_entities) = notification.to_parts();
+        let notification = notification.to_any();
+        let kind = *self
+            .notification_kinds_by_name
+            .get(notification.kind.as_ref())
+            .ok_or_else(|| anyhow!("invalid notification kind {:?}", notification.kind))?;
+
         let model = notification::ActiveModel {
             recipient_id: ActiveValue::Set(recipient_id),
-            kind: ActiveValue::Set(kind as i32),
-            entity_id_1: ActiveValue::Set(associated_entities[0].map(|id| id as i32)),
-            entity_id_2: ActiveValue::Set(associated_entities[1].map(|id| id as i32)),
-            entity_id_3: ActiveValue::Set(associated_entities[2].map(|id| id as i32)),
-            ..Default::default()
+            kind: ActiveValue::Set(kind),
+            content: ActiveValue::Set(notification.content.clone()),
+            actor_id: ActiveValue::Set(notification.actor_id.map(|id| UserId::from_proto(id))),
+            is_read: ActiveValue::NotSet,
+            created_at: ActiveValue::NotSet,
+            id: ActiveValue::NotSet,
         }
         .save(&*tx)
         .await?;
 
         Ok(proto::Notification {
             id: model.id.as_ref().to_proto(),
-            kind: *model.kind.as_ref() as u32,
+            kind: notification.kind.to_string(),
             timestamp: model.created_at.as_ref().assume_utc().unix_timestamp() as u64,
             is_read: false,
-            entity_id_1: model.entity_id_1.as_ref().map(|id| id as u64),
-            entity_id_2: model.entity_id_2.as_ref().map(|id| id as u64),
-            entity_id_3: model.entity_id_3.as_ref().map(|id| id as u64),
+            content: notification.content,
+            actor_id: notification.actor_id,
         })
     }
 }

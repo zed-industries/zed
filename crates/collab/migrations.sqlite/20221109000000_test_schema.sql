@@ -314,7 +314,7 @@ CREATE TABLE IF NOT EXISTS "observed_channel_messages" (
 CREATE UNIQUE INDEX "index_observed_channel_messages_user_and_channel_id" ON "observed_channel_messages" ("user_id", "channel_id");
 
 CREATE TABLE "notification_kinds" (
-    "id" INTEGER PRIMARY KEY NOT NULL,
+    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "name" VARCHAR NOT NULL
 );
 
@@ -322,13 +322,12 @@ CREATE UNIQUE INDEX "index_notification_kinds_on_name" ON "notification_kinds" (
 
 CREATE TABLE "notifications" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+    "is_read" BOOLEAN NOT NULL DEFAULT FALSE,
     "created_at" TIMESTAMP NOT NULL default CURRENT_TIMESTAMP,
     "recipient_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    "actor_id" INTEGER REFERENCES users (id) ON DELETE CASCADE,
     "kind" INTEGER NOT NULL REFERENCES notification_kinds (id),
-    "is_read" BOOLEAN NOT NULL DEFAULT FALSE,
-    "entity_id_1" INTEGER,
-    "entity_id_2" INTEGER,
-    "entity_id_3" INTEGER
+    "content" TEXT
 );
 
 CREATE INDEX "index_notifications_on_recipient_id" ON "notifications" ("recipient_id");

@@ -81,3 +81,4 @@ id_type!(UserId);
 id_type!(ChannelBufferCollaboratorId);
 id_type!(FlagId);
 id_type!(NotificationId);
+id_type!(NotificationKindId);

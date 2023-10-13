@@ -55,6 +55,8 @@ pub struct Database {
     rooms: DashMap<RoomId, Arc<Mutex<()>>>,
     rng: Mutex<StdRng>,
     executor: Executor,
+    notification_kinds_by_id: HashMap<NotificationKindId, &'static str>,
+    notification_kinds_by_name: HashMap<String, NotificationKindId>,
     #[cfg(test)]
     runtime: Option<tokio::runtime::Runtime>,
 }
@@ -69,6 +71,8 @@ impl Database {
             pool: sea_orm::Database::connect(options).await?,
             rooms: DashMap::with_capacity(16384),
             rng: Mutex::new(StdRng::seed_from_u64(0)),
+            notification_kinds_by_id: HashMap::default(),
+            notification_kinds_by_name: HashMap::default(),
             executor,
             #[cfg(test)]
             runtime: None,
@@ -119,6 +123,11 @@ impl Database {
         }
 
         Ok(new_migrations)
+    }
+
+    pub async fn initialize_static_data(&mut self) -> Result<()> {
+        self.initialize_notification_enum().await?;
+        Ok(())
     }
 
     pub async fn transaction<F, Fut, T>(&self, f: F) -> Result<T>
