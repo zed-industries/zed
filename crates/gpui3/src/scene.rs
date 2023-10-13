@@ -595,7 +595,7 @@ impl From<PolychromeSprite> for Primitive {
 pub(crate) struct PathId(pub(crate) usize);
 
 #[derive(Debug)]
-pub struct Path<P: Clone + Debug> {
+pub struct Path<P: Clone + Default + Debug> {
     pub(crate) id: PathId,
     order: u32,
     pub(crate) bounds: Bounds<P>,
@@ -736,7 +736,7 @@ impl From<Path<ScaledPixels>> for Primitive {
 
 #[derive(Clone, Debug)]
 #[repr(C)]
-pub struct PathVertex<P: Clone + Debug> {
+pub struct PathVertex<P: Clone + Default + Debug> {
     pub(crate) xy_position: Point<P>,
     pub(crate) st_position: Point<f32>,
     pub(crate) content_mask: ContentMask<P>,

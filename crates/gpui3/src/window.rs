@@ -132,7 +132,7 @@ impl Window {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[repr(C)]
-pub struct ContentMask<P: Clone + Debug> {
+pub struct ContentMask<P: Clone + Default + Debug> {
     pub bounds: Bounds<P>,
 }
 

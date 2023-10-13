@@ -2,7 +2,7 @@ use super::{AbsoluteLength, Bounds, DefiniteLength, Edges, Length, Pixels, Point
 use collections::HashMap;
 use std::fmt::Debug;
 use taffy::{
-    geometry::Size as TaffySize,
+    geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
     style::AvailableSpace as TaffyAvailableSpace,
     tree::{Measurable, MeasureFunc, NodeId},
     Taffy,
@@ -321,11 +321,12 @@ impl ToTaffy<taffy::style::LengthPercentage> for AbsoluteLength {
     }
 }
 
-impl<T, T2: Clone + Debug> From<taffy::geometry::Point<T>> for Point<T2>
+impl<T, T2> From<TaffyPoint<T>> for Point<T2>
 where
     T: Into<T2>,
+    T2: Clone + Default + Debug,
 {
-    fn from(point: taffy::geometry::Point<T>) -> Point<T2> {
+    fn from(point: TaffyPoint<T>) -> Point<T2> {
         Point {
             x: point.x.into(),
             y: point.y.into(),
@@ -333,33 +334,36 @@ where
     }
 }
 
-impl<T: Clone + Debug, T2> Into<taffy::geometry::Point<T2>> for Point<T>
+impl<T, T2> Into<TaffyPoint<T2>> for Point<T>
 where
-    T: Into<T2>,
+    T: Into<T2> + Clone + Default + Debug,
 {
-    fn into(self) -> taffy::geometry::Point<T2> {
-        taffy::geometry::Point {
+    fn into(self) -> TaffyPoint<T2> {
+        TaffyPoint {
             x: self.x.into(),
             y: self.y.into(),
         }
     }
 }
 
-impl<T: ToTaffy<U> + Clone + Debug, U> ToTaffy<taffy::geometry::Size<U>> for Size<T> {
-    fn to_taffy(&self, rem_size: Pixels) -> taffy::geometry::Size<U> {
-        taffy::geometry::Size {
+impl<T, U> ToTaffy<TaffySize<U>> for Size<T>
+where
+    T: ToTaffy<U> + Clone + Default + Debug,
+{
+    fn to_taffy(&self, rem_size: Pixels) -> TaffySize<U> {
+        TaffySize {
             width: self.width.to_taffy(rem_size).into(),
             height: self.height.to_taffy(rem_size).into(),
         }
     }
 }
 
-impl<T, U> ToTaffy<taffy::geometry::Rect<U>> for Edges<T>
+impl<T, U> ToTaffy<TaffyRect<U>> for Edges<T>
 where
-    T: ToTaffy<U> + Clone + Debug,
+    T: ToTaffy<U> + Clone + Default + Debug,
 {
-    fn to_taffy(&self, rem_size: Pixels) -> taffy::geometry::Rect<U> {
-        taffy::geometry::Rect {
+    fn to_taffy(&self, rem_size: Pixels) -> TaffyRect<U> {
+        TaffyRect {
             top: self.top.to_taffy(rem_size).into(),
             right: self.right.to_taffy(rem_size).into(),
             bottom: self.bottom.to_taffy(rem_size).into(),
@@ -368,8 +372,12 @@ where
     }
 }
 
-impl<T: Into<U>, U: Clone + Debug> From<TaffySize<T>> for Size<U> {
-    fn from(taffy_size: taffy::geometry::Size<T>) -> Self {
+impl<T, U> From<TaffySize<T>> for Size<U>
+where
+    T: Into<U>,
+    U: Clone + Default + Debug,
+{
+    fn from(taffy_size: TaffySize<T>) -> Self {
         Size {
             width: taffy_size.width.into(),
             height: taffy_size.height.into(),
@@ -377,29 +385,24 @@ impl<T: Into<U>, U: Clone + Debug> From<TaffySize<T>> for Size<U> {
     }
 }
 
-impl<T: Into<U> + Clone + Debug, U> From<Size<T>> for taffy::geometry::Size<U> {
+impl<T, U> From<Size<T>> for TaffySize<U>
+where
+    T: Into<U> + Clone + Default + Debug,
+{
     fn from(size: Size<T>) -> Self {
-        taffy::geometry::Size {
+        TaffySize {
             width: size.width.into(),
             height: size.height.into(),
         }
     }
 }
 
-// impl From<TaffySize<Option<f32>>> for Size<Option<Pixels>> {
-//     fn from(value: TaffySize<Option<f32>>) -> Self {
-//         Self {
-//             width: value.width.map(Into::into),
-//             height: value.height.map(Into::into),
-//         }
-//     }
-// }
-
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Default, Debug)]
 pub enum AvailableSpace {
     /// The amount of space available is the specified number of pixels
     Definite(Pixels),
     /// The amount of space available is indefinite and the node should be laid out under a min-content constraint
+    #[default]
     MinContent,
     /// The amount of space available is indefinite and the node should be laid out under a max-content constraint
     MaxContent,

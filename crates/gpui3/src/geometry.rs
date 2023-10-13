@@ -2,28 +2,29 @@ use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};
 use refineable::Refineable;
 use std::{
-    cmp, fmt,
+    cmp::{self, PartialOrd},
+    fmt,
     ops::{Add, AddAssign, Div, Mul, MulAssign, Sub, SubAssign},
 };
 
 #[derive(Refineable, Default, Add, AddAssign, Sub, SubAssign, Copy, Debug, PartialEq, Eq, Hash)]
 #[refineable(debug)]
 #[repr(C)]
-pub struct Point<T: Clone + Debug> {
+pub struct Point<T: Default + Clone + Debug> {
     pub x: T,
     pub y: T,
 }
 
-pub fn point<T: Clone + Debug>(x: T, y: T) -> Point<T> {
+pub fn point<T: Clone + Debug + Default>(x: T, y: T) -> Point<T> {
     Point { x, y }
 }
 
-impl<T: Clone + Debug> Point<T> {
+impl<T: Clone + Debug + Default> Point<T> {
     pub fn new(x: T, y: T) -> Self {
         Self { x, y }
     }
 
-    pub fn map<U: Clone + Debug, F: Fn(T) -> U>(&self, f: F) -> Point<U> {
+    pub fn map<U: Clone + Default + Debug>(&self, f: impl Fn(T) -> U) -> Point<U> {
         Point {
             x: f(self.x.clone()),
             y: f(self.y.clone()),
@@ -42,7 +43,7 @@ impl Point<Pixels> {
 
 impl<T, Rhs> Mul<Rhs> for Point<T>
 where
-    T: Mul<Rhs, Output = T> + Clone + Debug,
+    T: Mul<Rhs, Output = T> + Clone + Default + Debug,
     Rhs: Clone + Debug,
 {
     type Output = Point<T>;
@@ -55,28 +56,42 @@ where
     }
 }
 
-impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Point<T> {
+impl<T, S> MulAssign<S> for Point<T>
+where
+    T: Clone + Mul<S, Output = T> + Default + Debug,
+    S: Clone,
+{
     fn mul_assign(&mut self, rhs: S) {
         self.x = self.x.clone() * rhs.clone();
         self.y = self.y.clone() * rhs;
     }
 }
 
-impl<T: Clone + Debug + Sub<Output = T>> SubAssign<Size<T>> for Point<T> {
+impl<T> SubAssign<Size<T>> for Point<T>
+where
+    T: Sub<Output = T> + Clone + Debug + Default,
+{
     fn sub_assign(&mut self, rhs: Size<T>) {
         self.x = self.x.clone() - rhs.width;
         self.y = self.y.clone() - rhs.height;
     }
 }
 
-impl<T: Clone + Debug + Add<Output = T> + Copy> AddAssign<T> for Point<T> {
+impl<T> AddAssign<T> for Point<T>
+where
+    T: Add<Output = T> + Clone + Default + Debug,
+{
     fn add_assign(&mut self, rhs: T) {
-        self.x = self.x.clone() + rhs;
+        self.x = self.x.clone() + rhs.clone();
         self.y = self.y.clone() + rhs;
     }
 }
 
-impl<T: Clone + Debug + Div<S, Output = T>, S: Clone> Div<S> for Point<T> {
+impl<T, S> Div<S> for Point<T>
+where
+    T: Div<S, Output = T> + Clone + Default + Debug,
+    S: Clone,
+{
     type Output = Self;
 
     fn div(self, rhs: S) -> Self::Output {
@@ -87,7 +102,10 @@ impl<T: Clone + Debug + Div<S, Output = T>, S: Clone> Div<S> for Point<T> {
     }
 }
 
-impl<T: Clone + Debug + cmp::PartialOrd> Point<T> {
+impl<T> Point<T>
+where
+    T: PartialOrd + Clone + Default + Debug,
+{
     pub fn max(&self, other: &Self) -> Self {
         Point {
             x: if self.x >= other.x {
@@ -119,7 +137,7 @@ impl<T: Clone + Debug + cmp::PartialOrd> Point<T> {
     }
 }
 
-impl<T: Clone + Debug> Clone for Point<T> {
+impl<T: Clone + Default + Debug> Clone for Point<T> {
     fn clone(&self) -> Self {
         Self {
             x: self.x.clone(),
@@ -131,17 +149,26 @@ impl<T: Clone + Debug> Clone for Point<T> {
 #[derive(Refineable, Default, Clone, Copy, PartialEq, Div, Hash)]
 #[refineable(debug)]
 #[repr(C)]
-pub struct Size<T: Clone + Debug> {
+pub struct Size<T: Clone + Default + Debug> {
     pub width: T,
     pub height: T,
 }
 
-pub fn size<T: Clone + Debug>(width: T, height: T) -> Size<T> {
+pub fn size<T>(width: T, height: T) -> Size<T>
+where
+    T: Clone + Default + Debug,
+{
     Size { width, height }
 }
 
-impl<T: Clone + Debug> Size<T> {
-    pub fn map<U: Clone + Debug, F: Fn(T) -> U>(&self, f: F) -> Size<U> {
+impl<T> Size<T>
+where
+    T: Clone + Default + Debug,
+{
+    pub fn map<U>(&self, f: impl Fn(T) -> U) -> Size<U>
+    where
+        U: Clone + Default + Debug,
+    {
         Size {
             width: f(self.width.clone()),
             height: f(self.height.clone()),
@@ -158,7 +185,10 @@ impl Size<Pixels> {
     }
 }
 
-impl<T: Clone + Debug + Ord> Size<T> {
+impl<T> Size<T>
+where
+    T: Ord + Clone + Default + Debug,
+{
     pub fn max(&self, other: &Self) -> Self {
         Size {
             width: if self.width >= other.width {
@@ -177,8 +207,8 @@ impl<T: Clone + Debug + Ord> Size<T> {
 
 impl<T, Rhs> Mul<Rhs> for Size<T>
 where
-    T: Mul<Rhs, Output = Rhs> + Debug + Clone,
-    Rhs: Debug + Clone,
+    T: Mul<Rhs, Output = Rhs> + Clone + Default + Debug,
+    Rhs: Clone + Default + Debug,
 {
     type Output = Size<Rhs>;
 
@@ -190,16 +220,23 @@ where
     }
 }
 
-impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Size<T> {
+impl<T, S> MulAssign<S> for Size<T>
+where
+    T: Mul<S, Output = T> + Clone + Default + Debug,
+    S: Clone,
+{
     fn mul_assign(&mut self, rhs: S) {
         self.width = self.width.clone() * rhs.clone();
         self.height = self.height.clone() * rhs;
     }
 }
 
-impl<T: Eq + Debug + Clone> Eq for Size<T> {}
+impl<T> Eq for Size<T> where T: Eq + Default + Debug + Clone {}
 
-impl<T: Clone + Debug> Debug for Size<T> {
+impl<T> Debug for Size<T>
+where
+    T: Clone + Default + Debug,
+{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Size {{ {:?} × {:?} }}", self.width, self.height)
     }
@@ -244,12 +281,15 @@ impl Size<Length> {
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
 #[refineable(debug)]
 #[repr(C)]
-pub struct Bounds<T: Clone + Debug + Default> {
+pub struct Bounds<T: Clone + Default + Debug> {
     pub origin: Point<T>,
     pub size: Size<T>,
 }
 
-impl<T: Clone + Debug + Sub<Output = T> + Default> Bounds<T> {
+impl<T> Bounds<T>
+where
+    T: Clone + Debug + Sub<Output = T> + Default,
+{
     pub fn from_corners(upper_left: Point<T>, lower_right: Point<T>) -> Self {
         let origin = Point {
             x: upper_left.x.clone(),
@@ -263,7 +303,10 @@ impl<T: Clone + Debug + Sub<Output = T> + Default> Bounds<T> {
     }
 }
 
-impl<T: Clone + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T> + Default> Bounds<T> {
+impl<T> Bounds<T>
+where
+    T: Clone + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T> + Default,
+{
     pub fn intersects(&self, other: &Bounds<T>) -> bool {
         let my_lower_right = self.lower_right();
         let their_lower_right = other.lower_right();
@@ -283,7 +326,7 @@ impl<T: Clone + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T> + Defa
     }
 }
 
-impl<T: Clone + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T>> Bounds<T> {
+impl<T: Clone + Default + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T>> Bounds<T> {
     pub fn intersect(&self, other: &Self) -> Self {
         let upper_left = self.origin.max(&other.origin);
         let lower_right = self.lower_right().min(&other.lower_right());
@@ -299,9 +342,9 @@ impl<T: Clone + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T>> Bound
 
 impl<T, Rhs> Mul<Rhs> for Bounds<T>
 where
-    T: Mul<Rhs, Output = Rhs> + Clone + Debug,
+    T: Mul<Rhs, Output = Rhs> + Clone + Default + Debug,
     Point<T>: Mul<Rhs, Output = Point<Rhs>>,
-    Rhs: Clone + Debug,
+    Rhs: Clone + Default + Debug,
 {
     type Output = Bounds<Rhs>;
 
@@ -313,16 +356,22 @@ where
     }
 }
 
-impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Bounds<T> {
+impl<T, S> MulAssign<S> for Bounds<T>
+where
+    T: Mul<S, Output = T> + Clone + Default + Debug,
+    S: Clone,
+{
     fn mul_assign(&mut self, rhs: S) {
         self.origin *= rhs.clone();
         self.size *= rhs;
     }
 }
 
-impl<T: Clone + Debug + Div<S, Output = T>, S: Clone> Div<S> for Bounds<T>
+impl<T, S> Div<S> for Bounds<T>
 where
     Size<T>: Div<S, Output = Size<T>>,
+    T: Div<S, Output = T> + Default + Clone + Debug,
+    S: Clone,
 {
     type Output = Self;
 
@@ -334,7 +383,10 @@ where
     }
 }
 
-impl<T: Clone + Debug + Add<T, Output = T>> Bounds<T> {
+impl<T> Bounds<T>
+where
+    T: Add<T, Output = T> + Clone + Default + Debug,
+{
     pub fn upper_right(&self) -> Point<T> {
         Point {
             x: self.origin.x.clone() + self.size.width.clone(),
@@ -357,7 +409,10 @@ impl<T: Clone + Debug + Add<T, Output = T>> Bounds<T> {
     }
 }
 
-impl<T: Clone + Debug + PartialOrd + Add<T, Output = T>> Bounds<T> {
+impl<T> Bounds<T>
+where
+    T: Add<T, Output = T> + PartialOrd + Clone + Default + Debug,
+{
     pub fn contains_point(&self, point: Point<T>) -> bool {
         point.x >= self.origin.x
             && point.x <= self.origin.x.clone() + self.size.width.clone()
@@ -365,7 +420,10 @@ impl<T: Clone + Debug + PartialOrd + Add<T, Output = T>> Bounds<T> {
             && point.y <= self.origin.y.clone() + self.size.height.clone()
     }
 
-    pub fn map<U: Clone + Debug, F: Fn(T) -> U>(&self, f: F) -> Bounds<U> {
+    pub fn map<U>(&self, f: impl Fn(T) -> U) -> Bounds<U>
+    where
+        U: Clone + Default + Debug,
+    {
         Bounds {
             origin: self.origin.map(&f),
             size: self.size.map(f),
@@ -382,19 +440,22 @@ impl Bounds<Pixels> {
     }
 }
 
-impl<T: Clone + Debug + Copy> Copy for Bounds<T> {}
+impl<T: Clone + Debug + Copy + Default> Copy for Bounds<T> {}
 
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
 #[refineable(debug)]
 #[repr(C)]
-pub struct Edges<T: Clone + Debug> {
+pub struct Edges<T: Clone + Default + Debug> {
     pub top: T,
     pub right: T,
     pub bottom: T,
     pub left: T,
 }
 
-impl<T: Clone + Debug + Mul<Output = T>> Mul for Edges<T> {
+impl<T> Mul for Edges<T>
+where
+    T: Mul<Output = T> + Clone + Default + Debug,
+{
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self::Output {
@@ -407,19 +468,26 @@ impl<T: Clone + Debug + Mul<Output = T>> Mul for Edges<T> {
     }
 }
 
-impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Edges<T> {
+impl<T, S> MulAssign<S> for Edges<T>
+where
+    T: Mul<S, Output = T> + Clone + Default + Debug,
+    S: Clone,
+{
     fn mul_assign(&mut self, rhs: S) {
         self.top = self.top.clone() * rhs.clone();
         self.right = self.right.clone() * rhs.clone();
         self.bottom = self.bottom.clone() * rhs.clone();
-        self.left = self.left.clone() * rhs.clone();
+        self.left = self.left.clone() * rhs;
     }
 }
 
-impl<T: Clone + Debug + Copy> Copy for Edges<T> {}
+impl<T: Clone + Default + Debug + Copy> Copy for Edges<T> {}
 
-impl<T: Clone + Debug> Edges<T> {
-    pub fn map<U: Clone + Debug, F: Fn(&T) -> U>(&self, f: F) -> Edges<U> {
+impl<T: Clone + Default + Debug> Edges<T> {
+    pub fn map<U>(&self, f: impl Fn(&T) -> U) -> Edges<U>
+    where
+        U: Clone + Default + Debug,
+    {
         Edges {
             top: f(&self.top),
             right: f(&self.right),
@@ -501,7 +569,7 @@ impl Edges<Pixels> {
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
 #[refineable(debug)]
 #[repr(C)]
-pub struct Corners<T: Clone + Debug> {
+pub struct Corners<T: Clone + Default + Debug> {
     pub top_left: T,
     pub top_right: T,
     pub bottom_right: T,
@@ -531,8 +599,11 @@ impl Corners<Pixels> {
     }
 }
 
-impl<T: Clone + Debug> Corners<T> {
-    pub fn map<U: Clone + Debug, F: Fn(&T) -> U>(&self, f: F) -> Corners<U> {
+impl<T: Clone + Default + Debug> Corners<T> {
+    pub fn map<U>(&self, f: impl Fn(&T) -> U) -> Corners<U>
+    where
+        U: Clone + Default + Debug,
+    {
         Corners {
             top_left: f(&self.top_left),
             top_right: f(&self.top_right),
@@ -542,7 +613,10 @@ impl<T: Clone + Debug> Corners<T> {
     }
 }
 
-impl<T: Clone + Debug + Mul<Output = T>> Mul for Corners<T> {
+impl<T> Mul for Corners<T>
+where
+    T: Mul<Output = T> + Clone + Default + Debug,
+{
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self::Output {
@@ -555,7 +629,11 @@ impl<T: Clone + Debug + Mul<Output = T>> Mul for Corners<T> {
     }
 }
 
-impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Corners<T> {
+impl<T, S> MulAssign<S> for Corners<T>
+where
+    T: Mul<S, Output = T> + Clone + Default + Debug,
+    S: Clone,
+{
     fn mul_assign(&mut self, rhs: S) {
         self.top_left = self.top_left.clone() * rhs.clone();
         self.top_right = self.top_right.clone() * rhs.clone();
@@ -564,7 +642,7 @@ impl<T: Clone + Debug + Mul<S, Output = T>, S: Clone> MulAssign<S> for Corners<T
     }
 }
 
-impl<T: Clone + Debug + Copy> Copy for Corners<T> {}
+impl<T> Copy for Corners<T> where T: Copy + Clone + Default + Debug {}
 
 #[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, Neg, PartialEq, PartialOrd)]
 #[repr(transparent)]
@@ -1016,25 +1094,31 @@ impl IsZero for Length {
     }
 }
 
-impl<T: IsZero + Debug + Clone> IsZero for Point<T> {
+impl<T: IsZero + Debug + Clone + Default> IsZero for Point<T> {
     fn is_zero(&self) -> bool {
         self.x.is_zero() && self.y.is_zero()
     }
 }
 
-impl<T: IsZero + Debug + Clone> IsZero for Size<T> {
+impl<T> IsZero for Size<T>
+where
+    T: IsZero + Default + Debug + Clone,
+{
     fn is_zero(&self) -> bool {
         self.width.is_zero() || self.height.is_zero()
     }
 }
 
-impl<T: IsZero + Debug + Clone> IsZero for Bounds<T> {
+impl<T: IsZero + Debug + Clone + Default> IsZero for Bounds<T> {
     fn is_zero(&self) -> bool {
         self.size.is_zero()
     }
 }
 
-impl<T: IsZero + Debug + Clone> IsZero for Corners<T> {
+impl<T> IsZero for Corners<T>
+where
+    T: IsZero + Clone + Default + Debug,
+{
     fn is_zero(&self) -> bool {
         self.top_left.is_zero()
             && self.top_right.is_zero()
