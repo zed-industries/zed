@@ -11,7 +11,7 @@ use crate::{
 ///
 /// You must provide a primary action for the user to take.
 ///
-/// To simply convey information, use a Status.
+/// To simply convey information, use a `StatusToast`.
 #[derive(Element)]
 pub struct NotificationToast<S: 'static + Send + Sync + Clone> {
     state_type: PhantomData<S>,
@@ -52,21 +52,27 @@ impl<S: 'static + Send + Sync + Clone> NotificationToast<S> {
         let color = ThemeColor::new(cx);
 
         let notification = h_stack()
+            .min_w_64()
+            .max_w_96()
             .gap_1()
             .items_start()
+            .p_1()
             .children(self.left_icon.map(|i| IconElement::new(i)))
             .child(
                 v_stack()
+                    .flex_1()
+                    .w_full()
+                    .gap_1()
                     .child(
                         h_stack()
                             .justify_between()
-                            .p_1()
                             .child(Label::new(self.title.clone()))
-                            .child(IconButton::new(Icon::Close)),
+                            .child(IconButton::new(Icon::Close).color(crate::IconColor::Muted)),
                     )
                     .child(
                         v_stack()
-                            .p_1()
+                            .overflow_hidden_x()
+                            .gap_1()
                             .child(Label::new(self.message.clone()))
                             .child(
                                 h_stack()

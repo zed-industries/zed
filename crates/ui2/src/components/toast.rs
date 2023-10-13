@@ -10,6 +10,11 @@ pub enum ToastOrigin {
     BottomRight,
 }
 
+/// Don't use toast directly:
+///
+/// - For messages with a required action, use a `NotificationToast`.
+/// - For messages that convey information, use a `StatusToast`.
+///
 /// A toast is a small, temporary window that appears to show a message to the user
 /// or indicate a required action.
 ///
@@ -39,19 +44,19 @@ impl<S: 'static + Send + Sync> Toast<S> {
         if self.origin == ToastOrigin::Bottom {
             div = div.right_1_2();
         } else {
-            div = div.right_4();
+            div = div.right_2();
         }
 
         div.z_index(5)
             .absolute()
-            .bottom_4()
+            .bottom_9()
             .flex()
-            .py_2()
+            .py_1()
             .px_1p5()
-            .min_w_64()
-            .rounded_md()
+            .rounded_lg()
+            .shadow_md()
+            .overflow_hidden()
             .fill(color.elevated_surface)
-            .max_w_96()
             .children(self.children.drain(..))
     }
 }
