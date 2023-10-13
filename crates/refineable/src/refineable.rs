@@ -4,24 +4,12 @@ pub trait Refineable: Clone {
     type Refinement: Refineable<Refinement = Self::Refinement> + Default;
 
     fn refine(&mut self, refinement: &Self::Refinement);
-    fn refined(mut self, refinement: &Self::Refinement) -> Self
-    where
-        Self: Sized,
-    {
-        self.refine(refinement);
-        self
-    }
-    fn from_refinement(refinement: &Self::Refinement) -> Self
-    where
-        Self: Default + Sized,
-    {
-        Self::default().refined(refinement)
-    }
+    fn refined(self, refinement: Self::Refinement) -> Self;
     fn from_cascade(cascade: &Cascade<Self>) -> Self
     where
         Self: Default + Sized,
     {
-        Self::default().refined(&cascade.merged())
+        Self::default().refined(cascade.merged())
     }
 }
 

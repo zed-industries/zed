@@ -244,12 +244,12 @@ impl Size<Length> {
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
 #[refineable(debug)]
 #[repr(C)]
-pub struct Bounds<T: Clone + Debug> {
+pub struct Bounds<T: Clone + Debug + Default> {
     pub origin: Point<T>,
     pub size: Size<T>,
 }
 
-impl<T: Clone + Debug + Sub<Output = T>> Bounds<T> {
+impl<T: Clone + Debug + Sub<Output = T> + Default> Bounds<T> {
     pub fn from_corners(upper_left: Point<T>, lower_right: Point<T>) -> Self {
         let origin = Point {
             x: upper_left.x.clone(),
@@ -263,7 +263,7 @@ impl<T: Clone + Debug + Sub<Output = T>> Bounds<T> {
     }
 }
 
-impl<T: Clone + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T>> Bounds<T> {
+impl<T: Clone + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T> + Default> Bounds<T> {
     pub fn intersects(&self, other: &Bounds<T>) -> bool {
         let my_lower_right = self.lower_right();
         let their_lower_right = other.lower_right();
