@@ -110,7 +110,6 @@ pub struct LanguageServerName(pub Arc<str>);
 pub struct CachedLspAdapter {
     pub name: LanguageServerName,
     pub short_name: &'static str,
-    pub initialization_options: Option<Value>,
     pub disk_based_diagnostic_sources: Vec<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub language_ids: HashMap<String, String>,
@@ -121,7 +120,6 @@ impl CachedLspAdapter {
     pub async fn new(adapter: Arc<dyn LspAdapter>) -> Arc<Self> {
         let name = adapter.name().await;
         let short_name = adapter.short_name();
-        let initialization_options = adapter.initialization_options().await;
         let disk_based_diagnostic_sources = adapter.disk_based_diagnostic_sources().await;
         let disk_based_diagnostics_progress_token =
             adapter.disk_based_diagnostics_progress_token().await;
@@ -130,7 +128,6 @@ impl CachedLspAdapter {
         Arc::new(CachedLspAdapter {
             name,
             short_name,
-            initialization_options,
             disk_based_diagnostic_sources,
             disk_based_diagnostics_progress_token,
             language_ids,
