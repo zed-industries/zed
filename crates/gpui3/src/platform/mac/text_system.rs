@@ -1,7 +1,7 @@
 use crate::{
     point, px, size, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontStyle,
-    FontWeight, GlyphId, Pixels, PlatformTextSystem, Point, RenderGlyphParams, Result, ShapedGlyph,
-    ShapedLine, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
+    FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams, Result,
+    ShapedGlyph, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
 };
 use anyhow::anyhow;
 use cocoa::appkit::{CGFloat, CGPoint};
@@ -154,7 +154,7 @@ impl PlatformTextSystem for MacTextSystem {
         text: &str,
         font_size: Pixels,
         font_runs: &[(usize, FontId)],
-    ) -> ShapedLine {
+    ) -> LineLayout {
         self.0.write().layout_line(text, font_size, font_runs)
     }
 
@@ -342,7 +342,7 @@ impl MacTextSystemState {
         text: &str,
         font_size: Pixels,
         font_runs: &[(usize, FontId)],
-    ) -> ShapedLine {
+    ) -> LineLayout {
         // Construct the attributed string, converting UTF8 ranges to UTF16 ranges.
         let mut string = CFMutableAttributedString::new();
         {
@@ -394,7 +394,7 @@ impl MacTextSystemState {
             let font_id = self.id_for_native_font(font);
 
             let mut ix_converter = StringIndexConverter::new(text);
-            let mut glyphs = Vec::new();
+            let mut glyphs = SmallVec::new();
             for ((glyph_id, position), glyph_utf16_ix) in run
                 .glyphs()
                 .iter()
@@ -415,7 +415,7 @@ impl MacTextSystemState {
         }
 
         let typographic_bounds = line.get_typographic_bounds();
-        ShapedLine {
+        LineLayout {
             width: typographic_bounds.width.into(),
             ascent: typographic_bounds.ascent.into(),
             descent: typographic_bounds.descent.into(),

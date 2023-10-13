@@ -74,12 +74,13 @@ impl<S: 'static + Send + Sync> Element for Text<S> {
         let rem_size = cx.rem_size();
         let layout_id = cx.request_measured_layout(Default::default(), rem_size, {
             let element_state = element_state.clone();
-            move |_, _| {
+            move |known_dimensions, _| {
                 let Some(line_layout) = text_system
-                    .layout_line(
+                    .layout_text(
                         text.as_ref(),
                         font_size,
                         &[(text.len(), text_style.to_run())],
+                        known_dimensions.width, // Wrap if we know the width.
                     )
                     .log_err()
                 else {

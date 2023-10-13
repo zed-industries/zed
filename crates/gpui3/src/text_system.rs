@@ -7,6 +7,7 @@ use anyhow::anyhow;
 pub use font_features::*;
 pub use line::*;
 use line_wrapper::*;
+use smallvec::SmallVec;
 pub use text_layout_cache::*;
 
 use crate::{
@@ -143,13 +144,15 @@ impl TextSystem {
         }
     }
 
-    pub fn layout_line(
+    pub fn layout_text(
         &self,
         text: &str,
         font_size: Pixels,
         runs: &[(usize, RunStyle)],
-    ) -> Result<Line> {
-        let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+        wrap_width: Option<Pixels>,
+    ) -> Result<SmallVec<[Line; 1]>> {
+        let mut font_runs: Vec<(usize, FontId)> =
+            self.font_runs_pool.lock().pop().unwrap_or_default();
 
         let mut last_font: Option<&Font> = None;
         for (len, style) in runs {
@@ -163,14 +166,47 @@ impl TextSystem {
             font_runs.push((*len, self.font_id(&style.font)?));
         }
 
-        let layout = self
-            .text_layout_cache
-            .layout_line(text, font_size, &font_runs);
+        let mut layouts = SmallVec::new();
+        let mut start = 0;
+        let mut run_start = 0;
+        for line in text.lines() {
+            let end = start + line.len();
+            let mut run_end = run_start;
+            let mut line_length = 0;
+            for (len, _) in font_runs[run_start..].iter() {
+                line_length += len;
+                if *len >= line_length {
+                    break;
+                }
+                run_end += 1;
+            }
+            // If a run lands in the middle of a line, create an additional run for the remaining characters.
+            if line_length < end - start {
+                // Create a run for the part that fits this line.
+                let partial_run = font_runs[run_end];
+                partial_run.0 = line_length;
+                layouts.push(self.text_layout_cache.layout_line(
+                    &text[start..start + line_length],
+                    font_size,
+                    &font_runs[run_start..=run_end],
+                ));
+                // Update the original run to only include the part that does not fit this line.
+                font_runs[run_end].0 -= line_length;
+            } else {
+                layouts.push(self.text_layout_cache.layout_line(
+                    &text[start..end],
+                    font_size,
+                    &font_runs[run_start..run_end],
+                ));
+                run_start = run_end;
+            }
+            start = end + 1;
+        }
 
         font_runs.clear();
         self.font_runs_pool.lock().push(font_runs);
 
-        Ok(Line::new(layout.clone(), runs))
+        Ok(layouts)
     }
 
     pub fn end_frame(&self) {
@@ -346,7 +382,7 @@ impl From<u32> for GlyphId {
 }
 
 #[derive(Default, Debug)]
-pub struct ShapedLine {
+pub struct LineLayout {
     pub font_size: Pixels,
     pub width: Pixels,
     pub ascent: Pixels,
@@ -358,7 +394,7 @@ pub struct ShapedLine {
 #[derive(Debug)]
 pub struct ShapedRun {
     pub font_id: FontId,
-    pub glyphs: Vec<ShapedGlyph>,
+    pub glyphs: SmallVec<[ShapedGlyph; 8]>,
 }
 
 #[derive(Clone, Debug)]

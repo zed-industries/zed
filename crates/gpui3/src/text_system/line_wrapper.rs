@@ -287,7 +287,7 @@ mod tests {
 
             let text = "aa bbb cccc ddddd eeee";
             let line = text_system
-                .layout_line(
+                .layout_text(
                     text,
                     px(16.),
                     &[
@@ -297,6 +297,7 @@ mod tests {
                         (1, bold.clone()),
                         (7, normal.clone()),
                     ],
+                    None,
                 )
                 .unwrap();
 

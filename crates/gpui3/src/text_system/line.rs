@@ -1,5 +1,5 @@
 use crate::{
-    black, point, px, Bounds, FontId, Hsla, Pixels, Point, RunStyle, ShapedBoundary, ShapedLine,
+    black, point, px, Bounds, FontId, Hsla, LineLayout, Pixels, Point, RunStyle, ShapedBoundary,
     ShapedRun, UnderlineStyle, WindowContext,
 };
 use anyhow::Result;
@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 #[derive(Default, Debug, Clone)]
 pub struct Line {
-    layout: Arc<ShapedLine>,
+    layout: Arc<LineLayout>,
     style_runs: SmallVec<[StyleRun; 32]>,
 }
 
@@ -20,7 +20,7 @@ struct StyleRun {
 }
 
 impl Line {
-    pub fn new(layout: Arc<ShapedLine>, runs: &[(usize, RunStyle)]) -> Self {
+    pub fn new(layout: Arc<LineLayout>, runs: &[(usize, RunStyle)]) -> Self {
         let mut style_runs = SmallVec::new();
         for (len, style) in runs {
             style_runs.push(StyleRun {
