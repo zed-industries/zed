@@ -4,8 +4,8 @@ use gpui3::{view, Context, View};
 
 use crate::prelude::*;
 use crate::{
-    hello_world_rust_editor_with_status_example, v_stack, Breadcrumb, Buffer, Icon, IconButton,
-    IconColor, Symbol, Tab, TabBar, Toolbar,
+    hello_world_rust_editor_with_status_example, v_stack, Breadcrumb, Buffer, BufferSearch, Icon,
+    IconButton, IconColor, Symbol, Tab, TabBar, Toolbar,
 };
 
 #[derive(Clone)]
@@ -69,6 +69,7 @@ impl EditorPane {
                         IconButton::new(Icon::MagicWand),
                     ]),
             )
+            .children(Some(BufferSearch::new()).filter(|_| self.is_buffer_search_open))
             .child(self.buffer.clone())
     }
 }
