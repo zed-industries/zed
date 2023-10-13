@@ -2407,7 +2407,6 @@ dependencies = [
  "parking_lot 0.11.2",
  "postage",
  "project",
- "pulldown-cmark",
  "rand 0.8.5",
  "rich_text",
  "rpc",
@@ -3992,6 +3991,7 @@ dependencies = [
  "lsp",
  "parking_lot 0.11.2",
  "postage",
+ "pulldown-cmark",
  "rand 0.8.5",
  "regex",
  "rpc",
@@ -6987,7 +6987,6 @@ dependencies = [
  "unindent",
  "util",
  "workspace",
- "zed",
 ]
 
 [[package]]
@@ -8841,6 +8840,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-vue"
+version = "0.0.1"
+source = "git+https://github.com/zed-industries/tree-sitter-vue?rev=95b2890#95b28908d90e928c308866f7631e73ef6e1d4b5f"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-yaml"
 version = "0.0.1"
 source = "git+https://github.com/zed-industries/tree-sitter-yaml?rev=f545a41f57502e1b5ddf2a6668896c1b0620f930#f545a41f57502e1b5ddf2a6668896c1b0620f930"
@@ -10096,6 +10104,7 @@ name = "zed"
 version = "0.109.0"
 dependencies = [
  "activity_indicator",
+ "ai",
  "anyhow",
  "assistant",
  "async-compression",
@@ -10209,6 +10218,7 @@ dependencies = [
  "tree-sitter-svelte",
  "tree-sitter-toml",
  "tree-sitter-typescript",
+ "tree-sitter-vue",
  "tree-sitter-yaml",
  "unindent",
  "url",

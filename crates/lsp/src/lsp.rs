@@ -466,7 +466,10 @@ impl LanguageServer {
                         completion_item: Some(CompletionItemCapability {
                             snippet_support: Some(true),
                             resolve_support: Some(CompletionItemCapabilityResolveSupport {
-                                properties: vec!["additionalTextEdits".to_string()],
+                                properties: vec![
+                                    "documentation".to_string(),
+                                    "additionalTextEdits".to_string(),
+                                ],
                             }),
                             ..Default::default()
                         }),
@@ -747,6 +750,15 @@ impl LanguageServer {
             params,
         )
     }
+
+    // some child of string literal (be it "" or ``) which is the child of an attribute
+
+    // <Foo className="bar" />
+    // <Foo className={`bar`} />
+    // <Foo className={something + "bar"} />
+    // <Foo className={something + "bar"} />
+    // const classes = "awesome ";
+    // <Foo className={classes} />
 
     fn request_internal<T: request::Request>(
         next_id: &AtomicUsize,

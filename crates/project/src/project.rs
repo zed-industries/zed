@@ -592,6 +592,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_apply_code_action);
         client.add_model_request_handler(Self::handle_on_type_formatting);
         client.add_model_request_handler(Self::handle_inlay_hints);
+        client.add_model_request_handler(Self::handle_resolve_completion_documentation);
         client.add_model_request_handler(Self::handle_resolve_inlay_hint);
         client.add_model_request_handler(Self::handle_refresh_inlay_hints);
         client.add_model_request_handler(Self::handle_reload_buffers);
@@ -2751,15 +2752,6 @@ impl Project {
         let lsp = project_settings.lsp.get(&adapter.name.0);
         let override_options = lsp.map(|s| s.initialization_options.clone()).flatten();
 
-        let mut initialization_options = adapter.initialization_options.clone();
-        match (&mut initialization_options, override_options) {
-            (Some(initialization_options), Some(override_options)) => {
-                merge_json_value_into(override_options, initialization_options);
-            }
-            (None, override_options) => initialization_options = override_options,
-            _ => {}
-        }
-
         let server_id = pending_server.server_id;
         let container_dir = pending_server.container_dir.clone();
         let state = LanguageServerState::Starting({
@@ -2771,7 +2763,7 @@ impl Project {
             cx.spawn_weak(|this, mut cx| async move {
                 let result = Self::setup_and_insert_language_server(
                     this,
-                    initialization_options,
+                    override_options,
                     pending_server,
                     adapter.clone(),
                     language.clone(),
@@ -2874,7 +2866,7 @@ impl Project {
 
     async fn setup_and_insert_language_server(
         this: WeakModelHandle<Self>,
-        initialization_options: Option<serde_json::Value>,
+        override_initialization_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
         adapter: Arc<CachedLspAdapter>,
         language: Arc<Language>,
@@ -2884,7 +2876,7 @@ impl Project {
     ) -> Result<Option<Arc<LanguageServer>>> {
         let setup = Self::setup_pending_language_server(
             this,
-            initialization_options,
+            override_initialization_options,
             pending_server,
             adapter.clone(),
             server_id,
@@ -2916,7 +2908,7 @@ impl Project {
 
     async fn setup_pending_language_server(
         this: WeakModelHandle<Self>,
-        initialization_options: Option<serde_json::Value>,
+        override_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
         adapter: Arc<CachedLspAdapter>,
         server_id: LanguageServerId,
@@ -2934,8 +2926,8 @@ impl Project {
                 move |mut params, mut cx| {
                     let this = this;
                     let adapter = adapter.clone();
-                    adapter.process_diagnostics(&mut params);
                     if let Some(this) = this.upgrade(&cx) {
+                        adapter.process_diagnostics(&mut params);
                         this.update(&mut cx, |this, cx| {
                             this.update_diagnostics(
                                 server_id,
@@ -3062,6 +3054,14 @@ impl Project {
                 }
             })
             .detach();
+        let mut initialization_options = adapter.adapter.initialization_options().await;
+        match (&mut initialization_options, override_options) {
+            (Some(initialization_options), Some(override_options)) => {
+                merge_json_value_into(override_options, initialization_options);
+            }
+            (None, override_options) => initialization_options = override_options,
+            _ => {}
+        }
 
         let language_server = language_server.initialize(initialization_options).await?;
 
@@ -7351,6 +7351,40 @@ impl Project {
                 .as_ref()
                 .map(language::proto::serialize_transaction),
         })
+    }
+
+    async fn handle_resolve_completion_documentation(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::ResolveCompletionDocumentation>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ResolveCompletionDocumentationResponse> {
+        let lsp_completion = serde_json::from_slice(&envelope.payload.lsp_completion)?;
+
+        let completion = this
+            .read_with(&mut cx, |this, _| {
+                let id = LanguageServerId(envelope.payload.language_server_id as usize);
+                let Some(server) = this.language_server_for_id(id) else {
+                    return Err(anyhow!("No language server {id}"));
+                };
+
+                Ok(server.request::<lsp::request::ResolveCompletionItem>(lsp_completion))
+            })?
+            .await?;
+
+        let mut is_markdown = false;
+        let text = match completion.documentation {
+            Some(lsp::Documentation::String(text)) => text,
+
+            Some(lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value })) => {
+                is_markdown = kind == lsp::MarkupKind::Markdown;
+                value
+            }
+
+            _ => String::new(),
+        };
+
+        Ok(proto::ResolveCompletionDocumentationResponse { text, is_markdown })
     }
 
     async fn handle_apply_code_action(

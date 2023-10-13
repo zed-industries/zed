@@ -239,6 +239,8 @@ messages!(
     (RenameChannelResponse, Foreground),
     (RenameProjectEntry, Foreground),
     (RequestContact, Foreground),
+    (ResolveCompletionDocumentation, Background),
+    (ResolveCompletionDocumentationResponse, Background),
     (ResolveInlayHint, Background),
     (ResolveInlayHintResponse, Background),
     (RespondToChannelInvite, Foreground),
@@ -341,6 +343,10 @@ request_messages!(
     (RenameChannel, RenameChannelResponse),
     (RenameProjectEntry, ProjectEntryResponse),
     (RequestContact, Ack),
+    (
+        ResolveCompletionDocumentation,
+        ResolveCompletionDocumentationResponse
+    ),
     (ResolveInlayHint, ResolveInlayHintResponse),
     (RespondToChannelInvite, Ack),
     (RespondToContactRequest, Ack),
@@ -392,6 +398,7 @@ entity_messages!(
     ReloadBuffers,
     RemoveProjectCollaborator,
     RenameProjectEntry,
+    ResolveCompletionDocumentation,
     ResolveInlayHint,
     SaveBuffer,
     SearchProject,
