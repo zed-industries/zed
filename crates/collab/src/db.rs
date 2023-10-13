@@ -370,18 +370,9 @@ impl<T> RoomGuard<T> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Contact {
-    Accepted {
-        user_id: UserId,
-        should_notify: bool,
-        busy: bool,
-    },
-    Outgoing {
-        user_id: UserId,
-    },
-    Incoming {
-        user_id: UserId,
-        should_notify: bool,
-    },
+    Accepted { user_id: UserId, busy: bool },
+    Outgoing { user_id: UserId },
+    Incoming { user_id: UserId },
 }
 
 impl Contact {

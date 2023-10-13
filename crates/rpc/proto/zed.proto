@@ -1223,7 +1223,6 @@ message ShowContacts {}
 
 message IncomingContactRequest {
     uint64 requester_id = 1;
-    bool should_notify = 2;
 }
 
 message UpdateDiagnostics {
@@ -1549,7 +1548,6 @@ message Contact {
     uint64 user_id = 1;
     bool online = 2;
     bool busy = 3;
-    bool should_notify = 4;
 }
 
 message WorktreeMetadata {

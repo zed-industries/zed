@@ -6,6 +6,12 @@ use strum::{EnumVariantNames, IntoStaticStr, VariantNames as _};
 const KIND: &'static str = "kind";
 const ACTOR_ID: &'static str = "actor_id";
 
+/// A notification that can be stored, associated with a given user.
+///
+/// This struct is stored in the collab database as JSON, so it shouldn't be
+/// changed in a backward-incompatible way.
+///
+/// For example, when renaming a variant, add a serde alias for the old name.
 #[derive(Debug, Clone, PartialEq, Eq, EnumVariantNames, IntoStaticStr, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum Notification {
@@ -26,6 +32,8 @@ pub enum Notification {
     },
 }
 
+/// The representation of a notification that is stored in the database and
+/// sent over the wire.
 #[derive(Debug)]
 pub struct AnyNotification {
     pub kind: Cow<'static, str>,
@@ -87,8 +95,8 @@ fn test_notification() {
         assert_eq!(deserialized, notification);
     }
 
-    // When notifications are serialized, redundant data is not stored
-    // in the JSON.
+    // When notifications are serialized, the `kind` and `actor_id` fields are
+    // stored separately, and do not appear redundantly in the JSON.
     let notification = Notification::ContactRequest { actor_id: 1 };
     assert_eq!(notification.to_any().content, "{}");
 }

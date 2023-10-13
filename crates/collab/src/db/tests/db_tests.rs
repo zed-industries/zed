@@ -264,10 +264,7 @@ async fn test_add_contacts(db: &Arc<Database>) {
     );
     assert_eq!(
         db.get_contacts(user_2).await.unwrap(),
-        &[Contact::Incoming {
-            user_id: user_1,
-            should_notify: true
-        }]
+        &[Contact::Incoming { user_id: user_1 }]
     );
 
     // User 2 dismisses the contact request notification without accepting or rejecting.
@@ -280,10 +277,7 @@ async fn test_add_contacts(db: &Arc<Database>) {
         .unwrap();
     assert_eq!(
         db.get_contacts(user_2).await.unwrap(),
-        &[Contact::Incoming {
-            user_id: user_1,
-            should_notify: false
-        }]
+        &[Contact::Incoming { user_id: user_1 }]
     );
 
     // User can't accept their own contact request
@@ -299,7 +293,6 @@ async fn test_add_contacts(db: &Arc<Database>) {
         db.get_contacts(user_1).await.unwrap(),
         &[Contact::Accepted {
             user_id: user_2,
-            should_notify: true,
             busy: false,
         }],
     );
@@ -309,7 +302,6 @@ async fn test_add_contacts(db: &Arc<Database>) {
         db.get_contacts(user_2).await.unwrap(),
         &[Contact::Accepted {
             user_id: user_1,
-            should_notify: false,
             busy: false,
         }]
     );
@@ -326,7 +318,6 @@ async fn test_add_contacts(db: &Arc<Database>) {
         db.get_contacts(user_1).await.unwrap(),
         &[Contact::Accepted {
             user_id: user_2,
-            should_notify: true,
             busy: false,
         }]
     );
@@ -339,7 +330,6 @@ async fn test_add_contacts(db: &Arc<Database>) {
         db.get_contacts(user_1).await.unwrap(),
         &[Contact::Accepted {
             user_id: user_2,
-            should_notify: false,
             busy: false,
         }]
     );
@@ -353,12 +343,10 @@ async fn test_add_contacts(db: &Arc<Database>) {
         &[
             Contact::Accepted {
                 user_id: user_2,
-                should_notify: false,
                 busy: false,
             },
             Contact::Accepted {
                 user_id: user_3,
-                should_notify: false,
                 busy: false,
             }
         ]
@@ -367,7 +355,6 @@ async fn test_add_contacts(db: &Arc<Database>) {
         db.get_contacts(user_3).await.unwrap(),
         &[Contact::Accepted {
             user_id: user_1,
-            should_notify: false,
             busy: false,
         }],
     );
@@ -383,7 +370,6 @@ async fn test_add_contacts(db: &Arc<Database>) {
         db.get_contacts(user_2).await.unwrap(),
         &[Contact::Accepted {
             user_id: user_1,
-            should_notify: false,
             busy: false,
         }]
     );
@@ -391,7 +377,6 @@ async fn test_add_contacts(db: &Arc<Database>) {
         db.get_contacts(user_3).await.unwrap(),
         &[Contact::Accepted {
             user_id: user_1,
-            should_notify: false,
             busy: false,
         }],
     );

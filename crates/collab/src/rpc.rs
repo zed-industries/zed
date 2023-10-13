@@ -388,7 +388,7 @@ impl Server {
                             let contacts = app_state.db.get_contacts(user_id).await.trace_err();
                             if let Some((busy, contacts)) = busy.zip(contacts) {
                                 let pool = pool.lock();
-                                let updated_contact = contact_for_user(user_id, false, busy, &pool);
+                                let updated_contact = contact_for_user(user_id, busy, &pool);
                                 for contact in contacts {
                                     if let db::Contact::Accepted {
                                         user_id: contact_user_id,
@@ -690,7 +690,7 @@ impl Server {
         if let Some(user) = self.app_state.db.get_user_by_id(inviter_id).await? {
             if let Some(code) = &user.invite_code {
                 let pool = self.connection_pool.lock();
-                let invitee_contact = contact_for_user(invitee_id, true, false, &pool);
+                let invitee_contact = contact_for_user(invitee_id, false, &pool);
                 for connection_id in pool.user_connection_ids(inviter_id) {
                     self.peer.send(
                         connection_id,
@@ -2090,7 +2090,6 @@ async fn request_contact(
         .incoming_requests
         .push(proto::IncomingContactRequest {
             requester_id: requester_id.to_proto(),
-            should_notify: true,
         });
     for connection_id in session
         .connection_pool()
@@ -2124,7 +2123,8 @@ async fn respond_to_contact_request(
     } else {
         let accept = request.response == proto::ContactRequestResponse::Accept as i32;
 
-        db.respond_to_contact_request(responder_id, requester_id, accept)
+        let notification = db
+            .respond_to_contact_request(responder_id, requester_id, accept)
             .await?;
         let requester_busy = db.is_user_busy(requester_id).await?;
         let responder_busy = db.is_user_busy(responder_id).await?;
@@ -2135,7 +2135,7 @@ async fn respond_to_contact_request(
         if accept {
             update
                 .contacts
-                .push(contact_for_user(requester_id, false, requester_busy, &pool));
+                .push(contact_for_user(requester_id, requester_busy, &pool));
         }
         update
             .remove_incoming_requests
@@ -2149,13 +2149,19 @@ async fn respond_to_contact_request(
         if accept {
             update
                 .contacts
-                .push(contact_for_user(responder_id, true, responder_busy, &pool));
+                .push(contact_for_user(responder_id, responder_busy, &pool));
         }
         update
             .remove_outgoing_requests
             .push(responder_id.to_proto());
         for connection_id in pool.user_connection_ids(requester_id) {
             session.peer.send(connection_id, update.clone())?;
+            session.peer.send(
+                connection_id,
+                proto::AddNotifications {
+                    notifications: vec![notification.clone()],
+                },
+            )?;
         }
     }
 
@@ -3127,42 +3133,28 @@ fn build_initial_contacts_update(
 
     for contact in contacts {
         match contact {
-            db::Contact::Accepted {
-                user_id,
-                should_notify,
-                busy,
-            } => {
-                update
-                    .contacts
-                    .push(contact_for_user(user_id, should_notify, busy, &pool));
+            db::Contact::Accepted { user_id, busy } => {
+                update.contacts.push(contact_for_user(user_id, busy, &pool));
             }
             db::Contact::Outgoing { user_id } => update.outgoing_requests.push(user_id.to_proto()),
-            db::Contact::Incoming {
-                user_id,
-                should_notify,
-            } => update
-                .incoming_requests
-                .push(proto::IncomingContactRequest {
-                    requester_id: user_id.to_proto(),
-                    should_notify,
-                }),
+            db::Contact::Incoming { user_id } => {
+                update
+                    .incoming_requests
+                    .push(proto::IncomingContactRequest {
+                        requester_id: user_id.to_proto(),
+                    })
+            }
         }
     }
 
     update
 }
 
-fn contact_for_user(
-    user_id: UserId,
-    should_notify: bool,
-    busy: bool,
-    pool: &ConnectionPool,
-) -> proto::Contact {
+fn contact_for_user(user_id: UserId, busy: bool, pool: &ConnectionPool) -> proto::Contact {
     proto::Contact {
         user_id: user_id.to_proto(),
         online: pool.is_user_online(user_id),
         busy,
-        should_notify,
     }
 }
 
@@ -3223,7 +3215,7 @@ async fn update_user_contacts(user_id: UserId, session: &Session) -> Result<()> 
     let busy = db.is_user_busy(user_id).await?;
 
     let pool = session.connection_pool().await;
-    let updated_contact = contact_for_user(user_id, false, busy, &pool);
+    let updated_contact = contact_for_user(user_id, busy, &pool);
     for contact in contacts {
         if let db::Contact::Accepted {
             user_id: contact_user_id,

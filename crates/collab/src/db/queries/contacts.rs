@@ -8,7 +8,6 @@ impl Database {
             user_id_b: UserId,
             a_to_b: bool,
             accepted: bool,
-            should_notify: bool,
             user_a_busy: bool,
             user_b_busy: bool,
         }
@@ -53,7 +52,6 @@ impl Database {
                     if db_contact.accepted {
                         contacts.push(Contact::Accepted {
                             user_id: db_contact.user_id_b,
-                            should_notify: db_contact.should_notify && db_contact.a_to_b,
                             busy: db_contact.user_b_busy,
                         });
                     } else if db_contact.a_to_b {
@@ -63,19 +61,16 @@ impl Database {
                     } else {
                         contacts.push(Contact::Incoming {
                             user_id: db_contact.user_id_b,
-                            should_notify: db_contact.should_notify,
                         });
                     }
                 } else if db_contact.accepted {
                     contacts.push(Contact::Accepted {
                         user_id: db_contact.user_id_a,
-                        should_notify: db_contact.should_notify && !db_contact.a_to_b,
                         busy: db_contact.user_a_busy,
                     });
                 } else if db_contact.a_to_b {
                     contacts.push(Contact::Incoming {
                         user_id: db_contact.user_id_a,
-                        should_notify: db_contact.should_notify,
                     });
                 } else {
                     contacts.push(Contact::Outgoing {
