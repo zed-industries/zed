@@ -268,10 +268,10 @@ impl Workspace {
             .child(Toast::new(ToastOrigin::Bottom).child(Label::new("A toast")))
             // .child(Toast::new(ToastOrigin::BottomRight).child(Label::new("Another toast")))
             .child(NotificationToast::new(
-                "A notification",
-                "This is a notification",
-                Button::new("Primary"),
-            ))
+                "Can't pull changes from origin",
+                "Your local branch is behind the remote branch. Please pull the latest changes before pushing.",
+                Button::new("Stash & Switch").variant(ButtonVariant::Filled),
+            ).secondary_action(Button::new("Cancel")))
     }
 }
 
