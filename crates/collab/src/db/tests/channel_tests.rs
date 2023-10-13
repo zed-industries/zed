@@ -246,46 +246,9 @@ test_both_dbs!(
 async fn test_channel_invites(db: &Arc<Database>) {
     db.create_server("test").await.unwrap();
 
-    let user_1 = db
-        .create_user(
-            "user1@example.com",
-            false,
-            NewUserParams {
-                github_login: "user1".into(),
-                github_user_id: 5,
-                invite_count: 0,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
-    let user_2 = db
-        .create_user(
-            "user2@example.com",
-            false,
-            NewUserParams {
-                github_login: "user2".into(),
-                github_user_id: 6,
-                invite_count: 0,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
-
-    let user_3 = db
-        .create_user(
-            "user3@example.com",
-            false,
-            NewUserParams {
-                github_login: "user3".into(),
-                github_user_id: 7,
-                invite_count: 0,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
+    let user_1 = new_test_user(db, "user1@example.com").await;
+    let user_2 = new_test_user(db, "user2@example.com").await;
+    let user_3 = new_test_user(db, "user3@example.com").await;
 
     let channel_1_1 = db.create_root_channel("channel_1", user_1).await.unwrap();
 
@@ -334,14 +297,14 @@ async fn test_channel_invites(db: &Arc<Database>) {
                 role: proto::ChannelRole::Admin.into(),
             },
             proto::ChannelMember {
-                user_id: user_2.to_proto(),
-                kind: proto::channel_member::Kind::Invitee.into(),
-                role: proto::ChannelRole::Member.into(),
-            },
-            proto::ChannelMember {
                 user_id: user_3.to_proto(),
                 kind: proto::channel_member::Kind::Invitee.into(),
                 role: proto::ChannelRole::Admin.into(),
+            },
+            proto::ChannelMember {
+                user_id: user_2.to_proto(),
+                kind: proto::channel_member::Kind::Invitee.into(),
+                role: proto::ChannelRole::Member.into(),
             },
         ]
     );
@@ -860,92 +823,198 @@ test_both_dbs!(
 );
 
 async fn test_user_is_channel_participant(db: &Arc<Database>) {
-    let admin_id = new_test_user(db, "admin@example.com").await;
-    let member_id = new_test_user(db, "member@example.com").await;
-    let guest_id = new_test_user(db, "guest@example.com").await;
+    let admin = new_test_user(db, "admin@example.com").await;
+    let member = new_test_user(db, "member@example.com").await;
+    let guest = new_test_user(db, "guest@example.com").await;
 
-    let zed_id = db.create_root_channel("zed", admin_id).await.unwrap();
-    let intermediate_id = db
-        .create_channel("active", Some(zed_id), admin_id)
+    let zed_channel = db.create_root_channel("zed", admin).await.unwrap();
+    let active_channel = db
+        .create_channel("active", Some(zed_channel), admin)
         .await
         .unwrap();
-    let public_id = db
-        .create_channel("active", Some(intermediate_id), admin_id)
+    let vim_channel = db
+        .create_channel("vim", Some(active_channel), admin)
         .await
         .unwrap();
 
-    db.set_channel_visibility(public_id, crate::db::ChannelVisibility::Public, admin_id)
+    db.set_channel_visibility(vim_channel, crate::db::ChannelVisibility::Public, admin)
         .await
         .unwrap();
-    db.invite_channel_member(intermediate_id, member_id, admin_id, ChannelRole::Member)
+    db.invite_channel_member(active_channel, member, admin, ChannelRole::Member)
         .await
         .unwrap();
-    db.invite_channel_member(public_id, guest_id, admin_id, ChannelRole::Guest)
+    db.invite_channel_member(vim_channel, guest, admin, ChannelRole::Guest)
+        .await
+        .unwrap();
+
+    db.respond_to_channel_invite(active_channel, member, true)
         .await
         .unwrap();
 
     db.transaction(|tx| async move {
-        db.check_user_is_channel_participant(public_id, admin_id, &*tx)
+        db.check_user_is_channel_participant(vim_channel, admin, &*tx)
             .await
     })
     .await
     .unwrap();
     db.transaction(|tx| async move {
-        db.check_user_is_channel_participant(public_id, member_id, &*tx)
+        db.check_user_is_channel_participant(vim_channel, member, &*tx)
             .await
     })
     .await
     .unwrap();
     db.transaction(|tx| async move {
-        db.check_user_is_channel_participant(public_id, guest_id, &*tx)
+        db.check_user_is_channel_participant(vim_channel, guest, &*tx)
             .await
     })
     .await
     .unwrap();
 
-    db.set_channel_member_role(public_id, admin_id, guest_id, ChannelRole::Banned)
+    let members = db
+        .get_channel_participant_details(vim_channel, admin)
+        .await
+        .unwrap();
+    assert_eq!(
+        members,
+        &[
+            proto::ChannelMember {
+                user_id: admin.to_proto(),
+                kind: proto::channel_member::Kind::Member.into(),
+                role: proto::ChannelRole::Admin.into(),
+            },
+            proto::ChannelMember {
+                user_id: member.to_proto(),
+                kind: proto::channel_member::Kind::AncestorMember.into(),
+                role: proto::ChannelRole::Member.into(),
+            },
+            proto::ChannelMember {
+                user_id: guest.to_proto(),
+                kind: proto::channel_member::Kind::Invitee.into(),
+                role: proto::ChannelRole::Guest.into(),
+            },
+        ]
+    );
+
+    db.set_channel_member_role(vim_channel, admin, guest, ChannelRole::Banned)
         .await
         .unwrap();
     assert!(db
         .transaction(|tx| async move {
-            db.check_user_is_channel_participant(public_id, guest_id, &*tx)
+            db.check_user_is_channel_participant(vim_channel, guest, &*tx)
                 .await
         })
         .await
         .is_err());
 
-    db.remove_channel_member(public_id, guest_id, admin_id)
+    let members = db
+        .get_channel_participant_details(vim_channel, admin)
         .await
         .unwrap();
 
-    db.set_channel_visibility(zed_id, crate::db::ChannelVisibility::Public, admin_id)
+    assert_eq!(
+        members,
+        &[
+            proto::ChannelMember {
+                user_id: admin.to_proto(),
+                kind: proto::channel_member::Kind::Member.into(),
+                role: proto::ChannelRole::Admin.into(),
+            },
+            proto::ChannelMember {
+                user_id: member.to_proto(),
+                kind: proto::channel_member::Kind::AncestorMember.into(),
+                role: proto::ChannelRole::Member.into(),
+            },
+            proto::ChannelMember {
+                user_id: guest.to_proto(),
+                kind: proto::channel_member::Kind::Invitee.into(),
+                role: proto::ChannelRole::Banned.into(),
+            },
+        ]
+    );
+
+    db.remove_channel_member(vim_channel, guest, admin)
         .await
         .unwrap();
 
-    db.invite_channel_member(zed_id, guest_id, admin_id, ChannelRole::Guest)
+    db.set_channel_visibility(zed_channel, crate::db::ChannelVisibility::Public, admin)
+        .await
+        .unwrap();
+
+    db.invite_channel_member(zed_channel, guest, admin, ChannelRole::Guest)
         .await
         .unwrap();
 
     db.transaction(|tx| async move {
-        db.check_user_is_channel_participant(zed_id, guest_id, &*tx)
+        db.check_user_is_channel_participant(zed_channel, guest, &*tx)
             .await
     })
     .await
     .unwrap();
     assert!(db
         .transaction(|tx| async move {
-            db.check_user_is_channel_participant(intermediate_id, guest_id, &*tx)
+            db.check_user_is_channel_participant(active_channel, guest, &*tx)
                 .await
         })
         .await
         .is_err(),);
 
     db.transaction(|tx| async move {
-        db.check_user_is_channel_participant(public_id, guest_id, &*tx)
+        db.check_user_is_channel_participant(vim_channel, guest, &*tx)
             .await
     })
     .await
     .unwrap();
+
+    // currently people invited to parent channels are not shown here
+    // (though they *do* have permissions!)
+    let members = db
+        .get_channel_participant_details(vim_channel, admin)
+        .await
+        .unwrap();
+    assert_eq!(
+        members,
+        &[
+            proto::ChannelMember {
+                user_id: admin.to_proto(),
+                kind: proto::channel_member::Kind::Member.into(),
+                role: proto::ChannelRole::Admin.into(),
+            },
+            proto::ChannelMember {
+                user_id: member.to_proto(),
+                kind: proto::channel_member::Kind::AncestorMember.into(),
+                role: proto::ChannelRole::Member.into(),
+            },
+        ]
+    );
+
+    db.respond_to_channel_invite(zed_channel, guest, true)
+        .await
+        .unwrap();
+
+    let members = db
+        .get_channel_participant_details(vim_channel, admin)
+        .await
+        .unwrap();
+    assert_eq!(
+        members,
+        &[
+            proto::ChannelMember {
+                user_id: admin.to_proto(),
+                kind: proto::channel_member::Kind::Member.into(),
+                role: proto::ChannelRole::Admin.into(),
+            },
+            proto::ChannelMember {
+                user_id: member.to_proto(),
+                kind: proto::channel_member::Kind::AncestorMember.into(),
+                role: proto::ChannelRole::Member.into(),
+            },
+            proto::ChannelMember {
+                user_id: guest.to_proto(),
+                kind: proto::channel_member::Kind::AncestorMember.into(),
+                role: proto::ChannelRole::Guest.into(),
+            },
+        ]
+    );
 }
 
 #[track_caller]
@@ -976,8 +1045,6 @@ fn assert_dag(actual: ChannelGraph, expected: &[(ChannelId, Option<ChannelId>)])
 static GITHUB_USER_ID: AtomicI32 = AtomicI32::new(5);
 
 async fn new_test_user(db: &Arc<Database>, email: &str) -> UserId {
-    let gid = GITHUB_USER_ID.fetch_add(1, Ordering::SeqCst);
-
     db.create_user(
         email,
         false,

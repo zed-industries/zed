@@ -95,6 +95,18 @@ pub enum ChannelRole {
     Banned,
 }
 
+impl ChannelRole {
+    pub fn should_override(&self, other: Self) -> bool {
+        use ChannelRole::*;
+        match self {
+            Admin => matches!(other, Member | Banned | Guest),
+            Member => matches!(other, Banned | Guest),
+            Banned => matches!(other, Guest),
+            Guest => false,
+        }
+    }
+}
+
 impl From<proto::ChannelRole> for ChannelRole {
     fn from(value: proto::ChannelRole) -> Self {
         match value {

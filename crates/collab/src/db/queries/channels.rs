@@ -1,5 +1,7 @@
+use std::cmp::Ordering;
+
 use super::*;
-use rpc::proto::ChannelEdge;
+use rpc::proto::{channel_member::Kind, ChannelEdge};
 use smallvec::SmallVec;
 
 type ChannelDescendants = HashMap<ChannelId, SmallSet<ChannelId>>;
@@ -539,11 +541,18 @@ impl Database {
     pub async fn get_channel_participant_details(
         &self,
         channel_id: ChannelId,
-        user_id: UserId,
+        admin_id: UserId,
     ) -> Result<Vec<proto::ChannelMember>> {
         self.transaction(|tx| async move {
-            self.check_user_is_channel_admin(channel_id, user_id, &*tx)
+            self.check_user_is_channel_admin(channel_id, admin_id, &*tx)
                 .await?;
+
+            let channel_visibility = channel::Entity::find()
+                .filter(channel::Column::Id.eq(channel_id))
+                .one(&*tx)
+                .await?
+                .map(|channel| channel.visibility)
+                .unwrap_or(ChannelVisibility::ChannelMembers);
 
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
             enum QueryMemberDetails {
@@ -552,12 +561,13 @@ impl Database {
                 Role,
                 IsDirectMember,
                 Accepted,
+                Visibility,
             }
 
             let tx = tx;
             let ancestor_ids = self.get_channel_ancestors(channel_id, &*tx).await?;
             let mut stream = channel_member::Entity::find()
-                .distinct()
+                .left_join(channel::Entity)
                 .filter(channel_member::Column::ChannelId.is_in(ancestor_ids.iter().copied()))
                 .select_only()
                 .column(channel_member::Column::UserId)
@@ -568,19 +578,32 @@ impl Database {
                     QueryMemberDetails::IsDirectMember,
                 )
                 .column(channel_member::Column::Accepted)
-                .order_by_asc(channel_member::Column::UserId)
+                .column(channel::Column::Visibility)
                 .into_values::<_, QueryMemberDetails>()
                 .stream(&*tx)
                 .await?;
 
-            let mut rows = Vec::<proto::ChannelMember>::new();
+            struct UserDetail {
+                kind: Kind,
+                channel_role: ChannelRole,
+            }
+            let mut user_details: HashMap<UserId, UserDetail> = HashMap::default();
+
             while let Some(row) = stream.next().await {
-                let (user_id, is_admin, channel_role, is_direct_member, is_invite_accepted): (
+                let (
+                    user_id,
+                    is_admin,
+                    channel_role,
+                    is_direct_member,
+                    is_invite_accepted,
+                    visibility,
+                ): (
                     UserId,
                     bool,
                     Option<ChannelRole>,
                     bool,
                     bool,
+                    ChannelVisibility,
                 ) = row?;
                 let kind = match (is_direct_member, is_invite_accepted) {
                     (true, true) => proto::channel_member::Kind::Member,
@@ -593,25 +616,64 @@ impl Database {
                 } else {
                     ChannelRole::Member
                 });
-                let user_id = user_id.to_proto();
-                let kind = kind.into();
-                if let Some(last_row) = rows.last_mut() {
-                    if last_row.user_id == user_id {
-                        if is_direct_member {
-                            last_row.kind = kind;
-                            last_row.role = channel_role.into()
-                        }
-                        continue;
-                    }
+
+                if channel_role == ChannelRole::Guest
+                    && visibility != ChannelVisibility::Public
+                    && channel_visibility != ChannelVisibility::Public
+                {
+                    continue;
                 }
-                rows.push(proto::ChannelMember {
-                    user_id,
-                    kind,
-                    role: channel_role.into(),
-                });
+
+                if let Some(details_mut) = user_details.get_mut(&user_id) {
+                    if channel_role.should_override(details_mut.channel_role) {
+                        details_mut.channel_role = channel_role;
+                    }
+                    if kind == Kind::Member {
+                        details_mut.kind = kind;
+                    // the UI is going to be a bit confusing if you already have permissions
+                    // that are greater than or equal to the ones you're being invited to.
+                    } else if kind == Kind::Invitee && details_mut.kind == Kind::AncestorMember {
+                        details_mut.kind = kind;
+                    }
+                } else {
+                    user_details.insert(user_id, UserDetail { kind, channel_role });
+                }
             }
 
-            Ok(rows)
+            // sort by permissions descending, within each section, show members, then ancestor members, then invitees.
+            let mut results: Vec<(UserId, UserDetail)> = user_details.into_iter().collect();
+            results.sort_by(|a, b| {
+                if a.1.channel_role.should_override(b.1.channel_role) {
+                    return Ordering::Less;
+                } else if b.1.channel_role.should_override(a.1.channel_role) {
+                    return Ordering::Greater;
+                }
+
+                if a.1.kind == Kind::Member && b.1.kind != Kind::Member {
+                    return Ordering::Less;
+                } else if b.1.kind == Kind::Member && a.1.kind != Kind::Member {
+                    return Ordering::Greater;
+                }
+
+                if a.1.kind == Kind::AncestorMember && b.1.kind != Kind::AncestorMember {
+                    return Ordering::Less;
+                } else if b.1.kind == Kind::AncestorMember && a.1.kind != Kind::AncestorMember {
+                    return Ordering::Greater;
+                }
+
+                // would be nice to sort alphabetically instead of by user id.
+                // (or defer all sorting to the UI, but we need something to help the tests)
+                return a.0.cmp(&b.0);
+            });
+
+            Ok(results
+                .into_iter()
+                .map(|(user_id, details)| proto::ChannelMember {
+                    user_id: user_id.to_proto(),
+                    kind: details.kind.into(),
+                    role: details.channel_role.into(),
+                })
+                .collect())
         })
         .await
     }
