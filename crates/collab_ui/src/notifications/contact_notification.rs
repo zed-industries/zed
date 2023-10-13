@@ -1,14 +1,13 @@
-use std::sync::Arc;
-
 use crate::notifications::render_user_notification;
 use client::{ContactEventKind, User, UserStore};
 use gpui::{elements::*, Entity, ModelHandle, View, ViewContext};
+use std::sync::Arc;
 use workspace::notifications::Notification;
 
 pub struct ContactNotification {
     user_store: ModelHandle<UserStore>,
     user: Arc<User>,
-    kind: client::ContactEventKind,
+    notification: rpc::Notification,
 }
 
 #[derive(Clone, PartialEq)]
@@ -34,8 +33,8 @@ impl View for ContactNotification {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        match self.kind {
-            ContactEventKind::Requested => render_user_notification(
+        match self.notification {
+            rpc::Notification::ContactRequest { .. } => render_user_notification(
                 self.user.clone(),
                 "wants to add you as a contact",
                 Some("They won't be alerted if you decline."),
@@ -56,7 +55,7 @@ impl View for ContactNotification {
                 ],
                 cx,
             ),
-            ContactEventKind::Accepted => render_user_notification(
+            rpc::Notification::ContactRequestAccepted { .. } => render_user_notification(
                 self.user.clone(),
                 "accepted your contact request",
                 None,
@@ -78,7 +77,7 @@ impl Notification for ContactNotification {
 impl ContactNotification {
     pub fn new(
         user: Arc<User>,
-        kind: client::ContactEventKind,
+        notification: rpc::Notification,
         user_store: ModelHandle<UserStore>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -97,7 +96,7 @@ impl ContactNotification {
 
         Self {
             user,
-            kind,
+            notification,
             user_store,
         }
     }

@@ -70,7 +70,7 @@ pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 
 const MESSAGE_COUNT_PER_PAGE: usize = 100;
 const MAX_MESSAGE_LEN: usize = 1024;
-const INITIAL_NOTIFICATION_COUNT: usize = 30;
+const NOTIFICATION_COUNT_PER_PAGE: usize = 50;
 
 lazy_static! {
     static ref METRIC_CONNECTIONS: IntGauge =
@@ -269,6 +269,7 @@ impl Server {
             .add_request_handler(send_channel_message)
             .add_request_handler(remove_channel_message)
             .add_request_handler(get_channel_messages)
+            .add_request_handler(get_notifications)
             .add_request_handler(link_channel)
             .add_request_handler(unlink_channel)
             .add_request_handler(move_channel)
@@ -579,17 +580,15 @@ impl Server {
                 this.app_state.db.set_user_connected_once(user_id, true).await?;
             }
 
-            let (contacts, channels_for_user, channel_invites, notifications) = future::try_join4(
+            let (contacts, channels_for_user, channel_invites) = future::try_join3(
                 this.app_state.db.get_contacts(user_id),
                 this.app_state.db.get_channels_for_user(user_id),
                 this.app_state.db.get_channel_invites_for_user(user_id),
-                this.app_state.db.get_notifications(user_id, INITIAL_NOTIFICATION_COUNT)
             ).await?;
 
             {
                 let mut pool = this.connection_pool.lock();
                 pool.add_connection(connection_id, user_id, user.admin);
-                this.peer.send(connection_id, notifications)?;
                 this.peer.send(connection_id, build_initial_contacts_update(contacts, &pool))?;
                 this.peer.send(connection_id, build_initial_channels_update(
                     channels_for_user,
@@ -2099,8 +2098,8 @@ async fn request_contact(
         session.peer.send(connection_id, update.clone())?;
         session.peer.send(
             connection_id,
-            proto::AddNotifications {
-                notifications: vec![notification.clone()],
+            proto::NewNotification {
+                notification: Some(notification.clone()),
             },
         )?;
     }
@@ -2158,8 +2157,8 @@ async fn respond_to_contact_request(
             session.peer.send(connection_id, update.clone())?;
             session.peer.send(
                 connection_id,
-                proto::AddNotifications {
-                    notifications: vec![notification.clone()],
+                proto::NewNotification {
+                    notification: Some(notification.clone()),
                 },
             )?;
         }
@@ -3005,6 +3004,26 @@ async fn get_channel_messages(
         done: messages.len() < MESSAGE_COUNT_PER_PAGE,
         messages,
     })?;
+    Ok(())
+}
+
+async fn get_notifications(
+    request: proto::GetNotifications,
+    response: Response<proto::GetNotifications>,
+    session: Session,
+) -> Result<()> {
+    let notifications = session
+        .db()
+        .await
+        .get_notifications(
+            session.user_id,
+            NOTIFICATION_COUNT_PER_PAGE,
+            request
+                .before_id
+                .map(|id| db::NotificationId::from_proto(id)),
+        )
+        .await?;
+    response.send(proto::GetNotificationsResponse { notifications })?;
     Ok(())
 }
 

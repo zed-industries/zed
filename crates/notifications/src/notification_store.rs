@@ -2,7 +2,7 @@ use anyhow::Result;
 use channel::{ChannelMessage, ChannelMessageId, ChannelStore};
 use client::{Client, UserStore};
 use collections::HashMap;
-use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle};
+use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task};
 use rpc::{proto, AnyNotification, Notification, TypedEnvelope};
 use std::{ops::Range, sync::Arc};
 use sum_tree::{Bias, SumTree};
@@ -14,7 +14,7 @@ pub fn init(client: Arc<Client>, user_store: ModelHandle<UserStore>, cx: &mut Ap
 }
 
 pub struct NotificationStore {
-    _client: Arc<Client>,
+    client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
     channel_messages: HashMap<u64, ChannelMessage>,
     channel_store: ModelHandle<ChannelStore>,
@@ -26,6 +26,9 @@ pub enum NotificationEvent {
     NotificationsUpdated {
         old_range: Range<usize>,
         new_count: usize,
+    },
+    NewNotification {
+        entry: NotificationEntry,
     },
 }
 
@@ -63,16 +66,19 @@ impl NotificationStore {
         user_store: ModelHandle<UserStore>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        Self {
+        let this = Self {
             channel_store: ChannelStore::global(cx),
             notifications: Default::default(),
             channel_messages: Default::default(),
             _subscriptions: vec![
-                client.add_message_handler(cx.handle(), Self::handle_add_notifications)
+                client.add_message_handler(cx.handle(), Self::handle_new_notification)
             ],
             user_store,
-            _client: client,
-        }
+            client,
+        };
+
+        this.load_more_notifications(cx).detach();
+        this
     }
 
     pub fn notification_count(&self) -> usize {
@@ -93,18 +99,42 @@ impl NotificationStore {
         cursor.item()
     }
 
-    async fn handle_add_notifications(
+    pub fn load_more_notifications(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        let request = self
+            .client
+            .request(proto::GetNotifications { before_id: None });
+        cx.spawn(|this, cx| async move {
+            let response = request.await?;
+            Self::add_notifications(this, false, response.notifications, cx).await?;
+            Ok(())
+        })
+    }
+
+    async fn handle_new_notification(
         this: ModelHandle<Self>,
-        envelope: TypedEnvelope<proto::AddNotifications>,
+        envelope: TypedEnvelope<proto::NewNotification>,
         _: Arc<Client>,
+        cx: AsyncAppContext,
+    ) -> Result<()> {
+        Self::add_notifications(
+            this,
+            true,
+            envelope.payload.notification.into_iter().collect(),
+            cx,
+        )
+        .await
+    }
+
+    async fn add_notifications(
+        this: ModelHandle<Self>,
+        is_new: bool,
+        notifications: Vec<proto::Notification>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let mut user_ids = Vec::new();
         let mut message_ids = Vec::new();
 
-        let notifications = envelope
-            .payload
-            .notifications
+        let notifications = notifications
             .into_iter()
             .filter_map(|message| {
                 Some(NotificationEntry {
@@ -193,6 +223,12 @@ impl NotificationStore {
                     .map_or(true, |existing| existing.id != notification.id)
                 {
                     cursor.next(&());
+                }
+
+                if is_new {
+                    cx.emit(NotificationEvent::NewNotification {
+                        entry: notification.clone(),
+                    });
                 }
 
                 new_notifications.push(notification, &());

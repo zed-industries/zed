@@ -26,11 +26,19 @@ impl Database {
         &self,
         recipient_id: UserId,
         limit: usize,
-    ) -> Result<proto::AddNotifications> {
+        before_id: Option<NotificationId>,
+    ) -> Result<Vec<proto::Notification>> {
         self.transaction(|tx| async move {
-            let mut result = proto::AddNotifications::default();
+            let mut result = Vec::new();
+            let mut condition =
+                Condition::all().add(notification::Column::RecipientId.eq(recipient_id));
+
+            if let Some(before_id) = before_id {
+                condition = condition.add(notification::Column::Id.lt(before_id));
+            }
+
             let mut rows = notification::Entity::find()
-                .filter(notification::Column::RecipientId.eq(recipient_id))
+                .filter(condition)
                 .order_by_desc(notification::Column::Id)
                 .limit(limit as u64)
                 .stream(&*tx)
@@ -40,7 +48,7 @@ impl Database {
                 let Some(kind) = self.notification_kinds_by_id.get(&row.kind) else {
                     continue;
                 };
-                result.notifications.push(proto::Notification {
+                result.push(proto::Notification {
                     id: row.id.to_proto(),
                     kind: kind.to_string(),
                     timestamp: row.created_at.assume_utc().unix_timestamp() as u64,
@@ -49,7 +57,7 @@ impl Database {
                     actor_id: row.actor_id.map(|id| id.to_proto()),
                 });
             }
-            result.notifications.reverse();
+            result.reverse();
             Ok(result)
         })
         .await

@@ -1,10 +1,10 @@
 use crate::{
-    contact_notification::ContactNotification, face_pile::FacePile, toggle_deafen, toggle_mute,
-    toggle_screen_sharing, LeaveCall, ToggleDeafen, ToggleMute, ToggleScreenSharing,
+    face_pile::FacePile, toggle_deafen, toggle_mute, toggle_screen_sharing, LeaveCall,
+    ToggleDeafen, ToggleMute, ToggleScreenSharing,
 };
 use auto_update::AutoUpdateStatus;
 use call::{ActiveCall, ParticipantLocation, Room};
-use client::{proto::PeerId, Client, ContactEventKind, SignIn, SignOut, User, UserStore};
+use client::{proto::PeerId, Client, SignIn, SignOut, User, UserStore};
 use clock::ReplicaId;
 use context_menu::{ContextMenu, ContextMenuItem};
 use gpui::{
@@ -151,28 +151,6 @@ impl CollabTitlebarItem {
             this.window_activation_changed(active, cx)
         }));
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
-        subscriptions.push(
-            cx.subscribe(&user_store, move |this, user_store, event, cx| {
-                if let Some(workspace) = this.workspace.upgrade(cx) {
-                    workspace.update(cx, |workspace, cx| {
-                        if let client::Event::Contact { user, kind } = event {
-                            if let ContactEventKind::Requested | ContactEventKind::Accepted = kind {
-                                workspace.show_notification(user.id as usize, cx, |cx| {
-                                    cx.add_view(|cx| {
-                                        ContactNotification::new(
-                                            user.clone(),
-                                            *kind,
-                                            user_store,
-                                            cx,
-                                        )
-                                    })
-                                })
-                            }
-                        }
-                    });
-                }
-            }),
-        );
 
         Self {
             workspace: workspace.weak_handle(),

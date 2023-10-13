@@ -41,7 +41,8 @@ notifications = { path = "../notifications" }
 rich_text = { path = "../rich_text" }
 picker = { path = "../picker" }
 project = { path = "../project" }
-recent_projects = {path = "../recent_projects"}
+recent_projects = { path = "../recent_projects" }
+rpc = { path = "../rpc" }
 settings = { path = "../settings" }
 feature_flags = {path = "../feature_flags"}
 theme = { path = "../theme" }
@@ -68,6 +69,7 @@ editor = { path = "../editor", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 notifications = { path = "../notifications", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
+rpc = { path = "../rpc", features = ["test-support"] }
 settings = { path = "../settings", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 workspace = { path = "../workspace", features = ["test-support"] }

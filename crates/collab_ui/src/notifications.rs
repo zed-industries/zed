@@ -2,12 +2,22 @@ use client::User;
 use gpui::{
     elements::*,
     platform::{CursorStyle, MouseButton},
-    AnyElement, Element, ViewContext,
+    AnyElement, AppContext, Element, ViewContext,
 };
 use std::sync::Arc;
+use workspace::AppState;
+
+pub mod contact_notification;
+pub mod incoming_call_notification;
+pub mod project_shared_notification;
 
 enum Dismiss {}
 enum Button {}
+
+pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
+    incoming_call_notification::init(app_state, cx);
+    project_shared_notification::init(app_state, cx);
+}
 
 pub fn render_user_notification<F, V: 'static>(
     user: Arc<User>,

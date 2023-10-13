@@ -1,5 +1,7 @@
 use crate::{
-    format_timestamp, is_channels_feature_enabled, render_avatar, NotificationPanelSettings,
+    format_timestamp, is_channels_feature_enabled,
+    notifications::contact_notification::ContactNotification, render_avatar,
+    NotificationPanelSettings,
 };
 use anyhow::Result;
 use channel::ChannelStore;
@@ -39,6 +41,7 @@ pub struct NotificationPanel {
     notification_list: ListState<Self>,
     pending_serialization: Task<Option<()>>,
     subscriptions: Vec<gpui::Subscription>,
+    workspace: WeakViewHandle<Workspace>,
     local_timezone: UtcOffset,
     has_focus: bool,
 }
@@ -64,6 +67,7 @@ impl NotificationPanel {
         let fs = workspace.app_state().fs.clone();
         let client = workspace.app_state().client.clone();
         let user_store = workspace.app_state().user_store.clone();
+        let workspace_handle = workspace.weak_handle();
 
         let notification_list =
             ListState::<Self>::new(0, Orientation::Top, 1000., move |this, ix, cx| {
@@ -96,6 +100,7 @@ impl NotificationPanel {
                 notification_store: NotificationStore::global(cx),
                 notification_list,
                 pending_serialization: Task::ready(None),
+                workspace: workspace_handle,
                 has_focus: false,
                 subscriptions: Vec::new(),
                 active: false,
@@ -177,7 +182,7 @@ impl NotificationPanel {
         let notification_store = self.notification_store.read(cx);
         let user_store = self.user_store.read(cx);
         let channel_store = self.channel_store.read(cx);
-        let entry = notification_store.notification_at(ix).unwrap();
+        let entry = notification_store.notification_at(ix)?;
         let now = OffsetDateTime::now_utc();
         let timestamp = entry.timestamp;
 
@@ -293,7 +298,7 @@ impl NotificationPanel {
         &mut self,
         _: ModelHandle<NotificationStore>,
         event: &NotificationEvent,
-        _: &mut ViewContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) {
         match event {
             NotificationEvent::NotificationsUpdated {
@@ -301,7 +306,33 @@ impl NotificationPanel {
                 new_count,
             } => {
                 self.notification_list.splice(old_range.clone(), *new_count);
+                cx.notify();
             }
+            NotificationEvent::NewNotification { entry } => match entry.notification {
+                Notification::ContactRequest { actor_id }
+                | Notification::ContactRequestAccepted { actor_id } => {
+                    let user_store = self.user_store.clone();
+                    let Some(user) = user_store.read(cx).get_cached_user(actor_id) else {
+                        return;
+                    };
+                    self.workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.show_notification(actor_id as usize, cx, |cx| {
+                                cx.add_view(|cx| {
+                                    ContactNotification::new(
+                                        user.clone(),
+                                        entry.notification.clone(),
+                                        user_store,
+                                        cx,
+                                    )
+                                })
+                            })
+                        })
+                        .ok();
+                }
+                Notification::ChannelInvitation { .. } => {}
+                Notification::ChannelMessageMention { .. } => {}
+            },
         }
     }
 }

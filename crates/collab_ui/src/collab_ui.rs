@@ -2,13 +2,10 @@ pub mod channel_view;
 pub mod chat_panel;
 pub mod collab_panel;
 mod collab_titlebar_item;
-mod contact_notification;
 mod face_pile;
-mod incoming_call_notification;
 pub mod notification_panel;
-mod notifications;
+pub mod notifications;
 mod panel_settings;
-pub mod project_shared_notification;
 mod sharing_status_indicator;
 
 use call::{report_call_event_for_room, ActiveCall, Room};
@@ -48,8 +45,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     collab_titlebar_item::init(cx);
     collab_panel::init(cx);
     chat_panel::init(cx);
-    incoming_call_notification::init(&app_state, cx);
-    project_shared_notification::init(&app_state, cx);
+    notifications::init(&app_state, cx);
     sharing_status_indicator::init(cx);
 
     cx.add_global_action(toggle_screen_sharing);

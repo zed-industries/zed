@@ -1566,6 +1566,7 @@ dependencies = [
  "project",
  "recent_projects",
  "rich_text",
+ "rpc",
  "schemars",
  "serde",
  "serde_derive",

@@ -155,25 +155,28 @@ message Envelope {
         UpdateChannelBufferCollaborators update_channel_buffer_collaborators = 128;
         RejoinChannelBuffers rejoin_channel_buffers = 129;
         RejoinChannelBuffersResponse rejoin_channel_buffers_response = 130;
-        AckBufferOperation ack_buffer_operation = 143;
+        AckBufferOperation ack_buffer_operation = 131;
 
-        JoinChannelChat join_channel_chat = 131;
-        JoinChannelChatResponse join_channel_chat_response = 132;
-        LeaveChannelChat leave_channel_chat = 133;
-        SendChannelMessage send_channel_message = 134;
-        SendChannelMessageResponse send_channel_message_response = 135;
-        ChannelMessageSent channel_message_sent = 136;
-        GetChannelMessages get_channel_messages = 137;
-        GetChannelMessagesResponse get_channel_messages_response = 138;
-        RemoveChannelMessage remove_channel_message = 139;
-        AckChannelMessage ack_channel_message = 144;
+        JoinChannelChat join_channel_chat = 132;
+        JoinChannelChatResponse join_channel_chat_response = 133;
+        LeaveChannelChat leave_channel_chat = 134;
+        SendChannelMessage send_channel_message = 135;
+        SendChannelMessageResponse send_channel_message_response = 136;
+        ChannelMessageSent channel_message_sent = 137;
+        GetChannelMessages get_channel_messages = 138;
+        GetChannelMessagesResponse get_channel_messages_response = 139;
+        RemoveChannelMessage remove_channel_message = 140;
+        AckChannelMessage ack_channel_message = 141;
+        GetChannelMessagesById get_channel_messages_by_id = 142;
 
-        LinkChannel link_channel = 140;
-        UnlinkChannel unlink_channel = 141;
-        MoveChannel move_channel = 142;
+        LinkChannel link_channel = 143;
+        UnlinkChannel unlink_channel = 144;
+        MoveChannel move_channel = 145;
 
-        AddNotifications add_notifications = 145;
-        GetChannelMessagesById get_channel_messages_by_id = 146; // Current max
+        NewNotification new_notification = 146;
+        GetNotifications get_notifications = 147;
+        GetNotificationsResponse get_notifications_response = 148; // Current max
+
     }
 }
 
@@ -1563,7 +1566,15 @@ message UpdateDiffBase {
     optional string diff_base = 3;
 }
 
-message AddNotifications {
+message GetNotifications {
+    optional uint64 before_id = 1;
+}
+
+message NewNotification {
+    Notification notification = 1;
+}
+
+message GetNotificationsResponse {
     repeated Notification notifications = 1;
 }
 
