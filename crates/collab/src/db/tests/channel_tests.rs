@@ -895,6 +895,18 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         ]
     );
 
+    db.respond_to_channel_invite(vim_channel, guest, true)
+        .await
+        .unwrap();
+
+    let channels = db.get_channels_for_user(guest).await.unwrap().channels;
+    assert_dag(channels, &[(vim_channel, None)]);
+    let channels = db.get_channels_for_user(member).await.unwrap().channels;
+    assert_dag(
+        channels,
+        &[(active_channel, None), (vim_channel, Some(active_channel))],
+    );
+
     db.set_channel_member_role(vim_channel, admin, guest, ChannelRole::Banned)
         .await
         .unwrap();
@@ -926,7 +938,7 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
             },
             proto::ChannelMember {
                 user_id: guest.to_proto(),
-                kind: proto::channel_member::Kind::Invitee.into(),
+                kind: proto::channel_member::Kind::Member.into(),
                 role: proto::ChannelRole::Banned.into(),
             },
         ]
@@ -1015,6 +1027,12 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
             },
         ]
     );
+
+    let channels = db.get_channels_for_user(guest).await.unwrap().channels;
+    assert_dag(
+        channels,
+        &[(zed_channel, None), (vim_channel, Some(zed_channel))],
+    )
 }
 
 #[track_caller]
