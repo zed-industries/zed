@@ -3596,7 +3596,6 @@ impl Editor {
                         let menu = menu.unwrap();
                         *context_menu = Some(ContextMenu::Completions(menu));
                         drop(context_menu);
-                        this.completion_tasks.clear();
                         this.discard_copilot_suggestion(cx);
                         cx.notify();
                     } else if this.completion_tasks.is_empty() {
