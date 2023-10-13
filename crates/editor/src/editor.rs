@@ -3740,7 +3740,10 @@ impl Editor {
         if self.has_active_copilot_suggestion(cx) {
             self.cycle_copilot_suggestions(Direction::Next, cx);
         } else {
-            self.refresh_copilot_suggestions(false, cx);
+            let is_copilot_disabled = self.refresh_copilot_suggestions(false, cx).is_none();
+            if is_copilot_disabled {
+                cx.propagate_action();
+            }
         }
     }
 
@@ -3752,7 +3755,10 @@ impl Editor {
         if self.has_active_copilot_suggestion(cx) {
             self.cycle_copilot_suggestions(Direction::Prev, cx);
         } else {
-            self.refresh_copilot_suggestions(false, cx);
+            let is_copilot_disabled = self.refresh_copilot_suggestions(false, cx).is_none();
+            if is_copilot_disabled {
+                cx.propagate_action();
+            }
         }
     }
 
