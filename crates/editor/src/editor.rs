@@ -1000,6 +1000,11 @@ impl CompletionsMenu {
         project: Option<ModelHandle<Project>>,
         cx: &mut ViewContext<Editor>,
     ) {
+        let settings = settings::get::<EditorSettings>(cx);
+        if !settings.show_completion_documentation {
+            return;
+        }
+
         let Some(project) = project else {
             return;
         };
@@ -1083,6 +1088,11 @@ impl CompletionsMenu {
         project: Option<&ModelHandle<Project>>,
         cx: &mut ViewContext<Editor>,
     ) {
+        let settings = settings::get::<EditorSettings>(cx);
+        if !settings.show_completion_documentation {
+            return;
+        }
+
         let completion_index = self.matches[self.selected_item].candidate_id;
         let Some(project) = project else {
             return;
@@ -1241,6 +1251,9 @@ impl CompletionsMenu {
     ) -> AnyElement<Editor> {
         enum CompletionTag {}
 
+        let settings = settings::get::<EditorSettings>(cx);
+        let show_completion_documentation = settings.show_completion_documentation;
+
         let widest_completion_ix = self
             .matches
             .iter()
@@ -1252,7 +1265,9 @@ impl CompletionsMenu {
 
                 let mut len = completion.label.text.chars().count();
                 if let Some(Documentation::SingleLine(text)) = documentation {
-                    len += text.chars().count();
+                    if show_completion_documentation {
+                        len += text.chars().count();
+                    }
                 }
 
                 len
@@ -1273,7 +1288,12 @@ impl CompletionsMenu {
                     let item_ix = start_ix + ix;
                     let candidate_id = mat.candidate_id;
                     let completion = &completions_guard[candidate_id];
-                    let documentation = &completion.documentation;
+
+                    let documentation = if show_completion_documentation {
+                        &completion.documentation
+                    } else {
+                        &None
+                    };
 
                     items.push(
                         MouseEventHandler::new::<CompletionTag, _>(
