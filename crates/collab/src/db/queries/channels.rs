@@ -2,9 +2,6 @@ use std::cmp::Ordering;
 
 use super::*;
 use rpc::proto::{channel_member::Kind, ChannelEdge};
-use smallvec::SmallVec;
-
-type ChannelDescendants = HashMap<ChannelId, SmallSet<ChannelId>>;
 
 impl Database {
     #[cfg(test)]
@@ -41,7 +38,7 @@ impl Database {
             let channel = channel::ActiveModel {
                 id: ActiveValue::NotSet,
                 name: ActiveValue::Set(name.to_string()),
-                visibility: ActiveValue::Set(ChannelVisibility::ChannelMembers),
+                visibility: ActiveValue::Set(ChannelVisibility::Members),
             }
             .insert(&*tx)
             .await?;
@@ -349,49 +346,6 @@ impl Database {
         .await
     }
 
-    async fn get_channel_graph(
-        &self,
-        parents_by_child_id: ChannelDescendants,
-        trim_dangling_parents: bool,
-        tx: &DatabaseTransaction,
-    ) -> Result<ChannelGraph> {
-        let mut channels = Vec::with_capacity(parents_by_child_id.len());
-        {
-            let mut rows = channel::Entity::find()
-                .filter(channel::Column::Id.is_in(parents_by_child_id.keys().copied()))
-                .stream(&*tx)
-                .await?;
-            while let Some(row) = rows.next().await {
-                let row = row?;
-                channels.push(Channel {
-                    id: row.id,
-                    name: row.name,
-                })
-            }
-        }
-
-        let mut edges = Vec::with_capacity(parents_by_child_id.len());
-        for (channel, parents) in parents_by_child_id.iter() {
-            for parent in parents.into_iter() {
-                if trim_dangling_parents {
-                    if parents_by_child_id.contains_key(parent) {
-                        edges.push(ChannelEdge {
-                            channel_id: channel.to_proto(),
-                            parent_id: parent.to_proto(),
-                        });
-                    }
-                } else {
-                    edges.push(ChannelEdge {
-                        channel_id: channel.to_proto(),
-                        parent_id: parent.to_proto(),
-                    });
-                }
-            }
-        }
-
-        Ok(ChannelGraph { channels, edges })
-    }
-
     pub async fn get_channels_for_user(&self, user_id: UserId) -> Result<ChannelsForUser> {
         self.transaction(|tx| async move {
             let tx = tx;
@@ -637,7 +591,7 @@ impl Database {
                 .one(&*tx)
                 .await?
                 .map(|channel| channel.visibility)
-                .unwrap_or(ChannelVisibility::ChannelMembers);
+                .unwrap_or(ChannelVisibility::Members);
 
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
             enum QueryMemberDetails {
@@ -1011,79 +965,6 @@ impl Database {
         Ok(results)
     }
 
-    /// Returns the channel descendants,
-    /// Structured as a map from child ids to their parent ids
-    /// For example, the descendants of 'a' in this DAG:
-    ///
-    ///   /- b -\
-    /// a -- c -- d
-    ///
-    /// would be:
-    /// {
-    ///     a: [],
-    ///     b: [a],
-    ///     c: [a],
-    ///     d: [a, c],
-    /// }
-    async fn get_channel_descendants(
-        &self,
-        channel_ids: impl IntoIterator<Item = ChannelId>,
-        tx: &DatabaseTransaction,
-    ) -> Result<ChannelDescendants> {
-        let mut values = String::new();
-        for id in channel_ids {
-            if !values.is_empty() {
-                values.push_str(", ");
-            }
-            write!(&mut values, "({})", id).unwrap();
-        }
-
-        if values.is_empty() {
-            return Ok(HashMap::default());
-        }
-
-        let sql = format!(
-            r#"
-            SELECT
-                descendant_paths.*
-            FROM
-                channel_paths parent_paths, channel_paths descendant_paths
-            WHERE
-                parent_paths.channel_id IN ({values}) AND
-                descendant_paths.id_path LIKE (parent_paths.id_path || '%')
-        "#
-        );
-
-        let stmt = Statement::from_string(self.pool.get_database_backend(), sql);
-
-        let mut parents_by_child_id: ChannelDescendants = HashMap::default();
-        let mut paths = channel_path::Entity::find()
-            .from_raw_sql(stmt)
-            .stream(tx)
-            .await?;
-
-        while let Some(path) = paths.next().await {
-            let path = path?;
-            let ids = path.id_path.trim_matches('/').split('/');
-            let mut parent_id = None;
-            for id in ids {
-                if let Ok(id) = id.parse() {
-                    let id = ChannelId::from_proto(id);
-                    if id == path.channel_id {
-                        break;
-                    }
-                    parent_id = Some(id);
-                }
-            }
-            let entry = parents_by_child_id.entry(path.channel_id).or_default();
-            if let Some(parent_id) = parent_id {
-                entry.insert(parent_id);
-            }
-        }
-
-        Ok(parents_by_child_id)
-    }
-
     /// Returns the channel with the given ID and:
     /// - true if the user is a member
     /// - false if the user hasn't accepted the invitation yet
@@ -1242,18 +1123,23 @@ impl Database {
                 .await?;
         }
 
-        let mut channel_descendants = self.get_channel_descendants([channel], &*tx).await?;
-        if let Some(channel) = channel_descendants.get_mut(&channel) {
-            // Remove the other parents
-            channel.clear();
-            channel.insert(new_parent);
-        }
-
-        let channels = self
-            .get_channel_graph(channel_descendants, false, &*tx)
+        let membership = channel_member::Entity::find()
+            .filter(
+                channel_member::Column::ChannelId
+                    .eq(channel)
+                    .and(channel_member::Column::UserId.eq(user)),
+            )
+            .all(tx)
             .await?;
 
-        Ok(channels)
+        let mut channel_info = self.get_user_channels(user, membership, &*tx).await?;
+
+        channel_info.channels.edges.push(ChannelEdge {
+            channel_id: channel.to_proto(),
+            parent_id: new_parent.to_proto(),
+        });
+
+        Ok(channel_info.channels)
     }
 
     /// Unlink a channel from a given parent. This will add in a root edge if
@@ -1403,40 +1289,5 @@ impl PartialEq for ChannelGraph {
 impl PartialEq for ChannelGraph {
     fn eq(&self, other: &Self) -> bool {
         self.channels == other.channels && self.edges == other.edges
-    }
-}
-
-struct SmallSet<T>(SmallVec<[T; 1]>);
-
-impl<T> Deref for SmallSet<T> {
-    type Target = [T];
-
-    fn deref(&self) -> &Self::Target {
-        self.0.deref()
-    }
-}
-
-impl<T> Default for SmallSet<T> {
-    fn default() -> Self {
-        Self(SmallVec::new())
-    }
-}
-
-impl<T> SmallSet<T> {
-    fn insert(&mut self, value: T) -> bool
-    where
-        T: Ord,
-    {
-        match self.binary_search(&value) {
-            Ok(_) => false,
-            Err(ix) => {
-                self.0.insert(ix, value);
-                true
-            }
-        }
-    }
-
-    fn clear(&mut self) {
-        self.0.clear();
     }
 }

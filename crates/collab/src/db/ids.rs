@@ -141,16 +141,16 @@ impl Into<i32> for ChannelRole {
 pub enum ChannelVisibility {
     #[sea_orm(string_value = "public")]
     Public,
-    #[sea_orm(string_value = "channel_members")]
+    #[sea_orm(string_value = "members")]
     #[default]
-    ChannelMembers,
+    Members,
 }
 
 impl From<proto::ChannelVisibility> for ChannelVisibility {
     fn from(value: proto::ChannelVisibility) -> Self {
         match value {
             proto::ChannelVisibility::Public => ChannelVisibility::Public,
-            proto::ChannelVisibility::ChannelMembers => ChannelVisibility::ChannelMembers,
+            proto::ChannelVisibility::ChannelMembers => ChannelVisibility::Members,
         }
     }
 }
@@ -159,7 +159,7 @@ impl Into<proto::ChannelVisibility> for ChannelVisibility {
     fn into(self) -> proto::ChannelVisibility {
         match self {
             ChannelVisibility::Public => proto::ChannelVisibility::Public,
-            ChannelVisibility::ChannelMembers => proto::ChannelVisibility::ChannelMembers,
+            ChannelVisibility::Members => proto::ChannelVisibility::ChannelMembers,
         }
     }
 }
