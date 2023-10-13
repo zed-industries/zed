@@ -192,7 +192,8 @@ CREATE INDEX "index_followers_on_room_id" ON "followers" ("room_id");
 CREATE TABLE "channels" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "name" VARCHAR NOT NULL,
-    "created_at" TIMESTAMP NOT NULL DEFAULT now
+    "created_at" TIMESTAMP NOT NULL DEFAULT now,
+    "visibility" VARCHAR NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS "channel_chat_participants" (

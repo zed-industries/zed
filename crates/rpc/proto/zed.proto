@@ -1040,6 +1040,7 @@ enum ChannelRole {
     Admin = 0;
     Member = 1;
     Guest = 2;
+    Banned = 3;
 }
 
 message SetChannelMemberRole {

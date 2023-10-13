@@ -7,7 +7,7 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: ChannelId,
     pub name: String,
-    pub visbility: ChannelVisibility,
+    pub visibility: ChannelVisibility,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

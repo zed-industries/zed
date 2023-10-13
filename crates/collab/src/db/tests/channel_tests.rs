@@ -8,11 +8,14 @@ use crate::{
     db::{
         queries::channels::ChannelGraph,
         tests::{graph, TEST_RELEASE_CHANNEL},
-        ChannelId, ChannelRole, Database, NewUserParams,
+        ChannelId, ChannelRole, Database, NewUserParams, UserId,
     },
     test_both_dbs,
 };
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicI32, Ordering},
+    Arc,
+};
 
 test_both_dbs!(test_channels, test_channels_postgres, test_channels_sqlite);
 
@@ -850,6 +853,101 @@ async fn test_db_channel_moving_bugs(db: &Arc<Database>) {
     );
 }
 
+test_both_dbs!(
+    test_user_is_channel_participant,
+    test_user_is_channel_participant_postgres,
+    test_user_is_channel_participant_sqlite
+);
+
+async fn test_user_is_channel_participant(db: &Arc<Database>) {
+    let admin_id = new_test_user(db, "admin@example.com").await;
+    let member_id = new_test_user(db, "member@example.com").await;
+    let guest_id = new_test_user(db, "guest@example.com").await;
+
+    let zed_id = db.create_root_channel("zed", admin_id).await.unwrap();
+    let intermediate_id = db
+        .create_channel("active", Some(zed_id), admin_id)
+        .await
+        .unwrap();
+    let public_id = db
+        .create_channel("active", Some(intermediate_id), admin_id)
+        .await
+        .unwrap();
+
+    db.set_channel_visibility(public_id, crate::db::ChannelVisibility::Public, admin_id)
+        .await
+        .unwrap();
+    db.invite_channel_member(intermediate_id, member_id, admin_id, ChannelRole::Member)
+        .await
+        .unwrap();
+    db.invite_channel_member(public_id, guest_id, admin_id, ChannelRole::Guest)
+        .await
+        .unwrap();
+
+    db.transaction(|tx| async move {
+        db.check_user_is_channel_participant(public_id, admin_id, &*tx)
+            .await
+    })
+    .await
+    .unwrap();
+    db.transaction(|tx| async move {
+        db.check_user_is_channel_participant(public_id, member_id, &*tx)
+            .await
+    })
+    .await
+    .unwrap();
+    db.transaction(|tx| async move {
+        db.check_user_is_channel_participant(public_id, guest_id, &*tx)
+            .await
+    })
+    .await
+    .unwrap();
+
+    db.set_channel_member_role(public_id, admin_id, guest_id, ChannelRole::Banned)
+        .await
+        .unwrap();
+    assert!(db
+        .transaction(|tx| async move {
+            db.check_user_is_channel_participant(public_id, guest_id, &*tx)
+                .await
+        })
+        .await
+        .is_err());
+
+    db.remove_channel_member(public_id, guest_id, admin_id)
+        .await
+        .unwrap();
+
+    db.set_channel_visibility(zed_id, crate::db::ChannelVisibility::Public, admin_id)
+        .await
+        .unwrap();
+
+    db.invite_channel_member(zed_id, guest_id, admin_id, ChannelRole::Guest)
+        .await
+        .unwrap();
+
+    db.transaction(|tx| async move {
+        db.check_user_is_channel_participant(zed_id, guest_id, &*tx)
+            .await
+    })
+    .await
+    .unwrap();
+    assert!(db
+        .transaction(|tx| async move {
+            db.check_user_is_channel_participant(intermediate_id, guest_id, &*tx)
+                .await
+        })
+        .await
+        .is_err(),);
+
+    db.transaction(|tx| async move {
+        db.check_user_is_channel_participant(public_id, guest_id, &*tx)
+            .await
+    })
+    .await
+    .unwrap();
+}
+
 #[track_caller]
 fn assert_dag(actual: ChannelGraph, expected: &[(ChannelId, Option<ChannelId>)]) {
     let mut actual_map: HashMap<ChannelId, HashSet<ChannelId>> = HashMap::default();
@@ -873,4 +971,23 @@ fn assert_dag(actual: ChannelGraph, expected: &[(ChannelId, Option<ChannelId>)])
     }
 
     pretty_assertions::assert_eq!(actual_map, expected_map)
+}
+
+static GITHUB_USER_ID: AtomicI32 = AtomicI32::new(5);
+
+async fn new_test_user(db: &Arc<Database>, email: &str) -> UserId {
+    let gid = GITHUB_USER_ID.fetch_add(1, Ordering::SeqCst);
+
+    db.create_user(
+        email,
+        false,
+        NewUserParams {
+            github_login: email[0..email.find("@").unwrap()].to_string(),
+            github_user_id: GITHUB_USER_ID.fetch_add(1, Ordering::SeqCst),
+            invite_count: 0,
+        },
+    )
+    .await
+    .unwrap()
+    .user_id
 }

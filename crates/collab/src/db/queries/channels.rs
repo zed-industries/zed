@@ -37,8 +37,9 @@ impl Database {
             }
 
             let channel = channel::ActiveModel {
+                id: ActiveValue::NotSet,
                 name: ActiveValue::Set(name.to_string()),
-                ..Default::default()
+                visibility: ActiveValue::Set(ChannelVisibility::ChannelMembers),
             }
             .insert(&*tx)
             .await?;
@@ -85,6 +86,29 @@ impl Database {
             .await?;
 
             Ok(channel.id)
+        })
+        .await
+    }
+
+    pub async fn set_channel_visibility(
+        &self,
+        channel_id: ChannelId,
+        visibility: ChannelVisibility,
+        user_id: UserId,
+    ) -> Result<()> {
+        self.transaction(move |tx| async move {
+            self.check_user_is_channel_admin(channel_id, user_id, &*tx)
+                .await?;
+
+            channel::ActiveModel {
+                id: ActiveValue::Unchanged(channel_id),
+                visibility: ActiveValue::Set(visibility),
+                ..Default::default()
+            }
+            .update(&*tx)
+            .await?;
+
+            Ok(())
         })
         .await
     }
@@ -160,11 +184,11 @@ impl Database {
         &self,
         channel_id: ChannelId,
         invitee_id: UserId,
-        inviter_id: UserId,
+        admin_id: UserId,
         role: ChannelRole,
     ) -> Result<()> {
         self.transaction(move |tx| async move {
-            self.check_user_is_channel_admin(channel_id, inviter_id, &*tx)
+            self.check_user_is_channel_admin(channel_id, admin_id, &*tx)
                 .await?;
 
             channel_member::ActiveModel {
@@ -262,10 +286,10 @@ impl Database {
         &self,
         channel_id: ChannelId,
         member_id: UserId,
-        remover_id: UserId,
+        admin_id: UserId,
     ) -> Result<()> {
         self.transaction(|tx| async move {
-            self.check_user_is_channel_admin(channel_id, remover_id, &*tx)
+            self.check_user_is_channel_admin(channel_id, admin_id, &*tx)
                 .await?;
 
             let result = channel_member::Entity::delete_many()
@@ -481,12 +505,12 @@ impl Database {
     pub async fn set_channel_member_role(
         &self,
         channel_id: ChannelId,
-        from: UserId,
+        admin_id: UserId,
         for_user: UserId,
         role: ChannelRole,
     ) -> Result<()> {
         self.transaction(|tx| async move {
-            self.check_user_is_channel_admin(channel_id, from, &*tx)
+            self.check_user_is_channel_admin(channel_id, admin_id, &*tx)
                 .await?;
 
             let result = channel_member::Entity::update_many()
@@ -613,43 +637,147 @@ impl Database {
         Ok(user_ids)
     }
 
-    pub async fn check_user_is_channel_member(
-        &self,
-        channel_id: ChannelId,
-        user_id: UserId,
-        tx: &DatabaseTransaction,
-    ) -> Result<()> {
-        let channel_ids = self.get_channel_ancestors(channel_id, tx).await?;
-        channel_member::Entity::find()
-            .filter(
-                channel_member::Column::ChannelId
-                    .is_in(channel_ids)
-                    .and(channel_member::Column::UserId.eq(user_id)),
-            )
-            .one(&*tx)
-            .await?
-            .ok_or_else(|| anyhow!("user is not a channel member or channel does not exist"))?;
-        Ok(())
-    }
-
     pub async fn check_user_is_channel_admin(
         &self,
         channel_id: ChannelId,
         user_id: UserId,
         tx: &DatabaseTransaction,
     ) -> Result<()> {
+        match self.channel_role_for_user(channel_id, user_id, tx).await? {
+            Some(ChannelRole::Admin) => Ok(()),
+            Some(ChannelRole::Member)
+            | Some(ChannelRole::Banned)
+            | Some(ChannelRole::Guest)
+            | None => Err(anyhow!(
+                "user is not a channel admin or channel does not exist"
+            ))?,
+        }
+    }
+
+    pub async fn check_user_is_channel_member(
+        &self,
+        channel_id: ChannelId,
+        user_id: UserId,
+        tx: &DatabaseTransaction,
+    ) -> Result<()> {
+        match self.channel_role_for_user(channel_id, user_id, tx).await? {
+            Some(ChannelRole::Admin) | Some(ChannelRole::Member) => Ok(()),
+            Some(ChannelRole::Banned) | Some(ChannelRole::Guest) | None => Err(anyhow!(
+                "user is not a channel member or channel does not exist"
+            ))?,
+        }
+    }
+
+    pub async fn check_user_is_channel_participant(
+        &self,
+        channel_id: ChannelId,
+        user_id: UserId,
+        tx: &DatabaseTransaction,
+    ) -> Result<()> {
+        match self.channel_role_for_user(channel_id, user_id, tx).await? {
+            Some(ChannelRole::Admin) | Some(ChannelRole::Member) | Some(ChannelRole::Guest) => {
+                Ok(())
+            }
+            Some(ChannelRole::Banned) | None => Err(anyhow!(
+                "user is not a channel participant or channel does not exist"
+            ))?,
+        }
+    }
+
+    pub async fn channel_role_for_user(
+        &self,
+        channel_id: ChannelId,
+        user_id: UserId,
+        tx: &DatabaseTransaction,
+    ) -> Result<Option<ChannelRole>> {
         let channel_ids = self.get_channel_ancestors(channel_id, tx).await?;
-        channel_member::Entity::find()
+
+        #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+        enum QueryChannelMembership {
+            ChannelId,
+            Role,
+            Admin,
+            Visibility,
+        }
+
+        let mut rows = channel_member::Entity::find()
+            .left_join(channel::Entity)
             .filter(
                 channel_member::Column::ChannelId
                     .is_in(channel_ids)
-                    .and(channel_member::Column::UserId.eq(user_id))
-                    .and(channel_member::Column::Admin.eq(true)),
+                    .and(channel_member::Column::UserId.eq(user_id)),
             )
-            .one(&*tx)
-            .await?
-            .ok_or_else(|| anyhow!("user is not a channel admin or channel does not exist"))?;
-        Ok(())
+            .select_only()
+            .column(channel_member::Column::ChannelId)
+            .column(channel_member::Column::Role)
+            .column(channel_member::Column::Admin)
+            .column(channel::Column::Visibility)
+            .into_values::<_, QueryChannelMembership>()
+            .stream(&*tx)
+            .await?;
+
+        let mut is_admin = false;
+        let mut is_member = false;
+        let mut is_participant = false;
+        let mut is_banned = false;
+        let mut current_channel_visibility = None;
+
+        // note these channels are not iterated in any particular order,
+        // our current logic takes the highest permission available.
+        while let Some(row) = rows.next().await {
+            let (ch_id, role, admin, visibility): (
+                ChannelId,
+                Option<ChannelRole>,
+                bool,
+                ChannelVisibility,
+            ) = row?;
+            match role {
+                Some(ChannelRole::Admin) => is_admin = true,
+                Some(ChannelRole::Member) => is_member = true,
+                Some(ChannelRole::Guest) => {
+                    if visibility == ChannelVisibility::Public {
+                        is_participant = true
+                    }
+                }
+                Some(ChannelRole::Banned) => is_banned = true,
+                None => {
+                    // rows created from pre-role collab server.
+                    if admin {
+                        is_admin = true
+                    } else {
+                        is_member = true
+                    }
+                }
+            }
+            if channel_id == ch_id {
+                current_channel_visibility = Some(visibility);
+            }
+        }
+        // free up database connection
+        drop(rows);
+
+        Ok(if is_admin {
+            Some(ChannelRole::Admin)
+        } else if is_member {
+            Some(ChannelRole::Member)
+        } else if is_banned {
+            Some(ChannelRole::Banned)
+        } else if is_participant {
+            if current_channel_visibility.is_none() {
+                current_channel_visibility = channel::Entity::find()
+                    .filter(channel::Column::Id.eq(channel_id))
+                    .one(&*tx)
+                    .await?
+                    .map(|channel| channel.visibility);
+            }
+            if current_channel_visibility == Some(ChannelVisibility::Public) {
+                Some(ChannelRole::Guest)
+            } else {
+                None
+            }
+        } else {
+            None
+        })
     }
 
     /// Returns the channel ancestors, deepest first

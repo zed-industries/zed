@@ -91,6 +91,8 @@ pub enum ChannelRole {
     Member,
     #[sea_orm(string_value = "guest")]
     Guest,
+    #[sea_orm(string_value = "banned")]
+    Banned,
 }
 
 impl From<proto::ChannelRole> for ChannelRole {
@@ -99,6 +101,7 @@ impl From<proto::ChannelRole> for ChannelRole {
             proto::ChannelRole::Admin => ChannelRole::Admin,
             proto::ChannelRole::Member => ChannelRole::Member,
             proto::ChannelRole::Guest => ChannelRole::Guest,
+            proto::ChannelRole::Banned => ChannelRole::Banned,
         }
     }
 }
@@ -109,6 +112,7 @@ impl Into<proto::ChannelRole> for ChannelRole {
             ChannelRole::Admin => proto::ChannelRole::Admin,
             ChannelRole::Member => proto::ChannelRole::Member,
             ChannelRole::Guest => proto::ChannelRole::Guest,
+            ChannelRole::Banned => proto::ChannelRole::Banned,
         }
     }
 }
