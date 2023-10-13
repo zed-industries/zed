@@ -1,13 +1,13 @@
 use chrono::DateTime;
 use gpui3::{px, relative, rems, view, Context, Size, View};
 
-use crate::prelude::*;
 use crate::{
     hello_world_rust_editor_with_status_example, random_players_with_call_status, theme, v_stack,
     AssistantPanel, ChatMessage, ChatPanel, CollabPanel, EditorPane, Label, LanguageSelector,
     Livestream, Pane, PaneGroup, Panel, PanelAllowedSides, PanelSide, ProjectPanel, SplitDirection,
     StatusBar, Terminal, TitleBar, Toast, ToastOrigin,
 };
+use crate::{prelude::*, NotificationToast};
 
 #[derive(Clone)]
 pub struct Workspace {
@@ -266,7 +266,11 @@ impl Workspace {
                 .filter(|_| self.is_language_selector_open()),
             )
             .child(Toast::new(ToastOrigin::Bottom).child(Label::new("A toast")))
-            .child(Toast::new(ToastOrigin::BottomRight).child(Label::new("Another toast")))
+            // .child(Toast::new(ToastOrigin::BottomRight).child(Label::new("Another toast")))
+            .child(NotificationToast::new(
+                "A notification",
+                "This is a notification",
+            ))
     }
 }
 

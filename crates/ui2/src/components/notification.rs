@@ -1,7 +1,9 @@
-use gpui3::{div, Element, ParentElement, StyleHelpers, ViewContext};
+use std::marker::PhantomData;
+
+use gpui3::{Element, ParentElement, StyleHelpers, ViewContext};
 
 use crate::{
-    h_stack, v_stack, Button, Icon, IconButton, IconElement, Label, ThemeColor, Toast, ToastOrigin,
+    h_stack, v_stack, Icon, IconButton, IconElement, Label, ThemeColor, Toast, ToastOrigin,
 };
 
 /// Notification toasts are used to display a message
@@ -9,26 +11,27 @@ use crate::{
 ///
 /// To simply convey information, use a Status.
 pub struct NotificationToast<S: 'static + Send + Sync + Clone> {
+    state_type: PhantomData<S>,
     left_icon: Option<Icon>,
     title: String,
     message: String,
-    primary_action: Button<S>,
-    secondary_action: Option<Button<S>>,
+    // primary_action: Button<S>,
+    // secondary_action: Option<Button<S>>,
 }
 
 impl<S: 'static + Send + Sync + Clone> NotificationToast<S> {
     pub fn new(
         title: impl Into<String>,
         message: impl Into<String>,
-        actions: Vec<Button<S>>,
-        primary_action: Button<S>,
+        // primary_action: Button<S>,
     ) -> Self {
         Self {
+            state_type: PhantomData,
             left_icon: None,
             title: title.into(),
             message: message.into(),
-            primary_action,
-            secondary_action: None,
+            // primary_action,
+            // secondary_action: None,
         }
     }
 
@@ -37,10 +40,10 @@ impl<S: 'static + Send + Sync + Clone> NotificationToast<S> {
         self
     }
 
-    pub fn set_secondary_action(mut self, action: Button<S>) -> Self {
-        self.secondary_action = Some(action);
-        self
-    }
+    // pub fn set_secondary_action(mut self, action: Button<S>) -> Self {
+    //     self.secondary_action = Some(action);
+    //     self
+    // }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let color = ThemeColor::new(cx);
@@ -80,6 +83,6 @@ impl<S: 'static + Send + Sync + Clone> NotificationToast<S> {
                     ),
             );
 
-        Toast::new(ToastOrigin::BottomRight)
+        Toast::new(ToastOrigin::BottomRight).child(notification)
     }
 }
