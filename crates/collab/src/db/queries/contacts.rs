@@ -123,7 +123,7 @@ impl Database {
         &self,
         sender_id: UserId,
         receiver_id: UserId,
-    ) -> Result<proto::Notification> {
+    ) -> Result<Option<proto::Notification>> {
         self.transaction(|tx| async move {
             let (id_a, id_b, a_to_b) = if sender_id < receiver_id {
                 (sender_id, receiver_id, true)
@@ -169,6 +169,7 @@ impl Database {
                 rpc::Notification::ContactRequest {
                     actor_id: sender_id.to_proto(),
                 },
+                true,
                 &*tx,
             )
             .await
@@ -212,7 +213,7 @@ impl Database {
             let mut deleted_notification_id = None;
             if !contact.accepted {
                 deleted_notification_id = self
-                    .delete_notification(
+                    .remove_notification(
                         responder_id,
                         rpc::Notification::ContactRequest {
                             actor_id: requester_id.to_proto(),
@@ -273,7 +274,7 @@ impl Database {
         responder_id: UserId,
         requester_id: UserId,
         accept: bool,
-    ) -> Result<proto::Notification> {
+    ) -> Result<Option<proto::Notification>> {
         self.transaction(|tx| async move {
             let (id_a, id_b, a_to_b) = if responder_id < requester_id {
                 (responder_id, requester_id, false)
@@ -320,6 +321,7 @@ impl Database {
                 rpc::Notification::ContactRequestAccepted {
                     actor_id: responder_id.to_proto(),
                 },
+                true,
                 &*tx,
             )
             .await

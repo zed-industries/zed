@@ -161,7 +161,7 @@ impl Database {
         invitee_id: UserId,
         inviter_id: UserId,
         is_admin: bool,
-    ) -> Result<()> {
+    ) -> Result<Option<proto::Notification>> {
         self.transaction(move |tx| async move {
             self.check_user_is_channel_admin(channel_id, inviter_id, &*tx)
                 .await?;
@@ -176,7 +176,16 @@ impl Database {
             .insert(&*tx)
             .await?;
 
-            Ok(())
+            self.create_notification(
+                invitee_id,
+                rpc::Notification::ChannelInvitation {
+                    actor_id: inviter_id.to_proto(),
+                    channel_id: channel_id.to_proto(),
+                },
+                true,
+                &*tx,
+            )
+            .await
         })
         .await
     }

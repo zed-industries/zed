@@ -209,7 +209,12 @@ impl NotificationPanel {
                 channel_id,
             } => {
                 actor = user_store.get_cached_user(inviter_id)?;
-                let channel = channel_store.channel_for_id(channel_id)?;
+                let channel = channel_store.channel_for_id(channel_id).or_else(|| {
+                    channel_store
+                        .channel_invitations()
+                        .iter()
+                        .find(|c| c.id == channel_id)
+                })?;
 
                 icon = "icons/hash.svg";
                 text = format!(

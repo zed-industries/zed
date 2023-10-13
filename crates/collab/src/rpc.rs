@@ -2097,12 +2097,14 @@ async fn request_contact(
         .user_connection_ids(responder_id)
     {
         session.peer.send(connection_id, update.clone())?;
-        session.peer.send(
-            connection_id,
-            proto::NewNotification {
-                notification: Some(notification.clone()),
-            },
-        )?;
+        if let Some(notification) = &notification {
+            session.peer.send(
+                connection_id,
+                proto::NewNotification {
+                    notification: Some(notification.clone()),
+                },
+            )?;
+        }
     }
 
     response.send(proto::Ack {})?;
@@ -2156,12 +2158,14 @@ async fn respond_to_contact_request(
             .push(responder_id.to_proto());
         for connection_id in pool.user_connection_ids(requester_id) {
             session.peer.send(connection_id, update.clone())?;
-            session.peer.send(
-                connection_id,
-                proto::NewNotification {
-                    notification: Some(notification.clone()),
-                },
-            )?;
+            if let Some(notification) = &notification {
+                session.peer.send(
+                    connection_id,
+                    proto::NewNotification {
+                        notification: Some(notification.clone()),
+                    },
+                )?;
+            }
         }
     }
 
@@ -2306,7 +2310,8 @@ async fn invite_channel_member(
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
     let invitee_id = UserId::from_proto(request.user_id);
-    db.invite_channel_member(channel_id, invitee_id, session.user_id, request.admin)
+    let notification = db
+        .invite_channel_member(channel_id, invitee_id, session.user_id, request.admin)
         .await?;
 
     let (channel, _) = db
@@ -2319,12 +2324,21 @@ async fn invite_channel_member(
         id: channel.id.to_proto(),
         name: channel.name,
     });
+
     for connection_id in session
         .connection_pool()
         .await
         .user_connection_ids(invitee_id)
     {
         session.peer.send(connection_id, update.clone())?;
+        if let Some(notification) = &notification {
+            session.peer.send(
+                connection_id,
+                proto::NewNotification {
+                    notification: Some(notification.clone()),
+                },
+            )?;
+        }
     }
 
     response.send(proto::Ack {})?;

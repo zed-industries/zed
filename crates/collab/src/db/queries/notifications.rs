@@ -51,18 +51,12 @@ impl Database {
                 .await?;
             while let Some(row) = rows.next().await {
                 let row = row?;
-                let Some(kind) = self.notification_kinds_by_id.get(&row.kind) else {
-                    log::warn!("unknown notification kind {:?}", row.kind);
-                    continue;
-                };
-                result.push(proto::Notification {
-                    id: row.id.to_proto(),
-                    kind: kind.to_string(),
-                    timestamp: row.created_at.assume_utc().unix_timestamp() as u64,
-                    is_read: row.is_read,
-                    content: row.content,
-                    actor_id: row.actor_id.map(|id| id.to_proto()),
-                });
+                let kind = row.kind;
+                if let Some(proto) = self.model_to_proto(row) {
+                    result.push(proto);
+                } else {
+                    log::warn!("unknown notification kind {:?}", kind);
+                }
             }
             result.reverse();
             Ok(result)
@@ -74,19 +68,48 @@ impl Database {
         &self,
         recipient_id: UserId,
         notification: Notification,
+        avoid_duplicates: bool,
         tx: &DatabaseTransaction,
-    ) -> Result<proto::Notification> {
-        let notification = notification.to_proto();
+    ) -> Result<Option<proto::Notification>> {
+        let notification_proto = notification.to_proto();
         let kind = *self
             .notification_kinds_by_name
-            .get(&notification.kind)
-            .ok_or_else(|| anyhow!("invalid notification kind {:?}", notification.kind))?;
+            .get(&notification_proto.kind)
+            .ok_or_else(|| anyhow!("invalid notification kind {:?}", notification_proto.kind))?;
+        let actor_id = notification_proto.actor_id.map(|id| UserId::from_proto(id));
+
+        if avoid_duplicates {
+            let mut existing_notifications = notification::Entity::find()
+                .filter(
+                    Condition::all()
+                        .add(notification::Column::RecipientId.eq(recipient_id))
+                        .add(notification::Column::IsRead.eq(false))
+                        .add(notification::Column::Kind.eq(kind))
+                        .add(notification::Column::ActorId.eq(actor_id)),
+                )
+                .stream(&*tx)
+                .await?;
+
+            // Check if this notification already exists. Don't rely on the
+            // JSON serialization being identical, in case the notification enum
+            // is changed in backward-compatible ways over time.
+            while let Some(row) = existing_notifications.next().await {
+                let row = row?;
+                if let Some(proto) = self.model_to_proto(row) {
+                    if let Some(existing) = Notification::from_proto(&proto) {
+                        if existing == notification {
+                            return Ok(None);
+                        }
+                    }
+                }
+            }
+        }
 
         let model = notification::ActiveModel {
             recipient_id: ActiveValue::Set(recipient_id),
             kind: ActiveValue::Set(kind),
-            content: ActiveValue::Set(notification.content.clone()),
-            actor_id: ActiveValue::Set(notification.actor_id.map(|id| UserId::from_proto(id))),
+            content: ActiveValue::Set(notification_proto.content.clone()),
+            actor_id: ActiveValue::Set(actor_id),
             is_read: ActiveValue::NotSet,
             created_at: ActiveValue::NotSet,
             id: ActiveValue::NotSet,
@@ -94,17 +117,17 @@ impl Database {
         .save(&*tx)
         .await?;
 
-        Ok(proto::Notification {
+        Ok(Some(proto::Notification {
             id: model.id.as_ref().to_proto(),
-            kind: notification.kind.to_string(),
+            kind: notification_proto.kind.to_string(),
             timestamp: model.created_at.as_ref().assume_utc().unix_timestamp() as u64,
             is_read: false,
-            content: notification.content,
-            actor_id: notification.actor_id,
-        })
+            content: notification_proto.content,
+            actor_id: notification_proto.actor_id,
+        }))
     }
 
-    pub async fn delete_notification(
+    pub async fn remove_notification(
         &self,
         recipient_id: UserId,
         notification: Notification,
@@ -132,5 +155,17 @@ impl Database {
                 .await?;
         }
         Ok(notification.map(|notification| notification.id))
+    }
+
+    fn model_to_proto(&self, row: notification::Model) -> Option<proto::Notification> {
+        let kind = self.notification_kinds_by_id.get(&row.kind)?;
+        Some(proto::Notification {
+            id: row.id.to_proto(),
+            kind: kind.to_string(),
+            timestamp: row.created_at.assume_utc().unix_timestamp() as u64,
+            is_read: row.is_read,
+            content: row.content,
+            actor_id: row.actor_id.map(|id| id.to_proto()),
+        })
     }
 }

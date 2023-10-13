@@ -330,4 +330,4 @@ CREATE TABLE "notifications" (
     "content" TEXT
 );
 
-CREATE INDEX "index_notifications_on_recipient_id" ON "notifications" ("recipient_id");
+CREATE INDEX "index_notifications_on_recipient_id_is_read" ON "notifications" ("recipient_id", "is_read");
