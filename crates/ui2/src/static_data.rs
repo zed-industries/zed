@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use gpui3::WindowContext;
 use rand::Rng;
 
 use crate::{
-    Buffer, BufferRow, BufferRows, EditorPane, FileSystemStatus, GitStatus, HighlightColor,
+    theme, Buffer, BufferRow, BufferRows, EditorPane, FileSystemStatus, GitStatus, HighlightColor,
     HighlightedLine, HighlightedText, Icon, Keybinding, Label, LabelColor, ListEntry,
     ListEntrySize, ListItem, Livestream, MicStatus, ModifierKeys, PaletteItem, Player,
     PlayerCallStatus, PlayerWithCallStatus, ScreenShareStatus, Symbol, Tab, Theme, ToggleState,
@@ -597,8 +598,9 @@ pub fn example_editor_actions<S: 'static + Send + Sync + Clone>() -> Vec<Palette
     ]
 }
 
-pub fn empty_editor_example() -> EditorPane {
+pub fn empty_editor_example(cx: &mut WindowContext) -> EditorPane {
     EditorPane::new(
+        cx,
         static_tabs_example(),
         PathBuf::from_str("crates/ui/src/static_data.rs").unwrap(),
         vec![],
@@ -610,8 +612,11 @@ pub fn empty_buffer_example<S: 'static + Send + Sync + Clone>() -> Buffer<S> {
     Buffer::new().set_rows(Some(BufferRows::default()))
 }
 
-pub fn hello_world_rust_editor_example(theme: &Theme) -> EditorPane {
+pub fn hello_world_rust_editor_example(cx: &mut WindowContext) -> EditorPane {
+    let theme = theme(cx);
+
     EditorPane::new(
+        cx,
         static_tabs_example(),
         PathBuf::from_str("crates/ui/src/static_data.rs").unwrap(),
         vec![Symbol(vec![
@@ -624,7 +629,7 @@ pub fn hello_world_rust_editor_example(theme: &Theme) -> EditorPane {
                 color: HighlightColor::Function.hsla(&theme),
             },
         ])],
-        hello_world_rust_buffer_example(theme),
+        hello_world_rust_buffer_example(&theme),
     )
 }
 
@@ -748,8 +753,11 @@ pub fn hello_world_rust_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
     ]
 }
 
-pub fn hello_world_rust_editor_with_status_example(theme: &Theme) -> EditorPane {
+pub fn hello_world_rust_editor_with_status_example(cx: &mut WindowContext) -> EditorPane {
+    let theme = theme(cx);
+
     EditorPane::new(
+        cx,
         static_tabs_example(),
         PathBuf::from_str("crates/ui/src/static_data.rs").unwrap(),
         vec![Symbol(vec![
@@ -762,7 +770,7 @@ pub fn hello_world_rust_editor_with_status_example(theme: &Theme) -> EditorPane 
                 color: HighlightColor::Function.hsla(&theme),
             },
         ])],
-        hello_world_rust_buffer_with_status_example(theme),
+        hello_world_rust_buffer_with_status_example(&theme),
     )
 }
 

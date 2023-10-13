@@ -14,11 +14,13 @@ pub struct EditorPane {
     path: PathBuf,
     symbols: Vec<Symbol>,
     buffer: Buffer<Self>,
+    buffer_search: View<BufferSearch>,
     is_buffer_search_open: bool,
 }
 
 impl EditorPane {
     pub fn new(
+        cx: &mut WindowContext,
         tabs: Vec<Tab<Self>>,
         path: PathBuf,
         symbols: Vec<Symbol>,
@@ -29,6 +31,7 @@ impl EditorPane {
             path,
             symbols,
             buffer,
+            buffer_search: BufferSearch::view(cx),
             is_buffer_search_open: false,
         }
     }
@@ -43,7 +46,7 @@ impl EditorPane {
         let theme = theme(cx);
 
         view(
-            cx.entity(|cx| hello_world_rust_editor_with_status_example(&theme)),
+            cx.entity(|cx| hello_world_rust_editor_with_status_example(cx)),
             Self::render,
         )
     }
@@ -69,7 +72,7 @@ impl EditorPane {
                         IconButton::new(Icon::MagicWand),
                     ]),
             )
-            .children(Some(BufferSearch::new()).filter(|_| self.is_buffer_search_open))
+            .children(Some(self.buffer_search.clone()).filter(|_| self.is_buffer_search_open))
             .child(self.buffer.clone())
     }
 }
