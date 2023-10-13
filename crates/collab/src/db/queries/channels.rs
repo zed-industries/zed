@@ -125,17 +125,19 @@ impl Database {
                 .await?;
 
             // Don't remove descendant channels that have additional parents.
-            let mut channels_to_remove = self.get_channel_descendants([channel_id], &*tx).await?;
+            let mut channels_to_remove: HashSet<ChannelId> = HashSet::default();
+            channels_to_remove.insert(channel_id);
+
+            let graph = self.get_channel_descendants_2([channel_id], &*tx).await?;
+            for edge in graph.iter() {
+                channels_to_remove.insert(ChannelId::from_proto(edge.channel_id));
+            }
+
             {
                 let mut channels_to_keep = channel_path::Entity::find()
                     .filter(
                         channel_path::Column::ChannelId
-                            .is_in(
-                                channels_to_remove
-                                    .keys()
-                                    .copied()
-                                    .filter(|&id| id != channel_id),
-                            )
+                            .is_in(channels_to_remove.clone())
                             .and(
                                 channel_path::Column::IdPath
                                     .not_like(&format!("%/{}/%", channel_id)),
@@ -160,7 +162,7 @@ impl Database {
                 .await?;
 
             channel::Entity::delete_many()
-                .filter(channel::Column::Id.is_in(channels_to_remove.keys().copied()))
+                .filter(channel::Column::Id.is_in(channels_to_remove.clone()))
                 .exec(&*tx)
                 .await?;
 
@@ -177,7 +179,7 @@ impl Database {
             );
             tx.execute(channel_paths_stmt).await?;
 
-            Ok((channels_to_remove.into_keys().collect(), members_to_notify))
+            Ok((channels_to_remove.into_iter().collect(), members_to_notify))
         })
         .await
     }
