@@ -322,7 +322,7 @@ async fn test_channel_invites(db: &Arc<Database>) {
     assert_eq!(user_3_invites, &[channel_1_1]);
 
     let members = db
-        .get_channel_member_details(channel_1_1, user_1)
+        .get_channel_participant_details(channel_1_1, user_1)
         .await
         .unwrap();
     assert_eq!(
@@ -356,7 +356,7 @@ async fn test_channel_invites(db: &Arc<Database>) {
         .unwrap();
 
     let members = db
-        .get_channel_member_details(channel_1_3, user_1)
+        .get_channel_participant_details(channel_1_3, user_1)
         .await
         .unwrap();
     assert_eq!(

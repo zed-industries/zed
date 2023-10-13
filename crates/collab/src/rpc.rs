@@ -2557,7 +2557,7 @@ async fn get_channel_members(
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
     let members = db
-        .get_channel_member_details(channel_id, session.user_id)
+        .get_channel_participant_details(channel_id, session.user_id)
         .await?;
     response.send(proto::GetChannelMembersResponse { members })?;
     Ok(())

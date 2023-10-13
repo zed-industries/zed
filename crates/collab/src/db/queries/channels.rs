@@ -498,7 +498,7 @@ impl Database {
     }
 
     pub async fn get_channel_members(&self, id: ChannelId) -> Result<Vec<UserId>> {
-        self.transaction(|tx| async move { self.get_channel_members_internal(id, &*tx).await })
+        self.transaction(|tx| async move { self.get_channel_participants_internal(id, &*tx).await })
             .await
     }
 
@@ -536,7 +536,7 @@ impl Database {
         .await
     }
 
-    pub async fn get_channel_member_details(
+    pub async fn get_channel_participant_details(
         &self,
         channel_id: ChannelId,
         user_id: UserId,
@@ -616,7 +616,7 @@ impl Database {
         .await
     }
 
-    pub async fn get_channel_members_internal(
+    pub async fn get_channel_participants_internal(
         &self,
         id: ChannelId,
         tx: &DatabaseTransaction,

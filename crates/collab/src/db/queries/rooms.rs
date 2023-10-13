@@ -53,7 +53,9 @@ impl Database {
             let (channel_id, room) = self.get_channel_room(room_id, &tx).await?;
             let channel_members;
             if let Some(channel_id) = channel_id {
-                channel_members = self.get_channel_members_internal(channel_id, &tx).await?;
+                channel_members = self
+                    .get_channel_participants_internal(channel_id, &tx)
+                    .await?;
             } else {
                 channel_members = Vec::new();
 
@@ -377,7 +379,8 @@ impl Database {
 
             let room = self.get_room(room_id, &tx).await?;
             let channel_members = if let Some(channel_id) = channel_id {
-                self.get_channel_members_internal(channel_id, &tx).await?
+                self.get_channel_participants_internal(channel_id, &tx)
+                    .await?
             } else {
                 Vec::new()
             };
@@ -681,7 +684,8 @@ impl Database {
 
             let (channel_id, room) = self.get_channel_room(room_id, &tx).await?;
             let channel_members = if let Some(channel_id) = channel_id {
-                self.get_channel_members_internal(channel_id, &tx).await?
+                self.get_channel_participants_internal(channel_id, &tx)
+                    .await?
             } else {
                 Vec::new()
             };
@@ -839,7 +843,8 @@ impl Database {
                 };
 
                 let channel_members = if let Some(channel_id) = channel_id {
-                    self.get_channel_members_internal(channel_id, &tx).await?
+                    self.get_channel_participants_internal(channel_id, &tx)
+                        .await?
                 } else {
                     Vec::new()
                 };
