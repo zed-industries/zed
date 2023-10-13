@@ -2,6 +2,7 @@ mod buffer;
 mod diagnostic_set;
 mod highlight_map;
 pub mod language_settings;
+pub mod markdown;
 mod outline;
 pub mod proto;
 mod syntax_map;
