@@ -1,7 +1,7 @@
+use crate::proto;
 use serde::{Deserialize, Serialize};
 use serde_json::{map, Value};
-use std::borrow::Cow;
-use strum::{EnumVariantNames, IntoStaticStr, VariantNames as _};
+use strum::{EnumVariantNames, VariantNames as _};
 
 const KIND: &'static str = "kind";
 const ACTOR_ID: &'static str = "actor_id";
@@ -9,10 +9,12 @@ const ACTOR_ID: &'static str = "actor_id";
 /// A notification that can be stored, associated with a given user.
 ///
 /// This struct is stored in the collab database as JSON, so it shouldn't be
-/// changed in a backward-incompatible way.
+/// changed in a backward-incompatible way. For example, when renaming a
+/// variant, add a serde alias for the old name.
 ///
-/// For example, when renaming a variant, add a serde alias for the old name.
-#[derive(Debug, Clone, PartialEq, Eq, EnumVariantNames, IntoStaticStr, Serialize, Deserialize)]
+/// When a notification is initiated by a user, use the `actor_id` field
+/// to store the user's id.
+#[derive(Debug, Clone, PartialEq, Eq, EnumVariantNames, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum Notification {
     ContactRequest {
@@ -32,36 +34,28 @@ pub enum Notification {
     },
 }
 
-/// The representation of a notification that is stored in the database and
-/// sent over the wire.
-#[derive(Debug)]
-pub struct AnyNotification {
-    pub kind: Cow<'static, str>,
-    pub actor_id: Option<u64>,
-    pub content: String,
-}
-
 impl Notification {
-    pub fn to_any(&self) -> AnyNotification {
-        let kind: &'static str = self.into();
+    pub fn to_proto(&self) -> proto::Notification {
         let mut value = serde_json::to_value(self).unwrap();
         let mut actor_id = None;
-        if let Some(value) = value.as_object_mut() {
-            value.remove(KIND);
-            if let map::Entry::Occupied(e) = value.entry(ACTOR_ID) {
-                if e.get().is_u64() {
-                    actor_id = e.remove().as_u64();
-                }
+        let value = value.as_object_mut().unwrap();
+        let Some(Value::String(kind)) = value.remove(KIND) else {
+            unreachable!()
+        };
+        if let map::Entry::Occupied(e) = value.entry(ACTOR_ID) {
+            if e.get().is_u64() {
+                actor_id = e.remove().as_u64();
             }
         }
-        AnyNotification {
-            kind: Cow::Borrowed(kind),
+        proto::Notification {
+            kind,
             actor_id,
             content: serde_json::to_string(&value).unwrap(),
+            ..Default::default()
         }
     }
 
-    pub fn from_any(notification: &AnyNotification) -> Option<Self> {
+    pub fn from_proto(notification: &proto::Notification) -> Option<Self> {
         let mut value = serde_json::from_str::<Value>(&notification.content).ok()?;
         let object = value.as_object_mut()?;
         object.insert(KIND.into(), notification.kind.to_string().into());
@@ -92,13 +86,13 @@ fn test_notification() {
             message_id: 1,
         },
     ] {
-        let serialized = notification.to_any();
-        let deserialized = Notification::from_any(&serialized).unwrap();
+        let message = notification.to_proto();
+        let deserialized = Notification::from_proto(&message).unwrap();
         assert_eq!(deserialized, notification);
     }
 
     // When notifications are serialized, the `kind` and `actor_id` fields are
     // stored separately, and do not appear redundantly in the JSON.
     let notification = Notification::ContactRequest { actor_id: 1 };
-    assert_eq!(notification.to_any().content, "{}");
+    assert_eq!(notification.to_proto().content, "{}");
 }

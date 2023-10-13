@@ -4,7 +4,7 @@ use client::{Client, UserStore};
 use collections::HashMap;
 use db::smol::stream::StreamExt;
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task};
-use rpc::{proto, AnyNotification, Notification, TypedEnvelope};
+use rpc::{proto, Notification, TypedEnvelope};
 use std::{ops::Range, sync::Arc};
 use sum_tree::{Bias, SumTree};
 use time::OffsetDateTime;
@@ -185,11 +185,7 @@ impl NotificationStore {
                     is_read: message.is_read,
                     timestamp: OffsetDateTime::from_unix_timestamp(message.timestamp as i64)
                         .ok()?,
-                    notification: Notification::from_any(&AnyNotification {
-                        actor_id: message.actor_id,
-                        kind: message.kind.into(),
-                        content: message.content,
-                    })?,
+                    notification: Notification::from_proto(&message)?,
                 })
             })
             .collect::<Vec<_>>();

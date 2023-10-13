@@ -76,10 +76,10 @@ impl Database {
         notification: Notification,
         tx: &DatabaseTransaction,
     ) -> Result<proto::Notification> {
-        let notification = notification.to_any();
+        let notification = notification.to_proto();
         let kind = *self
             .notification_kinds_by_name
-            .get(notification.kind.as_ref())
+            .get(&notification.kind)
             .ok_or_else(|| anyhow!("invalid notification kind {:?}", notification.kind))?;
 
         let model = notification::ActiveModel {
@@ -110,10 +110,10 @@ impl Database {
         notification: Notification,
         tx: &DatabaseTransaction,
     ) -> Result<Option<NotificationId>> {
-        let notification = notification.to_any();
+        let notification = notification.to_proto();
         let kind = *self
             .notification_kinds_by_name
-            .get(notification.kind.as_ref())
+            .get(&notification.kind)
             .ok_or_else(|| anyhow!("invalid notification kind {:?}", notification.kind))?;
         let actor_id = notification.actor_id.map(|id| UserId::from_proto(id));
         let notification = notification::Entity::find()

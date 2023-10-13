@@ -13,6 +13,7 @@ use anyhow::anyhow;
 use collections::{BTreeMap, HashMap, HashSet};
 use dashmap::DashMap;
 use futures::StreamExt;
+use queries::channels::ChannelGraph;
 use rand::{prelude::StdRng, Rng, SeedableRng};
 use rpc::{
     proto::{self},
@@ -46,8 +47,6 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 pub use ids::*;
 pub use sea_orm::ConnectOptions;
 pub use tables::user::Model as User;
-
-use self::queries::channels::ChannelGraph;
 
 pub struct Database {
     options: ConnectOptions,
