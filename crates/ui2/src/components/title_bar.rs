@@ -5,8 +5,8 @@ use gpui3::{view, Context, View};
 
 use crate::prelude::*;
 use crate::{
-    random_players_with_call_status, theme, Avatar, Button, Icon, IconButton, IconColor,
-    PlayerStack, PlayerWithCallStatus, ToolDivider, TrafficLights,
+    random_players_with_call_status, theme, Avatar, Button, Icon, IconButton, IconColor, MicStatus,
+    PlayerStack, PlayerWithCallStatus, ScreenShareStatus, ToolDivider, TrafficLights,
 };
 
 #[derive(Clone)]
@@ -21,6 +21,9 @@ pub struct TitleBar {
     /// If the window is active from the OS's perspective.
     is_active: Arc<AtomicBool>,
     livestream: Option<Livestream>,
+    mic_status: MicStatus,
+    is_deafened: bool,
+    screen_share_status: ScreenShareStatus,
 }
 
 impl TitleBar {
@@ -37,12 +40,43 @@ impl TitleBar {
         Self {
             is_active,
             livestream: None,
+            mic_status: MicStatus::Unmuted,
+            is_deafened: false,
+            screen_share_status: ScreenShareStatus::NotShared,
         }
     }
 
     pub fn set_livestream(mut self, livestream: Option<Livestream>) -> Self {
         self.livestream = livestream;
         self
+    }
+
+    pub fn is_mic_muted(&self) -> bool {
+        self.mic_status == MicStatus::Muted
+    }
+
+    pub fn toggle_mic_status(&mut self, cx: &mut ViewContext<Self>) {
+        self.mic_status = self.mic_status.inverse();
+
+        // Undeafen yourself when unmuting the mic while deafened.
+        if self.is_deafened && self.mic_status == MicStatus::Unmuted {
+            self.is_deafened = false;
+        }
+
+        cx.notify();
+    }
+
+    pub fn toggle_deafened(&mut self, cx: &mut ViewContext<Self>) {
+        self.is_deafened = !self.is_deafened;
+        self.mic_status = MicStatus::Muted;
+
+        cx.notify()
+    }
+
+    pub fn toggle_screen_share_status(&mut self, cx: &mut ViewContext<Self>) {
+        self.screen_share_status = self.screen_share_status.inverse();
+
+        cx.notify();
     }
 
     pub fn view(cx: &mut WindowContext) -> View<Self> {
@@ -115,9 +149,26 @@ impl TitleBar {
                             .flex()
                             .items_center()
                             .gap_1()
-                            .child(IconButton::new(Icon::Mic))
-                            .child(IconButton::new(Icon::AudioOn))
-                            .child(IconButton::new(Icon::Screen).color(IconColor::Accent)),
+                            .child(
+                                IconButton::<TitleBar>::new(Icon::Mic)
+                                    .when(self.is_mic_muted(), |this| this.color(IconColor::Error))
+                                    .on_click(|title_bar, cx| title_bar.toggle_mic_status(cx)),
+                            )
+                            .child(
+                                IconButton::<TitleBar>::new(Icon::AudioOn)
+                                    .when(self.is_deafened, |this| this.color(IconColor::Error))
+                                    .on_click(|title_bar, cx| title_bar.toggle_deafened(cx)),
+                            )
+                            .child(
+                                IconButton::<TitleBar>::new(Icon::Screen)
+                                    .when(
+                                        self.screen_share_status == ScreenShareStatus::Shared,
+                                        |this| this.color(IconColor::Accent),
+                                    )
+                                    .on_click(|title_bar, cx| {
+                                        title_bar.toggle_screen_share_status(cx)
+                                    }),
+                            ),
                     )
                     .child(
                         div().px_2().flex().items_center().child(

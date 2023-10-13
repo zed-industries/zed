@@ -20,6 +20,15 @@ pub enum MicStatus {
     Unmuted,
 }
 
+impl MicStatus {
+    pub fn inverse(&self) -> Self {
+        match self {
+            Self::Muted => Self::Unmuted,
+            Self::Unmuted => Self::Muted,
+        }
+    }
+}
+
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub enum VideoStatus {
     On,
@@ -27,11 +36,29 @@ pub enum VideoStatus {
     Off,
 }
 
+impl VideoStatus {
+    pub fn inverse(&self) -> Self {
+        match self {
+            Self::On => Self::Off,
+            Self::Off => Self::On,
+        }
+    }
+}
+
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub enum ScreenShareStatus {
     Shared,
     #[default]
     NotShared,
+}
+
+impl ScreenShareStatus {
+    pub fn inverse(&self) -> Self {
+        match self {
+            Self::Shared => Self::NotShared,
+            Self::NotShared => Self::Shared,
+        }
+    }
 }
 
 #[derive(Clone)]
