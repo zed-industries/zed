@@ -102,27 +102,19 @@ impl<S: 'static + Send + Sync + Clone> Button<S> {
     }
 
     fn background_color(&self, cx: &mut ViewContext<S>) -> Hsla {
-        let theme = theme(cx);
-        let system_color = SystemColor::new();
+        let color = ThemeColor::new(cx);
 
         match (self.variant, self.state) {
-            (ButtonVariant::Ghost, InteractionState::Hovered) => {
-                theme.lowest.base.hovered.background
-            }
-            (ButtonVariant::Ghost, InteractionState::Active) => {
-                theme.lowest.base.pressed.background
-            }
-            (ButtonVariant::Filled, InteractionState::Enabled) => {
-                theme.lowest.on.default.background
-            }
-            (ButtonVariant::Filled, InteractionState::Hovered) => {
-                theme.lowest.on.hovered.background
-            }
-            (ButtonVariant::Filled, InteractionState::Active) => theme.lowest.on.pressed.background,
-            (ButtonVariant::Filled, InteractionState::Disabled) => {
-                theme.lowest.on.disabled.background
-            }
-            _ => system_color.transparent,
+            (ButtonVariant::Ghost, InteractionState::Enabled) => color.ghost_element,
+            (ButtonVariant::Ghost, InteractionState::Focused) => color.ghost_element,
+            (ButtonVariant::Ghost, InteractionState::Hovered) => color.ghost_element_hover,
+            (ButtonVariant::Ghost, InteractionState::Active) => color.ghost_element_active,
+            (ButtonVariant::Ghost, InteractionState::Disabled) => color.filled_element_disabled,
+            (ButtonVariant::Filled, InteractionState::Enabled) => color.filled_element,
+            (ButtonVariant::Filled, InteractionState::Focused) => color.filled_element,
+            (ButtonVariant::Filled, InteractionState::Hovered) => color.filled_element_hover,
+            (ButtonVariant::Filled, InteractionState::Active) => color.filled_element_active,
+            (ButtonVariant::Filled, InteractionState::Disabled) => color.filled_element_disabled,
         }
     }
 
@@ -141,12 +133,11 @@ impl<S: 'static + Send + Sync + Clone> Button<S> {
     }
 
     fn border_color(&self, cx: &WindowContext) -> Hsla {
-        let theme = theme(cx);
-        let system_color = SystemColor::new();
+        let color = ThemeColor::new(cx);
 
         match self.state {
-            InteractionState::Focused => theme.lowest.accent.default.border,
-            _ => system_color.transparent,
+            InteractionState::Focused => color.border_focused,
+            _ => color.border_transparent,
         }
     }
 
@@ -161,9 +152,7 @@ impl<S: 'static + Send + Sync + Clone> Button<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
         let icon_color = self.icon_color();
-        let system_color = SystemColor::new();
         let border_color = self.border_color(cx);
 
         let mut el = h_stack()

@@ -58,21 +58,56 @@ pub struct ThemeColor {
     pub border: Hsla,
     pub border_variant: Hsla,
     pub border_focused: Hsla,
+    pub border_transparent: Hsla,
     /// The background color of an elevated surface, like a modal, tooltip or toast.
     pub elevated_surface: Hsla,
     pub surface: Hsla,
+    /// Default background for elements like filled buttons,
+    /// text fields, checkboxes, radio buttons, etc.
+    /// - TODO: Map to step 3.
+    pub filled_element: Hsla,
+    /// The background color of a hovered element, like a button being hovered
+    /// with a mouse, or hovered on a touch screen.
+    /// - TODO: Map to step 4.
+    pub filled_element_hover: Hsla,
+    /// The background color of an active element, like a button being pressed,
+    /// or tapped on a touch screen.
+    /// - TODO: Map to step 5.
+    pub filled_element_active: Hsla,
+    /// The background color of a selected element, like a selected tab, a button toggled on, or a checkbox that is checked.
+    pub filled_element_selected: Hsla,
+    pub filled_element_disabled: Hsla,
+    pub ghost_element: Hsla,
+    /// - TODO: Map to step 3.
+    pub ghost_element_hover: Hsla,
+    /// - TODO: Map to step 4.
+    pub ghost_element_active: Hsla,
+    pub ghost_element_selected: Hsla,
+    pub ghost_element_disabled: Hsla,
 }
 
 impl ThemeColor {
     pub fn new(cx: &WindowContext) -> Self {
         let theme = theme(cx);
+        let system_color = SystemColor::new();
 
         Self {
             border: theme.lowest.base.default.border,
             border_variant: theme.lowest.variant.default.border,
             border_focused: theme.lowest.accent.default.border,
+            border_transparent: system_color.transparent,
             elevated_surface: theme.middle.base.default.background,
             surface: theme.middle.base.default.background,
+            filled_element: theme.lowest.base.default.background,
+            filled_element_hover: theme.lowest.base.hovered.background,
+            filled_element_active: theme.lowest.base.active.background,
+            filled_element_selected: theme.lowest.accent.default.background,
+            filled_element_disabled: system_color.transparent,
+            ghost_element: system_color.transparent,
+            ghost_element_hover: theme.lowest.base.default.background,
+            ghost_element_active: theme.lowest.base.hovered.background,
+            ghost_element_selected: theme.lowest.accent.default.background,
+            ghost_element_disabled: system_color.transparent,
         }
     }
 }
