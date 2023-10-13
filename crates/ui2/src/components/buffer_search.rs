@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use crate::EditorPane;
+use crate::{h_stack, EditorPane, Icon, IconButton, Input};
 
 #[derive(Element)]
 #[element(view_state = "EditorPane")]
@@ -15,6 +15,15 @@ impl BufferSearch {
         _view: &mut EditorPane,
         cx: &mut ViewContext<EditorPane>,
     ) -> impl Element<ViewState = EditorPane> {
-        div().child("This is where Buffer Search goes.")
+        let theme = theme(cx);
+
+        h_stack()
+            .fill(theme.highest.base.default.background)
+            .p_2()
+            .child(
+                h_stack()
+                    .child(Input::new("Search (↑/↓ for previous/next query)"))
+                    .child(IconButton::new(Icon::Replace)),
+            )
     }
 }

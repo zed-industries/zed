@@ -4,7 +4,7 @@ use std::sync::Arc;
 use gpui3::{DefiniteLength, Hsla, Interactive, MouseButton, WindowContext};
 
 use crate::prelude::*;
-use crate::{h_stack, theme, Icon, IconColor, IconElement, Label, LabelColor, LabelSize};
+use crate::{h_stack, Icon, IconColor, IconElement, Label, LabelColor, LabelSize};
 
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum IconPosition {
