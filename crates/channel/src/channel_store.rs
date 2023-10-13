@@ -127,9 +127,6 @@ impl ChannelStore {
                         this.update(&mut cx, |this, cx| this.handle_disconnect(true, cx));
                     }
                 }
-                if status.is_connected() {
-                } else {
-                }
             }
             Some(())
         });

@@ -1,5 +1,5 @@
 use crate::notifications::render_user_notification;
-use client::{ContactEventKind, User, UserStore};
+use client::{User, UserStore};
 use gpui::{elements::*, Entity, ModelHandle, View, ViewContext};
 use std::sync::Arc;
 use workspace::notifications::Notification;
@@ -79,21 +79,7 @@ impl ContactNotification {
         user: Arc<User>,
         notification: rpc::Notification,
         user_store: ModelHandle<UserStore>,
-        cx: &mut ViewContext<Self>,
     ) -> Self {
-        cx.subscribe(&user_store, move |this, _, event, cx| {
-            if let client::Event::Contact {
-                kind: ContactEventKind::Cancelled,
-                user,
-            } = event
-            {
-                if user.id == this.user.id {
-                    cx.emit(Event::Dismiss);
-                }
-            }
-        })
-        .detach();
-
         Self {
             user,
             notification,

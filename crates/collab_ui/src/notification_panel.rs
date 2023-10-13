@@ -301,6 +301,8 @@ impl NotificationPanel {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
+            NotificationEvent::NewNotification { entry } => self.add_toast(entry, cx),
+            NotificationEvent::NotificationRemoved { entry } => self.remove_toast(entry, cx),
             NotificationEvent::NotificationsUpdated {
                 old_range,
                 new_count,
@@ -308,31 +310,49 @@ impl NotificationPanel {
                 self.notification_list.splice(old_range.clone(), *new_count);
                 cx.notify();
             }
-            NotificationEvent::NewNotification { entry } => match entry.notification {
-                Notification::ContactRequest { actor_id }
-                | Notification::ContactRequestAccepted { actor_id } => {
-                    let user_store = self.user_store.clone();
-                    let Some(user) = user_store.read(cx).get_cached_user(actor_id) else {
-                        return;
-                    };
-                    self.workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.show_notification(actor_id as usize, cx, |cx| {
-                                cx.add_view(|cx| {
-                                    ContactNotification::new(
-                                        user.clone(),
-                                        entry.notification.clone(),
-                                        user_store,
-                                        cx,
-                                    )
-                                })
+        }
+    }
+
+    fn add_toast(&mut self, entry: &NotificationEntry, cx: &mut ViewContext<Self>) {
+        let id = entry.id as usize;
+        match entry.notification {
+            Notification::ContactRequest { actor_id }
+            | Notification::ContactRequestAccepted { actor_id } => {
+                let user_store = self.user_store.clone();
+                let Some(user) = user_store.read(cx).get_cached_user(actor_id) else {
+                    return;
+                };
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.show_notification(id, cx, |cx| {
+                            cx.add_view(|_| {
+                                ContactNotification::new(
+                                    user,
+                                    entry.notification.clone(),
+                                    user_store,
+                                )
                             })
                         })
-                        .ok();
-                }
-                Notification::ChannelInvitation { .. } => {}
-                Notification::ChannelMessageMention { .. } => {}
-            },
+                    })
+                    .ok();
+            }
+            Notification::ChannelInvitation { .. } => {}
+            Notification::ChannelMessageMention { .. } => {}
+        }
+    }
+
+    fn remove_toast(&mut self, entry: &NotificationEntry, cx: &mut ViewContext<Self>) {
+        let id = entry.id as usize;
+        match entry.notification {
+            Notification::ContactRequest { .. } | Notification::ContactRequestAccepted { .. } => {
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.dismiss_notification::<ContactNotification>(id, cx)
+                    })
+                    .ok();
+            }
+            Notification::ChannelInvitation { .. } => {}
+            Notification::ChannelMessageMention { .. } => {}
         }
     }
 }

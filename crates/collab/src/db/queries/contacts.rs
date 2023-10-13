@@ -185,7 +185,11 @@ impl Database {
     ///
     /// * `requester_id` - The user that initiates this request
     /// * `responder_id` - The user that will be removed
-    pub async fn remove_contact(&self, requester_id: UserId, responder_id: UserId) -> Result<bool> {
+    pub async fn remove_contact(
+        &self,
+        requester_id: UserId,
+        responder_id: UserId,
+    ) -> Result<(bool, Option<NotificationId>)> {
         self.transaction(|tx| async move {
             let (id_a, id_b) = if responder_id < requester_id {
                 (responder_id, requester_id)
@@ -204,7 +208,21 @@ impl Database {
                 .ok_or_else(|| anyhow!("no such contact"))?;
 
             contact::Entity::delete_by_id(contact.id).exec(&*tx).await?;
-            Ok(contact.accepted)
+
+            let mut deleted_notification_id = None;
+            if !contact.accepted {
+                deleted_notification_id = self
+                    .delete_notification(
+                        responder_id,
+                        rpc::Notification::ContactRequest {
+                            actor_id: requester_id.to_proto(),
+                        },
+                        &*tx,
+                    )
+                    .await?;
+            }
+
+            Ok((contact.accepted, deleted_notification_id))
         })
         .await
     }

@@ -155,6 +155,7 @@ messages!(
     (CreateRoomResponse, Foreground),
     (DeclineCall, Foreground),
     (DeleteChannel, Foreground),
+    (DeleteNotification, Foreground),
     (DeleteProjectEntry, Foreground),
     (Error, Foreground),
     (ExpandProjectEntry, Foreground),

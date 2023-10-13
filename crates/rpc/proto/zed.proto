@@ -177,7 +177,8 @@ message Envelope {
 
         NewNotification new_notification = 148;
         GetNotifications get_notifications = 149;
-        GetNotificationsResponse get_notifications_response = 150; // Current max
+        GetNotificationsResponse get_notifications_response = 150;
+        DeleteNotification delete_notification = 151; // Current max
     }
 }
 
@@ -1588,6 +1589,10 @@ message NewNotification {
 
 message GetNotificationsResponse {
     repeated Notification notifications = 1;
+}
+
+message DeleteNotification {
+    uint64 notification_id = 1;
 }
 
 message Notification {

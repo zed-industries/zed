@@ -2,11 +2,13 @@ use anyhow::Result;
 use channel::{ChannelMessage, ChannelMessageId, ChannelStore};
 use client::{Client, UserStore};
 use collections::HashMap;
+use db::smol::stream::StreamExt;
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task};
 use rpc::{proto, AnyNotification, Notification, TypedEnvelope};
 use std::{ops::Range, sync::Arc};
 use sum_tree::{Bias, SumTree};
 use time::OffsetDateTime;
+use util::ResultExt;
 
 pub fn init(client: Arc<Client>, user_store: ModelHandle<UserStore>, cx: &mut AppContext) {
     let notification_store = cx.add_model(|cx| NotificationStore::new(client, user_store, cx));
@@ -19,6 +21,7 @@ pub struct NotificationStore {
     channel_messages: HashMap<u64, ChannelMessage>,
     channel_store: ModelHandle<ChannelStore>,
     notifications: SumTree<NotificationEntry>,
+    _watch_connection_status: Task<Option<()>>,
     _subscriptions: Vec<client::Subscription>,
 }
 
@@ -28,6 +31,9 @@ pub enum NotificationEvent {
         new_count: usize,
     },
     NewNotification {
+        entry: NotificationEntry,
+    },
+    NotificationRemoved {
         entry: NotificationEntry,
     },
 }
@@ -66,19 +72,34 @@ impl NotificationStore {
         user_store: ModelHandle<UserStore>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let this = Self {
+        let mut connection_status = client.status();
+        let watch_connection_status = cx.spawn_weak(|this, mut cx| async move {
+            while let Some(status) = connection_status.next().await {
+                let this = this.upgrade(&cx)?;
+                match status {
+                    client::Status::Connected { .. } => {
+                        this.update(&mut cx, |this, cx| this.handle_connect(cx))
+                            .await
+                            .log_err()?;
+                    }
+                    _ => this.update(&mut cx, |this, cx| this.handle_disconnect(cx)),
+                }
+            }
+            Some(())
+        });
+
+        Self {
             channel_store: ChannelStore::global(cx),
             notifications: Default::default(),
             channel_messages: Default::default(),
+            _watch_connection_status: watch_connection_status,
             _subscriptions: vec![
-                client.add_message_handler(cx.handle(), Self::handle_new_notification)
+                client.add_message_handler(cx.handle(), Self::handle_new_notification),
+                client.add_message_handler(cx.handle(), Self::handle_delete_notification),
             ],
             user_store,
             client,
-        };
-
-        this.load_more_notifications(cx).detach();
-        this
+        }
     }
 
     pub fn notification_count(&self) -> usize {
@@ -110,6 +131,16 @@ impl NotificationStore {
         })
     }
 
+    fn handle_connect(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        self.notifications = Default::default();
+        self.channel_messages = Default::default();
+        self.load_more_notifications(cx)
+    }
+
+    fn handle_disconnect(&mut self, cx: &mut ModelContext<Self>) {
+        cx.notify()
+    }
+
     async fn handle_new_notification(
         this: ModelHandle<Self>,
         envelope: TypedEnvelope<proto::NewNotification>,
@@ -123,6 +154,18 @@ impl NotificationStore {
             cx,
         )
         .await
+    }
+
+    async fn handle_delete_notification(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::DeleteNotification>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            this.splice_notifications([(envelope.payload.notification_id, None)], false, cx);
+            Ok(())
+        })
     }
 
     async fn add_notifications(
@@ -205,26 +248,47 @@ impl NotificationStore {
                     }
                 }));
 
-            let mut cursor = this.notifications.cursor::<(NotificationId, Count)>();
-            let mut new_notifications = SumTree::new();
-            let mut old_range = 0..0;
-            for (i, notification) in notifications.into_iter().enumerate() {
-                new_notifications.append(
-                    cursor.slice(&NotificationId(notification.id), Bias::Left, &()),
-                    &(),
-                );
+            this.splice_notifications(
+                notifications
+                    .into_iter()
+                    .map(|notification| (notification.id, Some(notification))),
+                is_new,
+                cx,
+            );
+        });
 
-                if i == 0 {
-                    old_range.start = cursor.start().1 .0;
-                }
+        Ok(())
+    }
 
-                if cursor
-                    .item()
-                    .map_or(true, |existing| existing.id != notification.id)
-                {
+    fn splice_notifications(
+        &mut self,
+        notifications: impl IntoIterator<Item = (u64, Option<NotificationEntry>)>,
+        is_new: bool,
+        cx: &mut ModelContext<'_, NotificationStore>,
+    ) {
+        let mut cursor = self.notifications.cursor::<(NotificationId, Count)>();
+        let mut new_notifications = SumTree::new();
+        let mut old_range = 0..0;
+
+        for (i, (id, new_notification)) in notifications.into_iter().enumerate() {
+            new_notifications.append(cursor.slice(&NotificationId(id), Bias::Left, &()), &());
+
+            if i == 0 {
+                old_range.start = cursor.start().1 .0;
+            }
+
+            if let Some(existing_notification) = cursor.item() {
+                if existing_notification.id == id {
+                    if new_notification.is_none() {
+                        cx.emit(NotificationEvent::NotificationRemoved {
+                            entry: existing_notification.clone(),
+                        });
+                    }
                     cursor.next(&());
                 }
+            }
 
+            if let Some(notification) = new_notification {
                 if is_new {
                     cx.emit(NotificationEvent::NewNotification {
                         entry: notification.clone(),
@@ -233,20 +297,18 @@ impl NotificationStore {
 
                 new_notifications.push(notification, &());
             }
+        }
 
-            old_range.end = cursor.start().1 .0;
-            let new_count = new_notifications.summary().count;
-            new_notifications.append(cursor.suffix(&()), &());
-            drop(cursor);
+        old_range.end = cursor.start().1 .0;
+        let new_count = new_notifications.summary().count - old_range.start;
+        new_notifications.append(cursor.suffix(&()), &());
+        drop(cursor);
 
-            this.notifications = new_notifications;
-            cx.emit(NotificationEvent::NotificationsUpdated {
-                old_range,
-                new_count,
-            });
+        self.notifications = new_notifications;
+        cx.emit(NotificationEvent::NotificationsUpdated {
+            old_range,
+            new_count,
         });
-
-        Ok(())
     }
 }
 

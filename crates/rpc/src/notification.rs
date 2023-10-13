@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{map, Value};
 use std::borrow::Cow;
 use strum::{EnumVariantNames, IntoStaticStr, VariantNames as _};
 
@@ -47,10 +47,12 @@ impl Notification {
         let mut value = serde_json::to_value(self).unwrap();
         let mut actor_id = None;
         if let Some(value) = value.as_object_mut() {
-            value.remove("kind");
-            actor_id = value
-                .remove("actor_id")
-                .and_then(|value| Some(value.as_i64()? as u64));
+            value.remove(KIND);
+            if let map::Entry::Occupied(e) = value.entry(ACTOR_ID) {
+                if e.get().is_u64() {
+                    actor_id = e.remove().as_u64();
+                }
+            }
         }
         AnyNotification {
             kind: Cow::Borrowed(kind),
@@ -69,7 +71,7 @@ impl Notification {
         serde_json::from_value(value).ok()
     }
 
-    pub fn all_kinds() -> &'static [&'static str] {
+    pub fn all_variant_names() -> &'static [&'static str] {
         Self::VARIANTS
     }
 }

@@ -3,12 +3,12 @@ use rpc::Notification;
 
 impl Database {
     pub async fn initialize_notification_enum(&mut self) -> Result<()> {
-        notification_kind::Entity::insert_many(Notification::all_kinds().iter().map(|kind| {
-            notification_kind::ActiveModel {
+        notification_kind::Entity::insert_many(Notification::all_variant_names().iter().map(
+            |kind| notification_kind::ActiveModel {
                 name: ActiveValue::Set(kind.to_string()),
                 ..Default::default()
-            }
-        }))
+            },
+        ))
         .on_conflict(OnConflict::new().do_nothing().to_owned())
         .exec_without_returning(&self.pool)
         .await?;
@@ -17,6 +17,12 @@ impl Database {
         while let Some(row) = rows.next().await {
             let row = row?;
             self.notification_kinds_by_name.insert(row.name, row.id);
+        }
+
+        for name in Notification::all_variant_names() {
+            if let Some(id) = self.notification_kinds_by_name.get(*name).copied() {
+                self.notification_kinds_by_id.insert(id, name);
+            }
         }
 
         Ok(())
@@ -46,6 +52,7 @@ impl Database {
             while let Some(row) = rows.next().await {
                 let row = row?;
                 let Some(kind) = self.notification_kinds_by_id.get(&row.kind) else {
+                    log::warn!("unknown notification kind {:?}", row.kind);
                     continue;
                 };
                 result.push(proto::Notification {
@@ -95,5 +102,35 @@ impl Database {
             content: notification.content,
             actor_id: notification.actor_id,
         })
+    }
+
+    pub async fn delete_notification(
+        &self,
+        recipient_id: UserId,
+        notification: Notification,
+        tx: &DatabaseTransaction,
+    ) -> Result<Option<NotificationId>> {
+        let notification = notification.to_any();
+        let kind = *self
+            .notification_kinds_by_name
+            .get(notification.kind.as_ref())
+            .ok_or_else(|| anyhow!("invalid notification kind {:?}", notification.kind))?;
+        let actor_id = notification.actor_id.map(|id| UserId::from_proto(id));
+        let notification = notification::Entity::find()
+            .filter(
+                Condition::all()
+                    .add(notification::Column::RecipientId.eq(recipient_id))
+                    .add(notification::Column::Kind.eq(kind))
+                    .add(notification::Column::ActorId.eq(actor_id))
+                    .add(notification::Column::Content.eq(notification.content)),
+            )
+            .one(tx)
+            .await?;
+        if let Some(notification) = &notification {
+            notification::Entity::delete_by_id(notification.id)
+                .exec(tx)
+                .await?;
+        }
+        Ok(notification.map(|notification| notification.id))
     }
 }

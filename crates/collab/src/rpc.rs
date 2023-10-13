@@ -2177,7 +2177,8 @@ async fn remove_contact(
     let requester_id = session.user_id;
     let responder_id = UserId::from_proto(request.user_id);
     let db = session.db().await;
-    let contact_accepted = db.remove_contact(requester_id, responder_id).await?;
+    let (contact_accepted, deleted_notification_id) =
+        db.remove_contact(requester_id, responder_id).await?;
 
     let pool = session.connection_pool().await;
     // Update outgoing contact requests of requester
@@ -2204,6 +2205,14 @@ async fn remove_contact(
     }
     for connection_id in pool.user_connection_ids(responder_id) {
         session.peer.send(connection_id, update.clone())?;
+        if let Some(notification_id) = deleted_notification_id {
+            session.peer.send(
+                connection_id,
+                proto::DeleteNotification {
+                    notification_id: notification_id.to_proto(),
+                },
+            )?;
+        }
     }
 
     response.send(proto::Ack {})?;
