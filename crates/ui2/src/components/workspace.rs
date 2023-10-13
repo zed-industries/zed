@@ -1,17 +1,18 @@
 use chrono::DateTime;
 use gpui3::{px, relative, rems, view, Context, Size, View};
 
+use crate::prelude::*;
 use crate::{
-    hello_world_rust_editor_with_status_example, theme, v_stack, AssistantPanel, Button,
-    ChatMessage, ChatPanel, CollabPanel, EditorPane, Label, LanguageSelector, Pane, PaneGroup,
-    Panel, PanelAllowedSides, PanelSide, ProjectPanel, SplitDirection, StatusBar, Terminal,
-    TitleBar, Toast, ToastOrigin,
+    theme, v_stack, AssistantPanel, Button, ChatMessage, ChatPanel, CollabPanel, EditorPane, Label,
+    LanguageSelector, NotificationToast, Pane, PaneGroup, Panel, PanelAllowedSides, PanelSide,
+    ProjectPanel, SplitDirection, StatusBar, Terminal, TitleBar, Toast, ToastOrigin,
 };
-use crate::{prelude::*, NotificationToast};
 
 #[derive(Clone)]
 pub struct Workspace {
     title_bar: View<TitleBar>,
+    editor_1: View<EditorPane>,
+    editor_2: View<EditorPane>,
     show_project_panel: bool,
     show_collab_panel: bool,
     show_chat_panel: bool,
@@ -28,6 +29,8 @@ impl Workspace {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         Self {
             title_bar: TitleBar::view(cx),
+            editor_1: EditorPane::view(cx),
+            editor_2: EditorPane::view(cx),
             show_project_panel: true,
             show_collab_panel: false,
             show_chat_panel: true,
@@ -127,9 +130,7 @@ impl Workspace {
                                 height: temp_size,
                             },
                         )
-                        .child(EditorPane::new(
-                            hello_world_rust_editor_with_status_example(&theme),
-                        )),
+                        .child(self.editor_1.clone()),
                         Pane::new(
                             ScrollState::default(),
                             Size {
@@ -149,9 +150,7 @@ impl Workspace {
                             height: relative(1.).into(),
                         },
                     )
-                    .child(EditorPane::new(
-                        hello_world_rust_editor_with_status_example(&theme),
-                    ))],
+                    .child(self.editor_2.clone())],
                     SplitDirection::Vertical,
                 ),
             ],

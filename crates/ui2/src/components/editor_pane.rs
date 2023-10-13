@@ -1,43 +1,74 @@
 use std::path::PathBuf;
 
+use gpui3::{view, Context, View};
+
 use crate::prelude::*;
-use crate::{v_stack, Breadcrumb, Buffer, Icon, IconButton, Symbol, Tab, TabBar, Toolbar};
+use crate::{
+    hello_world_rust_editor_with_status_example, v_stack, Breadcrumb, Buffer, Icon, IconButton,
+    IconColor, Symbol, Tab, TabBar, Toolbar,
+};
 
-pub struct Editor<S: 'static + Send + Sync + Clone> {
-    pub tabs: Vec<Tab<S>>,
-    pub path: PathBuf,
-    pub symbols: Vec<Symbol>,
-    pub buffer: Buffer<S>,
+#[derive(Clone)]
+pub struct EditorPane {
+    tabs: Vec<Tab<Self>>,
+    path: PathBuf,
+    symbols: Vec<Symbol>,
+    buffer: Buffer<Self>,
+    is_buffer_search_open: bool,
 }
 
-#[derive(Element)]
-pub struct EditorPane<S: 'static + Send + Sync + Clone> {
-    editor: Editor<S>,
-}
-
-impl<S: 'static + Send + Sync + Clone> EditorPane<S> {
-    pub fn new(editor: Editor<S>) -> Self {
-        Self { editor }
+impl EditorPane {
+    pub fn new(
+        tabs: Vec<Tab<Self>>,
+        path: PathBuf,
+        symbols: Vec<Symbol>,
+        buffer: Buffer<Self>,
+    ) -> Self {
+        Self {
+            tabs,
+            path,
+            symbols,
+            buffer,
+            is_buffer_search_open: false,
+        }
     }
 
-    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    pub fn toggle_buffer_search(&mut self, cx: &mut ViewContext<Self>) {
+        self.is_buffer_search_open = !self.is_buffer_search_open;
+
+        cx.notify();
+    }
+
+    pub fn view(cx: &mut WindowContext) -> View<Self> {
+        let theme = theme(cx);
+
+        view(
+            cx.entity(|cx| hello_world_rust_editor_with_status_example(&theme)),
+            Self::render,
+        )
+    }
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
         v_stack()
             .w_full()
             .h_full()
             .flex_1()
-            .child(TabBar::new(self.editor.tabs.clone()))
+            .child(TabBar::new(self.tabs.clone()))
             .child(
                 Toolbar::new()
-                    .left_item(Breadcrumb::new(
-                        self.editor.path.clone(),
-                        self.editor.symbols.clone(),
-                    ))
+                    .left_item(Breadcrumb::new(self.path.clone(), self.symbols.clone()))
                     .right_items(vec![
-                        IconButton::new(Icon::InlayHint).into_any(),
-                        IconButton::new(Icon::MagnifyingGlass).into_any(),
-                        IconButton::new(Icon::MagicWand).into_any(),
+                        IconButton::new(Icon::InlayHint),
+                        IconButton::<Self>::new(Icon::MagnifyingGlass)
+                            .when(self.is_buffer_search_open, |this| {
+                                this.color(IconColor::Accent)
+                            })
+                            .on_click(|editor, cx| {
+                                editor.toggle_buffer_search(cx);
+                            }),
+                        IconButton::new(Icon::MagicWand),
                     ]),
             )
-            .child(self.editor.buffer.clone())
+            .child(self.buffer.clone())
     }
 }
