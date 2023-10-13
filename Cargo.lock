@@ -6956,7 +6956,6 @@ dependencies = [
  "unindent",
  "util",
  "workspace",
- "zed",
 ]
 
 [[package]]
@@ -10049,6 +10048,7 @@ name = "zed"
 version = "0.109.0"
 dependencies = [
  "activity_indicator",
+ "ai",
  "anyhow",
  "assistant",
  "async-compression",
