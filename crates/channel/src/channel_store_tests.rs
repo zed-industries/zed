@@ -3,7 +3,7 @@ use crate::channel_chat::ChannelChatEvent;
 use super::*;
 use client::{test::FakeServer, Client, UserStore};
 use gpui::{AppContext, ModelHandle, TestAppContext};
-use rpc::proto::{self, ChannelRole};
+use rpc::proto::{self};
 use settings::SettingsStore;
 use util::http::FakeHttpClient;
 
