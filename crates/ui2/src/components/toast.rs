@@ -10,13 +10,6 @@ pub enum ToastOrigin {
     BottomRight,
 }
 
-#[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
-pub enum ToastVariant {
-    #[default]
-    Toast,
-    Status,
-}
-
 /// A toast is a small, temporary window that appears to show a message to the user
 /// or indicate a required action.
 ///
