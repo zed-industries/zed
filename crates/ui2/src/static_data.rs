@@ -4,7 +4,7 @@ use std::str::FromStr;
 use rand::Rng;
 
 use crate::{
-    Buffer, BufferRow, BufferRows, Editor, FileSystemStatus, GitStatus, HighlightColor,
+    Buffer, BufferRow, BufferRows, EditorPane, FileSystemStatus, GitStatus, HighlightColor,
     HighlightedLine, HighlightedText, Icon, Keybinding, Label, LabelColor, ListEntry,
     ListEntrySize, ListItem, Livestream, MicStatus, ModifierKeys, PaletteItem, Player,
     PlayerCallStatus, PlayerWithCallStatus, ScreenShareStatus, Symbol, Tab, Theme, ToggleState,
@@ -597,26 +597,24 @@ pub fn example_editor_actions<S: 'static + Send + Sync + Clone>() -> Vec<Palette
     ]
 }
 
-pub fn empty_editor_example<S: 'static + Send + Sync + Clone>() -> Editor<S> {
-    Editor {
-        tabs: static_tabs_example(),
-        path: PathBuf::from_str("crates/ui/src/static_data.rs").unwrap(),
-        symbols: vec![],
-        buffer: empty_buffer_example(),
-    }
+pub fn empty_editor_example() -> EditorPane {
+    EditorPane::new(
+        static_tabs_example(),
+        PathBuf::from_str("crates/ui/src/static_data.rs").unwrap(),
+        vec![],
+        empty_buffer_example(),
+    )
 }
 
 pub fn empty_buffer_example<S: 'static + Send + Sync + Clone>() -> Buffer<S> {
     Buffer::new().set_rows(Some(BufferRows::default()))
 }
 
-pub fn hello_world_rust_editor_example<S: 'static + Send + Sync + Clone>(
-    theme: &Theme,
-) -> Editor<S> {
-    Editor {
-        tabs: static_tabs_example(),
-        path: PathBuf::from_str("crates/ui/src/static_data.rs").unwrap(),
-        symbols: vec![Symbol(vec![
+pub fn hello_world_rust_editor_example(theme: &Theme) -> EditorPane {
+    EditorPane::new(
+        static_tabs_example(),
+        PathBuf::from_str("crates/ui/src/static_data.rs").unwrap(),
+        vec![Symbol(vec![
             HighlightedText {
                 text: "fn ".to_string(),
                 color: HighlightColor::Keyword.hsla(&theme),
@@ -626,8 +624,8 @@ pub fn hello_world_rust_editor_example<S: 'static + Send + Sync + Clone>(
                 color: HighlightColor::Function.hsla(&theme),
             },
         ])],
-        buffer: hello_world_rust_buffer_example(theme),
-    }
+        hello_world_rust_buffer_example(theme),
+    )
 }
 
 pub fn hello_world_rust_buffer_example<S: 'static + Send + Sync + Clone>(
@@ -750,13 +748,11 @@ pub fn hello_world_rust_buffer_rows(theme: &Theme) -> Vec<BufferRow> {
     ]
 }
 
-pub fn hello_world_rust_editor_with_status_example<S: 'static + Send + Sync + Clone>(
-    theme: &Theme,
-) -> Editor<S> {
-    Editor {
-        tabs: static_tabs_example(),
-        path: PathBuf::from_str("crates/ui/src/static_data.rs").unwrap(),
-        symbols: vec![Symbol(vec![
+pub fn hello_world_rust_editor_with_status_example(theme: &Theme) -> EditorPane {
+    EditorPane::new(
+        static_tabs_example(),
+        PathBuf::from_str("crates/ui/src/static_data.rs").unwrap(),
+        vec![Symbol(vec![
             HighlightedText {
                 text: "fn ".to_string(),
                 color: HighlightColor::Keyword.hsla(&theme),
@@ -766,8 +762,8 @@ pub fn hello_world_rust_editor_with_status_example<S: 'static + Send + Sync + Cl
                 color: HighlightColor::Function.hsla(&theme),
             },
         ])],
-        buffer: hello_world_rust_buffer_with_status_example(theme),
-    }
+        hello_world_rust_buffer_with_status_example(theme),
+    )
 }
 
 pub fn hello_world_rust_buffer_with_status_example<S: 'static + Send + Sync + Clone>(

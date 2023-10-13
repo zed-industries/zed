@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use clap::Parser;
 use gpui3::{
-    div, px, size, view, AnyView, Bounds, Context, Element, ViewContext, WindowBounds,
-    WindowOptions,
+    div, px, size, view, AnyView, BorrowAppContext, Bounds, Context, Element, ViewContext,
+    WindowBounds, WindowOptions,
 };
 use log::LevelFilter;
 use simplelog::SimpleLogger;
@@ -68,7 +68,11 @@ fn main() {
                     },
                     move |cx| {
                         view(
-                            cx.entity(|cx| StoryWrapper::new(selector.story(cx), theme)),
+                            cx.entity(|cx| {
+                                cx.with_global(theme.clone(), |cx| {
+                                    StoryWrapper::new(selector.story(cx), theme)
+                                })
+                            }),
                             StoryWrapper::render,
                         )
                     },

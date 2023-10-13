@@ -1,6 +1,7 @@
 mod assistant_panel;
 mod breadcrumb;
 mod buffer;
+mod buffer_search;
 mod chat_panel;
 mod collab_panel;
 mod command_palette;
@@ -33,6 +34,7 @@ mod workspace;
 pub use assistant_panel::*;
 pub use breadcrumb::*;
 pub use buffer::*;
+pub use buffer_search::*;
 pub use chat_panel::*;
 pub use collab_panel::*;
 pub use command_palette::*;
