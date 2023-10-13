@@ -4,7 +4,7 @@ use crate::{
     AnyBox, AnyElement, BorrowWindow, Bounds, Element, ElementId, EntityId, Handle,
     IdentifiedElement, IntoAnyElement, LayoutId, Pixels, ViewContext, WindowContext,
 };
-use std::{any::Any, marker::PhantomData, sync::Arc};
+use std::{marker::PhantomData, sync::Arc};
 
 pub struct View<S: Send + Sync> {
     state: Handle<S>,

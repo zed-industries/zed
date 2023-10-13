@@ -4,12 +4,14 @@ use crate::{
     FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rems, Result, RunStyle, SharedString,
     Size, SizeRefinement, ViewContext, WindowContext,
 };
-use refineable::Refineable;
+use refineable::{Cascade, Refineable};
 use smallvec::SmallVec;
 pub use taffy::style::{
     AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap, JustifyContent,
     Overflow, Position,
 };
+
+pub type StyleCascade = Cascade<Style>;
 
 #[derive(Clone, Refineable, Debug)]
 #[refineable(debug)]
