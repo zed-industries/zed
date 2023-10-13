@@ -397,6 +397,7 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
 
         div()
             .relative()
+            .group("")
             .fill(color.surface)
             .when(self.state == InteractionState::Focused, |this| {
                 this.border().border_color(color.border_focused)
@@ -411,6 +412,8 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
                             .h_full()
                             .flex()
                             .justify_center()
+                            .group_hover("")
+                            .fill(color.border_focused)
                             .child(
                                 h_stack()
                                     .child(div().w_px().h_full())

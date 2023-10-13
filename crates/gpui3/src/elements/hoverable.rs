@@ -108,9 +108,10 @@ where
             let hovered = self.hovered.clone();
 
             move |_, event: &MouseMoveEvent, phase, cx| {
-                if phase == DispatchPhase::Capture {
+                if phase == DispatchPhase::Bubble {
                     if target_bounds.contains_point(event.position) != hovered.load(SeqCst) {
                         cx.notify();
+                        cx.stop_propagation();
                     }
                 }
             }

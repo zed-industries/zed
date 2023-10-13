@@ -19,7 +19,7 @@ pub struct Token {
 impl Default for Token {
     fn default() -> Self {
         Self {
-            list_indent_depth: AbsoluteLength::Rems(rems(0.3)),
+            list_indent_depth: rems(0.3).into(),
             default_panel_size: AbsoluteLength::Rems(rems(16.)),
             state_hover_background: hsla(0.0, 0.0, 0.0, 0.08),
             state_active_background: hsla(0.0, 0.0, 0.0, 0.16),
@@ -74,7 +74,8 @@ pub struct ThemeColor {
     /// or tapped on a touch screen.
     /// - TODO: Map to step 5.
     pub filled_element_active: Hsla,
-    /// The background color of a selected element, like a selected tab, a button toggled on, or a checkbox that is checked.
+    /// The background color of a selected element, like a selected tab,
+    /// a button toggled on, or a checkbox that is checked.
     pub filled_element_selected: Hsla,
     pub filled_element_disabled: Hsla,
     pub ghost_element: Hsla,

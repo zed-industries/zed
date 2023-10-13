@@ -24,6 +24,7 @@ pub struct NotificationToast<S: 'static + Send + Sync + Clone> {
 
 impl<S: 'static + Send + Sync + Clone> NotificationToast<S> {
     pub fn new(
+        // TODO: use a `SharedString` here
         title: impl Into<String>,
         message: impl Into<String>,
         primary_action: Button<S>,
