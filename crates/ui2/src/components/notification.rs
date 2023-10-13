@@ -1,4 +1,4 @@
-use gpui3::{Element, ParentElement, StyleHelpers, ViewContext};
+use gpui3::{div, Element, ParentElement, StyleHelpers, ViewContext};
 
 use crate::{
     h_stack, v_stack, Button, Icon, IconButton, IconElement, Label, ThemeColor, Toast, ToastOrigin,
@@ -12,7 +12,8 @@ pub struct NotificationToast<S: 'static + Send + Sync + Clone> {
     left_icon: Option<Icon>,
     title: String,
     message: String,
-    actions: Vec<Button<S>>,
+    primary_action: Button<S>,
+    secondary_action: Option<Button<S>>,
 }
 
 impl<S: 'static + Send + Sync + Clone> NotificationToast<S> {
@@ -20,12 +21,14 @@ impl<S: 'static + Send + Sync + Clone> NotificationToast<S> {
         title: impl Into<String>,
         message: impl Into<String>,
         actions: Vec<Button<S>>,
+        primary_action: Button<S>,
     ) -> Self {
         Self {
             left_icon: None,
             title: title.into(),
             message: message.into(),
-            actions,
+            primary_action,
+            secondary_action: None,
         }
     }
 
@@ -34,8 +37,21 @@ impl<S: 'static + Send + Sync + Clone> NotificationToast<S> {
         self
     }
 
+    pub fn set_secondary_action(mut self, action: Button<S>) -> Self {
+        self.secondary_action = Some(action);
+        self
+    }
+
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let color = ThemeColor::new(cx);
+
+        // TODO: Fix me
+
+        // let secondary_action = if self.secondary_action.is_some() {
+        //     div().child(Some(self.secondary_action))
+        // } else {
+        //     div()
+        // };
 
         let notification = h_stack()
             .gap_1()
@@ -47,14 +63,20 @@ impl<S: 'static + Send + Sync + Clone> NotificationToast<S> {
                         h_stack()
                             .justify_between()
                             .p_1()
-                            .child(Label::new(self.title))
+                            .child(Label::new(self.title.clone()))
                             .child(IconButton::new(Icon::Close)),
                     )
                     .child(
-                        h_stack()
+                        v_stack()
                             .p_1()
-                            .child(Label::new(self.message))
-                            .children(self.actions.iter().map(|action| action)),
+                            .child(Label::new(self.message.clone()))
+                            .child(
+                                h_stack()
+                                    .gap_1()
+                                    .justify_end()
+                                    .child(Label::new("Secondary").color(crate::LabelColor::Muted))
+                                    .child(Label::new("Primary")),
+                            ),
                     ),
             );
 
