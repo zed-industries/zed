@@ -9,7 +9,7 @@ use db::RELEASE_CHANNEL;
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
 use rpc::{
-    proto::{self, ChannelEdge, ChannelPermission, ChannelRole},
+    proto::{self, ChannelEdge, ChannelPermission, ChannelRole, ChannelVisibility},
     TypedEnvelope,
 };
 use serde_derive::{Deserialize, Serialize};
@@ -49,6 +49,7 @@ pub type ChannelData = (Channel, ChannelPath);
 pub struct Channel {
     pub id: ChannelId,
     pub name: String,
+    pub visibility: proto::ChannelVisibility,
     pub unseen_note_version: Option<(u64, clock::Global)>,
     pub unseen_message_id: Option<u64>,
 }
@@ -508,6 +509,25 @@ impl ChannelStore {
         })
     }
 
+    pub fn set_channel_visibility(
+        &mut self,
+        channel_id: ChannelId,
+        visibility: ChannelVisibility,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let client = self.client.clone();
+        cx.spawn(|_, _| async move {
+            let _ = client
+                .request(proto::SetChannelVisibility {
+                    channel_id,
+                    visibility: visibility.into(),
+                })
+                .await?;
+
+            Ok(())
+        })
+    }
+
     pub fn invite_member(
         &mut self,
         channel_id: ChannelId,
@@ -869,6 +889,7 @@ impl ChannelStore {
                     ix,
                     Arc::new(Channel {
                         id: channel.id,
+                        visibility: channel.visibility(),
                         name: channel.name,
                         unseen_note_version: None,
                         unseen_message_id: None,

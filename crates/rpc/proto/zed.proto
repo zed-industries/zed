@@ -170,7 +170,8 @@ message Envelope {
 
         LinkChannel link_channel = 140;
         UnlinkChannel unlink_channel = 141;
-        MoveChannel move_channel = 142; // current max: 145
+        MoveChannel move_channel = 142;
+        SetChannelVisibility set_channel_visibility = 146; // current max: 146
     }
 }
 
@@ -1049,6 +1050,11 @@ message SetChannelMemberRole {
     ChannelRole role = 3;
 }
 
+message SetChannelVisibility {
+    uint64 channel_id = 1;
+    ChannelVisibility visibility = 2;
+}
+
 message RenameChannel {
     uint64 channel_id = 1;
     string name = 2;
@@ -1542,7 +1548,7 @@ message Nonce {
 
 enum ChannelVisibility {
     Public = 0;
-    ChannelMembers = 1;
+    Members = 1;
 }
 
 message Channel {

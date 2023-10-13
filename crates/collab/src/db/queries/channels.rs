@@ -93,12 +93,12 @@ impl Database {
         channel_id: ChannelId,
         visibility: ChannelVisibility,
         user_id: UserId,
-    ) -> Result<()> {
+    ) -> Result<channel::Model> {
         self.transaction(move |tx| async move {
             self.check_user_is_channel_admin(channel_id, user_id, &*tx)
                 .await?;
 
-            channel::ActiveModel {
+            let channel = channel::ActiveModel {
                 id: ActiveValue::Unchanged(channel_id),
                 visibility: ActiveValue::Set(visibility),
                 ..Default::default()
@@ -106,7 +106,7 @@ impl Database {
             .update(&*tx)
             .await?;
 
-            Ok(())
+            Ok(channel)
         })
         .await
     }
@@ -219,14 +219,14 @@ impl Database {
         channel_id: ChannelId,
         user_id: UserId,
         new_name: &str,
-    ) -> Result<String> {
+    ) -> Result<Channel> {
         self.transaction(move |tx| async move {
             let new_name = Self::sanitize_channel_name(new_name)?.to_string();
 
             self.check_user_is_channel_admin(channel_id, user_id, &*tx)
                 .await?;
 
-            channel::ActiveModel {
+            let channel = channel::ActiveModel {
                 id: ActiveValue::Unchanged(channel_id),
                 name: ActiveValue::Set(new_name.clone()),
                 ..Default::default()
@@ -234,7 +234,11 @@ impl Database {
             .update(&*tx)
             .await?;
 
-            Ok(new_name)
+            Ok(Channel {
+                id: channel.id,
+                name: channel.name,
+                visibility: channel.visibility,
+            })
         })
         .await
     }
@@ -336,6 +340,7 @@ impl Database {
                 .map(|channel| Channel {
                     id: channel.id,
                     name: channel.name,
+                    visibility: channel.visibility,
                 })
                 .collect();
 
@@ -443,6 +448,7 @@ impl Database {
             channels.push(Channel {
                 id: channel.id,
                 name: channel.name,
+                visibility: channel.visibility,
             });
 
             if role == ChannelRole::Admin {
@@ -963,6 +969,7 @@ impl Database {
                 Ok(Some((
                     Channel {
                         id: channel.id,
+                        visibility: channel.visibility,
                         name: channel.name,
                     },
                     is_accepted,

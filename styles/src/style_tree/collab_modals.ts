@@ -1,10 +1,11 @@
-import { useTheme } from "../theme"
+import { StyleSet, StyleSets, Styles, useTheme } from "../theme"
 import { background, border, foreground, text } from "./components"
 import picker from "./picker"
 import { input } from "../component/input"
 import contact_finder from "./contact_finder"
 import { tab } from "../component/tab"
 import { icon_button } from "../component/icon_button"
+import { interactive } from "../element/interactive"
 
 export default function channel_modal(): any {
     const theme = useTheme()
@@ -26,6 +27,24 @@ export default function channel_modal(): any {
     delete picker_style.border
 
     const picker_input = input()
+
+    const interactive_text = (styleset: StyleSets) =>
+        interactive({
+            base: {
+                padding: {
+                    left: 8,
+                    top: 8
+                },
+                ...text(theme.middle, "sans", styleset, "default"),
+            }, state: {
+                hovered: {
+                    ...text(theme.middle, "sans", styleset, "hovered"),
+                },
+                clicked: {
+                    ...text(theme.middle, "sans", styleset, "active"),
+                }
+            }
+        });
 
     const member_icon_style = icon_button({
         variant: "ghost",
@@ -88,6 +107,8 @@ export default function channel_modal(): any {
                     left: BUTTON_OFFSET,
                 },
             },
+            visibility_toggle: interactive_text("base"),
+            channel_link: interactive_text("accent"),
             picker: {
                 empty_container: {},
                 item: {

@@ -11,7 +11,10 @@ use collections::HashMap;
 use editor::{Anchor, Editor, ToOffset};
 use futures::future;
 use gpui::{executor::Deterministic, ModelHandle, TestAppContext, ViewContext};
-use rpc::{proto::PeerId, RECEIVE_TIMEOUT};
+use rpc::{
+    proto::{self, PeerId},
+    RECEIVE_TIMEOUT,
+};
 use serde_json::json;
 use std::{ops::Range, sync::Arc};
 
@@ -445,6 +448,7 @@ fn channel(id: u64, name: &'static str) -> Channel {
     Channel {
         id,
         name: name.to_string(),
+        visibility: proto::ChannelVisibility::Members,
         unseen_note_version: None,
         unseen_message_id: None,
     }

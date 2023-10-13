@@ -286,6 +286,8 @@ pub struct TabbedModal {
     pub header: ContainerStyle,
     pub body: ContainerStyle,
     pub title: ContainedText,
+    pub visibility_toggle: Interactive<ContainedText>,
+    pub channel_link: Interactive<ContainedText>,
     pub picker: Picker,
     pub max_height: f32,
     pub max_width: f32,

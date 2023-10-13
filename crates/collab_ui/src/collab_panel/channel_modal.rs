@@ -1,6 +1,6 @@
-use channel::{ChannelId, ChannelMembership, ChannelStore};
+use channel::{Channel, ChannelId, ChannelMembership, ChannelStore};
 use client::{
-    proto::{self, ChannelRole},
+    proto::{self, ChannelRole, ChannelVisibility},
     User, UserId, UserStore,
 };
 use context_menu::{ContextMenu, ContextMenuItem};
@@ -9,7 +9,8 @@ use gpui::{
     actions,
     elements::*,
     platform::{CursorStyle, MouseButton},
-    AppContext, Entity, ModelHandle, MouseState, Task, View, ViewContext, ViewHandle,
+    AppContext, ClipboardItem, Entity, ModelHandle, MouseState, Task, View, ViewContext,
+    ViewHandle,
 };
 use picker::{Picker, PickerDelegate, PickerEvent};
 use std::sync::Arc;
@@ -185,6 +186,81 @@ impl View for ChannelModal {
             .into_any()
         }
 
+        fn render_visibility(
+            channel_id: ChannelId,
+            visibility: ChannelVisibility,
+            theme: &theme::TabbedModal,
+            cx: &mut ViewContext<ChannelModal>,
+        ) -> AnyElement<ChannelModal> {
+            enum TogglePublic {}
+
+            if visibility == ChannelVisibility::Members {
+                return Flex::row()
+                    .with_child(
+                        MouseEventHandler::new::<TogglePublic, _>(0, cx, move |state, _| {
+                            let style = theme.visibility_toggle.style_for(state);
+                            Label::new(format!("{}", "Public access: OFF"), style.text.clone())
+                                .contained()
+                                .with_style(style.container.clone())
+                        })
+                        .on_click(MouseButton::Left, move |_, this, cx| {
+                            this.channel_store
+                                .update(cx, |channel_store, cx| {
+                                    channel_store.set_channel_visibility(
+                                        channel_id,
+                                        ChannelVisibility::Public,
+                                        cx,
+                                    )
+                                })
+                                .detach_and_log_err(cx);
+                        })
+                        .with_cursor_style(CursorStyle::PointingHand),
+                    )
+                    .into_any();
+            }
+
+            Flex::row()
+                .with_child(
+                    MouseEventHandler::new::<TogglePublic, _>(0, cx, move |state, _| {
+                        let style = theme.visibility_toggle.style_for(state);
+                        Label::new(format!("{}", "Public access: ON"), style.text.clone())
+                            .contained()
+                            .with_style(style.container.clone())
+                    })
+                    .on_click(MouseButton::Left, move |_, this, cx| {
+                        this.channel_store
+                            .update(cx, |channel_store, cx| {
+                                channel_store.set_channel_visibility(
+                                    channel_id,
+                                    ChannelVisibility::Members,
+                                    cx,
+                                )
+                            })
+                            .detach_and_log_err(cx);
+                    })
+                    .with_cursor_style(CursorStyle::PointingHand),
+                )
+                .with_spacing(14.0)
+                .with_child(
+                    MouseEventHandler::new::<TogglePublic, _>(1, cx, move |state, _| {
+                        let style = theme.channel_link.style_for(state);
+                        Label::new(format!("{}", "copy link"), style.text.clone())
+                            .contained()
+                            .with_style(style.container.clone())
+                    })
+                    .on_click(MouseButton::Left, move |_, this, cx| {
+                        if let Some(channel) =
+                            this.channel_store.read(cx).channel_for_id(channel_id)
+                        {
+                            let item = ClipboardItem::new(channel.link());
+                            cx.write_to_clipboard(item);
+                        }
+                    })
+                    .with_cursor_style(CursorStyle::PointingHand),
+                )
+                .into_any()
+        }
+
         Flex::column()
             .with_child(
                 Flex::column()
@@ -193,6 +269,7 @@ impl View for ChannelModal {
                             .contained()
                             .with_style(theme.title.container.clone()),
                     )
+                    .with_child(render_visibility(channel.id, channel.visibility, theme, cx))
                     .with_child(Flex::row().with_children([
                         render_mode_button::<InviteMembers>(
                             Mode::InviteMembers,

@@ -3,8 +3,8 @@ mod connection_pool;
 use crate::{
     auth,
     db::{
-        self, BufferId, ChannelId, ChannelsForUser, Database, MessageId, ProjectId, RoomId,
-        ServerId, User, UserId,
+        self, BufferId, ChannelId, ChannelVisibility, ChannelsForUser, Database, MessageId,
+        ProjectId, RoomId, ServerId, User, UserId,
     },
     executor::Executor,
     AppState, Result,
@@ -38,8 +38,8 @@ use lazy_static::lazy_static;
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
-        self, Ack, AnyTypedEnvelope, ChannelEdge, ChannelVisibility, EntityMessage,
-        EnvelopedMessage, LiveKitConnectionInfo, RequestMessage, UpdateChannelBufferCollaborators,
+        self, Ack, AnyTypedEnvelope, ChannelEdge, EntityMessage, EnvelopedMessage,
+        LiveKitConnectionInfo, RequestMessage, UpdateChannelBufferCollaborators,
     },
     Connection, ConnectionId, Peer, Receipt, TypedEnvelope,
 };
@@ -255,6 +255,7 @@ impl Server {
             .add_request_handler(invite_channel_member)
             .add_request_handler(remove_channel_member)
             .add_request_handler(set_channel_member_role)
+            .add_request_handler(set_channel_visibility)
             .add_request_handler(rename_channel)
             .add_request_handler(join_channel_buffer)
             .add_request_handler(leave_channel_buffer)
@@ -2210,8 +2211,7 @@ async fn create_channel(
     let channel = proto::Channel {
         id: id.to_proto(),
         name: request.name,
-        // TODO: Visibility
-        visibility: proto::ChannelVisibility::ChannelMembers as i32,
+        visibility: proto::ChannelVisibility::Members as i32,
     };
 
     response.send(proto::CreateChannelResponse {
@@ -2300,9 +2300,8 @@ async fn invite_channel_member(
     let mut update = proto::UpdateChannels::default();
     update.channel_invitations.push(proto::Channel {
         id: channel.id.to_proto(),
+        visibility: channel.visibility.into(),
         name: channel.name,
-        // TODO: Visibility
-        visibility: proto::ChannelVisibility::ChannelMembers as i32,
     });
     for connection_id in session
         .connection_pool()
@@ -2337,6 +2336,39 @@ async fn remove_channel_member(
         .user_connection_ids(member_id)
     {
         session.peer.send(connection_id, update.clone())?;
+    }
+
+    response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn set_channel_visibility(
+    request: proto::SetChannelVisibility,
+    response: Response<proto::SetChannelVisibility>,
+    session: Session,
+) -> Result<()> {
+    let db = session.db().await;
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let visibility = request.visibility().into();
+
+    let channel = db
+        .set_channel_visibility(channel_id, visibility, session.user_id)
+        .await?;
+
+    let mut update = proto::UpdateChannels::default();
+    update.channels.push(proto::Channel {
+        id: channel.id.to_proto(),
+        name: channel.name,
+        visibility: channel.visibility.into(),
+    });
+
+    let member_ids = db.get_channel_members(channel_id).await?;
+
+    let connection_pool = session.connection_pool().await;
+    for member_id in member_ids {
+        for connection_id in connection_pool.user_connection_ids(member_id) {
+            session.peer.send(connection_id, update.clone())?;
+        }
     }
 
     response.send(proto::Ack {})?;
@@ -2391,15 +2423,14 @@ async fn rename_channel(
 ) -> Result<()> {
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
-    let new_name = db
+    let channel = db
         .rename_channel(channel_id, session.user_id, &request.name)
         .await?;
 
     let channel = proto::Channel {
-        id: request.channel_id,
-        name: new_name,
-        // TODO: Visibility
-        visibility: proto::ChannelVisibility::ChannelMembers as i32,
+        id: channel.id.to_proto(),
+        name: channel.name,
+        visibility: channel.visibility.into(),
     };
     response.send(proto::RenameChannelResponse {
         channel: Some(channel.clone()),
@@ -2437,9 +2468,8 @@ async fn link_channel(
             .into_iter()
             .map(|channel| proto::Channel {
                 id: channel.id.to_proto(),
+                visibility: channel.visibility.into(),
                 name: channel.name,
-                // TODO: Visibility
-                visibility: proto::ChannelVisibility::ChannelMembers as i32,
             })
             .collect(),
         insert_edge: channels_to_send.edges,
@@ -2530,9 +2560,8 @@ async fn move_channel(
             .into_iter()
             .map(|channel| proto::Channel {
                 id: channel.id.to_proto(),
+                visibility: channel.visibility.into(),
                 name: channel.name,
-                // TODO: Visibility
-                visibility: proto::ChannelVisibility::ChannelMembers as i32,
             })
             .collect(),
         insert_edge: channels_to_send.edges,
@@ -2588,9 +2617,8 @@ async fn respond_to_channel_invite(
                     .into_iter()
                     .map(|channel| proto::Channel {
                         id: channel.id.to_proto(),
+                        visibility: channel.visibility.into(),
                         name: channel.name,
-                        // TODO: Visibility
-                        visibility: ChannelVisibility::ChannelMembers.into(),
                     }),
             );
         update.unseen_channel_messages = result.channel_messages;
@@ -3094,8 +3122,7 @@ fn build_initial_channels_update(
         update.channels.push(proto::Channel {
             id: channel.id.to_proto(),
             name: channel.name,
-            // TODO: Visibility
-            visibility: ChannelVisibility::Public.into(),
+            visibility: channel.visibility.into(),
         });
     }
 
