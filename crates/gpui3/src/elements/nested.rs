@@ -2,7 +2,7 @@ use crate::{
     group_bounds, AnyElement, DispatchPhase, Element, IntoAnyElement, MouseMoveEvent, SharedString,
     Style, StyleCascade, StyleRefinement,
 };
-use refineable::CascadeSlot;
+use refineable::{CascadeSlot, Refineable};
 use smallvec::SmallVec;
 use std::sync::{
     atomic::{AtomicBool, Ordering::SeqCst},
@@ -237,7 +237,7 @@ impl<V: 'static + Send + Sync> Styled for LayoutNodeState<V> {
 
     fn computed_style(&mut self) -> &Style {
         self.computed_style
-            .get_or_insert_with(|| Style::from(self.style_cascade.merged()))
+            .get_or_insert_with(|| Style::default().refined(self.style_cascade.merged()))
     }
 }
 

@@ -7,10 +7,7 @@ pub trait Styled {
     fn declared_style(&mut self) -> &mut <Self::Style as Refineable>::Refinement;
 
     fn computed_style(&mut self) -> Self::Style {
-        todo!()
-        // let x: StyleRefinement = self.style_cascade().merged();
-
-        // x.into();
+        Self::Style::default().refined(self.style_cascade().merged())
     }
 
     fn hover(self) -> Hoverable<Self>
