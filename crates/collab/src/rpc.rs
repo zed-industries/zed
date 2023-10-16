@@ -38,7 +38,7 @@ use lazy_static::lazy_static;
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
-        self, Ack, AnyTypedEnvelope, ChannelEdge, EntityMessage, EnvelopedMessage, JoinRoom,
+        self, Ack, AnyTypedEnvelope, ChannelEdge, EntityMessage, EnvelopedMessage,
         LiveKitConnectionInfo, RequestMessage, UpdateChannelBufferCollaborators,
     },
     Connection, ConnectionId, Peer, Receipt, TypedEnvelope,
@@ -2289,10 +2289,7 @@ async fn invite_channel_member(
     )
     .await?;
 
-    let (channel, _) = db
-        .get_channel(channel_id, session.user_id)
-        .await?
-        .ok_or_else(|| anyhow!("channel not found"))?;
+    let channel = db.get_channel(channel_id, session.user_id).await?;
 
     let mut update = proto::UpdateChannels::default();
     update.channel_invitations.push(proto::Channel {
@@ -2380,21 +2377,19 @@ async fn set_channel_member_role(
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
     let member_id = UserId::from_proto(request.user_id);
-    db.set_channel_member_role(
-        channel_id,
-        session.user_id,
-        member_id,
-        request.role().into(),
-    )
-    .await?;
+    let channel_member = db
+        .set_channel_member_role(
+            channel_id,
+            session.user_id,
+            member_id,
+            request.role().into(),
+        )
+        .await?;
 
-    let (channel, has_accepted) = db
-        .get_channel(channel_id, member_id)
-        .await?
-        .ok_or_else(|| anyhow!("channel not found"))?;
+    let channel = db.get_channel(channel_id, session.user_id).await?;
 
     let mut update = proto::UpdateChannels::default();
-    if has_accepted {
+    if channel_member.accepted {
         update.channel_permissions.push(proto::ChannelPermission {
             channel_id: channel.id.to_proto(),
             role: request.role,
@@ -2724,9 +2719,11 @@ async fn join_channel_internal(
             channel_id: joined_room.channel_id.map(|id| id.to_proto()),
             live_kit_connection_info,
         })?;
+        dbg!("Joined channel", &joined_channel);
 
-        if joined_channel {
-            channel_membership_updated(db, channel_id, &session).await?
+        if let Some(joined_channel) = joined_channel {
+            dbg!("CMU");
+            channel_membership_updated(db, joined_channel, &session).await?
         }
 
         room_updated(&joined_room.room, &session.peer);

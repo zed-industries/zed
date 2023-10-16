@@ -51,7 +51,7 @@ async fn test_channels(db: &Arc<Database>) {
     let zed_id = db.create_root_channel("zed", a_id).await.unwrap();
 
     // Make sure that people cannot read channels they haven't been invited to
-    assert!(db.get_channel(zed_id, b_id).await.unwrap().is_none());
+    assert!(db.get_channel(zed_id, b_id).await.is_err());
 
     db.invite_channel_member(zed_id, b_id, a_id, ChannelRole::Member)
         .await
@@ -157,7 +157,7 @@ async fn test_channels(db: &Arc<Database>) {
 
     // Remove a single channel
     db.delete_channel(crdb_id, a_id).await.unwrap();
-    assert!(db.get_channel(crdb_id, a_id).await.unwrap().is_none());
+    assert!(db.get_channel(crdb_id, a_id).await.is_err());
 
     // Remove a channel tree
     let (mut channel_ids, user_ids) = db.delete_channel(rust_id, a_id).await.unwrap();
@@ -165,9 +165,9 @@ async fn test_channels(db: &Arc<Database>) {
     assert_eq!(channel_ids, &[rust_id, cargo_id, cargo_ra_id]);
     assert_eq!(user_ids, &[a_id]);
 
-    assert!(db.get_channel(rust_id, a_id).await.unwrap().is_none());
-    assert!(db.get_channel(cargo_id, a_id).await.unwrap().is_none());
-    assert!(db.get_channel(cargo_ra_id, a_id).await.unwrap().is_none());
+    assert!(db.get_channel(rust_id, a_id).await.is_err());
+    assert!(db.get_channel(cargo_id, a_id).await.is_err());
+    assert!(db.get_channel(cargo_ra_id, a_id).await.is_err());
 }
 
 test_both_dbs!(
@@ -381,11 +381,7 @@ async fn test_channel_renames(db: &Arc<Database>) {
 
     let zed_archive_id = zed_id;
 
-    let (channel, _) = db
-        .get_channel(zed_archive_id, user_1)
-        .await
-        .unwrap()
-        .unwrap();
+    let channel = db.get_channel(zed_archive_id, user_1).await.unwrap();
     assert_eq!(channel.name, "zed-archive");
 
     let non_permissioned_rename = db
@@ -860,12 +856,6 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     })
     .await
     .unwrap();
-    db.transaction(|tx| async move {
-        db.check_user_is_channel_participant(vim_channel, guest, &*tx)
-            .await
-    })
-    .await
-    .unwrap();
 
     let members = db
         .get_channel_participant_details(vim_channel, admin)
@@ -895,6 +885,13 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     db.respond_to_channel_invite(vim_channel, guest, true)
         .await
         .unwrap();
+
+    db.transaction(|tx| async move {
+        db.check_user_is_channel_participant(vim_channel, guest, &*tx)
+            .await
+    })
+    .await
+    .unwrap();
 
     let channels = db.get_channels_for_user(guest).await.unwrap().channels;
     assert_dag(channels, &[(vim_channel, None)]);
@@ -953,29 +950,7 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    db.transaction(|tx| async move {
-        db.check_user_is_channel_participant(zed_channel, guest, &*tx)
-            .await
-    })
-    .await
-    .unwrap();
-    assert!(db
-        .transaction(|tx| async move {
-            db.check_user_is_channel_participant(active_channel, guest, &*tx)
-                .await
-        })
-        .await
-        .is_err(),);
-
-    db.transaction(|tx| async move {
-        db.check_user_is_channel_participant(vim_channel, guest, &*tx)
-            .await
-    })
-    .await
-    .unwrap();
-
     // currently people invited to parent channels are not shown here
-    // (though they *do* have permissions!)
     let members = db
         .get_channel_participant_details(vim_channel, admin)
         .await
@@ -999,6 +974,27 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     db.respond_to_channel_invite(zed_channel, guest, true)
         .await
         .unwrap();
+
+    db.transaction(|tx| async move {
+        db.check_user_is_channel_participant(zed_channel, guest, &*tx)
+            .await
+    })
+    .await
+    .unwrap();
+    assert!(db
+        .transaction(|tx| async move {
+            db.check_user_is_channel_participant(active_channel, guest, &*tx)
+                .await
+        })
+        .await
+        .is_err(),);
+
+    db.transaction(|tx| async move {
+        db.check_user_is_channel_participant(vim_channel, guest, &*tx)
+            .await
+    })
+    .await
+    .unwrap();
 
     let members = db
         .get_channel_participant_details(vim_channel, admin)
