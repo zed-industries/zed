@@ -15,11 +15,11 @@ pub(crate) struct TextLayoutCache {
 }
 
 impl TextLayoutCache {
-    pub fn new(fonts: Arc<dyn PlatformTextSystem>) -> Self {
+    pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
         Self {
             prev_frame: Mutex::new(HashMap::new()),
             curr_frame: RwLock::new(HashMap::new()),
-            platform_text_system: fonts,
+            platform_text_system,
         }
     }
 

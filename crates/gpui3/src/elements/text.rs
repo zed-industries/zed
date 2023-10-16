@@ -1,7 +1,8 @@
 use crate::{
-    AnyElement, Bounds, Element, IntoAnyElement, LayoutId, Line, Pixels, Size, ViewContext,
+    size, AnyElement, Bounds, Element, IntoAnyElement, LayoutId, Line, Pixels, Size, ViewContext,
 };
 use parking_lot::Mutex;
+use smallvec::SmallVec;
 use std::{marker::PhantomData, sync::Arc};
 use util::{arc_cow::ArcCow, ResultExt};
 
@@ -75,7 +76,7 @@ impl<S: 'static + Send + Sync> Element for Text<S> {
         let layout_id = cx.request_measured_layout(Default::default(), rem_size, {
             let element_state = element_state.clone();
             move |known_dimensions, _| {
-                let Some(line_layout) = text_system
+                let Some(lines) = text_system
                     .layout_text(
                         text.as_ref(),
                         font_size,
@@ -88,14 +89,13 @@ impl<S: 'static + Send + Sync> Element for Text<S> {
                 };
 
                 let size = Size {
-                    width: line_layout.width(),
-                    height: line_height,
+                    width: lines.iter().map(|line| line.width()).max().unwrap(),
+                    height: line_height * lines.len(),
                 };
 
-                element_state.lock().replace(TextElementState {
-                    line: Arc::new(line_layout),
-                    line_height,
-                });
+                element_state
+                    .lock()
+                    .replace(TextElementState { lines, line_height });
 
                 size
             }
@@ -111,22 +111,25 @@ impl<S: 'static + Send + Sync> Element for Text<S> {
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<S>,
     ) {
-        let line;
-        let line_height;
-        {
-            let element_state = element_state.lock();
-            let element_state = element_state
-                .as_ref()
-                .expect("measurement has not been performed");
-            line = element_state.line.clone();
-            line_height = element_state.line_height;
+        let element_state = element_state.lock();
+        let element_state = element_state
+            .as_ref()
+            .expect("measurement has not been performed");
+        let line_height = element_state.line_height;
+        let mut line_origin = bounds.origin;
+        for line in &element_state.lines {
+            let line_bounds = Bounds {
+                origin: line_origin,
+                size: size(line.width(), line_height),
+            };
+            line.paint(line_bounds, line_bounds, line_height, cx)
+                .log_err();
+            line_origin.y += line_height;
         }
-
-        line.paint(bounds, bounds, line_height, cx).log_err();
     }
 }
 
 pub struct TextElementState {
-    line: Arc<Line>,
+    lines: SmallVec<[Arc<Line>; 1]>,
     line_height: Pixels,
 }

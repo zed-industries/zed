@@ -18,6 +18,7 @@ use collections::HashMap;
 use core::fmt;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use std::{
+    cmp,
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
     ops::{Deref, DerefMut},
@@ -150,63 +151,72 @@ impl TextSystem {
         font_size: Pixels,
         runs: &[(usize, RunStyle)],
         wrap_width: Option<Pixels>,
-    ) -> Result<SmallVec<[Line; 1]>> {
+    ) -> Result<SmallVec<[Arc<Line>; 1]>> {
+        let mut runs = runs
+            .iter()
+            .map(|(run_len, style)| (*run_len, style))
+            .peekable();
         let mut font_runs: Vec<(usize, FontId)> =
             self.font_runs_pool.lock().pop().unwrap_or_default();
 
-        let mut last_font: Option<&Font> = None;
-        for (len, style) in runs {
-            if let Some(last_font) = last_font.as_ref() {
-                if **last_font == style.font {
-                    font_runs.last_mut().unwrap().0 += len;
-                    continue;
-                }
-            }
-            last_font = Some(&style.font);
-            font_runs.push((*len, self.font_id(&style.font)?));
-        }
+        let mut lines = SmallVec::new();
+        let mut line_start = 0;
+        for line in text.split('\n') {
+            let line_end = line_start + line.len();
 
-        let mut layouts = SmallVec::new();
-        let mut start = 0;
-        let mut run_start = 0;
-        for line in text.lines() {
-            let end = start + line.len();
-            let mut run_end = run_start;
-            let mut line_length = 0;
-            for (len, _) in font_runs[run_start..].iter() {
-                line_length += len;
-                if *len >= line_length {
+            let mut last_font: Option<&Font> = None;
+            let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
+            let mut run_start = line_start;
+            while run_start < line_end {
+                let Some((run_len, run_style)) = runs.peek_mut() else {
                     break;
+                };
+
+                let run_len_within_line = cmp::min(line_end, run_start + *run_len) - run_start;
+
+                if last_font == Some(&run_style.font) {
+                    font_runs.last_mut().unwrap().0 += run_len_within_line;
+                } else {
+                    last_font = Some(&run_style.font);
+                    font_runs.push((
+                        run_len_within_line,
+                        self.platform_text_system.font_id(&run_style.font)?,
+                    ));
                 }
-                run_end += 1;
+
+                if decoration_runs.last().map_or(false, |last_run| {
+                    last_run.color == run_style.color && last_run.underline == run_style.underline
+                }) {
+                    decoration_runs.last_mut().unwrap().len += run_len_within_line as u32;
+                } else {
+                    decoration_runs.push(DecorationRun {
+                        len: run_len_within_line as u32,
+                        color: run_style.color,
+                        underline: run_style.underline.clone(),
+                    });
+                }
+
+                if run_len_within_line == *run_len {
+                    runs.next();
+                } else {
+                    // Preserve the remainder of the run for the next line
+                    *run_len -= run_len_within_line;
+                }
+                run_start += run_len_within_line;
             }
-            // If a run lands in the middle of a line, create an additional run for the remaining characters.
-            if line_length < end - start {
-                // Create a run for the part that fits this line.
-                let partial_run = font_runs[run_end];
-                partial_run.0 = line_length;
-                layouts.push(self.text_layout_cache.layout_line(
-                    &text[start..start + line_length],
-                    font_size,
-                    &font_runs[run_start..=run_end],
-                ));
-                // Update the original run to only include the part that does not fit this line.
-                font_runs[run_end].0 -= line_length;
-            } else {
-                layouts.push(self.text_layout_cache.layout_line(
-                    &text[start..end],
-                    font_size,
-                    &font_runs[run_start..run_end],
-                ));
-                run_start = run_end;
-            }
-            start = end + 1;
+
+            let layout = self
+                .text_layout_cache
+                .layout_line(line, font_size, &font_runs);
+            lines.push(Arc::new(Line::new(layout, decoration_runs)));
+
+            line_start = line_end + 1; // Skip `\n` character.
+            font_runs.clear();
         }
 
-        font_runs.clear();
         self.font_runs_pool.lock().push(font_runs);
 
-        Ok(layouts)
+        Ok(lines)
     }
 
     pub fn end_frame(&self) {

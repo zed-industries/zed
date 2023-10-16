@@ -286,7 +286,7 @@ mod tests {
             };
 
             let text = "aa bbb cccc ddddd eeee";
-            let line = text_system
+            let lines = text_system
                 .layout_text(
                     text,
                     px(16.),
@@ -300,6 +300,7 @@ mod tests {
                     None,
                 )
                 .unwrap();
+            let line = &lines[0];
 
             let mut wrapper = LineWrapper::new(
                 text_system.font_id(&normal.font).unwrap(),

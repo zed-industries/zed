@@ -1,6 +1,6 @@
 use crate::{
-    black, point, px, Bounds, FontId, Hsla, LineLayout, Pixels, Point, RunStyle, ShapedBoundary,
-    ShapedRun, UnderlineStyle, WindowContext,
+    black, point, px, Bounds, FontId, Hsla, LineLayout, Pixels, Point, ShapedBoundary, ShapedRun,
+    UnderlineStyle, WindowContext,
 };
 use anyhow::Result;
 use smallvec::SmallVec;
@@ -9,27 +9,22 @@ use std::sync::Arc;
 #[derive(Default, Debug, Clone)]
 pub struct Line {
     layout: Arc<LineLayout>,
-    style_runs: SmallVec<[StyleRun; 32]>,
+    decoration_runs: SmallVec<[DecorationRun; 32]>,
 }
 
 #[derive(Debug, Clone)]
-struct StyleRun {
-    len: u32,
-    color: Hsla,
-    underline: UnderlineStyle,
+pub struct DecorationRun {
+    pub len: u32,
+    pub color: Hsla,
+    pub underline: Option<UnderlineStyle>,
 }
 
 impl Line {
-    pub fn new(layout: Arc<LineLayout>, runs: &[(usize, RunStyle)]) -> Self {
-        let mut style_runs = SmallVec::new();
-        for (len, style) in runs {
-            style_runs.push(StyleRun {
-                len: *len as u32,
-                color: style.color,
-                underline: style.underline.clone().unwrap_or_default(),
-            });
+    pub fn new(layout: Arc<LineLayout>, decoration_runs: SmallVec<[DecorationRun; 32]>) -> Self {
+        Self {
+            layout,
+            decoration_runs,
         }
-        Self { layout, style_runs }
     }
 
     pub fn runs(&self) -> &[ShapedRun] {
@@ -101,10 +96,10 @@ impl Line {
         let padding_top = (line_height - self.layout.ascent - self.layout.descent) / 2.;
         let baseline_offset = point(px(0.), padding_top + self.layout.ascent);
 
-        let mut style_runs = self.style_runs.iter();
+        let mut style_runs = self.decoration_runs.iter();
         let mut run_end = 0;
         let mut color = black();
-        let mut underline = None;
+        let mut current_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
         let text_system = cx.text_system().clone();
 
         for run in &self.layout.runs {
@@ -122,23 +117,21 @@ impl Line {
                 let mut finished_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
                 if glyph.index >= run_end {
                     if let Some(style_run) = style_runs.next() {
-                        if let Some((_, underline_style)) = &mut underline {
-                            if style_run.underline != *underline_style {
-                                finished_underline = underline.take();
+                        if let Some((_, underline_style)) = &mut current_underline {
+                            if style_run.underline.as_ref() != Some(underline_style) {
+                                finished_underline = current_underline.take();
                             }
                         }
-                        if style_run.underline.thickness > px(0.) {
-                            underline.get_or_insert((
+                        if let Some(run_underline) = style_run.underline.as_ref() {
+                            current_underline.get_or_insert((
                                 point(
                                     glyph_origin.x,
                                     origin.y + baseline_offset.y + (self.layout.descent * 0.618),
                                 ),
                                 UnderlineStyle {
-                                    color: Some(
-                                        style_run.underline.color.unwrap_or(style_run.color),
-                                    ),
-                                    thickness: style_run.underline.thickness,
-                                    wavy: style_run.underline.wavy,
+                                    color: Some(run_underline.color.unwrap_or(style_run.color)),
+                                    thickness: run_underline.thickness,
+                                    wavy: run_underline.wavy,
                                 },
                             ));
                         }
@@ -147,7 +140,7 @@ impl Line {
                         color = style_run.color;
                     } else {
                         run_end = self.layout.len;
-                        finished_underline = underline.take();
+                        finished_underline = current_underline.take();
                     }
                 }
 
@@ -177,7 +170,7 @@ impl Line {
             }
         }
 
-        if let Some((underline_start, underline_style)) = underline.take() {
+        if let Some((underline_start, underline_style)) = current_underline.take() {
             let line_end_x = origin.x + self.layout.width;
             cx.paint_underline(
                 underline_start,
@@ -201,10 +194,10 @@ impl Line {
         let baseline_offset = point(px(0.), padding_top + self.layout.ascent);
 
         let mut boundaries = boundaries.into_iter().peekable();
-        let mut color_runs = self.style_runs.iter();
+        let mut color_runs = self.decoration_runs.iter();
         let mut style_run_end = 0;
         let mut _color = black(); // todo!
-        let mut underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
+        let mut current_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
 
         let mut glyph_origin = origin;
         let mut prev_position = px(0.);
@@ -217,7 +210,7 @@ impl Line {
                     .map_or(false, |b| b.run_ix == run_ix && b.glyph_ix == glyph_ix)
                 {
                     boundaries.next();
-                    if let Some((underline_origin, underline_style)) = underline.take() {
+                    if let Some((underline_origin, underline_style)) = current_underline.take() {
                         cx.paint_underline(
                             underline_origin,
                             glyph_origin.x - underline_origin.x,
@@ -234,31 +227,29 @@ impl Line {
                     if let Some(style_run) = color_runs.next() {
                         style_run_end += style_run.len as usize;
                         _color = style_run.color;
-                        if let Some((_, underline_style)) = &mut underline {
-                            if style_run.underline != *underline_style {
-                                finished_underline = underline.take();
+                        if let Some((_, underline_style)) = &mut current_underline {
+                            if style_run.underline.as_ref() != Some(underline_style) {
+                                finished_underline = current_underline.take();
                             }
                         }
-                        if style_run.underline.thickness > px(0.) {
-                            underline.get_or_insert((
+                        if let Some(underline_style) = style_run.underline.as_ref() {
+                            current_underline.get_or_insert((
                                 glyph_origin
                                     + point(
                                         px(0.),
                                         baseline_offset.y + (self.layout.descent * 0.618),
                                     ),
                                 UnderlineStyle {
-                                    color: Some(
-                                        style_run.underline.color.unwrap_or(style_run.color),
-                                    ),
-                                    thickness: style_run.underline.thickness,
-                                    wavy: style_run.underline.wavy,
+                                    color: Some(underline_style.color.unwrap_or(style_run.color)),
+                                    thickness: underline_style.thickness,
+                                    wavy: underline_style.wavy,
                                 },
                             ));
                         }
                     } else {
                         style_run_end = self.layout.len;
                         _color = black();
-                        finished_underline = underline.take();
+                        finished_underline = current_underline.take();
                     }
                 }
 
@@ -298,7 +289,7 @@ impl Line {
             }
         }
 
-        if let Some((underline_origin, underline_style)) = underline.take() {
+        if let Some((underline_origin, underline_style)) = current_underline.take() {
             let line_end_x = glyph_origin.x + self.layout.width - prev_position;
             cx.paint_underline(
                 underline_origin,
