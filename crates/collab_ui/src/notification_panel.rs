@@ -299,6 +299,19 @@ impl NotificationPanel {
         .into_any()
     }
 
+    fn render_empty_state(
+        &self,
+        theme: &Arc<Theme>,
+        _cx: &mut ViewContext<Self>,
+    ) -> AnyElement<Self> {
+        Label::new(
+            "You have no notifications".to_string(),
+            theme.chat_panel.sign_in_prompt.default.clone(),
+        )
+        .aligned()
+        .into_any()
+    }
+
     fn on_notification_event(
         &mut self,
         _: ModelHandle<NotificationStore>,
@@ -373,13 +386,15 @@ impl View for NotificationPanel {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
         let theme = theme::current(cx);
-        let element = if self.client.user_id().is_some() {
+        let element = if self.client.user_id().is_none() {
+            self.render_sign_in_prompt(&theme, cx)
+        } else if self.notification_list.item_count() == 0 {
+            self.render_empty_state(&theme, cx)
+        } else {
             List::new(self.notification_list.clone())
                 .contained()
                 .with_style(theme.chat_panel.list)
                 .into_any()
-        } else {
-            self.render_sign_in_prompt(&theme, cx)
         };
         element
             .contained()

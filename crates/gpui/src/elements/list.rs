@@ -378,6 +378,10 @@ impl<V: 'static> ListState<V> {
             .extend((0..element_count).map(|_| ListItem::Unrendered), &());
     }
 
+    pub fn item_count(&self) -> usize {
+        self.0.borrow().items.summary().count
+    }
+
     pub fn splice(&self, old_range: Range<usize>, count: usize) {
         let state = &mut *self.0.borrow_mut();
 
