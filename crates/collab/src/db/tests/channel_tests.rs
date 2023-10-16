@@ -8,7 +8,7 @@ use crate::{
     db::{
         queries::channels::ChannelGraph,
         tests::{graph, TEST_RELEASE_CHANNEL},
-        ChannelId, ChannelRole, Database, NewUserParams, UserId,
+        ChannelId, ChannelRole, Database, NewUserParams, RoomId, UserId,
     },
     test_both_dbs,
 };
@@ -207,15 +207,11 @@ async fn test_joining_channels(db: &Arc<Database>) {
         .user_id;
 
     let channel_1 = db.create_root_channel("channel_1", user_1).await.unwrap();
-    let room_1 = db
-        .get_or_create_channel_room(channel_1, "1", TEST_RELEASE_CHANNEL)
-        .await
-        .unwrap();
 
     // can join a room with membership to its channel
-    let joined_room = db
-        .join_room(
-            room_1,
+    let (joined_room, _) = db
+        .join_channel(
+            channel_1,
             user_1,
             ConnectionId { owner_id, id: 1 },
             TEST_RELEASE_CHANNEL,
@@ -224,11 +220,12 @@ async fn test_joining_channels(db: &Arc<Database>) {
         .unwrap();
     assert_eq!(joined_room.room.participants.len(), 1);
 
+    let room_id = RoomId::from_proto(joined_room.room.id);
     drop(joined_room);
     // cannot join a room without membership to its channel
     assert!(db
         .join_room(
-            room_1,
+            room_id,
             user_2,
             ConnectionId { owner_id, id: 1 },
             TEST_RELEASE_CHANNEL

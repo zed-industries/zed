@@ -1,4 +1,4 @@
-use channel::{Channel, ChannelId, ChannelMembership, ChannelStore};
+use channel::{ChannelId, ChannelMembership, ChannelStore};
 use client::{
     proto::{self, ChannelRole, ChannelVisibility},
     User, UserId, UserStore,

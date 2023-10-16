@@ -912,6 +912,58 @@ async fn test_lost_channel_creation(
         ],
     );
 }
+#[gpui::test]
+async fn test_guest_access(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+
+    let channels = server
+        .make_channel_tree(&[("channel-a", None)], (&client_a, cx_a))
+        .await;
+    let channel_a_id = channels[0];
+
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    // should not be allowed to join
+    assert!(active_call_b
+        .update(cx_b, |call, cx| call.join_channel(channel_a_id, cx))
+        .await
+        .is_err());
+
+    client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.set_channel_visibility(channel_a_id, proto::ChannelVisibility::Public, cx)
+        })
+        .await
+        .unwrap();
+
+    active_call_b
+        .update(cx_b, |call, cx| call.join_channel(channel_a_id, cx))
+        .await
+        .unwrap();
+
+    deterministic.run_until_parked();
+
+    assert!(client_b
+        .channel_store()
+        .update(cx_b, |channel_store, _| channel_store
+            .channel_for_id(channel_a_id)
+            .is_some()));
+
+    client_a.channel_store().update(cx_a, |channel_store, _| {
+        let participants = channel_store.channel_participants(channel_a_id);
+        assert_eq!(participants.len(), 1);
+        assert_eq!(participants[0].id, client_b.user_id().unwrap());
+    })
+}
 
 #[gpui::test]
 async fn test_channel_moving(

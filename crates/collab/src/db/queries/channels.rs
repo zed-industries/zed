@@ -88,6 +88,84 @@ impl Database {
         .await
     }
 
+    pub async fn join_channel_internal(
+        &self,
+        channel_id: ChannelId,
+        user_id: UserId,
+        connection: ConnectionId,
+        environment: &str,
+        tx: &DatabaseTransaction,
+    ) -> Result<(JoinRoom, bool)> {
+        let mut joined = false;
+
+        let channel = channel::Entity::find()
+            .filter(channel::Column::Id.eq(channel_id))
+            .one(&*tx)
+            .await?;
+
+        let mut role = self
+            .channel_role_for_user(channel_id, user_id, &*tx)
+            .await?;
+
+        if role.is_none() {
+            if channel.as_ref().map(|c| c.visibility) == Some(ChannelVisibility::Public) {
+                channel_member::Entity::insert(channel_member::ActiveModel {
+                    id: ActiveValue::NotSet,
+                    channel_id: ActiveValue::Set(channel_id),
+                    user_id: ActiveValue::Set(user_id),
+                    accepted: ActiveValue::Set(true),
+                    role: ActiveValue::Set(ChannelRole::Guest),
+                })
+                .on_conflict(
+                    OnConflict::columns([
+                        channel_member::Column::UserId,
+                        channel_member::Column::ChannelId,
+                    ])
+                    .update_columns([channel_member::Column::Accepted])
+                    .to_owned(),
+                )
+                .exec(&*tx)
+                .await?;
+
+                debug_assert!(
+                    self.channel_role_for_user(channel_id, user_id, &*tx)
+                        .await?
+                        == Some(ChannelRole::Guest)
+                );
+
+                role = Some(ChannelRole::Guest);
+                joined = true;
+            }
+        }
+
+        if channel.is_none() || role.is_none() || role == Some(ChannelRole::Banned) {
+            Err(anyhow!("no such channel, or not allowed"))?
+        }
+
+        let live_kit_room = format!("channel-{}", nanoid::nanoid!(30));
+        let room_id = self
+            .get_or_create_channel_room(channel_id, &live_kit_room, environment, &*tx)
+            .await?;
+
+        self.join_channel_room_internal(channel_id, room_id, user_id, connection, &*tx)
+            .await
+            .map(|jr| (jr, joined))
+    }
+
+    pub async fn join_channel(
+        &self,
+        channel_id: ChannelId,
+        user_id: UserId,
+        connection: ConnectionId,
+        environment: &str,
+    ) -> Result<(JoinRoom, bool)> {
+        self.transaction(move |tx| async move {
+            self.join_channel_internal(channel_id, user_id, connection, environment, &*tx)
+                .await
+        })
+        .await
+    }
+
     pub async fn set_channel_visibility(
         &self,
         channel_id: ChannelId,
@@ -981,38 +1059,39 @@ impl Database {
         .await
     }
 
-    pub async fn get_or_create_channel_room(
+    pub(crate) async fn get_or_create_channel_room(
         &self,
         channel_id: ChannelId,
         live_kit_room: &str,
-        enviroment: &str,
+        environment: &str,
+        tx: &DatabaseTransaction,
     ) -> Result<RoomId> {
-        self.transaction(|tx| async move {
-            let tx = tx;
+        let room = room::Entity::find()
+            .filter(room::Column::ChannelId.eq(channel_id))
+            .one(&*tx)
+            .await?;
 
-            let room = room::Entity::find()
-                .filter(room::Column::ChannelId.eq(channel_id))
-                .one(&*tx)
-                .await?;
+        let room_id = if let Some(room) = room {
+            if let Some(env) = room.enviroment {
+                if &env != environment {
+                    Err(anyhow!("must join using the {} release", env))?;
+                }
+            }
+            room.id
+        } else {
+            let result = room::Entity::insert(room::ActiveModel {
+                channel_id: ActiveValue::Set(Some(channel_id)),
+                live_kit_room: ActiveValue::Set(live_kit_room.to_string()),
+                enviroment: ActiveValue::Set(Some(environment.to_string())),
+                ..Default::default()
+            })
+            .exec(&*tx)
+            .await?;
 
-            let room_id = if let Some(room) = room {
-                room.id
-            } else {
-                let result = room::Entity::insert(room::ActiveModel {
-                    channel_id: ActiveValue::Set(Some(channel_id)),
-                    live_kit_room: ActiveValue::Set(live_kit_room.to_string()),
-                    enviroment: ActiveValue::Set(Some(enviroment.to_string())),
-                    ..Default::default()
-                })
-                .exec(&*tx)
-                .await?;
+            result.last_insert_id
+        };
 
-                result.last_insert_id
-            };
-
-            Ok(room_id)
-        })
-        .await
+        Ok(room_id)
     }
 
     // Insert an edge from the given channel to the given other channel.

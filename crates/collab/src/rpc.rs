@@ -38,7 +38,7 @@ use lazy_static::lazy_static;
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
-        self, Ack, AnyTypedEnvelope, ChannelEdge, EntityMessage, EnvelopedMessage,
+        self, Ack, AnyTypedEnvelope, ChannelEdge, EntityMessage, EnvelopedMessage, JoinRoom,
         LiveKitConnectionInfo, RequestMessage, UpdateChannelBufferCollaborators,
     },
     Connection, ConnectionId, Peer, Receipt, TypedEnvelope,
@@ -977,6 +977,13 @@ async fn join_room(
     session: Session,
 ) -> Result<()> {
     let room_id = RoomId::from_proto(request.id);
+
+    let channel_id = session.db().await.channel_id_for_room(room_id).await?;
+
+    if let Some(channel_id) = channel_id {
+        return join_channel_internal(channel_id, Box::new(response), session).await;
+    }
+
     let joined_room = {
         let room = session
             .db()
@@ -991,16 +998,6 @@ async fn join_room(
         room_updated(&room.room, &session.peer);
         room.into_inner()
     };
-
-    if let Some(channel_id) = joined_room.channel_id {
-        channel_updated(
-            channel_id,
-            &joined_room.room,
-            &joined_room.channel_members,
-            &session.peer,
-            &*session.connection_pool().await,
-        )
-    }
 
     for connection_id in session
         .connection_pool()
@@ -1039,7 +1036,7 @@ async fn join_room(
 
     response.send(proto::JoinRoomResponse {
         room: Some(joined_room.room),
-        channel_id: joined_room.channel_id.map(|id| id.to_proto()),
+        channel_id: None,
         live_kit_connection_info,
     })?;
 
@@ -2602,54 +2599,68 @@ async fn respond_to_channel_invite(
     db.respond_to_channel_invite(channel_id, session.user_id, request.accept)
         .await?;
 
+    if request.accept {
+        channel_membership_updated(db, channel_id, &session).await?;
+    } else {
+        let mut update = proto::UpdateChannels::default();
+        update
+            .remove_channel_invitations
+            .push(channel_id.to_proto());
+        session.peer.send(session.connection_id, update)?;
+    }
+    response.send(proto::Ack {})?;
+
+    Ok(())
+}
+
+async fn channel_membership_updated(
+    db: tokio::sync::MutexGuard<'_, DbHandle>,
+    channel_id: ChannelId,
+    session: &Session,
+) -> Result<(), crate::Error> {
     let mut update = proto::UpdateChannels::default();
     update
         .remove_channel_invitations
         .push(channel_id.to_proto());
-    if request.accept {
-        let result = db.get_channel_for_user(channel_id, session.user_id).await?;
-        update
-            .channels
-            .extend(
-                result
-                    .channels
-                    .channels
-                    .into_iter()
-                    .map(|channel| proto::Channel {
-                        id: channel.id.to_proto(),
-                        visibility: channel.visibility.into(),
-                        name: channel.name,
-                    }),
-            );
-        update.unseen_channel_messages = result.channel_messages;
-        update.unseen_channel_buffer_changes = result.unseen_buffer_changes;
-        update.insert_edge = result.channels.edges;
-        update
-            .channel_participants
-            .extend(
-                result
-                    .channel_participants
-                    .into_iter()
-                    .map(|(channel_id, user_ids)| proto::ChannelParticipants {
-                        channel_id: channel_id.to_proto(),
-                        participant_user_ids: user_ids.into_iter().map(UserId::to_proto).collect(),
-                    }),
-            );
-        update
-            .channel_permissions
-            .extend(
-                result
-                    .channels_with_admin_privileges
-                    .into_iter()
-                    .map(|channel_id| proto::ChannelPermission {
-                        channel_id: channel_id.to_proto(),
-                        role: proto::ChannelRole::Admin.into(),
-                    }),
-            );
-    }
-    session.peer.send(session.connection_id, update)?;
-    response.send(proto::Ack {})?;
 
+    let result = db.get_channel_for_user(channel_id, session.user_id).await?;
+    update.channels.extend(
+        result
+            .channels
+            .channels
+            .into_iter()
+            .map(|channel| proto::Channel {
+                id: channel.id.to_proto(),
+                visibility: channel.visibility.into(),
+                name: channel.name,
+            }),
+    );
+    update.unseen_channel_messages = result.channel_messages;
+    update.unseen_channel_buffer_changes = result.unseen_buffer_changes;
+    update.insert_edge = result.channels.edges;
+    update
+        .channel_participants
+        .extend(
+            result
+                .channel_participants
+                .into_iter()
+                .map(|(channel_id, user_ids)| proto::ChannelParticipants {
+                    channel_id: channel_id.to_proto(),
+                    participant_user_ids: user_ids.into_iter().map(UserId::to_proto).collect(),
+                }),
+        );
+    update
+        .channel_permissions
+        .extend(
+            result
+                .channels_with_admin_privileges
+                .into_iter()
+                .map(|channel_id| proto::ChannelPermission {
+                    channel_id: channel_id.to_proto(),
+                    role: proto::ChannelRole::Admin.into(),
+                }),
+        );
+    session.peer.send(session.connection_id, update)?;
     Ok(())
 }
 
@@ -2659,19 +2670,35 @@ async fn join_channel(
     session: Session,
 ) -> Result<()> {
     let channel_id = ChannelId::from_proto(request.channel_id);
-    let live_kit_room = format!("channel-{}", nanoid::nanoid!(30));
+    join_channel_internal(channel_id, Box::new(response), session).await
+}
 
+trait JoinChannelInternalResponse {
+    fn send(self, result: proto::JoinRoomResponse) -> Result<()>;
+}
+impl JoinChannelInternalResponse for Response<proto::JoinChannel> {
+    fn send(self, result: proto::JoinRoomResponse) -> Result<()> {
+        Response::<proto::JoinChannel>::send(self, result)
+    }
+}
+impl JoinChannelInternalResponse for Response<proto::JoinRoom> {
+    fn send(self, result: proto::JoinRoomResponse) -> Result<()> {
+        Response::<proto::JoinRoom>::send(self, result)
+    }
+}
+
+async fn join_channel_internal(
+    channel_id: ChannelId,
+    response: Box<impl JoinChannelInternalResponse>,
+    session: Session,
+) -> Result<()> {
     let joined_room = {
         leave_room_for_session(&session).await?;
         let db = session.db().await;
 
-        let room_id = db
-            .get_or_create_channel_room(channel_id, &live_kit_room, &*RELEASE_CHANNEL_NAME)
-            .await?;
-
-        let joined_room = db
-            .join_room(
-                room_id,
+        let (joined_room, joined_channel) = db
+            .join_channel(
+                channel_id,
                 session.user_id,
                 session.connection_id,
                 RELEASE_CHANNEL_NAME.as_str(),
@@ -2698,9 +2725,13 @@ async fn join_channel(
             live_kit_connection_info,
         })?;
 
+        if joined_channel {
+            channel_membership_updated(db, channel_id, &session).await?
+        }
+
         room_updated(&joined_room.room, &session.peer);
 
-        joined_room.into_inner()
+        joined_room
     };
 
     channel_updated(
@@ -2712,7 +2743,6 @@ async fn join_channel(
     );
 
     update_user_contacts(session.user_id, &session).await?;
-
     Ok(())
 }
 
