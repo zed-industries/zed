@@ -157,7 +157,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         })
         .collect();
 
-    let refinement_refined_assignments: Vec<TokenStream2> = fields
+    let refinement_refined_assigments: Vec<TokenStream2> = fields
         .iter()
         .map(|field| {
             let name = &field.ident;
@@ -169,9 +169,32 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
                 }
             } else {
                 quote! {
-                    if refinement.#name.is_some() {
-                        self.#name = refinement.#name;
+                    if let Some(value) = refinement.#name {
+                        self.#name = Some(value);
                     }
+                }
+            }
+        })
+        .collect();
+
+    let from_refinement_assigments: Vec<TokenStream2> = fields
+        .iter()
+        .map(|field| {
+            let name = &field.ident;
+            let is_refineable = is_refineable_field(field);
+            let is_optional = is_optional_field(field);
+
+            if is_refineable {
+                quote! {
+                    #name: value.#name.into(),
+                }
+            } else if is_optional {
+                quote! {
+                    #name: value.#name.map(|v| v.into()),
+                }
+            } else {
+                quote! {
+                    #name: value.#name.map(|v| v.into()).unwrap_or_default(),
                 }
             }
         })
@@ -243,8 +266,18 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
             }
 
             fn refined(mut self, refinement: Self::Refinement) -> Self {
-                #( #refinement_refined_assignments )*
+                #( #refinement_refined_assigments )*
                 self
+            }
+        }
+
+        impl #impl_generics From<#refinement_ident #ty_generics> for #ident #ty_generics
+            #where_clause
+        {
+            fn from(value: #refinement_ident #ty_generics) -> Self {
+                Self {
+                    #( #from_refinement_assigments )*
+                }
             }
         }
 
@@ -273,7 +306,6 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
 
         #debug_impl
     };
-
     gen.into()
 }
 
