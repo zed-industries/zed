@@ -99,7 +99,7 @@ impl<S: 'static + Send + Sync + Clone> ListHeader<S> {
         let color = ThemeColor::new(cx);
 
         let is_toggleable = self.toggleable != Toggleable::NotToggleable;
-        let is_toggled = Toggleable::is_toggled(&self.toggleable);
+        let is_toggled = self.toggleable.is_toggled();
 
         let disclosure_control = self.disclosure_control();
 
