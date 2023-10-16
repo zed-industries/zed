@@ -205,6 +205,8 @@ messages!(
     (OnTypeFormattingResponse, Background),
     (InlayHints, Background),
     (InlayHintsResponse, Background),
+    (ResolveCompletionDocumentation, Background),
+    (ResolveCompletionDocumentationResponse, Background),
     (ResolveInlayHint, Background),
     (ResolveInlayHintResponse, Background),
     (RefreshInlayHints, Foreground),
@@ -318,6 +320,10 @@ request_messages!(
     (PrepareRename, PrepareRenameResponse),
     (OnTypeFormatting, OnTypeFormattingResponse),
     (InlayHints, InlayHintsResponse),
+    (
+        ResolveCompletionDocumentation,
+        ResolveCompletionDocumentationResponse
+    ),
     (ResolveInlayHint, ResolveInlayHintResponse),
     (RefreshInlayHints, Ack),
     (ReloadBuffers, ReloadBuffersResponse),
@@ -381,6 +387,7 @@ entity_messages!(
     PerformRename,
     OnTypeFormatting,
     InlayHints,
+    ResolveCompletionDocumentation,
     ResolveInlayHint,
     RefreshInlayHints,
     PrepareRename,

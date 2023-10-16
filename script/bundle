@@ -5,6 +5,7 @@ set -e
 build_flag="--release"
 target_dir="release"
 open_result=false
+local_arch=false
 local_only=false
 overwrite_local_app=false
 bundle_name=""
@@ -16,8 +17,8 @@ Usage: ${0##*/} [options] [bundle_name]
 Build the application bundle.
 
 Options:
-  -d    Compile in debug mode and print the app bundle's path.
-  -l    Compile for local architecture only and copy bundle to /Applications.
+  -d    Compile in debug mode
+  -l    Compile for local architecture and copy bundle to /Applications, implies -d.
   -o    Open the resulting DMG or the app itself in local mode.
   -f    Overwrite the local app bundle if it exists.
   -h    Display this help and exit.
@@ -32,10 +33,20 @@ do
     case "${flag}" in
         o) open_result=true;;
         d)
+            export CARGO_INCREMENTAL=true
+            export CARGO_BUNDLE_SKIP_BUILD=true
             build_flag="";
+            local_arch=true
             target_dir="debug"
             ;;
-        l) local_only=true;;
+        l)
+            export CARGO_INCREMENTAL=true
+            export CARGO_BUNDLE_SKIP_BUILD=true
+            build_flag=""
+            local_arch=true
+            local_only=true
+            target_dir="debug"
+            ;;
         f) overwrite_local_app=true;;
         h)
            help_info
@@ -67,7 +78,7 @@ version_info=$(rustc --version --verbose)
 host_line=$(echo "$version_info" | grep host)
 local_target_triple=${host_line#*: }
 
-if [ "$local_only" = true ]; then
+if [ "$local_arch" = true ]; then
     echo "Building for local target only."
     cargo build ${build_flag} --package zed
     cargo build ${build_flag} --package cli
@@ -91,7 +102,7 @@ sed \
     "s/package.metadata.bundle-${channel}/package.metadata.bundle/" \
     Cargo.toml
 
-if [ "$local_only" = true ]; then
+if [ "$local_arch" = true ]; then
     app_path=$(cargo bundle ${build_flag} --select-workspace-root | xargs)
 else
     app_path=$(cargo bundle ${build_flag} --target x86_64-apple-darwin --select-workspace-root | xargs)
@@ -101,7 +112,7 @@ mv Cargo.toml.backup Cargo.toml
 popd
 echo "Bundled ${app_path}"
 
-if [ "$local_only" = false ]; then
+if [ "$local_arch" = false ]; then
     echo "Creating fat binaries"
     lipo \
         -create \
@@ -117,7 +128,11 @@ fi
 
 echo "Copying WebRTC.framework into the frameworks folder"
 mkdir "${app_path}/Contents/Frameworks"
-cp -R target/${local_target_triple}/${target_dir}/WebRTC.framework "${app_path}/Contents/Frameworks/"
+if [ "$local_arch" = false ]; then
+    cp -R target/${local_target_triple}/${target_dir}/WebRTC.framework "${app_path}/Contents/Frameworks/"
+else
+    cp -R target/${target_dir}/WebRTC.framework "${app_path}/Contents/Frameworks/"
+fi
 
 if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTARIZATION_USERNAME && -n $APPLE_NOTARIZATION_PASSWORD ]]; then
     echo "Signing bundle with Apple-issued certificate"
@@ -133,10 +148,12 @@ if [[ -n $MACOS_CERTIFICATE && -n $MACOS_CERTIFICATE_PASSWORD && -n $APPLE_NOTAR
 else
     echo "One or more of the following variables are missing: MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, APPLE_NOTARIZATION_USERNAME, APPLE_NOTARIZATION_PASSWORD"
     echo "Performing an ad-hoc signature, but this bundle should not be distributed"
-    codesign --force --deep --entitlements crates/zed/resources/zed.entitlements --sign - "${app_path}" -v
+    echo "If you see 'The application cannot be opened for an unexpected reason,' you likely don't have the necessary entitlements to run the application in your signing keychain"
+    echo "You will need to download a new signing key from developer.apple.com, add it to keychain, and export MACOS_SIGNING_KEY=<email address of signing key>"
+    codesign --force --deep --entitlements crates/zed/resources/zed.entitlements --sign ${MACOS_SIGNING_KEY:- -} "${app_path}" -v
 fi
 
-if [ "$target_dir" = "debug" ]; then
+if [[ "$target_dir" = "debug" && "$local_only" = false ]]; then
     if [ "$open_result" = true ]; then
         open "$app_path"
     else

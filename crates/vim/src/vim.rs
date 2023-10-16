@@ -33,7 +33,7 @@ use workspace::{self, Workspace};
 
 use crate::state::ReplayableAction;
 
-struct VimModeSetting(bool);
+pub struct VimModeSetting(pub bool);
 
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct SwitchMode(pub Mode);

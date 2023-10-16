@@ -1083,7 +1083,6 @@ dependencies = [
  "anyhow",
  "async-broadcast",
  "audio",
- "channel",
  "client",
  "collections",
  "fs",
@@ -1468,7 +1467,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.23.2"
+version = "0.24.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1503,6 +1502,7 @@ dependencies = [
  "log",
  "lsp",
  "nanoid",
+ "node_runtime",
  "parking_lot 0.11.2",
  "pretty_assertions",
  "project",
@@ -2080,9 +2080,9 @@ dependencies = [
 
 [[package]]
 name = "curl-sys"
-version = "0.4.66+curl-8.3.0"
+version = "0.4.67+curl-8.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70c44a72e830f0e40ad90dda8a6ab6ed6314d39776599a58a2e5e37fbc6db5b9"
+checksum = "3cc35d066510b197a0f72de863736641539957628c8a42e70e27c66849e77c34"
 dependencies = [
  "cc",
  "libc",
@@ -2405,7 +2405,6 @@ dependencies = [
  "parking_lot 0.11.2",
  "postage",
  "project",
- "pulldown-cmark",
  "rand 0.8.5",
  "rich_text",
  "rpc",
@@ -2833,7 +2832,6 @@ dependencies = [
  "parking_lot 0.11.2",
  "regex",
  "rope",
- "rpc",
  "serde",
  "serde_derive",
  "serde_json",
@@ -3991,6 +3989,7 @@ dependencies = [
  "lsp",
  "parking_lot 0.11.2",
  "postage",
+ "pulldown-cmark",
  "rand 0.8.5",
  "regex",
  "rpc",
@@ -5521,6 +5520,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
 
 [[package]]
+name = "prettier"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "collections",
+ "fs",
+ "futures 0.3.28",
+ "gpui",
+ "language",
+ "log",
+ "lsp",
+ "node_runtime",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "util",
+]
+
+[[package]]
 name = "pretty_assertions"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5632,8 +5651,10 @@ dependencies = [
  "lazy_static",
  "log",
  "lsp",
+ "node_runtime",
  "parking_lot 0.11.2",
  "postage",
+ "prettier",
  "pretty_assertions",
  "rand 0.8.5",
  "regex",
@@ -6604,12 +6625,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustversion"
-version = "1.0.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ffc183a10b4478d04cbbbfc96d0873219d962dd5accaff2ffbd4ceb7df837f4"
-
-[[package]]
 name = "rustybuzz"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6942,7 +6957,6 @@ dependencies = [
  "unindent",
  "util",
  "workspace",
- "zed",
 ]
 
 [[package]]
@@ -7663,28 +7677,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
-name = "storybook"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap 4.4.4",
- "fs",
- "futures 0.3.28",
- "gpui2",
- "itertools 0.11.0",
- "log",
- "rust-embed",
- "serde",
- "settings",
- "simplelog",
- "strum",
- "theme",
- "ui",
- "util",
-]
-
-[[package]]
 name = "stringprep"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7706,22 +7698,6 @@ name = "strum"
 version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "290d54ea6f91c969195bdbcd7442c8c2a2ba87da8bf60a7ee86a235d4bc1e125"
-dependencies = [
- "strum_macros",
-]
-
-[[package]]
-name = "strum_macros"
-version = "0.25.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad8d03b598d3d0fff69bf533ee3ef19b8eeb342729596df84bcc7e1f96ec4059"
-dependencies = [
- "heck 0.4.1",
- "proc-macro2",
- "quote",
- "rustversion",
- "syn 2.0.37",
-]
 
 [[package]]
 name = "subtle"
@@ -8803,6 +8779,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-vue"
+version = "0.0.1"
+source = "git+https://github.com/zed-industries/tree-sitter-vue?rev=95b2890#95b28908d90e928c308866f7631e73ef6e1d4b5f"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-yaml"
 version = "0.0.1"
 source = "git+https://github.com/zed-industries/tree-sitter-yaml?rev=f545a41f57502e1b5ddf2a6668896c1b0620f930#f545a41f57502e1b5ddf2a6668896c1b0620f930"
@@ -8872,21 +8857,6 @@ name = "typenum"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42ff0bf0c66b8238c6f3b578df37d0b7848e55df8577b3f74f92a69acceeb825"
-
-[[package]]
-name = "ui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "gpui2",
- "rand 0.8.5",
- "serde",
- "settings",
- "smallvec",
- "strum",
- "theme",
-]
 
 [[package]]
 name = "unicase"
@@ -9651,6 +9621,7 @@ dependencies = [
  "theme",
  "theme_selector",
  "util",
+ "vim",
  "workspace",
 ]
 
@@ -9957,7 +9928,6 @@ dependencies = [
  "async-recursion 1.0.5",
  "bincode",
  "call",
- "channel",
  "client",
  "collections",
  "context_menu",
@@ -9974,6 +9944,7 @@ dependencies = [
  "lazy_static",
  "log",
  "menu",
+ "node_runtime",
  "parking_lot 0.11.2",
  "postage",
  "project",
@@ -10069,9 +10040,10 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.108.0"
+version = "0.109.0"
 dependencies = [
  "activity_indicator",
+ "ai",
  "anyhow",
  "assistant",
  "async-compression",
@@ -10184,6 +10156,7 @@ dependencies = [
  "tree-sitter-svelte",
  "tree-sitter-toml",
  "tree-sitter-typescript",
+ "tree-sitter-vue",
  "tree-sitter-yaml",
  "unindent",
  "url",

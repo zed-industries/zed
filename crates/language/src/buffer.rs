@@ -1,11 +1,13 @@
 pub use crate::{
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
+    markdown::ParsedMarkdown,
     proto, BracketPair, Grammar, Language, LanguageConfig, LanguageRegistry, PLAIN_TEXT,
 };
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
     language_settings::{language_settings, LanguageSettings},
+    markdown::parse_markdown,
     outline::OutlineItem,
     syntax_map::{
         SyntaxLayerInfo, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatches,
@@ -143,11 +145,51 @@ pub struct Diagnostic {
     pub is_unnecessary: bool,
 }
 
+pub async fn prepare_completion_documentation(
+    documentation: &lsp::Documentation,
+    language_registry: &Arc<LanguageRegistry>,
+    language: Option<Arc<Language>>,
+) -> Documentation {
+    match documentation {
+        lsp::Documentation::String(text) => {
+            if text.lines().count() <= 1 {
+                Documentation::SingleLine(text.clone())
+            } else {
+                Documentation::MultiLinePlainText(text.clone())
+            }
+        }
+
+        lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
+            lsp::MarkupKind::PlainText => {
+                if value.lines().count() <= 1 {
+                    Documentation::SingleLine(value.clone())
+                } else {
+                    Documentation::MultiLinePlainText(value.clone())
+                }
+            }
+
+            lsp::MarkupKind::Markdown => {
+                let parsed = parse_markdown(value, language_registry, language).await;
+                Documentation::MultiLineMarkdown(parsed)
+            }
+        },
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum Documentation {
+    Undocumented,
+    SingleLine(String),
+    MultiLinePlainText(String),
+    MultiLineMarkdown(ParsedMarkdown),
+}
+
 #[derive(Clone, Debug)]
 pub struct Completion {
     pub old_range: Range<Anchor>,
     pub new_text: String,
     pub label: CodeLabel,
+    pub documentation: Option<Documentation>,
     pub server_id: LanguageServerId,
     pub lsp_completion: lsp::CompletionItem,
 }
@@ -1406,82 +1448,95 @@ impl Buffer {
             return None;
         }
 
-        self.start_transaction();
-        self.pending_autoindent.take();
-        let autoindent_request = autoindent_mode
-            .and_then(|mode| self.language.as_ref().map(|_| (self.snapshot(), mode)));
+        // Non-generic part hoisted out to reduce LLVM IR size.
+        fn tail(
+            this: &mut Buffer,
+            edits: Vec<(Range<usize>, Arc<str>)>,
+            autoindent_mode: Option<AutoindentMode>,
+            cx: &mut ModelContext<Buffer>,
+        ) -> Option<clock::Lamport> {
+            this.start_transaction();
+            this.pending_autoindent.take();
+            let autoindent_request = autoindent_mode
+                .and_then(|mode| this.language.as_ref().map(|_| (this.snapshot(), mode)));
 
-        let edit_operation = self.text.edit(edits.iter().cloned());
-        let edit_id = edit_operation.timestamp();
+            let edit_operation = this.text.edit(edits.iter().cloned());
+            let edit_id = edit_operation.timestamp();
 
-        if let Some((before_edit, mode)) = autoindent_request {
-            let mut delta = 0isize;
-            let entries = edits
-                .into_iter()
-                .enumerate()
-                .zip(&edit_operation.as_edit().unwrap().new_text)
-                .map(|((ix, (range, _)), new_text)| {
-                    let new_text_length = new_text.len();
-                    let old_start = range.start.to_point(&before_edit);
-                    let new_start = (delta + range.start as isize) as usize;
-                    delta += new_text_length as isize - (range.end as isize - range.start as isize);
+            if let Some((before_edit, mode)) = autoindent_request {
+                let mut delta = 0isize;
+                let entries = edits
+                    .into_iter()
+                    .enumerate()
+                    .zip(&edit_operation.as_edit().unwrap().new_text)
+                    .map(|((ix, (range, _)), new_text)| {
+                        let new_text_length = new_text.len();
+                        let old_start = range.start.to_point(&before_edit);
+                        let new_start = (delta + range.start as isize) as usize;
+                        delta +=
+                            new_text_length as isize - (range.end as isize - range.start as isize);
 
-                    let mut range_of_insertion_to_indent = 0..new_text_length;
-                    let mut first_line_is_new = false;
-                    let mut original_indent_column = None;
+                        let mut range_of_insertion_to_indent = 0..new_text_length;
+                        let mut first_line_is_new = false;
+                        let mut original_indent_column = None;
 
-                    // When inserting an entire line at the beginning of an existing line,
-                    // treat the insertion as new.
-                    if new_text.contains('\n')
-                        && old_start.column <= before_edit.indent_size_for_line(old_start.row).len
-                    {
-                        first_line_is_new = true;
-                    }
-
-                    // When inserting text starting with a newline, avoid auto-indenting the
-                    // previous line.
-                    if new_text.starts_with('\n') {
-                        range_of_insertion_to_indent.start += 1;
-                        first_line_is_new = true;
-                    }
-
-                    // Avoid auto-indenting after the insertion.
-                    if let AutoindentMode::Block {
-                        original_indent_columns,
-                    } = &mode
-                    {
-                        original_indent_column =
-                            Some(original_indent_columns.get(ix).copied().unwrap_or_else(|| {
-                                indent_size_for_text(
-                                    new_text[range_of_insertion_to_indent.clone()].chars(),
-                                )
-                                .len
-                            }));
-                        if new_text[range_of_insertion_to_indent.clone()].ends_with('\n') {
-                            range_of_insertion_to_indent.end -= 1;
+                        // When inserting an entire line at the beginning of an existing line,
+                        // treat the insertion as new.
+                        if new_text.contains('\n')
+                            && old_start.column
+                                <= before_edit.indent_size_for_line(old_start.row).len
+                        {
+                            first_line_is_new = true;
                         }
-                    }
 
-                    AutoindentRequestEntry {
-                        first_line_is_new,
-                        original_indent_column,
-                        indent_size: before_edit.language_indent_size_at(range.start, cx),
-                        range: self.anchor_before(new_start + range_of_insertion_to_indent.start)
-                            ..self.anchor_after(new_start + range_of_insertion_to_indent.end),
-                    }
-                })
-                .collect();
+                        // When inserting text starting with a newline, avoid auto-indenting the
+                        // previous line.
+                        if new_text.starts_with('\n') {
+                            range_of_insertion_to_indent.start += 1;
+                            first_line_is_new = true;
+                        }
 
-            self.autoindent_requests.push(Arc::new(AutoindentRequest {
-                before_edit,
-                entries,
-                is_block_mode: matches!(mode, AutoindentMode::Block { .. }),
-            }));
+                        // Avoid auto-indenting after the insertion.
+                        if let AutoindentMode::Block {
+                            original_indent_columns,
+                        } = &mode
+                        {
+                            original_indent_column = Some(
+                                original_indent_columns.get(ix).copied().unwrap_or_else(|| {
+                                    indent_size_for_text(
+                                        new_text[range_of_insertion_to_indent.clone()].chars(),
+                                    )
+                                    .len
+                                }),
+                            );
+                            if new_text[range_of_insertion_to_indent.clone()].ends_with('\n') {
+                                range_of_insertion_to_indent.end -= 1;
+                            }
+                        }
+
+                        AutoindentRequestEntry {
+                            first_line_is_new,
+                            original_indent_column,
+                            indent_size: before_edit.language_indent_size_at(range.start, cx),
+                            range: this
+                                .anchor_before(new_start + range_of_insertion_to_indent.start)
+                                ..this.anchor_after(new_start + range_of_insertion_to_indent.end),
+                        }
+                    })
+                    .collect();
+
+                this.autoindent_requests.push(Arc::new(AutoindentRequest {
+                    before_edit,
+                    entries,
+                    is_block_mode: matches!(mode, AutoindentMode::Block { .. }),
+                }));
+            }
+
+            this.end_transaction(cx);
+            this.send_operation(Operation::Buffer(edit_operation), cx);
+            Some(edit_id)
         }
-
-        self.end_transaction(cx);
-        self.send_operation(Operation::Buffer(edit_operation), cx);
-        Some(edit_id)
+        tail(self, edits, autoindent_mode, cx)
     }
 
     fn did_edit(

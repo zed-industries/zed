@@ -11,6 +11,7 @@ lazy_static::lazy_static! {
     pub static ref SUPPORT_DIR: PathBuf = HOME.join("Library/Application Support/Zed");
     pub static ref LANGUAGES_DIR: PathBuf = HOME.join("Library/Application Support/Zed/languages");
     pub static ref COPILOT_DIR: PathBuf = HOME.join("Library/Application Support/Zed/copilot");
+    pub static ref DEFAULT_PRETTIER_DIR: PathBuf = HOME.join("Library/Application Support/Zed/prettier");
     pub static ref DB_DIR: PathBuf = HOME.join("Library/Application Support/Zed/db");
     pub static ref SETTINGS: PathBuf = CONFIG_DIR.join("settings.json");
     pub static ref KEYMAP: PathBuf = CONFIG_DIR.join("keymap.json");
@@ -139,6 +140,12 @@ impl<P> PathLikeWithPosition<P> {
                                     column: None,
                                 })
                             } else {
+                                let maybe_col_str =
+                                    if maybe_col_str.ends_with(FILE_ROW_COLUMN_DELIMITER) {
+                                        &maybe_col_str[..maybe_col_str.len() - 1]
+                                    } else {
+                                        maybe_col_str
+                                    };
                                 match maybe_col_str.parse::<u32>() {
                                     Ok(col) => Ok(Self {
                                         path_like: parse_path_like_str(path_like_str)?,
@@ -241,7 +248,6 @@ mod tests {
             "test_file.rs:1::",
             "test_file.rs::1:2",
             "test_file.rs:1::2",
-            "test_file.rs:1:2:",
             "test_file.rs:1:2:3",
         ] {
             let actual = parse_str(input);
@@ -275,6 +281,14 @@ mod tests {
                     path_like: "test_file.rs".to_string(),
                     row: Some(1),
                     column: None,
+                },
+            ),
+            (
+                "crates/file_finder/src/file_finder.rs:1902:13:",
+                PathLikeWithPosition {
+                    path_like: "crates/file_finder/src/file_finder.rs".to_string(),
+                    row: Some(1902),
+                    column: Some(13),
                 },
             ),
         ];

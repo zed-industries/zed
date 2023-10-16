@@ -340,10 +340,10 @@ fn init_test(cx: &mut AppContext) -> ModelHandle<ChannelStore> {
 
     cx.foreground().forbid_parking();
     cx.set_global(SettingsStore::test(cx));
-    crate::init(&client);
     client::init(&client, cx);
+    crate::init(&client, user_store, cx);
 
-    cx.add_model(|cx| ChannelStore::new(client, user_store, cx))
+    ChannelStore::global(cx)
 }
 
 fn update_channels(

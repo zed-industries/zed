@@ -89,7 +89,7 @@ impl Database {
 
             let mut rows = channel_message::Entity::find()
                 .filter(condition)
-                .order_by_asc(channel_message::Column::Id)
+                .order_by_desc(channel_message::Column::Id)
                 .limit(count as u64)
                 .stream(&*tx)
                 .await?;
@@ -110,6 +110,7 @@ impl Database {
                 });
             }
             drop(rows);
+            messages.reverse();
             Ok(messages)
         })
         .await

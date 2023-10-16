@@ -46,6 +46,7 @@ actions!(
         ChangeToEndOfLine,
         DeleteToEndOfLine,
         Yank,
+        YankLine,
         ChangeCase,
         JoinLines,
     ]
@@ -66,6 +67,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(insert_line_above);
     cx.add_action(insert_line_below);
     cx.add_action(change_case);
+    cx.add_action(yank_line);
 
     cx.add_action(|_: &mut Workspace, _: &DeleteLeft, cx| {
         Vim::update(cx, |vim, cx| {
@@ -306,6 +308,13 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
             });
         });
     });
+}
+
+fn yank_line(_: &mut Workspace, _: &YankLine, cx: &mut ViewContext<Workspace>) {
+    Vim::update(cx, |vim, cx| {
+        let count = vim.take_count(cx);
+        yank_motion(vim, motion::Motion::CurrentLine, count, cx)
+    })
 }
 
 pub(crate) fn normal_replace(text: Arc<str>, cx: &mut WindowContext) {

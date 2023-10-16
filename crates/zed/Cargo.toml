@@ -3,7 +3,7 @@ authors = ["Nathan Sobo <nathansobo@gmail.com>"]
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.108.0"
+version = "0.109.0"
 publish = false
 
 [lib]
@@ -14,6 +14,9 @@ doctest = false
 [[bin]]
 name = "Zed"
 path = "src/main.rs"
+
+[[example]]
+name = "semantic_index_eval"
 
 [dependencies]
 audio = { path = "../audio" }
@@ -135,12 +138,14 @@ tree-sitter-yaml.workspace = true
 tree-sitter-lua.workspace = true
 tree-sitter-nix.workspace = true
 tree-sitter-nu.workspace = true
+tree-sitter-vue.workspace = true
 
 url = "2.2"
 urlencoding = "2.1.2"
 uuid.workspace = true
 
 [dev-dependencies]
+ai = { path = "../ai" }
 call = { path = "../call", features = ["test-support"] }
 client = { path = "../client", features = ["test-support"] }
 editor = { path = "../editor", features = ["test-support"] }
@@ -162,6 +167,7 @@ identifier = "dev.zed.Zed-Dev"
 name = "Zed Dev"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
+osx_url_schemes = ["zed-dev"]
 
 [package.metadata.bundle-preview]
 icon = ["resources/app-icon-preview@2x.png", "resources/app-icon-preview.png"]
@@ -169,6 +175,7 @@ identifier = "dev.zed.Zed-Preview"
 name = "Zed Preview"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
+osx_url_schemes = ["zed-preview"]
 
 
 [package.metadata.bundle-stable]
@@ -177,3 +184,4 @@ identifier = "dev.zed.Zed"
 name = "Zed"
 osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
+osx_url_schemes = ["zed"]

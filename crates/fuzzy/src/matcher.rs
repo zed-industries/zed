@@ -441,7 +441,7 @@ mod tests {
                 score,
                 worktree_id: 0,
                 positions: Vec::new(),
-                path: candidate.path.clone(),
+                path: Arc::from(candidate.path),
                 path_prefix: "".into(),
                 distance_to_relative_ancestor: usize::MAX,
             },

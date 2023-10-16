@@ -34,8 +34,8 @@ use gpui::{
     },
     impl_actions,
     platform::{CursorStyle, MouseButton, PromptLevel},
-    serde_json, AnyElement, AppContext, AsyncAppContext, Element, Entity, FontCache, ModelHandle,
-    Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    serde_json, AnyElement, AppContext, AsyncAppContext, ClipboardItem, Element, Entity, FontCache,
+    ModelHandle, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
@@ -100,6 +100,11 @@ pub struct JoinChannelChat {
     pub channel_id: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CopyChannelLink {
+    pub channel_id: u64,
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct StartMoveChannelFor {
     channel_id: ChannelId,
@@ -157,6 +162,7 @@ impl_actions!(
         OpenChannelNotes,
         JoinChannelCall,
         JoinChannelChat,
+        CopyChannelLink,
         LinkChannel,
         StartMoveChannelFor,
         StartLinkChannelFor,
@@ -205,6 +211,7 @@ pub fn init(cx: &mut AppContext) {
     cx.add_action(CollabPanel::expand_selected_channel);
     cx.add_action(CollabPanel::open_channel_notes);
     cx.add_action(CollabPanel::join_channel_chat);
+    cx.add_action(CollabPanel::copy_channel_link);
 
     cx.add_action(
         |panel: &mut CollabPanel, action: &ToggleSelectedIx, cx: &mut ViewContext<CollabPanel>| {
@@ -648,7 +655,7 @@ impl CollabPanel {
                 channel_editing_state: None,
                 selection: None,
                 user_store: workspace.user_store().clone(),
-                channel_store: workspace.app_state().channel_store.clone(),
+                channel_store: ChannelStore::global(cx),
                 project: workspace.project().clone(),
                 subscriptions: Vec::default(),
                 match_candidates: Vec::default(),
@@ -2568,6 +2575,13 @@ impl CollabPanel {
                 },
             ));
 
+            items.push(ContextMenuItem::action(
+                "Copy Channel Link",
+                CopyChannelLink {
+                    channel_id: path.channel_id(),
+                },
+            ));
+
             if self.channel_store.read(cx).is_user_admin(path.channel_id()) {
                 let parent_id = path.parent_id();
 
@@ -3187,49 +3201,19 @@ impl CollabPanel {
     }
 
     fn join_channel(&self, channel_id: u64, cx: &mut ViewContext<Self>) {
-        let workspace = self.workspace.clone();
-        let window = cx.window();
-        let active_call = ActiveCall::global(cx);
-        cx.spawn(|_, mut cx| async move {
-            if active_call.read_with(&mut cx, |active_call, cx| {
-                if let Some(room) = active_call.room() {
-                    let room = room.read(cx);
-                    room.is_sharing_project() && room.remote_participants().len() > 0
-                } else {
-                    false
-                }
-            }) {
-                let answer = window.prompt(
-                    PromptLevel::Warning,
-                    "Leaving this call will unshare your current project.\nDo you want to switch channels?",
-                    &["Yes, Join Channel", "Cancel"],
-                    &mut cx,
-                );
-
-                if let Some(mut answer) = answer {
-                    if answer.next().await == Some(1) {
-                        return anyhow::Ok(());
-                    }
-                }
-            }
-
-            let room = active_call
-                .update(&mut cx, |call, cx| call.join_channel(channel_id, cx))
-                .await?;
-
-            let task = room.update(&mut cx, |room, cx| {
-                let workspace = workspace.upgrade(cx)?;
-                let (project, host) = room.most_active_project()?;
-                let app_state = workspace.read(cx).app_state().clone();
-                Some(workspace::join_remote_project(project, host, app_state, cx))
-            });
-            if let Some(task) = task {
-                task.await?;
-            }
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+        let Some(workspace) = self.workspace.upgrade(cx) else {
+            return;
+        };
+        let Some(handle) = cx.window().downcast::<Workspace>() else {
+            return;
+        };
+        workspace::join_channel(
+            channel_id,
+            workspace.read(cx).app_state().clone(),
+            Some(handle),
+            cx,
+        )
+        .detach_and_log_err(cx)
     }
 
     fn join_channel_chat(&mut self, action: &JoinChannelChat, cx: &mut ViewContext<Self>) {
@@ -3245,6 +3229,15 @@ impl CollabPanel {
                 });
             });
         }
+    }
+
+    fn copy_channel_link(&mut self, action: &CopyChannelLink, cx: &mut ViewContext<Self>) {
+        let channel_store = self.channel_store.read(cx);
+        let Some(channel) = channel_store.channel_for_id(action.channel_id) else {
+            return;
+        };
+        let item = ClipboardItem::new(channel.link());
+        cx.write_to_clipboard(item)
     }
 }
 

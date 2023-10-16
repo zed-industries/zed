@@ -1,10 +1,65 @@
 use crate::codegen::CodegenKind;
-use language::{BufferSnapshot, OffsetRangeExt, ToOffset};
+use gpui::{AppContext, AsyncAppContext};
+use language::{BufferSnapshot, Language, OffsetRangeExt, ToOffset};
+use semantic_index::SearchResult;
+use std::borrow::Cow;
 use std::cmp::{self, Reverse};
 use std::fmt::Write;
 use std::ops::Range;
+use std::path::PathBuf;
+use std::sync::Arc;
 use tiktoken_rs::ChatCompletionRequestMessage;
 
+pub struct PromptCodeSnippet {
+    path: Option<PathBuf>,
+    language_name: Option<String>,
+    content: String,
+}
+
+impl PromptCodeSnippet {
+    pub fn new(search_result: SearchResult, cx: &AsyncAppContext) -> Self {
+        let (content, language_name, file_path) =
+            search_result.buffer.read_with(cx, |buffer, cx| {
+                let snapshot = buffer.snapshot();
+                let content = snapshot
+                    .text_for_range(search_result.range.clone())
+                    .collect::<String>();
+
+                let language_name = buffer
+                    .language()
+                    .and_then(|language| Some(language.name().to_string()));
+
+                let language = buffer.language();
+                let file_path = buffer
+                    .file()
+                    .and_then(|file| Some(file.path().to_path_buf()));
+
+                (content, language_name, file_path)
+            });
+
+        PromptCodeSnippet {
+            path: file_path,
+            language_name,
+            content,
+        }
+    }
+}
+
+impl ToString for PromptCodeSnippet {
+    fn to_string(&self) -> String {
+        let path = self
+            .path
+            .as_ref()
+            .and_then(|path| Some(path.to_string_lossy().to_string()))
+            .unwrap_or("".to_string());
+        let language_name = self.language_name.clone().unwrap_or("".to_string());
+        let content = self.content.clone();
+
+        format!("The below code snippet may be relevant from file: {path}\n```{language_name}\n{content}\n```")
+    }
+}
+
+#[allow(dead_code)]
 fn summarize(buffer: &BufferSnapshot, selected_range: Range<impl ToOffset>) -> String {
     #[derive(Debug)]
     struct Match {
@@ -121,13 +176,14 @@ pub fn generate_content_prompt(
     buffer: &BufferSnapshot,
     range: Range<impl ToOffset>,
     kind: CodegenKind,
-    search_results: Vec<String>,
+    search_results: Vec<PromptCodeSnippet>,
     model: &str,
 ) -> String {
     const MAXIMUM_SNIPPET_TOKEN_COUNT: usize = 500;
     const RESERVED_TOKENS_FOR_GENERATION: usize = 1000;
 
     let mut prompts = Vec::new();
+    let range = range.to_offset(buffer);
 
     // General Preamble
     if let Some(language_name) = language_name {
@@ -139,13 +195,26 @@ pub fn generate_content_prompt(
     // Snippets
     let mut snippet_position = prompts.len() - 1;
 
-    let outline = summarize(buffer, range);
-    prompts.push("The file you are currently working on has the following outline:".to_string());
+    let mut content = String::new();
+    content.extend(buffer.text_for_range(0..range.start));
+    if range.start == range.end {
+        content.push_str("<|START|>");
+    } else {
+        content.push_str("<|START|");
+    }
+    content.extend(buffer.text_for_range(range.clone()));
+    if range.start != range.end {
+        content.push_str("|END|>");
+    }
+    content.extend(buffer.text_for_range(range.end..buffer.len()));
+
+    prompts.push("The file you are currently working on has the following content:\n".to_string());
+
     if let Some(language_name) = language_name {
         let language_name = language_name.to_lowercase();
-        prompts.push(format!("```{language_name}\n{outline}\n```"));
+        prompts.push(format!("```{language_name}\n{content}\n```"));
     } else {
-        prompts.push(format!("```\n{outline}\n```"));
+        prompts.push(format!("```\n{content}\n```"));
     }
 
     match kind {
@@ -164,17 +233,20 @@ pub fn generate_content_prompt(
         CodegenKind::Transform { range: _ } => {
             prompts.push("In particular, the user has selected a section of the text between the '<|START|' and '|END|>' spans.".to_string());
             prompts.push(format!(
-                "Modify the users code selected text based upon the users prompt: {user_prompt}"
+                "Modify the users code selected text based upon the users prompt: '{user_prompt}'"
             ));
             prompts.push("You MUST reply with only the adjusted code (within the '<|START|' and '|END|>' spans), not the entire file.".to_string());
         }
     }
 
     if let Some(language_name) = language_name {
-        prompts.push(format!("Your answer MUST always be valid {language_name}"));
+        prompts.push(format!(
+            "Your answer MUST always and only be valid {language_name}"
+        ));
     }
-    prompts.push("Always wrap your response in a Markdown codeblock".to_string());
     prompts.push("Never make remarks about the output.".to_string());
+    prompts.push("DO NOT return any text, except the generated code.".to_string());
+    prompts.push("DO NOT wrap your text in a Markdown block".to_string());
 
     let current_messages = [ChatCompletionRequestMessage {
         role: "user".to_string(),
@@ -208,7 +280,8 @@ pub fn generate_content_prompt(
 
         for search_result in search_results {
             let mut snippet_prompt = template.to_string();
-            writeln!(snippet_prompt, "```\n{search_result}\n```").unwrap();
+            let snippet = search_result.to_string();
+            writeln!(snippet_prompt, "```\n{snippet}\n```").unwrap();
 
             let token_count = encoding
                 .encode_with_special_tokens(snippet_prompt.as_str())

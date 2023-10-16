@@ -1,10 +1,7 @@
-use std::{cell::RefCell, rc::Rc, sync::Arc};
-
-use crate::{
-    pane_group::element::PaneAxisElement, AppState, FollowerStatesByLeader, Pane, Workspace,
-};
+use crate::{pane_group::element::PaneAxisElement, AppState, FollowerState, Pane, Workspace};
 use anyhow::{anyhow, Result};
 use call::{ActiveCall, ParticipantLocation};
+use collections::HashMap;
 use gpui::{
     elements::*,
     geometry::{rect::RectF, vector::Vector2F},
@@ -13,6 +10,7 @@ use gpui::{
 };
 use project::Project;
 use serde::Deserialize;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 use theme::Theme;
 
 const HANDLE_HITBOX_SIZE: f32 = 4.0;
@@ -95,7 +93,7 @@ impl PaneGroup {
         &self,
         project: &ModelHandle<Project>,
         theme: &Theme,
-        follower_states: &FollowerStatesByLeader,
+        follower_states: &HashMap<ViewHandle<Pane>, FollowerState>,
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
         zoomed: Option<&AnyViewHandle>,
@@ -162,7 +160,7 @@ impl Member {
         project: &ModelHandle<Project>,
         basis: usize,
         theme: &Theme,
-        follower_states: &FollowerStatesByLeader,
+        follower_states: &HashMap<ViewHandle<Pane>, FollowerState>,
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
         zoomed: Option<&AnyViewHandle>,
@@ -179,19 +177,10 @@ impl Member {
                     ChildView::new(pane, cx).into_any()
                 };
 
-                let leader = follower_states
-                    .iter()
-                    .find_map(|(leader_id, follower_states)| {
-                        if follower_states.contains_key(pane) {
-                            Some(leader_id)
-                        } else {
-                            None
-                        }
-                    })
-                    .and_then(|leader_id| {
-                        let room = active_call?.read(cx).room()?.read(cx);
-                        room.remote_participant_for_peer_id(*leader_id)
-                    });
+                let leader = follower_states.get(pane).and_then(|state| {
+                    let room = active_call?.read(cx).room()?.read(cx);
+                    room.remote_participant_for_peer_id(state.leader_id)
+                });
 
                 let mut leader_border = Border::default();
                 let mut leader_status_box = None;
@@ -486,7 +475,7 @@ impl PaneAxis {
         project: &ModelHandle<Project>,
         basis: usize,
         theme: &Theme,
-        follower_state: &FollowerStatesByLeader,
+        follower_states: &HashMap<ViewHandle<Pane>, FollowerState>,
         active_call: Option<&ModelHandle<ActiveCall>>,
         active_pane: &ViewHandle<Pane>,
         zoomed: Option<&AnyViewHandle>,
@@ -515,7 +504,7 @@ impl PaneAxis {
                 project,
                 (basis + ix) * 10,
                 theme,
-                follower_state,
+                follower_states,
                 active_call,
                 active_pane,
                 zoomed,

@@ -8,7 +8,6 @@ use sysinfo::{Pid, PidExt, ProcessExt, System, SystemExt};
 use tempfile::NamedTempFile;
 use util::http::HttpClient;
 use util::{channel::ReleaseChannel, TryFutureExt};
-use uuid::Uuid;
 
 pub struct Telemetry {
     http_client: Arc<dyn HttpClient>,
@@ -20,7 +19,7 @@ pub struct Telemetry {
 struct TelemetryState {
     metrics_id: Option<Arc<str>>,      // Per logged-in user
     installation_id: Option<Arc<str>>, // Per app installation (different for dev, preview, and stable)
-    session_id: String,                // Per app launch
+    session_id: Option<Arc<str>>,      // Per app launch
     app_version: Option<Arc<str>>,
     release_channel: Option<&'static str>,
     os_name: &'static str,
@@ -43,7 +42,7 @@ lazy_static! {
 struct ClickhouseEventRequestBody {
     token: &'static str,
     installation_id: Option<Arc<str>>,
-    session_id: String,
+    session_id: Option<Arc<str>>,
     is_staff: Option<bool>,
     app_version: Option<Arc<str>>,
     os_name: &'static str,
@@ -134,7 +133,7 @@ impl Telemetry {
                 release_channel,
                 installation_id: None,
                 metrics_id: None,
-                session_id: Uuid::new_v4().to_string(),
+                session_id: None,
                 clickhouse_events_queue: Default::default(),
                 flush_clickhouse_events_task: Default::default(),
                 log_file: None,
@@ -149,9 +148,15 @@ impl Telemetry {
         Some(self.state.lock().log_file.as_ref()?.path().to_path_buf())
     }
 
-    pub fn start(self: &Arc<Self>, installation_id: Option<String>, cx: &mut AppContext) {
+    pub fn start(
+        self: &Arc<Self>,
+        installation_id: Option<String>,
+        session_id: String,
+        cx: &mut AppContext,
+    ) {
         let mut state = self.state.lock();
         state.installation_id = installation_id.map(|id| id.into());
+        state.session_id = Some(session_id.into());
         let has_clickhouse_events = !state.clickhouse_events_queue.is_empty();
         drop(state);
 
@@ -283,23 +288,21 @@ impl Telemetry {
 
                     {
                         let state = this.state.lock();
-                        json_bytes.clear();
-                        serde_json::to_writer(
-                            &mut json_bytes,
-                            &ClickhouseEventRequestBody {
-                                token: ZED_SECRET_CLIENT_TOKEN,
-                                installation_id: state.installation_id.clone(),
-                                session_id: state.session_id.clone(),
-                                is_staff: state.is_staff.clone(),
-                                app_version: state.app_version.clone(),
-                                os_name: state.os_name,
-                                os_version: state.os_version.clone(),
-                                architecture: state.architecture,
+                        let request_body = ClickhouseEventRequestBody {
+                            token: ZED_SECRET_CLIENT_TOKEN,
+                            installation_id: state.installation_id.clone(),
+                            session_id: state.session_id.clone(),
+                            is_staff: state.is_staff.clone(),
+                            app_version: state.app_version.clone(),
+                            os_name: state.os_name,
+                            os_version: state.os_version.clone(),
+                            architecture: state.architecture,
 
-                                release_channel: state.release_channel,
-                                events,
-                            },
-                        )?;
+                            release_channel: state.release_channel,
+                            events,
+                        };
+                        json_bytes.clear();
+                        serde_json::to_writer(&mut json_bytes, &request_body)?;
                     }
 
                     this.http_client

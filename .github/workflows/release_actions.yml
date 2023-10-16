@@ -6,8 +6,8 @@ jobs:
   discord_release:
     runs-on: ubuntu-latest
     steps:
-    - name: Get appropriate URL
-      id: get-appropriate-url
+    - name: Get release URL
+      id: get-release-url
       run: |
         if [ "${{ github.event.release.prerelease }}" == "true" ]; then
           URL="https://zed.dev/releases/preview/latest"
@@ -15,14 +15,19 @@ jobs:
           URL="https://zed.dev/releases/stable/latest"
         fi
         echo "::set-output name=URL::$URL"
+    - name: Get content
+      uses: 2428392/gh-truncate-string-action@v1.2.0
+      id: get-content
+      with:
+        stringToTruncate: |
+          📣 Zed ${{ github.event.release.tag_name }} was just released!
 
+          Restart your Zed or head to ${{ steps.get-release-url.outputs.URL }} to grab it.
+
+          ${{ github.event.release.body }}
+        maxLength: 2000
     - name: Discord Webhook Action
       uses: tsickert/discord-webhook@v5.3.0
       with:
         webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        content: |
-          📣 Zed ${{ github.event.release.tag_name }} was just released!
-
-          Restart your Zed or head to ${{ steps.get-appropriate-url.outputs.URL }} to grab it.
-
-          ${{ github.event.release.body }}
+        content: ${{ steps.get-content.outputs.string }}

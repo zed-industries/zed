@@ -18,7 +18,7 @@ use live_kit_client::{
     LocalAudioTrack, LocalTrackPublication, LocalVideoTrack, RemoteAudioTrackUpdate,
     RemoteVideoTrackUpdate,
 };
-use postage::stream::Stream;
+use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
 use std::{future::Future, mem, pin::Pin, sync::Arc, time::Duration};
 use util::{post_inc, ResultExt, TryFutureExt};
@@ -70,6 +70,8 @@ pub struct Room {
     user_store: ModelHandle<UserStore>,
     follows_by_leader_id_project_id: HashMap<(PeerId, u64), Vec<PeerId>>,
     subscriptions: Vec<client::Subscription>,
+    room_update_completed_tx: watch::Sender<Option<()>>,
+    room_update_completed_rx: watch::Receiver<Option<()>>,
     pending_room_update: Option<Task<()>>,
     maintain_connection: Option<Task<Option<()>>>,
 }
@@ -211,6 +213,8 @@ impl Room {
 
         Audio::play_sound(Sound::Joined, cx);
 
+        let (room_update_completed_tx, room_update_completed_rx) = watch::channel();
+
         Self {
             id,
             channel_id,
@@ -230,6 +234,8 @@ impl Room {
             user_store,
             follows_by_leader_id_project_id: Default::default(),
             maintain_connection: Some(maintain_connection),
+            room_update_completed_tx,
+            room_update_completed_rx,
         }
     }
 
@@ -599,28 +605,40 @@ impl Room {
     }
 
     /// Returns the most 'active' projects, defined as most people in the project
-    pub fn most_active_project(&self) -> Option<(u64, u64)> {
-        let mut projects = HashMap::default();
-        let mut hosts = HashMap::default();
+    pub fn most_active_project(&self, cx: &AppContext) -> Option<(u64, u64)> {
+        let mut project_hosts_and_guest_counts = HashMap::<u64, (Option<u64>, u32)>::default();
         for participant in self.remote_participants.values() {
             match participant.location {
                 ParticipantLocation::SharedProject { project_id } => {
-                    *projects.entry(project_id).or_insert(0) += 1;
+                    project_hosts_and_guest_counts
+                        .entry(project_id)
+                        .or_default()
+                        .1 += 1;
                 }
                 ParticipantLocation::External | ParticipantLocation::UnsharedProject => {}
             }
             for project in &participant.projects {
-                *projects.entry(project.id).or_insert(0) += 1;
-                hosts.insert(project.id, participant.user.id);
+                project_hosts_and_guest_counts
+                    .entry(project.id)
+                    .or_default()
+                    .0 = Some(participant.user.id);
             }
         }
 
-        let mut pairs: Vec<(u64, usize)> = projects.into_iter().collect();
-        pairs.sort_by_key(|(_, count)| *count as i32);
+        if let Some(user) = self.user_store.read(cx).current_user() {
+            for project in &self.local_participant.projects {
+                project_hosts_and_guest_counts
+                    .entry(project.id)
+                    .or_default()
+                    .0 = Some(user.id);
+            }
+        }
 
-        pairs
-            .first()
-            .map(|(project_id, _)| (*project_id, hosts[&project_id]))
+        project_hosts_and_guest_counts
+            .into_iter()
+            .filter_map(|(id, (host, guest_count))| Some((id, host?, guest_count)))
+            .max_by_key(|(_, _, guest_count)| *guest_count)
+            .map(|(id, host, _)| (id, host))
     }
 
     async fn handle_room_updated(
@@ -686,6 +704,7 @@ impl Room {
                         let Some(peer_id) = participant.peer_id else {
                             continue;
                         };
+                        let participant_index = ParticipantIndex(participant.participant_index);
                         this.participant_user_ids.insert(participant.user_id);
 
                         let old_projects = this
@@ -736,8 +755,9 @@ impl Room {
                         if let Some(remote_participant) =
                             this.remote_participants.get_mut(&participant.user_id)
                         {
-                            remote_participant.projects = participant.projects;
                             remote_participant.peer_id = peer_id;
+                            remote_participant.projects = participant.projects;
+                            remote_participant.participant_index = participant_index;
                             if location != remote_participant.location {
                                 remote_participant.location = location;
                                 cx.emit(Event::ParticipantLocationChanged {
@@ -749,9 +769,7 @@ impl Room {
                                 participant.user_id,
                                 RemoteParticipant {
                                     user: user.clone(),
-                                    participant_index: ParticipantIndex(
-                                        participant.participant_index,
-                                    ),
+                                    participant_index,
                                     peer_id,
                                     projects: participant.projects,
                                     location,
@@ -855,12 +873,24 @@ impl Room {
                 });
 
                 this.check_invariants();
+                this.room_update_completed_tx.try_send(Some(())).ok();
                 cx.notify();
             });
         }));
 
         cx.notify();
         Ok(())
+    }
+
+    pub fn room_update_completed(&mut self) -> impl Future<Output = ()> {
+        let mut done_rx = self.room_update_completed_rx.clone();
+        async move {
+            while let Some(result) = done_rx.next().await {
+                if result.is_some() {
+                    break;
+                }
+            }
+        }
     }
 
     fn remote_video_track_updated(

@@ -408,6 +408,7 @@
         "vim::PushOperator",
         "Yank"
       ],
+      "shift-y": "vim::YankLine",
       "i": "vim::InsertBefore",
       "shift-i": "vim::InsertFirstNonWhitespace",
       "a": "vim::InsertAfter",

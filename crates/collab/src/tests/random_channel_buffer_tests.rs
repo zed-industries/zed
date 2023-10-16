@@ -46,12 +46,7 @@ impl RandomizedTest for RandomChannelBufferTest {
         let db = &server.app_state.db;
         for ix in 0..CHANNEL_COUNT {
             let id = db
-                .create_channel(
-                    &format!("channel-{ix}"),
-                    None,
-                    &format!("livekit-room-{ix}"),
-                    users[0].user_id,
-                )
+                .create_channel(&format!("channel-{ix}"), None, users[0].user_id)
                 .await
                 .unwrap();
             for user in &users[1..] {

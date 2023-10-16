@@ -4310,7 +4310,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
             is_symlink: entry.is_symlink,
             is_ignored: entry.is_ignored,
             is_external: entry.is_external,
-            git_status: entry.git_status.map(|status| status.to_proto()),
+            git_status: entry.git_status.map(git_status_to_proto),
         }
     }
 }
@@ -4337,7 +4337,7 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
                 is_symlink: entry.is_symlink,
                 is_ignored: entry.is_ignored,
                 is_external: entry.is_external,
-                git_status: GitFileStatus::from_proto(entry.git_status),
+                git_status: git_status_from_proto(entry.git_status),
             })
         } else {
             Err(anyhow!(
@@ -4364,5 +4364,23 @@ fn combine_git_statuses(
         }
     } else {
         unstaged
+    }
+}
+
+fn git_status_from_proto(git_status: Option<i32>) -> Option<GitFileStatus> {
+    git_status.and_then(|status| {
+        proto::GitStatus::from_i32(status).map(|status| match status {
+            proto::GitStatus::Added => GitFileStatus::Added,
+            proto::GitStatus::Modified => GitFileStatus::Modified,
+            proto::GitStatus::Conflict => GitFileStatus::Conflict,
+        })
+    })
+}
+
+fn git_status_to_proto(status: GitFileStatus) -> i32 {
+    match status {
+        GitFileStatus::Added => proto::GitStatus::Added as i32,
+        GitFileStatus::Modified => proto::GitStatus::Modified as i32,
+        GitFileStatus::Conflict => proto::GitStatus::Conflict as i32,
     }
 }

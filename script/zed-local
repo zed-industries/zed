@@ -1,0 +1,88 @@
+#!/usr/bin/env node
+
+const {spawn, execFileSync} = require('child_process')
+
+const RESOLUTION_REGEX = /(\d+) x (\d+)/
+const DIGIT_FLAG_REGEX = /^--?(\d+)$/
+
+const args = process.argv.slice(2)
+
+// Parse the number of Zed instances to spawn.
+let instanceCount = 1
+const digitMatch = args[0]?.match(DIGIT_FLAG_REGEX)
+if (digitMatch) {
+  instanceCount = parseInt(digitMatch[1])
+  args.shift()
+}
+if (instanceCount > 4) {
+  throw new Error('Cannot spawn more than 4 instances')
+}
+
+// Parse the resolution of the main screen
+const displayInfo = JSON.parse(
+  execFileSync(
+    'system_profiler',
+    ['SPDisplaysDataType', '-json'],
+    {encoding: 'utf8'}
+  )
+)
+const mainDisplayResolution = displayInfo
+  ?.SPDisplaysDataType[0]
+  ?.spdisplays_ndrvs
+  ?.find(entry => entry.spdisplays_main === "spdisplays_yes")
+  ?._spdisplays_resolution
+  ?.match(RESOLUTION_REGEX)
+if (!mainDisplayResolution) {
+  throw new Error('Could not parse screen resolution')
+}
+const screenWidth = parseInt(mainDisplayResolution[1])
+const screenHeight = parseInt(mainDisplayResolution[2])
+
+// Determine the window size for each instance
+let instanceWidth = screenWidth
+let instanceHeight = screenHeight
+if (instanceCount > 1) {
+  instanceWidth = Math.floor(screenWidth / 2)
+  if (instanceCount > 2) {
+    instanceHeight = Math.floor(screenHeight / 2)
+  }
+}
+
+let users = [
+  'nathansobo',
+  'as-cii',
+  'maxbrunsfeld',
+  'iamnbutler'
+]
+
+// If a user is specified, make sure it's first in the list
+const user = process.env.ZED_IMPERSONATE
+if (user) {
+  users = [user].concat(users.filter(u => u !== user))
+}
+
+const positions = [
+  '0,0',
+  `${instanceWidth},0`,
+  `0,${instanceHeight}`,
+  `${instanceWidth},${instanceHeight}`
+]
+
+execFileSync('cargo', ['build'], {stdio: 'inherit'})
+
+setTimeout(() => {
+  for (let i = 0; i < instanceCount; i++) {
+    spawn('target/debug/Zed', i == 0 ? args : [], {
+      stdio: 'inherit',
+      env: {
+        ZED_IMPERSONATE: users[i],
+        ZED_WINDOW_POSITION: positions[i],
+        ZED_STATELESS: '1',
+        ZED_ALWAYS_ACTIVE: '1',
+        ZED_SERVER_URL: 'http://localhost:8080',
+        ZED_ADMIN_API_TOKEN: 'secret',
+        ZED_WINDOW_SIZE: `${instanceWidth},${instanceHeight}`
+      }
+    })
+  }
+}, 0.1)

@@ -5,7 +5,6 @@ pub mod room;
 use anyhow::{anyhow, Result};
 use audio::Audio;
 use call_settings::CallSettings;
-use channel::ChannelId;
 use client::{
     proto, ClickhouseEvent, Client, TelemetrySettings, TypedEnvelope, User, UserStore,
     ZED_ALWAYS_ACTIVE,
@@ -79,7 +78,7 @@ impl ActiveCall {
         }
     }
 
-    pub fn channel_id(&self, cx: &AppContext) -> Option<ChannelId> {
+    pub fn channel_id(&self, cx: &AppContext) -> Option<u64> {
         self.room()?.read(cx).channel_id()
     }
 

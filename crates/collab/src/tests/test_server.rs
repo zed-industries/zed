@@ -15,6 +15,7 @@ use fs::FakeFs;
 use futures::{channel::oneshot, StreamExt as _};
 use gpui::{executor::Deterministic, ModelHandle, Task, TestAppContext, WindowHandle};
 use language::LanguageRegistry;
+use node_runtime::FakeNodeRuntime;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
 use rpc::RECEIVE_TIMEOUT;
@@ -44,6 +45,7 @@ pub struct TestServer {
 pub struct TestClient {
     pub username: String,
     pub app_state: Arc<workspace::AppState>,
+    channel_store: ModelHandle<ChannelStore>,
     state: RefCell<TestClientState>,
 }
 
@@ -206,20 +208,18 @@ impl TestServer {
         let fs = FakeFs::new(cx.background());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
         let workspace_store = cx.add_model(|cx| WorkspaceStore::new(client.clone(), cx));
-        let channel_store =
-            cx.add_model(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
         let mut language_registry = LanguageRegistry::test();
         language_registry.set_executor(cx.background());
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
             workspace_store,
-            channel_store: channel_store.clone(),
             languages: Arc::new(language_registry),
             fs: fs.clone(),
             build_window_options: |_, _, _| Default::default(),
             initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
             background_actions: || &[],
+            node_runtime: FakeNodeRuntime::new(),
         });
 
         cx.update(|cx| {
@@ -231,7 +231,7 @@ impl TestServer {
             workspace::init(app_state.clone(), cx);
             audio::init((), cx);
             call::init(client.clone(), user_store.clone(), cx);
-            channel::init(&client);
+            channel::init(&client, user_store, cx);
         });
 
         client
@@ -242,6 +242,7 @@ impl TestServer {
         let client = TestClient {
             app_state,
             username: name.to_string(),
+            channel_store: cx.read(ChannelStore::global).clone(),
             state: Default::default(),
         };
         client.wait_for_current_user(cx).await;
@@ -310,10 +311,9 @@ impl TestServer {
         admin: (&TestClient, &mut TestAppContext),
         members: &mut [(&TestClient, &mut TestAppContext)],
     ) -> u64 {
-        let (admin_client, admin_cx) = admin;
-        let channel_id = admin_client
-            .app_state
-            .channel_store
+        let (_, admin_cx) = admin;
+        let channel_id = admin_cx
+            .read(ChannelStore::global)
             .update(admin_cx, |channel_store, cx| {
                 channel_store.create_channel(channel, parent, cx)
             })
@@ -321,9 +321,8 @@ impl TestServer {
             .unwrap();
 
         for (member_client, member_cx) in members {
-            admin_client
-                .app_state
-                .channel_store
+            admin_cx
+                .read(ChannelStore::global)
                 .update(admin_cx, |channel_store, cx| {
                     channel_store.invite_member(
                         channel_id,
@@ -337,9 +336,8 @@ impl TestServer {
 
             admin_cx.foreground().run_until_parked();
 
-            member_client
-                .app_state
-                .channel_store
+            member_cx
+                .read(ChannelStore::global)
                 .update(*member_cx, |channels, _| {
                     channels.respond_to_channel_invite(channel_id, true)
                 })
@@ -447,7 +445,7 @@ impl TestClient {
     }
 
     pub fn channel_store(&self) -> &ModelHandle<ChannelStore> {
-        &self.app_state.channel_store
+        &self.channel_store
     }
 
     pub fn user_store(&self) -> &ModelHandle<UserStore> {
@@ -571,6 +569,7 @@ impl TestClient {
         cx.update(|cx| {
             Project::local(
                 self.client().clone(),
+                self.app_state.node_runtime.clone(),
                 self.app_state.user_store.clone(),
                 self.app_state.languages.clone(),
                 self.app_state.fs.clone(),
@@ -614,8 +613,8 @@ impl TestClient {
     ) {
         let (other_client, other_cx) = user;
 
-        self.app_state
-            .channel_store
+        cx_self
+            .read(ChannelStore::global)
             .update(cx_self, |channel_store, cx| {
                 channel_store.invite_member(channel, other_client.user_id().unwrap(), true, cx)
             })
@@ -624,11 +623,10 @@ impl TestClient {
 
         cx_self.foreground().run_until_parked();
 
-        other_client
-            .app_state
-            .channel_store
-            .update(other_cx, |channels, _| {
-                channels.respond_to_channel_invite(channel, true)
+        other_cx
+            .read(ChannelStore::global)
+            .update(other_cx, |channel_store, _| {
+                channel_store.respond_to_channel_invite(channel, true)
             })
             .await
             .unwrap();

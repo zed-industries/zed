@@ -107,13 +107,23 @@ fn matching_history_item_paths(
 ) -> HashMap<Arc<Path>, PathMatch> {
     let history_items_by_worktrees = history_items
         .iter()
-        .map(|found_path| {
-            let path = &found_path.project.path;
+        .filter_map(|found_path| {
             let candidate = PathMatchCandidate {
-                path,
-                char_bag: CharBag::from_iter(path.to_string_lossy().to_lowercase().chars()),
+                path: &found_path.project.path,
+                // Only match history items names, otherwise their paths may match too many queries, producing false positives.
+                // E.g. `foo` would match both `something/foo/bar.rs` and `something/foo/foo.rs` and if the former is a history item,
+                // it would be shown first always, despite the latter being a better match.
+                char_bag: CharBag::from_iter(
+                    found_path
+                        .project
+                        .path
+                        .file_name()?
+                        .to_string_lossy()
+                        .to_lowercase()
+                        .chars(),
+                ),
             };
-            (found_path.project.worktree_id, candidate)
+            Some((found_path.project.worktree_id, candidate))
         })
         .fold(
             HashMap::default(),
@@ -212,6 +222,10 @@ fn toggle_or_cycle_file_finder(
                                         .as_ref()
                                         .and_then(|found_path| found_path.absolute.as_ref())
                             })
+                            .filter(|(_, history_abs_path)| match history_abs_path {
+                                Some(abs_path) => history_file_exists(abs_path),
+                                None => true,
+                            })
                             .map(|(history_path, abs_path)| FoundPath::new(history_path, abs_path)),
                     )
                     .collect();
@@ -234,6 +248,16 @@ fn toggle_or_cycle_file_finder(
             });
         }
     }
+}
+
+#[cfg(not(test))]
+fn history_file_exists(abs_path: &PathBuf) -> bool {
+    abs_path.exists()
+}
+
+#[cfg(test)]
+fn history_file_exists(abs_path: &PathBuf) -> bool {
+    !abs_path.ends_with("nonexistent.rs")
 }
 
 pub enum Event {
@@ -505,12 +529,7 @@ impl PickerDelegate for FileFinderDelegate {
                         project
                             .worktree_for_id(history_item.project.worktree_id, cx)
                             .is_some()
-                            || (project.is_local()
-                                && history_item
-                                    .absolute
-                                    .as_ref()
-                                    .filter(|abs_path| abs_path.exists())
-                                    .is_some())
+                            || (project.is_local() && history_item.absolute.is_some())
                     })
                     .cloned()
                     .map(|p| (p, None))
@@ -1800,6 +1819,202 @@ mod tests {
             ));
             assert_eq!(delegate.matches.search.len(), 1, "Only one non-history item contains {first_query_again}, it should be present, even after non-matching query");
             assert_eq!(delegate.matches.search.first().unwrap().path.as_ref(), Path::new("test/fourth.rs"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_history_items_vs_very_good_external_match(
+        deterministic: Arc<gpui::executor::Deterministic>,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/src",
+                json!({
+                    "collab_ui": {
+                        "first.rs": "// First Rust file",
+                        "second.rs": "// Second Rust file",
+                        "third.rs": "// Third Rust file",
+                        "collab_ui.rs": "// Fourth Rust file",
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
+        // generate some history to select from
+        open_close_queried_buffer(
+            "fir",
+            1,
+            "first.rs",
+            window.into(),
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        open_close_queried_buffer(
+            "sec",
+            1,
+            "second.rs",
+            window.into(),
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        open_close_queried_buffer(
+            "thi",
+            1,
+            "third.rs",
+            window.into(),
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        open_close_queried_buffer(
+            "sec",
+            1,
+            "second.rs",
+            window.into(),
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+
+        cx.dispatch_action(window.into(), Toggle);
+        let query = "collab_ui";
+        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
+        finder
+            .update(cx, |finder, cx| {
+                finder.delegate_mut().update_matches(query.to_string(), cx)
+            })
+            .await;
+        finder.read_with(cx, |finder, _| {
+            let delegate = finder.delegate();
+            assert!(
+                delegate.matches.history.is_empty(),
+                "History items should not math query {query}, they should be matched by name only"
+            );
+
+            let search_entries = delegate
+                .matches
+                .search
+                .iter()
+                .map(|path_match| path_match.path.to_path_buf())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                search_entries,
+                vec![
+                    PathBuf::from("collab_ui/collab_ui.rs"),
+                    PathBuf::from("collab_ui/third.rs"),
+                    PathBuf::from("collab_ui/first.rs"),
+                    PathBuf::from("collab_ui/second.rs"),
+                ],
+                "Despite all search results having the same directory name, the most matching one should be on top"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_nonexistent_history_items_not_shown(
+        deterministic: Arc<gpui::executor::Deterministic>,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/src",
+                json!({
+                    "test": {
+                        "first.rs": "// First Rust file",
+                        "nonexistent.rs": "// Second Rust file",
+                        "third.rs": "// Third Rust file",
+                    }
+                }),
+            )
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+        let window = cx.add_window(|cx| Workspace::test_new(project, cx));
+        let workspace = window.root(cx);
+        // generate some history to select from
+        open_close_queried_buffer(
+            "fir",
+            1,
+            "first.rs",
+            window.into(),
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        open_close_queried_buffer(
+            "non",
+            1,
+            "nonexistent.rs",
+            window.into(),
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        open_close_queried_buffer(
+            "thi",
+            1,
+            "third.rs",
+            window.into(),
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+        open_close_queried_buffer(
+            "fir",
+            1,
+            "first.rs",
+            window.into(),
+            &workspace,
+            &deterministic,
+            cx,
+        )
+        .await;
+
+        cx.dispatch_action(window.into(), Toggle);
+        let query = "rs";
+        let finder = cx.read(|cx| workspace.read(cx).modal::<FileFinder>().unwrap());
+        finder
+            .update(cx, |finder, cx| {
+                finder.delegate_mut().update_matches(query.to_string(), cx)
+            })
+            .await;
+        finder.read_with(cx, |finder, _| {
+            let delegate = finder.delegate();
+            let history_entries = delegate
+                .matches
+                .history
+                .iter()
+                .map(|(_, path_match)| path_match.as_ref().expect("should have a path match").path.to_path_buf())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                history_entries,
+                vec![
+                    PathBuf::from("test/first.rs"),
+                    PathBuf::from("test/third.rs"),
+                ],
+                "Should have all opened files in the history, except the ones that do not exist on disk"
+            );
         });
     }
 

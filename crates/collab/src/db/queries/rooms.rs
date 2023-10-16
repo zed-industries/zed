@@ -107,10 +107,12 @@ impl Database {
         user_id: UserId,
         connection: ConnectionId,
         live_kit_room: &str,
+        release_channel: &str,
     ) -> Result<proto::Room> {
         self.transaction(|tx| async move {
             let room = room::ActiveModel {
                 live_kit_room: ActiveValue::set(live_kit_room.into()),
+                enviroment: ActiveValue::set(Some(release_channel.to_string())),
                 ..Default::default()
             }
             .insert(&*tx)
@@ -270,20 +272,31 @@ impl Database {
         room_id: RoomId,
         user_id: UserId,
         connection: ConnectionId,
+        enviroment: &str,
     ) -> Result<RoomGuard<JoinRoom>> {
         self.room_transaction(room_id, |tx| async move {
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-            enum QueryChannelId {
+            enum QueryChannelIdAndEnviroment {
                 ChannelId,
+                Enviroment,
             }
-            let channel_id: Option<ChannelId> = room::Entity::find()
-                .select_only()
-                .column(room::Column::ChannelId)
-                .filter(room::Column::Id.eq(room_id))
-                .into_values::<_, QueryChannelId>()
-                .one(&*tx)
-                .await?
-                .ok_or_else(|| anyhow!("no such room"))?;
+
+            let (channel_id, release_channel): (Option<ChannelId>, Option<String>) =
+                room::Entity::find()
+                    .select_only()
+                    .column(room::Column::ChannelId)
+                    .column(room::Column::Enviroment)
+                    .filter(room::Column::Id.eq(room_id))
+                    .into_values::<_, QueryChannelIdAndEnviroment>()
+                    .one(&*tx)
+                    .await?
+                    .ok_or_else(|| anyhow!("no such room"))?;
+
+            if let Some(release_channel) = release_channel {
+                if &release_channel != enviroment {
+                    Err(anyhow!("must join using the {} release", release_channel))?;
+                }
+            }
 
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
             enum QueryParticipantIndices {
@@ -300,6 +313,7 @@ impl Database {
                 .into_values::<_, QueryParticipantIndices>()
                 .all(&*tx)
                 .await?;
+
             let mut participant_index = 0;
             while existing_participant_indices.contains(&participant_index) {
                 participant_index += 1;
@@ -818,10 +832,7 @@ impl Database {
 
                 let (channel_id, room) = self.get_channel_room(room_id, &tx).await?;
                 let deleted = if room.participants.is_empty() {
-                    let result = room::Entity::delete_by_id(room_id)
-                        .filter(room::Column::ChannelId.is_null())
-                        .exec(&*tx)
-                        .await?;
+                    let result = room::Entity::delete_by_id(room_id).exec(&*tx).await?;
                     result.rows_affected > 0
                 } else {
                     false
