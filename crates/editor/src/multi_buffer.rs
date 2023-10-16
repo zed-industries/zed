@@ -498,77 +498,91 @@ impl MultiBuffer {
             }
         }
 
-        for (buffer_id, mut edits) in buffer_edits {
-            edits.sort_unstable_by_key(|edit| edit.range.start);
-            self.buffers.borrow()[&buffer_id]
-                .buffer
-                .update(cx, |buffer, cx| {
-                    let mut edits = edits.into_iter().peekable();
-                    let mut insertions = Vec::new();
-                    let mut original_indent_columns = Vec::new();
-                    let mut deletions = Vec::new();
-                    let empty_str: Arc<str> = "".into();
-                    while let Some(BufferEdit {
-                        mut range,
-                        new_text,
-                        mut is_insertion,
-                        original_indent_column,
-                    }) = edits.next()
-                    {
+        drop(cursor);
+        drop(snapshot);
+        // Non-generic part of edit, hoisted out to avoid blowing up LLVM IR.
+        fn tail(
+            this: &mut MultiBuffer,
+            buffer_edits: HashMap<u64, Vec<BufferEdit>>,
+            autoindent_mode: Option<AutoindentMode>,
+            edited_excerpt_ids: Vec<ExcerptId>,
+            cx: &mut ModelContext<MultiBuffer>,
+        ) {
+            for (buffer_id, mut edits) in buffer_edits {
+                edits.sort_unstable_by_key(|edit| edit.range.start);
+                this.buffers.borrow()[&buffer_id]
+                    .buffer
+                    .update(cx, |buffer, cx| {
+                        let mut edits = edits.into_iter().peekable();
+                        let mut insertions = Vec::new();
+                        let mut original_indent_columns = Vec::new();
+                        let mut deletions = Vec::new();
+                        let empty_str: Arc<str> = "".into();
                         while let Some(BufferEdit {
-                            range: next_range,
-                            is_insertion: next_is_insertion,
-                            ..
-                        }) = edits.peek()
+                            mut range,
+                            new_text,
+                            mut is_insertion,
+                            original_indent_column,
+                        }) = edits.next()
                         {
-                            if range.end >= next_range.start {
-                                range.end = cmp::max(next_range.end, range.end);
-                                is_insertion |= *next_is_insertion;
-                                edits.next();
-                            } else {
-                                break;
+                            while let Some(BufferEdit {
+                                range: next_range,
+                                is_insertion: next_is_insertion,
+                                ..
+                            }) = edits.peek()
+                            {
+                                if range.end >= next_range.start {
+                                    range.end = cmp::max(next_range.end, range.end);
+                                    is_insertion |= *next_is_insertion;
+                                    edits.next();
+                                } else {
+                                    break;
+                                }
+                            }
+
+                            if is_insertion {
+                                original_indent_columns.push(original_indent_column);
+                                insertions.push((
+                                    buffer.anchor_before(range.start)
+                                        ..buffer.anchor_before(range.end),
+                                    new_text.clone(),
+                                ));
+                            } else if !range.is_empty() {
+                                deletions.push((
+                                    buffer.anchor_before(range.start)
+                                        ..buffer.anchor_before(range.end),
+                                    empty_str.clone(),
+                                ));
                             }
                         }
 
-                        if is_insertion {
-                            original_indent_columns.push(original_indent_column);
-                            insertions.push((
-                                buffer.anchor_before(range.start)..buffer.anchor_before(range.end),
-                                new_text.clone(),
-                            ));
-                        } else if !range.is_empty() {
-                            deletions.push((
-                                buffer.anchor_before(range.start)..buffer.anchor_before(range.end),
-                                empty_str.clone(),
-                            ));
-                        }
-                    }
+                        let deletion_autoindent_mode =
+                            if let Some(AutoindentMode::Block { .. }) = autoindent_mode {
+                                Some(AutoindentMode::Block {
+                                    original_indent_columns: Default::default(),
+                                })
+                            } else {
+                                None
+                            };
+                        let insertion_autoindent_mode =
+                            if let Some(AutoindentMode::Block { .. }) = autoindent_mode {
+                                Some(AutoindentMode::Block {
+                                    original_indent_columns,
+                                })
+                            } else {
+                                None
+                            };
 
-                    let deletion_autoindent_mode =
-                        if let Some(AutoindentMode::Block { .. }) = autoindent_mode {
-                            Some(AutoindentMode::Block {
-                                original_indent_columns: Default::default(),
-                            })
-                        } else {
-                            None
-                        };
-                    let insertion_autoindent_mode =
-                        if let Some(AutoindentMode::Block { .. }) = autoindent_mode {
-                            Some(AutoindentMode::Block {
-                                original_indent_columns,
-                            })
-                        } else {
-                            None
-                        };
+                        buffer.edit(deletions, deletion_autoindent_mode, cx);
+                        buffer.edit(insertions, insertion_autoindent_mode, cx);
+                    })
+            }
 
-                    buffer.edit(deletions, deletion_autoindent_mode, cx);
-                    buffer.edit(insertions, insertion_autoindent_mode, cx);
-                })
+            cx.emit(Event::ExcerptsEdited {
+                ids: edited_excerpt_ids,
+            });
         }
-
-        cx.emit(Event::ExcerptsEdited {
-            ids: edited_excerpt_ids,
-        });
+        tail(self, buffer_edits, autoindent_mode, edited_excerpt_ids, cx);
     }
 
     pub fn start_transaction(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
