@@ -245,8 +245,8 @@ pub fn generate_content_prompt(
         ));
     }
     prompts.push("Never make remarks about the output.".to_string());
-    prompts.push("DO NOT return any text, except the generated code.".to_string());
-    prompts.push("DO NOT wrap your text in a Markdown block".to_string());
+    prompts.push("Do not return any text, except the generated code.".to_string());
+    prompts.push("Do not wrap your text in a Markdown block".to_string());
 
     let current_messages = [ChatCompletionRequestMessage {
         role: "user".to_string(),
@@ -300,9 +300,7 @@ pub fn generate_content_prompt(
         }
     }
 
-    let prompt = prompts.join("\n");
-    println!("PROMPT: {:?}", prompt);
-    prompt
+    prompts.join("\n")
 }
 
 #[cfg(test)]
