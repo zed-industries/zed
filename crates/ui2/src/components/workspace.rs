@@ -12,7 +12,6 @@ use crate::{
 pub struct Workspace {
     title_bar: View<TitleBar>,
     editor_1: View<EditorPane>,
-    editor_2: View<EditorPane>,
     show_project_panel: bool,
     show_collab_panel: bool,
     show_chat_panel: bool,
@@ -30,7 +29,6 @@ impl Workspace {
         Self {
             title_bar: TitleBar::view(cx),
             editor_1: EditorPane::view(cx),
-            editor_2: EditorPane::view(cx),
             show_project_panel: true,
             show_collab_panel: false,
             show_chat_panel: true,
@@ -117,43 +115,15 @@ impl Workspace {
     pub fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
         let theme = theme(cx).clone();
 
-        let temp_size = rems(36.).into();
-
-        let root_group = PaneGroup::new_groups(
-            vec![
-                PaneGroup::new_panes(
-                    vec![
-                        Pane::new(
-                            ScrollState::default(),
-                            Size {
-                                width: relative(1.).into(),
-                                height: temp_size,
-                            },
-                        )
-                        .child(self.editor_1.clone()),
-                        Pane::new(
-                            ScrollState::default(),
-                            Size {
-                                width: relative(1.).into(),
-                                height: temp_size,
-                            },
-                        )
-                        .child(Terminal::new()),
-                    ],
-                    SplitDirection::Vertical,
-                ),
-                PaneGroup::new_panes(
-                    vec![Pane::new(
-                        ScrollState::default(),
-                        Size {
-                            width: relative(1.).into(),
-                            height: relative(1.).into(),
-                        },
-                    )
-                    .child(self.editor_2.clone())],
-                    SplitDirection::Vertical,
-                ),
-            ],
+        let root_group = PaneGroup::new_panes(
+            vec![Pane::new(
+                ScrollState::default(),
+                Size {
+                    width: relative(1.).into(),
+                    height: relative(1.).into(),
+                },
+            )
+            .child(self.editor_1.clone())],
             SplitDirection::Horizontal,
         );
 
