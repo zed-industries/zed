@@ -1,11 +1,11 @@
 use chrono::DateTime;
-use gpui3::{px, relative, rems, view, Context, Size, View};
+use gpui3::{px, relative, view, Context, Size, View};
 
 use crate::prelude::*;
 use crate::{
-    theme, v_stack, AssistantPanel, Button, ChatMessage, ChatPanel, CollabPanel, EditorPane, Label,
-    LanguageSelector, NotificationToast, Pane, PaneGroup, Panel, PanelAllowedSides, PanelSide,
-    ProjectPanel, SplitDirection, StatusBar, Terminal, TitleBar, Toast, ToastOrigin,
+    theme, v_stack, AssistantPanel, ChatMessage, ChatPanel, CollabPanel, EditorPane, Label,
+    LanguageSelector, Pane, PaneGroup, Panel, PanelAllowedSides, PanelSide, ProjectPanel,
+    SplitDirection, StatusBar, Terminal, TitleBar, Toast, ToastOrigin,
 };
 
 #[derive(Clone)]
@@ -16,6 +16,7 @@ pub struct Workspace {
     show_collab_panel: bool,
     show_chat_panel: bool,
     show_assistant_panel: bool,
+    show_notifications_panel: bool,
     show_terminal: bool,
     show_language_selector: bool,
     left_panel_scroll_state: ScrollState,
@@ -31,10 +32,11 @@ impl Workspace {
             editor_1: EditorPane::view(cx),
             show_project_panel: true,
             show_collab_panel: false,
-            show_chat_panel: true,
+            show_chat_panel: false,
             show_assistant_panel: false,
             show_terminal: true,
             show_language_selector: false,
+            show_notifications_panel: true,
             left_panel_scroll_state: ScrollState::default(),
             right_panel_scroll_state: ScrollState::default(),
             tab_bar_scroll_state: ScrollState::default(),
@@ -82,6 +84,18 @@ impl Workspace {
         self.show_chat_panel = !self.show_chat_panel;
 
         self.show_assistant_panel = false;
+
+        cx.notify();
+    }
+
+    pub fn is_notifications_panel_open(&self) -> bool {
+        self.show_notifications_panel
+    }
+
+    pub fn toggle_notifications_panel(&mut self, cx: &mut ViewContext<Self>) {
+        self.show_notifications_panel = !self.show_notifications_panel;
+
+        self.show_notifications_panel = false;
 
         cx.notify();
     }
@@ -216,6 +230,14 @@ impl Workspace {
                     .children(
                         Some(
                             Panel::new(self.right_panel_scroll_state.clone())
+                                .side(PanelSide::Right)
+                                .child(div().w_96().h_full().child("Notifications")),
+                        )
+                        .filter(|_| self.is_notifications_panel_open()),
+                    )
+                    .children(
+                        Some(
+                            Panel::new(self.right_panel_scroll_state.clone())
                                 .child(AssistantPanel::new()),
                         )
                         .filter(|_| self.is_assistant_panel_open()),
@@ -234,12 +256,12 @@ impl Workspace {
                 .filter(|_| self.is_language_selector_open()),
             )
             .child(Toast::new(ToastOrigin::Bottom).child(Label::new("A toast")))
-            // .child(Toast::new(ToastOrigin::BottomRight).child(Label::new("Another toast")))
-            .child(NotificationToast::new(
-                "Can't pull changes from origin",
-                "Your local branch is behind the remote branch. Please pull the latest changes before pushing.",
-                Button::new("Stash & Switch").variant(ButtonVariant::Filled),
-            ).secondary_action(Button::new("Cancel")))
+        // .child(Toast::new(ToastOrigin::BottomRight).child(Label::new("Another toast")))
+        // .child(NotificationToast::new(
+        //     "Can't pull changes from origin",
+        //     "Your local branch is behind the remote branch. Please pull the latest changes before pushing.",
+        //     Button::new("Stash & Switch").variant(ButtonVariant::Filled),
+        // ).secondary_action(Button::new("Cancel")))
     }
 }
 
