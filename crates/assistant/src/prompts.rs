@@ -1,13 +1,11 @@
 use crate::codegen::CodegenKind;
-use gpui::{AppContext, AsyncAppContext};
-use language::{BufferSnapshot, Language, OffsetRangeExt, ToOffset};
+use gpui::AsyncAppContext;
+use language::{BufferSnapshot, OffsetRangeExt, ToOffset};
 use semantic_index::SearchResult;
-use std::borrow::Cow;
 use std::cmp::{self, Reverse};
 use std::fmt::Write;
 use std::ops::Range;
 use std::path::PathBuf;
-use std::sync::Arc;
 use tiktoken_rs::ChatCompletionRequestMessage;
 
 pub struct PromptCodeSnippet {
@@ -19,7 +17,7 @@ pub struct PromptCodeSnippet {
 impl PromptCodeSnippet {
     pub fn new(search_result: SearchResult, cx: &AsyncAppContext) -> Self {
         let (content, language_name, file_path) =
-            search_result.buffer.read_with(cx, |buffer, cx| {
+            search_result.buffer.read_with(cx, |buffer, _| {
                 let snapshot = buffer.snapshot();
                 let content = snapshot
                     .text_for_range(search_result.range.clone())
@@ -29,7 +27,6 @@ impl PromptCodeSnippet {
                     .language()
                     .and_then(|language| Some(language.name().to_string()));
 
-                let language = buffer.language();
                 let file_path = buffer
                     .file()
                     .and_then(|file| Some(file.path().to_path_buf()));
