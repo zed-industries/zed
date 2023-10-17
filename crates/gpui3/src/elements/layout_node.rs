@@ -21,7 +21,7 @@ pub trait ElementKind: 'static + Send + Sync {
     fn id(&self) -> Option<ElementId>;
 }
 
-pub struct IdentifiedElementKind(ElementId);
+pub struct IdentifiedElementKind(pub(crate) ElementId);
 pub struct AnonymousElementKind;
 
 impl ElementKind for IdentifiedElementKind {

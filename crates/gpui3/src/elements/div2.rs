@@ -1,7 +1,8 @@
 use crate::{
     AnonymousElementKind, AnyElement, AppContext, BorrowWindow, Bounds, DispatchPhase, Element,
-    ElementId, ElementKind, IntoAnyElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, ScrollWheelEvent, SharedString, Style, StyleRefinement, ViewContext,
+    ElementId, ElementKind, IdentifiedElement, IdentifiedElementKind, IntoAnyElement, LayoutId,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Overflow, Pixels, Point, ScrollWheelEvent,
+    SharedString, Style, StyleRefinement, ViewContext,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -37,6 +38,44 @@ pub fn group_bounds(name: &SharedString, cx: &mut AppContext) -> Option<Bounds<P
         .and_then(|bounds_stack| bounds_stack.last().cloned())
 }
 
+#[derive(Default, Clone)]
+pub struct ScrollState(Arc<Mutex<Point<Pixels>>>);
+
+impl ScrollState {
+    pub fn x(&self) -> Pixels {
+        self.0.lock().x
+    }
+
+    pub fn set_x(&self, value: Pixels) {
+        self.0.lock().x = value;
+    }
+
+    pub fn y(&self) -> Pixels {
+        self.0.lock().y
+    }
+
+    pub fn set_y(&self, value: Pixels) {
+        self.0.lock().y = value;
+    }
+}
+
+pub fn div<S>() -> Div<S, AnonymousElementKind>
+where
+    S: 'static + Send + Sync,
+{
+    Div {
+        kind: AnonymousElementKind,
+        children: SmallVec::new(),
+        group: None,
+        base_style: StyleRefinement::default(),
+        hover_style: StyleRefinement::default(),
+        group_hover: None,
+        active_style: StyleRefinement::default(),
+        group_active: None,
+        listeners: MouseEventListeners::default(),
+    }
+}
+
 pub struct Div<V: 'static + Send + Sync, K: ElementKind = AnonymousElementKind> {
     kind: K,
     children: SmallVec<[AnyElement<V>; 2]>,
@@ -54,11 +93,78 @@ struct GroupStyle {
     style: StyleRefinement,
 }
 
+impl<V> Div<V, AnonymousElementKind>
+where
+    V: 'static + Send + Sync,
+{
+    pub fn id(self, id: ElementId) -> Div<V, IdentifiedElementKind> {
+        Div {
+            kind: IdentifiedElementKind(id),
+            children: self.children,
+            group: self.group,
+            base_style: self.base_style,
+            hover_style: self.hover_style,
+            group_hover: self.group_hover,
+            active_style: self.active_style,
+            group_active: self.group_active,
+            listeners: self.listeners,
+        }
+    }
+}
+
 impl<V, K> Div<V, K>
 where
     V: 'static + Send + Sync,
     K: ElementKind,
 {
+    pub fn group(mut self, group: impl Into<SharedString>) -> Self {
+        self.group = Some(group.into());
+        self
+    }
+
+    pub fn z_index(mut self, z_index: u32) -> Self {
+        self.base_style.z_index = Some(z_index);
+        self
+    }
+
+    pub fn overflow_hidden(mut self) -> Self {
+        self.base_style.overflow.x = Some(Overflow::Hidden);
+        self.base_style.overflow.y = Some(Overflow::Hidden);
+        self
+    }
+
+    pub fn overflow_hidden_x(mut self) -> Self {
+        self.base_style.overflow.x = Some(Overflow::Hidden);
+        self
+    }
+
+    pub fn overflow_hidden_y(mut self) -> Self {
+        self.base_style.overflow.y = Some(Overflow::Hidden);
+        self
+    }
+
+    pub fn overflow_scroll(mut self, _scroll_state: ScrollState) -> Self {
+        // todo!("impl scrolling")
+        // self.scroll_state = Some(scroll_state);
+        self.base_style.overflow.x = Some(Overflow::Scroll);
+        self.base_style.overflow.y = Some(Overflow::Scroll);
+        self
+    }
+
+    pub fn overflow_x_scroll(mut self, _scroll_state: ScrollState) -> Self {
+        // todo!("impl scrolling")
+        // self.scroll_state = Some(scroll_state);
+        self.base_style.overflow.x = Some(Overflow::Scroll);
+        self
+    }
+
+    pub fn overflow_y_scroll(mut self, _scroll_state: ScrollState) -> Self {
+        // todo!("impl scrolling")
+        // self.scroll_state = Some(scroll_state);
+        self.base_style.overflow.y = Some(Overflow::Scroll);
+        self
+    }
+
     fn with_element_id<R>(
         &mut self,
         cx: &mut ViewContext<V>,
@@ -206,20 +312,6 @@ where
     }
 }
 
-fn paint_hover_listener<V>(bounds: Bounds<Pixels>, cx: &mut ViewContext<V>)
-where
-    V: 'static + Send + Sync,
-{
-    let hovered = bounds.contains_point(cx.mouse_position());
-    cx.on_mouse_event(move |_, event: &MouseMoveEvent, phase, cx| {
-        if phase == DispatchPhase::Capture {
-            if bounds.contains_point(event.position) != hovered {
-                cx.notify();
-            }
-        }
-    });
-}
-
 impl<V, K> Element for Div<V, K>
 where
     V: 'static + Send + Sync,
@@ -321,6 +413,12 @@ where
     }
 }
 
+impl<V: 'static + Send + Sync> IdentifiedElement for Div<V, IdentifiedElementKind> {
+    fn id(&self) -> ElementId {
+        self.kind.0.clone()
+    }
+}
+
 impl<V, K> IntoAnyElement<V> for Div<V, K>
 where
     V: 'static + Send + Sync,
@@ -383,4 +481,18 @@ impl<V> Default for MouseEventListeners<V> {
             scroll_wheel: SmallVec::new(),
         }
     }
+}
+
+fn paint_hover_listener<V>(bounds: Bounds<Pixels>, cx: &mut ViewContext<V>)
+where
+    V: 'static + Send + Sync,
+{
+    let hovered = bounds.contains_point(cx.mouse_position());
+    cx.on_mouse_event(move |_, event: &MouseMoveEvent, phase, cx| {
+        if phase == DispatchPhase::Capture {
+            if bounds.contains_point(event.position) != hovered {
+                cx.notify();
+            }
+        }
+    });
 }
