@@ -1,3 +1,5 @@
+use crate::db::ChannelRole;
+
 use super::{run_randomized_test, RandomizedTest, TestClient, TestError, TestServer, UserTestPlan};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -50,7 +52,7 @@ impl RandomizedTest for RandomChannelBufferTest {
                 .await
                 .unwrap();
             for user in &users[1..] {
-                db.invite_channel_member(id, user.user_id, users[0].user_id, false)
+                db.invite_channel_member(id, user.user_id, users[0].user_id, ChannelRole::Member)
                     .await
                     .unwrap();
                 db.respond_to_channel_invite(id, user.user_id, true)

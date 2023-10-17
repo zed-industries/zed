@@ -9,7 +9,7 @@ use db::RELEASE_CHANNEL;
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
 use rpc::{
-    proto::{self, ChannelEdge, ChannelPermission},
+    proto::{self, ChannelEdge, ChannelPermission, ChannelRole, ChannelVisibility},
     TypedEnvelope,
 };
 use serde_derive::{Deserialize, Serialize};
@@ -49,6 +49,7 @@ pub type ChannelData = (Channel, ChannelPath);
 pub struct Channel {
     pub id: ChannelId,
     pub name: String,
+    pub visibility: proto::ChannelVisibility,
     pub unseen_note_version: Option<(u64, clock::Global)>,
     pub unseen_message_id: Option<u64>,
 }
@@ -79,7 +80,32 @@ pub struct ChannelPath(Arc<[ChannelId]>);
 pub struct ChannelMembership {
     pub user: Arc<User>,
     pub kind: proto::channel_member::Kind,
-    pub admin: bool,
+    pub role: proto::ChannelRole,
+}
+impl ChannelMembership {
+    pub fn sort_key(&self) -> MembershipSortKey {
+        MembershipSortKey {
+            role_order: match self.role {
+                proto::ChannelRole::Admin => 0,
+                proto::ChannelRole::Member => 1,
+                proto::ChannelRole::Banned => 2,
+                proto::ChannelRole::Guest => 3,
+            },
+            kind_order: match self.kind {
+                proto::channel_member::Kind::Member => 0,
+                proto::channel_member::Kind::AncestorMember => 1,
+                proto::channel_member::Kind::Invitee => 2,
+            },
+            username_order: self.user.github_login.as_str(),
+        }
+    }
+}
+
+#[derive(PartialOrd, Ord, PartialEq, Eq)]
+pub struct MembershipSortKey<'a> {
+    role_order: u8,
+    kind_order: u8,
+    username_order: &'a str,
 }
 
 pub enum ChannelEvent {
@@ -445,7 +471,7 @@ impl ChannelStore {
                         insert_edge: parent_edge,
                         channel_permissions: vec![ChannelPermission {
                             channel_id,
-                            is_admin: true,
+                            role: ChannelRole::Admin.into(),
                         }],
                         ..Default::default()
                     },
@@ -517,11 +543,30 @@ impl ChannelStore {
         })
     }
 
+    pub fn set_channel_visibility(
+        &mut self,
+        channel_id: ChannelId,
+        visibility: ChannelVisibility,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let client = self.client.clone();
+        cx.spawn(|_, _| async move {
+            let _ = client
+                .request(proto::SetChannelVisibility {
+                    channel_id,
+                    visibility: visibility.into(),
+                })
+                .await?;
+
+            Ok(())
+        })
+    }
+
     pub fn invite_member(
         &mut self,
         channel_id: ChannelId,
         user_id: UserId,
-        admin: bool,
+        role: proto::ChannelRole,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         if !self.outgoing_invites.insert((channel_id, user_id)) {
@@ -535,7 +580,7 @@ impl ChannelStore {
                 .request(proto::InviteChannelMember {
                     channel_id,
                     user_id,
-                    admin,
+                    role: role.into(),
                 })
                 .await;
 
@@ -579,11 +624,11 @@ impl ChannelStore {
         })
     }
 
-    pub fn set_member_admin(
+    pub fn set_member_role(
         &mut self,
         channel_id: ChannelId,
         user_id: UserId,
-        admin: bool,
+        role: proto::ChannelRole,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         if !self.outgoing_invites.insert((channel_id, user_id)) {
@@ -594,10 +639,10 @@ impl ChannelStore {
         let client = self.client.clone();
         cx.spawn(|this, mut cx| async move {
             let result = client
-                .request(proto::SetChannelMemberAdmin {
+                .request(proto::SetChannelMemberRole {
                     channel_id,
                     user_id,
-                    admin,
+                    role: role.into(),
                 })
                 .await;
 
@@ -685,8 +730,8 @@ impl ChannelStore {
                 .filter_map(|(user, member)| {
                     Some(ChannelMembership {
                         user,
-                        admin: member.admin,
-                        kind: proto::channel_member::Kind::from_i32(member.kind)?,
+                        role: member.role(),
+                        kind: member.kind(),
                     })
                 })
                 .collect())
@@ -881,6 +926,7 @@ impl ChannelStore {
                     ix,
                     Arc::new(Channel {
                         id: channel.id,
+                        visibility: channel.visibility(),
                         name: channel.name,
                         unseen_note_version: None,
                         unseen_message_id: None,
@@ -947,7 +993,7 @@ impl ChannelStore {
         }
 
         for permission in payload.channel_permissions {
-            if permission.is_admin {
+            if permission.role() == proto::ChannelRole::Admin {
                 self.channels_with_admin_privileges
                     .insert(permission.channel_id);
             } else {

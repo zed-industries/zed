@@ -146,7 +146,7 @@ message Envelope {
         DeleteChannel delete_channel = 120;
         GetChannelMembers get_channel_members = 121;
         GetChannelMembersResponse get_channel_members_response = 122;
-        SetChannelMemberAdmin set_channel_member_admin = 123;
+        SetChannelMemberRole set_channel_member_role = 123;
         RenameChannel rename_channel = 124;
         RenameChannelResponse rename_channel_response = 125;
 
@@ -172,7 +172,8 @@ message Envelope {
 
         LinkChannel link_channel = 142;
         UnlinkChannel unlink_channel = 143;
-        MoveChannel move_channel = 144; // current max: 146
+        MoveChannel move_channel = 144;
+        SetChannelVisibility set_channel_visibility = 147; // current max: 147
     }
 }
 
@@ -992,7 +993,7 @@ message ChannelEdge {
 
 message ChannelPermission {
     uint64 channel_id = 1;
-    bool is_admin = 2;
+    ChannelRole role = 3;
 }
 
 message ChannelParticipants {
@@ -1018,8 +1019,8 @@ message GetChannelMembersResponse {
 
 message ChannelMember {
     uint64 user_id = 1;
-    bool admin = 2;
     Kind kind = 3;
+    ChannelRole role = 4;
 
     enum Kind {
         Member = 0;
@@ -1041,7 +1042,7 @@ message CreateChannelResponse {
 message InviteChannelMember {
     uint64 channel_id = 1;
     uint64 user_id = 2;
-    bool admin = 3;
+    ChannelRole role = 4;
 }
 
 message RemoveChannelMember {
@@ -1049,10 +1050,22 @@ message RemoveChannelMember {
     uint64 user_id = 2;
 }
 
-message SetChannelMemberAdmin {
+enum ChannelRole {
+    Admin = 0;
+    Member = 1;
+    Guest = 2;
+    Banned = 3;
+}
+
+message SetChannelMemberRole {
     uint64 channel_id = 1;
     uint64 user_id = 2;
-    bool admin = 3;
+    ChannelRole role = 3;
+}
+
+message SetChannelVisibility {
+    uint64 channel_id = 1;
+    ChannelVisibility visibility = 2;
 }
 
 message RenameChannel {
@@ -1546,9 +1559,15 @@ message Nonce {
     uint64 lower_half = 2;
 }
 
+enum ChannelVisibility {
+    Public = 0;
+    Members = 1;
+}
+
 message Channel {
     uint64 id = 1;
     string name = 2;
+    ChannelVisibility visibility = 3;
 }
 
 message Contact {
