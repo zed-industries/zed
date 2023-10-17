@@ -2027,11 +2027,16 @@ impl LocalSnapshot {
 
     fn ignore_stack_for_abs_path(&self, abs_path: &Path, is_dir: bool) -> Arc<IgnoreStack> {
         let mut new_ignores = Vec::new();
-        for ancestor in abs_path.ancestors().skip(1) {
-            if let Some((ignore, _)) = self.ignores_by_parent_abs_path.get(ancestor) {
-                new_ignores.push((ancestor, Some(ignore.clone())));
-            } else {
-                new_ignores.push((ancestor, None));
+        for (index, ancestor) in abs_path.ancestors().enumerate() {
+            if index > 0 {
+                if let Some((ignore, _)) = self.ignores_by_parent_abs_path.get(ancestor) {
+                    new_ignores.push((ancestor, Some(ignore.clone())));
+                } else {
+                    new_ignores.push((ancestor, None));
+                }
+            }
+            if ancestor.join(&*DOT_GIT).is_dir() {
+                break;
             }
         }
 
@@ -2048,7 +2053,6 @@ impl LocalSnapshot {
         if ignore_stack.is_abs_path_ignored(abs_path, is_dir) {
             ignore_stack = IgnoreStack::all();
         }
-
         ignore_stack
     }
 
@@ -3064,7 +3068,6 @@ impl BackgroundScanner {
 
         // Populate ignores above the root.
         let root_abs_path = self.state.lock().snapshot.abs_path.clone();
-
         for (index, ancestor) in root_abs_path.ancestors().enumerate() {
             if index != 0 {
                 if let Ok(ignore) =
