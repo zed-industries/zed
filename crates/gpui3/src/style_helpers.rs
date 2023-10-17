@@ -8,42 +8,57 @@ use smallvec::smallvec;
 pub trait StyleHelpers: Sized + Styled<Style = Style> {
     gpui3_macros::style_helpers!();
 
+    /// Sets the size of the element to the full width and height.
     fn full(mut self) -> Self {
         self.declared_style().size.width = Some(relative(1.).into());
         self.declared_style().size.height = Some(relative(1.).into());
         self
     }
 
+    /// Sets the position of the element to `relative`.
+    /// [Docs](https://tailwindcss.com/docs/position)
     fn relative(mut self) -> Self {
         self.declared_style().position = Some(Position::Relative);
         self
     }
 
+    /// Sets the position of the element to `absolute`.
+    /// [Docs](https://tailwindcss.com/docs/position)
     fn absolute(mut self) -> Self {
         self.declared_style().position = Some(Position::Absolute);
         self
     }
 
+    /// Sets the display type of the element to `block`.
+    /// [Docs](https://tailwindcss.com/docs/display)
     fn block(mut self) -> Self {
         self.declared_style().display = Some(Display::Block);
         self
     }
 
+    /// Sets the display type of the element to `flex`.
+    /// [Docs](https://tailwindcss.com/docs/display)
     fn flex(mut self) -> Self {
         self.declared_style().display = Some(Display::Flex);
         self
     }
 
+    /// Sets the flex directino of the element to `column`.
+    /// [Docs](https://tailwindcss.com/docs/flex-direction#column)
     fn flex_col(mut self) -> Self {
         self.declared_style().flex_direction = Some(FlexDirection::Column);
         self
     }
 
+    /// Sets the flex directino of the element to `row`.
+    /// [Docs](https://tailwindcss.com/docs/flex-direction#row)
     fn flex_row(mut self) -> Self {
         self.declared_style().flex_direction = Some(FlexDirection::Row);
         self
     }
 
+    /// Sets the element to allow a flex item to grow and shrink as needed, ignoring its initial size.
+    /// [Docs](https://tailwindcss.com/docs/flex#flex-1)
     fn flex_1(mut self) -> Self {
         self.declared_style().flex_grow = Some(1.);
         self.declared_style().flex_shrink = Some(1.);
@@ -51,6 +66,8 @@ pub trait StyleHelpers: Sized + Styled<Style = Style> {
         self
     }
 
+    /// Sets the element to allow a flex item to grow and shrink, taking into account its initial size.
+    /// [Docs](https://tailwindcss.com/docs/flex#auto)
     fn flex_auto(mut self) -> Self {
         self.declared_style().flex_grow = Some(1.);
         self.declared_style().flex_shrink = Some(1.);
@@ -58,6 +75,8 @@ pub trait StyleHelpers: Sized + Styled<Style = Style> {
         self
     }
 
+    /// Sets the element to allow a flex item to shrink but not grow, taking into account its initial size.
+    /// [Docs](https://tailwindcss.com/docs/flex#initial)
     fn flex_initial(mut self) -> Self {
         self.declared_style().flex_grow = Some(0.);
         self.declared_style().flex_shrink = Some(1.);
@@ -65,12 +84,16 @@ pub trait StyleHelpers: Sized + Styled<Style = Style> {
         self
     }
 
+    /// Sets the element to prevent a flex item from growing or shrinking.
+    /// [Docs](https://tailwindcss.com/docs/flex#none)
     fn flex_none(mut self) -> Self {
         self.declared_style().flex_grow = Some(0.);
         self.declared_style().flex_shrink = Some(0.);
         self
     }
 
+    /// Sets the element to allow a flex item to grow to fill any available space.
+    /// [Docs](https://tailwindcss.com/docs/flex-grow)
     fn grow(mut self) -> Self {
         self.declared_style().flex_grow = Some(1.);
         self
