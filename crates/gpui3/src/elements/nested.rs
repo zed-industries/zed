@@ -1,7 +1,7 @@
 use crate::{
-    group_bounds, AnyElement, BorrowWindow, DispatchPhase, Element, ElementId, IdentifiedElement,
-    IntoAnyElement, MouseDownEvent, MouseMoveEvent, MouseUpEvent, SharedString, Style,
-    StyleCascade, StyleRefinement, ViewContext,
+    group_bounds, AnyElement, BorrowWindow, Bounds, DispatchPhase, Element, ElementId,
+    IdentifiedElement, IntoAnyElement, MouseDownEvent, MouseMoveEvent, MouseUpEvent, SharedString,
+    Style, StyleCascade, StyleRefinement, ViewContext,
 };
 use parking_lot::Mutex;
 use refineable::{CascadeSlot, Refineable};
@@ -125,7 +125,7 @@ impl<V: 'static + Send + Sync, K: ElementKind> Element for LayoutNodeElement<V, 
         &mut self,
         state: &mut Self::ViewState,
         _: Option<Self::ElementState>,
-        cx: &mut crate::ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<Self::ViewState>,
     ) -> (crate::LayoutId, Self::ElementState) {
         self.with_element_id(cx, |this, cx| {
             let layout_ids = this
@@ -142,15 +142,28 @@ impl<V: 'static + Send + Sync, K: ElementKind> Element for LayoutNodeElement<V, 
 
     fn paint(
         &mut self,
-        _: crate::Bounds<crate::Pixels>,
+        bounds: Bounds<crate::Pixels>,
         state: &mut Self::ViewState,
         _: &mut Self::ElementState,
-        cx: &mut crate::ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<Self::ViewState>,
     ) {
         self.with_element_id(cx, |this, cx| {
-            for child in &mut this.children {
-                child.paint(state, None, cx);
-            }
+            let style = this.computed_style().clone();
+            let z_index = style.z_index.unwrap_or(0);
+            cx.stack(z_index, |cx| style.paint(bounds, cx));
+
+            // todo!("implement overflow")
+            // let overflow = &style.overflow;
+
+            style.apply_text_style(cx, |cx| {
+                cx.stack(z_index + 1, |cx| {
+                    style.apply_overflow(bounds, cx, |cx| {
+                        for child in &mut this.children {
+                            child.paint(state, None, cx);
+                        }
+                    })
+                })
+            });
         })
     }
 }
@@ -223,17 +236,17 @@ where
         &mut self,
         state: &mut Self::ViewState,
         element_state: Option<Self::ElementState>,
-        cx: &mut crate::ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<Self::ViewState>,
     ) -> (crate::LayoutId, Self::ElementState) {
         self.child.layout(state, element_state, cx)
     }
 
     fn paint(
         &mut self,
-        bounds: crate::Bounds<crate::Pixels>,
+        bounds: Bounds<crate::Pixels>,
         state: &mut Self::ViewState,
         element_state: &mut Self::ElementState,
-        cx: &mut crate::ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<Self::ViewState>,
     ) {
         let target_bounds = self
             .group
@@ -356,7 +369,7 @@ where
         &mut self,
         state: &mut Self::ViewState,
         element_state: Option<Self::ElementState>,
-        cx: &mut crate::ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<Self::ViewState>,
     ) -> (crate::LayoutId, Self::ElementState) {
         if let Some(element_state) = element_state {
             if element_state.mouse_down.lock().is_some() {
@@ -389,10 +402,10 @@ where
 
     fn paint(
         &mut self,
-        bounds: crate::Bounds<crate::Pixels>,
+        bounds: Bounds<crate::Pixels>,
         state: &mut Self::ViewState,
         element_state: &mut Self::ElementState,
-        cx: &mut crate::ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<Self::ViewState>,
     ) {
         if !self.listeners.is_empty() || self.active_style.is_some() {
             if let Some(mouse_down) = element_state.mouse_down.lock().clone() {
@@ -519,17 +532,17 @@ where
         &mut self,
         state: &mut Self::ViewState,
         element_state: Option<Self::ElementState>,
-        cx: &mut crate::ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<Self::ViewState>,
     ) -> (crate::LayoutId, Self::ElementState) {
         self.0.layout(state, element_state, cx)
     }
 
     fn paint(
         &mut self,
-        bounds: crate::Bounds<crate::Pixels>,
+        bounds: Bounds<crate::Pixels>,
         state: &mut Self::ViewState,
         element_state: &mut Self::ElementState,
-        cx: &mut crate::ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<Self::ViewState>,
     ) {
         self.0.paint(bounds, state, element_state, cx);
     }
