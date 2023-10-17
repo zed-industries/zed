@@ -1,18 +1,18 @@
 use crate::{
-    div, AnonymousElementKind, AnyElement, BorrowWindow, Bounds, Div, DivState, Element, ElementId,
-    ElementKind, IdentifiedElement, IdentifiedElementKind, IntoAnyElement, LayoutId, Pixels,
-    SharedString, StyleRefinement, Styled, ViewContext,
+    div, AnonymousElement, AnyElement, BorrowWindow, Bounds, Clickable, Div, DivState, Element,
+    ElementId, ElementIdentity, IdentifiedElement, Interactive, IntoAnyElement, LayoutId,
+    MouseEventListeners, Pixels, SharedString, StyleRefinement, Styled, ViewContext,
 };
 use futures::FutureExt;
 use util::ResultExt;
 
-pub struct Img<V: 'static + Send + Sync, K: ElementKind = AnonymousElementKind> {
+pub struct Img<V: 'static + Send + Sync, K: ElementIdentity = AnonymousElement> {
     base: Div<V, K>,
     uri: Option<SharedString>,
     grayscale: bool,
 }
 
-pub fn img<V>() -> Img<V, AnonymousElementKind>
+pub fn img<V>() -> Img<V, AnonymousElement>
 where
     V: 'static + Send + Sync,
 {
@@ -26,7 +26,7 @@ where
 impl<V, K> Img<V, K>
 where
     V: 'static + Send + Sync,
-    K: ElementKind,
+    K: ElementIdentity,
 {
     pub fn uri(mut self, uri: impl Into<SharedString>) -> Self {
         self.uri = Some(uri.into());
@@ -39,8 +39,8 @@ where
     }
 }
 
-impl<V: 'static + Send + Sync> Img<V, AnonymousElementKind> {
-    pub fn id(self, id: impl Into<ElementId>) -> Img<V, IdentifiedElementKind> {
+impl<V: 'static + Send + Sync> Img<V, AnonymousElement> {
+    pub fn id(self, id: impl Into<ElementId>) -> Img<V, IdentifiedElement> {
         Img {
             base: self.base.id(id),
             uri: self.uri,
@@ -52,7 +52,7 @@ impl<V: 'static + Send + Sync> Img<V, AnonymousElementKind> {
 impl<V, K> IntoAnyElement<V> for Img<V, K>
 where
     V: 'static + Send + Sync,
-    K: ElementKind,
+    K: ElementIdentity,
 {
     fn into_any(self) -> AnyElement<V> {
         AnyElement::new(self)
@@ -62,7 +62,7 @@ where
 impl<V, K> Element for Img<V, K>
 where
     V: Send + Sync + 'static,
-    K: ElementKind,
+    K: ElementIdentity,
 {
     type ViewState = V;
     type ElementState = DivState;
@@ -121,18 +121,24 @@ where
     }
 }
 
-impl<V: 'static + Send + Sync> IdentifiedElement for Img<V, IdentifiedElementKind> {
-    fn id(&self) -> ElementId {
-        IdentifiedElement::id(&self.base)
-    }
-}
-
 impl<V, K> Styled for Img<V, K>
 where
     V: 'static + Send + Sync,
-    K: ElementKind,
+    K: ElementIdentity,
 {
     fn style(&mut self) -> &mut StyleRefinement {
         self.base.style()
     }
 }
+
+impl<V, K> Interactive for Img<V, K>
+where
+    V: 'static + Send + Sync,
+    K: ElementIdentity,
+{
+    fn listeners(&mut self) -> &mut MouseEventListeners<V> {
+        self.base.listeners()
+    }
+}
+
+impl<V> Clickable for Img<V, IdentifiedElement> where V: 'static + Send + Sync {}

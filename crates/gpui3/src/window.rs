@@ -1145,6 +1145,13 @@ impl From<SmallVec<[u32; 16]>> for StackingOrder {
 pub enum ElementId {
     View(EntityId),
     Number(usize),
+    Name(SharedString),
+}
+
+impl From<EntityId> for ElementId {
+    fn from(id: EntityId) -> Self {
+        ElementId::View(id)
+    }
 }
 
 impl From<usize> for ElementId {
@@ -1156,5 +1163,11 @@ impl From<usize> for ElementId {
 impl From<i32> for ElementId {
     fn from(id: i32) -> Self {
         Self::Number(id as usize)
+    }
+}
+
+impl From<SharedString> for ElementId {
+    fn from(id: SharedString) -> Self {
+        ElementId::Name(id)
     }
 }

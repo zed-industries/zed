@@ -1,8 +1,8 @@
 use parking_lot::Mutex;
 
 use crate::{
-    AnyBox, AnyElement, BorrowWindow, Bounds, Element, ElementId, EntityId, Handle,
-    IdentifiedElement, IntoAnyElement, LayoutId, Pixels, ViewContext, WindowContext,
+    AnyBox, AnyElement, BorrowWindow, Bounds, Element, ElementId, EntityId, Handle, IntoAnyElement,
+    LayoutId, Pixels, ViewContext, WindowContext,
 };
 use std::{marker::PhantomData, sync::Arc};
 
@@ -86,8 +86,6 @@ impl<S: 'static + Send + Sync> Element for View<S> {
     }
 }
 
-impl<S: Send + Sync + 'static> IdentifiedElement for View<S> {}
-
 struct EraseViewState<ViewState: 'static + Send + Sync, ParentViewState> {
     view: View<ViewState>,
     parent_view_state_type: PhantomData<ParentViewState>,
@@ -148,7 +146,7 @@ impl<S: Send + Sync + 'static> ViewObject for View<S> {
     }
 
     fn layout(&mut self, cx: &mut WindowContext) -> (LayoutId, AnyBox) {
-        cx.with_element_id(IdentifiedElement::id(self), |cx| {
+        cx.with_element_id(self.entity_id(), |cx| {
             self.state.update(cx, |state, cx| {
                 let mut element = (self.render)(state, cx);
                 let layout_id = element.layout(state, cx);
@@ -159,7 +157,7 @@ impl<S: Send + Sync + 'static> ViewObject for View<S> {
     }
 
     fn paint(&mut self, _: Bounds<Pixels>, element: &mut AnyBox, cx: &mut WindowContext) {
-        cx.with_element_id(IdentifiedElement::id(self), |cx| {
+        cx.with_element_id(self.entity_id(), |cx| {
             self.state.update(cx, |state, cx| {
                 let element = element.downcast_mut::<AnyElement<S>>().unwrap();
                 element.paint(state, None, cx);

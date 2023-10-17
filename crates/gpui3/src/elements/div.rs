@@ -1,8 +1,8 @@
 use crate::{
-    AnonymousElementKind, AnyElement, AppContext, BorrowWindow, Bounds, DispatchPhase, Element,
-    ElementId, ElementKind, IdentifiedElement, IdentifiedElementKind, IntoAnyElement, LayoutId,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Overflow, Pixels, Point,
-    ScrollWheelEvent, SharedString, Style, StyleRefinement, Styled, ViewContext,
+    AnonymousElement, AnyElement, AppContext, BorrowWindow, Bounds, Clickable, DispatchPhase,
+    Element, ElementId, ElementIdentity, IdentifiedElement, Interactive, IntoAnyElement, LayoutId,
+    MouseClickEvent, MouseDownEvent, MouseEventListeners, MouseMoveEvent, MouseUpEvent, Overflow,
+    Pixels, Point, ScrollWheelEvent, SharedString, Style, StyleRefinement, Styled, ViewContext,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -59,12 +59,12 @@ impl ScrollState {
     }
 }
 
-pub fn div<S>() -> Div<S, AnonymousElementKind>
+pub fn div<S>() -> Div<S, AnonymousElement>
 where
     S: 'static + Send + Sync,
 {
     Div {
-        kind: AnonymousElementKind,
+        kind: AnonymousElement,
         children: SmallVec::new(),
         group: None,
         base_style: StyleRefinement::default(),
@@ -76,7 +76,7 @@ where
     }
 }
 
-pub struct Div<V: 'static + Send + Sync, K: ElementKind = AnonymousElementKind> {
+pub struct Div<V: 'static + Send + Sync, K: ElementIdentity = AnonymousElement> {
     kind: K,
     children: SmallVec<[AnyElement<V>; 2]>,
     group: Option<SharedString>,
@@ -93,13 +93,13 @@ struct GroupStyle {
     style: StyleRefinement,
 }
 
-impl<V> Div<V, AnonymousElementKind>
+impl<V> Div<V, AnonymousElement>
 where
     V: 'static + Send + Sync,
 {
-    pub fn id(self, id: impl Into<ElementId>) -> Div<V, IdentifiedElementKind> {
+    pub fn id(self, id: impl Into<ElementId>) -> Div<V, IdentifiedElement> {
         Div {
-            kind: IdentifiedElementKind(id.into()),
+            kind: IdentifiedElement(id.into()),
             children: self.children,
             group: self.group,
             base_style: self.base_style,
@@ -112,115 +112,22 @@ where
     }
 }
 
-impl<V> Div<V, IdentifiedElementKind>
+impl<V, K> Interactive for Div<V, K>
 where
     V: 'static + Send + Sync,
+    K: ElementIdentity,
 {
-    pub fn on_mouse_down(
-        mut self,
-        button: MouseButton,
-        handler: impl Fn(&mut V, &MouseDownEvent, &mut ViewContext<V>) + Send + Sync + 'static,
-    ) -> Self {
-        self.listeners
-            .mouse_down
-            .push(Arc::new(move |view, event, bounds, phase, cx| {
-                if phase == DispatchPhase::Bubble
-                    && event.button == button
-                    && bounds.contains_point(&event.position)
-                {
-                    handler(view, event, cx)
-                }
-            }));
-        self
-    }
-
-    pub fn on_mouse_up(
-        mut self,
-        button: MouseButton,
-        handler: impl Fn(&mut V, &MouseUpEvent, &mut ViewContext<V>) + Send + Sync + 'static,
-    ) -> Self {
-        self.listeners
-            .mouse_up
-            .push(Arc::new(move |view, event, bounds, phase, cx| {
-                if phase == DispatchPhase::Bubble
-                    && event.button == button
-                    && bounds.contains_point(&event.position)
-                {
-                    handler(view, event, cx)
-                }
-            }));
-        self
-    }
-
-    pub fn on_mouse_down_out(
-        mut self,
-        button: MouseButton,
-        handler: impl Fn(&mut V, &MouseDownEvent, &mut ViewContext<V>) + Send + Sync + 'static,
-    ) -> Self {
-        self.listeners
-            .mouse_down
-            .push(Arc::new(move |view, event, bounds, phase, cx| {
-                if phase == DispatchPhase::Capture
-                    && event.button == button
-                    && !bounds.contains_point(&event.position)
-                {
-                    handler(view, event, cx)
-                }
-            }));
-        self
-    }
-
-    pub fn on_mouse_up_out(
-        mut self,
-        button: MouseButton,
-        handler: impl Fn(&mut V, &MouseUpEvent, &mut ViewContext<V>) + Send + Sync + 'static,
-    ) -> Self {
-        self.listeners
-            .mouse_up
-            .push(Arc::new(move |view, event, bounds, phase, cx| {
-                if phase == DispatchPhase::Capture
-                    && event.button == button
-                    && !bounds.contains_point(&event.position)
-                {
-                    handler(view, event, cx);
-                }
-            }));
-        self
-    }
-
-    pub fn on_mouse_move(
-        mut self,
-        handler: impl Fn(&mut V, &MouseMoveEvent, &mut ViewContext<V>) + Send + Sync + 'static,
-    ) -> Self {
-        self.listeners
-            .mouse_move
-            .push(Arc::new(move |view, event, bounds, phase, cx| {
-                if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
-                    handler(view, event, cx);
-                }
-            }));
-        self
-    }
-
-    pub fn on_scroll_wheel(
-        mut self,
-        handler: impl Fn(&mut V, &ScrollWheelEvent, &mut ViewContext<V>) + Send + Sync + 'static,
-    ) -> Self {
-        self.listeners
-            .scroll_wheel
-            .push(Arc::new(move |view, event, bounds, phase, cx| {
-                if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
-                    handler(view, event, cx);
-                }
-            }));
-        self
+    fn listeners(&mut self) -> &mut MouseEventListeners<V> {
+        &mut self.listeners
     }
 }
+
+impl<V> Clickable for Div<V, IdentifiedElement> where V: 'static + Send + Sync {}
 
 impl<V, K> Div<V, K>
 where
     V: 'static + Send + Sync,
-    K: ElementKind,
+    K: ElementIdentity,
 {
     pub fn group(mut self, group: impl Into<SharedString>) -> Self {
         self.group = Some(group.into());
@@ -378,7 +285,7 @@ where
                         up: event.clone(),
                     };
                     for listener in &click_listeners {
-                        listener(state, &mouse_click, &bounds, cx);
+                        listener(state, &mouse_click, cx);
                     }
                 }
 
@@ -421,7 +328,7 @@ where
 impl<V, K> Element for Div<V, K>
 where
     V: 'static + Send + Sync,
-    K: ElementKind,
+    K: ElementIdentity,
 {
     type ViewState = V;
     type ElementState = DivState;
@@ -513,16 +420,10 @@ where
     }
 }
 
-impl<V: 'static + Send + Sync> IdentifiedElement for Div<V, IdentifiedElementKind> {
-    fn id(&self) -> ElementId {
-        self.kind.0.clone()
-    }
-}
-
 impl<V, K> IntoAnyElement<V> for Div<V, K>
 where
     V: 'static + Send + Sync,
-    K: ElementKind,
+    K: ElementIdentity,
 {
     fn into_any(self) -> AnyElement<V> {
         AnyElement::new(self)
@@ -532,64 +433,10 @@ where
 impl<V, K> Styled for Div<V, K>
 where
     V: 'static + Send + Sync,
-    K: ElementKind,
+    K: ElementIdentity,
 {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.base_style
-    }
-}
-
-pub struct MouseClickEvent {
-    pub down: MouseDownEvent,
-    pub up: MouseUpEvent,
-}
-
-type MouseDownHandler<V> = Arc<
-    dyn Fn(&mut V, &MouseDownEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
-        + Send
-        + Sync
-        + 'static,
->;
-type MouseUpHandler<V> = Arc<
-    dyn Fn(&mut V, &MouseUpEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
-        + Send
-        + Sync
-        + 'static,
->;
-type MouseClickHandler<V> = Arc<
-    dyn Fn(&mut V, &MouseClickEvent, &Bounds<Pixels>, &mut ViewContext<V>) + Send + Sync + 'static,
->;
-
-type MouseMoveHandler<V> = Arc<
-    dyn Fn(&mut V, &MouseMoveEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
-        + Send
-        + Sync
-        + 'static,
->;
-type ScrollWheelHandler<V> = Arc<
-    dyn Fn(&mut V, &ScrollWheelEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
-        + Send
-        + Sync
-        + 'static,
->;
-
-pub struct MouseEventListeners<V: 'static> {
-    mouse_down: SmallVec<[MouseDownHandler<V>; 2]>,
-    mouse_up: SmallVec<[MouseUpHandler<V>; 2]>,
-    mouse_click: SmallVec<[MouseClickHandler<V>; 2]>,
-    mouse_move: SmallVec<[MouseMoveHandler<V>; 2]>,
-    scroll_wheel: SmallVec<[ScrollWheelHandler<V>; 2]>,
-}
-
-impl<V> Default for MouseEventListeners<V> {
-    fn default() -> Self {
-        Self {
-            mouse_down: SmallVec::new(),
-            mouse_up: SmallVec::new(),
-            mouse_click: SmallVec::new(),
-            mouse_move: SmallVec::new(),
-            scroll_wheel: SmallVec::new(),
-        }
     }
 }
 

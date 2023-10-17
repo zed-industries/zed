@@ -1,16 +1,16 @@
 use crate::{
-    div, AnonymousElementKind, AnyElement, Bounds, Div, DivState, Element, ElementId, ElementKind,
-    IdentifiedElement, IdentifiedElementKind, IntoAnyElement, LayoutId, Pixels, SharedString,
-    StyleRefinement, Styled,
+    div, AnonymousElement, AnyElement, Bounds, Clickable, Div, DivState, Element, ElementId,
+    ElementIdentity, IdentifiedElement, Interactive, IntoAnyElement, LayoutId, MouseEventListeners,
+    Pixels, SharedString, StyleRefinement, Styled,
 };
 use util::ResultExt;
 
-pub struct Svg<V: 'static + Send + Sync, K: ElementKind = AnonymousElementKind> {
+pub struct Svg<V: 'static + Send + Sync, K: ElementIdentity = AnonymousElement> {
     base: Div<V, K>,
     path: Option<SharedString>,
 }
 
-pub fn svg<V>() -> Svg<V, AnonymousElementKind>
+pub fn svg<V>() -> Svg<V, AnonymousElement>
 where
     V: 'static + Send + Sync,
 {
@@ -23,7 +23,7 @@ where
 impl<V, K> Svg<V, K>
 where
     V: 'static + Send + Sync,
-    K: ElementKind,
+    K: ElementIdentity,
 {
     pub fn path(mut self, path: impl Into<SharedString>) -> Self {
         self.path = Some(path.into());
@@ -31,8 +31,8 @@ where
     }
 }
 
-impl<V: 'static + Send + Sync> Svg<V, AnonymousElementKind> {
-    pub fn id(self, id: impl Into<ElementId>) -> Svg<V, IdentifiedElementKind> {
+impl<V: 'static + Send + Sync> Svg<V, AnonymousElement> {
+    pub fn id(self, id: impl Into<ElementId>) -> Svg<V, IdentifiedElement> {
         Svg {
             base: self.base.id(id),
             path: self.path,
@@ -43,7 +43,7 @@ impl<V: 'static + Send + Sync> Svg<V, AnonymousElementKind> {
 impl<V, K> IntoAnyElement<V> for Svg<V, K>
 where
     V: 'static + Send + Sync,
-    K: ElementKind,
+    K: ElementIdentity,
 {
     fn into_any(self) -> AnyElement<V> {
         AnyElement::new(self)
@@ -53,7 +53,7 @@ where
 impl<V, K> Element for Svg<V, K>
 where
     V: 'static + Send + Sync,
-    K: ElementKind,
+    K: ElementIdentity,
 {
     type ViewState = V;
     type ElementState = DivState;
@@ -96,18 +96,24 @@ where
     }
 }
 
-impl<V: 'static + Send + Sync> IdentifiedElement for Svg<V, IdentifiedElementKind> {
-    fn id(&self) -> ElementId {
-        IdentifiedElement::id(&self.base)
-    }
-}
-
 impl<V, K> Styled for Svg<V, K>
 where
     V: 'static + Send + Sync,
-    K: ElementKind,
+    K: ElementIdentity,
 {
     fn style(&mut self) -> &mut StyleRefinement {
         self.base.style()
     }
 }
+
+impl<V, K> Interactive for Svg<V, K>
+where
+    V: 'static + Send + Sync,
+    K: ElementIdentity,
+{
+    fn listeners(&mut self) -> &mut MouseEventListeners<V> {
+        self.base.listeners()
+    }
+}
+
+impl<V> Clickable for Svg<V, IdentifiedElement> where V: 'static + Send + Sync {}
