@@ -1,7 +1,7 @@
 use crate::{
     group_bounds, AnyElement, BorrowWindow, Bounds, DispatchPhase, Element, ElementId,
-    IdentifiedElement, IntoAnyElement, MouseDownEvent, MouseMoveEvent, MouseUpEvent, SharedString,
-    Style, StyleCascade, StyleRefinement, ViewContext,
+    IdentifiedElement, IntoAnyElement, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Overflow,
+    ScrollState, SharedString, Style, StyleCascade, StyleRefinement, ViewContext,
 };
 use parking_lot::Mutex;
 use refineable::{CascadeSlot, Refineable};
@@ -465,6 +465,55 @@ where
 pub struct Div<V: 'static + Send + Sync, K: ElementKind>(
     ClickableElement<HoverableElement<LayoutNodeElement<V, K>>>,
 );
+
+impl<V: 'static + Send + Sync, K: ElementKind> Div<V, K> {
+    pub fn z_index(mut self, z_index: u32) -> Self {
+        self.base_style().z_index = Some(z_index);
+        self
+    }
+
+    pub fn overflow_hidden(mut self) -> Self {
+        self.base_style().overflow.x = Some(Overflow::Hidden);
+        self.base_style().overflow.y = Some(Overflow::Hidden);
+        self
+    }
+
+    pub fn overflow_hidden_x(mut self) -> Self {
+        self.base_style().overflow.x = Some(Overflow::Hidden);
+        self
+    }
+
+    pub fn overflow_hidden_y(mut self) -> Self {
+        self.base_style().overflow.y = Some(Overflow::Hidden);
+        self
+    }
+
+    pub fn overflow_scroll(mut self, scroll_state: ScrollState) -> Self {
+        // todo!("impl scrolling")
+        // self.scroll_state = Some(scroll_state);
+        self.base_style().overflow.x = Some(Overflow::Scroll);
+        self.base_style().overflow.y = Some(Overflow::Scroll);
+        self
+    }
+
+    pub fn overflow_x_scroll(mut self, scroll_state: ScrollState) -> Self {
+        // todo!("impl scrolling")
+        // self.scroll_state = Some(scroll_state);
+        self.base_style().overflow.x = Some(Overflow::Scroll);
+        self
+    }
+
+    pub fn overflow_y_scroll(mut self, scroll_state: ScrollState) -> Self {
+        // todo!("impl scrolling")
+        // self.scroll_state = Some(scroll_state);
+        self.base_style().overflow.y = Some(Overflow::Scroll);
+        self
+    }
+
+    fn base_style(&mut self) -> &mut StyleRefinement {
+        self.style_cascade().base()
+    }
+}
 
 impl<V: 'static + Send + Sync> Div<V, Anonymous> {
     pub fn id(self, id: impl Into<ElementId>) -> Div<V, Identified> {
