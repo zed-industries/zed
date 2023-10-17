@@ -1,5 +1,3 @@
-use std::cmp::Ordering;
-
 use super::*;
 use rpc::proto::{channel_member::Kind, ChannelEdge};
 
@@ -544,6 +542,12 @@ impl Database {
 
         if !channels_to_remove.is_empty() {
             // Note: this code assumes each channel has one parent.
+            // If there are multiple valid public paths to a channel,
+            // e.g.
+            // If both of these paths are present (* indicating public):
+            // - zed* -> projects -> vim*
+            // - zed* -> conrad -> public-projects* -> vim*
+            // Users would only see one of them (based on edge sort order)
             let mut replacement_parent: HashMap<u64, u64> = HashMap::default();
             for ChannelEdge {
                 parent_id,
@@ -707,14 +711,14 @@ impl Database {
             }
             let mut user_details: HashMap<UserId, UserDetail> = HashMap::default();
 
-            while let Some(row) = stream.next().await {
+            while let Some(user_membership) = stream.next().await {
                 let (user_id, channel_role, is_direct_member, is_invite_accepted, visibility): (
                     UserId,
                     ChannelRole,
                     bool,
                     bool,
                     ChannelVisibility,
-                ) = row?;
+                ) = user_membership?;
                 let kind = match (is_direct_member, is_invite_accepted) {
                     (true, true) => proto::channel_member::Kind::Member,
                     (true, false) => proto::channel_member::Kind::Invitee,
@@ -745,33 +749,7 @@ impl Database {
                 }
             }
 
-            // sort by permissions descending, within each section, show members, then ancestor members, then invitees.
-            let mut results: Vec<(UserId, UserDetail)> = user_details.into_iter().collect();
-            results.sort_by(|a, b| {
-                if a.1.channel_role.should_override(b.1.channel_role) {
-                    return Ordering::Less;
-                } else if b.1.channel_role.should_override(a.1.channel_role) {
-                    return Ordering::Greater;
-                }
-
-                if a.1.kind == Kind::Member && b.1.kind != Kind::Member {
-                    return Ordering::Less;
-                } else if b.1.kind == Kind::Member && a.1.kind != Kind::Member {
-                    return Ordering::Greater;
-                }
-
-                if a.1.kind == Kind::AncestorMember && b.1.kind != Kind::AncestorMember {
-                    return Ordering::Less;
-                } else if b.1.kind == Kind::AncestorMember && a.1.kind != Kind::AncestorMember {
-                    return Ordering::Greater;
-                }
-
-                // would be nice to sort alphabetically instead of by user id.
-                // (or defer all sorting to the UI, but we need something to help the tests)
-                return a.0.cmp(&b.0);
-            });
-
-            Ok(results
+            Ok(user_details
                 .into_iter()
                 .map(|(user_id, details)| proto::ChannelMember {
                     user_id: user_id.to_proto(),
@@ -810,7 +788,7 @@ impl Database {
         user_id: UserId,
         tx: &DatabaseTransaction,
     ) -> Result<()> {
-        match self.channel_role_for_user(channel_id, user_id, tx).await? {
+        match dbg!(self.channel_role_for_user(channel_id, user_id, tx).await)? {
             Some(ChannelRole::Admin) => Ok(()),
             Some(ChannelRole::Member)
             | Some(ChannelRole::Banned)
@@ -874,10 +852,26 @@ impl Database {
         channel_id: ChannelId,
         tx: &DatabaseTransaction,
     ) -> Result<Option<ChannelId>> {
-        let channel_ids = self.get_channel_ancestors(channel_id, tx).await?;
+        // Note: if there are many paths to a channel, this will return just one
+        let arbitary_path = channel_path::Entity::find()
+            .filter(channel_path::Column::ChannelId.eq(channel_id))
+            .order_by(channel_path::Column::IdPath, sea_orm::Order::Desc)
+            .one(tx)
+            .await?;
+
+        let Some(path) = arbitary_path else {
+            return Ok(None);
+        };
+
+        let ancestor_ids: Vec<ChannelId> = path
+            .id_path
+            .trim_matches('/')
+            .split('/')
+            .map(|id| ChannelId::from_proto(id.parse().unwrap()))
+            .collect();
 
         let rows = channel::Entity::find()
-            .filter(channel::Column::Id.is_in(channel_ids.iter().copied()))
+            .filter(channel::Column::Id.is_in(ancestor_ids.iter().copied()))
             .filter(channel::Column::Visibility.eq(ChannelVisibility::Public))
             .all(&*tx)
             .await?;
@@ -888,7 +882,7 @@ impl Database {
             visible_channels.insert(row.id);
         }
 
-        for ancestor in channel_ids.into_iter().rev() {
+        for ancestor in ancestor_ids {
             if visible_channels.contains(&ancestor) {
                 return Ok(Some(ancestor));
             }
@@ -929,11 +923,6 @@ impl Database {
             .await?;
 
         let mut user_role: Option<ChannelRole> = None;
-        let max_role = |role| {
-            user_role
-                .map(|user_role| user_role.max(role))
-                .get_or_insert(role);
-        };
 
         let mut is_participant = false;
         let mut current_channel_visibility = None;
@@ -946,8 +935,15 @@ impl Database {
                 ChannelRole,
                 ChannelVisibility,
             ) = row?;
+
             match role {
-                ChannelRole::Admin | ChannelRole::Member | ChannelRole::Banned => max_role(role),
+                ChannelRole::Admin | ChannelRole::Member | ChannelRole::Banned => {
+                    if let Some(users_role) = user_role {
+                        user_role = Some(users_role.max(role));
+                    } else {
+                        user_role = Some(role)
+                    }
+                }
                 ChannelRole::Guest if visibility == ChannelVisibility::Public => {
                     is_participant = true
                 }

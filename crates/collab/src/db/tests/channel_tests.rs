@@ -1028,6 +1028,54 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     )
 }
 
+test_both_dbs!(
+    test_user_joins_correct_channel,
+    test_user_joins_correct_channel_postgres,
+    test_user_joins_correct_channel_sqlite
+);
+
+async fn test_user_joins_correct_channel(db: &Arc<Database>) {
+    let admin = new_test_user(db, "admin@example.com").await;
+
+    let zed_channel = db.create_root_channel("zed", admin).await.unwrap();
+
+    let active_channel = db
+        .create_channel("active", Some(zed_channel), admin)
+        .await
+        .unwrap();
+
+    let vim_channel = db
+        .create_channel("vim", Some(active_channel), admin)
+        .await
+        .unwrap();
+
+    let vim2_channel = db
+        .create_channel("vim2", Some(vim_channel), admin)
+        .await
+        .unwrap();
+
+    db.set_channel_visibility(zed_channel, crate::db::ChannelVisibility::Public, admin)
+        .await
+        .unwrap();
+
+    db.set_channel_visibility(vim_channel, crate::db::ChannelVisibility::Public, admin)
+        .await
+        .unwrap();
+
+    db.set_channel_visibility(vim2_channel, crate::db::ChannelVisibility::Public, admin)
+        .await
+        .unwrap();
+
+    let most_public = db
+        .transaction(
+            |tx| async move { db.most_public_ancestor_for_channel(vim_channel, &*tx).await },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(most_public, Some(zed_channel))
+}
+
 #[track_caller]
 fn assert_dag(actual: ChannelGraph, expected: &[(ChannelId, Option<ChannelId>)]) {
     let mut actual_map: HashMap<ChannelId, HashSet<ChannelId>> = HashMap::default();

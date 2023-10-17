@@ -7,7 +7,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate, PickerEvent};
 use std::cmp::{self, Reverse};
 use util::{
-    channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL, RELEASE_CHANNEL_NAME},
+    channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
     ResultExt,
 };
 use workspace::Workspace;

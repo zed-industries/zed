@@ -108,11 +108,10 @@ impl ChannelRole {
     }
 
     pub fn max(&self, other: Self) -> Self {
-        match (self, other) {
-            (ChannelRole::Admin, _) | (_, ChannelRole::Admin) => ChannelRole::Admin,
-            (ChannelRole::Member, _) | (_, ChannelRole::Member) => ChannelRole::Member,
-            (ChannelRole::Banned, _) | (_, ChannelRole::Banned) => ChannelRole::Banned,
-            (ChannelRole::Guest, _) | (_, ChannelRole::Guest) => ChannelRole::Guest,
+        if self.should_override(other) {
+            *self
+        } else {
+            other
         }
     }
 }

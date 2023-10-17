@@ -100,11 +100,14 @@ impl ChannelModal {
         let channel_id = self.channel_id;
         cx.spawn(|this, mut cx| async move {
             if mode == Mode::ManageMembers {
-                let members = channel_store
+                let mut members = channel_store
                     .update(&mut cx, |channel_store, cx| {
                         channel_store.get_channel_member_details(channel_id, cx)
                     })
                     .await?;
+
+                members.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
+
                 this.update(&mut cx, |this, cx| {
                     this.picker
                         .update(cx, |picker, _| picker.delegate_mut().members = members);
@@ -675,11 +678,16 @@ impl ChannelModalDelegate {
             invite_member.await?;
 
             this.update(&mut cx, |this, cx| {
-                this.delegate_mut().members.push(ChannelMembership {
+                let new_member = ChannelMembership {
                     user,
                     kind: proto::channel_member::Kind::Invitee,
                     role: ChannelRole::Member,
-                });
+                };
+                let members = &mut this.delegate_mut().members;
+                match members.binary_search_by_key(&new_member.sort_key(), |k| k.sort_key()) {
+                    Ok(ix) | Err(ix) => members.insert(ix, new_member),
+                }
+
                 cx.notify();
             })
         })
