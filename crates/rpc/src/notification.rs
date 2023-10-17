@@ -30,12 +30,13 @@ pub enum Notification {
         #[serde(rename = "entity_id")]
         channel_id: u64,
         channel_name: String,
+        inviter_id: u64,
     },
     ChannelMessageMention {
-        sender_id: u64,
-        channel_id: u64,
         #[serde(rename = "entity_id")]
         message_id: u64,
+        sender_id: u64,
+        channel_id: u64,
     },
 }
 
@@ -84,6 +85,7 @@ fn test_notification() {
         Notification::ChannelInvitation {
             channel_id: 100,
             channel_name: "the-channel".into(),
+            inviter_id: 50,
         },
         Notification::ChannelMessageMention {
             sender_id: 200,

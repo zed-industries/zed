@@ -1,11 +1,9 @@
 use crate::{
-    format_timestamp, is_channels_feature_enabled,
-    notifications::contact_notification::ContactNotification, render_avatar,
-    NotificationPanelSettings,
+    format_timestamp, is_channels_feature_enabled, render_avatar, NotificationPanelSettings,
 };
 use anyhow::Result;
 use channel::ChannelStore;
-use client::{Client, Notification, UserStore};
+use client::{Client, Notification, User, UserStore};
 use db::kvp::KEY_VALUE_STORE;
 use futures::StreamExt;
 use gpui::{
@@ -19,7 +17,7 @@ use notifications::{NotificationEntry, NotificationEvent, NotificationStore};
 use project::Fs;
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use theme::{IconButton, Theme};
 use time::{OffsetDateTime, UtcOffset};
 use util::{ResultExt, TryFutureExt};
@@ -28,6 +26,7 @@ use workspace::{
     Workspace,
 };
 
+const TOAST_DURATION: Duration = Duration::from_secs(5);
 const NOTIFICATION_PANEL_KEY: &'static str = "NotificationPanel";
 
 pub struct NotificationPanel {
@@ -42,6 +41,7 @@ pub struct NotificationPanel {
     pending_serialization: Task<Option<()>>,
     subscriptions: Vec<gpui::Subscription>,
     workspace: WeakViewHandle<Workspace>,
+    current_notification_toast: Option<(u64, Task<()>)>,
     local_timezone: UtcOffset,
     has_focus: bool,
 }
@@ -58,7 +58,7 @@ pub enum Event {
     Dismissed,
 }
 
-actions!(chat_panel, [ToggleFocus]);
+actions!(notification_panel, [ToggleFocus]);
 
 pub fn init(_cx: &mut AppContext) {}
 
@@ -69,14 +69,8 @@ impl NotificationPanel {
         let user_store = workspace.app_state().user_store.clone();
         let workspace_handle = workspace.weak_handle();
 
-        let notification_list =
-            ListState::<Self>::new(0, Orientation::Top, 1000., move |this, ix, cx| {
-                this.render_notification(ix, cx)
-            });
-
         cx.add_view(|cx| {
             let mut status = client.status();
-
             cx.spawn(|this, mut cx| async move {
                 while let Some(_) = status.next().await {
                     if this
@@ -91,6 +85,12 @@ impl NotificationPanel {
             })
             .detach();
 
+            let notification_list =
+                ListState::<Self>::new(0, Orientation::Top, 1000., move |this, ix, cx| {
+                    this.render_notification(ix, cx)
+                        .unwrap_or_else(|| Empty::new().into_any())
+                });
+
             let mut this = Self {
                 fs,
                 client,
@@ -102,6 +102,7 @@ impl NotificationPanel {
                 pending_serialization: Task::ready(None),
                 workspace: workspace_handle,
                 has_focus: false,
+                current_notification_toast: None,
                 subscriptions: Vec::new(),
                 active: false,
                 width: None,
@@ -169,73 +170,20 @@ impl NotificationPanel {
         );
     }
 
-    fn render_notification(&mut self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        self.try_render_notification(ix, cx)
-            .unwrap_or_else(|| Empty::new().into_any())
-    }
-
-    fn try_render_notification(
+    fn render_notification(
         &mut self,
         ix: usize,
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement<Self>> {
-        let notification_store = self.notification_store.read(cx);
-        let user_store = self.user_store.read(cx);
-        let channel_store = self.channel_store.read(cx);
-        let entry = notification_store.notification_at(ix)?;
-        let notification = entry.notification.clone();
+        let entry = self.notification_store.read(cx).notification_at(ix)?;
         let now = OffsetDateTime::now_utc();
         let timestamp = entry.timestamp;
-
-        let icon;
-        let text;
-        let actor;
-        let needs_acceptance;
-        match notification {
-            Notification::ContactRequest { sender_id } => {
-                let requester = user_store.get_cached_user(sender_id)?;
-                icon = "icons/plus.svg";
-                text = format!("{} wants to add you as a contact", requester.github_login);
-                needs_acceptance = true;
-                actor = Some(requester);
-            }
-            Notification::ContactRequestAccepted { responder_id } => {
-                let responder = user_store.get_cached_user(responder_id)?;
-                icon = "icons/plus.svg";
-                text = format!("{} accepted your contact invite", responder.github_login);
-                needs_acceptance = false;
-                actor = Some(responder);
-            }
-            Notification::ChannelInvitation {
-                ref channel_name, ..
-            } => {
-                actor = None;
-                icon = "icons/hash.svg";
-                text = format!("you were invited to join the #{channel_name} channel");
-                needs_acceptance = true;
-            }
-            Notification::ChannelMessageMention {
-                sender_id,
-                channel_id,
-                message_id,
-            } => {
-                let sender = user_store.get_cached_user(sender_id)?;
-                let channel = channel_store.channel_for_id(channel_id)?;
-                let message = notification_store.channel_message_for_id(message_id)?;
-
-                icon = "icons/conversations.svg";
-                text = format!(
-                    "{} mentioned you in the #{} channel:\n{}",
-                    sender.github_login, channel.name, message.body,
-                );
-                needs_acceptance = false;
-                actor = Some(sender);
-            }
-        }
+        let (actor, text, icon, needs_response) = self.present_notification(entry, cx)?;
 
         let theme = theme::current(cx);
         let style = &theme.notification_panel;
         let response = entry.response;
+        let notification = entry.notification.clone();
 
         let message_style = if entry.is_read {
             style.read_text.clone()
@@ -276,7 +224,7 @@ impl NotificationPanel {
                             )
                             .into_any(),
                         )
-                    } else if needs_acceptance {
+                    } else if needs_response {
                         Some(
                             Flex::row()
                                 .with_children([
@@ -336,6 +284,69 @@ impl NotificationPanel {
         )
     }
 
+    fn present_notification(
+        &self,
+        entry: &NotificationEntry,
+        cx: &AppContext,
+    ) -> Option<(Option<Arc<client::User>>, String, &'static str, bool)> {
+        let user_store = self.user_store.read(cx);
+        let channel_store = self.channel_store.read(cx);
+        let icon;
+        let text;
+        let actor;
+        let needs_response;
+        match entry.notification {
+            Notification::ContactRequest { sender_id } => {
+                let requester = user_store.get_cached_user(sender_id)?;
+                icon = "icons/plus.svg";
+                text = format!("{} wants to add you as a contact", requester.github_login);
+                needs_response = user_store.is_contact_request_pending(&requester);
+                actor = Some(requester);
+            }
+            Notification::ContactRequestAccepted { responder_id } => {
+                let responder = user_store.get_cached_user(responder_id)?;
+                icon = "icons/plus.svg";
+                text = format!("{} accepted your contact invite", responder.github_login);
+                needs_response = false;
+                actor = Some(responder);
+            }
+            Notification::ChannelInvitation {
+                ref channel_name,
+                channel_id,
+                inviter_id,
+            } => {
+                let inviter = user_store.get_cached_user(inviter_id)?;
+                icon = "icons/hash.svg";
+                text = format!(
+                    "{} invited you to join the #{channel_name} channel",
+                    inviter.github_login
+                );
+                needs_response = channel_store.has_channel_invitation(channel_id);
+                actor = Some(inviter);
+            }
+            Notification::ChannelMessageMention {
+                sender_id,
+                channel_id,
+                message_id,
+            } => {
+                let sender = user_store.get_cached_user(sender_id)?;
+                let channel = channel_store.channel_for_id(channel_id)?;
+                let message = self
+                    .notification_store
+                    .read(cx)
+                    .channel_message_for_id(message_id)?;
+                icon = "icons/conversations.svg";
+                text = format!(
+                    "{} mentioned you in the #{} channel:\n{}",
+                    sender.github_login, channel.name, message.body,
+                );
+                needs_response = false;
+                actor = Some(sender);
+            }
+        }
+        Some((actor, text, icon, needs_response))
+    }
+
     fn render_sign_in_prompt(
         &self,
         theme: &Arc<Theme>,
@@ -387,7 +398,7 @@ impl NotificationPanel {
         match event {
             NotificationEvent::NewNotification { entry } => self.add_toast(entry, cx),
             NotificationEvent::NotificationRemoved { entry }
-            | NotificationEvent::NotificationRead { entry } => self.remove_toast(entry, cx),
+            | NotificationEvent::NotificationRead { entry } => self.remove_toast(entry.id, cx),
             NotificationEvent::NotificationsUpdated {
                 old_range,
                 new_count,
@@ -399,49 +410,44 @@ impl NotificationPanel {
     }
 
     fn add_toast(&mut self, entry: &NotificationEntry, cx: &mut ViewContext<Self>) {
-        let id = entry.id as usize;
-        match entry.notification {
-            Notification::ContactRequest {
-                sender_id: actor_id,
-            }
-            | Notification::ContactRequestAccepted {
-                responder_id: actor_id,
-            } => {
-                let user_store = self.user_store.clone();
-                let Some(user) = user_store.read(cx).get_cached_user(actor_id) else {
-                    return;
-                };
-                self.workspace
-                    .update(cx, |workspace, cx| {
-                        workspace.show_notification(id, cx, |cx| {
-                            cx.add_view(|_| {
-                                ContactNotification::new(
-                                    user,
-                                    entry.notification.clone(),
-                                    user_store,
-                                )
-                            })
-                        })
-                    })
+        let Some((actor, text, _, _)) = self.present_notification(entry, cx) else {
+            return;
+        };
+
+        let id = entry.id;
+        self.current_notification_toast = Some((
+            id,
+            cx.spawn(|this, mut cx| async move {
+                cx.background().timer(TOAST_DURATION).await;
+                this.update(&mut cx, |this, cx| this.remove_toast(id, cx))
                     .ok();
-            }
-            Notification::ChannelInvitation { .. } => {}
-            Notification::ChannelMessageMention { .. } => {}
-        }
+            }),
+        ));
+
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace.show_notification(0, cx, |cx| {
+                    let workspace = cx.weak_handle();
+                    cx.add_view(|_| NotificationToast {
+                        actor,
+                        text,
+                        workspace,
+                    })
+                })
+            })
+            .ok();
     }
 
-    fn remove_toast(&mut self, entry: &NotificationEntry, cx: &mut ViewContext<Self>) {
-        let id = entry.id as usize;
-        match entry.notification {
-            Notification::ContactRequest { .. } | Notification::ContactRequestAccepted { .. } => {
+    fn remove_toast(&mut self, notification_id: u64, cx: &mut ViewContext<Self>) {
+        if let Some((current_id, _)) = &self.current_notification_toast {
+            if *current_id == notification_id {
+                self.current_notification_toast.take();
                 self.workspace
                     .update(cx, |workspace, cx| {
-                        workspace.dismiss_notification::<ContactNotification>(id, cx)
+                        workspace.dismiss_notification::<NotificationToast>(0, cx)
                     })
                     .ok();
             }
-            Notification::ChannelInvitation { .. } => {}
-            Notification::ChannelMessageMention { .. } => {}
         }
     }
 
@@ -581,4 +587,112 @@ fn render_icon_button<V: View>(style: &IconButton, svg_path: &'static str) -> im
         .with_height(style.button_width)
         .contained()
         .with_style(style.container)
+}
+
+pub struct NotificationToast {
+    actor: Option<Arc<User>>,
+    text: String,
+    workspace: WeakViewHandle<Workspace>,
+}
+
+pub enum ToastEvent {
+    Dismiss,
+}
+
+impl NotificationToast {
+    fn focus_notification_panel(&self, cx: &mut AppContext) {
+        let workspace = self.workspace.clone();
+        cx.defer(move |cx| {
+            workspace
+                .update(cx, |workspace, cx| {
+                    workspace.focus_panel::<NotificationPanel>(cx);
+                })
+                .ok();
+        })
+    }
+}
+
+impl Entity for NotificationToast {
+    type Event = ToastEvent;
+}
+
+impl View for NotificationToast {
+    fn ui_name() -> &'static str {
+        "ContactNotification"
+    }
+
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
+        let user = self.actor.clone();
+        let theme = theme::current(cx).clone();
+        let theme = &theme.contact_notification;
+
+        MouseEventHandler::new::<Self, _>(0, cx, |_, cx| {
+            Flex::row()
+                .with_children(user.and_then(|user| {
+                    Some(
+                        Image::from_data(user.avatar.clone()?)
+                            .with_style(theme.header_avatar)
+                            .aligned()
+                            .constrained()
+                            .with_height(
+                                cx.font_cache()
+                                    .line_height(theme.header_message.text.font_size),
+                            )
+                            .aligned()
+                            .top(),
+                    )
+                }))
+                .with_child(
+                    Text::new(self.text.clone(), theme.header_message.text.clone())
+                        .contained()
+                        .with_style(theme.header_message.container)
+                        .aligned()
+                        .top()
+                        .left()
+                        .flex(1., true),
+                )
+                .with_child(
+                    MouseEventHandler::new::<ToastEvent, _>(0, cx, |state, _| {
+                        let style = theme.dismiss_button.style_for(state);
+                        Svg::new("icons/x.svg")
+                            .with_color(style.color)
+                            .constrained()
+                            .with_width(style.icon_width)
+                            .aligned()
+                            .contained()
+                            .with_style(style.container)
+                            .constrained()
+                            .with_width(style.button_width)
+                            .with_height(style.button_width)
+                    })
+                    .with_cursor_style(CursorStyle::PointingHand)
+                    .with_padding(Padding::uniform(5.))
+                    .on_click(MouseButton::Left, move |_, _, cx| {
+                        cx.emit(ToastEvent::Dismiss)
+                    })
+                    .aligned()
+                    .constrained()
+                    .with_height(
+                        cx.font_cache()
+                            .line_height(theme.header_message.text.font_size),
+                    )
+                    .aligned()
+                    .top()
+                    .flex_float(),
+                )
+                .contained()
+        })
+        .with_cursor_style(CursorStyle::PointingHand)
+        .on_click(MouseButton::Left, move |_, this, cx| {
+            this.focus_notification_panel(cx);
+            cx.emit(ToastEvent::Dismiss);
+        })
+        .into_any()
+    }
+}
+
+impl workspace::notifications::Notification for NotificationToast {
+    fn should_dismiss_notification_on_event(&self, event: &<Self as Entity>::Event) -> bool {
+        matches!(event, ToastEvent::Dismiss)
+    }
 }

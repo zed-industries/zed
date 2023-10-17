@@ -1,5 +1,7 @@
 use crate::tests::TestServer;
 use gpui::{executor::Deterministic, TestAppContext};
+use notifications::NotificationEvent;
+use parking_lot::Mutex;
 use rpc::Notification;
 use std::sync::Arc;
 
@@ -13,6 +15,23 @@ async fn test_notifications(
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
+
+    let notification_events_a = Arc::new(Mutex::new(Vec::new()));
+    let notification_events_b = Arc::new(Mutex::new(Vec::new()));
+    client_a.notification_store().update(cx_a, |_, cx| {
+        let events = notification_events_a.clone();
+        cx.subscribe(&cx.handle(), move |_, _, event, _| {
+            events.lock().push(event.clone());
+        })
+        .detach()
+    });
+    client_b.notification_store().update(cx_b, |_, cx| {
+        let events = notification_events_b.clone();
+        cx.subscribe(&cx.handle(), move |_, _, event, _| {
+            events.lock().push(event.clone());
+        })
+        .detach()
+    });
 
     // Client A sends a contact request to client B.
     client_a
@@ -36,6 +55,18 @@ async fn test_notifications(
             }
         );
         assert!(!entry.is_read);
+        assert_eq!(
+            &notification_events_b.lock()[0..],
+            &[
+                NotificationEvent::NewNotification {
+                    entry: entry.clone(),
+                },
+                NotificationEvent::NotificationsUpdated {
+                    old_range: 0..0,
+                    new_count: 1
+                }
+            ]
+        );
 
         store.respond_to_notification(entry.notification.clone(), true, cx);
     });
@@ -49,6 +80,18 @@ async fn test_notifications(
         let entry = store.notification_at(0).unwrap();
         assert!(entry.is_read);
         assert_eq!(entry.response, Some(true));
+        assert_eq!(
+            &notification_events_b.lock()[2..],
+            &[
+                NotificationEvent::NotificationRead {
+                    entry: entry.clone(),
+                },
+                NotificationEvent::NotificationsUpdated {
+                    old_range: 0..1,
+                    new_count: 1
+                }
+            ]
+        );
     });
 
     // Client A receives a notification that client B accepted their request.
@@ -89,12 +132,13 @@ async fn test_notifications(
         assert_eq!(store.notification_count(), 2);
         assert_eq!(store.unread_notification_count(), 1);
 
-        let entry = store.notification_at(1).unwrap();
+        let entry = store.notification_at(0).unwrap();
         assert_eq!(
             entry.notification,
             Notification::ChannelInvitation {
                 channel_id,
-                channel_name: "the-channel".to_string()
+                channel_name: "the-channel".to_string(),
+                inviter_id: client_a.id()
             }
         );
         assert!(!entry.is_read);
@@ -108,7 +152,7 @@ async fn test_notifications(
         assert_eq!(store.notification_count(), 2);
         assert_eq!(store.unread_notification_count(), 0);
 
-        let entry = store.notification_at(1).unwrap();
+        let entry = store.notification_at(0).unwrap();
         assert!(entry.is_read);
         assert_eq!(entry.response, Some(true));
     });

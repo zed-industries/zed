@@ -187,6 +187,7 @@ impl Database {
                     rpc::Notification::ChannelInvitation {
                         channel_id: channel_id.to_proto(),
                         channel_name: channel.name,
+                        inviter_id: inviter_id.to_proto(),
                     },
                     true,
                     &*tx,
@@ -276,6 +277,7 @@ impl Database {
                     &rpc::Notification::ChannelInvitation {
                         channel_id: channel_id.to_proto(),
                         channel_name: Default::default(),
+                        inviter_id: Default::default(),
                     },
                     accept,
                     &*tx,
@@ -292,7 +294,7 @@ impl Database {
         channel_id: ChannelId,
         member_id: UserId,
         remover_id: UserId,
-    ) -> Result<()> {
+    ) -> Result<Option<NotificationId>> {
         self.transaction(|tx| async move {
             self.check_user_is_channel_admin(channel_id, remover_id, &*tx)
                 .await?;
@@ -310,7 +312,17 @@ impl Database {
                 Err(anyhow!("no such member"))?;
             }
 
-            Ok(())
+            Ok(self
+                .remove_notification(
+                    member_id,
+                    rpc::Notification::ChannelInvitation {
+                        channel_id: channel_id.to_proto(),
+                        channel_name: Default::default(),
+                        inviter_id: Default::default(),
+                    },
+                    &*tx,
+                )
+                .await?)
         })
         .await
     }

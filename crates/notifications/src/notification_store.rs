@@ -25,6 +25,7 @@ pub struct NotificationStore {
     _subscriptions: Vec<client::Subscription>,
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum NotificationEvent {
     NotificationsUpdated {
         old_range: Range<usize>,
@@ -118,7 +119,13 @@ impl NotificationStore {
         self.channel_messages.get(&id)
     }
 
+    // Get the nth newest notification.
     pub fn notification_at(&self, ix: usize) -> Option<&NotificationEntry> {
+        let count = self.notifications.summary().count;
+        if ix >= count {
+            return None;
+        }
+        let ix = count - 1 - ix;
         let mut cursor = self.notifications.cursor::<Count>();
         cursor.seek(&Count(ix), Bias::Right, &());
         cursor.item()
@@ -200,7 +207,9 @@ impl NotificationStore {
 
         for entry in &notifications {
             match entry.notification {
-                Notification::ChannelInvitation { .. } => {}
+                Notification::ChannelInvitation { inviter_id, .. } => {
+                    user_ids.push(inviter_id);
+                }
                 Notification::ContactRequest {
                     sender_id: requester_id,
                 } => {
@@ -273,8 +282,11 @@ impl NotificationStore {
                 old_range.start = cursor.start().1 .0;
             }
 
-            if let Some(existing_notification) = cursor.item() {
-                if existing_notification.id == id {
+            let old_notification = cursor.item();
+            if let Some(old_notification) = old_notification {
+                if old_notification.id == id {
+                    cursor.next(&());
+
                     if let Some(new_notification) = &new_notification {
                         if new_notification.is_read {
                             cx.emit(NotificationEvent::NotificationRead {
@@ -283,20 +295,19 @@ impl NotificationStore {
                         }
                     } else {
                         cx.emit(NotificationEvent::NotificationRemoved {
-                            entry: existing_notification.clone(),
+                            entry: old_notification.clone(),
                         });
                     }
-                    cursor.next(&());
+                }
+            } else if let Some(new_notification) = &new_notification {
+                if is_new {
+                    cx.emit(NotificationEvent::NewNotification {
+                        entry: new_notification.clone(),
+                    });
                 }
             }
 
             if let Some(notification) = new_notification {
-                if is_new {
-                    cx.emit(NotificationEvent::NewNotification {
-                        entry: notification.clone(),
-                    });
-                }
-
                 new_notifications.push(notification, &());
             }
         }

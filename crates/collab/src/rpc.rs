@@ -2331,7 +2331,8 @@ async fn remove_channel_member(
     let channel_id = ChannelId::from_proto(request.channel_id);
     let member_id = UserId::from_proto(request.user_id);
 
-    db.remove_channel_member(channel_id, member_id, session.user_id)
+    let removed_notification_id = db
+        .remove_channel_member(channel_id, member_id, session.user_id)
         .await?;
 
     let mut update = proto::UpdateChannels::default();
@@ -2342,7 +2343,18 @@ async fn remove_channel_member(
         .await
         .user_connection_ids(member_id)
     {
-        session.peer.send(connection_id, update.clone())?;
+        session.peer.send(connection_id, update.clone()).trace_err();
+        if let Some(notification_id) = removed_notification_id {
+            session
+                .peer
+                .send(
+                    connection_id,
+                    proto::DeleteNotification {
+                        notification_id: notification_id.to_proto(),
+                    },
+                )
+                .trace_err();
+        }
     }
 
     response.send(proto::Ack {})?;
