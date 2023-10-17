@@ -135,7 +135,8 @@ impl Database {
                     .most_public_ancestor_for_channel(channel_id, &*tx)
                     .await?
                     .unwrap_or(channel_id);
-                role = Some(ChannelRole::Guest);
+                // TODO: change this back to Guest.
+                role = Some(ChannelRole::Member);
                 joined_channel_id = Some(channel_id_to_join);
 
                 channel_member::Entity::insert(channel_member::ActiveModel {
@@ -789,7 +790,7 @@ impl Database {
         user_id: UserId,
         tx: &DatabaseTransaction,
     ) -> Result<()> {
-        match dbg!(self.channel_role_for_user(channel_id, user_id, tx).await)? {
+        match self.channel_role_for_user(channel_id, user_id, tx).await? {
             Some(ChannelRole::Admin) => Ok(()),
             Some(ChannelRole::Member)
             | Some(ChannelRole::Banned)

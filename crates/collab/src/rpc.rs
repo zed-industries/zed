@@ -2720,10 +2720,8 @@ async fn join_channel_internal(
             channel_id: joined_room.channel_id.map(|id| id.to_proto()),
             live_kit_connection_info,
         })?;
-        dbg!("Joined channel", &joined_channel);
 
         if let Some(joined_channel) = joined_channel {
-            dbg!("CMU");
             channel_membership_updated(db, joined_channel, &session).await?
         }
 
