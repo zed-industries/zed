@@ -152,10 +152,7 @@ impl TextSystem {
         runs: &[(usize, RunStyle)],
         wrap_width: Option<Pixels>,
     ) -> Result<SmallVec<[Arc<Line>; 1]>> {
-        let mut runs = runs
-            .iter()
-            .map(|(run_len, style)| (*run_len, style))
-            .peekable();
+        let mut runs = runs.iter().cloned().peekable();
         let mut font_runs: Vec<(usize, FontId)> =
             self.font_runs_pool.lock().pop().unwrap_or_default();
 
@@ -164,7 +161,7 @@ impl TextSystem {
         for line in text.split('\n') {
             let line_end = line_start + line.len();
 
-            let mut last_font: Option<&Font> = None;
+            let mut last_font: Option<Font> = None;
             let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
             let mut run_start = line_start;
             while run_start < line_end {
@@ -174,10 +171,10 @@ impl TextSystem {
 
                 let run_len_within_line = cmp::min(line_end, run_start + *run_len) - run_start;
 
-                if last_font == Some(&run_style.font) {
+                if last_font == Some(run_style.font.clone()) {
                     font_runs.last_mut().unwrap().0 += run_len_within_line;
                 } else {
-                    last_font = Some(&run_style.font);
+                    last_font = Some(run_style.font.clone());
                     font_runs.push((
                         run_len_within_line,
                         self.platform_text_system.font_id(&run_style.font)?,
