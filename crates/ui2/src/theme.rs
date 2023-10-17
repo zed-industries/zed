@@ -160,7 +160,7 @@ impl<E: Element> Element for Themed<E> {
     type ViewState = E::ViewState;
     type ElementState = E::ElementState;
 
-    fn element_id(&self) -> Option<gpui3::ElementId> {
+    fn id(&self) -> Option<gpui3::ElementId> {
         None
     }
 

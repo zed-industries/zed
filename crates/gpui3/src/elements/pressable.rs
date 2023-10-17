@@ -74,7 +74,7 @@ where
     type ViewState = E::ViewState;
     type ElementState = PressableState<E::ElementState>;
 
-    fn element_id(&self) -> Option<crate::ElementId> {
+    fn id(&self) -> Option<crate::ElementId> {
         Some(IdentifiedElement::element_id(&self.child))
     }
 

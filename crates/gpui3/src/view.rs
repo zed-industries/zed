@@ -57,7 +57,7 @@ impl<S: 'static + Send + Sync> Element for View<S> {
     type ViewState = ();
     type ElementState = AnyElement<S>;
 
-    fn element_id(&self) -> Option<crate::ElementId> {
+    fn id(&self) -> Option<crate::ElementId> {
         Some(ElementId::View(self.state.id))
     }
 
@@ -112,8 +112,8 @@ where
     type ViewState = ParentViewState;
     type ElementState = AnyBox;
 
-    fn element_id(&self) -> Option<crate::ElementId> {
-        Element::element_id(&self.view)
+    fn id(&self) -> Option<crate::ElementId> {
+        Element::id(&self.view)
     }
 
     fn layout(
@@ -188,7 +188,7 @@ impl Element for AnyView {
     type ViewState = ();
     type ElementState = AnyBox;
 
-    fn element_id(&self) -> Option<crate::ElementId> {
+    fn id(&self) -> Option<crate::ElementId> {
         Some(ElementId::View(self.view.lock().entity_id()))
     }
 
@@ -233,8 +233,8 @@ where
     type ViewState = ParentViewState;
     type ElementState = AnyBox;
 
-    fn element_id(&self) -> Option<crate::ElementId> {
-        Element::element_id(&self.view)
+    fn id(&self) -> Option<crate::ElementId> {
+        Element::id(&self.view)
     }
 
     fn layout(

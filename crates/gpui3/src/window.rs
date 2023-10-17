@@ -600,7 +600,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
             let mut root_view = cx.window.root_view.take().unwrap();
 
-            if let Some(element_id) = root_view.element_id() {
+            if let Some(element_id) = root_view.id() {
                 cx.with_element_state(element_id, |element_state, cx| {
                     let element_state = draw_with_element_state(&mut root_view, element_state, cx);
                     ((), element_state)

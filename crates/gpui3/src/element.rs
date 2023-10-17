@@ -11,7 +11,7 @@ pub trait Element: 'static + Send + Sync + IntoAnyElement<Self::ViewState> {
     type ViewState: 'static + Send + Sync;
     type ElementState: 'static + Send + Sync;
 
-    fn element_id(&self) -> Option<ElementId>;
+    fn id(&self) -> Option<ElementId>;
 
     fn layout(
         &mut self,
@@ -38,7 +38,7 @@ pub trait Element: 'static + Send + Sync + IntoAnyElement<Self::ViewState> {
 
 pub trait IdentifiedElement: Element {
     fn element_id(&self) -> ElementId {
-        Element::element_id(self).unwrap()
+        Element::id(self).unwrap()
     }
 
     fn on_click(
@@ -126,7 +126,7 @@ impl<E: Element> RenderedElement<E> {
         frame_state: &mut Option<E::ElementState>,
         cx: &mut ViewContext<E::ViewState>,
     ) {
-        if let Some(id) = self.element.element_id() {
+        if let Some(id) = self.element.id() {
             cx.with_element_state(id, |element_state, cx| {
                 let mut element_state = element_state.unwrap();
                 self.element
@@ -146,7 +146,7 @@ where
     S: 'static + Send + Sync,
 {
     fn layout(&mut self, state: &mut E::ViewState, cx: &mut ViewContext<E::ViewState>) -> LayoutId {
-        let (layout_id, frame_state) = if let Some(id) = self.element.element_id() {
+        let (layout_id, frame_state) = if let Some(id) = self.element.id() {
             let layout_id = cx.with_element_state(id, |element_state, cx| {
                 self.element.layout(state, element_state, cx)
             });

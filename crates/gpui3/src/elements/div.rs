@@ -47,7 +47,7 @@ where
     type ViewState = S;
     type ElementState = ();
 
-    fn element_id(&self) -> Option<ElementId> {
+    fn id(&self) -> Option<ElementId> {
         self.id.clone()
     }
 
@@ -188,7 +188,7 @@ where
         cx: &mut ViewContext<S>,
         f: impl FnOnce(&mut Self, &mut ViewContext<S>) -> R,
     ) -> R {
-        if let Some(element_id) = self.element_id() {
+        if let Some(element_id) = self.id() {
             cx.with_element_id(element_id, |cx| f(self, cx))
         } else {
             f(self, cx)

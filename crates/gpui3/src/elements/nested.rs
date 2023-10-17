@@ -1,5 +1,5 @@
 use crate::{
-    group_bounds, AnyElement, DispatchPhase, Element, IdentifiedElement, IntoAnyElement,
+    group_bounds, AnyElement, DispatchPhase, Element, ElementId, IdentifiedElement, IntoAnyElement,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, SharedString, Style, StyleCascade,
     StyleRefinement, ViewContext,
 };
@@ -11,8 +11,8 @@ use std::sync::{
     Arc,
 };
 
-trait LayoutNode<V: 'static + Send + Sync> {
-    fn state(&mut self) -> &mut LayoutNodeState<V>;
+trait LayoutNode<V: 'static + Send + Sync, K: ElementKind> {
+    fn state(&mut self) -> &mut LayoutNodeElement<V, K>;
 
     fn child(mut self, child: impl IntoAnyElement<V>) -> Self
     where
@@ -35,26 +35,75 @@ trait LayoutNode<V: 'static + Send + Sync> {
     }
 }
 
-struct LayoutNodeState<V: 'static + Send + Sync> {
+pub trait ElementKind: 'static + Send + Sync {
+    fn id(&self) -> Option<ElementId>;
+}
+
+pub struct Identified(ElementId);
+pub struct Anonymous;
+
+impl ElementKind for Identified {
+    fn id(&self) -> Option<ElementId> {
+        Some(self.0.clone())
+    }
+}
+
+impl ElementKind for Anonymous {
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+}
+
+struct LayoutNodeElement<V: 'static + Send + Sync, K: ElementKind> {
     style_cascade: StyleCascade,
     computed_style: Option<Style>,
     children: SmallVec<[AnyElement<V>; 2]>,
+    kind: K,
 }
 
-impl<V> IntoAnyElement<V> for LayoutNodeState<V>
+impl<V: 'static + Send + Sync> LayoutNodeElement<V, Anonymous> {
+    pub fn identify(self, id: impl Into<ElementId>) -> LayoutNodeElement<V, Identified> {
+        LayoutNodeElement {
+            style_cascade: self.style_cascade,
+            computed_style: self.computed_style,
+            children: self.children,
+            kind: Identified(id.into()),
+        }
+    }
+}
+
+impl<V: 'static + Send + Sync, K: ElementKind> Styled for LayoutNodeElement<V, K> {
+    fn style_cascade(&mut self) -> &mut StyleCascade {
+        &mut self.style_cascade
+    }
+
+    fn computed_style(&mut self) -> &Style {
+        self.computed_style
+            .get_or_insert_with(|| Style::default().refined(self.style_cascade.merged()))
+    }
+}
+
+impl<V: 'static + Send + Sync> IdentifiedElement for LayoutNodeElement<V, Identified> {
+    fn element_id(&self) -> crate::ElementId {
+        self.kind.0.clone()
+    }
+}
+
+impl<V, K> IntoAnyElement<V> for LayoutNodeElement<V, K>
 where
     V: 'static + Send + Sync,
+    K: ElementKind,
 {
     fn into_any(self) -> AnyElement<V> {
         AnyElement::new(self)
     }
 }
 
-impl<V: 'static + Send + Sync> Element for LayoutNodeState<V> {
+impl<V: 'static + Send + Sync, K: ElementKind> Element for LayoutNodeElement<V, K> {
     type ViewState = V;
     type ElementState = ();
 
-    fn element_id(&self) -> Option<crate::ElementId> {
+    fn id(&self) -> Option<crate::ElementId> {
         None
     }
 
@@ -94,48 +143,6 @@ pub trait Styled {
     fn computed_style(&mut self) -> &Style;
 }
 
-pub struct StyledElement<E> {
-    child: E,
-}
-
-impl<E> IntoAnyElement<E::ViewState> for StyledElement<E>
-where
-    E: Element + Styled,
-{
-    fn into_any(self) -> AnyElement<E::ViewState> {
-        AnyElement::new(self)
-    }
-}
-
-impl<E: Element + Styled> Element for StyledElement<E> {
-    type ViewState = E::ViewState;
-    type ElementState = E::ElementState;
-
-    fn element_id(&self) -> Option<crate::ElementId> {
-        self.child.element_id()
-    }
-
-    fn layout(
-        &mut self,
-        state: &mut Self::ViewState,
-        element_state: Option<Self::ElementState>,
-        cx: &mut crate::ViewContext<Self::ViewState>,
-    ) -> (crate::LayoutId, Self::ElementState) {
-        self.child.layout(state, element_state, cx)
-    }
-
-    fn paint(
-        &mut self,
-        bounds: crate::Bounds<crate::Pixels>,
-        state: &mut Self::ViewState,
-        element_state: &mut Self::ElementState,
-        cx: &mut crate::ViewContext<Self::ViewState>,
-    ) {
-        self.child.computed_style().paint(bounds, cx);
-        self.child.paint(bounds, state, element_state, cx);
-    }
-}
-
 pub trait Hoverable {
     fn hover_style(&mut self) -> &mut StyleRefinement;
 
@@ -148,15 +155,28 @@ pub trait Hoverable {
     }
 }
 
-struct HoverableElement<Child> {
+struct HoverableElement<E> {
     hover_style: StyleRefinement,
     group: Option<SharedString>,
     cascade_slot: CascadeSlot,
     hovered: Arc<AtomicBool>,
-    child: Child,
+    child: E,
 }
 
-impl<Child: Styled + Element> HoverableElement<Child> {
+impl<E: Styled + Element> HoverableElement<E> {
+    pub fn replace_child<E2: Element<ViewState = E::ViewState>>(
+        self,
+        replace: impl FnOnce(E) -> E2,
+    ) -> HoverableElement<E2> {
+        HoverableElement {
+            hover_style: self.hover_style,
+            group: self.group,
+            cascade_slot: self.cascade_slot,
+            hovered: self.hovered,
+            child: replace(self.child),
+        }
+    }
+
     fn hover_style(&mut self) -> &mut StyleRefinement {
         &mut self.hover_style
     }
@@ -164,7 +184,7 @@ impl<Child: Styled + Element> HoverableElement<Child> {
 
 impl<E> IntoAnyElement<E::ViewState> for HoverableElement<E>
 where
-    E: Element + Styled,
+    E: Styled + Element,
 {
     fn into_any(self) -> AnyElement<E::ViewState> {
         AnyElement::new(self)
@@ -173,13 +193,13 @@ where
 
 impl<E> Element for HoverableElement<E>
 where
-    E: Element + Styled,
+    E: Styled + Element,
 {
     type ViewState = E::ViewState;
     type ElementState = E::ElementState;
 
-    fn element_id(&self) -> Option<crate::ElementId> {
-        self.child.element_id()
+    fn id(&self) -> Option<crate::ElementId> {
+        self.child.id()
     }
 
     fn layout(
@@ -224,7 +244,19 @@ where
     }
 }
 
-pub trait Clickable: IdentifiedElement + Sized {
+impl<E: Styled + Element> Styled for HoverableElement<E> {
+    fn style_cascade(&mut self) -> &mut StyleCascade {
+        self.child.style_cascade()
+    }
+
+    fn computed_style(&mut self) -> &Style {
+        self.child.computed_style()
+    }
+}
+
+impl<E: Styled + IdentifiedElement> IdentifiedElement for HoverableElement<E> {}
+
+pub trait Clickable: Element + Sized {
     fn active_style(&mut self) -> &mut StyleRefinement;
     fn listeners(&mut self) -> &mut ClickListeners<Self::ViewState>;
 
@@ -252,26 +284,40 @@ pub trait Clickable: IdentifiedElement + Sized {
 type ClickListeners<V> =
     SmallVec<[Arc<dyn Fn(&mut V, &MouseClickEvent, &mut ViewContext<V>) + Send + Sync>; 1]>;
 
-pub struct ClickableElementState<E: IdentifiedElement> {
+pub struct ClickableElementState<E: 'static + Send + Sync> {
     mouse_down: Arc<Mutex<Option<MouseDownEvent>>>,
-    child_state: E::ElementState,
+    child_state: E,
 }
 
 pub struct MouseClickEvent {
-    down: MouseDownEvent,
-    up: MouseUpEvent,
+    pub down: MouseDownEvent,
+    pub up: MouseUpEvent,
 }
 
-pub struct ClickableElement<E: IdentifiedElement> {
+pub struct ClickableElement<E: Element> {
     child: E,
     listeners: ClickListeners<E::ViewState>,
     active_style: StyleRefinement,
     cascade_slot: CascadeSlot,
 }
 
+impl<E: Element> ClickableElement<E> {
+    pub fn replace_child<E2: Element<ViewState = E::ViewState>>(
+        self,
+        replace: impl FnOnce(E) -> E2,
+    ) -> ClickableElement<E2> {
+        ClickableElement {
+            child: replace(self.child),
+            listeners: self.listeners,
+            active_style: self.active_style,
+            cascade_slot: self.cascade_slot,
+        }
+    }
+}
+
 impl<E> IntoAnyElement<E::ViewState> for ClickableElement<E>
 where
-    E: IdentifiedElement + Styled,
+    E: Styled + Element,
 {
     fn into_any(self) -> AnyElement<E::ViewState> {
         AnyElement::new(self)
@@ -280,13 +326,13 @@ where
 
 impl<E> Element for ClickableElement<E>
 where
-    E: IdentifiedElement + Styled,
+    E: Styled + Element,
 {
     type ViewState = E::ViewState;
-    type ElementState = ClickableElementState<E>;
+    type ElementState = ClickableElementState<E::ElementState>;
 
-    fn element_id(&self) -> Option<crate::ElementId> {
-        Some(IdentifiedElement::element_id(&self.child))
+    fn id(&self) -> Option<crate::ElementId> {
+        self.child.id()
     }
 
     fn layout(
@@ -371,37 +417,103 @@ where
     }
 }
 
-struct Div<V: 'static + Send + Sync>(HoverableElement<LayoutNodeState<V>>);
+impl<E: Styled + IdentifiedElement> IdentifiedElement for ClickableElement<E> {}
 
-impl<V: 'static + Send + Sync> LayoutNode<V> for Div<V> {
-    fn state(&mut self) -> &mut LayoutNodeState<V> {
-        &mut self.0.child
+impl<E> Clickable for ClickableElement<E>
+where
+    E: Styled + IdentifiedElement,
+{
+    fn active_style(&mut self) -> &mut StyleRefinement {
+        &mut self.active_style
+    }
+
+    fn listeners(&mut self) -> &mut ClickListeners<Self::ViewState> {
+        &mut self.listeners
     }
 }
 
-impl<V: 'static + Send + Sync> Styled for LayoutNodeState<V> {
+pub struct Div<V: 'static + Send + Sync, K: ElementKind>(
+    ClickableElement<HoverableElement<LayoutNodeElement<V, K>>>,
+);
+
+impl<V: 'static + Send + Sync> Div<V, Anonymous> {
+    pub fn id(self, id: impl Into<ElementId>) -> Div<V, Identified> {
+        Div(self.0.replace_child(|hoverable| {
+            hoverable.replace_child(|layout_node| layout_node.identify(id))
+        }))
+    }
+}
+
+impl<V: 'static + Send + Sync, K: ElementKind> LayoutNode<V, K> for Div<V, K> {
+    fn state(&mut self) -> &mut LayoutNodeElement<V, K> {
+        &mut self.0.child.child
+    }
+}
+
+impl<V: 'static + Send + Sync, K: ElementKind> Styled for Div<V, K> {
     fn style_cascade(&mut self) -> &mut StyleCascade {
-        &mut self.style_cascade
+        self.0.child.child.style_cascade()
     }
 
     fn computed_style(&mut self) -> &Style {
-        self.computed_style
-            .get_or_insert_with(|| Style::default().refined(self.style_cascade.merged()))
+        self.0.child.child.computed_style()
     }
 }
 
-impl<V: 'static + Send + Sync> Styled for Div<V> {
-    fn style_cascade(&mut self) -> &mut StyleCascade {
-        self.0.child.style_cascade()
-    }
-
-    fn computed_style(&mut self) -> &Style {
-        self.0.child.computed_style()
-    }
-}
-
-impl<V: 'static + Send + Sync> Hoverable for Div<V> {
+impl<V: 'static + Send + Sync, K: ElementKind> Hoverable for Div<V, K> {
     fn hover_style(&mut self) -> &mut StyleRefinement {
-        self.0.hover_style()
+        self.0.child.hover_style()
+    }
+}
+
+impl<V: 'static + Send + Sync> Clickable for Div<V, Identified> {
+    fn active_style(&mut self) -> &mut StyleRefinement {
+        self.0.active_style()
+    }
+
+    fn listeners(&mut self) -> &mut ClickListeners<V> {
+        self.0.listeners()
+    }
+}
+
+impl<V, K> IntoAnyElement<V> for Div<V, K>
+where
+    V: 'static + Send + Sync,
+    K: ElementKind,
+{
+    fn into_any(self) -> AnyElement<V> {
+        AnyElement::new(self)
+    }
+}
+
+impl<V, K> Element for Div<V, K>
+where
+    V: 'static + Send + Sync,
+    K: ElementKind,
+{
+    type ViewState = V;
+    type ElementState = ClickableElementState<()>;
+
+    fn id(&self) -> Option<ElementId> {
+        self.0.id()
+    }
+
+    fn layout(
+        &mut self,
+        state: &mut Self::ViewState,
+        element_state: Option<Self::ElementState>,
+        cx: &mut crate::ViewContext<Self::ViewState>,
+    ) -> (crate::LayoutId, Self::ElementState) {
+        self.0.layout(state, element_state, cx)
+    }
+
+    fn paint(
+        &mut self,
+        bounds: crate::Bounds<crate::Pixels>,
+        state: &mut Self::ViewState,
+        element_state: &mut Self::ElementState,
+        cx: &mut crate::ViewContext<Self::ViewState>,
+    ) {
+        self.0.paint(bounds, state, element_state, cx);
     }
 }

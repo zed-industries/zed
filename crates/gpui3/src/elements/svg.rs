@@ -39,7 +39,7 @@ impl<S: 'static + Send + Sync> Element for Svg<S> {
     type ViewState = S;
     type ElementState = ();
 
-    fn element_id(&self) -> Option<crate::ElementId> {
+    fn id(&self) -> Option<crate::ElementId> {
         None
     }
 

@@ -37,8 +37,8 @@ impl<E: Element> Element for Group<E> {
     type ViewState = E::ViewState;
     type ElementState = E::ElementState;
 
-    fn element_id(&self) -> Option<ElementId> {
-        self.child.element_id()
+    fn id(&self) -> Option<ElementId> {
+        self.child.id()
     }
 
     fn layout(

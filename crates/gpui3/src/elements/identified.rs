@@ -21,7 +21,7 @@ impl<E: Element> Element for Identified<E> {
     type ViewState = E::ViewState;
     type ElementState = E::ElementState;
 
-    fn element_id(&self) -> Option<ElementId> {
+    fn id(&self) -> Option<ElementId> {
         Some(self.id.clone())
     }
 
