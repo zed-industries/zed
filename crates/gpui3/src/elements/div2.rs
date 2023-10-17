@@ -12,6 +12,7 @@ use std::sync::Arc;
 #[derive(Default)]
 pub struct DivState {
     active_state: Arc<Mutex<ActiveState>>,
+    pending_click: Arc<Mutex<Option<MouseDownEvent>>>,
 }
 
 #[derive(Copy, Clone, Default, Eq, PartialEq)]
@@ -147,30 +148,61 @@ where
                 }
             });
         }
+    }
 
-        // for listener in self.listeners.mouse_down.iter().cloned() {
-        //     cx.on_mouse_event(move |state, event: &MouseDownEvent, phase, cx| {
-        //         listener(state, event, &bounds, phase, cx);
-        //     })
-        // }
+    fn paint_event_listeners(
+        &self,
+        bounds: Bounds<Pixels>,
+        pending_click: Arc<Mutex<Option<MouseDownEvent>>>,
+        cx: &mut ViewContext<V>,
+    ) {
+        let click_listeners = self.listeners.mouse_click.clone();
+        let mouse_down = pending_click.lock().clone();
+        if let Some(mouse_down) = mouse_down {
+            cx.on_mouse_event(move |state, event: &MouseUpEvent, phase, cx| {
+                if phase == DispatchPhase::Bubble && bounds.contains_point(event.position) {
+                    let mouse_click = MouseClickEvent {
+                        down: mouse_down.clone(),
+                        up: event.clone(),
+                    };
+                    for listener in &click_listeners {
+                        listener(state, &mouse_click, &bounds, cx);
+                    }
+                }
 
-        // for listener in self.listeners.mouse_up.iter().cloned() {
-        //     cx.on_mouse_event(move |state, event: &MouseUpEvent, phase, cx| {
-        //         listener(state, event, &bounds, phase, cx);
-        //     })
-        // }
+                *pending_click.lock() = None;
+            });
+        } else {
+            cx.on_mouse_event(move |_state, event: &MouseDownEvent, phase, _cx| {
+                if phase == DispatchPhase::Bubble && bounds.contains_point(event.position) {
+                    *pending_click.lock() = Some(event.clone());
+                }
+            });
+        }
 
-        // for listener in self.listeners.mouse_move.iter().cloned() {
-        //     cx.on_mouse_event(move |state, event: &MouseMoveEvent, phase, cx| {
-        //         listener(state, event, &bounds, phase, cx);
-        //     })
-        // }
+        for listener in self.listeners.mouse_down.iter().cloned() {
+            cx.on_mouse_event(move |state, event: &MouseDownEvent, phase, cx| {
+                listener(state, event, &bounds, phase, cx);
+            })
+        }
 
-        // for listener in self.listeners.scroll_wheel.iter().cloned() {
-        //     cx.on_mouse_event(move |state, event: &ScrollWheelEvent, phase, cx| {
-        //         listener(state, event, &bounds, phase, cx);
-        //     })
-        // }
+        for listener in self.listeners.mouse_up.iter().cloned() {
+            cx.on_mouse_event(move |state, event: &MouseUpEvent, phase, cx| {
+                listener(state, event, &bounds, phase, cx);
+            })
+        }
+
+        for listener in self.listeners.mouse_move.iter().cloned() {
+            cx.on_mouse_event(move |state, event: &MouseMoveEvent, phase, cx| {
+                listener(state, event, &bounds, phase, cx);
+            })
+        }
+
+        for listener in self.listeners.scroll_wheel.iter().cloned() {
+            cx.on_mouse_event(move |state, event: &ScrollWheelEvent, phase, cx| {
+                listener(state, event, &bounds, phase, cx);
+            })
+        }
     }
 }
 
@@ -264,6 +296,7 @@ where
                         element_state.active_state.clone(),
                         cx,
                     );
+                    this.paint_event_listeners(bounds, element_state.pending_click.clone(), cx);
                 });
             });
 
