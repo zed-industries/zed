@@ -63,11 +63,11 @@ impl Line {
     }
 
     pub fn len(&self) -> usize {
-        self.layout.len
+        self.layout.text.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.layout.len == 0
+        self.layout.text.is_empty()
     }
 
     pub fn index_for_x(&self, x: Pixels) -> Option<usize> {
@@ -139,7 +139,7 @@ impl Line {
                         run_end += style_run.len as usize;
                         color = style_run.color;
                     } else {
-                        run_end = self.layout.len;
+                        run_end = self.layout.text.len();
                         finished_underline = current_underline.take();
                     }
                 }
@@ -247,7 +247,7 @@ impl Line {
                             ));
                         }
                     } else {
-                        style_run_end = self.layout.len;
+                        style_run_end = self.layout.text.len();
                         _color = black();
                         finished_underline = current_underline.take();
                     }

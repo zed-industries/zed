@@ -1,4 +1,4 @@
-use crate::{px, FontId, Line, Pixels, PlatformTextSystem, ShapedBoundary};
+use crate::{px, FontId, Line, Pixels, PlatformTextSystem, ShapedBoundary, SharedString};
 use collections::HashMap;
 use std::{iter, sync::Arc};
 
@@ -89,7 +89,7 @@ impl LineWrapper {
 
     pub fn wrap_shaped_line<'a>(
         &'a mut self,
-        str: &'a str,
+        str: &'a SharedString,
         line: &'a Line,
         wrap_width: Pixels,
     ) -> impl Iterator<Item = ShapedBoundary> + 'a {
@@ -183,7 +183,7 @@ impl LineWrapper {
 
     fn compute_width_for_char(&self, c: char) -> Pixels {
         self.platform_text_system
-            .layout_line(&c.to_string(), self.font_size, &[(1, self.font_id)])
+            .layout_line(&c.to_string().into(), self.font_size, &[(1, self.font_id)])
             .width
     }
 }
@@ -295,10 +295,10 @@ mod tests {
                 }
             }
 
-            let text = "aa bbb cccc ddddd eeee";
+            let text = "aa bbb cccc ddddd eeee".into();
             let lines = text_system
                 .layout_text(
-                    text,
+                    &text,
                     px(16.),
                     &[
                         normal.with_len(4),
@@ -319,7 +319,7 @@ mod tests {
             );
             assert_eq!(
                 wrapper
-                    .wrap_shaped_line(text, &line, px(72.))
+                    .wrap_shaped_line(&text, &line, px(72.))
                     .collect::<Vec<_>>(),
                 &[
                     ShapedBoundary {

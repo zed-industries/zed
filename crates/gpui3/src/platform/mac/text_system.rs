@@ -151,7 +151,7 @@ impl PlatformTextSystem for MacTextSystem {
 
     fn layout_line(
         &self,
-        text: &str,
+        text: &SharedString,
         font_size: Pixels,
         font_runs: &[(usize, FontId)],
     ) -> LineLayout {
@@ -339,7 +339,7 @@ impl MacTextSystemState {
 
     fn layout_line(
         &mut self,
-        text: &str,
+        text: &SharedString,
         font_size: Pixels,
         font_runs: &[(usize, FontId)],
     ) -> LineLayout {
@@ -416,12 +416,12 @@ impl MacTextSystemState {
 
         let typographic_bounds = line.get_typographic_bounds();
         LineLayout {
+            text: text.clone(),
             width: typographic_bounds.width.into(),
             ascent: typographic_bounds.ascent.into(),
             descent: typographic_bounds.descent.into(),
             runs,
             font_size,
-            len: text.len(),
         }
     }
 

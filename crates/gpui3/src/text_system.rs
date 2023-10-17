@@ -147,7 +147,7 @@ impl TextSystem {
 
     pub fn layout_text(
         &self,
-        text: &str,
+        text: &SharedString,
         font_size: Pixels,
         runs: &[TextRun],
         wrap_width: Option<Pixels>,
@@ -158,8 +158,9 @@ impl TextSystem {
 
         let mut lines = SmallVec::new();
         let mut line_start = 0;
-        for line in text.split('\n') {
-            let line_end = line_start + line.len();
+        for line_text in text.split('\n') {
+            let line_text = SharedString::from(line_text.to_string());
+            let line_end = line_start + line_text.len();
 
             let mut last_font: Option<Font> = None;
             let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
@@ -204,7 +205,7 @@ impl TextSystem {
 
             let layout = self
                 .text_layout_cache
-                .layout_line(line, font_size, &font_runs);
+                .layout_line(&line_text, font_size, &font_runs);
             lines.push(Arc::new(Line::new(layout, decoration_runs)));
 
             line_start = line_end + 1; // Skip `\n` character.
@@ -391,12 +392,12 @@ impl From<u32> for GlyphId {
 
 #[derive(Default, Debug)]
 pub struct LineLayout {
+    pub text: SharedString,
     pub font_size: Pixels,
     pub width: Pixels,
     pub ascent: Pixels,
     pub descent: Pixels,
     pub runs: Vec<ShapedRun>,
-    pub len: usize,
 }
 
 #[derive(Debug)]

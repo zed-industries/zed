@@ -1,12 +1,13 @@
 use crate::{
-    size, AnyElement, Bounds, Element, IntoAnyElement, LayoutId, Line, Pixels, Size, ViewContext,
+    size, AnyElement, Bounds, Element, IntoAnyElement, LayoutId, Line, Pixels, SharedString, Size,
+    ViewContext,
 };
 use parking_lot::Mutex;
 use smallvec::SmallVec;
 use std::{marker::PhantomData, sync::Arc};
-use util::{arc_cow::ArcCow, ResultExt};
+use util::ResultExt;
 
-impl<S: 'static + Send + Sync> IntoAnyElement<S> for ArcCow<'static, str> {
+impl<S: 'static + Send + Sync> IntoAnyElement<S> for SharedString {
     fn into_any(self) -> AnyElement<S> {
         Text {
             text: self,
@@ -19,7 +20,7 @@ impl<S: 'static + Send + Sync> IntoAnyElement<S> for ArcCow<'static, str> {
 impl<V: 'static + Send + Sync> IntoAnyElement<V> for &'static str {
     fn into_any(self) -> AnyElement<V> {
         Text {
-            text: ArcCow::from(self),
+            text: self.into(),
             state_type: PhantomData,
         }
         .into_any()
@@ -31,7 +32,7 @@ impl<V: 'static + Send + Sync> IntoAnyElement<V> for &'static str {
 impl<S: 'static + Send + Sync> IntoAnyElement<S> for String {
     fn into_any(self) -> AnyElement<S> {
         Text {
-            text: ArcCow::from(self),
+            text: self.into(),
             state_type: PhantomData,
         }
         .into_any()
@@ -39,7 +40,7 @@ impl<S: 'static + Send + Sync> IntoAnyElement<S> for String {
 }
 
 pub struct Text<S> {
-    text: ArcCow<'static, str>,
+    text: SharedString,
     state_type: PhantomData<S>,
 }
 
@@ -78,7 +79,7 @@ impl<S: 'static + Send + Sync> Element for Text<S> {
             move |known_dimensions, _| {
                 let Some(lines) = text_system
                     .layout_text(
-                        text.as_ref(),
+                        &text,
                         font_size,
                         &[text_style.to_run(text.len())],
                         known_dimensions.width, // Wrap if we know the width.

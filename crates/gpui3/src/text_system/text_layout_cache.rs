@@ -1,4 +1,4 @@
-use crate::{FontId, LineLayout, Pixels, PlatformTextSystem, ShapedGlyph, ShapedRun};
+use crate::{FontId, LineLayout, Pixels, PlatformTextSystem, ShapedGlyph, ShapedRun, SharedString};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
 use std::{
@@ -30,9 +30,9 @@ impl TextLayoutCache {
         curr_frame.clear();
     }
 
-    pub fn layout_line<'a>(
-        &'a self,
-        text: &'a str,
+    pub fn layout_line(
+        &self,
+        text: &SharedString,
         font_size: Pixels,
         runs: &[(usize, FontId)],
     ) -> Arc<LineLayout> {
@@ -53,7 +53,7 @@ impl TextLayoutCache {
         } else {
             let layout = Arc::new(self.platform_text_system.layout_line(text, font_size, runs));
             let key = CacheKeyValue {
-                text: text.into(),
+                text: text.clone(),
                 font_size,
                 runs: SmallVec::from(runs),
             };
@@ -83,7 +83,7 @@ impl<'a> Hash for (dyn CacheKey + 'a) {
 
 #[derive(Eq)]
 struct CacheKeyValue {
-    text: String,
+    text: SharedString,
     font_size: Pixels,
     runs: SmallVec<[(usize, FontId); 1]>,
 }
@@ -91,7 +91,7 @@ struct CacheKeyValue {
 impl CacheKey for CacheKeyValue {
     fn key(&self) -> CacheKeyRef {
         CacheKeyRef {
-            text: self.text.as_str(),
+            text: &self.text,
             font_size: self.font_size,
             runs: self.runs.as_slice(),
         }
