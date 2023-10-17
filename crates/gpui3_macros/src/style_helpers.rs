@@ -27,7 +27,7 @@ pub fn style_helpers(input: TokenStream) -> TokenStream {
 fn generate_methods() -> Vec<TokenStream2> {
     let mut methods = Vec::new();
 
-    for (prefix, auto_allowed, fields) in box_prefixes() {
+    for (prefix, auto_allowed, fields, prefix_doc_string) in box_prefixes() {
         methods.push(generate_custom_value_setter(
             prefix,
             if auto_allowed {
@@ -38,7 +38,7 @@ fn generate_methods() -> Vec<TokenStream2> {
             &fields,
         ));
 
-        for (suffix, length_tokens, doc_string) in box_suffixes() {
+        for (suffix, length_tokens, suffix_doc_string) in box_suffixes() {
             if suffix != "auto" || auto_allowed {
                 methods.push(generate_predefined_setter(
                     prefix,
@@ -46,7 +46,7 @@ fn generate_methods() -> Vec<TokenStream2> {
                     &fields,
                     &length_tokens,
                     false,
-                    doc_string,
+                    &format!("{prefix_doc_string}\n\n{suffix_doc_string}"),
                 ));
             }
 
@@ -57,7 +57,7 @@ fn generate_methods() -> Vec<TokenStream2> {
                     &fields,
                     &length_tokens,
                     true,
-                    doc_string,
+                    &format!("{prefix_doc_string}\n\n{suffix_doc_string}"),
                 ));
             }
         }
@@ -103,7 +103,7 @@ fn generate_predefined_setter(
     fields: &Vec<TokenStream2>,
     length_tokens: &TokenStream2,
     negate: bool,
-    doc_string: &'static str,
+    doc_string: &str,
 ) -> TokenStream2 {
     let (negation_prefix, negation_token) = if negate {
         ("neg_", quote! { - })
@@ -169,19 +169,40 @@ fn generate_custom_value_setter(
     method
 }
 
-fn box_prefixes() -> Vec<(&'static str, bool, Vec<TokenStream2>)> {
+fn box_prefixes() -> Vec<(&'static str, bool, Vec<TokenStream2>, &'static str)> {
     vec![
-        ("w", true, vec![quote! { size.width }]),
-        ("h", true, vec![quote! { size.height }]),
+        ("w", true, vec![quote! { size.width }], "todo!(docstring)"),
+        ("h", true, vec![quote! { size.height }], "todo!(docstring)"),
         (
             "size",
             true,
             vec![quote! {size.width}, quote! {size.height}],
+            "todo!(docstring)",
         ),
-        ("min_w", true, vec![quote! { min_size.width }]),
-        ("min_h", true, vec![quote! { min_size.height }]),
-        ("max_w", true, vec![quote! { max_size.width }]),
-        ("max_h", true, vec![quote! { max_size.height }]),
+        (
+            "min_w",
+            true,
+            vec![quote! { min_size.width }],
+            "todo!(docstring)",
+        ),
+        (
+            "min_h",
+            true,
+            vec![quote! { min_size.height }],
+            "todo!(docstring)",
+        ),
+        (
+            "max_w",
+            true,
+            vec![quote! { max_size.width }],
+            "todo!(docstring)",
+        ),
+        (
+            "max_h",
+            true,
+            vec![quote! { max_size.height }],
+            "todo!(docstring)",
+        ),
         (
             "m",
             true,
@@ -191,21 +212,34 @@ fn box_prefixes() -> Vec<(&'static str, bool, Vec<TokenStream2>)> {
                 quote! { margin.left },
                 quote! { margin.right },
             ],
+            "todo!(docstring)",
         ),
-        ("mt", true, vec![quote! { margin.top }]),
-        ("mb", true, vec![quote! { margin.bottom }]),
+        ("mt", true, vec![quote! { margin.top }], "todo!(docstring)"),
+        (
+            "mb",
+            true,
+            vec![quote! { margin.bottom }],
+            "todo!(docstring)",
+        ),
         (
             "my",
             true,
             vec![quote! { margin.top }, quote! { margin.bottom }],
+            "todo!(docstring)",
         ),
         (
             "mx",
             true,
             vec![quote! { margin.left }, quote! { margin.right }],
+            "todo!(docstring)",
         ),
-        ("ml", true, vec![quote! { margin.left }]),
-        ("mr", true, vec![quote! { margin.right }]),
+        ("ml", true, vec![quote! { margin.left }], "todo!(docstring)"),
+        (
+            "mr",
+            true,
+            vec![quote! { margin.right }],
+            "todo!(docstring)",
+        ),
         (
             "p",
             false,
@@ -215,32 +249,81 @@ fn box_prefixes() -> Vec<(&'static str, bool, Vec<TokenStream2>)> {
                 quote! { padding.left },
                 quote! { padding.right },
             ],
+            "todo!(docstring)",
         ),
-        ("pt", false, vec![quote! { padding.top }]),
-        ("pb", false, vec![quote! { padding.bottom }]),
+        (
+            "pt",
+            false,
+            vec![quote! { padding.top }],
+            "todo!(docstring)",
+        ),
+        (
+            "pb",
+            false,
+            vec![quote! { padding.bottom }],
+            "todo!(docstring)",
+        ),
         (
             "px",
             false,
             vec![quote! { padding.left }, quote! { padding.right }],
+            "todo!(docstring)",
         ),
         (
             "py",
             false,
             vec![quote! { padding.top }, quote! { padding.bottom }],
+            "todo!(docstring)",
         ),
-        ("pl", false, vec![quote! { padding.left }]),
-        ("pr", false, vec![quote! { padding.right }]),
-        ("top", true, vec![quote! { inset.top }]),
-        ("bottom", true, vec![quote! { inset.bottom }]),
-        ("left", true, vec![quote! { inset.left }]),
-        ("right", true, vec![quote! { inset.right }]),
+        (
+            "pl",
+            false,
+            vec![quote! { padding.left }],
+            "todo!(docstring)",
+        ),
+        (
+            "pr",
+            false,
+            vec![quote! { padding.right }],
+            "todo!(docstring)",
+        ),
+        ("top", true, vec![quote! { inset.top }], "todo!(docstring)"),
+        (
+            "bottom",
+            true,
+            vec![quote! { inset.bottom }],
+            "todo!(docstring)",
+        ),
+        (
+            "left",
+            true,
+            vec![quote! { inset.left }],
+            "todo!(docstring)",
+        ),
+        (
+            "right",
+            true,
+            vec![quote! { inset.right }],
+            "todo!(docstring)",
+        ),
         (
             "gap",
             false,
             vec![quote! { gap.width }, quote! { gap.height }],
+            "todo!(docstring)",
         ),
-        ("gap_x", false, vec![quote! { gap.width }]),
-        ("gap_y", false, vec![quote! { gap.height }]),
+        (
+            "gap_x",
+            false,
+            vec![quote! { gap.width }],
+            "todo!(docstring)",
+        ),
+        (
+            "gap_y",
+            false,
+            vec![quote! { gap.height }],
+            "todo!(docstring)",
+        ),
     ]
 }
 
