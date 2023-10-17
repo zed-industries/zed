@@ -1,16 +1,10 @@
-use std::fmt::Write;
-use std::{cmp::Reverse, sync::Arc};
+use std::cmp::Reverse;
+use std::sync::Arc;
 
 use util::ResultExt;
 
+use crate::models::LanguageModel;
 use crate::templates::repository_context::PromptCodeSnippet;
-
-pub trait LanguageModel {
-    fn name(&self) -> String;
-    fn count_tokens(&self, content: &str) -> usize;
-    fn truncate(&self, content: &str, length: usize) -> String;
-    fn capacity(&self) -> usize;
-}
 
 pub(crate) enum PromptFileType {
     Text,
@@ -73,7 +67,7 @@ impl PromptChain {
     pub fn generate(&self, truncate: bool) -> anyhow::Result<(String, usize)> {
         // Argsort based on Prompt Priority
         let seperator = "\n";
-        let seperator_tokens = self.args.model.count_tokens(seperator);
+        let seperator_tokens = self.args.model.count_tokens(seperator)?;
         let mut sorted_indices = (0..self.templates.len()).collect::<Vec<_>>();
         sorted_indices.sort_by_key(|&i| Reverse(&self.templates[i].0));
 
@@ -81,7 +75,7 @@ impl PromptChain {
 
         // If Truncate
         let mut tokens_outstanding = if truncate {
-            Some(self.args.model.capacity() - self.args.reserved_tokens)
+            Some(self.args.model.capacity()? - self.args.reserved_tokens)
         } else {
             None
         };
@@ -111,7 +105,7 @@ impl PromptChain {
         }
 
         let full_prompt = prompts.join(seperator);
-        let total_token_count = self.args.model.count_tokens(&full_prompt);
+        let total_token_count = self.args.model.count_tokens(&full_prompt)?;
         anyhow::Ok((prompts.join(seperator), total_token_count))
     }
 }
@@ -131,10 +125,10 @@ pub(crate) mod tests {
             ) -> anyhow::Result<(String, usize)> {
                 let mut content = "This is a test prompt template".to_string();
 
-                let mut token_count = args.model.count_tokens(&content);
+                let mut token_count = args.model.count_tokens(&content)?;
                 if let Some(max_token_length) = max_token_length {
                     if token_count > max_token_length {
-                        content = args.model.truncate(&content, max_token_length);
+                        content = args.model.truncate(&content, max_token_length)?;
                         token_count = max_token_length;
                     }
                 }
@@ -152,10 +146,10 @@ pub(crate) mod tests {
             ) -> anyhow::Result<(String, usize)> {
                 let mut content = "This is a low priority test prompt template".to_string();
 
-                let mut token_count = args.model.count_tokens(&content);
+                let mut token_count = args.model.count_tokens(&content)?;
                 if let Some(max_token_length) = max_token_length {
                     if token_count > max_token_length {
-                        content = args.model.truncate(&content, max_token_length);
+                        content = args.model.truncate(&content, max_token_length)?;
                         token_count = max_token_length;
                     }
                 }
@@ -169,26 +163,22 @@ pub(crate) mod tests {
             capacity: usize,
         }
 
-        impl DummyLanguageModel {
-            fn set_capacity(&mut self, capacity: usize) {
-                self.capacity = capacity
-            }
-        }
-
         impl LanguageModel for DummyLanguageModel {
             fn name(&self) -> String {
                 "dummy".to_string()
             }
-            fn count_tokens(&self, content: &str) -> usize {
-                content.chars().collect::<Vec<char>>().len()
+            fn count_tokens(&self, content: &str) -> anyhow::Result<usize> {
+                anyhow::Ok(content.chars().collect::<Vec<char>>().len())
             }
-            fn truncate(&self, content: &str, length: usize) -> String {
-                content.chars().collect::<Vec<char>>()[..length]
-                    .into_iter()
-                    .collect::<String>()
+            fn truncate(&self, content: &str, length: usize) -> anyhow::Result<String> {
+                anyhow::Ok(
+                    content.chars().collect::<Vec<char>>()[..length]
+                        .into_iter()
+                        .collect::<String>(),
+                )
             }
-            fn capacity(&self) -> usize {
-                self.capacity
+            fn capacity(&self) -> anyhow::Result<usize> {
+                anyhow::Ok(self.capacity)
             }
         }
 
@@ -215,7 +205,7 @@ pub(crate) mod tests {
                 .to_string()
         );
 
-        assert_eq!(model.count_tokens(&prompt), token_count);
+        assert_eq!(model.count_tokens(&prompt).unwrap(), token_count);
 
         // Testing with Truncation Off
         // Should ignore capacity and return all prompts
@@ -242,7 +232,7 @@ pub(crate) mod tests {
                 .to_string()
         );
 
-        assert_eq!(model.count_tokens(&prompt), token_count);
+        assert_eq!(model.count_tokens(&prompt).unwrap(), token_count);
 
         // Testing with Truncation Off
         // Should ignore capacity and return all prompts
