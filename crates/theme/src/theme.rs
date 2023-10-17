@@ -1199,6 +1199,15 @@ pub struct InlineAssistantStyle {
     pub disabled_editor: FieldEditor,
     pub pending_edit_background: Color,
     pub include_conversation: ToggleIconButtonStyle,
+    pub retrieve_context: ToggleIconButtonStyle,
+    pub context_status: ContextStatusStyle,
+}
+
+#[derive(Clone, Deserialize, Default, JsonSchema)]
+pub struct ContextStatusStyle {
+    pub error_icon: Icon,
+    pub in_progress_icon: Icon,
+    pub complete_icon: Icon,
 }
 
 #[derive(Clone, Deserialize, Default, JsonSchema)]

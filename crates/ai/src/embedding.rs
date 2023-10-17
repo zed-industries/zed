@@ -85,25 +85,6 @@ impl Embedding {
     }
 }
 
-// impl FromSql for Embedding {
-//     fn column_result(value: ValueRef) -> FromSqlResult<Self> {
-//         let bytes = value.as_blob()?;
-//         let embedding: Result<Vec<f32>, Box<bincode::ErrorKind>> = bincode::deserialize(bytes);
-//         if embedding.is_err() {
-//             return Err(rusqlite::types::FromSqlError::Other(embedding.unwrap_err()));
-//         }
-//         Ok(Embedding(embedding.unwrap()))
-//     }
-// }
-
-// impl ToSql for Embedding {
-//     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput> {
-//         let bytes = bincode::serialize(&self.0)
-//             .map_err(|err| rusqlite::Error::ToSqlConversionFailure(Box::new(err)))?;
-//         Ok(ToSqlOutput::Owned(rusqlite::types::Value::Blob(bytes)))
-//     }
-// }
-
 #[derive(Clone)]
 pub struct OpenAIEmbeddings {
     pub client: Arc<dyn HttpClient>,
@@ -300,6 +281,7 @@ impl EmbeddingProvider for OpenAIEmbeddings {
                     request_timeout,
                 )
                 .await?;
+
             request_number += 1;
 
             match response.status() {
