@@ -1,5 +1,5 @@
 use collections::{HashMap, VecDeque};
-use editor::Editor;
+use editor::{Editor, MoveToEnd};
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
     actions,
@@ -11,7 +11,7 @@ use gpui::{
     AnyElement, AppContext, Element, Entity, ModelContext, ModelHandle, Subscription, View,
     ViewContext, ViewHandle, WeakModelHandle,
 };
-use language::{Buffer, LanguageServerId, LanguageServerName};
+use language::{LanguageServerId, LanguageServerName};
 use lsp::IoKind;
 use project::{search::SearchQuery, Project};
 use std::{borrow::Cow, sync::Arc};
@@ -22,8 +22,8 @@ use workspace::{
     ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceCreated,
 };
 
-const SEND_LINE: &str = "// Send:\n";
-const RECEIVE_LINE: &str = "// Receive:\n";
+const SEND_LINE: &str = "// Send:";
+const RECEIVE_LINE: &str = "// Receive:";
 const MAX_STORED_LOG_ENTRIES: usize = 5000;
 
 pub struct LogStore {
@@ -37,20 +37,20 @@ struct ProjectState {
 }
 
 struct LanguageServerState {
-    log_storage: VecDeque<String>,
+    log_messages: VecDeque<String>,
     rpc_state: Option<LanguageServerRpcState>,
     _io_logs_subscription: Option<lsp::Subscription>,
     _lsp_logs_subscription: Option<lsp::Subscription>,
 }
 
 struct LanguageServerRpcState {
-    buffer: ModelHandle<Buffer>,
+    rpc_messages: VecDeque<String>,
     last_message_kind: Option<MessageKind>,
 }
 
 pub struct LspLogView {
     pub(crate) editor: ViewHandle<Editor>,
-    _editor_subscription: Subscription,
+    editor_subscription: Subscription,
     log_store: ModelHandle<LogStore>,
     current_server_id: Option<LanguageServerId>,
     is_showing_rpc_trace: bool,
@@ -124,10 +124,9 @@ impl LogStore {
             io_tx,
         };
         cx.spawn_weak(|this, mut cx| async move {
-            while let Some((project, server_id, io_kind, mut message)) = io_rx.next().await {
+            while let Some((project, server_id, io_kind, message)) = io_rx.next().await {
                 if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| {
-                        message.push('\n');
                         this.on_io(project, server_id, io_kind, &message, cx);
                     });
                 }
@@ -176,7 +175,7 @@ impl LogStore {
             cx.notify();
             LanguageServerState {
                 rpc_state: None,
-                log_storage: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
+                log_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
                 _io_logs_subscription: None,
                 _lsp_logs_subscription: None,
             }
@@ -235,16 +234,16 @@ impl LogStore {
             None => self.add_language_server(&project, id, cx)?,
         };
 
-        let log_lines = &mut language_server_state.log_storage;
+        let log_lines = &mut language_server_state.log_messages;
         if log_lines.len() == MAX_STORED_LOG_ENTRIES {
             log_lines.pop_front();
         }
-
         let message = message.trim();
         log_lines.push_back(message.to_string());
         cx.emit(Event::NewServerLogEntry {
             id,
             entry: message.to_string(),
+            is_rpc: false,
         });
         cx.notify();
         Some(())
@@ -270,38 +269,24 @@ impl LogStore {
         let weak_project = project.downgrade();
         let project_state = self.projects.get(&weak_project)?;
         let server_state = project_state.servers.get(&server_id)?;
-        Some(&server_state.log_storage)
+        Some(&server_state.log_messages)
     }
 
     fn enable_rpc_trace_for_language_server(
         &mut self,
         project: &ModelHandle<Project>,
         server_id: LanguageServerId,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<ModelHandle<Buffer>> {
+    ) -> Option<&mut LanguageServerRpcState> {
         let weak_project = project.downgrade();
         let project_state = self.projects.get_mut(&weak_project)?;
         let server_state = project_state.servers.get_mut(&server_id)?;
-        let rpc_state = server_state.rpc_state.get_or_insert_with(|| {
-            let language = project.read(cx).languages().language_for_name("JSON");
-            let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, ""));
-            cx.spawn_weak({
-                let buffer = buffer.clone();
-                |_, mut cx| async move {
-                    let language = language.await.ok();
-                    buffer.update(&mut cx, |buffer, cx| {
-                        buffer.set_language(language, cx);
-                    });
-                }
-            })
-            .detach();
-
-            LanguageServerRpcState {
-                buffer,
+        let rpc_state = server_state
+            .rpc_state
+            .get_or_insert_with(|| LanguageServerRpcState {
+                rpc_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
                 last_message_kind: None,
-            }
-        });
-        Some(rpc_state.buffer.clone())
+            });
+        Some(rpc_state)
     }
 
     pub fn disable_rpc_trace_for_language_server(
@@ -330,7 +315,7 @@ impl LogStore {
             IoKind::StdIn => false,
             IoKind::StdErr => {
                 let project = project.upgrade(cx)?;
-                let message = format!("stderr: {}\n", message.trim());
+                let message = format!("stderr: {}", message.trim());
                 self.add_language_server_log(&project, language_server_id, &message, cx);
                 return Some(());
             }
@@ -343,24 +328,40 @@ impl LogStore {
             .get_mut(&language_server_id)?
             .rpc_state
             .as_mut()?;
-        state.buffer.update(cx, |buffer, cx| {
-            let kind = if is_received {
-                MessageKind::Receive
-            } else {
-                MessageKind::Send
+        let kind = if is_received {
+            MessageKind::Receive
+        } else {
+            MessageKind::Send
+        };
+
+        let rpc_log_lines = &mut state.rpc_messages;
+        if rpc_log_lines.len() == MAX_STORED_LOG_ENTRIES {
+            rpc_log_lines.pop_front();
+        }
+        if state.last_message_kind != Some(kind) {
+            let line_before_message = match kind {
+                MessageKind::Send => SEND_LINE,
+                MessageKind::Receive => RECEIVE_LINE,
             };
-            if state.last_message_kind != Some(kind) {
-                let len = buffer.len();
-                let line = match kind {
-                    MessageKind::Send => SEND_LINE,
-                    MessageKind::Receive => RECEIVE_LINE,
-                };
-                buffer.edit([(len..len, line)], None, cx);
-                state.last_message_kind = Some(kind);
-            }
-            let len = buffer.len();
-            buffer.edit([(len..len, message)], None, cx);
+            rpc_log_lines.push_back(line_before_message.to_string());
+            cx.emit(Event::NewServerLogEntry {
+                id: language_server_id,
+                entry: line_before_message.to_string(),
+                is_rpc: true,
+            });
+        }
+
+        if rpc_log_lines.len() == MAX_STORED_LOG_ENTRIES {
+            rpc_log_lines.pop_front();
+        }
+        let message = message.trim();
+        rpc_log_lines.push_back(message.to_string());
+        cx.emit(Event::NewServerLogEntry {
+            id: language_server_id,
+            entry: message.to_string(),
+            is_rpc: true,
         });
+        cx.notify();
         Some(())
     }
 }
@@ -413,28 +414,25 @@ impl LspLogView {
             cx.notify();
         });
         let events_subscriptions = cx.subscribe(&log_store, |log_view, _, e, cx| match e {
-            Event::NewServerLogEntry { id, entry } => {
+            Event::NewServerLogEntry { id, entry, is_rpc } => {
                 if log_view.current_server_id == Some(*id) {
-                    log_view.editor.update(cx, |editor, cx| {
-                        editor.set_read_only(false);
-                        editor.handle_input(entry, cx);
-                        editor.handle_input("\n", cx);
-                        editor.set_read_only(true);
-                    })
+                    if (*is_rpc && log_view.is_showing_rpc_trace)
+                        || (!*is_rpc && !log_view.is_showing_rpc_trace)
+                    {
+                        log_view.editor.update(cx, |editor, cx| {
+                            editor.set_read_only(false);
+                            editor.handle_input(entry.trim(), cx);
+                            editor.handle_input("\n", cx);
+                            editor.set_read_only(true);
+                        });
+                    }
                 }
             }
         });
-        // TODO kb deduplicate
-        let editor = cx.add_view(|cx| {
-            let mut editor = Editor::multi_line(None, cx);
-            editor.set_read_only(true);
-            editor.move_to_end(&Default::default(), cx);
-            editor
-        });
-        let _editor_subscription = cx.subscribe(&editor, |_, _, event, cx| cx.emit(event.clone()));
+        let (editor, editor_subscription) = Self::editor_for_logs(String::new(), cx);
         let mut this = Self {
             editor,
-            _editor_subscription,
+            editor_subscription,
             project,
             log_store,
             current_server_id: None,
@@ -447,19 +445,19 @@ impl LspLogView {
         this
     }
 
-    fn editor_for_buffer(
-        project: ModelHandle<Project>,
-        buffer: ModelHandle<Buffer>,
+    fn editor_for_logs(
+        log_contents: String,
         cx: &mut ViewContext<Self>,
     ) -> (ViewHandle<Editor>, Subscription) {
         let editor = cx.add_view(|cx| {
-            let mut editor = Editor::for_buffer(buffer, Some(project), cx);
+            let mut editor = Editor::multi_line(None, cx);
+            editor.set_text(log_contents, cx);
+            editor.move_to_end(&MoveToEnd, cx);
             editor.set_read_only(true);
-            editor.move_to_end(&Default::default(), cx);
             editor
         });
-        let subscription = cx.subscribe(&editor, |_, _, event, cx| cx.emit(event.clone()));
-        (editor, subscription)
+        let editor_subscription = cx.subscribe(&editor, |_, _, event, cx| cx.emit(event.clone()));
+        (editor, editor_subscription)
     }
 
     pub(crate) fn menu_items<'a>(&'a self, cx: &'a AppContext) -> Option<Vec<LogMenuItem>> {
@@ -512,28 +510,13 @@ impl LspLogView {
             .log_store
             .read(cx)
             .server_logs(&self.project, server_id)
-            .map(|lines| {
-                let (a, b) = lines.as_slices();
-                let log_contents = a.join("\n");
-                if b.is_empty() {
-                    log_contents
-                } else {
-                    log_contents + "\n" + &b.join("\n")
-                }
-            });
+            .map(log_contents);
         if let Some(log_contents) = log_contents {
             self.current_server_id = Some(server_id);
             self.is_showing_rpc_trace = false;
-            let editor = cx.add_view(|cx| {
-                let mut editor = Editor::multi_line(None, cx);
-                editor.set_read_only(true);
-                editor.move_to_end(&Default::default(), cx);
-                editor.set_text(log_contents, cx);
-                editor
-            });
-            self._editor_subscription =
-                cx.subscribe(&editor, |_, _, event, cx| cx.emit(event.clone()));
+            let (editor, editor_subscription) = Self::editor_for_logs(log_contents, cx);
             self.editor = editor;
+            self.editor_subscription = editor_subscription;
             cx.notify();
         }
     }
@@ -543,16 +526,37 @@ impl LspLogView {
         server_id: LanguageServerId,
         cx: &mut ViewContext<Self>,
     ) {
-        let buffer = self.log_store.update(cx, |log_set, cx| {
-            log_set.enable_rpc_trace_for_language_server(&self.project, server_id, cx)
+        let rpc_log = self.log_store.update(cx, |log_store, _| {
+            log_store
+                .enable_rpc_trace_for_language_server(&self.project, server_id)
+                .map(|state| log_contents(&state.rpc_messages))
         });
-        if let Some(buffer) = buffer {
+        if let Some(rpc_log) = rpc_log {
             self.current_server_id = Some(server_id);
             self.is_showing_rpc_trace = true;
-            let (editor, _editor_subscription) =
-                Self::editor_for_buffer(self.project.clone(), buffer, cx);
+            let (editor, editor_subscription) = Self::editor_for_logs(rpc_log, cx);
+            let language = self.project.read(cx).languages().language_for_name("JSON");
+            editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .expect("log buffer should be a singleton")
+                .update(cx, |_, cx| {
+                    cx.spawn_weak({
+                        let buffer = cx.handle();
+                        |_, mut cx| async move {
+                            let language = language.await.ok();
+                            buffer.update(&mut cx, |buffer, cx| {
+                                buffer.set_language(language, cx);
+                            });
+                        }
+                    })
+                    .detach();
+                });
+
             self.editor = editor;
-            self._editor_subscription = _editor_subscription;
+            self.editor_subscription = editor_subscription;
             cx.notify();
         }
     }
@@ -565,7 +569,7 @@ impl LspLogView {
     ) {
         self.log_store.update(cx, |log_store, cx| {
             if enabled {
-                log_store.enable_rpc_trace_for_language_server(&self.project, server_id, cx);
+                log_store.enable_rpc_trace_for_language_server(&self.project, server_id);
             } else {
                 log_store.disable_rpc_trace_for_language_server(&self.project, server_id, cx);
             }
@@ -574,6 +578,16 @@ impl LspLogView {
             self.show_logs_for_server(server_id, cx);
             cx.notify();
         }
+    }
+}
+
+fn log_contents(lines: &VecDeque<String>) -> String {
+    let (a, b) = lines.as_slices();
+    let log_contents = a.join("\n");
+    if b.is_empty() {
+        log_contents
+    } else {
+        log_contents + "\n" + &b.join("\n")
     }
 }
 
@@ -992,7 +1006,11 @@ impl LspLogToolbarItemView {
 }
 
 pub enum Event {
-    NewServerLogEntry { id: LanguageServerId, entry: String },
+    NewServerLogEntry {
+        id: LanguageServerId,
+        entry: String,
+        is_rpc: bool,
+    },
 }
 
 impl Entity for LogStore {
