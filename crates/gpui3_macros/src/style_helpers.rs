@@ -395,7 +395,7 @@ fn corner_prefixes() -> Vec<(&'static str, Vec<TokenStream2>, &'static str)> {
                 quote! { corner_radii.bottom_right },
                 quote! { corner_radii.bottom_left },
             ],
-            "todo!(docstring)",
+            "Sets the border radius of the element. [Docs](https://tailwindcss.com/docs/border-radius)"
         ),
         (
             "rounded_t",
@@ -403,7 +403,7 @@ fn corner_prefixes() -> Vec<(&'static str, Vec<TokenStream2>, &'static str)> {
                 quote! { corner_radii.top_left },
                 quote! { corner_radii.top_right },
             ],
-            "todo!(docstring)",
+            "Sets the border radius of the top side of the element. [Docs](https://tailwindcss.com/docs/border-radius#rounding-sides-separately)"
         ),
         (
             "rounded_b",
@@ -411,7 +411,7 @@ fn corner_prefixes() -> Vec<(&'static str, Vec<TokenStream2>, &'static str)> {
                 quote! { corner_radii.bottom_left },
                 quote! { corner_radii.bottom_right },
             ],
-            "todo!(docstring)",
+            "Sets the border radius of the bottom side of the element. [Docs](https://tailwindcss.com/docs/border-radius#rounding-sides-separately)"
         ),
         (
             "rounded_r",
@@ -419,7 +419,7 @@ fn corner_prefixes() -> Vec<(&'static str, Vec<TokenStream2>, &'static str)> {
                 quote! { corner_radii.top_right },
                 quote! { corner_radii.bottom_right },
             ],
-            "todo!(docstring)",
+            "Sets the border radius of the right side of the element. [Docs](https://tailwindcss.com/docs/border-radius#rounding-sides-separately)"
         ),
         (
             "rounded_l",
@@ -427,27 +427,27 @@ fn corner_prefixes() -> Vec<(&'static str, Vec<TokenStream2>, &'static str)> {
                 quote! { corner_radii.top_left },
                 quote! { corner_radii.bottom_left },
             ],
-            "todo!(docstring)",
+            "Sets the border radius of the left side of the element. [Docs](https://tailwindcss.com/docs/border-radius#rounding-sides-separately)"
         ),
         (
             "rounded_tl",
             vec![quote! { corner_radii.top_left }],
-            "todo!(docstring)",
+            "Sets the border radius of the top left corner of the element. [Docs](https://tailwindcss.com/docs/border-radius#rounding-corners-separately)"
         ),
         (
             "rounded_tr",
             vec![quote! { corner_radii.top_right }],
-            "todo!(docstring)",
+            "Sets the border radius of the top right corner of the element. [Docs](https://tailwindcss.com/docs/border-radius#rounding-corners-separately)"
         ),
         (
             "rounded_bl",
             vec![quote! { corner_radii.bottom_left }],
-            "todo!(docstring)",
+            "Sets the border radius of the bottom left corner of the element. [Docs](https://tailwindcss.com/docs/border-radius#rounding-corners-separately)"
         ),
         (
             "rounded_br",
             vec![quote! { corner_radii.bottom_right }],
-            "todo!(docstring)",
+            "Sets the border radius of the bottom right corner of the element. [Docs](https://tailwindcss.com/docs/border-radius#rounding-corners-separately)"
         ),
     ]
 }
