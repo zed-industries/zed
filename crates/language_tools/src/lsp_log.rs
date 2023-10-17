@@ -36,7 +36,7 @@ struct ProjectState {
 }
 
 struct LanguageServerState {
-    log_buffer: ModelHandle<Buffer>,
+    log_storage: Vec<String>,
     rpc_state: Option<LanguageServerRpcState>,
     _io_logs_subscription: Option<lsp::Subscription>,
     _lsp_logs_subscription: Option<lsp::Subscription>,
@@ -168,15 +168,14 @@ impl LogStore {
         project: &ModelHandle<Project>,
         id: LanguageServerId,
         cx: &mut ModelContext<Self>,
-    ) -> Option<ModelHandle<Buffer>> {
+    ) -> Option<&mut Vec<String>> {
         let project_state = self.projects.get_mut(&project.downgrade())?;
         let server_state = project_state.servers.entry(id).or_insert_with(|| {
             cx.notify();
             LanguageServerState {
                 rpc_state: None,
-                log_buffer: cx
-                    .add_model(|cx| Buffer::new(0, cx.model_id() as u64, ""))
-                    .clone(),
+                // TODO kb move this to settings?
+                log_storage: Vec::with_capacity(10_000),
                 _io_logs_subscription: None,
                 _lsp_logs_subscription: None,
             }
@@ -186,7 +185,7 @@ impl LogStore {
         if let Some(server) = server.as_deref() {
             if server.has_notification_handler::<lsp::notification::LogMessage>() {
                 // Another event wants to re-add the server that was already added and subscribed to, avoid doing it again.
-                return Some(server_state.log_buffer.clone());
+                return Some(&mut server_state.log_storage);
             }
         }
 
@@ -215,7 +214,7 @@ impl LogStore {
                 }
             })
         });
-        Some(server_state.log_buffer.clone())
+        Some(&mut server_state.log_storage)
     }
 
     fn add_language_server_log(
@@ -225,25 +224,23 @@ impl LogStore {
         message: &str,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
-        let buffer = match self
+        let log_lines = match self
             .projects
             .get_mut(&project.downgrade())?
             .servers
-            .get(&id)
-            .map(|state| state.log_buffer.clone())
+            .get_mut(&id)
+            .map(|state| &mut state.log_storage)
         {
             Some(existing_buffer) => existing_buffer,
             None => self.add_language_server(&project, id, cx)?,
         };
-        buffer.update(cx, |buffer, cx| {
-            let len = buffer.len();
-            let has_newline = message.ends_with("\n");
-            buffer.edit([(len..len, message)], None, cx);
-            if !has_newline {
-                let len = buffer.len();
-                buffer.edit([(len..len, "\n")], None, cx);
-            }
-        });
+
+        // TODO kb something better VecDequeue?
+        if log_lines.capacity() == log_lines.len() {
+            log_lines.drain(..log_lines.len() / 2);
+        }
+        log_lines.push(message.trim().to_string());
+
         cx.notify();
         Some(())
     }
@@ -260,15 +257,15 @@ impl LogStore {
         Some(())
     }
 
-    pub fn log_buffer_for_server(
+    fn server_logs(
         &self,
         project: &ModelHandle<Project>,
         server_id: LanguageServerId,
-    ) -> Option<ModelHandle<Buffer>> {
+    ) -> Option<&[String]> {
         let weak_project = project.downgrade();
         let project_state = self.projects.get(&weak_project)?;
         let server_state = project_state.servers.get(&server_id)?;
-        Some(server_state.log_buffer.clone())
+        Some(&server_state.log_storage)
     }
 
     fn enable_rpc_trace_for_language_server(
@@ -487,14 +484,24 @@ impl LspLogView {
     }
 
     fn show_logs_for_server(&mut self, server_id: LanguageServerId, cx: &mut ViewContext<Self>) {
-        let buffer = self
+        let log_contents = self
             .log_store
             .read(cx)
-            .log_buffer_for_server(&self.project, server_id);
-        if let Some(buffer) = buffer {
+            .server_logs(&self.project, server_id)
+            .map(|lines| lines.join("\n"));
+        if let Some(log_contents) = log_contents {
             self.current_server_id = Some(server_id);
             self.is_showing_rpc_trace = false;
-            self.editor = Self::editor_for_buffer(self.project.clone(), buffer, cx);
+            let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, log_contents));
+            let editor = cx.add_view(|cx| {
+                let mut editor = Editor::for_buffer(buffer, Some(self.project.clone()), cx);
+                editor.set_read_only(true);
+                editor.move_to_end(&Default::default(), cx);
+                editor
+            });
+            cx.subscribe(&editor, |_, _, event, cx| cx.emit(event.clone()))
+                .detach();
+            self.editor = editor;
             cx.notify();
         }
     }
@@ -505,6 +512,7 @@ impl LspLogView {
         cx: &mut ViewContext<Self>,
     ) {
         let buffer = self.log_store.update(cx, |log_set, cx| {
+            // TODO kb save this buffer from overflows too
             log_set.enable_rpc_trace_for_language_server(&self.project, server_id, cx)
         });
         if let Some(buffer) = buffer {
