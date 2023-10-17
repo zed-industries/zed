@@ -16,6 +16,7 @@ use futures::{channel::oneshot, StreamExt as _};
 use gpui::{executor::Deterministic, ModelHandle, Task, TestAppContext, WindowHandle};
 use language::LanguageRegistry;
 use node_runtime::FakeNodeRuntime;
+use notifications::NotificationStore;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
 use rpc::RECEIVE_TIMEOUT;
@@ -46,6 +47,7 @@ pub struct TestClient {
     pub username: String,
     pub app_state: Arc<workspace::AppState>,
     channel_store: ModelHandle<ChannelStore>,
+    notification_store: ModelHandle<NotificationStore>,
     state: RefCell<TestClientState>,
 }
 
@@ -244,6 +246,7 @@ impl TestServer {
             app_state,
             username: name.to_string(),
             channel_store: cx.read(ChannelStore::global).clone(),
+            notification_store: cx.read(NotificationStore::global).clone(),
             state: Default::default(),
         };
         client.wait_for_current_user(cx).await;
@@ -447,6 +450,10 @@ impl TestClient {
 
     pub fn channel_store(&self) -> &ModelHandle<ChannelStore> {
         &self.channel_store
+    }
+
+    pub fn notification_store(&self) -> &ModelHandle<NotificationStore> {
+        &self.notification_store
     }
 
     pub fn user_store(&self) -> &ModelHandle<UserStore> {

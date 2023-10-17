@@ -386,7 +386,8 @@ impl NotificationPanel {
     ) {
         match event {
             NotificationEvent::NewNotification { entry } => self.add_toast(entry, cx),
-            NotificationEvent::NotificationRemoved { entry } => self.remove_toast(entry, cx),
+            NotificationEvent::NotificationRemoved { entry }
+            | NotificationEvent::NotificationRead { entry } => self.remove_toast(entry, cx),
             NotificationEvent::NotificationsUpdated {
                 old_range,
                 new_count,
@@ -450,25 +451,9 @@ impl NotificationPanel {
         response: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        match notification {
-            Notification::ContactRequest {
-                sender_id: actor_id,
-            } => {
-                self.user_store
-                    .update(cx, |store, cx| {
-                        store.respond_to_contact_request(actor_id, response, cx)
-                    })
-                    .detach();
-            }
-            Notification::ChannelInvitation { channel_id, .. } => {
-                self.channel_store
-                    .update(cx, |store, cx| {
-                        store.respond_to_channel_invite(channel_id, response, cx)
-                    })
-                    .detach();
-            }
-            _ => {}
-        }
+        self.notification_store.update(cx, |store, cx| {
+            store.respond_to_notification(notification, response, cx);
+        });
     }
 }
 

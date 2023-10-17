@@ -36,6 +36,9 @@ pub enum NotificationEvent {
     NotificationRemoved {
         entry: NotificationEntry,
     },
+    NotificationRead {
+        entry: NotificationEntry,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -272,7 +275,13 @@ impl NotificationStore {
 
             if let Some(existing_notification) = cursor.item() {
                 if existing_notification.id == id {
-                    if new_notification.is_none() {
+                    if let Some(new_notification) = &new_notification {
+                        if new_notification.is_read {
+                            cx.emit(NotificationEvent::NotificationRead {
+                                entry: new_notification.clone(),
+                            });
+                        }
+                    } else {
                         cx.emit(NotificationEvent::NotificationRemoved {
                             entry: existing_notification.clone(),
                         });
@@ -302,6 +311,31 @@ impl NotificationStore {
             old_range,
             new_count,
         });
+    }
+
+    pub fn respond_to_notification(
+        &mut self,
+        notification: Notification,
+        response: bool,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match notification {
+            Notification::ContactRequest { sender_id } => {
+                self.user_store
+                    .update(cx, |store, cx| {
+                        store.respond_to_contact_request(sender_id, response, cx)
+                    })
+                    .detach();
+            }
+            Notification::ChannelInvitation { channel_id, .. } => {
+                self.channel_store
+                    .update(cx, |store, cx| {
+                        store.respond_to_channel_invite(channel_id, response, cx)
+                    })
+                    .detach();
+            }
+            _ => {}
+        }
     }
 }
 
