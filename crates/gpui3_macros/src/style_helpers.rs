@@ -475,27 +475,27 @@ fn border_prefixes() -> Vec<(&'static str, Vec<TokenStream2>, &'static str)> {
                 quote! { border_widths.bottom },
                 quote! { border_widths.left },
             ],
-            "todo!(docstring)",
+            "Sets the border width of the element. [Docs](https://tailwindcss.com/docs/border-width)"
         ),
         (
             "border_t",
             vec![quote! { border_widths.top }],
-            "todo!(docstring)",
+            "Sets the border width of the top side of the element. [Docs](https://tailwindcss.com/docs/border-width#individual-sides)"
         ),
         (
             "border_b",
             vec![quote! { border_widths.bottom }],
-            "todo!(docstring)",
+            "Sets the border width of the bottom side of the element. [Docs](https://tailwindcss.com/docs/border-width#individual-sides)"
         ),
         (
             "border_r",
             vec![quote! { border_widths.right }],
-            "todo!(docstring)",
+            "Sets the border width of the right side of the element. [Docs](https://tailwindcss.com/docs/border-width#individual-sides)"
         ),
         (
             "border_l",
             vec![quote! { border_widths.left }],
-            "todo!(docstring)",
+            "Sets the border width of the left side of the element. [Docs](https://tailwindcss.com/docs/border-width#individual-sides)"
         ),
         (
             "border_x",
@@ -503,7 +503,7 @@ fn border_prefixes() -> Vec<(&'static str, Vec<TokenStream2>, &'static str)> {
                 quote! { border_widths.left },
                 quote! { border_widths.right },
             ],
-            "todo!(docstring)",
+            "Sets the border width of the vertical sides of the element. [Docs](https://tailwindcss.com/docs/border-width#horizontal-and-vertical-sides)"
         ),
         (
             "border_y",
@@ -511,7 +511,7 @@ fn border_prefixes() -> Vec<(&'static str, Vec<TokenStream2>, &'static str)> {
                 quote! { border_widths.top },
                 quote! { border_widths.bottom },
             ],
-            "todo!(docstring)",
+            "Sets the border width of the horizontal sides of the element. [Docs](https://tailwindcss.com/docs/border-width#horizontal-and-vertical-sides)"
         ),
     ]
 }
