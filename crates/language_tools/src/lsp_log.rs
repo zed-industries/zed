@@ -376,7 +376,6 @@ impl LspLogView {
             .projects
             .get(&project.downgrade())
             .and_then(|project| project.servers.keys().copied().next());
-        let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, ""));
         let model_changes_subscription = cx.observe(&log_store, |this, store, cx| {
             (|| -> Option<()> {
                 let project_state = store.read(cx).projects.get(&this.project.downgrade())?;
@@ -425,7 +424,14 @@ impl LspLogView {
                 }
             }
         });
-        let (editor, _editor_subscription) = Self::editor_for_buffer(project.clone(), buffer, cx);
+        // TODO kb deduplicate
+        let editor = cx.add_view(|cx| {
+            let mut editor = Editor::multi_line(None, cx);
+            editor.set_read_only(true);
+            editor.move_to_end(&Default::default(), cx);
+            editor
+        });
+        let _editor_subscription = cx.subscribe(&editor, |_, _, event, cx| cx.emit(event.clone()));
         let mut this = Self {
             editor,
             _editor_subscription,
