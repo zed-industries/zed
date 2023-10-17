@@ -209,7 +209,7 @@ impl Database {
             let mut channels_to_remove: HashSet<ChannelId> = HashSet::default();
             channels_to_remove.insert(channel_id);
 
-            let graph = self.get_channel_descendants_2([channel_id], &*tx).await?;
+            let graph = self.get_channel_descendants([channel_id], &*tx).await?;
             for edge in graph.iter() {
                 channels_to_remove.insert(ChannelId::from_proto(edge.channel_id));
             }
@@ -218,7 +218,7 @@ impl Database {
                 let mut channels_to_keep = channel_path::Entity::find()
                     .filter(
                         channel_path::Column::ChannelId
-                            .is_in(channels_to_remove.clone())
+                            .is_in(channels_to_remove.iter().copied())
                             .and(
                                 channel_path::Column::IdPath
                                     .not_like(&format!("%/{}/%", channel_id)),
@@ -243,7 +243,7 @@ impl Database {
                 .await?;
 
             channel::Entity::delete_many()
-                .filter(channel::Column::Id.is_in(channels_to_remove.clone()))
+                .filter(channel::Column::Id.is_in(channels_to_remove.iter().copied()))
                 .exec(&*tx)
                 .await?;
 
@@ -484,7 +484,7 @@ impl Database {
         tx: &DatabaseTransaction,
     ) -> Result<ChannelsForUser> {
         let mut edges = self
-            .get_channel_descendants_2(channel_memberships.iter().map(|m| m.channel_id), &*tx)
+            .get_channel_descendants(channel_memberships.iter().map(|m| m.channel_id), &*tx)
             .await?;
 
         let mut role_for_channel: HashMap<ChannelId, ChannelRole> = HashMap::default();
@@ -515,7 +515,7 @@ impl Database {
         let mut channels_to_remove: HashSet<u64> = HashSet::default();
 
         let mut rows = channel::Entity::find()
-            .filter(channel::Column::Id.is_in(role_for_channel.keys().cloned()))
+            .filter(channel::Column::Id.is_in(role_for_channel.keys().copied()))
             .stream(&*tx)
             .await?;
 
@@ -877,7 +877,7 @@ impl Database {
         let channel_ids = self.get_channel_ancestors(channel_id, tx).await?;
 
         let rows = channel::Entity::find()
-            .filter(channel::Column::Id.is_in(channel_ids.clone()))
+            .filter(channel::Column::Id.is_in(channel_ids.iter().copied()))
             .filter(channel::Column::Visibility.eq(ChannelVisibility::Public))
             .all(&*tx)
             .await?;
@@ -928,40 +928,39 @@ impl Database {
             .stream(&*tx)
             .await?;
 
-        let mut is_admin = false;
-        let mut is_member = false;
+        let mut user_role: Option<ChannelRole> = None;
+        let max_role = |role| {
+            user_role
+                .map(|user_role| user_role.max(role))
+                .get_or_insert(role);
+        };
+
         let mut is_participant = false;
-        let mut is_banned = false;
         let mut current_channel_visibility = None;
 
         // note these channels are not iterated in any particular order,
         // our current logic takes the highest permission available.
         while let Some(row) = rows.next().await {
-            let (ch_id, role, visibility): (ChannelId, ChannelRole, ChannelVisibility) = row?;
+            let (membership_channel, role, visibility): (
+                ChannelId,
+                ChannelRole,
+                ChannelVisibility,
+            ) = row?;
             match role {
-                ChannelRole::Admin => is_admin = true,
-                ChannelRole::Member => is_member = true,
-                ChannelRole::Guest => {
-                    if visibility == ChannelVisibility::Public {
-                        is_participant = true
-                    }
+                ChannelRole::Admin | ChannelRole::Member | ChannelRole::Banned => max_role(role),
+                ChannelRole::Guest if visibility == ChannelVisibility::Public => {
+                    is_participant = true
                 }
-                ChannelRole::Banned => is_banned = true,
+                ChannelRole::Guest => {}
             }
-            if channel_id == ch_id {
+            if channel_id == membership_channel {
                 current_channel_visibility = Some(visibility);
             }
         }
         // free up database connection
         drop(rows);
 
-        Ok(if is_admin {
-            Some(ChannelRole::Admin)
-        } else if is_member {
-            Some(ChannelRole::Member)
-        } else if is_banned {
-            Some(ChannelRole::Banned)
-        } else if is_participant {
+        if is_participant && user_role.is_none() {
             if current_channel_visibility.is_none() {
                 current_channel_visibility = channel::Entity::find()
                     .filter(channel::Column::Id.eq(channel_id))
@@ -970,13 +969,11 @@ impl Database {
                     .map(|channel| channel.visibility);
             }
             if current_channel_visibility == Some(ChannelVisibility::Public) {
-                Some(ChannelRole::Guest)
-            } else {
-                None
+                user_role = Some(ChannelRole::Guest);
             }
-        } else {
-            None
-        })
+        }
+
+        Ok(user_role)
     }
 
     /// Returns the channel ancestors in arbitrary order
@@ -1007,7 +1004,7 @@ impl Database {
     // Returns the channel desendants as a sorted list of edges for further processing.
     // The edges are sorted such that you will see unknown channel ids as children
     // before you see them as parents.
-    async fn get_channel_descendants_2(
+    async fn get_channel_descendants(
         &self,
         channel_ids: impl IntoIterator<Item = ChannelId>,
         tx: &DatabaseTransaction,

@@ -972,7 +972,6 @@ impl ChannelStore {
 
         let mut all_user_ids = Vec::new();
         let channel_participants = payload.channel_participants;
-        dbg!(&channel_participants);
         for entry in &channel_participants {
             for user_id in entry.participant_user_ids.iter() {
                 if let Err(ix) = all_user_ids.binary_search(user_id) {
