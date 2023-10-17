@@ -64,35 +64,35 @@ fn generate_methods() -> Vec<TokenStream2> {
         }
     }
 
-    for (prefix, fields) in corner_prefixes() {
+    for (prefix, fields, prefix_doc_string) in corner_prefixes() {
         methods.push(generate_custom_value_setter(
             prefix,
             quote! { AbsoluteLength },
             &fields,
-            "todo!(docstring)",
+            prefix_doc_string,
         ));
 
-        for (suffix, radius_tokens, doc_string) in corner_suffixes() {
+        for (suffix, radius_tokens, suffix_doc_string) in corner_suffixes() {
             methods.push(generate_predefined_setter(
                 prefix,
                 suffix,
                 &fields,
                 &radius_tokens,
                 false,
-                doc_string,
+                &format!("{prefix_doc_string}\n\n{suffix_doc_string}"),
             ));
         }
     }
 
-    for (prefix, fields) in border_prefixes() {
-        for (suffix, width_tokens, doc_string) in border_suffixes() {
+    for (prefix, fields, prefix_doc_string) in border_prefixes() {
+        for (suffix, width_tokens, suffix_doc_string) in border_suffixes() {
             methods.push(generate_predefined_setter(
                 prefix,
                 suffix,
                 &fields,
                 &width_tokens,
                 false,
-                doc_string,
+                &format!("{prefix_doc_string}\n\n{suffix_doc_string}"),
             ));
         }
     }
@@ -385,7 +385,7 @@ fn box_suffixes() -> Vec<(&'static str, TokenStream2, &'static str)> {
     ]
 }
 
-fn corner_prefixes() -> Vec<(&'static str, Vec<TokenStream2>)> {
+fn corner_prefixes() -> Vec<(&'static str, Vec<TokenStream2>, &'static str)> {
     vec![
         (
             "rounded",
@@ -395,6 +395,7 @@ fn corner_prefixes() -> Vec<(&'static str, Vec<TokenStream2>)> {
                 quote! { corner_radii.bottom_right },
                 quote! { corner_radii.bottom_left },
             ],
+            "todo!(docstring)",
         ),
         (
             "rounded_t",
@@ -402,6 +403,7 @@ fn corner_prefixes() -> Vec<(&'static str, Vec<TokenStream2>)> {
                 quote! { corner_radii.top_left },
                 quote! { corner_radii.top_right },
             ],
+            "todo!(docstring)",
         ),
         (
             "rounded_b",
@@ -409,6 +411,7 @@ fn corner_prefixes() -> Vec<(&'static str, Vec<TokenStream2>)> {
                 quote! { corner_radii.bottom_left },
                 quote! { corner_radii.bottom_right },
             ],
+            "todo!(docstring)",
         ),
         (
             "rounded_r",
@@ -416,6 +419,7 @@ fn corner_prefixes() -> Vec<(&'static str, Vec<TokenStream2>)> {
                 quote! { corner_radii.top_right },
                 quote! { corner_radii.bottom_right },
             ],
+            "todo!(docstring)",
         ),
         (
             "rounded_l",
@@ -423,11 +427,28 @@ fn corner_prefixes() -> Vec<(&'static str, Vec<TokenStream2>)> {
                 quote! { corner_radii.top_left },
                 quote! { corner_radii.bottom_left },
             ],
+            "todo!(docstring)",
         ),
-        ("rounded_tl", vec![quote! { corner_radii.top_left }]),
-        ("rounded_tr", vec![quote! { corner_radii.top_right }]),
-        ("rounded_bl", vec![quote! { corner_radii.bottom_left }]),
-        ("rounded_br", vec![quote! { corner_radii.bottom_right }]),
+        (
+            "rounded_tl",
+            vec![quote! { corner_radii.top_left }],
+            "todo!(docstring)",
+        ),
+        (
+            "rounded_tr",
+            vec![quote! { corner_radii.top_right }],
+            "todo!(docstring)",
+        ),
+        (
+            "rounded_bl",
+            vec![quote! { corner_radii.bottom_left }],
+            "todo!(docstring)",
+        ),
+        (
+            "rounded_br",
+            vec![quote! { corner_radii.bottom_right }],
+            "todo!(docstring)",
+        ),
     ]
 }
 
@@ -444,7 +465,7 @@ fn corner_suffixes() -> Vec<(&'static str, TokenStream2, &'static str)> {
     ]
 }
 
-fn border_prefixes() -> Vec<(&'static str, Vec<TokenStream2>)> {
+fn border_prefixes() -> Vec<(&'static str, Vec<TokenStream2>, &'static str)> {
     vec![
         (
             "border",
@@ -454,17 +475,35 @@ fn border_prefixes() -> Vec<(&'static str, Vec<TokenStream2>)> {
                 quote! { border_widths.bottom },
                 quote! { border_widths.left },
             ],
+            "todo!(docstring)",
         ),
-        ("border_t", vec![quote! { border_widths.top }]),
-        ("border_b", vec![quote! { border_widths.bottom }]),
-        ("border_r", vec![quote! { border_widths.right }]),
-        ("border_l", vec![quote! { border_widths.left }]),
+        (
+            "border_t",
+            vec![quote! { border_widths.top }],
+            "todo!(docstring)",
+        ),
+        (
+            "border_b",
+            vec![quote! { border_widths.bottom }],
+            "todo!(docstring)",
+        ),
+        (
+            "border_r",
+            vec![quote! { border_widths.right }],
+            "todo!(docstring)",
+        ),
+        (
+            "border_l",
+            vec![quote! { border_widths.left }],
+            "todo!(docstring)",
+        ),
         (
             "border_x",
             vec![
                 quote! { border_widths.left },
                 quote! { border_widths.right },
             ],
+            "todo!(docstring)",
         ),
         (
             "border_y",
@@ -472,6 +511,7 @@ fn border_prefixes() -> Vec<(&'static str, Vec<TokenStream2>)> {
                 quote! { border_widths.top },
                 quote! { border_widths.bottom },
             ],
+            "todo!(docstring)",
         ),
     ]
 }
