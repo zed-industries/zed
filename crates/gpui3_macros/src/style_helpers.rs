@@ -36,6 +36,7 @@ fn generate_methods() -> Vec<TokenStream2> {
                 quote! { DefiniteLength }
             },
             &fields,
+            prefix_doc_string,
         ));
 
         for (suffix, length_tokens, suffix_doc_string) in box_suffixes() {
@@ -68,6 +69,7 @@ fn generate_methods() -> Vec<TokenStream2> {
             prefix,
             quote! { AbsoluteLength },
             &fields,
+            "todo!(docstring)",
         ));
 
         for (suffix, radius_tokens, doc_string) in corner_suffixes() {
@@ -142,6 +144,7 @@ fn generate_custom_value_setter(
     prefix: &'static str,
     length_type: TokenStream2,
     fields: &Vec<TokenStream2>,
+    doc_string: &str,
 ) -> TokenStream2 {
     let method_name = format_ident!("{}", prefix);
 
@@ -159,6 +162,7 @@ fn generate_custom_value_setter(
         .collect::<Vec<_>>();
 
     let method = quote! {
+        #[doc = #doc_string]
         fn #method_name(mut self, length: impl std::clone::Clone + Into<gpui3::#length_type>) -> Self where Self: std::marker::Sized {
             let mut style = self.declared_style();
             #(#field_assignments)*
@@ -171,7 +175,12 @@ fn generate_custom_value_setter(
 
 fn box_prefixes() -> Vec<(&'static str, bool, Vec<TokenStream2>, &'static str)> {
     vec![
-        ("w", true, vec![quote! { size.width }], "todo!(docstring)"),
+        (
+            "w",
+            true,
+            vec![quote! { size.width }],
+            "Sets the width of the element. [Docs](https://tailwindcss.com/docs/width)",
+        ),
         ("h", true, vec![quote! { size.height }], "todo!(docstring)"),
         (
             "size",
