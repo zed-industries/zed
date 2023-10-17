@@ -143,7 +143,8 @@ impl Database {
                     channel_id: ActiveValue::Set(channel_id_to_join),
                     user_id: ActiveValue::Set(user_id),
                     accepted: ActiveValue::Set(true),
-                    role: ActiveValue::Set(ChannelRole::Guest),
+                    // TODO: change this back to Guest.
+                    role: ActiveValue::Set(ChannelRole::Member),
                 })
                 .exec(&*tx)
                 .await?;

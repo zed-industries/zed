@@ -18,12 +18,12 @@ fn test_update_channels(cx: &mut AppContext) {
                 proto::Channel {
                     id: 1,
                     name: "b".to_string(),
-                    visibility: proto::ChannelVisibility::ChannelMembers as i32,
+                    visibility: proto::ChannelVisibility::Members as i32,
                 },
                 proto::Channel {
                     id: 2,
                     name: "a".to_string(),
-                    visibility: proto::ChannelVisibility::ChannelMembers as i32,
+                    visibility: proto::ChannelVisibility::Members as i32,
                 },
             ],
             channel_permissions: vec![proto::ChannelPermission {
@@ -51,12 +51,12 @@ fn test_update_channels(cx: &mut AppContext) {
                 proto::Channel {
                     id: 3,
                     name: "x".to_string(),
-                    visibility: proto::ChannelVisibility::ChannelMembers as i32,
+                    visibility: proto::ChannelVisibility::Members as i32,
                 },
                 proto::Channel {
                     id: 4,
                     name: "y".to_string(),
-                    visibility: proto::ChannelVisibility::ChannelMembers as i32,
+                    visibility: proto::ChannelVisibility::Members as i32,
                 },
             ],
             insert_edge: vec![
@@ -96,17 +96,17 @@ fn test_dangling_channel_paths(cx: &mut AppContext) {
                 proto::Channel {
                     id: 0,
                     name: "a".to_string(),
-                    visibility: proto::ChannelVisibility::ChannelMembers as i32,
+                    visibility: proto::ChannelVisibility::Members as i32,
                 },
                 proto::Channel {
                     id: 1,
                     name: "b".to_string(),
-                    visibility: proto::ChannelVisibility::ChannelMembers as i32,
+                    visibility: proto::ChannelVisibility::Members as i32,
                 },
                 proto::Channel {
                     id: 2,
                     name: "c".to_string(),
-                    visibility: proto::ChannelVisibility::ChannelMembers as i32,
+                    visibility: proto::ChannelVisibility::Members as i32,
                 },
             ],
             insert_edge: vec![
@@ -165,7 +165,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
         channels: vec![proto::Channel {
             id: channel_id,
             name: "the-channel".to_string(),
-            visibility: proto::ChannelVisibility::ChannelMembers as i32,
+            visibility: proto::ChannelVisibility::Members as i32,
         }],
         ..Default::default()
     });
