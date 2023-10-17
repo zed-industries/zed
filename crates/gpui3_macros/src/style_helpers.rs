@@ -221,33 +221,33 @@ fn box_prefixes() -> Vec<(&'static str, bool, Vec<TokenStream2>, &'static str)> 
                 quote! { margin.left },
                 quote! { margin.right },
             ],
-            "todo!(docstring)",
+            "Sets the margin of the element. [Docs](https://tailwindcss.com/docs/margin)"
         ),
-        ("mt", true, vec![quote! { margin.top }], "todo!(docstring)"),
+        ("mt", true, vec![quote! { margin.top }], "Sets the top margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)"),
         (
             "mb",
             true,
             vec![quote! { margin.bottom }],
-            "todo!(docstring)",
+            "Sets the bottom margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)"
         ),
         (
             "my",
             true,
             vec![quote! { margin.top }, quote! { margin.bottom }],
-            "todo!(docstring)",
+            "Sets the vertical margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-vertical-margin)"
         ),
         (
             "mx",
             true,
             vec![quote! { margin.left }, quote! { margin.right }],
-            "todo!(docstring)",
+            "Sets the horizontal margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-horizontal-margin)"
         ),
-        ("ml", true, vec![quote! { margin.left }], "todo!(docstring)"),
+        ("ml", true, vec![quote! { margin.left }], "Sets the left margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)"),
         (
             "mr",
             true,
             vec![quote! { margin.right }],
-            "todo!(docstring)",
+            "Sets the right margin of the element. [Docs](https://tailwindcss.com/docs/margin#add-margin-to-a-single-side)"
         ),
         (
             "p",
