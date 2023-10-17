@@ -1,6 +1,6 @@
 use crate::{
-    div, AnonymousElement, AnyElement, BorrowWindow, Bounds, Clickable, Div, DivState, Element,
-    ElementId, ElementIdentity, IdentifiedElement, Interactive, IntoAnyElement, LayoutId,
+    div, Active, AnonymousElement, AnyElement, BorrowWindow, Bounds, Click, Div, DivState, Element,
+    ElementId, ElementIdentity, Hover, IdentifiedElement, Interactive, IntoAnyElement, LayoutId,
     MouseEventListeners, Pixels, SharedString, StyleRefinement, Styled, ViewContext,
 };
 use futures::FutureExt;
@@ -141,4 +141,23 @@ where
     }
 }
 
-impl<V> Clickable for Img<V, IdentifiedElement> where V: 'static + Send + Sync {}
+impl<V, K> Hover for Img<V, K>
+where
+    V: 'static + Send + Sync,
+    K: ElementIdentity,
+{
+    fn set_hover_style(&mut self, style: StyleRefinement) {
+        self.base.set_hover_style(style);
+    }
+}
+
+impl<V> Click for Img<V, IdentifiedElement> where V: 'static + Send + Sync {}
+
+impl<V> Active for Img<V, IdentifiedElement>
+where
+    V: 'static + Send + Sync,
+{
+    fn set_active_style(&mut self, style: StyleRefinement) {
+        self.base.set_active_style(style)
+    }
+}

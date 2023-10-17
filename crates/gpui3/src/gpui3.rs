@@ -1,3 +1,4 @@
+mod active;
 mod app;
 mod assets;
 mod color;
@@ -6,6 +7,7 @@ mod elements;
 mod events;
 mod executor;
 mod geometry;
+mod hover;
 mod image_cache;
 mod interactive;
 mod platform;
@@ -20,6 +22,7 @@ mod util;
 mod view;
 mod window;
 
+pub use active::*;
 pub use anyhow::Result;
 pub use app::*;
 pub use assets::*;
@@ -30,6 +33,7 @@ pub use events::*;
 pub use executor::*;
 pub use geometry::*;
 pub use gpui3_macros::*;
+pub use hover::*;
 pub use image_cache::*;
 pub use interactive::*;
 pub use platform::*;

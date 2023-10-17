@@ -1,9 +1,9 @@
 use crate::{
-    AnonymousElement, AnyElement, AppContext, BorrowWindow, Bounds, Clickable, DispatchPhase,
-    Element, ElementId, ElementIdentity, IdentifiedElement, Interactive, IntoAnyElement, LayoutId,
-    MouseClickEvent, MouseDownEvent, MouseEventListeners, MouseMoveEvent, MouseUpEvent, Overflow,
-    ParentElement, Pixels, Point, ScrollWheelEvent, SharedString, Style, StyleRefinement, Styled,
-    ViewContext,
+    Active, AnonymousElement, AnyElement, AppContext, BorrowWindow, Bounds, Click, DispatchPhase,
+    Element, ElementId, ElementIdentity, Hover, IdentifiedElement, Interactive, IntoAnyElement,
+    LayoutId, MouseClickEvent, MouseDownEvent, MouseEventListeners, MouseMoveEvent, MouseUpEvent,
+    Overflow, ParentElement, Pixels, Point, ScrollWheelEvent, SharedString, Style, StyleRefinement,
+    Styled, ViewContext,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -449,7 +449,26 @@ where
     }
 }
 
-impl<V> Clickable for Div<V, IdentifiedElement> where V: 'static + Send + Sync {}
+impl<V, K> Hover for Div<V, K>
+where
+    V: 'static + Send + Sync,
+    K: ElementIdentity,
+{
+    fn set_hover_style(&mut self, style: StyleRefinement) {
+        self.hover_style = style;
+    }
+}
+
+impl<V> Click for Div<V, IdentifiedElement> where V: 'static + Send + Sync {}
+
+impl<V> Active for Div<V, IdentifiedElement>
+where
+    V: 'static + Send + Sync,
+{
+    fn set_active_style(&mut self, style: StyleRefinement) {
+        self.active_style = style;
+    }
+}
 
 fn paint_hover_listener<V>(bounds: Bounds<Pixels>, cx: &mut ViewContext<V>)
 where

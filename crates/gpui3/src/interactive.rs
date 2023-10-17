@@ -146,7 +146,7 @@ pub trait Interactive: Element {
     }
 }
 
-pub trait Clickable: Interactive {
+pub trait Click: Interactive {
     fn on_click(
         mut self,
         handler: impl Fn(&mut Self::ViewState, &MouseClickEvent, &mut ViewContext<Self::ViewState>)

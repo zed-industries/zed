@@ -1,6 +1,6 @@
 pub use gpui3::{
-    div, Clickable, Element, Hoverable, IntoAnyElement, ParentElement, ScrollState, Styled,
-    ViewContext, WindowContext,
+    div, Click, Element, Hover, IntoAnyElement, ParentElement, ScrollState, Styled, ViewContext,
+    WindowContext,
 };
 
 pub use crate::{theme, ButtonVariant, ElementExt, Theme};
