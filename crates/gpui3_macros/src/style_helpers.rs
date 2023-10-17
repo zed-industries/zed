@@ -181,12 +181,12 @@ fn box_prefixes() -> Vec<(&'static str, bool, Vec<TokenStream2>, &'static str)> 
             vec![quote! { size.width }],
             "Sets the width of the element. [Docs](https://tailwindcss.com/docs/width)",
         ),
-        ("h", true, vec![quote! { size.height }], "todo!(docstring)"),
+        ("h", true, vec![quote! { size.height }], "Sets the height of the element. [Docs](https://tailwindcss.com/docs/height)"),
         (
             "size",
             true,
             vec![quote! {size.width}, quote! {size.height}],
-            "Sets the height of the element. [Docs](https://tailwindcss.com/docs/height)",
+            "Sets the width and height of the element."
         ),
         (
             "min_w",
