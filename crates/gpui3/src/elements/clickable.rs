@@ -1,71 +1,90 @@
 use crate::{
-    AnyElement, Bounds, DispatchPhase, Element, IdentifiedElement, Interactive, IntoAnyElement,
-    MouseDownEvent, MouseEventListeners, MouseUpEvent, ParentElement, Pixels, Styled, ViewContext,
+    AnyElement, Bounds, DispatchPhase, Element, ElementId, ElementKind, Hoverable,
+    IdentifiedElement, IntoAnyElement, LayoutId, LayoutNode, MouseDownEvent, MouseUpEvent, Pixels,
+    SharedString, StyleRefinement, Styled, ViewContext,
 };
 use parking_lot::Mutex;
-use refineable::Cascade;
+use refineable::CascadeSlot;
 use smallvec::SmallVec;
 use std::sync::Arc;
 
-pub type ClickListener<S> =
-    dyn Fn(&mut S, (&MouseDownEvent, &MouseUpEvent), &mut ViewContext<S>) + Send + Sync + 'static;
+pub trait Clickable: Element + Sized {
+    fn active_style(&mut self) -> &mut StyleRefinement;
+    fn listeners(&mut self) -> &mut ClickListeners<Self::ViewState>;
 
-pub struct Clickable<E: Element> {
+    fn on_click(
+        &mut self,
+        f: impl Fn(&mut Self::ViewState, &MouseClickEvent, &mut ViewContext<Self::ViewState>)
+            + 'static
+            + Send
+            + Sync,
+    ) where
+        Self: Sized,
+    {
+        self.listeners().push(Arc::new(f));
+    }
+
+    fn active(mut self, f: impl FnOnce(&mut StyleRefinement) -> &mut StyleRefinement) -> Self
+    where
+        Self: Sized,
+    {
+        f(self.active_style());
+        self
+    }
+}
+
+pub type ClickListeners<V> =
+    SmallVec<[Arc<dyn Fn(&mut V, &MouseClickEvent, &mut ViewContext<V>) + Send + Sync>; 1]>;
+
+pub struct ClickableElementState<E: 'static + Send + Sync> {
+    mouse_down: Arc<Mutex<Option<MouseDownEvent>>>,
+    child_state: E,
+}
+
+pub struct MouseClickEvent {
+    pub down: MouseDownEvent,
+    pub up: MouseUpEvent,
+}
+
+pub struct ClickableElement<E: Element> {
     child: E,
-    listener: Arc<ClickListener<E::ViewState>>,
+    listeners: ClickListeners<E::ViewState>,
+    active_style: StyleRefinement,
+    cascade_slot: CascadeSlot,
 }
 
-pub struct ClickableState<S> {
-    last_mouse_down: Arc<Mutex<Option<MouseDownEvent>>>,
-    child_state: S,
-}
-
-impl<E: Element> Clickable<E> {
-    pub fn new(child: E, listener: Arc<ClickListener<E::ViewState>>) -> Self {
-        Self { child, listener }
+impl<E: Element> ClickableElement<E> {
+    pub fn replace_child<E2: Element<ViewState = E::ViewState>>(
+        self,
+        replace: impl FnOnce(E) -> E2,
+    ) -> ClickableElement<E2> {
+        ClickableElement {
+            child: replace(self.child),
+            listeners: self.listeners,
+            active_style: self.active_style,
+            cascade_slot: self.cascade_slot,
+        }
     }
 }
 
-impl<E> Styled for Clickable<E>
+impl<E> IntoAnyElement<E::ViewState> for ClickableElement<E>
 where
-    E: Styled + IdentifiedElement,
+    E: Styled + Element,
 {
-    type Style = E::Style;
-
-    fn style_cascade(&mut self) -> &mut Cascade<E::Style> {
-        self.child.style_cascade()
-    }
-
-    fn declared_style(&mut self) -> &mut <Self::Style as refineable::Refineable>::Refinement {
-        self.child.declared_style()
-    }
-}
-
-impl<S, E> Interactive<S> for Clickable<E>
-where
-    S: 'static + Send + Sync,
-    E: IdentifiedElement + Interactive<S>,
-{
-    fn listeners(&mut self) -> &mut MouseEventListeners<S> {
-        self.child.listeners()
-    }
-}
-
-impl<E: IdentifiedElement> IntoAnyElement<E::ViewState> for Clickable<E> {
     fn into_any(self) -> AnyElement<E::ViewState> {
         AnyElement::new(self)
     }
 }
 
-impl<E> Element for Clickable<E>
+impl<E> Element for ClickableElement<E>
 where
-    E: IdentifiedElement,
+    E: Styled + Element,
 {
     type ViewState = E::ViewState;
-    type ElementState = ClickableState<E::ElementState>;
+    type ElementState = ClickableElementState<E::ElementState>;
 
-    fn id(&self) -> Option<crate::ElementId> {
-        Some(IdentifiedElement::element_id(&self.child))
+    fn id(&self) -> Option<ElementId> {
+        self.child.id()
     }
 
     fn layout(
@@ -73,24 +92,33 @@ where
         state: &mut Self::ViewState,
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<Self::ViewState>,
-    ) -> (crate::LayoutId, Self::ElementState) {
+    ) -> (LayoutId, Self::ElementState) {
         if let Some(element_state) = element_state {
+            if element_state.mouse_down.lock().is_some() {
+                self.child
+                    .style_cascade()
+                    .set(self.cascade_slot, Some(self.active_style.clone()));
+            }
+
             let (layout_id, child_state) =
                 self.child
                     .layout(state, Some(element_state.child_state), cx);
-
-            let element_state = ClickableState {
-                last_mouse_down: element_state.last_mouse_down,
-                child_state,
-            };
-            (layout_id, element_state)
+            (
+                layout_id,
+                ClickableElementState {
+                    mouse_down: element_state.mouse_down,
+                    child_state,
+                },
+            )
         } else {
             let (layout_id, child_state) = self.child.layout(state, None, cx);
-            let element_state = ClickableState {
-                last_mouse_down: Default::default(),
-                child_state,
-            };
-            (layout_id, element_state)
+            (
+                layout_id,
+                ClickableElementState {
+                    mouse_down: Default::default(),
+                    child_state,
+                },
+            )
         }
     }
 
@@ -101,31 +129,39 @@ where
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<Self::ViewState>,
     ) {
-        let last_mouse_down = element_state.last_mouse_down.clone();
-        let is_some = last_mouse_down.lock().is_some();
+        if !self.listeners.is_empty() || self.active_style.is_some() {
+            if let Some(mouse_down) = element_state.mouse_down.lock().clone() {
+                self.child
+                    .style_cascade()
+                    .set(self.cascade_slot, Some(self.active_style.clone()));
+                let listeners = self.listeners.clone();
+                let mouse_down_mutex = element_state.mouse_down.clone();
+                cx.on_mouse_event(move |view, up: &MouseUpEvent, phase, cx| {
+                    if phase == DispatchPhase::Bubble && bounds.contains_point(up.position) {
+                        for listener in &*listeners {
+                            listener(
+                                view,
+                                &MouseClickEvent {
+                                    down: mouse_down.clone(),
+                                    up: up.clone(),
+                                },
+                                cx,
+                            );
+                        }
+                    }
 
-        if is_some {
-            let listener = self.listener.clone();
-            cx.on_mouse_event(move |view, up_event: &MouseUpEvent, phase, cx| {
-                if phase == DispatchPhase::Capture && !bounds.contains_point(up_event.position) {
-                    *last_mouse_down.lock() = None;
-                } else if phase == DispatchPhase::Bubble && bounds.contains_point(up_event.position)
-                {
-                    if let Some(down_event) = last_mouse_down.lock().take() {
-                        listener(view, (&down_event, up_event), cx);
-                    } else {
-                        log::error!("No mouse down event found for click event");
+                    mouse_down_mutex.lock().take();
+                    cx.notify();
+                });
+            } else {
+                let mouse_down_mutex = element_state.mouse_down.clone();
+                cx.on_mouse_event(move |_view, down: &MouseDownEvent, phase, cx| {
+                    if phase == DispatchPhase::Bubble && bounds.contains_point(down.position) {
+                        *mouse_down_mutex.lock() = Some(down.clone());
+                        cx.notify();
                     }
-                }
-            })
-        } else {
-            cx.on_mouse_event(move |_, event: &MouseDownEvent, phase, _| {
-                if phase == DispatchPhase::Bubble {
-                    if bounds.contains_point(event.position) {
-                        *last_mouse_down.lock() = Some(event.clone());
-                    }
-                }
-            })
+                });
+            }
         }
 
         self.child
@@ -133,12 +169,53 @@ where
     }
 }
 
-impl<E: IdentifiedElement + ParentElement> ParentElement for Clickable<E> {
-    type State = E::State;
+impl<E: Styled + IdentifiedElement> IdentifiedElement for ClickableElement<E> {}
 
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::State>; 2]> {
+impl<E, K> LayoutNode<E::ViewState, K> for ClickableElement<E>
+where
+    E: Element + LayoutNode<E::ViewState, K>,
+    K: ElementKind,
+{
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<E::ViewState>; 2]> {
         self.child.children_mut()
+    }
+
+    fn group_mut(&mut self) -> &mut Option<SharedString> {
+        self.child.group_mut()
     }
 }
 
-impl<E> IdentifiedElement for Clickable<E> where E: IdentifiedElement + Styled {}
+impl<E> Styled for ClickableElement<E>
+where
+    E: Styled + Element,
+{
+    fn style_cascade(&mut self) -> &mut crate::StyleCascade {
+        self.child.style_cascade()
+    }
+
+    fn computed_style(&mut self) -> &crate::Style {
+        self.child.computed_style()
+    }
+}
+
+impl<E> Hoverable for ClickableElement<E>
+where
+    E: Element + Hoverable,
+{
+    fn hover_style(&mut self) -> &mut StyleRefinement {
+        self.child.hover_style()
+    }
+}
+
+impl<E> Clickable for ClickableElement<E>
+where
+    E: Styled + IdentifiedElement,
+{
+    fn active_style(&mut self) -> &mut StyleRefinement {
+        &mut self.active_style
+    }
+
+    fn listeners(&mut self) -> &mut ClickListeners<Self::ViewState> {
+        &mut self.listeners
+    }
+}

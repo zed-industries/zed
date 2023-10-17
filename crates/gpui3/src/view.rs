@@ -148,7 +148,7 @@ impl<S: Send + Sync + 'static> ViewObject for View<S> {
     }
 
     fn layout(&mut self, cx: &mut WindowContext) -> (LayoutId, AnyBox) {
-        cx.with_element_id(IdentifiedElement::element_id(self), |cx| {
+        cx.with_element_id(IdentifiedElement::id(self), |cx| {
             self.state.update(cx, |state, cx| {
                 let mut element = (self.render)(state, cx);
                 let layout_id = element.layout(state, cx);
@@ -159,7 +159,7 @@ impl<S: Send + Sync + 'static> ViewObject for View<S> {
     }
 
     fn paint(&mut self, _: Bounds<Pixels>, element: &mut AnyBox, cx: &mut WindowContext) {
-        cx.with_element_id(IdentifiedElement::element_id(self), |cx| {
+        cx.with_element_id(IdentifiedElement::id(self), |cx| {
             self.state.update(cx, |state, cx| {
                 let element = element.downcast_mut::<AnyElement<S>>().unwrap();
                 element.paint(state, None, cx);

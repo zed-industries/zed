@@ -74,7 +74,7 @@ impl<S: Send + Sync + 'static> Element for Img<S> {
         cx: &mut ViewContext<Self::ViewState>,
     ) {
         let style = self.computed_style();
-
+        let corner_radii = style.corner_radii;
         style.paint(bounds, cx);
 
         if let Some(uri) = self.uri.clone() {
@@ -84,7 +84,7 @@ impl<S: Send + Sync + 'static> Element for Img<S> {
                 .now_or_never()
                 .and_then(ResultExt::log_err)
             {
-                let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
+                let corner_radii = corner_radii.to_pixels(bounds.size, cx.rem_size());
                 cx.stack(1, |cx| {
                     cx.paint_image(bounds, corner_radii, data, self.grayscale)
                         .log_err()
@@ -102,13 +102,13 @@ impl<S: Send + Sync + 'static> Element for Img<S> {
 }
 
 impl<S> Styled for Img<S> {
-    type Style = Style;
-
-    fn style_cascade(&mut self) -> &mut Cascade<Self::Style> {
-        &mut self.style
+    fn style_cascade(&mut self) -> &mut Cascade<Style> {
+        todo!("use layout node")
+        // &mut self.style
     }
 
-    fn declared_style(&mut self) -> &mut <Self::Style as refineable::Refineable>::Refinement {
-        self.style.base()
+    fn computed_style(&mut self) -> &Style {
+        todo!("use layout node")
+        // self.style.compute()
     }
 }

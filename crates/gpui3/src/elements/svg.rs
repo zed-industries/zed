@@ -65,7 +65,11 @@ impl<S: 'static + Send + Sync> Element for Svg<S> {
     ) where
         Self: Sized,
     {
-        let fill_color = self.computed_style().fill.and_then(|fill| fill.color());
+        let fill_color = self
+            .computed_style()
+            .fill
+            .as_ref()
+            .and_then(|fill| fill.color());
         if let Some((path, fill_color)) = self.path.as_ref().zip(fill_color) {
             cx.paint_svg(bounds, path.clone(), fill_color).log_err();
         }
@@ -73,13 +77,11 @@ impl<S: 'static + Send + Sync> Element for Svg<S> {
 }
 
 impl<S: 'static + Send + Sync> Styled for Svg<S> {
-    type Style = Style;
-
-    fn style_cascade(&mut self) -> &mut refineable::Cascade<Self::Style> {
-        &mut self.style
+    fn style_cascade(&mut self) -> &mut crate::StyleCascade {
+        todo!("use layout node")
     }
 
-    fn declared_style(&mut self) -> &mut <Self::Style as refineable::Refineable>::Refinement {
-        self.style.base()
+    fn computed_style(&mut self) -> &Style {
+        todo!("use layout node")
     }
 }
