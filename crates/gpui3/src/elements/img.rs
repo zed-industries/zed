@@ -1,15 +1,13 @@
 use crate::{
-    AnonymousElementKind, AnyElement, BorrowWindow, Bounds, ClickListeners, Clickable,
-    ClickableElement, ClickableElementState, Element, ElementId, ElementKind, Hoverable,
-    HoverableElement, IdentifiedElement, IdentifiedElementKind, IntoAnyElement, LayoutId,
-    LayoutNodeElement, Pixels, SharedString, Style, StyleRefinement, Styled, ViewContext,
+    div, AnonymousElementKind, AnyElement, BorrowWindow, Bounds, Div, DivState, Element, ElementId,
+    ElementKind, IdentifiedElement, IdentifiedElementKind, IntoAnyElement, LayoutId, Pixels,
+    SharedString, StyleRefinement, Styled, ViewContext,
 };
 use futures::FutureExt;
-use refineable::Cascade;
 use util::ResultExt;
 
 pub struct Img<V: 'static + Send + Sync, K: ElementKind = AnonymousElementKind> {
-    layout_node: ClickableElement<HoverableElement<LayoutNodeElement<V, K>>>,
+    base: Div<V, K>,
     uri: Option<SharedString>,
     grayscale: bool,
 }
@@ -19,7 +17,7 @@ where
     V: 'static + Send + Sync,
 {
     Img {
-        layout_node: ClickableElement::new(HoverableElement::new(LayoutNodeElement::new())),
+        base: div(),
         uri: None,
         grayscale: false,
     }
@@ -44,9 +42,7 @@ where
 impl<V: 'static + Send + Sync> Img<V, AnonymousElementKind> {
     pub fn id(self, id: impl Into<ElementId>) -> Img<V, IdentifiedElementKind> {
         Img {
-            layout_node: self.layout_node.replace_child(|hoverable| {
-                hoverable.replace_child(|layout_node| layout_node.identify(id))
-            }),
+            base: self.base.id(id),
             uri: self.uri,
             grayscale: self.grayscale,
         }
@@ -69,10 +65,10 @@ where
     K: ElementKind,
 {
     type ViewState = V;
-    type ElementState = ClickableElementState<()>;
+    type ElementState = DivState;
 
     fn id(&self) -> Option<crate::ElementId> {
-        self.layout_node.id()
+        self.base.id()
     }
 
     fn layout(
@@ -84,7 +80,7 @@ where
     where
         Self: Sized,
     {
-        self.layout_node.layout(view_state, element_state, cx)
+        self.base.layout(view_state, element_state, cx)
     }
 
     fn paint(
@@ -95,10 +91,10 @@ where
         cx: &mut ViewContext<Self::ViewState>,
     ) {
         cx.stack(1, |cx| {
-            self.layout_node.paint(bounds, view, element_state, cx);
+            self.base.paint(bounds, view, element_state, cx);
         });
 
-        let style = self.computed_style();
+        let style = self.base.compute_style(bounds, element_state, cx);
         let corner_radii = style.corner_radii;
 
         if let Some(uri) = self.uri.clone() {
@@ -127,7 +123,7 @@ where
 
 impl<V: 'static + Send + Sync> IdentifiedElement for Img<V, IdentifiedElementKind> {
     fn id(&self) -> ElementId {
-        IdentifiedElement::id(&self.layout_node)
+        IdentifiedElement::id(&self.base)
     }
 }
 
@@ -136,27 +132,7 @@ where
     V: 'static + Send + Sync,
     K: ElementKind,
 {
-    fn style_cascade(&mut self) -> &mut Cascade<Style> {
-        self.layout_node.style_cascade()
-    }
-
-    fn computed_style(&mut self) -> &Style {
-        self.layout_node.computed_style()
-    }
-}
-
-impl<V: 'static + Send + Sync, K: ElementKind> Hoverable for Img<V, K> {
-    fn hover_style(&mut self) -> &mut StyleRefinement {
-        self.layout_node.hover_style()
-    }
-}
-
-impl<V: 'static + Send + Sync> Clickable for Img<V, IdentifiedElementKind> {
-    fn active_style(&mut self) -> &mut StyleRefinement {
-        self.layout_node.active_style()
-    }
-
-    fn listeners(&mut self) -> &mut ClickListeners<V> {
-        self.layout_node.listeners()
+    fn style(&mut self) -> &mut StyleRefinement {
+        self.base.style()
     }
 }

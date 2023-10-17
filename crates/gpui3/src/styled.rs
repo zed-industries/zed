@@ -1,16 +1,12 @@
 use crate::{
     self as gpui3, hsla, point, px, relative, rems, AlignItems, Display, Fill, FlexDirection, Hsla,
-    JustifyContent, Length, Position, SharedString, Style, StyleCascade, StyleRefinement,
+    JustifyContent, Length, Position, SharedString, StyleRefinement,
 };
 use crate::{BoxShadow, TextStyleRefinement};
 use smallvec::smallvec;
 
 pub trait Styled {
-    fn style_cascade(&mut self) -> &mut StyleCascade;
-    fn computed_style(&mut self) -> &Style;
-    fn base_style(&mut self) -> &mut StyleRefinement {
-        self.style_cascade().base()
-    }
+    fn style(&mut self) -> &mut StyleRefinement;
 
     gpui3_macros::style_helpers!();
 
@@ -18,8 +14,8 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().size.width = Some(relative(1.).into());
-        self.base_style().size.height = Some(relative(1.).into());
+        self.style().size.width = Some(relative(1.).into());
+        self.style().size.height = Some(relative(1.).into());
         self
     }
 
@@ -27,7 +23,7 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().position = Some(Position::Relative);
+        self.style().position = Some(Position::Relative);
         self
     }
 
@@ -35,7 +31,7 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().position = Some(Position::Absolute);
+        self.style().position = Some(Position::Absolute);
         self
     }
 
@@ -43,7 +39,7 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().display = Some(Display::Block);
+        self.style().display = Some(Display::Block);
         self
     }
 
@@ -51,7 +47,7 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().display = Some(Display::Flex);
+        self.style().display = Some(Display::Flex);
         self
     }
 
@@ -59,7 +55,7 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().flex_direction = Some(FlexDirection::Column);
+        self.style().flex_direction = Some(FlexDirection::Column);
         self
     }
 
@@ -67,7 +63,7 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().flex_direction = Some(FlexDirection::Row);
+        self.style().flex_direction = Some(FlexDirection::Row);
         self
     }
 
@@ -75,9 +71,9 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().flex_grow = Some(1.);
-        self.base_style().flex_shrink = Some(1.);
-        self.base_style().flex_basis = Some(relative(0.).into());
+        self.style().flex_grow = Some(1.);
+        self.style().flex_shrink = Some(1.);
+        self.style().flex_basis = Some(relative(0.).into());
         self
     }
 
@@ -85,9 +81,9 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().flex_grow = Some(1.);
-        self.base_style().flex_shrink = Some(1.);
-        self.base_style().flex_basis = Some(Length::Auto);
+        self.style().flex_grow = Some(1.);
+        self.style().flex_shrink = Some(1.);
+        self.style().flex_basis = Some(Length::Auto);
         self
     }
 
@@ -95,9 +91,9 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().flex_grow = Some(0.);
-        self.base_style().flex_shrink = Some(1.);
-        self.base_style().flex_basis = Some(Length::Auto);
+        self.style().flex_grow = Some(0.);
+        self.style().flex_shrink = Some(1.);
+        self.style().flex_basis = Some(Length::Auto);
         self
     }
 
@@ -105,8 +101,8 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().flex_grow = Some(0.);
-        self.base_style().flex_shrink = Some(0.);
+        self.style().flex_grow = Some(0.);
+        self.style().flex_shrink = Some(0.);
         self
     }
 
@@ -114,7 +110,7 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().flex_grow = Some(1.);
+        self.style().flex_grow = Some(1.);
         self
     }
 
@@ -122,7 +118,7 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().align_items = Some(AlignItems::FlexStart);
+        self.style().align_items = Some(AlignItems::FlexStart);
         self
     }
 
@@ -130,7 +126,7 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().align_items = Some(AlignItems::FlexEnd);
+        self.style().align_items = Some(AlignItems::FlexEnd);
         self
     }
 
@@ -138,7 +134,7 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().align_items = Some(AlignItems::Center);
+        self.style().align_items = Some(AlignItems::Center);
         self
     }
 
@@ -146,7 +142,7 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().justify_content = Some(JustifyContent::SpaceBetween);
+        self.style().justify_content = Some(JustifyContent::SpaceBetween);
         self
     }
 
@@ -154,7 +150,7 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().justify_content = Some(JustifyContent::Center);
+        self.style().justify_content = Some(JustifyContent::Center);
         self
     }
 
@@ -162,7 +158,7 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().justify_content = Some(JustifyContent::Start);
+        self.style().justify_content = Some(JustifyContent::Start);
         self
     }
 
@@ -170,7 +166,7 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().justify_content = Some(JustifyContent::End);
+        self.style().justify_content = Some(JustifyContent::End);
         self
     }
 
@@ -178,7 +174,7 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().justify_content = Some(JustifyContent::SpaceAround);
+        self.style().justify_content = Some(JustifyContent::SpaceAround);
         self
     }
 
@@ -187,7 +183,7 @@ pub trait Styled {
         F: Into<Fill>,
         Self: Sized,
     {
-        self.base_style().fill = Some(fill.into());
+        self.style().fill = Some(fill.into());
         self
     }
 
@@ -196,7 +192,7 @@ pub trait Styled {
         C: Into<Hsla>,
         Self: Sized,
     {
-        self.base_style().border_color = Some(border_color.into());
+        self.style().border_color = Some(border_color.into());
         self
     }
 
@@ -204,7 +200,7 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().box_shadow = Some(smallvec![
+        self.style().box_shadow = Some(smallvec![
             BoxShadow {
                 color: hsla(0., 0., 0., 0.1),
                 offset: point(px(0.), px(1.)),
@@ -225,7 +221,7 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().box_shadow = Some(Default::default());
+        self.style().box_shadow = Some(Default::default());
         self
     }
 
@@ -233,7 +229,7 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().box_shadow = Some(smallvec::smallvec![BoxShadow {
+        self.style().box_shadow = Some(smallvec::smallvec![BoxShadow {
             color: hsla(0., 0., 0., 0.05),
             offset: point(px(0.), px(1.)),
             blur_radius: px(2.),
@@ -246,7 +242,7 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().box_shadow = Some(smallvec![
+        self.style().box_shadow = Some(smallvec![
             BoxShadow {
                 color: hsla(0.5, 0., 0., 0.1),
                 offset: point(px(0.), px(4.)),
@@ -267,7 +263,7 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().box_shadow = Some(smallvec![
+        self.style().box_shadow = Some(smallvec![
             BoxShadow {
                 color: hsla(0., 0., 0., 0.1),
                 offset: point(px(0.), px(10.)),
@@ -288,7 +284,7 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().box_shadow = Some(smallvec![
+        self.style().box_shadow = Some(smallvec![
             BoxShadow {
                 color: hsla(0., 0., 0., 0.1),
                 offset: point(px(0.), px(20.)),
@@ -309,7 +305,7 @@ pub trait Styled {
     where
         Self: Sized,
     {
-        self.base_style().box_shadow = Some(smallvec![BoxShadow {
+        self.style().box_shadow = Some(smallvec![BoxShadow {
             color: hsla(0., 0., 0., 0.25),
             offset: point(px(0.), px(25.)),
             blur_radius: px(50.),
@@ -319,7 +315,7 @@ pub trait Styled {
     }
 
     fn text_style(&mut self) -> &mut Option<TextStyleRefinement> {
-        let style: &mut StyleRefinement = self.base_style();
+        let style: &mut StyleRefinement = self.style();
         &mut style.text
     }
 

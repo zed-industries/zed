@@ -413,7 +413,7 @@ impl<T> Bounds<T>
 where
     T: Add<T, Output = T> + PartialOrd + Clone + Default + Debug,
 {
-    pub fn contains_point(&self, point: Point<T>) -> bool {
+    pub fn contains_point(&self, point: &Point<T>) -> bool {
         point.x >= self.origin.x
             && point.x <= self.origin.x.clone() + self.size.width.clone()
             && point.y >= self.origin.y

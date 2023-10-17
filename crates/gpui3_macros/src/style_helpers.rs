@@ -129,7 +129,7 @@ fn generate_predefined_setter(
     let method = quote! {
         #[doc = #doc_string]
         fn #method_name(mut self) -> Self where Self: std::marker::Sized {
-            let mut style = self.base_style();
+            let style = self.style();
             #(#field_assignments)*
             self
         }
@@ -160,7 +160,7 @@ fn generate_custom_value_setter(
 
     let method = quote! {
         fn #method_name(mut self, length: impl std::clone::Clone + Into<gpui3::#length_type>) -> Self where Self: std::marker::Sized {
-            let mut style = self.base_style();
+            let style = self.style();
             #(#field_assignments)*
             self
         }

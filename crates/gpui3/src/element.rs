@@ -33,6 +33,26 @@ pub trait IdentifiedElement: Element {
 #[derive(Deref, DerefMut, Default, Clone, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct GlobalElementId(SmallVec<[ElementId; 8]>);
 
+pub trait ElementKind: 'static + Send + Sync {
+    fn id(&self) -> Option<ElementId>;
+}
+
+pub struct IdentifiedElementKind(pub(crate) ElementId);
+pub struct AnonymousElementKind;
+
+impl ElementKind for IdentifiedElementKind {
+    fn id(&self) -> Option<ElementId> {
+        Some(self.0.clone())
+    }
+}
+
+impl ElementKind for AnonymousElementKind {
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+}
+
+
 pub trait ParentElement: Element {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::ViewState>; 2]>;
     fn group_mut(&mut self) -> &mut Option<SharedString>;
