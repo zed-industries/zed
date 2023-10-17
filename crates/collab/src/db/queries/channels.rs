@@ -135,8 +135,7 @@ impl Database {
                     .most_public_ancestor_for_channel(channel_id, &*tx)
                     .await?
                     .unwrap_or(channel_id);
-                // TODO: change this back to Guest.
-                role = Some(ChannelRole::Member);
+                role = Some(ChannelRole::Guest);
                 joined_channel_id = Some(channel_id_to_join);
 
                 channel_member::Entity::insert(channel_member::ActiveModel {
@@ -144,8 +143,7 @@ impl Database {
                     channel_id: ActiveValue::Set(channel_id_to_join),
                     user_id: ActiveValue::Set(user_id),
                     accepted: ActiveValue::Set(true),
-                    // TODO: change this back to Guest.
-                    role: ActiveValue::Set(ChannelRole::Member),
+                    role: ActiveValue::Set(ChannelRole::Guest),
                 })
                 .exec(&*tx)
                 .await?;
