@@ -3,7 +3,7 @@ use crate::{
     themes::rose_pine,
 };
 use gpui3::{
-    div, img, svg, view, Context, Element, ParentElement, StyleHelpers, Styled, View, ViewContext,
+    div, img, svg, view, Context, Element, Hover, ParentElement, Styled, View, ViewContext,
     WindowContext,
 };
 use ui::{theme, themed};
@@ -42,10 +42,10 @@ impl Workspace {
                     div()
                         .size_5()
                         .fill(theme.middle.negative.default.foreground)
-                        .group_hover("")
-                        .fill(theme.middle.positive.default.foreground)
-                        .hover()
-                        .fill(theme.middle.variant.default.foreground),
+                        .group_hover("", |style| {
+                            style.fill(theme.middle.positive.default.foreground)
+                        })
+                        .hover(|style| style.fill(theme.middle.variant.default.foreground)),
                 ),
         )
     }

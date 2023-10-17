@@ -2,7 +2,7 @@ use crate::{
     black, phi, point, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds, ContentMask,
     Corners, CornersRefinement, DefiniteLength, Edges, EdgesRefinement, Font, FontFeatures,
     FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rems, Result,
-    SharedString, Size, SizeRefinement, TextRun, ViewContext, WindowContext,
+    SharedString, Size, SizeRefinement, Styled, TextRun, ViewContext, WindowContext,
 };
 use refineable::{Cascade, Refineable};
 use smallvec::SmallVec;
@@ -99,6 +99,12 @@ pub struct Style {
     pub text: TextStyleRefinement,
 
     pub z_index: Option<u32>,
+}
+
+impl Styled for StyleRefinement {
+    fn style(&mut self) -> &mut StyleRefinement {
+        self
+    }
 }
 
 #[derive(Clone, Debug)]

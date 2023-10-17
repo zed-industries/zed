@@ -31,7 +31,11 @@ impl<S: 'static + Send + Sync + Clone> Breadcrumb<S> {
             .text_color(HighlightColor::Default.hsla(theme))
     }
 
-    fn render(&mut self, view_state: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+    fn render(
+        &mut self,
+        view_state: &mut S,
+        cx: &mut ViewContext<S>,
+    ) -> impl Element<ViewState = S> {
         let theme = theme(cx);
 
         let symbols_len = self.symbols.len();
@@ -43,8 +47,7 @@ impl<S: 'static + Send + Sync + Clone> Breadcrumb<S> {
             .text_sm()
             .text_color(theme.middle.base.default.foreground)
             .rounded_md()
-            .hover()
-            .fill(theme.highest.base.hovered.background)
+            .hover(|style| style.fill(theme.highest.base.hovered.background))
             .child(self.path.clone().to_str().unwrap().to_string())
             .child(if !self.symbols.is_empty() {
                 self.render_separator(&theme)
@@ -99,7 +102,11 @@ mod stories {
             }
         }
 
-        fn render(&mut self, view_state: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            view_state: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             let theme = theme(cx);
 
             Story::container(cx)

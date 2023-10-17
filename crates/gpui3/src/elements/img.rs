@@ -90,7 +90,7 @@ where
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<Self::ViewState>,
     ) {
-        cx.stack(1, |cx| {
+        cx.stack(0, |cx| {
             self.base.paint(bounds, view, element_state, cx);
         });
 
@@ -146,8 +146,8 @@ where
     V: 'static + Send + Sync,
     K: ElementIdentity,
 {
-    fn set_hover_style(&mut self, style: StyleRefinement) {
-        self.base.set_hover_style(style);
+    fn set_hover_style(&mut self, group: Option<SharedString>, style: StyleRefinement) {
+        self.base.set_hover_style(group, style);
     }
 }
 
@@ -157,7 +157,7 @@ impl<V> Active for Img<V, IdentifiedElement>
 where
     V: 'static + Send + Sync,
 {
-    fn set_active_style(&mut self, style: StyleRefinement) {
-        self.base.set_active_style(style)
+    fn set_active_style(&mut self, group: Option<SharedString>, style: StyleRefinement) {
+        self.base.set_active_style(group, style)
     }
 }

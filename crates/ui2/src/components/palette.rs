@@ -89,8 +89,7 @@ impl<S: 'static + Send + Sync + Clone> Palette<S> {
                                     .px_2()
                                     .py_0p5()
                                     .rounded_lg()
-                                    .hover()
-                                    .fill(theme.lowest.base.hovered.background)
+                                    .hover(|style| style.fill(theme.lowest.base.hovered.background))
                                     // .active()
                                     // .fill(theme.lowest.base.pressed.background)
                                     .child(item.clone())
@@ -172,7 +171,11 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Palette<S>>(cx))
                 .child(Story::label(cx, "Default"))

@@ -1167,7 +1167,13 @@ impl From<i32> for ElementId {
 }
 
 impl From<SharedString> for ElementId {
-    fn from(id: SharedString) -> Self {
-        ElementId::Name(id)
+    fn from(name: SharedString) -> Self {
+        ElementId::Name(name)
+    }
+}
+
+impl From<&'static str> for ElementId {
+    fn from(name: &'static str) -> Self {
+        ElementId::Name(name.into())
     }
 }

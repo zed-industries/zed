@@ -412,8 +412,7 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
                             .h_full()
                             .flex()
                             .justify_center()
-                            .group_hover("")
-                            .fill(color.border_focused)
+                            .group_hover("", |style| style.fill(color.border_focused))
                             .child(
                                 h_stack()
                                     .child(div().w_px().h_full())

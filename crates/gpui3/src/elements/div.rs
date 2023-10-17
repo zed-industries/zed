@@ -386,16 +386,16 @@ where
                     );
                     this.paint_event_listeners(bounds, element_state.pending_click.clone(), cx);
                 });
-            });
 
-            style.apply_text_style(cx, |cx| {
-                style.apply_overflow(bounds, cx, |cx| {
-                    cx.stack(z_index + 1, |cx| {
-                        for child in &mut this.children {
-                            child.paint(view_state, None, cx);
-                        }
+                cx.stack(1, |cx| {
+                    style.apply_text_style(cx, |cx| {
+                        style.apply_overflow(bounds, cx, |cx| {
+                            for child in &mut this.children {
+                                child.paint(view_state, None, cx);
+                            }
+                        })
                     })
-                })
+                });
             });
 
             if let Some(group) = this.group.as_ref() {
@@ -454,8 +454,12 @@ where
     V: 'static + Send + Sync,
     K: ElementIdentity,
 {
-    fn set_hover_style(&mut self, style: StyleRefinement) {
-        self.hover_style = style;
+    fn set_hover_style(&mut self, group: Option<SharedString>, style: StyleRefinement) {
+        if let Some(group) = group {
+            self.group_hover = Some(GroupStyle { group, style });
+        } else {
+            self.hover_style = style;
+        }
     }
 }
 
@@ -465,8 +469,12 @@ impl<V> Active for Div<V, IdentifiedElement>
 where
     V: 'static + Send + Sync,
 {
-    fn set_active_style(&mut self, style: StyleRefinement) {
-        self.active_style = style;
+    fn set_active_style(&mut self, group: Option<SharedString>, style: StyleRefinement) {
+        if let Some(group) = group {
+            self.group_active = Some(GroupStyle { group, style });
+        } else {
+            self.active_style = style;
+        }
     }
 }
 

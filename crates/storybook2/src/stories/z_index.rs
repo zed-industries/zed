@@ -59,7 +59,7 @@ impl<S: 'static + Send + Sync> ZIndexStory<S> {
     }
 }
 
-trait Styles: StyleHelpers {
+trait Styles: Styled + Sized {
     // Trailing `_` is so we don't collide with `block` style `StyleHelpers`.
     fn block_(self) -> Self {
         self.absolute()
