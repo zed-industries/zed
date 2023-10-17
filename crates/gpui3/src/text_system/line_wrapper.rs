@@ -203,7 +203,7 @@ impl Boundary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{font, App, RunStyle};
+    use crate::{font, App, TextRun};
 
     #[test]
     fn test_wrap_line() {
@@ -274,16 +274,26 @@ mod tests {
         App::test().run(|cx| {
             let text_system = cx.text_system().clone();
 
-            let normal = RunStyle {
+            let normal = TextRun {
+                len: 0,
                 font: font("Helvetica"),
                 color: Default::default(),
                 underline: Default::default(),
             };
-            let bold = RunStyle {
+            let bold = TextRun {
+                len: 0,
                 font: font("Helvetica").bold(),
                 color: Default::default(),
                 underline: Default::default(),
             };
+
+            impl TextRun {
+                fn with_len(&self, len: usize) -> Self {
+                    let mut this = self.clone();
+                    this.len = len;
+                    this
+                }
+            }
 
             let text = "aa bbb cccc ddddd eeee";
             let lines = text_system
@@ -291,11 +301,11 @@ mod tests {
                     text,
                     px(16.),
                     &[
-                        (4, normal.clone()),
-                        (5, bold.clone()),
-                        (6, normal.clone()),
-                        (1, bold.clone()),
-                        (7, normal.clone()),
+                        normal.with_len(4),
+                        bold.with_len(5),
+                        normal.with_len(6),
+                        bold.with_len(1),
+                        normal.with_len(7),
                     ],
                     None,
                 )

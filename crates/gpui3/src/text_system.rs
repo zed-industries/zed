@@ -149,7 +149,7 @@ impl TextSystem {
         &self,
         text: &str,
         font_size: Pixels,
-        runs: &[(usize, RunStyle)],
+        runs: &[TextRun],
         wrap_width: Option<Pixels>,
     ) -> Result<SmallVec<[Arc<Line>; 1]>> {
         let mut runs = runs.iter().cloned().peekable();
@@ -165,39 +165,39 @@ impl TextSystem {
             let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
             let mut run_start = line_start;
             while run_start < line_end {
-                let Some((run_len, run_style)) = runs.peek_mut() else {
+                let Some(run) = runs.peek_mut() else {
                     break;
                 };
 
-                let run_len_within_line = cmp::min(line_end, run_start + *run_len) - run_start;
+                let run_len_within_line = cmp::min(line_end, run_start + run.len) - run_start;
 
-                if last_font == Some(run_style.font.clone()) {
+                if last_font == Some(run.font.clone()) {
                     font_runs.last_mut().unwrap().0 += run_len_within_line;
                 } else {
-                    last_font = Some(run_style.font.clone());
+                    last_font = Some(run.font.clone());
                     font_runs.push((
                         run_len_within_line,
-                        self.platform_text_system.font_id(&run_style.font)?,
+                        self.platform_text_system.font_id(&run.font)?,
                     ));
                 }
 
                 if decoration_runs.last().map_or(false, |last_run| {
-                    last_run.color == run_style.color && last_run.underline == run_style.underline
+                    last_run.color == run.color && last_run.underline == run.underline
                 }) {
                     decoration_runs.last_mut().unwrap().len += run_len_within_line as u32;
                 } else {
                     decoration_runs.push(DecorationRun {
                         len: run_len_within_line as u32,
-                        color: run_style.color,
-                        underline: run_style.underline.clone(),
+                        color: run.color,
+                        underline: run.underline.clone(),
                     });
                 }
 
-                if run_len_within_line == *run_len {
+                if run_len_within_line == run.len {
                     runs.next();
                 } else {
                     // Preserve the remainder of the run for the next line
-                    *run_len -= run_len_within_line;
+                    run.len -= run_len_within_line;
                 }
                 run_start += run_len_within_line;
             }
@@ -360,7 +360,8 @@ impl Display for FontStyle {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RunStyle {
+pub struct TextRun {
+    pub len: usize,
     pub font: Font,
     pub color: Hsla,
     pub underline: Option<UnderlineStyle>,

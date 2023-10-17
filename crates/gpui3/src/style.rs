@@ -1,8 +1,8 @@
 use crate::{
     phi, point, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners,
     CornersRefinement, DefiniteLength, Edges, EdgesRefinement, Font, FontFeatures, FontStyle,
-    FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rems, Result, RunStyle, SharedString,
-    Size, SizeRefinement, ViewContext, WindowContext,
+    FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rems, Result, SharedString, Size,
+    SizeRefinement, TextRun, ViewContext, WindowContext,
 };
 use refineable::{Cascade, Refineable};
 use smallvec::SmallVec;
@@ -161,8 +161,9 @@ impl TextStyle {
         Ok(self)
     }
 
-    pub fn to_run(&self) -> RunStyle {
-        RunStyle {
+    pub fn to_run(&self, len: usize) -> TextRun {
+        TextRun {
+            len,
             font: Font {
                 family: self.font_family.clone(),
                 features: Default::default(),

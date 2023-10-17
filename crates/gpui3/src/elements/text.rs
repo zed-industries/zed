@@ -80,7 +80,7 @@ impl<S: 'static + Send + Sync> Element for Text<S> {
                     .layout_text(
                         text.as_ref(),
                         font_size,
-                        &[(text.len(), text_style.to_run())],
+                        &[text_style.to_run(text.len())],
                         known_dimensions.width, // Wrap if we know the width.
                     )
                     .log_err()
