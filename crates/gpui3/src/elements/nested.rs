@@ -1,7 +1,7 @@
 use crate::{
-    group_bounds, AnyElement, DispatchPhase, Element, ElementId, IdentifiedElement, IntoAnyElement,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, SharedString, Style, StyleCascade,
-    StyleRefinement, ViewContext,
+    group_bounds, AnyElement, BorrowWindow, DispatchPhase, Element, ElementId, IdentifiedElement,
+    IntoAnyElement, MouseDownEvent, MouseMoveEvent, MouseUpEvent, SharedString, Style,
+    StyleCascade, StyleRefinement, ViewContext,
 };
 use parking_lot::Mutex;
 use refineable::{CascadeSlot, Refineable};
@@ -72,6 +72,20 @@ impl<V: 'static + Send + Sync> LayoutNodeElement<V, Anonymous> {
     }
 }
 
+impl<V: 'static + Send + Sync, E: ElementKind> LayoutNodeElement<V, E> {
+    fn with_element_id<R>(
+        &mut self,
+        cx: &mut ViewContext<V>,
+        f: impl FnOnce(&mut Self, &mut ViewContext<V>) -> R,
+    ) -> R {
+        if let Some(id) = self.id() {
+            cx.with_element_id(id, |cx| f(self, cx))
+        } else {
+            f(self, cx)
+        }
+    }
+}
+
 impl<V: 'static + Send + Sync, K: ElementKind> Styled for LayoutNodeElement<V, K> {
     fn style_cascade(&mut self) -> &mut StyleCascade {
         &mut self.style_cascade
@@ -84,7 +98,7 @@ impl<V: 'static + Send + Sync, K: ElementKind> Styled for LayoutNodeElement<V, K
 }
 
 impl<V: 'static + Send + Sync> IdentifiedElement for LayoutNodeElement<V, Identified> {
-    fn element_id(&self) -> crate::ElementId {
+    fn element_id(&self) -> ElementId {
         self.kind.0.clone()
     }
 }
@@ -103,8 +117,8 @@ impl<V: 'static + Send + Sync, K: ElementKind> Element for LayoutNodeElement<V, 
     type ViewState = V;
     type ElementState = ();
 
-    fn id(&self) -> Option<crate::ElementId> {
-        None
+    fn id(&self) -> Option<ElementId> {
+        self.kind.id()
     }
 
     fn layout(
@@ -113,16 +127,17 @@ impl<V: 'static + Send + Sync, K: ElementKind> Element for LayoutNodeElement<V, 
         _: Option<Self::ElementState>,
         cx: &mut crate::ViewContext<Self::ViewState>,
     ) -> (crate::LayoutId, Self::ElementState) {
-        let layout_ids = self
-            .children
-            .iter_mut()
-            .map(|child| child.layout(state, cx))
-            .collect::<Vec<_>>();
+        self.with_element_id(cx, |this, cx| {
+            let layout_ids = this
+                .children
+                .iter_mut()
+                .map(|child| child.layout(state, cx))
+                .collect::<Vec<_>>();
 
-        // todo!("pass just the style cascade")
-        let style = self.computed_style().clone();
-        let layout_id = cx.request_layout(style, layout_ids);
-        (layout_id, ())
+            let style = this.computed_style().clone();
+            let layout_id = cx.request_layout(style, layout_ids);
+            (layout_id, ())
+        })
     }
 
     fn paint(
@@ -132,9 +147,11 @@ impl<V: 'static + Send + Sync, K: ElementKind> Element for LayoutNodeElement<V, 
         _: &mut Self::ElementState,
         cx: &mut crate::ViewContext<Self::ViewState>,
     ) {
-        for child in &mut self.children {
-            child.paint(state, None, cx);
-        }
+        self.with_element_id(cx, |this, cx| {
+            for child in &mut this.children {
+                child.paint(state, None, cx);
+            }
+        })
     }
 }
 
@@ -198,7 +215,7 @@ where
     type ViewState = E::ViewState;
     type ElementState = E::ElementState;
 
-    fn id(&self) -> Option<crate::ElementId> {
+    fn id(&self) -> Option<ElementId> {
         self.child.id()
     }
 
@@ -331,7 +348,7 @@ where
     type ViewState = E::ViewState;
     type ElementState = ClickableElementState<E::ElementState>;
 
-    fn id(&self) -> Option<crate::ElementId> {
+    fn id(&self) -> Option<ElementId> {
         self.child.id()
     }
 
