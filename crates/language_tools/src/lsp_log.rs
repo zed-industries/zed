@@ -1,4 +1,4 @@
-use collections::HashMap;
+use collections::{HashMap, VecDeque};
 use editor::Editor;
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
@@ -36,7 +36,7 @@ struct ProjectState {
 }
 
 struct LanguageServerState {
-    log_storage: Vec<String>,
+    log_storage: VecDeque<String>,
     rpc_state: Option<LanguageServerRpcState>,
     _io_logs_subscription: Option<lsp::Subscription>,
     _lsp_logs_subscription: Option<lsp::Subscription>,
@@ -49,6 +49,7 @@ struct LanguageServerRpcState {
 
 pub struct LspLogView {
     pub(crate) editor: ViewHandle<Editor>,
+    _editor_subscription: Subscription,
     log_store: ModelHandle<LogStore>,
     current_server_id: Option<LanguageServerId>,
     is_showing_rpc_trace: bool,
@@ -168,14 +169,14 @@ impl LogStore {
         project: &ModelHandle<Project>,
         id: LanguageServerId,
         cx: &mut ModelContext<Self>,
-    ) -> Option<&mut Vec<String>> {
+    ) -> Option<&mut LanguageServerState> {
         let project_state = self.projects.get_mut(&project.downgrade())?;
         let server_state = project_state.servers.entry(id).or_insert_with(|| {
             cx.notify();
             LanguageServerState {
                 rpc_state: None,
                 // TODO kb move this to settings?
-                log_storage: Vec::with_capacity(10_000),
+                log_storage: VecDeque::with_capacity(10_000),
                 _io_logs_subscription: None,
                 _lsp_logs_subscription: None,
             }
@@ -185,7 +186,7 @@ impl LogStore {
         if let Some(server) = server.as_deref() {
             if server.has_notification_handler::<lsp::notification::LogMessage>() {
                 // Another event wants to re-add the server that was already added and subscribed to, avoid doing it again.
-                return Some(&mut server_state.log_storage);
+                return Some(server_state);
             }
         }
 
@@ -214,7 +215,7 @@ impl LogStore {
                 }
             })
         });
-        Some(&mut server_state.log_storage)
+        Some(server_state)
     }
 
     fn add_language_server_log(
@@ -224,22 +225,24 @@ impl LogStore {
         message: &str,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
-        let log_lines = match self
+        let language_server_state = match self
             .projects
             .get_mut(&project.downgrade())?
             .servers
             .get_mut(&id)
-            .map(|state| &mut state.log_storage)
         {
-            Some(existing_buffer) => existing_buffer,
+            Some(existing_state) => existing_state,
             None => self.add_language_server(&project, id, cx)?,
         };
 
-        // TODO kb something better VecDequeue?
+        let log_lines = &mut language_server_state.log_storage;
         if log_lines.capacity() == log_lines.len() {
-            log_lines.drain(..log_lines.len() / 2);
+            log_lines.pop_front();
         }
-        log_lines.push(message.trim().to_string());
+        log_lines.push_back(message.trim().to_string());
+
+        //// TODO kb refresh editor too
+        //need LspLogView.
 
         cx.notify();
         Some(())
@@ -261,7 +264,7 @@ impl LogStore {
         &self,
         project: &ModelHandle<Project>,
         server_id: LanguageServerId,
-    ) -> Option<&[String]> {
+    ) -> Option<&VecDeque<String>> {
         let weak_project = project.downgrade();
         let project_state = self.projects.get(&weak_project)?;
         let server_state = project_state.servers.get(&server_id)?;
@@ -408,8 +411,10 @@ impl LspLogView {
 
             cx.notify();
         });
+        let (editor, _editor_subscription) = Self::editor_for_buffer(project.clone(), buffer, cx);
         let mut this = Self {
-            editor: Self::editor_for_buffer(project.clone(), buffer, cx),
+            editor,
+            _editor_subscription,
             project,
             log_store,
             current_server_id: None,
@@ -426,16 +431,15 @@ impl LspLogView {
         project: ModelHandle<Project>,
         buffer: ModelHandle<Buffer>,
         cx: &mut ViewContext<Self>,
-    ) -> ViewHandle<Editor> {
+    ) -> (ViewHandle<Editor>, Subscription) {
         let editor = cx.add_view(|cx| {
             let mut editor = Editor::for_buffer(buffer, Some(project), cx);
             editor.set_read_only(true);
             editor.move_to_end(&Default::default(), cx);
             editor
         });
-        cx.subscribe(&editor, |_, _, event, cx| cx.emit(event.clone()))
-            .detach();
-        editor
+        let subscription = cx.subscribe(&editor, |_, _, event, cx| cx.emit(event.clone()));
+        (editor, subscription)
     }
 
     pub(crate) fn menu_items<'a>(&'a self, cx: &'a AppContext) -> Option<Vec<LogMenuItem>> {
@@ -488,19 +492,27 @@ impl LspLogView {
             .log_store
             .read(cx)
             .server_logs(&self.project, server_id)
-            .map(|lines| lines.join("\n"));
+            .map(|lines| {
+                let (a, b) = lines.as_slices();
+                let log_contents = a.join("\n");
+                if b.is_empty() {
+                    log_contents
+                } else {
+                    log_contents + "\n" + &b.join("\n")
+                }
+            });
         if let Some(log_contents) = log_contents {
             self.current_server_id = Some(server_id);
             self.is_showing_rpc_trace = false;
-            let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, log_contents));
             let editor = cx.add_view(|cx| {
-                let mut editor = Editor::for_buffer(buffer, Some(self.project.clone()), cx);
+                let mut editor = Editor::multi_line(None, cx);
                 editor.set_read_only(true);
                 editor.move_to_end(&Default::default(), cx);
+                editor.set_text(log_contents, cx);
                 editor
             });
-            cx.subscribe(&editor, |_, _, event, cx| cx.emit(event.clone()))
-                .detach();
+            self._editor_subscription =
+                cx.subscribe(&editor, |_, _, event, cx| cx.emit(event.clone()));
             self.editor = editor;
             cx.notify();
         }
@@ -518,7 +530,10 @@ impl LspLogView {
         if let Some(buffer) = buffer {
             self.current_server_id = Some(server_id);
             self.is_showing_rpc_trace = true;
-            self.editor = Self::editor_for_buffer(self.project.clone(), buffer, cx);
+            let (editor, _editor_subscription) =
+                Self::editor_for_buffer(self.project.clone(), buffer, cx);
+            self.editor = editor;
+            self._editor_subscription = _editor_subscription;
             cx.notify();
         }
     }
