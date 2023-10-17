@@ -1,14 +1,14 @@
 mod font_features;
 mod line;
+mod line_layout;
 mod line_wrapper;
-mod text_layout_cache;
 
 use anyhow::anyhow;
 pub use font_features::*;
 pub use line::*;
+pub use line_layout::*;
 use line_wrapper::*;
 use smallvec::SmallVec;
-pub use text_layout_cache::*;
 
 use crate::{
     px, Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
@@ -35,7 +35,7 @@ pub struct FontFamilyId(pub usize);
 pub const SUBPIXEL_VARIANTS: u8 = 4;
 
 pub struct TextSystem {
-    text_layout_cache: Arc<TextLayoutCache>,
+    line_layout_cache: Arc<LineLayoutCache>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
     font_ids_by_font: RwLock<HashMap<Font, FontId>>,
     font_metrics: RwLock<HashMap<FontId, FontMetrics>>,
@@ -46,7 +46,7 @@ pub struct TextSystem {
 impl TextSystem {
     pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
         TextSystem {
-            text_layout_cache: Arc::new(TextLayoutCache::new(platform_text_system.clone())),
+            line_layout_cache: Arc::new(LineLayoutCache::new(platform_text_system.clone())),
             platform_text_system,
             font_metrics: RwLock::new(HashMap::default()),
             font_ids_by_font: RwLock::new(HashMap::default()),
@@ -151,7 +151,7 @@ impl TextSystem {
         font_size: Pixels,
         runs: &[TextRun],
         wrap_width: Option<Pixels>,
-    ) -> Result<SmallVec<[Arc<Line>; 1]>> {
+    ) -> Result<SmallVec<[Line; 1]>> {
         let mut runs = runs.iter().cloned().peekable();
         let mut font_runs: Vec<(usize, FontId)> =
             self.font_runs_pool.lock().pop().unwrap_or_default();
@@ -204,9 +204,12 @@ impl TextSystem {
             }
 
             let layout = self
-                .text_layout_cache
-                .layout_line(&line_text, font_size, &font_runs);
-            lines.push(Arc::new(Line::new(layout, decoration_runs)));
+                .line_layout_cache
+                .layout_line(&line_text, font_size, &font_runs, wrap_width);
+            lines.push(Line {
+                layout,
+                decorations: decoration_runs,
+            });
 
             line_start = line_end + 1; // Skip `\n` character.
             font_runs.clear();
@@ -218,7 +221,7 @@ impl TextSystem {
     }
 
     pub fn end_frame(&self) {
-        self.text_layout_cache.end_frame()
+        self.line_layout_cache.end_frame()
     }
 
     pub fn line_wrapper(
@@ -388,30 +391,6 @@ impl From<u32> for GlyphId {
     fn from(num: u32) -> Self {
         GlyphId(num)
     }
-}
-
-#[derive(Default, Debug)]
-pub struct LineLayout {
-    pub text: SharedString,
-    pub font_size: Pixels,
-    pub width: Pixels,
-    pub ascent: Pixels,
-    pub descent: Pixels,
-    pub runs: Vec<ShapedRun>,
-}
-
-#[derive(Debug)]
-pub struct ShapedRun {
-    pub font_id: FontId,
-    pub glyphs: SmallVec<[ShapedGlyph; 8]>,
-}
-
-#[derive(Clone, Debug)]
-pub struct ShapedGlyph {
-    pub id: GlyphId,
-    pub position: Point<Pixels>,
-    pub index: usize,
-    pub is_emoji: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]

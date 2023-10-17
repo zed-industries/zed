@@ -45,7 +45,7 @@ type MouseEventHandler =
 pub struct Window {
     handle: AnyWindowHandle,
     platform_window: MainThreadOnly<Box<dyn PlatformWindow>>,
-    pub(crate) display_id: DisplayId, // todo!("make private again?")
+    display_id: DisplayId,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     rem_size: Pixels,
     content_size: Size<Pixels>,

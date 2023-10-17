@@ -1,6 +1,6 @@
 use crate::{
-    size, AnyElement, Bounds, Element, IntoAnyElement, LayoutId, Line, Pixels, SharedString, Size,
-    ViewContext,
+    AnyElement, BorrowWindow, Bounds, Element, IntoAnyElement, LayoutId, Line, Pixels,
+    SharedString, Size, ViewContext,
 };
 use parking_lot::Mutex;
 use smallvec::SmallVec;
@@ -90,7 +90,7 @@ impl<S: 'static + Send + Sync> Element for Text<S> {
                 };
 
                 let size = Size {
-                    width: lines.iter().map(|line| line.width()).max().unwrap(),
+                    width: lines.iter().map(|line| line.layout.width).max().unwrap(),
                     height: line_height * lines.len(),
                 };
 
@@ -119,18 +119,13 @@ impl<S: 'static + Send + Sync> Element for Text<S> {
         let line_height = element_state.line_height;
         let mut line_origin = bounds.origin;
         for line in &element_state.lines {
-            let line_bounds = Bounds {
-                origin: line_origin,
-                size: size(line.width(), line_height),
-            };
-            line.paint(line_bounds, line_bounds, line_height, cx)
-                .log_err();
-            line_origin.y += line_height;
+            line.paint(line_origin, line_height, cx).log_err();
+            line_origin.y += line.size(line_height).height;
         }
     }
 }
 
 pub struct TextElementState {
-    lines: SmallVec<[Arc<Line>; 1]>,
+    lines: SmallVec<[Line; 1]>,
     line_height: Pixels,
 }
