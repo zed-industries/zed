@@ -319,19 +319,19 @@ fn box_prefixes() -> Vec<(&'static str, bool, Vec<TokenStream2>, &'static str)> 
             "gap",
             false,
             vec![quote! { gap.width }, quote! { gap.height }],
-            "todo!(docstring)",
+            "Sets the gap between rows and columns in flex layouts. [Docs](https://tailwindcss.com/docs/gap)"
         ),
         (
             "gap_x",
             false,
             vec![quote! { gap.width }],
-            "todo!(docstring)",
+            "Sets the gap between columns in flex layouts. [Docs](https://tailwindcss.com/docs/gap#changing-row-and-column-gaps-independently)"
         ),
         (
             "gap_y",
             false,
             vec![quote! { gap.height }],
-            "todo!(docstring)",
+            "Sets the gap between rows in flex layouts. [Docs](https://tailwindcss.com/docs/gap#changing-row-and-column-gaps-independently)"
         ),
     ]
 }
