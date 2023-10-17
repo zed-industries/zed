@@ -2428,7 +2428,7 @@ impl Element<Editor> for EditorElement {
                 }
 
                 let active = matches!(
-                    editor.context_menu,
+                    editor.context_menu.read().as_ref(),
                     Some(crate::ContextMenu::CodeActions(_))
                 );
 
@@ -2439,9 +2439,13 @@ impl Element<Editor> for EditorElement {
         }
 
         let visible_rows = start_row..start_row + line_layouts.len() as u32;
-        let mut hover = editor
-            .hover_state
-            .render(&snapshot, &style, visible_rows, cx);
+        let mut hover = editor.hover_state.render(
+            &snapshot,
+            &style,
+            visible_rows,
+            editor.workspace.as_ref().map(|(w, _)| w.clone()),
+            cx,
+        );
         let mode = editor.mode;
 
         let mut fold_indicators = editor.render_fold_indicators(

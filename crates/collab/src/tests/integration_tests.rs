@@ -15,12 +15,14 @@ use gpui::{executor::Deterministic, test::EmptyView, AppContext, ModelHandle, Te
 use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, Formatter, InlayHintSettings},
-    tree_sitter_rust, Anchor, Diagnostic, DiagnosticEntry, FakeLspAdapter, Language,
-    LanguageConfig, LineEnding, OffsetRangeExt, Point, Rope,
+    tree_sitter_rust, Anchor, BundledFormatter, Diagnostic, DiagnosticEntry, FakeLspAdapter,
+    Language, LanguageConfig, LineEnding, OffsetRangeExt, Point, Rope,
 };
 use live_kit_client::MacOSDisplay;
 use lsp::LanguageServerId;
-use project::{search::SearchQuery, DiagnosticSummary, HoverBlockKind, Project, ProjectPath};
+use project::{
+    search::SearchQuery, DiagnosticSummary, FormatTrigger, HoverBlockKind, Project, ProjectPath,
+};
 use rand::prelude::*;
 use serde_json::json;
 use settings::SettingsStore;
@@ -4407,8 +4409,6 @@ async fn test_formatting_buffer(
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    use project::FormatTrigger;
-
     let mut server = TestServer::start(&deterministic).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -4508,6 +4508,134 @@ async fn test_formatting_buffer(
     assert_eq!(
         buffer_b.read_with(cx_b, |buffer, _| buffer.text()),
         format!("let honey = \"{}/a.rs\"\n", directory.to_str().unwrap())
+    );
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_prettier_formatting_buffer(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    // Set up a fake language server.
+    let mut language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::language()),
+    );
+    let test_plugin = "test_plugin";
+    let mut fake_language_servers = language
+        .set_fake_lsp_adapter(Arc::new(FakeLspAdapter {
+            enabled_formatters: vec![BundledFormatter::Prettier {
+                parser_name: Some("test_parser"),
+                plugin_names: vec![test_plugin],
+            }],
+            ..Default::default()
+        }))
+        .await;
+    let language = Arc::new(language);
+    client_a.language_registry().add(Arc::clone(&language));
+
+    // Here we insert a fake tree with a directory that exists on disk. This is needed
+    // because later we'll invoke a command, which requires passing a working directory
+    // that points to a valid location on disk.
+    let directory = env::current_dir().unwrap();
+    let buffer_text = "let one = \"two\"";
+    client_a
+        .fs()
+        .insert_tree(&directory, json!({ "a.rs": buffer_text }))
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(&directory, cx_a).await;
+    let prettier_format_suffix = project_a.update(cx_a, |project, _| {
+        let suffix = project.enable_test_prettier(&[test_plugin]);
+        project.languages().add(language);
+        suffix
+    });
+    let buffer_a = cx_a
+        .background()
+        .spawn(project_a.update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
+        .await
+        .unwrap();
+
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let buffer_b = cx_b
+        .background()
+        .spawn(project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
+        .await
+        .unwrap();
+
+    cx_a.update(|cx| {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<AllLanguageSettings>(cx, |file| {
+                file.defaults.formatter = Some(Formatter::Auto);
+            });
+        });
+    });
+    cx_b.update(|cx| {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<AllLanguageSettings>(cx, |file| {
+                file.defaults.formatter = Some(Formatter::LanguageServer);
+            });
+        });
+    });
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+    fake_language_server.handle_request::<lsp::request::Formatting, _, _>(|_, _| async move {
+        panic!(
+            "Unexpected: prettier should be preferred since it's enabled and language supports it"
+        )
+    });
+
+    project_b
+        .update(cx_b, |project, cx| {
+            project.format(
+                HashSet::from_iter([buffer_b.clone()]),
+                true,
+                FormatTrigger::Save,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    cx_a.foreground().run_until_parked();
+    cx_b.foreground().run_until_parked();
+    assert_eq!(
+        buffer_b.read_with(cx_b, |buffer, _| buffer.text()),
+        buffer_text.to_string() + "\n" + prettier_format_suffix,
+        "Prettier formatting was not applied to client buffer after client's request"
+    );
+
+    project_a
+        .update(cx_a, |project, cx| {
+            project.format(
+                HashSet::from_iter([buffer_a.clone()]),
+                true,
+                FormatTrigger::Manual,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    cx_a.foreground().run_until_parked();
+    cx_b.foreground().run_until_parked();
+    assert_eq!(
+        buffer_b.read_with(cx_b, |buffer, _| buffer.text()),
+        buffer_text.to_string() + "\n" + prettier_format_suffix + "\n" + prettier_format_suffix,
+        "Prettier formatting was not applied to client buffer after host's request"
     );
 }
 

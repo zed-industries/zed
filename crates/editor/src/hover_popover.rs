@@ -9,13 +9,15 @@ use gpui::{
     actions,
     elements::{Flex, MouseEventHandler, Padding, ParentElement, Text},
     platform::{CursorStyle, MouseButton},
-    AnyElement, AppContext, Element, ModelHandle, Task, ViewContext,
+    AnyElement, AppContext, Element, ModelHandle, Task, ViewContext, WeakViewHandle,
 };
-use language::{Bias, DiagnosticEntry, DiagnosticSeverity, Language, LanguageRegistry};
+use language::{
+    markdown, Bias, DiagnosticEntry, DiagnosticSeverity, Language, LanguageRegistry, ParsedMarkdown,
+};
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart, Project};
-use rich_text::{new_paragraph, render_code, render_markdown_mut, RichText};
 use std::{ops::Range, sync::Arc, time::Duration};
 use util::TryFutureExt;
+use workspace::Workspace;
 
 pub const HOVER_DELAY_MILLIS: u64 = 350;
 pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
@@ -105,12 +107,15 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
                     this.hover_state.diagnostic_popover = None;
                 })?;
 
+                let language_registry = project.update(&mut cx, |p, _| p.languages().clone());
+                let blocks = vec![inlay_hover.tooltip];
+                let parsed_content = parse_blocks(&blocks, &language_registry, None).await;
+
                 let hover_popover = InfoPopover {
                     project: project.clone(),
                     symbol_range: RangeInEditor::Inlay(inlay_hover.range.clone()),
-                    blocks: vec![inlay_hover.tooltip],
-                    language: None,
-                    rendered_content: None,
+                    blocks,
+                    parsed_content,
                 };
 
                 this.update(&mut cx, |this, cx| {
@@ -288,35 +293,38 @@ fn show_hover(
                     });
             })?;
 
-            // Construct new hover popover from hover request
-            let hover_popover = hover_request.await.ok().flatten().and_then(|hover_result| {
-                if hover_result.is_empty() {
-                    return None;
+            let hover_result = hover_request.await.ok().flatten();
+            let hover_popover = match hover_result {
+                Some(hover_result) if !hover_result.is_empty() => {
+                    // Create symbol range of anchors for highlighting and filtering of future requests.
+                    let range = if let Some(range) = hover_result.range {
+                        let start = snapshot
+                            .buffer_snapshot
+                            .anchor_in_excerpt(excerpt_id.clone(), range.start);
+                        let end = snapshot
+                            .buffer_snapshot
+                            .anchor_in_excerpt(excerpt_id.clone(), range.end);
+
+                        start..end
+                    } else {
+                        anchor..anchor
+                    };
+
+                    let language_registry = project.update(&mut cx, |p, _| p.languages().clone());
+                    let blocks = hover_result.contents;
+                    let language = hover_result.language;
+                    let parsed_content = parse_blocks(&blocks, &language_registry, language).await;
+
+                    Some(InfoPopover {
+                        project: project.clone(),
+                        symbol_range: RangeInEditor::Text(range),
+                        blocks,
+                        parsed_content,
+                    })
                 }
 
-                // Create symbol range of anchors for highlighting and filtering
-                // of future requests.
-                let range = if let Some(range) = hover_result.range {
-                    let start = snapshot
-                        .buffer_snapshot
-                        .anchor_in_excerpt(excerpt_id.clone(), range.start);
-                    let end = snapshot
-                        .buffer_snapshot
-                        .anchor_in_excerpt(excerpt_id.clone(), range.end);
-
-                    start..end
-                } else {
-                    anchor..anchor
-                };
-
-                Some(InfoPopover {
-                    project: project.clone(),
-                    symbol_range: RangeInEditor::Text(range),
-                    blocks: hover_result.contents,
-                    language: hover_result.language,
-                    rendered_content: None,
-                })
-            });
+                _ => None,
+            };
 
             this.update(&mut cx, |this, cx| {
                 if let Some(symbol_range) = hover_popover
@@ -345,44 +353,56 @@ fn show_hover(
     editor.hover_state.info_task = Some(task);
 }
 
-fn render_blocks(
+async fn parse_blocks(
     blocks: &[HoverBlock],
     language_registry: &Arc<LanguageRegistry>,
-    language: Option<&Arc<Language>>,
-) -> RichText {
-    let mut data = RichText {
-        text: Default::default(),
-        highlights: Default::default(),
-        region_ranges: Default::default(),
-        regions: Default::default(),
-    };
+    language: Option<Arc<Language>>,
+) -> markdown::ParsedMarkdown {
+    let mut text = String::new();
+    let mut highlights = Vec::new();
+    let mut region_ranges = Vec::new();
+    let mut regions = Vec::new();
 
     for block in blocks {
         match &block.kind {
             HoverBlockKind::PlainText => {
-                new_paragraph(&mut data.text, &mut Vec::new());
-                data.text.push_str(&block.text);
+                markdown::new_paragraph(&mut text, &mut Vec::new());
+                text.push_str(&block.text);
             }
+
             HoverBlockKind::Markdown => {
-                render_markdown_mut(&block.text, language_registry, language, &mut data)
+                markdown::parse_markdown_block(
+                    &block.text,
+                    language_registry,
+                    language.clone(),
+                    &mut text,
+                    &mut highlights,
+                    &mut region_ranges,
+                    &mut regions,
+                )
+                .await
             }
+
             HoverBlockKind::Code { language } => {
                 if let Some(language) = language_registry
                     .language_for_name(language)
                     .now_or_never()
                     .and_then(Result::ok)
                 {
-                    render_code(&mut data.text, &mut data.highlights, &block.text, &language);
+                    markdown::highlight_code(&mut text, &mut highlights, &block.text, &language);
                 } else {
-                    data.text.push_str(&block.text);
+                    text.push_str(&block.text);
                 }
             }
         }
     }
 
-    data.text = data.text.trim().to_string();
-
-    data
+    ParsedMarkdown {
+        text: text.trim().to_string(),
+        highlights,
+        region_ranges,
+        regions,
+    }
 }
 
 #[derive(Default)]
@@ -403,6 +423,7 @@ impl HoverState {
         snapshot: &EditorSnapshot,
         style: &EditorStyle,
         visible_rows: Range<u32>,
+        workspace: Option<WeakViewHandle<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> Option<(DisplayPoint, Vec<AnyElement<Editor>>)> {
         // If there is a diagnostic, position the popovers based on that.
@@ -432,7 +453,7 @@ impl HoverState {
             elements.push(diagnostic_popover.render(style, cx));
         }
         if let Some(info_popover) = self.info_popover.as_mut() {
-            elements.push(info_popover.render(style, cx));
+            elements.push(info_popover.render(style, workspace, cx));
         }
 
         Some((point, elements))
@@ -444,32 +465,23 @@ pub struct InfoPopover {
     pub project: ModelHandle<Project>,
     symbol_range: RangeInEditor,
     pub blocks: Vec<HoverBlock>,
-    language: Option<Arc<Language>>,
-    rendered_content: Option<RichText>,
+    parsed_content: ParsedMarkdown,
 }
 
 impl InfoPopover {
     pub fn render(
         &mut self,
         style: &EditorStyle,
+        workspace: Option<WeakViewHandle<Workspace>>,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement<Editor> {
-        let rendered_content = self.rendered_content.get_or_insert_with(|| {
-            render_blocks(
-                &self.blocks,
-                self.project.read(cx).languages(),
-                self.language.as_ref(),
-            )
-        });
-
-        MouseEventHandler::new::<InfoPopover, _>(0, cx, move |_, cx| {
-            let code_span_background_color = style.document_highlight_read_background;
+        MouseEventHandler::new::<InfoPopover, _>(0, cx, |_, cx| {
             Flex::column()
-                .scrollable::<HoverBlock>(1, None, cx)
-                .with_child(rendered_content.element(
-                    style.syntax.clone(),
-                    style.text.clone(),
-                    code_span_background_color,
+                .scrollable::<HoverBlock>(0, None, cx)
+                .with_child(crate::render_parsed_markdown::<HoverBlock>(
+                    &self.parsed_content,
+                    style,
+                    workspace,
                     cx,
                 ))
                 .contained()
@@ -572,7 +584,6 @@ mod tests {
     use language::{language_settings::InlayHintSettings, Diagnostic, DiagnosticSet};
     use lsp::LanguageServerId;
     use project::{HoverBlock, HoverBlockKind};
-    use rich_text::Highlight;
     use smol::stream::StreamExt;
     use unindent::Unindent;
     use util::test::marked_text_ranges;
@@ -793,7 +804,7 @@ mod tests {
                 }],
             );
 
-            let rendered = render_blocks(&blocks, &Default::default(), None);
+            let rendered = smol::block_on(parse_blocks(&blocks, &Default::default(), None));
             assert_eq!(
                 rendered.text,
                 code_str.trim(),
@@ -900,7 +911,7 @@ mod tests {
                 // Links
                 Row {
                     blocks: vec![HoverBlock {
-                        text: "one [two](the-url) three".to_string(),
+                        text: "one [two](https://the-url) three".to_string(),
                         kind: HoverBlockKind::Markdown,
                     }],
                     expected_marked_text: "one «two» three".to_string(),
@@ -921,7 +932,7 @@ mod tests {
                                 - a
                                 - b
                             * two
-                                - [c](the-url)
+                                - [c](https://the-url)
                                 - d"
                         .unindent(),
                         kind: HoverBlockKind::Markdown,
@@ -985,7 +996,7 @@ mod tests {
                 expected_styles,
             } in &rows[0..]
             {
-                let rendered = render_blocks(&blocks, &Default::default(), None);
+                let rendered = smol::block_on(parse_blocks(&blocks, &Default::default(), None));
 
                 let (expected_text, ranges) = marked_text_ranges(expected_marked_text, false);
                 let expected_highlights = ranges
@@ -1001,11 +1012,8 @@ mod tests {
                     .highlights
                     .iter()
                     .filter_map(|(range, highlight)| {
-                        let style = match highlight {
-                            Highlight::Id(id) => id.style(&style.syntax)?,
-                            Highlight::Highlight(style) => style.clone(),
-                        };
-                        Some((range.clone(), style))
+                        let highlight = highlight.to_highlight_style(&style.syntax)?;
+                        Some((range.clone(), highlight))
                     })
                     .collect();
 
@@ -1258,11 +1266,7 @@ mod tests {
                 "Popover range should match the new type label part"
             );
             assert_eq!(
-                popover
-                    .rendered_content
-                    .as_ref()
-                    .expect("should have label text for new type hint")
-                    .text,
+                popover.parsed_content.text,
                 format!("A tooltip for `{new_type_label}`"),
                 "Rendered text should not anyhow alter backticks"
             );
@@ -1316,11 +1320,7 @@ mod tests {
                 "Popover range should match the struct label part"
             );
             assert_eq!(
-                popover
-                    .rendered_content
-                    .as_ref()
-                    .expect("should have label text for struct hint")
-                    .text,
+                popover.parsed_content.text,
                 format!("A tooltip for {struct_label}"),
                 "Rendered markdown element should remove backticks from text"
             );

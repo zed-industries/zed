@@ -42,6 +42,7 @@ use gpui::{
 use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ProjectItem};
 use itertools::Itertools;
 use language::{LanguageRegistry, Rope};
+use node_runtime::NodeRuntime;
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -457,6 +458,7 @@ pub struct AppState {
     pub initialize_workspace:
         fn(WeakViewHandle<Workspace>, bool, Arc<AppState>, AsyncAppContext) -> Task<Result<()>>,
     pub background_actions: BackgroundActions,
+    pub node_runtime: Arc<dyn NodeRuntime>,
 }
 
 pub struct WorkspaceStore {
@@ -475,6 +477,7 @@ struct Follower {
 impl AppState {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut AppContext) -> Arc<Self> {
+        use node_runtime::FakeNodeRuntime;
         use settings::SettingsStore;
 
         if !cx.has_global::<SettingsStore>() {
@@ -499,6 +502,7 @@ impl AppState {
             user_store,
             // channel_store,
             workspace_store,
+            node_runtime: FakeNodeRuntime::new(),
             initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
             build_window_options: |_, _, _| Default::default(),
             background_actions: || &[],
@@ -817,6 +821,7 @@ impl Workspace {
     )> {
         let project_handle = Project::local(
             app_state.client.clone(),
+            app_state.node_runtime.clone(),
             app_state.user_store.clone(),
             app_state.languages.clone(),
             app_state.fs.clone(),
@@ -3518,6 +3523,8 @@ impl Workspace {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test_new(project: ModelHandle<Project>, cx: &mut ViewContext<Self>) -> Self {
+        use node_runtime::FakeNodeRuntime;
+
         let client = project.read(cx).client();
         let user_store = project.read(cx).user_store();
 
@@ -3531,6 +3538,7 @@ impl Workspace {
             build_window_options: |_, _, _| Default::default(),
             initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
             background_actions: || &[],
+            node_runtime: FakeNodeRuntime::new(),
         });
         Self::new(0, project, app_state, cx)
     }

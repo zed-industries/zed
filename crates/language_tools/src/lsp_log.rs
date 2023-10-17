@@ -685,6 +685,7 @@ impl View for LspLogToolbarItemView {
         });
         let server_selected = current_server.is_some();
 
+        enum LspLogScroll {}
         enum Menu {}
         let lsp_menu = Stack::new()
             .with_child(Self::render_language_server_menu_header(
@@ -697,7 +698,7 @@ impl View for LspLogToolbarItemView {
                     Overlay::new(
                         MouseEventHandler::new::<Menu, _>(0, cx, move |_, cx| {
                             Flex::column()
-                                .scrollable::<Self>(0, None, cx)
+                                .scrollable::<LspLogScroll>(0, None, cx)
                                 .with_children(menu_rows.into_iter().map(|row| {
                                     Self::render_language_server_menu_item(
                                         row.server_id,
@@ -876,6 +877,7 @@ impl LspLogToolbarItemView {
     ) -> impl Element<Self> {
         enum ActivateLog {}
         enum ActivateRpcTrace {}
+        enum LanguageServerCheckbox {}
 
         Flex::column()
             .with_child({
@@ -921,7 +923,7 @@ impl LspLogToolbarItemView {
                                 .with_height(theme.toolbar_dropdown_menu.row_height),
                         )
                         .with_child(
-                            ui::checkbox_with_label::<Self, _, Self, _>(
+                            ui::checkbox_with_label::<LanguageServerCheckbox, _, Self, _>(
                                 Empty::new(),
                                 &theme.welcome.checkbox,
                                 rpc_trace_enabled,

@@ -50,6 +50,9 @@
   // Whether to pop the completions menu while typing in an editor without
   // explicitly requesting it.
   "show_completions_on_input": true,
+  // Whether to display inline and alongside documentation for items in the
+  // completions menu
+  "show_completion_documentation": true,
   // Whether to show wrap guides in the editor. Setting this to true will
   // show a guide at the 'preferred_line_length' value if softwrap is set to
   // 'preferred_line_length', and will show any additional guides as specified
@@ -199,7 +202,12 @@
   //         "arguments": ["--stdin-filepath", "{buffer_path}"]
   //       }
   //     }
-  "formatter": "language_server",
+  // 3. Format code using Zed's Prettier integration:
+  //     "formatter": "prettier"
+  // 4. Default. Format files using Zed's Prettier integration (if applicable),
+  //    or falling back to formatting via language server:
+  //     "formatter": "auto"
+  "formatter": "auto",
   // How to soft-wrap long lines of text. This setting can take
   // three values:
   //
@@ -428,6 +436,16 @@
     "JSON": {
       "tab_size": 2
     }
+  },
+  // Zed's Prettier integration settings.
+  // If Prettier is enabled, Zed will use this its Prettier instance for any applicable file, if
+  // project has no other Prettier installed.
+  "prettier": {
+    // Use regular Prettier json configuration:
+    // "trailingComma": "es5",
+    // "tabWidth": 4,
+    // "semi": false,
+    // "singleQuote": true
   },
   // LSP Specific settings.
   "lsp": {
