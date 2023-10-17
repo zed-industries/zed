@@ -134,7 +134,7 @@ impl<V: 'static + Send + Sync, K: ElementKind> Element for LayoutNodeElement<V, 
                 .map(|child| child.layout(state, cx))
                 .collect::<Vec<_>>();
 
-            let style = this.computed_style().clone();
+            let style = this.computed_style();
             let layout_id = cx.request_layout(style, layout_ids);
             (layout_id, ())
         })

@@ -61,7 +61,7 @@ where
         let child_layout_ids = style.apply_text_style(cx, |cx| {
             self.with_element_id(cx, |this, cx| this.layout_children(view, cx))
         });
-        let layout_id = cx.request_layout(style.into(), child_layout_ids.clone());
+        let layout_id = cx.request_layout(&style, child_layout_ids.clone());
         (layout_id, ())
     }
 

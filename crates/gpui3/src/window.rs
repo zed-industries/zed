@@ -248,7 +248,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub fn request_layout(
         &mut self,
-        style: Style,
+        style: &Style,
         children: impl IntoIterator<Item = LayoutId>,
     ) -> LayoutId {
         self.app.layout_id_buffer.clear();

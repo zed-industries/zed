@@ -53,7 +53,7 @@ impl<S: 'static + Send + Sync> Element for Svg<S> {
         Self: Sized,
     {
         let style = self.computed_style();
-        (cx.request_layout(style, []), ())
+        (cx.request_layout(&style, []), ())
     }
 
     fn paint(

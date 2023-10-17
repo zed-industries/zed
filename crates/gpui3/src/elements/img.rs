@@ -62,7 +62,7 @@ impl<S: Send + Sync + 'static> Element for Img<S> {
         Self: Sized,
     {
         let style = self.computed_style();
-        let layout_id = cx.request_layout(style, []);
+        let layout_id = cx.request_layout(&style, []);
         (layout_id, ())
     }
 
