@@ -1,4 +1,4 @@
-use crate::{BorrowWindow, Bounds, ElementId, LayoutId, Pixels, Point, SharedString, ViewContext};
+use crate::{BorrowWindow, Bounds, ElementId, LayoutId, Pixels, Point, ViewContext};
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
 
@@ -48,7 +48,6 @@ impl ElementIdentity for AnonymousElement {
 
 pub trait ParentElement: Element {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::ViewState>; 2]>;
-    fn group_mut(&mut self) -> &mut Option<SharedString>;
 
     fn child(mut self, child: impl IntoAnyElement<Self::ViewState>) -> Self
     where

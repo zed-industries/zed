@@ -2,7 +2,8 @@ use crate::{
     AnonymousElement, AnyElement, AppContext, BorrowWindow, Bounds, Clickable, DispatchPhase,
     Element, ElementId, ElementIdentity, IdentifiedElement, Interactive, IntoAnyElement, LayoutId,
     MouseClickEvent, MouseDownEvent, MouseEventListeners, MouseMoveEvent, MouseUpEvent, Overflow,
-    Pixels, Point, ScrollWheelEvent, SharedString, Style, StyleRefinement, Styled, ViewContext,
+    ParentElement, Pixels, Point, ScrollWheelEvent, SharedString, Style, StyleRefinement, Styled,
+    ViewContext,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -111,18 +112,6 @@ where
         }
     }
 }
-
-impl<V, K> Interactive for Div<V, K>
-where
-    V: 'static + Send + Sync,
-    K: ElementIdentity,
-{
-    fn listeners(&mut self) -> &mut MouseEventListeners<V> {
-        &mut self.listeners
-    }
-}
-
-impl<V> Clickable for Div<V, IdentifiedElement> where V: 'static + Send + Sync {}
 
 impl<V, K> Div<V, K>
 where
@@ -430,6 +419,16 @@ where
     }
 }
 
+impl<V, K> ParentElement for Div<V, K>
+where
+    V: 'static + Send + Sync,
+    K: ElementIdentity,
+{
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::ViewState>; 2]> {
+        &mut self.children
+    }
+}
+
 impl<V, K> Styled for Div<V, K>
 where
     V: 'static + Send + Sync,
@@ -439,6 +438,18 @@ where
         &mut self.base_style
     }
 }
+
+impl<V, K> Interactive for Div<V, K>
+where
+    V: 'static + Send + Sync,
+    K: ElementIdentity,
+{
+    fn listeners(&mut self) -> &mut MouseEventListeners<V> {
+        &mut self.listeners
+    }
+}
+
+impl<V> Clickable for Div<V, IdentifiedElement> where V: 'static + Send + Sync {}
 
 fn paint_hover_listener<V>(bounds: Bounds<Pixels>, cx: &mut ViewContext<V>)
 where
