@@ -1,7 +1,7 @@
 use crate::templates::base::{PromptArguments, PromptFileType, PromptTemplate};
 use std::fmt::Write;
 
-struct EngineerPreamble {}
+pub struct EngineerPreamble {}
 
 impl PromptTemplate for EngineerPreamble {
     fn generate(
@@ -14,8 +14,8 @@ impl PromptTemplate for EngineerPreamble {
         match args.get_file_type() {
             PromptFileType::Code => {
                 prompts.push(format!(
-                    "You are an expert {} engineer.",
-                    args.language_name.clone().unwrap_or("".to_string())
+                    "You are an expert {}engineer.",
+                    args.language_name.clone().unwrap_or("".to_string()) + " "
                 ));
             }
             PromptFileType::Text => {

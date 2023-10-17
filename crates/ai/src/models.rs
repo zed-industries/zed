@@ -9,16 +9,16 @@ pub trait LanguageModel {
     fn capacity(&self) -> anyhow::Result<usize>;
 }
 
-struct OpenAILanguageModel {
+pub struct OpenAILanguageModel {
     name: String,
     bpe: Option<CoreBPE>,
 }
 
 impl OpenAILanguageModel {
-    pub fn load(model_name: String) -> Self {
-        let bpe = tiktoken_rs::get_bpe_from_model(&model_name).log_err();
+    pub fn load(model_name: &str) -> Self {
+        let bpe = tiktoken_rs::get_bpe_from_model(model_name).log_err();
         OpenAILanguageModel {
-            name: model_name,
+            name: model_name.to_string(),
             bpe,
         }
     }

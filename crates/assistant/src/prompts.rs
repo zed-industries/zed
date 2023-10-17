@@ -1,60 +1,14 @@
 use crate::codegen::CodegenKind;
-use gpui::AsyncAppContext;
+use ai::models::{LanguageModel, OpenAILanguageModel};
+use ai::templates::base::{PromptArguments, PromptChain, PromptPriority, PromptTemplate};
+use ai::templates::preamble::EngineerPreamble;
+use ai::templates::repository_context::{PromptCodeSnippet, RepositoryContext};
 use language::{BufferSnapshot, OffsetRangeExt, ToOffset};
-use semantic_index::SearchResult;
 use std::cmp::{self, Reverse};
 use std::fmt::Write;
 use std::ops::Range;
-use std::path::PathBuf;
+use std::sync::Arc;
 use tiktoken_rs::ChatCompletionRequestMessage;
-
-pub struct PromptCodeSnippet {
-    path: Option<PathBuf>,
-    language_name: Option<String>,
-    content: String,
-}
-
-impl PromptCodeSnippet {
-    pub fn new(search_result: SearchResult, cx: &AsyncAppContext) -> Self {
-        let (content, language_name, file_path) =
-            search_result.buffer.read_with(cx, |buffer, _| {
-                let snapshot = buffer.snapshot();
-                let content = snapshot
-                    .text_for_range(search_result.range.clone())
-                    .collect::<String>();
-
-                let language_name = buffer
-                    .language()
-                    .and_then(|language| Some(language.name().to_string()));
-
-                let file_path = buffer
-                    .file()
-                    .and_then(|file| Some(file.path().to_path_buf()));
-
-                (content, language_name, file_path)
-            });
-
-        PromptCodeSnippet {
-            path: file_path,
-            language_name,
-            content,
-        }
-    }
-}
-
-impl ToString for PromptCodeSnippet {
-    fn to_string(&self) -> String {
-        let path = self
-            .path
-            .as_ref()
-            .and_then(|path| Some(path.to_string_lossy().to_string()))
-            .unwrap_or("".to_string());
-        let language_name = self.language_name.clone().unwrap_or("".to_string());
-        let content = self.content.clone();
-
-        format!("The below code snippet may be relevant from file: {path}\n```{language_name}\n{content}\n```")
-    }
-}
 
 #[allow(dead_code)]
 fn summarize(buffer: &BufferSnapshot, selected_range: Range<impl ToOffset>) -> String {
@@ -175,7 +129,32 @@ pub fn generate_content_prompt(
     kind: CodegenKind,
     search_results: Vec<PromptCodeSnippet>,
     model: &str,
-) -> String {
+) -> anyhow::Result<String> {
+    // Using new Prompt Templates
+    let openai_model: Arc<dyn LanguageModel> = Arc::new(OpenAILanguageModel::load(model));
+    let lang_name = if let Some(language_name) = language_name {
+        Some(language_name.to_string())
+    } else {
+        None
+    };
+
+    let args = PromptArguments {
+        model: openai_model,
+        language_name: lang_name.clone(),
+        project_name: None,
+        snippets: search_results.clone(),
+        reserved_tokens: 1000,
+    };
+
+    let templates: Vec<(PromptPriority, Box<dyn PromptTemplate>)> = vec![
+        (PromptPriority::High, Box::new(EngineerPreamble {})),
+        (PromptPriority::Low, Box::new(RepositoryContext {})),
+    ];
+    let chain = PromptChain::new(args, templates);
+
+    let prompt = chain.generate(true)?;
+    println!("{:?}", prompt);
+
     const MAXIMUM_SNIPPET_TOKEN_COUNT: usize = 500;
     const RESERVED_TOKENS_FOR_GENERATION: usize = 1000;
 
@@ -183,7 +162,7 @@ pub fn generate_content_prompt(
     let range = range.to_offset(buffer);
 
     // General Preamble
-    if let Some(language_name) = language_name {
+    if let Some(language_name) = language_name.clone() {
         prompts.push(format!("You're an expert {language_name} engineer.\n"));
     } else {
         prompts.push("You're an expert engineer.\n".to_string());
@@ -297,7 +276,7 @@ pub fn generate_content_prompt(
         }
     }
 
-    prompts.join("\n")
+    anyhow::Ok(prompts.join("\n"))
 }
 
 #[cfg(test)]

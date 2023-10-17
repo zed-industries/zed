@@ -1,8 +1,11 @@
+use crate::templates::base::{PromptArguments, PromptTemplate};
+use std::fmt::Write;
 use std::{ops::Range, path::PathBuf};
 
 use gpui::{AsyncAppContext, ModelHandle};
 use language::{Anchor, Buffer};
 
+#[derive(Clone)]
 pub struct PromptCodeSnippet {
     path: Option<PathBuf>,
     language_name: Option<String>,
@@ -17,7 +20,7 @@ impl PromptCodeSnippet {
 
             let language_name = buffer
                 .language()
-                .and_then(|language| Some(language.name().to_string()));
+                .and_then(|language| Some(language.name().to_string().to_lowercase()));
 
             let file_path = buffer
                 .file()
@@ -45,5 +48,47 @@ impl ToString for PromptCodeSnippet {
         let content = self.content.clone();
 
         format!("The below code snippet may be relevant from file: {path}\n```{language_name}\n{content}\n```")
+    }
+}
+
+pub struct RepositoryContext {}
+
+impl PromptTemplate for RepositoryContext {
+    fn generate(
+        &self,
+        args: &PromptArguments,
+        max_token_length: Option<usize>,
+    ) -> anyhow::Result<(String, usize)> {
+        const MAXIMUM_SNIPPET_TOKEN_COUNT: usize = 500;
+        let mut template = "You are working inside a large repository, here are a few code snippets that may be useful.";
+        let mut prompt = String::new();
+
+        let mut remaining_tokens = max_token_length.clone();
+        let seperator_token_length = args.model.count_tokens("\n")?;
+        for snippet in &args.snippets {
+            let mut snippet_prompt = template.to_string();
+            let content = snippet.to_string();
+            writeln!(snippet_prompt, "{content}").unwrap();
+
+            let token_count = args.model.count_tokens(&snippet_prompt)?;
+            if token_count <= MAXIMUM_SNIPPET_TOKEN_COUNT {
+                if let Some(tokens_left) = remaining_tokens {
+                    if tokens_left >= token_count {
+                        writeln!(prompt, "{snippet_prompt}").unwrap();
+                        remaining_tokens = if tokens_left >= (token_count + seperator_token_length)
+                        {
+                            Some(tokens_left - token_count - seperator_token_length)
+                        } else {
+                            Some(0)
+                        };
+                    }
+                } else {
+                    writeln!(prompt, "{snippet_prompt}").unwrap();
+                }
+            }
+        }
+
+        let total_token_count = args.model.count_tokens(&prompt)?;
+        anyhow::Ok((prompt, total_token_count))
     }
 }

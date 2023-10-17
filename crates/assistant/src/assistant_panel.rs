@@ -1,12 +1,15 @@
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings, OpenAIModel},
     codegen::{self, Codegen, CodegenKind},
-    prompts::{generate_content_prompt, PromptCodeSnippet},
+    prompts::generate_content_prompt,
     MessageId, MessageMetadata, MessageStatus, Role, SavedConversation, SavedConversationMetadata,
     SavedMessage,
 };
-use ai::completion::{
-    stream_completion, OpenAICompletionProvider, OpenAIRequest, RequestMessage, OPENAI_API_URL,
+use ai::{
+    completion::{
+        stream_completion, OpenAICompletionProvider, OpenAIRequest, RequestMessage, OPENAI_API_URL,
+    },
+    templates::repository_context::PromptCodeSnippet,
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
@@ -668,14 +671,7 @@ impl AssistantPanel {
             let snippets = cx.spawn(|_, cx| async move {
                 let mut snippets = Vec::new();
                 for result in search_results.await {
-                    snippets.push(PromptCodeSnippet::new(result, &cx));
-
-                    // snippets.push(result.buffer.read_with(&cx, |buffer, _| {
-                    //     buffer
-                    //         .snapshot()
-                    //         .text_for_range(result.range)
-                    //         .collect::<String>()
-                    // }));
+                    snippets.push(PromptCodeSnippet::new(result.buffer, result.range, &cx));
                 }
                 snippets
             });
@@ -717,7 +713,8 @@ impl AssistantPanel {
         }
 
         cx.spawn(|_, mut cx| async move {
-            let prompt = prompt.await;
+            // I Don't know if we want to return a ? here.
+            let prompt = prompt.await?;
 
             messages.push(RequestMessage {
                 role: Role::User,
@@ -729,6 +726,7 @@ impl AssistantPanel {
                 stream: true,
             };
             codegen.update(&mut cx, |codegen, cx| codegen.start(request, cx));
+            anyhow::Ok(())
         })
         .detach();
     }
