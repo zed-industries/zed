@@ -183,32 +183,31 @@ impl NotificationPanel {
         let user_store = self.user_store.read(cx);
         let channel_store = self.channel_store.read(cx);
         let entry = notification_store.notification_at(ix)?;
+        let notification = entry.notification.clone();
         let now = OffsetDateTime::now_utc();
         let timestamp = entry.timestamp;
 
         let icon;
         let text;
         let actor;
-        match entry.notification {
-            Notification::ContactRequest {
-                actor_id: requester_id,
-            } => {
-                actor = user_store.get_cached_user(requester_id)?;
+        let needs_acceptance;
+        match notification {
+            Notification::ContactRequest { actor_id } => {
+                let requester = user_store.get_cached_user(actor_id)?;
                 icon = "icons/plus.svg";
-                text = format!("{} wants to add you as a contact", actor.github_login);
+                text = format!("{} wants to add you as a contact", requester.github_login);
+                needs_acceptance = true;
+                actor = Some(requester);
             }
-            Notification::ContactRequestAccepted {
-                actor_id: contact_id,
-            } => {
-                actor = user_store.get_cached_user(contact_id)?;
+            Notification::ContactRequestAccepted { actor_id } => {
+                let responder = user_store.get_cached_user(actor_id)?;
                 icon = "icons/plus.svg";
-                text = format!("{} accepted your contact invite", actor.github_login);
+                text = format!("{} accepted your contact invite", responder.github_login);
+                needs_acceptance = false;
+                actor = Some(responder);
             }
-            Notification::ChannelInvitation {
-                actor_id: inviter_id,
-                channel_id,
-            } => {
-                actor = user_store.get_cached_user(inviter_id)?;
+            Notification::ChannelInvitation { channel_id } => {
+                actor = None;
                 let channel = channel_store.channel_for_id(channel_id).or_else(|| {
                     channel_store
                         .channel_invitations()
@@ -217,39 +216,51 @@ impl NotificationPanel {
                 })?;
 
                 icon = "icons/hash.svg";
-                text = format!(
-                    "{} invited you to join the #{} channel",
-                    actor.github_login, channel.name
-                );
+                text = format!("you were invited to join the #{} channel", channel.name);
+                needs_acceptance = true;
             }
             Notification::ChannelMessageMention {
-                actor_id: sender_id,
+                actor_id,
                 channel_id,
                 message_id,
             } => {
-                actor = user_store.get_cached_user(sender_id)?;
+                let sender = user_store.get_cached_user(actor_id)?;
                 let channel = channel_store.channel_for_id(channel_id)?;
                 let message = notification_store.channel_message_for_id(message_id)?;
 
                 icon = "icons/conversations.svg";
                 text = format!(
                     "{} mentioned you in the #{} channel:\n{}",
-                    actor.github_login, channel.name, message.body,
+                    sender.github_login, channel.name, message.body,
                 );
+                needs_acceptance = false;
+                actor = Some(sender);
             }
         }
 
         let theme = theme::current(cx);
-        let style = &theme.chat_panel.message;
+        let style = &theme.notification_panel;
+        let response = entry.response;
+
+        let message_style = if entry.is_read {
+            style.read_text.clone()
+        } else {
+            style.unread_text.clone()
+        };
+
+        enum Decline {}
+        enum Accept {}
 
         Some(
-            MouseEventHandler::new::<NotificationEntry, _>(ix, cx, |state, _| {
-                let container = style.container.style_for(state);
+            MouseEventHandler::new::<NotificationEntry, _>(ix, cx, |_, cx| {
+                let container = message_style.container;
 
                 Flex::column()
                     .with_child(
                         Flex::row()
-                            .with_child(render_avatar(actor.avatar.clone(), &theme))
+                            .with_children(
+                                actor.map(|actor| render_avatar(actor.avatar.clone(), &theme)),
+                            )
                             .with_child(render_icon_button(&theme.chat_panel.icon_button, icon))
                             .with_child(
                                 Label::new(
@@ -261,9 +272,69 @@ impl NotificationPanel {
                             )
                             .align_children_center(),
                     )
-                    .with_child(Text::new(text, style.body.clone()))
+                    .with_child(Text::new(text, message_style.text.clone()))
+                    .with_children(if let Some(is_accepted) = response {
+                        Some(
+                            Label::new(
+                                if is_accepted { "Accepted" } else { "Declined" },
+                                style.button.text.clone(),
+                            )
+                            .into_any(),
+                        )
+                    } else if needs_acceptance {
+                        Some(
+                            Flex::row()
+                                .with_children([
+                                    MouseEventHandler::new::<Decline, _>(ix, cx, |state, _| {
+                                        let button = style.button.style_for(state);
+                                        Label::new("Decline", button.text.clone())
+                                            .contained()
+                                            .with_style(button.container)
+                                    })
+                                    .with_cursor_style(CursorStyle::PointingHand)
+                                    .on_click(
+                                        MouseButton::Left,
+                                        {
+                                            let notification = notification.clone();
+                                            move |_, view, cx| {
+                                                view.respond_to_notification(
+                                                    notification.clone(),
+                                                    false,
+                                                    cx,
+                                                );
+                                            }
+                                        },
+                                    ),
+                                    MouseEventHandler::new::<Accept, _>(ix, cx, |state, _| {
+                                        let button = style.button.style_for(state);
+                                        Label::new("Accept", button.text.clone())
+                                            .contained()
+                                            .with_style(button.container)
+                                    })
+                                    .with_cursor_style(CursorStyle::PointingHand)
+                                    .on_click(
+                                        MouseButton::Left,
+                                        {
+                                            let notification = notification.clone();
+                                            move |_, view, cx| {
+                                                view.respond_to_notification(
+                                                    notification.clone(),
+                                                    true,
+                                                    cx,
+                                                );
+                                            }
+                                        },
+                                    ),
+                                ])
+                                .aligned()
+                                .right()
+                                .into_any(),
+                        )
+                    } else {
+                        None
+                    })
                     .contained()
-                    .with_style(*container)
+                    .with_style(container)
                     .into_any()
             })
             .into_any(),
@@ -371,6 +442,31 @@ impl NotificationPanel {
             }
             Notification::ChannelInvitation { .. } => {}
             Notification::ChannelMessageMention { .. } => {}
+        }
+    }
+
+    fn respond_to_notification(
+        &mut self,
+        notification: Notification,
+        response: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match notification {
+            Notification::ContactRequest { actor_id } => {
+                self.user_store
+                    .update(cx, |store, cx| {
+                        store.respond_to_contact_request(actor_id, response, cx)
+                    })
+                    .detach();
+            }
+            Notification::ChannelInvitation { channel_id, .. } => {
+                self.channel_store
+                    .update(cx, |store, cx| {
+                        store.respond_to_channel_invite(channel_id, response, cx)
+                    })
+                    .detach();
+            }
+            _ => {}
         }
     }
 }

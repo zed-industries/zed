@@ -161,7 +161,7 @@ impl Database {
         invitee_id: UserId,
         inviter_id: UserId,
         is_admin: bool,
-    ) -> Result<Option<proto::Notification>> {
+    ) -> Result<NotificationBatch> {
         self.transaction(move |tx| async move {
             self.check_user_is_channel_admin(channel_id, inviter_id, &*tx)
                 .await?;
@@ -176,16 +176,18 @@ impl Database {
             .insert(&*tx)
             .await?;
 
-            self.create_notification(
-                invitee_id,
-                rpc::Notification::ChannelInvitation {
-                    actor_id: inviter_id.to_proto(),
-                    channel_id: channel_id.to_proto(),
-                },
-                true,
-                &*tx,
-            )
-            .await
+            Ok(self
+                .create_notification(
+                    invitee_id,
+                    rpc::Notification::ChannelInvitation {
+                        channel_id: channel_id.to_proto(),
+                    },
+                    true,
+                    &*tx,
+                )
+                .await?
+                .into_iter()
+                .collect())
         })
         .await
     }
@@ -228,7 +230,7 @@ impl Database {
         channel_id: ChannelId,
         user_id: UserId,
         accept: bool,
-    ) -> Result<()> {
+    ) -> Result<NotificationBatch> {
         self.transaction(move |tx| async move {
             let rows_affected = if accept {
                 channel_member::Entity::update_many()
@@ -246,21 +248,34 @@ impl Database {
                     .await?
                     .rows_affected
             } else {
-                channel_member::ActiveModel {
-                    channel_id: ActiveValue::Unchanged(channel_id),
-                    user_id: ActiveValue::Unchanged(user_id),
-                    ..Default::default()
-                }
-                .delete(&*tx)
-                .await?
-                .rows_affected
+                channel_member::Entity::delete_many()
+                    .filter(
+                        channel_member::Column::ChannelId
+                            .eq(channel_id)
+                            .and(channel_member::Column::UserId.eq(user_id))
+                            .and(channel_member::Column::Accepted.eq(false)),
+                    )
+                    .exec(&*tx)
+                    .await?
+                    .rows_affected
             };
 
             if rows_affected == 0 {
                 Err(anyhow!("no such invitation"))?;
             }
 
-            Ok(())
+            Ok(self
+                .respond_to_notification(
+                    user_id,
+                    &rpc::Notification::ChannelInvitation {
+                        channel_id: channel_id.to_proto(),
+                    },
+                    accept,
+                    &*tx,
+                )
+                .await?
+                .into_iter()
+                .collect())
         })
         .await
     }

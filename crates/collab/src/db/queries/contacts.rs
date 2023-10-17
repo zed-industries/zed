@@ -123,7 +123,7 @@ impl Database {
         &self,
         sender_id: UserId,
         receiver_id: UserId,
-    ) -> Result<Option<proto::Notification>> {
+    ) -> Result<NotificationBatch> {
         self.transaction(|tx| async move {
             let (id_a, id_b, a_to_b) = if sender_id < receiver_id {
                 (sender_id, receiver_id, true)
@@ -164,15 +164,18 @@ impl Database {
                 Err(anyhow!("contact already requested"))?;
             }
 
-            self.create_notification(
-                receiver_id,
-                rpc::Notification::ContactRequest {
-                    actor_id: sender_id.to_proto(),
-                },
-                true,
-                &*tx,
-            )
-            .await
+            Ok(self
+                .create_notification(
+                    receiver_id,
+                    rpc::Notification::ContactRequest {
+                        actor_id: sender_id.to_proto(),
+                    },
+                    true,
+                    &*tx,
+                )
+                .await?
+                .into_iter()
+                .collect())
         })
         .await
     }
@@ -274,7 +277,7 @@ impl Database {
         responder_id: UserId,
         requester_id: UserId,
         accept: bool,
-    ) -> Result<Option<proto::Notification>> {
+    ) -> Result<NotificationBatch> {
         self.transaction(|tx| async move {
             let (id_a, id_b, a_to_b) = if responder_id < requester_id {
                 (responder_id, requester_id, false)
@@ -316,15 +319,34 @@ impl Database {
                 Err(anyhow!("no such contact request"))?
             }
 
-            self.create_notification(
-                requester_id,
-                rpc::Notification::ContactRequestAccepted {
-                    actor_id: responder_id.to_proto(),
-                },
-                true,
-                &*tx,
-            )
-            .await
+            let mut notifications = Vec::new();
+            notifications.extend(
+                self.respond_to_notification(
+                    responder_id,
+                    &rpc::Notification::ContactRequest {
+                        actor_id: requester_id.to_proto(),
+                    },
+                    accept,
+                    &*tx,
+                )
+                .await?,
+            );
+
+            if accept {
+                notifications.extend(
+                    self.create_notification(
+                        requester_id,
+                        rpc::Notification::ContactRequestAccepted {
+                            actor_id: responder_id.to_proto(),
+                        },
+                        true,
+                        &*tx,
+                    )
+                    .await?,
+                );
+            }
+
+            Ok(notifications)
         })
         .await
     }

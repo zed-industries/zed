@@ -44,6 +44,7 @@ pub struct NotificationEntry {
     pub notification: Notification,
     pub timestamp: OffsetDateTime,
     pub is_read: bool,
+    pub response: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -186,6 +187,7 @@ impl NotificationStore {
                     timestamp: OffsetDateTime::from_unix_timestamp(message.timestamp as i64)
                         .ok()?,
                     notification: Notification::from_proto(&message)?,
+                    response: message.response,
                 })
             })
             .collect::<Vec<_>>();
@@ -195,12 +197,7 @@ impl NotificationStore {
 
         for entry in &notifications {
             match entry.notification {
-                Notification::ChannelInvitation {
-                    actor_id: inviter_id,
-                    ..
-                } => {
-                    user_ids.push(inviter_id);
-                }
+                Notification::ChannelInvitation { .. } => {}
                 Notification::ContactRequest {
                     actor_id: requester_id,
                 } => {

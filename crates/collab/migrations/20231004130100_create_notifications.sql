@@ -7,12 +7,13 @@ CREATE UNIQUE INDEX "index_notification_kinds_on_name" ON "notification_kinds" (
 
 CREATE TABLE notifications (
     "id" SERIAL PRIMARY KEY,
-    "is_read" BOOLEAN NOT NULL DEFAULT FALSE,
     "created_at" TIMESTAMP NOT NULL DEFAULT now(),
     "recipient_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     "actor_id" INTEGER REFERENCES users (id) ON DELETE CASCADE,
     "kind" INTEGER NOT NULL REFERENCES notification_kinds (id),
-    "content" TEXT
+    "content" TEXT,
+    "is_read" BOOLEAN NOT NULL DEFAULT FALSE,
+    "response" BOOLEAN
 );
 
 CREATE INDEX "index_notifications_on_recipient_id" ON "notifications" ("recipient_id");

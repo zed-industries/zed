@@ -53,6 +53,7 @@ pub struct Theme {
     pub collab_panel: CollabPanel,
     pub project_panel: ProjectPanel,
     pub chat_panel: ChatPanel,
+    pub notification_panel: NotificationPanel,
     pub command_palette: CommandPalette,
     pub picker: Picker,
     pub editor: Editor,
@@ -642,6 +643,21 @@ pub struct ChatPanel {
     pub pending_message: ChatMessage,
     pub sign_in_prompt: Interactive<TextStyle>,
     pub icon_button: Interactive<IconButton>,
+}
+
+#[derive(Deserialize, Default, JsonSchema)]
+pub struct NotificationPanel {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub list: ContainerStyle,
+    pub avatar: AvatarStyle,
+    pub avatar_container: ContainerStyle,
+    pub sign_in_prompt: Interactive<TextStyle>,
+    pub icon_button: Interactive<IconButton>,
+    pub unread_text: ContainedText,
+    pub read_text: ContainedText,
+    pub timestamp: ContainedText,
+    pub button: Interactive<ContainedText>,
 }
 
 #[derive(Deserialize, Default, JsonSchema)]

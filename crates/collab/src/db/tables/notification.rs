@@ -7,12 +7,13 @@ use time::PrimitiveDateTime;
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: NotificationId,
-    pub is_read: bool,
     pub created_at: PrimitiveDateTime,
     pub recipient_id: UserId,
     pub actor_id: Option<UserId>,
     pub kind: NotificationKindId,
     pub content: String,
+    pub is_read: bool,
+    pub response: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -13,7 +13,8 @@ const ACTOR_ID: &'static str = "actor_id";
 /// variant, add a serde alias for the old name.
 ///
 /// When a notification is initiated by a user, use the `actor_id` field
-/// to store the user's id.
+/// to store the user's id. This is value is stored in a dedicated column
+/// in the database, so it can be queried more efficiently.
 #[derive(Debug, Clone, PartialEq, Eq, EnumVariantNames, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum Notification {
@@ -24,7 +25,6 @@ pub enum Notification {
         actor_id: u64,
     },
     ChannelInvitation {
-        actor_id: u64,
         channel_id: u64,
     },
     ChannelMessageMention {
@@ -40,7 +40,7 @@ impl Notification {
         let mut actor_id = None;
         let value = value.as_object_mut().unwrap();
         let Some(Value::String(kind)) = value.remove(KIND) else {
-            unreachable!()
+            unreachable!("kind is the enum tag")
         };
         if let map::Entry::Occupied(e) = value.entry(ACTOR_ID) {
             if e.get().is_u64() {
@@ -76,10 +76,7 @@ fn test_notification() {
     for notification in [
         Notification::ContactRequest { actor_id: 1 },
         Notification::ContactRequestAccepted { actor_id: 2 },
-        Notification::ChannelInvitation {
-            actor_id: 0,
-            channel_id: 100,
-        },
+        Notification::ChannelInvitation { channel_id: 100 },
         Notification::ChannelMessageMention {
             actor_id: 200,
             channel_id: 30,

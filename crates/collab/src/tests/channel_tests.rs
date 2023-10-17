@@ -117,8 +117,8 @@ async fn test_core_channels(
     // Client B accepts the invitation.
     client_b
         .channel_store()
-        .update(cx_b, |channels, _| {
-            channels.respond_to_channel_invite(channel_a_id, true)
+        .update(cx_b, |channels, cx| {
+            channels.respond_to_channel_invite(channel_a_id, true, cx)
         })
         .await
         .unwrap();
@@ -856,8 +856,8 @@ async fn test_lost_channel_creation(
     // Client B accepts the invite
     client_b
         .channel_store()
-        .update(cx_b, |channel_store, _| {
-            channel_store.respond_to_channel_invite(channel_id, true)
+        .update(cx_b, |channel_store, cx| {
+            channel_store.respond_to_channel_invite(channel_id, true, cx)
         })
         .await
         .unwrap();

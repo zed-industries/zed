@@ -384,6 +384,8 @@ impl Contact {
     }
 }
 
+pub type NotificationBatch = Vec<(UserId, proto::Notification)>;
+
 #[derive(Clone, Debug, PartialEq, Eq, FromQueryResult, Serialize, Deserialize)]
 pub struct Invite {
     pub email_address: String,

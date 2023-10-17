@@ -673,14 +673,15 @@ impl ChannelStore {
         &mut self,
         channel_id: ChannelId,
         accept: bool,
-    ) -> impl Future<Output = Result<()>> {
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
         let client = self.client.clone();
-        async move {
+        cx.background().spawn(async move {
             client
                 .request(proto::RespondToChannelInvite { channel_id, accept })
                 .await?;
             Ok(())
-        }
+        })
     }
 
     pub fn get_channel_member_details(

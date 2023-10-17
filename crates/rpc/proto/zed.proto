@@ -1598,8 +1598,9 @@ message DeleteNotification {
 message Notification {
     uint64 id = 1;
     uint64 timestamp = 2;
-    bool is_read = 3;
-    string kind = 4;
-    string content = 5;
-    optional uint64 actor_id = 6;
+    string kind = 3;
+    string content = 4;
+    optional uint64 actor_id = 5;
+    bool is_read = 6;
+    optional bool response = 7;
 }

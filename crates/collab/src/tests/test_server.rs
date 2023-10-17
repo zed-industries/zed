@@ -339,8 +339,8 @@ impl TestServer {
 
             member_cx
                 .read(ChannelStore::global)
-                .update(*member_cx, |channels, _| {
-                    channels.respond_to_channel_invite(channel_id, true)
+                .update(*member_cx, |channels, cx| {
+                    channels.respond_to_channel_invite(channel_id, true, cx)
                 })
                 .await
                 .unwrap();
@@ -626,8 +626,8 @@ impl TestClient {
 
         other_cx
             .read(ChannelStore::global)
-            .update(other_cx, |channel_store, _| {
-                channel_store.respond_to_channel_invite(channel, true)
+            .update(other_cx, |channel_store, cx| {
+                channel_store.respond_to_channel_invite(channel, true, cx)
             })
             .await
             .unwrap();
