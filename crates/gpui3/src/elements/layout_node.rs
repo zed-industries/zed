@@ -1,6 +1,7 @@
 use crate::{
     AnyElement, AppContext, BorrowWindow, Bounds, Element, ElementId, IdentifiedElement,
-    IntoAnyElement, LayoutId, Pixels, SharedString, Style, StyleCascade, Styled, ViewContext,
+    IntoAnyElement, LayoutId, ParentElement, Pixels, SharedString, Style, StyleCascade, Styled,
+    ViewContext,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -14,31 +15,6 @@ pub fn group_bounds(name: &SharedString, cx: &mut AppContext) -> Option<Bounds<P
         .0
         .get(name)
         .and_then(|bounds_stack| bounds_stack.last().cloned())
-}
-
-pub trait LayoutNode<V: 'static + Send + Sync, K: ElementKind> {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]>;
-    fn group_mut(&mut self) -> &mut Option<SharedString>;
-
-    fn child(mut self, child: impl IntoAnyElement<V>) -> Self
-    where
-        Self: Sized,
-    {
-        self.children_mut().push(child.into_any());
-        self
-    }
-
-    fn children<C, E>(mut self, children: C) -> Self
-    where
-        C: IntoIterator<Item = E>,
-        E: IntoAnyElement<V>,
-        Self: Sized,
-    {
-        for child in children {
-            self.children_mut().push(child.into_any());
-        }
-        self
-    }
 }
 
 pub trait ElementKind: 'static + Send + Sync {
@@ -69,6 +45,16 @@ pub struct LayoutNodeElement<V: 'static + Send + Sync, K: ElementKind> {
 }
 
 impl<V: 'static + Send + Sync> LayoutNodeElement<V, AnonymousElementKind> {
+    pub fn new() -> LayoutNodeElement<V, AnonymousElementKind> {
+        LayoutNodeElement {
+            style_cascade: StyleCascade::default(),
+            computed_style: None,
+            children: SmallVec::new(),
+            kind: AnonymousElementKind,
+            group: None,
+        }
+    }
+
     pub fn identify(self, id: impl Into<ElementId>) -> LayoutNodeElement<V, IdentifiedElementKind> {
         LayoutNodeElement {
             style_cascade: self.style_cascade,
@@ -196,7 +182,7 @@ impl<V: 'static + Send + Sync, K: ElementKind> Element for LayoutNodeElement<V, 
     }
 }
 
-impl<V: 'static + Send + Sync, K: ElementKind> LayoutNode<V, K> for LayoutNodeElement<V, K> {
+impl<V: 'static + Send + Sync, K: ElementKind> ParentElement for LayoutNodeElement<V, K> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         &mut self.children
     }

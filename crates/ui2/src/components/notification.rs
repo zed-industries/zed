@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use gpui3::{Element, ParentElement, StyleHelpers, ViewContext};
+use gpui3::{Element, ParentElement, ViewContext};
 
 use crate::{
     h_stack, v_stack, Button, Icon, IconButton, IconElement, Label, ThemeColor, Toast, ToastOrigin,

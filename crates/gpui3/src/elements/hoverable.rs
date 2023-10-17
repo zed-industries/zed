@@ -1,7 +1,7 @@
 use crate::{
-    group_bounds, AnyElement, Bounds, DispatchPhase, Element, ElementId, ElementKind,
-    IdentifiedElement, IntoAnyElement, LayoutId, LayoutNode, MouseMoveEvent, Pixels, SharedString,
-    Style, StyleCascade, StyleRefinement, Styled, ViewContext,
+    group_bounds, AnyElement, Bounds, DispatchPhase, Element, ElementId, IdentifiedElement,
+    IntoAnyElement, LayoutId, MouseMoveEvent, ParentElement, Pixels, SharedString, Style,
+    StyleCascade, StyleRefinement, Styled, ViewContext,
 };
 use refineable::CascadeSlot;
 use std::sync::{
@@ -30,6 +30,17 @@ pub struct HoverableElement<E> {
 }
 
 impl<E: Styled + Element> HoverableElement<E> {
+    pub fn new(mut child: E) -> Self {
+        let cascade_slot = child.style_cascade().reserve();
+        HoverableElement {
+            hover_style: StyleRefinement::default(),
+            group: None,
+            cascade_slot,
+            hovered: Arc::new(AtomicBool::new(false)),
+            child,
+        }
+    }
+
     pub fn replace_child<E2: Element<ViewState = E::ViewState>>(
         self,
         replace: impl FnOnce(E) -> E2,
@@ -106,13 +117,11 @@ where
     }
 }
 
-impl<E, K, V> LayoutNode<V, K> for HoverableElement<E>
+impl<E> ParentElement for HoverableElement<E>
 where
-    E: LayoutNode<V, K>,
-    K: ElementKind,
-    V: 'static + Send + Sync,
+    E: Styled + ParentElement,
 {
-    fn children_mut(&mut self) -> &mut smallvec::SmallVec<[AnyElement<V>; 2]> {
+    fn children_mut(&mut self) -> &mut smallvec::SmallVec<[AnyElement<E::ViewState>; 2]> {
         self.child.children_mut()
     }
 

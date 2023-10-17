@@ -1,7 +1,7 @@
 use crate::{
-    AnyElement, Bounds, DispatchPhase, Element, ElementId, ElementKind, Hoverable,
-    IdentifiedElement, IntoAnyElement, LayoutId, LayoutNode, MouseDownEvent, MouseUpEvent, Pixels,
-    SharedString, StyleRefinement, Styled, ViewContext,
+    AnyElement, Bounds, DispatchPhase, Element, ElementId, Hoverable, IdentifiedElement,
+    IntoAnyElement, LayoutId, MouseDownEvent, MouseUpEvent, ParentElement, Pixels, SharedString,
+    StyleRefinement, Styled, ViewContext,
 };
 use parking_lot::Mutex;
 use refineable::CascadeSlot;
@@ -53,7 +53,17 @@ pub struct ClickableElement<E: Element> {
     cascade_slot: CascadeSlot,
 }
 
-impl<E: Element> ClickableElement<E> {
+impl<E: Styled + Element> ClickableElement<E> {
+    pub fn new(mut child: E) -> Self {
+        let cascade_slot = child.style_cascade().reserve();
+        ClickableElement {
+            child,
+            listeners: Default::default(),
+            active_style: Default::default(),
+            cascade_slot,
+        }
+    }
+
     pub fn replace_child<E2: Element<ViewState = E::ViewState>>(
         self,
         replace: impl FnOnce(E) -> E2,
@@ -171,12 +181,11 @@ where
 
 impl<E: Styled + IdentifiedElement> IdentifiedElement for ClickableElement<E> {}
 
-impl<E, K> LayoutNode<E::ViewState, K> for ClickableElement<E>
+impl<E> ParentElement for ClickableElement<E>
 where
-    E: Element + LayoutNode<E::ViewState, K>,
-    K: ElementKind,
+    E: Styled + ParentElement,
 {
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<E::ViewState>; 2]> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::ViewState>; 2]> {
         self.child.children_mut()
     }
 

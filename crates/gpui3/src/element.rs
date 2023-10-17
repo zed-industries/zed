@@ -1,4 +1,4 @@
-use crate::{BorrowWindow, Bounds, ElementId, LayoutId, Pixels, Point, ViewContext};
+use crate::{BorrowWindow, Bounds, ElementId, LayoutId, Pixels, Point, SharedString, ViewContext};
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
 
@@ -33,12 +33,11 @@ pub trait IdentifiedElement: Element {
 #[derive(Deref, DerefMut, Default, Clone, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct GlobalElementId(SmallVec<[ElementId; 8]>);
 
-pub trait ParentElement {
-    type State;
+pub trait ParentElement: Element {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::ViewState>; 2]>;
+    fn group_mut(&mut self) -> &mut Option<SharedString>;
 
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::State>; 2]>;
-
-    fn child(mut self, child: impl IntoAnyElement<Self::State>) -> Self
+    fn child(mut self, child: impl IntoAnyElement<Self::ViewState>) -> Self
     where
         Self: Sized,
     {
@@ -46,7 +45,10 @@ pub trait ParentElement {
         self
     }
 
-    fn children(mut self, iter: impl IntoIterator<Item = impl IntoAnyElement<Self::State>>) -> Self
+    fn children(
+        mut self,
+        iter: impl IntoIterator<Item = impl IntoAnyElement<Self::ViewState>>,
+    ) -> Self
     where
         Self: Sized,
     {

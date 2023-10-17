@@ -88,11 +88,11 @@ impl<S: 'static + Send + Sync> Input<S> {
             .border()
             .border_color(border_color_default)
             .fill(background_color_default)
-            .hover()
-            .border_color(border_color_hover)
-            // .active()
-            // .border_color(border_color_active)
-            .fill(background_color_active)
+            .hover(|h| {
+                h.border_color(border_color_hover)
+                    .fill(background_color_active)
+            })
+            // .active(|a| .border_color(border_color_active))
             .flex()
             .items_center()
             .child(
@@ -128,7 +128,11 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Input<S>>(cx))
                 .child(Story::label(cx, "Default"))

@@ -62,9 +62,7 @@ impl<S: 'static + Send + Sync> Toast<S> {
 }
 
 impl<S: 'static + Send + Sync> ParentElement for Toast<S> {
-    type State = S;
-
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::State>; 2]> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::ViewState>; 2]> {
         &mut self.children
     }
 }

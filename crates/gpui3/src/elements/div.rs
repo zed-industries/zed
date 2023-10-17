@@ -1,8 +1,9 @@
 use crate::{
-    AnonymousElementKind, AnyElement, Bounds, Clickable, ClickableElement, ClickableElementState,
-    Element, ElementId, ElementKind, Hoverable, HoverableElement, IdentifiedElementKind,
-    IntoAnyElement, LayoutId, LayoutNode, LayoutNodeElement, Overflow, Pixels, Point, SharedString,
-    Style, StyleCascade, StyleRefinement, Styled, ViewContext, ClickListeners,
+    AnonymousElementKind, AnyElement, Bounds, ClickListeners, Clickable, ClickableElement,
+    ClickableElementState, Element, ElementId, ElementKind, Hoverable, HoverableElement,
+    IdentifiedElement, IdentifiedElementKind, IntoAnyElement, LayoutId, LayoutNodeElement,
+    Overflow, ParentElement, Pixels, Point, SharedString, Style, StyleCascade, StyleRefinement,
+    Styled, ViewContext,
 };
 use parking_lot::Mutex;
 use smallvec::SmallVec;
@@ -29,7 +30,16 @@ impl ScrollState {
     }
 }
 
-pub struct Div<V: 'static + Send + Sync, K: ElementKind>(
+pub fn div<S>() -> Div<S, AnonymousElementKind>
+where
+    S: 'static + Send + Sync,
+{
+    Div(ClickableElement::new(HoverableElement::new(
+        LayoutNodeElement::new(),
+    )))
+}
+
+pub struct Div<V: 'static + Send + Sync, K: ElementKind = AnonymousElementKind>(
     ClickableElement<HoverableElement<LayoutNodeElement<V, K>>>,
 );
 
@@ -95,7 +105,13 @@ impl<V: 'static + Send + Sync> Div<V, AnonymousElementKind> {
     }
 }
 
-impl<V: 'static + Send + Sync, K: ElementKind> LayoutNode<V, K> for Div<V, K> {
+impl<V: 'static + Send + Sync> IdentifiedElement for Div<V, IdentifiedElementKind> {
+    fn id(&self) -> ElementId {
+        IdentifiedElement::id(&self.0)
+    }
+}
+
+impl<V: 'static + Send + Sync, K: ElementKind> ParentElement for Div<V, K> {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<V>; 2]> {
         self.0.children_mut()
     }

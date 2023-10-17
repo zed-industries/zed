@@ -1,70 +1,93 @@
 use crate::{
-    AnyElement, Bounds, Element, IntoAnyElement, LayoutId, Pixels, SharedString, Style, Styled,
+    AnonymousElementKind, AnyElement, Bounds, ClickListeners, Clickable, ClickableElement,
+    ClickableElementState, Element, ElementId, ElementKind, Hoverable, HoverableElement,
+    IdentifiedElement, IdentifiedElementKind, IntoAnyElement, LayoutId, LayoutNodeElement, Pixels,
+    SharedString, Style, StyleRefinement, Styled,
 };
 use refineable::Cascade;
-use std::marker::PhantomData;
 use util::ResultExt;
 
-pub struct Svg<S> {
+pub struct Svg<V: 'static + Send + Sync, K: ElementKind = AnonymousElementKind> {
+    layout_node: ClickableElement<HoverableElement<LayoutNodeElement<V, K>>>,
     path: Option<SharedString>,
-    style: Cascade<Style>,
-    state_type: PhantomData<S>,
 }
 
-pub fn svg<S>() -> Svg<S> {
+pub fn svg<V>() -> Svg<V, AnonymousElementKind>
+where
+    V: 'static + Send + Sync,
+{
     Svg {
+        layout_node: ClickableElement::new(HoverableElement::new(LayoutNodeElement::new())),
         path: None,
-        style: Cascade::<Style>::default(),
-        state_type: PhantomData,
     }
 }
 
-impl<S> Svg<S> {
+impl<V, K> Svg<V, K>
+where
+    V: 'static + Send + Sync,
+    K: ElementKind,
+{
     pub fn path(mut self, path: impl Into<SharedString>) -> Self {
         self.path = Some(path.into());
         self
     }
 }
 
-impl<S> IntoAnyElement<S> for Svg<S>
+impl<V: 'static + Send + Sync> Svg<V, AnonymousElementKind> {
+    pub fn id(self, id: impl Into<ElementId>) -> Svg<V, IdentifiedElementKind> {
+        Svg {
+            layout_node: self.layout_node.replace_child(|hoverable| {
+                hoverable.replace_child(|layout_node| layout_node.identify(id))
+            }),
+            path: self.path,
+        }
+    }
+}
+
+impl<V, K> IntoAnyElement<V> for Svg<V, K>
 where
-    S: 'static + Send + Sync,
+    V: 'static + Send + Sync,
+    K: ElementKind,
 {
-    fn into_any(self) -> AnyElement<S> {
+    fn into_any(self) -> AnyElement<V> {
         AnyElement::new(self)
     }
 }
 
-impl<S: 'static + Send + Sync> Element for Svg<S> {
-    type ViewState = S;
-    type ElementState = ();
+impl<V, K> Element for Svg<V, K>
+where
+    V: 'static + Send + Sync,
+    K: ElementKind,
+{
+    type ViewState = V;
+    type ElementState = ClickableElementState<()>;
 
     fn id(&self) -> Option<crate::ElementId> {
-        None
+        self.layout_node.id()
     }
 
     fn layout(
         &mut self,
-        _: &mut S,
-        _: Option<Self::ElementState>,
-        cx: &mut crate::ViewContext<S>,
+        view: &mut V,
+        element_state: Option<Self::ElementState>,
+        cx: &mut crate::ViewContext<V>,
     ) -> (LayoutId, Self::ElementState)
     where
         Self: Sized,
     {
-        let style = self.computed_style();
-        (cx.request_layout(&style, []), ())
+        self.layout_node.layout(view, element_state, cx)
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _: &mut Self::ViewState,
-        _: &mut Self::ElementState,
-        cx: &mut crate::ViewContext<S>,
+        view: &mut Self::ViewState,
+        element_state: &mut Self::ElementState,
+        cx: &mut crate::ViewContext<V>,
     ) where
         Self: Sized,
     {
+        self.layout_node.paint(bounds, view, element_state, cx);
         let fill_color = self
             .computed_style()
             .fill
@@ -76,12 +99,38 @@ impl<S: 'static + Send + Sync> Element for Svg<S> {
     }
 }
 
-impl<S: 'static + Send + Sync> Styled for Svg<S> {
-    fn style_cascade(&mut self) -> &mut crate::StyleCascade {
-        todo!("use layout node")
+impl<V: 'static + Send + Sync> IdentifiedElement for Svg<V, IdentifiedElementKind> {
+    fn id(&self) -> ElementId {
+        IdentifiedElement::id(&self.layout_node)
+    }
+}
+
+impl<V, K> Styled for Svg<V, K>
+where
+    V: 'static + Send + Sync,
+    K: ElementKind,
+{
+    fn style_cascade(&mut self) -> &mut Cascade<Style> {
+        self.layout_node.style_cascade()
     }
 
     fn computed_style(&mut self) -> &Style {
-        todo!("use layout node")
+        self.layout_node.computed_style()
+    }
+}
+
+impl<V: 'static + Send + Sync, K: ElementKind> Hoverable for Svg<V, K> {
+    fn hover_style(&mut self) -> &mut StyleRefinement {
+        self.layout_node.hover_style()
+    }
+}
+
+impl<V: 'static + Send + Sync> Clickable for Svg<V, IdentifiedElementKind> {
+    fn active_style(&mut self) -> &mut StyleRefinement {
+        self.layout_node.active_style()
+    }
+
+    fn listeners(&mut self) -> &mut ClickListeners<V> {
+        self.layout_node.listeners()
     }
 }

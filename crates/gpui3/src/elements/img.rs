@@ -1,29 +1,35 @@
 use crate::{
-    AnyElement, BorrowWindow, Bounds, Element, IntoAnyElement, LayoutId, Pixels, SharedString,
-    Style, Styled, ViewContext,
+    AnonymousElementKind, AnyElement, BorrowWindow, Bounds, ClickListeners, Clickable,
+    ClickableElement, ClickableElementState, Element, ElementId, ElementKind, Hoverable,
+    HoverableElement, IdentifiedElement, IdentifiedElementKind, IntoAnyElement, LayoutId,
+    LayoutNodeElement, Pixels, SharedString, Style, StyleRefinement, Styled, ViewContext,
 };
 use futures::FutureExt;
 use refineable::Cascade;
-use std::marker::PhantomData;
 use util::ResultExt;
 
-pub struct Img<S> {
-    style: Cascade<Style>,
+pub struct Img<V: 'static + Send + Sync, K: ElementKind = AnonymousElementKind> {
+    layout_node: ClickableElement<HoverableElement<LayoutNodeElement<V, K>>>,
     uri: Option<SharedString>,
     grayscale: bool,
-    state_type: PhantomData<S>,
 }
 
-pub fn img<S>() -> Img<S> {
+pub fn img<V>() -> Img<V, AnonymousElementKind>
+where
+    V: 'static + Send + Sync,
+{
     Img {
-        style: Cascade::default(),
+        layout_node: ClickableElement::new(HoverableElement::new(LayoutNodeElement::new())),
         uri: None,
         grayscale: false,
-        state_type: PhantomData,
     }
 }
 
-impl<S> Img<S> {
+impl<V, K> Img<V, K>
+where
+    V: 'static + Send + Sync,
+    K: ElementKind,
+{
     pub fn uri(mut self, uri: impl Into<SharedString>) -> Self {
         self.uri = Some(uri.into());
         self
@@ -35,47 +41,65 @@ impl<S> Img<S> {
     }
 }
 
-impl<S> IntoAnyElement<S> for Img<S>
+impl<V: 'static + Send + Sync> Img<V, AnonymousElementKind> {
+    pub fn id(self, id: impl Into<ElementId>) -> Img<V, IdentifiedElementKind> {
+        Img {
+            layout_node: self.layout_node.replace_child(|hoverable| {
+                hoverable.replace_child(|layout_node| layout_node.identify(id))
+            }),
+            uri: self.uri,
+            grayscale: self.grayscale,
+        }
+    }
+}
+
+impl<V, K> IntoAnyElement<V> for Img<V, K>
 where
-    S: 'static + Send + Sync,
+    V: 'static + Send + Sync,
+    K: ElementKind,
 {
-    fn into_any(self) -> AnyElement<S> {
+    fn into_any(self) -> AnyElement<V> {
         AnyElement::new(self)
     }
 }
 
-impl<S: Send + Sync + 'static> Element for Img<S> {
-    type ViewState = S;
-    type ElementState = ();
+impl<V, K> Element for Img<V, K>
+where
+    V: Send + Sync + 'static,
+    K: ElementKind,
+{
+    type ViewState = V;
+    type ElementState = ClickableElementState<()>;
 
     fn id(&self) -> Option<crate::ElementId> {
-        None
+        self.layout_node.id()
     }
 
     fn layout(
         &mut self,
-        _: &mut Self::ViewState,
-        _: Option<Self::ElementState>,
+        view_state: &mut Self::ViewState,
+        element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<Self::ViewState>,
     ) -> (LayoutId, Self::ElementState)
     where
         Self: Sized,
     {
-        let style = self.computed_style();
-        let layout_id = cx.request_layout(&style, []);
-        (layout_id, ())
+        self.layout_node.layout(view_state, element_state, cx)
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _: &mut Self::ViewState,
-        _: &mut Self::ElementState,
+        view: &mut Self::ViewState,
+        element_state: &mut Self::ElementState,
         cx: &mut ViewContext<Self::ViewState>,
     ) {
+        cx.stack(1, |cx| {
+            self.layout_node.paint(bounds, view, element_state, cx);
+        });
+
         let style = self.computed_style();
         let corner_radii = style.corner_radii;
-        style.paint(bounds, cx);
 
         if let Some(uri) = self.uri.clone() {
             let image_future = cx.image_cache.get(uri);
@@ -101,14 +125,38 @@ impl<S: Send + Sync + 'static> Element for Img<S> {
     }
 }
 
-impl<S> Styled for Img<S> {
+impl<V: 'static + Send + Sync> IdentifiedElement for Img<V, IdentifiedElementKind> {
+    fn id(&self) -> ElementId {
+        IdentifiedElement::id(&self.layout_node)
+    }
+}
+
+impl<V, K> Styled for Img<V, K>
+where
+    V: 'static + Send + Sync,
+    K: ElementKind,
+{
     fn style_cascade(&mut self) -> &mut Cascade<Style> {
-        todo!("use layout node")
-        // &mut self.style
+        self.layout_node.style_cascade()
     }
 
     fn computed_style(&mut self) -> &Style {
-        todo!("use layout node")
-        // self.style.compute()
+        self.layout_node.computed_style()
+    }
+}
+
+impl<V: 'static + Send + Sync, K: ElementKind> Hoverable for Img<V, K> {
+    fn hover_style(&mut self) -> &mut StyleRefinement {
+        self.layout_node.hover_style()
+    }
+}
+
+impl<V: 'static + Send + Sync> Clickable for Img<V, IdentifiedElementKind> {
+    fn active_style(&mut self) -> &mut StyleRefinement {
+        self.layout_node.active_style()
+    }
+
+    fn listeners(&mut self) -> &mut ClickListeners<V> {
+        self.layout_node.listeners()
     }
 }
