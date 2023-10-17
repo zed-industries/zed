@@ -24,7 +24,7 @@ use workspace::{
 
 const SEND_LINE: &str = "// Send:";
 const RECEIVE_LINE: &str = "// Receive:";
-const MAX_STORED_LOG_ENTRIES: usize = 5000;
+const MAX_STORED_LOG_ENTRIES: usize = 2000;
 
 pub struct LogStore {
     projects: HashMap<WeakModelHandle<Project>, ProjectState>,
@@ -235,7 +235,7 @@ impl LogStore {
         };
 
         let log_lines = &mut language_server_state.log_messages;
-        if log_lines.len() == MAX_STORED_LOG_ENTRIES {
+        while log_lines.len() >= MAX_STORED_LOG_ENTRIES {
             log_lines.pop_front();
         }
         let message = message.trim();
@@ -335,9 +335,6 @@ impl LogStore {
         };
 
         let rpc_log_lines = &mut state.rpc_messages;
-        if rpc_log_lines.len() == MAX_STORED_LOG_ENTRIES {
-            rpc_log_lines.pop_front();
-        }
         if state.last_message_kind != Some(kind) {
             let line_before_message = match kind {
                 MessageKind::Send => SEND_LINE,
@@ -351,7 +348,7 @@ impl LogStore {
             });
         }
 
-        if rpc_log_lines.len() == MAX_STORED_LOG_ENTRIES {
+        while rpc_log_lines.len() >= MAX_STORED_LOG_ENTRIES {
             rpc_log_lines.pop_front();
         }
         let message = message.trim();
