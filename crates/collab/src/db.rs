@@ -125,7 +125,7 @@ impl Database {
     }
 
     pub async fn initialize_static_data(&mut self) -> Result<()> {
-        self.initialize_notification_enum().await?;
+        self.initialize_notification_kinds().await?;
         Ok(())
     }
 

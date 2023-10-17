@@ -199,17 +199,17 @@ impl NotificationStore {
             match entry.notification {
                 Notification::ChannelInvitation { .. } => {}
                 Notification::ContactRequest {
-                    actor_id: requester_id,
+                    sender_id: requester_id,
                 } => {
                     user_ids.push(requester_id);
                 }
                 Notification::ContactRequestAccepted {
-                    actor_id: contact_id,
+                    responder_id: contact_id,
                 } => {
                     user_ids.push(contact_id);
                 }
                 Notification::ChannelMessageMention {
-                    actor_id: sender_id,
+                    sender_id,
                     message_id,
                     ..
                 } => {

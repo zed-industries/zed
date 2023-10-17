@@ -45,7 +45,7 @@ impl TestDb {
                 ))
                 .await
                 .unwrap();
-            db.initialize_notification_enum().await.unwrap();
+            db.initialize_notification_kinds().await.unwrap();
             db
         });
 
@@ -85,7 +85,7 @@ impl TestDb {
                 .unwrap();
             let migrations_path = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations");
             db.migrate(Path::new(migrations_path), false).await.unwrap();
-            db.initialize_notification_enum().await.unwrap();
+            db.initialize_notification_kinds().await.unwrap();
             db
         });
 

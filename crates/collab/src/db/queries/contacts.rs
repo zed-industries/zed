@@ -168,7 +168,7 @@ impl Database {
                 .create_notification(
                     receiver_id,
                     rpc::Notification::ContactRequest {
-                        actor_id: sender_id.to_proto(),
+                        sender_id: sender_id.to_proto(),
                     },
                     true,
                     &*tx,
@@ -219,7 +219,7 @@ impl Database {
                     .remove_notification(
                         responder_id,
                         rpc::Notification::ContactRequest {
-                            actor_id: requester_id.to_proto(),
+                            sender_id: requester_id.to_proto(),
                         },
                         &*tx,
                     )
@@ -324,7 +324,7 @@ impl Database {
                 self.respond_to_notification(
                     responder_id,
                     &rpc::Notification::ContactRequest {
-                        actor_id: requester_id.to_proto(),
+                        sender_id: requester_id.to_proto(),
                     },
                     accept,
                     &*tx,
@@ -337,7 +337,7 @@ impl Database {
                     self.create_notification(
                         requester_id,
                         rpc::Notification::ContactRequestAccepted {
-                            actor_id: responder_id.to_proto(),
+                            responder_id: responder_id.to_proto(),
                         },
                         true,
                         &*tx,

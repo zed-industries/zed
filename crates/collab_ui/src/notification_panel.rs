@@ -192,39 +192,34 @@ impl NotificationPanel {
         let actor;
         let needs_acceptance;
         match notification {
-            Notification::ContactRequest { actor_id } => {
-                let requester = user_store.get_cached_user(actor_id)?;
+            Notification::ContactRequest { sender_id } => {
+                let requester = user_store.get_cached_user(sender_id)?;
                 icon = "icons/plus.svg";
                 text = format!("{} wants to add you as a contact", requester.github_login);
                 needs_acceptance = true;
                 actor = Some(requester);
             }
-            Notification::ContactRequestAccepted { actor_id } => {
-                let responder = user_store.get_cached_user(actor_id)?;
+            Notification::ContactRequestAccepted { responder_id } => {
+                let responder = user_store.get_cached_user(responder_id)?;
                 icon = "icons/plus.svg";
                 text = format!("{} accepted your contact invite", responder.github_login);
                 needs_acceptance = false;
                 actor = Some(responder);
             }
-            Notification::ChannelInvitation { channel_id } => {
+            Notification::ChannelInvitation {
+                ref channel_name, ..
+            } => {
                 actor = None;
-                let channel = channel_store.channel_for_id(channel_id).or_else(|| {
-                    channel_store
-                        .channel_invitations()
-                        .iter()
-                        .find(|c| c.id == channel_id)
-                })?;
-
                 icon = "icons/hash.svg";
-                text = format!("you were invited to join the #{} channel", channel.name);
+                text = format!("you were invited to join the #{channel_name} channel");
                 needs_acceptance = true;
             }
             Notification::ChannelMessageMention {
-                actor_id,
+                sender_id,
                 channel_id,
                 message_id,
             } => {
-                let sender = user_store.get_cached_user(actor_id)?;
+                let sender = user_store.get_cached_user(sender_id)?;
                 let channel = channel_store.channel_for_id(channel_id)?;
                 let message = notification_store.channel_message_for_id(message_id)?;
 
@@ -405,8 +400,12 @@ impl NotificationPanel {
     fn add_toast(&mut self, entry: &NotificationEntry, cx: &mut ViewContext<Self>) {
         let id = entry.id as usize;
         match entry.notification {
-            Notification::ContactRequest { actor_id }
-            | Notification::ContactRequestAccepted { actor_id } => {
+            Notification::ContactRequest {
+                sender_id: actor_id,
+            }
+            | Notification::ContactRequestAccepted {
+                responder_id: actor_id,
+            } => {
                 let user_store = self.user_store.clone();
                 let Some(user) = user_store.read(cx).get_cached_user(actor_id) else {
                     return;
@@ -452,7 +451,9 @@ impl NotificationPanel {
         cx: &mut ViewContext<Self>,
     ) {
         match notification {
-            Notification::ContactRequest { actor_id } => {
+            Notification::ContactRequest {
+                sender_id: actor_id,
+            } => {
                 self.user_store
                     .update(cx, |store, cx| {
                         store.respond_to_contact_request(actor_id, response, cx)

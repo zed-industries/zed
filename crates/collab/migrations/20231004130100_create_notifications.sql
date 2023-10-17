@@ -9,8 +9,8 @@ CREATE TABLE notifications (
     "id" SERIAL PRIMARY KEY,
     "created_at" TIMESTAMP NOT NULL DEFAULT now(),
     "recipient_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
-    "actor_id" INTEGER REFERENCES users (id) ON DELETE CASCADE,
     "kind" INTEGER NOT NULL REFERENCES notification_kinds (id),
+    "entity_id" INTEGER,
     "content" TEXT,
     "is_read" BOOLEAN NOT NULL DEFAULT FALSE,
     "response" BOOLEAN

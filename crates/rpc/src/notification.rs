@@ -4,32 +4,37 @@ use serde_json::{map, Value};
 use strum::{EnumVariantNames, VariantNames as _};
 
 const KIND: &'static str = "kind";
-const ACTOR_ID: &'static str = "actor_id";
+const ENTITY_ID: &'static str = "entity_id";
 
-/// A notification that can be stored, associated with a given user.
+/// A notification that can be stored, associated with a given recipient.
 ///
 /// This struct is stored in the collab database as JSON, so it shouldn't be
 /// changed in a backward-incompatible way. For example, when renaming a
 /// variant, add a serde alias for the old name.
 ///
-/// When a notification is initiated by a user, use the `actor_id` field
-/// to store the user's id. This is value is stored in a dedicated column
-/// in the database, so it can be queried more efficiently.
+/// Most notification types have a special field which is aliased to
+/// `entity_id`. This field is stored in its own database column, and can
+/// be used to query the notification.
 #[derive(Debug, Clone, PartialEq, Eq, EnumVariantNames, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum Notification {
     ContactRequest {
-        actor_id: u64,
+        #[serde(rename = "entity_id")]
+        sender_id: u64,
     },
     ContactRequestAccepted {
-        actor_id: u64,
+        #[serde(rename = "entity_id")]
+        responder_id: u64,
     },
     ChannelInvitation {
+        #[serde(rename = "entity_id")]
         channel_id: u64,
+        channel_name: String,
     },
     ChannelMessageMention {
-        actor_id: u64,
+        sender_id: u64,
         channel_id: u64,
+        #[serde(rename = "entity_id")]
         message_id: u64,
     },
 }
@@ -37,19 +42,19 @@ pub enum Notification {
 impl Notification {
     pub fn to_proto(&self) -> proto::Notification {
         let mut value = serde_json::to_value(self).unwrap();
-        let mut actor_id = None;
+        let mut entity_id = None;
         let value = value.as_object_mut().unwrap();
         let Some(Value::String(kind)) = value.remove(KIND) else {
             unreachable!("kind is the enum tag")
         };
-        if let map::Entry::Occupied(e) = value.entry(ACTOR_ID) {
+        if let map::Entry::Occupied(e) = value.entry(ENTITY_ID) {
             if e.get().is_u64() {
-                actor_id = e.remove().as_u64();
+                entity_id = e.remove().as_u64();
             }
         }
         proto::Notification {
             kind,
-            actor_id,
+            entity_id,
             content: serde_json::to_string(&value).unwrap(),
             ..Default::default()
         }
@@ -59,8 +64,8 @@ impl Notification {
         let mut value = serde_json::from_str::<Value>(&notification.content).ok()?;
         let object = value.as_object_mut()?;
         object.insert(KIND.into(), notification.kind.to_string().into());
-        if let Some(actor_id) = notification.actor_id {
-            object.insert(ACTOR_ID.into(), actor_id.into());
+        if let Some(entity_id) = notification.entity_id {
+            object.insert(ENTITY_ID.into(), entity_id.into());
         }
         serde_json::from_value(value).ok()
     }
@@ -74,11 +79,14 @@ impl Notification {
 fn test_notification() {
     // Notifications can be serialized and deserialized.
     for notification in [
-        Notification::ContactRequest { actor_id: 1 },
-        Notification::ContactRequestAccepted { actor_id: 2 },
-        Notification::ChannelInvitation { channel_id: 100 },
+        Notification::ContactRequest { sender_id: 1 },
+        Notification::ContactRequestAccepted { responder_id: 2 },
+        Notification::ChannelInvitation {
+            channel_id: 100,
+            channel_name: "the-channel".into(),
+        },
         Notification::ChannelMessageMention {
-            actor_id: 200,
+            sender_id: 200,
             channel_id: 30,
             message_id: 1,
         },
@@ -90,6 +98,6 @@ fn test_notification() {
 
     // When notifications are serialized, the `kind` and `actor_id` fields are
     // stored separately, and do not appear redundantly in the JSON.
-    let notification = Notification::ContactRequest { actor_id: 1 };
+    let notification = Notification::ContactRequest { sender_id: 1 };
     assert_eq!(notification.to_proto().content, "{}");
 }

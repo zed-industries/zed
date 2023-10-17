@@ -166,6 +166,11 @@ impl Database {
             self.check_user_is_channel_admin(channel_id, inviter_id, &*tx)
                 .await?;
 
+            let channel = channel::Entity::find_by_id(channel_id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such channel"))?;
+
             channel_member::ActiveModel {
                 channel_id: ActiveValue::Set(channel_id),
                 user_id: ActiveValue::Set(invitee_id),
@@ -181,6 +186,7 @@ impl Database {
                     invitee_id,
                     rpc::Notification::ChannelInvitation {
                         channel_id: channel_id.to_proto(),
+                        channel_name: channel.name,
                     },
                     true,
                     &*tx,
@@ -269,6 +275,7 @@ impl Database {
                     user_id,
                     &rpc::Notification::ChannelInvitation {
                         channel_id: channel_id.to_proto(),
+                        channel_name: Default::default(),
                     },
                     accept,
                     &*tx,
