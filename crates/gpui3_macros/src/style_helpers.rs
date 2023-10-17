@@ -258,43 +258,43 @@ fn box_prefixes() -> Vec<(&'static str, bool, Vec<TokenStream2>, &'static str)> 
                 quote! { padding.left },
                 quote! { padding.right },
             ],
-            "todo!(docstring)",
+            "Sets the padding of the element. [Docs](https://tailwindcss.com/docs/padding)"
         ),
         (
             "pt",
             false,
             vec![quote! { padding.top }],
-            "todo!(docstring)",
+            "Sets the top padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)"
         ),
         (
             "pb",
             false,
             vec![quote! { padding.bottom }],
-            "todo!(docstring)",
+            "Sets the bottom padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)"
         ),
         (
             "px",
             false,
             vec![quote! { padding.left }, quote! { padding.right }],
-            "todo!(docstring)",
+            "Sets the horizontal padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-horizontal-padding)"
         ),
         (
             "py",
             false,
             vec![quote! { padding.top }, quote! { padding.bottom }],
-            "todo!(docstring)",
+            "Sets the vertical padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-vertical-padding)"
         ),
         (
             "pl",
             false,
             vec![quote! { padding.left }],
-            "todo!(docstring)",
+            "Sets the left padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)"
         ),
         (
             "pr",
             false,
             vec![quote! { padding.right }],
-            "todo!(docstring)",
+            "Sets the right padding of the element. [Docs](https://tailwindcss.com/docs/padding#add-padding-to-a-single-side)"
         ),
         ("top", true, vec![quote! { inset.top }], "todo!(docstring)"),
         (
