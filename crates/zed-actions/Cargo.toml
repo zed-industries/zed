@@ -8,3 +8,4 @@ publish = false
 
 [dependencies]
 gpui = { path = "../gpui" }
+serde.workspace = true

@@ -979,7 +979,7 @@ impl Database {
         })
     }
 
-    /// Returns the channel ancestors, include itself, deepest first
+    /// Returns the channel ancestors in arbitrary order
     pub async fn get_channel_ancestors(
         &self,
         channel_id: ChannelId,
