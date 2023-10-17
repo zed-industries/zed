@@ -1,12 +1,12 @@
 use std::str::FromStr;
 use std::sync::OnceLock;
 
+use crate::stories::*;
 use anyhow::anyhow;
 use clap::builder::PossibleValue;
 use clap::ValueEnum;
 use gpui3::{view, AnyView, Context};
 use strum::{EnumIter, EnumString, IntoEnumIterator};
-
 use ui::prelude::*;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, strum::Display, EnumString, EnumIter)]
@@ -18,6 +18,7 @@ pub enum ElementStory {
     Icon,
     Input,
     Label,
+    Text,
     ZIndex,
 }
 
@@ -43,10 +44,10 @@ impl ElementStory {
             Self::Label => {
                 view(cx.entity(|cx| ()), |_, _| ui::LabelStory::new().into_any()).into_any()
             }
-            Self::ZIndex => view(cx.entity(|cx| ()), |_, _| {
-                crate::stories::z_index::ZIndexStory::new().into_any()
-            })
-            .into_any(),
+            Self::Text => TextStory::view(cx).into_any(),
+            Self::ZIndex => {
+                view(cx.entity(|cx| ()), |_, _| ZIndexStory::new().into_any()).into_any()
+            }
         }
     }
 }
@@ -212,9 +213,7 @@ impl StorySelector {
         match self {
             Self::Element(element_story) => element_story.story(cx),
             Self::Component(component_story) => component_story.story(cx),
-            Self::KitchenSink => {
-                crate::stories::kitchen_sink::KitchenSinkStory::view(cx).into_any()
-            }
+            Self::KitchenSink => KitchenSinkStory::view(cx).into_any(),
         }
     }
 }

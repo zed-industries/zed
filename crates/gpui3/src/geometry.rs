@@ -656,6 +656,14 @@ impl Mul<f32> for Pixels {
     }
 }
 
+impl Mul<usize> for Pixels {
+    type Output = Pixels;
+
+    fn mul(self, other: usize) -> Pixels {
+        Pixels(self.0 * other as f32)
+    }
+}
+
 impl Mul<Pixels> for f32 {
     type Output = Pixels;
 

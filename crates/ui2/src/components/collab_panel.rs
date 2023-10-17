@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use gpui3::{img, svg, ArcCow};
+use gpui3::{img, svg, SharedString};
 
 use crate::prelude::*;
 use crate::theme::{theme, Theme};
@@ -100,7 +100,7 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
 
     fn list_section_header(
         &self,
-        label: impl Into<ArcCow<'static, str>>,
+        label: impl Into<SharedString>,
         expanded: bool,
         theme: &Theme,
     ) -> impl Element<ViewState = S> {
@@ -128,8 +128,8 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
 
     fn list_item(
         &self,
-        avatar_uri: impl Into<ArcCow<'static, str>>,
-        label: impl Into<ArcCow<'static, str>>,
+        avatar_uri: impl Into<SharedString>,
+        label: impl Into<SharedString>,
         theme: &Theme,
     ) -> impl Element<ViewState = S> {
         div()
@@ -180,7 +180,11 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, CollabPanel<S>>(cx))
                 .child(Story::label(cx, "Default"))

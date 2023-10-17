@@ -1,4 +1,4 @@
-use crate::{px, FontId, Line, Pixels, PlatformTextSystem, ShapedBoundary};
+use crate::{px, FontId, FontRun, Pixels, PlatformTextSystem};
 use collections::HashMap;
 use std::{iter, sync::Arc};
 
@@ -46,7 +46,7 @@ impl LineWrapper {
                     continue;
                 }
 
-                if self.is_boundary(prev_c, c) && first_non_whitespace_ix.is_some() {
+                if prev_c == ' ' && c != ' ' && first_non_whitespace_ix.is_some() {
                     last_candidate_ix = ix;
                     last_candidate_width = width;
                 }
@@ -87,79 +87,6 @@ impl LineWrapper {
         })
     }
 
-    pub fn wrap_shaped_line<'a>(
-        &'a mut self,
-        str: &'a str,
-        line: &'a Line,
-        wrap_width: Pixels,
-    ) -> impl Iterator<Item = ShapedBoundary> + 'a {
-        let mut first_non_whitespace_ix = None;
-        let mut last_candidate_ix = None;
-        let mut last_candidate_x = px(0.);
-        let mut last_wrap_ix = ShapedBoundary {
-            run_ix: 0,
-            glyph_ix: 0,
-        };
-        let mut last_wrap_x = px(0.);
-        let mut prev_c = '\0';
-        let mut glyphs = line
-            .runs()
-            .iter()
-            .enumerate()
-            .flat_map(move |(run_ix, run)| {
-                run.glyphs()
-                    .iter()
-                    .enumerate()
-                    .map(move |(glyph_ix, glyph)| {
-                        let character = str[glyph.index..].chars().next().unwrap();
-                        (
-                            ShapedBoundary { run_ix, glyph_ix },
-                            character,
-                            glyph.position.x,
-                        )
-                    })
-            })
-            .peekable();
-
-        iter::from_fn(move || {
-            while let Some((ix, c, x)) = glyphs.next() {
-                if c == '\n' {
-                    continue;
-                }
-
-                if self.is_boundary(prev_c, c) && first_non_whitespace_ix.is_some() {
-                    last_candidate_ix = Some(ix);
-                    last_candidate_x = x;
-                }
-
-                if c != ' ' && first_non_whitespace_ix.is_none() {
-                    first_non_whitespace_ix = Some(ix);
-                }
-
-                let next_x = glyphs.peek().map_or(line.width(), |(_, _, x)| *x);
-                let width = next_x - last_wrap_x;
-                if width > wrap_width && ix > last_wrap_ix {
-                    if let Some(last_candidate_ix) = last_candidate_ix.take() {
-                        last_wrap_ix = last_candidate_ix;
-                        last_wrap_x = last_candidate_x;
-                    } else {
-                        last_wrap_ix = ix;
-                        last_wrap_x = x;
-                    }
-
-                    return Some(last_wrap_ix);
-                }
-                prev_c = c;
-            }
-
-            None
-        })
-    }
-
-    fn is_boundary(&self, prev: char, next: char) -> bool {
-        (prev == ' ') && (next != ' ')
-    }
-
     #[inline(always)]
     fn width_for_char(&mut self, c: char) -> Pixels {
         if (c as u32) < 128 {
@@ -182,8 +109,17 @@ impl LineWrapper {
     }
 
     fn compute_width_for_char(&self, c: char) -> Pixels {
+        let mut buffer = [0; 4];
+        let buffer = c.encode_utf8(&mut buffer);
         self.platform_text_system
-            .layout_line(&c.to_string(), self.font_size, &[(1, self.font_id)])
+            .layout_line(
+                buffer,
+                self.font_size,
+                &[FontRun {
+                    len: 1,
+                    font_id: self.font_id,
+                }],
+            )
             .width
     }
 }
@@ -203,7 +139,7 @@ impl Boundary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{font, App, RunStyle};
+    use crate::{font, App};
 
     #[test]
     fn test_wrap_line() {
@@ -268,62 +204,75 @@ mod tests {
         });
     }
 
+    // todo!("move this to a test on TextSystem::layout_text")
     // todo! repeat this test
-    #[test]
-    fn test_wrap_shaped_line() {
-        App::test().run(|cx| {
-            let text_system = cx.text_system().clone();
+    // #[test]
+    // fn test_wrap_shaped_line() {
+    //     App::test().run(|cx| {
+    //         let text_system = cx.text_system().clone();
 
-            let normal = RunStyle {
-                font: font("Helvetica"),
-                color: Default::default(),
-                underline: Default::default(),
-            };
-            let bold = RunStyle {
-                font: font("Helvetica").bold(),
-                color: Default::default(),
-                underline: Default::default(),
-            };
+    //         let normal = TextRun {
+    //             len: 0,
+    //             font: font("Helvetica"),
+    //             color: Default::default(),
+    //             underline: Default::default(),
+    //         };
+    //         let bold = TextRun {
+    //             len: 0,
+    //             font: font("Helvetica").bold(),
+    //             color: Default::default(),
+    //             underline: Default::default(),
+    //         };
 
-            let text = "aa bbb cccc ddddd eeee";
-            let line = text_system
-                .layout_line(
-                    text,
-                    px(16.),
-                    &[
-                        (4, normal.clone()),
-                        (5, bold.clone()),
-                        (6, normal.clone()),
-                        (1, bold.clone()),
-                        (7, normal.clone()),
-                    ],
-                )
-                .unwrap();
+    //         impl TextRun {
+    //             fn with_len(&self, len: usize) -> Self {
+    //                 let mut this = self.clone();
+    //                 this.len = len;
+    //                 this
+    //             }
+    //         }
 
-            let mut wrapper = LineWrapper::new(
-                text_system.font_id(&normal.font).unwrap(),
-                px(16.),
-                text_system.platform_text_system.clone(),
-            );
-            assert_eq!(
-                wrapper
-                    .wrap_shaped_line(text, &line, px(72.))
-                    .collect::<Vec<_>>(),
-                &[
-                    ShapedBoundary {
-                        run_ix: 1,
-                        glyph_ix: 3
-                    },
-                    ShapedBoundary {
-                        run_ix: 2,
-                        glyph_ix: 3
-                    },
-                    ShapedBoundary {
-                        run_ix: 4,
-                        glyph_ix: 2
-                    }
-                ],
-            );
-        });
-    }
+    //         let text = "aa bbb cccc ddddd eeee".into();
+    //         let lines = text_system
+    //             .layout_text(
+    //                 &text,
+    //                 px(16.),
+    //                 &[
+    //                     normal.with_len(4),
+    //                     bold.with_len(5),
+    //                     normal.with_len(6),
+    //                     bold.with_len(1),
+    //                     normal.with_len(7),
+    //                 ],
+    //                 None,
+    //             )
+    //             .unwrap();
+    //         let line = &lines[0];
+
+    //         let mut wrapper = LineWrapper::new(
+    //             text_system.font_id(&normal.font).unwrap(),
+    //             px(16.),
+    //             text_system.platform_text_system.clone(),
+    //         );
+    //         assert_eq!(
+    //             wrapper
+    //                 .wrap_shaped_line(&text, &line, px(72.))
+    //                 .collect::<Vec<_>>(),
+    //             &[
+    //                 ShapedBoundary {
+    //                     run_ix: 1,
+    //                     glyph_ix: 3
+    //                 },
+    //                 ShapedBoundary {
+    //                     run_ix: 2,
+    //                     glyph_ix: 3
+    //                 },
+    //                 ShapedBoundary {
+    //                     run_ix: 4,
+    //                     glyph_ix: 2
+    //                 }
+    //             ],
+    //         );
+    //     });
+    // }
 }

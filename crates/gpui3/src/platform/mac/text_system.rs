@@ -1,7 +1,7 @@
 use crate::{
-    point, px, size, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontStyle,
-    FontWeight, GlyphId, Pixels, PlatformTextSystem, Point, RenderGlyphParams, Result, ShapedGlyph,
-    ShapedLine, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
+    point, px, size, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun,
+    FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point,
+    RenderGlyphParams, Result, ShapedGlyph, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS,
 };
 use anyhow::anyhow;
 use cocoa::appkit::{CGFloat, CGPoint};
@@ -149,12 +149,7 @@ impl PlatformTextSystem for MacTextSystem {
         self.0.read().rasterize_glyph(glyph_id)
     }
 
-    fn layout_line(
-        &self,
-        text: &str,
-        font_size: Pixels,
-        font_runs: &[(usize, FontId)],
-    ) -> ShapedLine {
+    fn layout_line(&self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
         self.0.write().layout_line(text, font_size, font_runs)
     }
 
@@ -337,12 +332,7 @@ impl MacTextSystemState {
         }
     }
 
-    fn layout_line(
-        &mut self,
-        text: &str,
-        font_size: Pixels,
-        font_runs: &[(usize, FontId)],
-    ) -> ShapedLine {
+    fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
         // Construct the attributed string, converting UTF8 ranges to UTF16 ranges.
         let mut string = CFMutableAttributedString::new();
         {
@@ -350,8 +340,8 @@ impl MacTextSystemState {
             let utf16_line_len = string.char_len() as usize;
 
             let mut ix_converter = StringIndexConverter::new(text);
-            for (run_len, font_id) in font_runs {
-                let utf8_end = ix_converter.utf8_ix + run_len;
+            for run in font_runs {
+                let utf8_end = ix_converter.utf8_ix + run.len;
                 let utf16_start = ix_converter.utf16_ix;
 
                 if utf16_start >= utf16_line_len {
@@ -364,7 +354,7 @@ impl MacTextSystemState {
                 let cf_range =
                     CFRange::init(utf16_start as isize, (utf16_end - utf16_start) as isize);
 
-                let font: &FontKitFont = &self.fonts[font_id.0];
+                let font: &FontKitFont = &self.fonts[run.font_id.0];
                 unsafe {
                     string.set_attribute(
                         cf_range,
@@ -394,7 +384,7 @@ impl MacTextSystemState {
             let font_id = self.id_for_native_font(font);
 
             let mut ix_converter = StringIndexConverter::new(text);
-            let mut glyphs = Vec::new();
+            let mut glyphs = SmallVec::new();
             for ((glyph_id, position), glyph_utf16_ix) in run
                 .glyphs()
                 .iter()
@@ -415,13 +405,12 @@ impl MacTextSystemState {
         }
 
         let typographic_bounds = line.get_typographic_bounds();
-        ShapedLine {
+        LineLayout {
             width: typographic_bounds.width.into(),
             ascent: typographic_bounds.ascent.into(),
             descent: typographic_bounds.descent.into(),
             runs,
             font_size,
-            len: text.len(),
         }
     }
 

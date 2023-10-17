@@ -51,6 +51,7 @@ pub use util::arc_cow::ArcCow;
 pub use view::*;
 pub use window::*;
 
+use derive_more::{Deref, DerefMut};
 use std::{
     any::{Any, TypeId},
     mem,
@@ -180,7 +181,7 @@ impl<T> Flatten<T> for Result<T> {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Hash)]
+#[derive(Deref, DerefMut, Eq, PartialEq, Hash, Clone)]
 pub struct SharedString(ArcCow<'static, str>);
 
 impl Default for SharedString {
