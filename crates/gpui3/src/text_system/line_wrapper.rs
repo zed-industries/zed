@@ -1,4 +1,4 @@
-use crate::{px, FontId, Pixels, PlatformTextSystem};
+use crate::{px, FontId, FontRun, Pixels, PlatformTextSystem};
 use collections::HashMap;
 use std::{iter, sync::Arc};
 
@@ -112,7 +112,14 @@ impl LineWrapper {
         let mut buffer = [0; 4];
         let buffer = c.encode_utf8(&mut buffer);
         self.platform_text_system
-            .layout_line(buffer, self.font_size, &[(1, self.font_id)])
+            .layout_line(
+                buffer,
+                self.font_size,
+                &[FontRun {
+                    len: 1,
+                    font_id: self.font_id,
+                }],
+            )
             .width
     }
 }

@@ -178,7 +178,7 @@ impl LineLayoutCache {
         &self,
         text: &SharedString,
         font_size: Pixels,
-        runs: &[(usize, FontId)],
+        runs: &[FontRun],
         wrap_width: Option<Pixels>,
     ) -> Arc<WrappedLineLayout> {
         let key = &CacheKeyRef {
@@ -219,6 +219,12 @@ impl LineLayoutCache {
     }
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub struct FontRun {
+    pub(crate) len: usize,
+    pub(crate) font_id: FontId,
+}
+
 trait AsCacheKeyRef {
     fn as_cache_key_ref(&self) -> CacheKeyRef;
 }
@@ -227,15 +233,15 @@ trait AsCacheKeyRef {
 struct CacheKey {
     text: SharedString,
     font_size: Pixels,
-    runs: SmallVec<[(usize, FontId); 1]>,
+    runs: SmallVec<[FontRun; 1]>,
     wrap_width: Option<Pixels>,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 struct CacheKeyRef<'a> {
     text: &'a str,
     font_size: Pixels,
-    runs: &'a [(usize, FontId)],
+    runs: &'a [FontRun],
     wrap_width: Option<Pixels>,
 }
 
@@ -285,16 +291,5 @@ impl<'a> Borrow<dyn AsCacheKeyRef + 'a> for CacheKey {
 impl<'a> AsCacheKeyRef for CacheKeyRef<'a> {
     fn as_cache_key_ref(&self) -> CacheKeyRef {
         *self
-    }
-}
-
-impl<'a> Hash for CacheKeyRef<'a> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.text.hash(state);
-        self.font_size.hash(state);
-        for (len, font_id) in self.runs {
-            len.hash(state);
-            font_id.hash(state);
-        }
     }
 }

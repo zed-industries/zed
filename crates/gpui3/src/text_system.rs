@@ -40,7 +40,7 @@ pub struct TextSystem {
     font_ids_by_font: RwLock<HashMap<Font, FontId>>,
     font_metrics: RwLock<HashMap<FontId, FontMetrics>>,
     wrapper_pool: Mutex<HashMap<FontIdWithSize, Vec<LineWrapper>>>,
-    font_runs_pool: Mutex<Vec<Vec<(usize, FontId)>>>,
+    font_runs_pool: Mutex<Vec<Vec<FontRun>>>,
 }
 
 impl TextSystem {
@@ -153,8 +153,7 @@ impl TextSystem {
         wrap_width: Option<Pixels>,
     ) -> Result<SmallVec<[Line; 1]>> {
         let mut runs = runs.iter().cloned().peekable();
-        let mut font_runs: Vec<(usize, FontId)> =
-            self.font_runs_pool.lock().pop().unwrap_or_default();
+        let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
 
         let mut lines = SmallVec::new();
         let mut line_start = 0;
@@ -173,13 +172,13 @@ impl TextSystem {
                 let run_len_within_line = cmp::min(line_end, run_start + run.len) - run_start;
 
                 if last_font == Some(run.font.clone()) {
-                    font_runs.last_mut().unwrap().0 += run_len_within_line;
+                    font_runs.last_mut().unwrap().len += run_len_within_line;
                 } else {
                     last_font = Some(run.font.clone());
-                    font_runs.push((
-                        run_len_within_line,
-                        self.platform_text_system.font_id(&run.font)?,
-                    ));
+                    font_runs.push(FontRun {
+                        len: run_len_within_line,
+                        font_id: self.platform_text_system.font_id(&run.font)?,
+                    });
                 }
 
                 if decoration_runs.last().map_or(false, |last_run| {

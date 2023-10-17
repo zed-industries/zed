@@ -5,7 +5,7 @@ mod mac;
 mod test;
 
 use crate::{
-    AnyWindowHandle, Bounds, DevicePixels, Event, Executor, Font, FontId, FontMetrics,
+    AnyWindowHandle, Bounds, DevicePixels, Event, Executor, Font, FontId, FontMetrics, FontRun,
     GlobalPixels, GlyphId, LineLayout, Pixels, Point, RenderGlyphParams, RenderImageParams,
     RenderSvgParams, Result, Scene, SharedString, Size,
 };
@@ -171,7 +171,7 @@ pub trait PlatformTextSystem: Send + Sync {
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId>;
     fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>>;
     fn rasterize_glyph(&self, params: &RenderGlyphParams) -> Result<(Size<DevicePixels>, Vec<u8>)>;
-    fn layout_line(&self, text: &str, font_size: Pixels, runs: &[(usize, FontId)]) -> LineLayout;
+    fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
     fn wrap_line(
         &self,
         text: &str,
