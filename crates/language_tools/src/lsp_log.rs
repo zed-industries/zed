@@ -24,6 +24,7 @@ use workspace::{
 
 const SEND_LINE: &str = "// Send:\n";
 const RECEIVE_LINE: &str = "// Receive:\n";
+const MAX_STORED_LOG_ENTRIES: usize = 5000;
 
 pub struct LogStore {
     projects: HashMap<WeakModelHandle<Project>, ProjectState>,
@@ -54,7 +55,7 @@ pub struct LspLogView {
     current_server_id: Option<LanguageServerId>,
     is_showing_rpc_trace: bool,
     project: ModelHandle<Project>,
-    _log_store_subscription: Subscription,
+    _log_store_subscriptions: Vec<Subscription>,
 }
 
 pub struct LspLogToolbarItemView {
@@ -175,8 +176,7 @@ impl LogStore {
             cx.notify();
             LanguageServerState {
                 rpc_state: None,
-                // TODO kb move this to settings?
-                log_storage: VecDeque::with_capacity(10_000),
+                log_storage: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
                 _io_logs_subscription: None,
                 _lsp_logs_subscription: None,
             }
@@ -236,14 +236,16 @@ impl LogStore {
         };
 
         let log_lines = &mut language_server_state.log_storage;
-        if log_lines.capacity() == log_lines.len() {
+        if log_lines.len() == MAX_STORED_LOG_ENTRIES {
             log_lines.pop_front();
         }
-        log_lines.push_back(message.trim().to_string());
 
-        //// TODO kb refresh editor too
-        //need LspLogView.
-
+        let message = message.trim();
+        log_lines.push_back(message.to_string());
+        cx.emit(Event::NewServerLogEntry {
+            id,
+            entry: message.to_string(),
+        });
         cx.notify();
         Some(())
     }
@@ -375,7 +377,7 @@ impl LspLogView {
             .get(&project.downgrade())
             .and_then(|project| project.servers.keys().copied().next());
         let buffer = cx.add_model(|cx| Buffer::new(0, cx.model_id() as u64, ""));
-        let _log_store_subscription = cx.observe(&log_store, |this, store, cx| {
+        let model_changes_subscription = cx.observe(&log_store, |this, store, cx| {
             (|| -> Option<()> {
                 let project_state = store.read(cx).projects.get(&this.project.downgrade())?;
                 if let Some(current_lsp) = this.current_server_id {
@@ -411,6 +413,18 @@ impl LspLogView {
 
             cx.notify();
         });
+        let events_subscriptions = cx.subscribe(&log_store, |log_view, _, e, cx| match e {
+            Event::NewServerLogEntry { id, entry } => {
+                if log_view.current_server_id == Some(*id) {
+                    log_view.editor.update(cx, |editor, cx| {
+                        editor.set_read_only(false);
+                        editor.handle_input(entry, cx);
+                        editor.handle_input("\n", cx);
+                        editor.set_read_only(true);
+                    })
+                }
+            }
+        });
         let (editor, _editor_subscription) = Self::editor_for_buffer(project.clone(), buffer, cx);
         let mut this = Self {
             editor,
@@ -419,7 +433,7 @@ impl LspLogView {
             log_store,
             current_server_id: None,
             is_showing_rpc_trace: false,
-            _log_store_subscription,
+            _log_store_subscriptions: vec![model_changes_subscription, events_subscriptions],
         };
         if let Some(server_id) = server_id {
             this.show_logs_for_server(server_id, cx);
@@ -524,7 +538,6 @@ impl LspLogView {
         cx: &mut ViewContext<Self>,
     ) {
         let buffer = self.log_store.update(cx, |log_set, cx| {
-            // TODO kb save this buffer from overflows too
             log_set.enable_rpc_trace_for_language_server(&self.project, server_id, cx)
         });
         if let Some(buffer) = buffer {
@@ -972,8 +985,12 @@ impl LspLogToolbarItemView {
     }
 }
 
+pub enum Event {
+    NewServerLogEntry { id: LanguageServerId, entry: String },
+}
+
 impl Entity for LogStore {
-    type Event = ();
+    type Event = Event;
 }
 
 impl Entity for LspLogView {
