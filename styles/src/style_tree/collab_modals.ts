@@ -1,4 +1,4 @@
-import { StyleSet, StyleSets, Styles, useTheme } from "../theme"
+import { StyleSets, useTheme } from "../theme"
 import { background, border, foreground, text } from "./components"
 import picker from "./picker"
 import { input } from "../component/input"
@@ -44,7 +44,7 @@ export default function channel_modal(): any {
                     ...text(theme.middle, "sans", styleset, "active"),
                 }
             }
-        });
+        })
 
     const member_icon_style = icon_button({
         variant: "ghost",
