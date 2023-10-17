@@ -185,6 +185,7 @@ impl LineLayoutCache {
             text,
             font_size,
             runs,
+            wrap_width,
         } as &dyn AsCacheKeyRef;
         let curr_frame = self.curr_frame.upgradable_read();
         if let Some(layout) = curr_frame.get(key) {
@@ -210,6 +211,7 @@ impl LineLayoutCache {
                 text: text.clone(),
                 font_size,
                 runs: SmallVec::from(runs),
+                wrap_width,
             };
             curr_frame.insert(key, wrapped_line.clone());
             wrapped_line
@@ -226,6 +228,7 @@ struct CacheKey {
     text: SharedString,
     font_size: Pixels,
     runs: SmallVec<[(usize, FontId); 1]>,
+    wrap_width: Option<Pixels>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -233,6 +236,7 @@ struct CacheKeyRef<'a> {
     text: &'a str,
     font_size: Pixels,
     runs: &'a [(usize, FontId)],
+    wrap_width: Option<Pixels>,
 }
 
 impl<'a> PartialEq for (dyn AsCacheKeyRef + 'a) {
@@ -255,6 +259,7 @@ impl AsCacheKeyRef for CacheKey {
             text: &self.text,
             font_size: self.font_size,
             runs: self.runs.as_slice(),
+            wrap_width: self.wrap_width,
         }
     }
 }
