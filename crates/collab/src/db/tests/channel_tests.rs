@@ -281,10 +281,12 @@ async fn test_channel_invites(db: &Arc<Database>) {
 
     assert_eq!(user_3_invites, &[channel_1_1]);
 
-    let members = db
+    let mut members = db
         .get_channel_participant_details(channel_1_1, user_1)
         .await
         .unwrap();
+
+    members.sort_by_key(|member| member.user_id);
     assert_eq!(
         members,
         &[
@@ -294,14 +296,14 @@ async fn test_channel_invites(db: &Arc<Database>) {
                 role: proto::ChannelRole::Admin.into(),
             },
             proto::ChannelMember {
-                user_id: user_3.to_proto(),
-                kind: proto::channel_member::Kind::Invitee.into(),
-                role: proto::ChannelRole::Admin.into(),
-            },
-            proto::ChannelMember {
                 user_id: user_2.to_proto(),
                 kind: proto::channel_member::Kind::Invitee.into(),
                 role: proto::ChannelRole::Member.into(),
+            },
+            proto::ChannelMember {
+                user_id: user_3.to_proto(),
+                kind: proto::channel_member::Kind::Invitee.into(),
+                role: proto::ChannelRole::Admin.into(),
             },
         ]
     );
@@ -857,10 +859,13 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     .await
     .unwrap();
 
-    let members = db
+    let mut members = db
         .get_channel_participant_details(vim_channel, admin)
         .await
         .unwrap();
+
+    members.sort_by_key(|member| member.user_id);
+
     assert_eq!(
         members,
         &[
@@ -912,10 +917,12 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         .await
         .is_err());
 
-    let members = db
+    let mut members = db
         .get_channel_participant_details(vim_channel, admin)
         .await
         .unwrap();
+
+    members.sort_by_key(|member| member.user_id);
 
     assert_eq!(
         members,
@@ -951,10 +958,13 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         .unwrap();
 
     // currently people invited to parent channels are not shown here
-    let members = db
+    let mut members = db
         .get_channel_participant_details(vim_channel, admin)
         .await
         .unwrap();
+
+    members.sort_by_key(|member| member.user_id);
+
     assert_eq!(
         members,
         &[
@@ -996,10 +1006,13 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     .await
     .unwrap();
 
-    let members = db
+    let mut members = db
         .get_channel_participant_details(vim_channel, admin)
         .await
         .unwrap();
+
+    members.sort_by_key(|member| member.user_id);
+
     assert_eq!(
         members,
         &[
