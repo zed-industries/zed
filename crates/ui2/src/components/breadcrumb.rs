@@ -47,7 +47,7 @@ impl<S: 'static + Send + Sync + Clone> Breadcrumb<S> {
             .text_sm()
             .text_color(theme.middle.base.default.foreground)
             .rounded_md()
-            .hover(|style| style.fill(theme.highest.base.hovered.background))
+            .hover(|style| style.bg(theme.highest.base.hovered.background))
             .child(self.path.clone().to_str().unwrap().to_string())
             .child(if !self.symbols.is_empty() {
                 self.render_separator(&theme)

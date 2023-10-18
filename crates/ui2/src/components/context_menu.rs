@@ -48,7 +48,7 @@ impl<S: 'static + Send + Sync + Clone> ContextMenu<S> {
 
         v_stack()
             .flex()
-            .fill(theme.lowest.base.default.background)
+            .bg(theme.lowest.base.default.background)
             .border()
             .border_color(theme.lowest.base.default.border)
             .child(
@@ -87,7 +87,11 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, ContextMenu<S>>(cx))
                 .child(Story::label(cx, "Default"))

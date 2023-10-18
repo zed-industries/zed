@@ -32,7 +32,7 @@ impl<S: 'static + Send + Sync + Clone> MultiBuffer<S> {
                             .items_center()
                             .justify_between()
                             .p_4()
-                            .fill(theme.lowest.base.default.background)
+                            .bg(theme.lowest.base.default.background)
                             .child(Label::new("main.rs").size(LabelSize::Small))
                             .child(IconButton::new(Icon::ArrowUpRight)),
                     )

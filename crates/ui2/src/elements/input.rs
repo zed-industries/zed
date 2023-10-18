@@ -87,11 +87,11 @@ impl<S: 'static + Send + Sync> Input<S> {
             .px_2()
             .border()
             .border_color(border_color_default)
-            .fill(background_color_default)
+            .bg(background_color_default)
             .hover(|style| {
                 style
                     .border_color(border_color_hover)
-                    .fill(background_color_active)
+                    .bg(background_color_active)
             })
             // .active(|a| .border_color(border_color_active))
             .flex()

@@ -179,7 +179,7 @@ impl<S: 'static + Send + Sync + Clone> Buffer<S> {
         };
 
         h_stack()
-            .fill(line_background)
+            .bg(line_background)
             .w_full()
             .gap_2()
             .px_1()
@@ -201,7 +201,7 @@ impl<S: 'static + Send + Sync + Clone> Buffer<S> {
                     ),
                 )
             })
-            .child(div().mx_0p5().w_1().h_full().fill(row.status.hsla(cx)))
+            .child(div().mx_0p5().w_1().h_full().bg(row.status.hsla(cx)))
             .children(row.line.map(|line| {
                 div()
                     .flex()
@@ -232,7 +232,7 @@ impl<S: 'static + Send + Sync + Clone> Buffer<S> {
             .flex_1()
             .w_full()
             .h_full()
-            .fill(theme.highest.base.default.background)
+            .bg(theme.highest.base.default.background)
             .children(rows)
     }
 }
@@ -263,7 +263,11 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             let theme = theme(cx);
 
             Story::container(cx)

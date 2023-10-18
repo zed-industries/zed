@@ -16,7 +16,7 @@ impl Story {
             .pt_2()
             .px_4()
             .font("Zed Mono Extended")
-            .fill(theme.lowest.base.default.background)
+            .bg(theme.lowest.base.default.background)
     }
 
     pub fn title<S: 'static + Send + Sync>(

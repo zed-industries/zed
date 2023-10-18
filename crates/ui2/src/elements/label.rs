@@ -141,7 +141,7 @@ impl<S: 'static + Send + Sync + Clone> Label<S> {
                         .my_auto()
                         .w_full()
                         .h_px()
-                        .fill(LabelColor::Hidden.hsla(cx)),
+                        .bg(LabelColor::Hidden.hsla(cx)),
                 )
             })
             .children(runs.into_iter().map(|run| {
@@ -185,7 +185,11 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Label<S>>(cx))
                 .child(Story::label(cx, "Default"))

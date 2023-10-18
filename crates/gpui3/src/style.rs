@@ -83,7 +83,7 @@ pub struct Style {
     pub flex_shrink: f32,
 
     /// The fill color of this element
-    pub fill: Option<Fill>,
+    pub background: Option<Fill>,
 
     /// The border color of this element
     pub border_color: Option<Hsla>,
@@ -263,7 +263,7 @@ impl Style {
             );
         });
 
-        let background_color = self.fill.as_ref().and_then(Fill::color);
+        let background_color = self.background.as_ref().and_then(Fill::color);
         if background_color.is_some() || self.is_border_visible() {
             cx.stack(1, |cx| {
                 cx.paint_quad(
@@ -314,7 +314,7 @@ impl Default for Style {
             flex_grow: 0.0,
             flex_shrink: 1.0,
             flex_basis: Length::Auto,
-            fill: None,
+            background: None,
             border_color: None,
             corner_radii: Corners::default(),
             box_shadow: Default::default(),

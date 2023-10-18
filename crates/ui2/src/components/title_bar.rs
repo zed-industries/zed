@@ -108,7 +108,7 @@ impl TitleBar {
             .justify_between()
             .w_full()
             .h_8()
-            .fill(theme.lowest.base.default.background)
+            .bg(theme.lowest.base.default.background)
             .child(
                 div()
                     .flex()

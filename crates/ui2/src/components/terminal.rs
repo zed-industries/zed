@@ -32,7 +32,7 @@ impl<S: 'static + Send + Sync + Clone> Terminal<S> {
                 div()
                     .w_full()
                     .flex()
-                    .fill(theme.middle.base.default.background)
+                    .bg(theme.middle.base.default.background)
                     .child(
                         div().px_1().flex().flex_none().gap_2().child(
                             div()

@@ -69,7 +69,7 @@ trait Styles: Styled + Sized {
     }
 
     fn blue(self) -> Self {
-        self.fill(rgb::<Hsla>(0xe5e8fc))
+        self.bg(rgb::<Hsla>(0xe5e8fc))
             .border_5()
             .border_color(rgb::<Hsla>(0x112382))
             // HACK: Simulate `line-height: 55px`.
@@ -79,7 +79,7 @@ trait Styles: Styled + Sized {
     }
 
     fn red(self) -> Self {
-        self.fill(rgb::<Hsla>(0xfce5e7))
+        self.bg(rgb::<Hsla>(0xfce5e7))
             .border_5()
             .border_color(rgb::<Hsla>(0xe3a1a7))
             // HACK: Simulate `text-align: center`.
@@ -115,7 +115,7 @@ impl<S: 'static + Send + Sync> ZIndexExample<S> {
                     .left(px(15.))
                     .w(px(180.))
                     .h(px(230.))
-                    .fill(rgb::<Hsla>(0xfcfbe5))
+                    .bg(rgb::<Hsla>(0xfcfbe5))
                     .text_color(rgb::<Hsla>(0x000000))
                     .border_5()
                     .border_color(rgb::<Hsla>(0xe3e0a1))

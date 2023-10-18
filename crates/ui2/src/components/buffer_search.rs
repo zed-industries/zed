@@ -30,7 +30,7 @@ impl BufferSearch {
         let theme = theme(cx);
 
         h_stack()
-            .fill(theme.highest.base.default.background)
+            .bg(theme.highest.base.default.background)
             .p_2()
             .child(
                 h_stack()

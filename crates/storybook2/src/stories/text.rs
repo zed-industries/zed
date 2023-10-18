@@ -9,7 +9,7 @@ impl TextStory {
         view(cx.entity(|cx| ()), |_, cx| {
             div()
                 .size_full()
-                .fill(white())
+                .bg(white())
                 .child(concat!(
                     "The quick brown fox jumps over the lazy dog. ",
                     "Meanwhile, the lazy dog decided it was time for a change. ",

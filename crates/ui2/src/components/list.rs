@@ -106,7 +106,7 @@ impl<S: 'static + Send + Sync + Clone> ListHeader<S> {
         h_stack()
             .flex_1()
             .w_full()
-            .fill(color.surface)
+            .bg(color.surface)
             .when(self.state == InteractionState::Focused, |this| {
                 this.border().border_color(color.border_focused)
             })
@@ -398,7 +398,7 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
         div()
             .relative()
             .group("")
-            .fill(color.surface)
+            .bg(color.surface)
             .when(self.state == InteractionState::Focused, |this| {
                 this.border().border_color(color.border_focused)
             })
@@ -412,11 +412,11 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
                             .h_full()
                             .flex()
                             .justify_center()
-                            .group_hover("", |style| style.fill(color.border_focused))
+                            .group_hover("", |style| style.bg(color.border_focused))
                             .child(
                                 h_stack()
                                     .child(div().w_px().h_full())
-                                    .child(div().w_px().h_full().fill(color.border)),
+                                    .child(div().w_px().h_full().bg(color.border)),
                             )
                     }))
                     .flex()
@@ -445,7 +445,7 @@ impl<S: 'static + Send + Sync> ListSeparator<S> {
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let color = ThemeColor::new(cx);
 
-        div().h_px().w_full().fill(color.border)
+        div().h_px().w_full().bg(color.border)
     }
 }
 

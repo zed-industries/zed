@@ -151,7 +151,7 @@ impl Workspace {
             .justify_start()
             .items_start()
             .text_color(theme.lowest.base.default.foreground)
-            .fill(theme.lowest.base.default.background)
+            .bg(theme.lowest.base.default.background)
             .child(self.title_bar.clone())
             .child(
                 div()

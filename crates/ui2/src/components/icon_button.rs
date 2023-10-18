@@ -76,7 +76,7 @@ impl<S: 'static + Send + Sync> IconButton<S> {
 
         let mut div = div();
         if self.variant == ButtonVariant::Filled {
-            div = div.fill(theme.highest.on.default.background);
+            div = div.bg(theme.highest.on.default.background);
         }
 
         if let Some(click_handler) = self.handlers.click.clone() {
@@ -91,7 +91,7 @@ impl<S: 'static + Send + Sync> IconButton<S> {
             .items_center()
             .justify_center()
             .rounded_md()
-            .hover(|style| style.fill(theme.highest.base.hovered.background))
+            .hover(|style| style.bg(theme.highest.base.hovered.background))
             // .active()
             // .fill(theme.highest.base.pressed.background)
             .child(IconElement::new(self.icon).color(icon_color))

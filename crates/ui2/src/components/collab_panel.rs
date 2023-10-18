@@ -29,14 +29,14 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
 
         v_stack()
             .h_full()
-            .fill(color.surface)
+            .bg(color.surface)
             .child(
                 v_stack()
                     .w_full()
                     .overflow_y_scroll(self.scroll_state.clone())
                     .child(
                         div()
-                            .fill(theme.lowest.base.default.background)
+                            .bg(theme.lowest.base.default.background)
                             .pb_1()
                             .border_color(theme.lowest.base.default.border)
                             .border_b()
@@ -137,7 +137,7 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
             .px_2()
             .flex()
             .items_center()
-            .hover(|style| style.fill(theme.lowest.variant.hovered.background))
+            .hover(|style| style.bg(theme.lowest.variant.hovered.background))
             // .active(|style| style.fill(theme.lowest.variant.pressed.background))
             .child(
                 div()
@@ -146,11 +146,11 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
                     .gap_1()
                     .text_sm()
                     .child(
-                        img()
-                            .uri(avatar_uri)
-                            .size_3p5()
-                            .rounded_full()
-                            .fill(theme.middle.positive.default.foreground),
+                        img().uri(avatar_uri).size_3p5().rounded_full().bg(theme
+                            .middle
+                            .positive
+                            .default
+                            .foreground),
                     )
                     .child(label.into()),
             )

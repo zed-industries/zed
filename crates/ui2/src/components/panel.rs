@@ -109,7 +109,7 @@ impl<S: 'static + Send + Sync> Panel<S> {
                     .h_full()
                     // .w(current_width)
                     .w_64()
-                    .fill(theme.middle.base.default.background)
+                    .bg(theme.middle.base.default.background)
                     .border_r()
                     .border_color(theme.middle.base.default.border);
             }
@@ -119,7 +119,7 @@ impl<S: 'static + Send + Sync> Panel<S> {
                     .h_full()
                     // .w(current_width)
                     .w_64()
-                    .fill(theme.middle.base.default.background)
+                    .bg(theme.middle.base.default.background)
                     .border_l()
                     .border_color(theme.middle.base.default.border);
             }
@@ -129,7 +129,7 @@ impl<S: 'static + Send + Sync> Panel<S> {
                     .w_full()
                     // .h(current_width)
                     .h_64()
-                    .fill(theme.middle.base.default.background)
+                    .bg(theme.middle.base.default.background)
                     .border_t()
                     .border_color(theme.middle.base.default.border);
             }

@@ -102,7 +102,7 @@ impl<S: 'static + Send + Sync + Clone> Tab<S> {
             .flex()
             .items_center()
             .justify_center()
-            .fill(if self.current {
+            .bg(if self.current {
                 theme.highest.base.default.background
             } else {
                 theme.middle.base.default.background
@@ -157,7 +157,11 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             let git_statuses = GitStatus::iter();
             let fs_statuses = FileSystemStatus::iter();
 

@@ -81,7 +81,7 @@ impl<S: 'static + Send + Sync> Key<S> {
             .rounded_md()
             .text_sm()
             .text_color(theme.lowest.on.default.foreground)
-            .fill(theme.lowest.on.default.background)
+            .bg(theme.lowest.on.default.background)
             .child(self.key.clone())
     }
 }
@@ -189,7 +189,11 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             let all_modifier_permutations = ModifierKey::iter().permutations(2);
 
             Story::container(cx)

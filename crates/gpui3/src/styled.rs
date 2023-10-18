@@ -178,12 +178,12 @@ pub trait Styled {
         self
     }
 
-    fn fill<F>(mut self, fill: F) -> Self
+    fn bg<F>(mut self, fill: F) -> Self
     where
         F: Into<Fill>,
         Self: Sized,
     {
-        self.style().fill = Some(fill.into());
+        self.style().background = Some(fill.into());
         self
     }
 

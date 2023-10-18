@@ -56,7 +56,7 @@ impl<S: 'static + Send + Sync> Toast<S> {
             .rounded_lg()
             .shadow_md()
             .overflow_hidden()
-            .fill(color.elevated_surface)
+            .bg(color.elevated_surface)
             .children(self.children.drain(..))
     }
 }
