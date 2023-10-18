@@ -6,7 +6,11 @@ use crate::{
 };
 use util::ResultExt;
 
-pub struct Svg<V: 'static + Send + Sync, I: ElementIdentity, F: ElementFocusability> {
+pub struct Svg<
+    V: 'static + Send + Sync,
+    I: ElementIdentity = Anonymous,
+    F: ElementFocusability = NonFocusable,
+> {
     base: Div<V, I, F>,
     path: Option<SharedString>,
 }

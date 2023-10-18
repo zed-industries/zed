@@ -81,7 +81,11 @@ where
     }
 }
 
-pub struct Div<V: 'static + Send + Sync, I: ElementIdentity, F: ElementFocusability> {
+pub struct Div<
+    V: 'static + Send + Sync,
+    I: ElementIdentity = Anonymous,
+    F: ElementFocusability = NonFocusable,
+> {
     identity: I,
     focusability: F,
     children: SmallVec<[AnyElement<V>; 2]>,

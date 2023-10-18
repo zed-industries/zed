@@ -7,7 +7,11 @@ use crate::{
 use futures::FutureExt;
 use util::ResultExt;
 
-pub struct Img<V: 'static + Send + Sync, I: ElementIdentity, F: ElementFocusability> {
+pub struct Img<
+    V: 'static + Send + Sync,
+    I: ElementIdentity = Anonymous,
+    F: ElementFocusability = NonFocusable,
+> {
     base: Div<V, I, F>,
     uri: Option<SharedString>,
     grayscale: bool,
