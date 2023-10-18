@@ -379,6 +379,7 @@ where
             self.focusability.focus_handle().cloned(),
             mem::take(&mut self.listeners.key_down),
             mem::take(&mut self.listeners.key_up),
+            mem::take(&mut self.listeners.focus),
             |cx| {
                 for child in &mut self.children {
                     child.initialize(view_state, cx);

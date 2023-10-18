@@ -1,9 +1,9 @@
 use crate::{
     px, size, AnyBox, AnyView, AppContext, AsyncWindowContext, AvailableSpace, BorrowAppContext,
     Bounds, BoxShadow, Context, Corners, DevicePixels, DisplayId, Edges, Effect, Element, EntityId,
-    EventEmitter, FocusEvent, FontId, GlobalElementId, GlyphId, Handle, Hsla, ImageData,
-    InputEvent, IsZero, KeyDownEvent, KeyDownListener, KeyUpEvent, KeyUpListener, LayoutId,
-    MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path, Pixels, Platform,
+    EventEmitter, FocusEvent, FocusListener, FontId, GlobalElementId, GlyphId, Handle, Hsla,
+    ImageData, InputEvent, IsZero, KeyDownEvent, KeyDownListener, KeyUpEvent, KeyUpListener,
+    LayoutId, MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path, Pixels, Platform,
     PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams,
     RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
     Style, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle,
@@ -42,7 +42,7 @@ pub enum DispatchPhase {
 
 type AnyMouseEventListener =
     Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
-type AnyFocusChangeListener = Box<dyn Fn(&FocusEvent, &mut WindowContext) + Send + Sync + 'static>;
+type AnyFocusListener = Box<dyn Fn(&FocusEvent, &mut WindowContext) + Send + Sync + 'static>;
 type AnyKeyDownListener =
     Box<dyn Fn(&KeyDownEvent, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
 type AnyKeyUpListener =
@@ -51,7 +51,7 @@ type AnyKeyUpListener =
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct FocusId(usize);
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct FocusHandle {
     pub(crate) id: FocusId,
 }
@@ -70,9 +70,14 @@ impl FocusHandle {
     }
 
     pub fn within_focused(&self, cx: &WindowContext) -> bool {
-        let mut ancestor = Some(self.id);
+        let focused = cx.focused();
+        focused.map_or(false, |focused| focused.contains(self, cx))
+    }
+
+    pub(crate) fn contains(&self, other: &Self, cx: &WindowContext) -> bool {
+        let mut ancestor = Some(other.id);
         while let Some(ancestor_id) = ancestor {
-            if cx.window.focus == Some(ancestor_id) {
+            if self.id == ancestor_id {
                 return true;
             } else {
                 ancestor = cx.window.focus_parents_by_child.get(&ancestor_id).copied();
@@ -100,7 +105,7 @@ pub struct Window {
     focus_stack: Vec<FocusStackFrame>,
     focus_parents_by_child: HashMap<FocusId, FocusId>,
     containing_focus: HashSet<FocusId>,
-    pub(crate) focus_change_listeners: Vec<AnyFocusChangeListener>,
+    pub(crate) focus_listeners: Vec<AnyFocusListener>,
     key_down_listeners: Vec<AnyKeyDownListener>,
     key_up_listeners: Vec<AnyKeyUpListener>,
     propagate_event: bool,
@@ -173,7 +178,7 @@ impl Window {
             focus_parents_by_child: HashMap::default(),
             containing_focus: HashSet::default(),
             mouse_listeners: HashMap::default(),
-            focus_change_listeners: Vec::new(),
+            focus_listeners: Vec::new(),
             key_down_listeners: Vec::new(),
             key_up_listeners: Vec::new(),
             propagate_event: true,
@@ -233,6 +238,10 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     pub fn focus_handle(&mut self) -> FocusHandle {
         let id = FocusId(post_inc(&mut self.window.next_focus_id.0));
         FocusHandle { id }
+    }
+
+    pub fn focused(&self) -> Option<FocusHandle> {
+        self.window.focus.map(|id| FocusHandle::new(id))
     }
 
     pub fn focus(&mut self, handle: &FocusHandle) {
@@ -751,7 +760,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
         // Clear focus state, because we determine what is focused when the new elements
         // in the upcoming frame are initialized.
-        window.focus_change_listeners.clear();
+        window.focus_listeners.clear();
         window.key_down_listeners.clear();
         window.key_up_listeners.clear();
         window.containing_focus.clear();
@@ -1110,6 +1119,7 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         focus_handle: Option<FocusHandle>,
         key_down: impl IntoIterator<Item = KeyDownListener<V>>,
         key_up: impl IntoIterator<Item = KeyUpListener<V>>,
+        focus: impl IntoIterator<Item = FocusListener<V>>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         let Some(focus_handle) = focus_handle else {
@@ -1118,6 +1128,16 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
 
         let handle = self.handle();
         let window = &mut *self.window;
+
+        for listener in focus {
+            let handle = handle.clone();
+            window.focus_listeners.push(Box::new(move |event, cx| {
+                handle
+                    .update(cx, |view, cx| listener(view, event, cx))
+                    .log_err();
+            }));
+        }
+
         if let Some(parent_frame) = window.focus_stack.last() {
             window
                 .focus_parents_by_child
@@ -1150,7 +1170,6 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
                         .log_err();
                 }));
         }
-
         window.focus_stack.push(frame);
 
         if Some(focus_handle.id) == window.focus {

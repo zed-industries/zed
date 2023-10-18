@@ -234,7 +234,7 @@ impl AppContext {
     fn apply_focus_changed(&mut self, window_id: WindowId, focused: Option<FocusId>) {
         self.update_window(window_id, |cx| {
             if cx.window.focus == focused {
-                let mut listeners = mem::take(&mut cx.window.focus_change_listeners);
+                let mut listeners = mem::take(&mut cx.window.focus_listeners);
                 let focused = focused.map(FocusHandle::new);
                 let blurred = cx.window.last_blur.unwrap().map(FocusHandle::new);
                 let event = FocusEvent { focused, blurred };
@@ -242,8 +242,8 @@ impl AppContext {
                     listener(&event, cx);
                 }
 
-                listeners.extend(cx.window.focus_change_listeners.drain(..));
-                cx.window.focus_change_listeners = listeners;
+                listeners.extend(cx.window.focus_listeners.drain(..));
+                cx.window.focus_listeners = listeners;
             }
         })
         .ok();
