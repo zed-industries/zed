@@ -40,8 +40,13 @@ pub enum DispatchPhase {
     Capture,
 }
 
-type MouseEventHandler =
-    Arc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
+type AnyMouseEventListener =
+    Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
+type AnyFocusChangeListener = Box<dyn Fn(&FocusEvent, &mut WindowContext) + Send + Sync + 'static>;
+type AnyKeyDownListener =
+    Box<dyn Fn(&KeyDownEvent, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
+type AnyKeyUpListener =
+    Box<dyn Fn(&KeyUpEvent, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct FocusId(usize);
@@ -91,16 +96,13 @@ pub struct Window {
     element_states: HashMap<GlobalElementId, AnyBox>,
     z_index_stack: StackingOrder,
     content_mask_stack: Vec<ContentMask<Pixels>>,
-    mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, MouseEventHandler)>>,
+    mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyMouseEventListener)>>,
     focus_stack: Vec<FocusStackFrame>,
     focus_parents_by_child: HashMap<FocusId, FocusId>,
     containing_focus: HashSet<FocusId>,
-    pub(crate) focus_change_listeners:
-        Vec<Arc<dyn Fn(&FocusEvent, &mut WindowContext) + Send + Sync + 'static>>,
-    key_down_listeners:
-        Vec<Arc<dyn Fn(&KeyDownEvent, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>>,
-    key_up_listeners:
-        Vec<Arc<dyn Fn(&KeyUpEvent, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>>,
+    pub(crate) focus_change_listeners: Vec<AnyFocusChangeListener>,
+    key_down_listeners: Vec<AnyKeyDownListener>,
+    key_up_listeners: Vec<AnyKeyUpListener>,
     propagate_event: bool,
     mouse_position: Point<Pixels>,
     scale_factor: f32,
@@ -207,12 +209,8 @@ impl ContentMask<Pixels> {
 
 struct FocusStackFrame {
     handle: FocusHandle,
-    key_down_listeners: SmallVec<
-        [Arc<dyn Fn(&KeyDownEvent, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>; 2],
-    >,
-    key_up_listeners: SmallVec<
-        [Arc<dyn Fn(&KeyUpEvent, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>; 2],
-    >,
+    key_down_listeners: SmallVec<[AnyKeyDownListener; 2]>,
+    key_up_listeners: SmallVec<[AnyKeyUpListener; 2]>,
 }
 
 pub struct WindowContext<'a, 'w> {
@@ -402,7 +400,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             .or_default()
             .push((
                 order,
-                Arc::new(move |event: &dyn Any, phase, cx| {
+                Box::new(move |event: &dyn Any, phase, cx| {
                     handler(event.downcast_ref().unwrap(), phase, cx)
                 }),
             ))
@@ -1136,7 +1134,7 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
             let handle = handle.clone();
             frame
                 .key_down_listeners
-                .push(Arc::new(move |event, phase, cx| {
+                .push(Box::new(move |event, phase, cx| {
                     handle
                         .update(cx, |view, cx| listener(view, event, phase, cx))
                         .log_err();
@@ -1146,7 +1144,7 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
             let handle = handle.clone();
             frame
                 .key_up_listeners
-                .push(Arc::new(move |event, phase, cx| {
+                .push(Box::new(move |event, phase, cx| {
                     handle
                         .update(cx, |view, cx| listener(view, event, phase, cx))
                         .log_err();
@@ -1156,14 +1154,14 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         window.focus_stack.push(frame);
 
         if Some(focus_handle.id) == window.focus {
-            for frame in &window.focus_stack {
+            for frame in &mut window.focus_stack {
                 window.containing_focus.insert(frame.handle.id);
                 window
                     .key_down_listeners
-                    .extend_from_slice(&frame.key_down_listeners);
+                    .extend(frame.key_down_listeners.drain(..));
                 window
                     .key_up_listeners
-                    .extend_from_slice(&frame.key_up_listeners);
+                    .extend(frame.key_up_listeners.drain(..));
             }
         }
 

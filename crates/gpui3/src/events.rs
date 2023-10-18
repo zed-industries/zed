@@ -1,9 +1,8 @@
-use smallvec::SmallVec;
-
 use crate::{
     point, Bounds, DispatchPhase, FocusHandle, Keystroke, Modifiers, Pixels, Point, ViewContext,
 };
-use std::{any::Any, ops::Deref, sync::Arc};
+use smallvec::SmallVec;
+use std::{any::Any, ops::Deref};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KeyDownEvent {
@@ -209,29 +208,29 @@ pub struct FocusEvent {
     pub focused: Option<FocusHandle>,
 }
 
-pub type MouseDownListener<V> = Arc<
+pub type MouseDownListener<V> = Box<
     dyn Fn(&mut V, &MouseDownEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
         + Send
         + Sync
         + 'static,
 >;
-pub type MouseUpListener<V> = Arc<
+pub type MouseUpListener<V> = Box<
     dyn Fn(&mut V, &MouseUpEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
         + Send
         + Sync
         + 'static,
 >;
 pub type MouseClickListener<V> =
-    Arc<dyn Fn(&mut V, &MouseClickEvent, &mut ViewContext<V>) + Send + Sync + 'static>;
+    Box<dyn Fn(&mut V, &MouseClickEvent, &mut ViewContext<V>) + Send + Sync + 'static>;
 
-pub type MouseMoveListener<V> = Arc<
+pub type MouseMoveListener<V> = Box<
     dyn Fn(&mut V, &MouseMoveEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
         + Send
         + Sync
         + 'static,
 >;
 
-pub type ScrollWheelListener<V> = Arc<
+pub type ScrollWheelListener<V> = Box<
     dyn Fn(&mut V, &ScrollWheelEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
         + Send
         + Sync
@@ -239,10 +238,10 @@ pub type ScrollWheelListener<V> = Arc<
 >;
 
 pub type KeyDownListener<V> =
-    Arc<dyn Fn(&mut V, &KeyDownEvent, DispatchPhase, &mut ViewContext<V>) + Send + Sync + 'static>;
+    Box<dyn Fn(&mut V, &KeyDownEvent, DispatchPhase, &mut ViewContext<V>) + Send + Sync + 'static>;
 
 pub type KeyUpListener<V> =
-    Arc<dyn Fn(&mut V, &KeyUpEvent, DispatchPhase, &mut ViewContext<V>) + Send + Sync + 'static>;
+    Box<dyn Fn(&mut V, &KeyUpEvent, DispatchPhase, &mut ViewContext<V>) + Send + Sync + 'static>;
 
 pub struct EventListeners<V: 'static> {
     pub mouse_down: SmallVec<[MouseDownListener<V>; 2]>,

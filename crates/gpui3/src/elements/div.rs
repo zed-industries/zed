@@ -9,7 +9,7 @@ use collections::HashMap;
 use parking_lot::Mutex;
 use refineable::Refineable;
 use smallvec::SmallVec;
-use std::sync::Arc;
+use std::{mem, sync::Arc};
 
 #[derive(Default)]
 pub struct DivState {
@@ -263,12 +263,12 @@ where
     }
 
     fn paint_event_listeners(
-        &self,
+        &mut self,
         bounds: Bounds<Pixels>,
         pending_click: Arc<Mutex<Option<MouseDownEvent>>>,
         cx: &mut ViewContext<V>,
     ) {
-        let click_listeners = self.listeners.mouse_click.clone();
+        let click_listeners = mem::take(&mut self.listeners.mouse_click);
         let mouse_down = pending_click.lock().clone();
         if let Some(mouse_down) = mouse_down {
             cx.on_mouse_event(move |state, event: &MouseUpEvent, phase, cx| {
@@ -292,25 +292,25 @@ where
             });
         }
 
-        for listener in self.listeners.mouse_down.iter().cloned() {
+        for listener in mem::take(&mut self.listeners.mouse_down) {
             cx.on_mouse_event(move |state, event: &MouseDownEvent, phase, cx| {
                 listener(state, event, &bounds, phase, cx);
             })
         }
 
-        for listener in self.listeners.mouse_up.iter().cloned() {
+        for listener in mem::take(&mut self.listeners.mouse_up) {
             cx.on_mouse_event(move |state, event: &MouseUpEvent, phase, cx| {
                 listener(state, event, &bounds, phase, cx);
             })
         }
 
-        for listener in self.listeners.mouse_move.iter().cloned() {
+        for listener in mem::take(&mut self.listeners.mouse_move) {
             cx.on_mouse_event(move |state, event: &MouseMoveEvent, phase, cx| {
                 listener(state, event, &bounds, phase, cx);
             })
         }
 
-        for listener in self.listeners.scroll_wheel.iter().cloned() {
+        for listener in mem::take(&mut self.listeners.scroll_wheel) {
             cx.on_mouse_event(move |state, event: &ScrollWheelEvent, phase, cx| {
                 listener(state, event, &bounds, phase, cx);
             })
@@ -351,7 +351,7 @@ where
             + Sync
             + 'static,
     ) -> Self {
-        self.listeners.key_down.push(Arc::new(listener));
+        self.listeners.key_down.push(Box::new(listener));
         self
     }
 }
@@ -377,8 +377,8 @@ where
     ) -> Self::ElementState {
         cx.with_focus(
             self.focusability.focus_handle().cloned(),
-            self.listeners.key_down.clone(),
-            self.listeners.key_up.clone(),
+            mem::take(&mut self.listeners.key_down),
+            mem::take(&mut self.listeners.key_up),
             |cx| {
                 for child in &mut self.children {
                     child.initialize(view_state, cx);
