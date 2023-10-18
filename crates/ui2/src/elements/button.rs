@@ -162,7 +162,15 @@ impl<S: 'static + Send + Sync + Clone> Button<S> {
             .rounded_md()
             .border()
             .border_color(border_color)
-            .bg(self.background_color(cx));
+            .bg(self.background_color(cx))
+            .hover(|style| {
+                let color = ThemeColor::new(cx);
+
+                style.bg(match self.variant {
+                    ButtonVariant::Ghost => color.ghost_element_hover,
+                    ButtonVariant::Filled => color.filled_element_hover,
+                })
+            });
 
         match (self.icon, self.icon_position) {
             (Some(_), Some(IconPosition::Left)) => {
