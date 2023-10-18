@@ -6,6 +6,7 @@ pub use async_context::*;
 pub use entity_map::*;
 pub use model_context::*;
 use refineable::Refineable;
+use smallvec::SmallVec;
 
 use crate::{
     current_platform, image_cache::ImageCache, AssetSource, Context, DisplayId, Executor,
@@ -21,7 +22,7 @@ use slotmap::SlotMap;
 use std::{
     any::{type_name, Any, TypeId},
     mem,
-    sync::{Arc, Weak},
+    sync::{atomic::Ordering::SeqCst, Arc, Weak},
 };
 use util::http::{self, HttpClient};
 
@@ -170,6 +171,7 @@ impl AppContext {
     fn flush_effects(&mut self) {
         loop {
             self.release_dropped_entities();
+            self.release_dropped_focus_handles();
             if let Some(effect) = self.pending_effects.pop_front() {
                 match effect {
                     Effect::Notify { emitter } => self.apply_notify_effect(emitter),
@@ -194,7 +196,7 @@ impl AppContext {
                     None
                 }
             })
-            .collect::<Vec<_>>();
+            .collect::<SmallVec<[_; 8]>>();
 
         for dirty_window_id in dirty_window_ids {
             self.update_window(dirty_window_id, |cx| cx.draw()).unwrap();
@@ -218,6 +220,32 @@ impl AppContext {
         }
     }
 
+    fn release_dropped_focus_handles(&mut self) {
+        let window_ids = self.windows.keys().collect::<SmallVec<[_; 8]>>();
+        for window_id in window_ids {
+            self.update_window(window_id, |cx| {
+                let mut blur_window = false;
+                let focus = cx.window.focus;
+                cx.window.focus_handles.write().retain(|handle_id, count| {
+                    if count.load(SeqCst) == 0 {
+                        if focus == Some(handle_id) {
+                            blur_window = true;
+                        }
+                        false
+                    } else {
+                        true
+                    }
+                });
+
+                if blur_window {
+                    cx.window.focus = None;
+                    cx.blur();
+                }
+            })
+            .unwrap();
+        }
+    }
+
     fn apply_notify_effect(&mut self, emitter: EntityId) {
         self.pending_notifications.remove(&emitter);
         self.observers
@@ -235,8 +263,12 @@ impl AppContext {
         self.update_window(window_id, |cx| {
             if cx.window.focus == focused {
                 let mut listeners = mem::take(&mut cx.window.focus_listeners);
-                let focused = focused.map(FocusHandle::new);
-                let blurred = cx.window.last_blur.unwrap().map(FocusHandle::new);
+                let focused = focused.map(|id| FocusHandle::for_id(id, &cx.window.focus_handles));
+                let blurred = cx
+                    .window
+                    .last_blur
+                    .unwrap()
+                    .map(|id| FocusHandle::for_id(id, &cx.window.focus_handles));
                 let event = FocusEvent { focused, blurred };
                 for listener in &listeners {
                     listener(&event, cx);

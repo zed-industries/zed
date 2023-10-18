@@ -12,6 +12,8 @@ use crate::{
 use anyhow::Result;
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
+use parking_lot::{RwLock, RwLockUpgradableReadGuard};
+use slotmap::SlotMap;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
@@ -20,9 +22,12 @@ use std::{
     future::Future,
     marker::PhantomData,
     mem,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc, Weak,
+    },
 };
-use util::{post_inc, ResultExt};
+use util::ResultExt;
 
 #[derive(Deref, DerefMut, Ord, PartialOrd, Eq, PartialEq, Clone, Default)]
 pub struct StackingOrder(pub(crate) SmallVec<[u32; 16]>);
@@ -50,17 +55,34 @@ type AnyKeyDownListener =
 type AnyKeyUpListener =
     Box<dyn Fn(&KeyUpEvent, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub struct FocusId(usize);
+slotmap::new_key_type! { pub struct FocusId; }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct FocusHandle {
     pub(crate) id: FocusId,
+    handles: Weak<RwLock<SlotMap<FocusId, AtomicUsize>>>,
 }
 
 impl FocusHandle {
-    pub(crate) fn new(id: FocusId) -> Self {
-        Self { id }
+    pub(crate) fn new(handles: &Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>) -> Self {
+        let id = handles.write().insert(AtomicUsize::new(1));
+        Self {
+            id,
+            handles: Arc::downgrade(handles),
+        }
+    }
+
+    pub(crate) fn for_id(
+        id: FocusId,
+        handles: &Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
+    ) -> Self {
+        let lock = handles.upgradable_read();
+        let ref_count = lock.get(id).expect("all focus handles dropped for id");
+        ref_count.fetch_add(1, SeqCst);
+        Self {
+            id,
+            handles: Arc::downgrade(handles),
+        }
     }
 
     pub fn is_focused(&self, cx: &WindowContext) -> bool {
@@ -90,6 +112,22 @@ impl FocusHandle {
     }
 }
 
+impl PartialEq for FocusHandle {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for FocusHandle {}
+
+impl Drop for FocusHandle {
+    fn drop(&mut self) {
+        if let Some(handles) = self.handles.upgrade() {
+            handles.read().get(self.id).unwrap().fetch_sub(1, SeqCst);
+        }
+    }
+}
+
 pub struct Window {
     handle: AnyWindowHandle,
     platform_window: MainThreadOnly<Box<dyn PlatformWindow>>,
@@ -109,6 +147,7 @@ pub struct Window {
     focus_stack: Vec<FocusStackFrame>,
     focus_parents_by_child: HashMap<FocusId, FocusId>,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
+    pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
     propagate_event: bool,
     mouse_position: Point<Pixels>,
     scale_factor: f32,
@@ -116,7 +155,6 @@ pub struct Window {
     pub(crate) dirty: bool,
     pub(crate) last_blur: Option<Option<FocusId>>,
     pub(crate) focus: Option<FocusId>,
-    next_focus_id: FocusId,
 }
 
 impl Window {
@@ -185,9 +223,9 @@ impl Window {
             scale_factor,
             scene_builder: SceneBuilder::new(),
             dirty: true,
+            focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             last_blur: None,
             focus: None,
-            next_focus_id: FocusId(0),
         }
     }
 }
@@ -235,12 +273,13 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 
     pub fn focus_handle(&mut self) -> FocusHandle {
-        let id = FocusId(post_inc(&mut self.window.next_focus_id.0));
-        FocusHandle { id }
+        FocusHandle::new(&self.window.focus_handles)
     }
 
     pub fn focused(&self) -> Option<FocusHandle> {
-        self.window.focus.map(|id| FocusHandle::new(id))
+        self.window
+            .focus
+            .map(|id| FocusHandle::for_id(id, &self.window.focus_handles))
     }
 
     pub fn focus(&mut self, handle: &FocusHandle) {
