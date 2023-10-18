@@ -48,7 +48,7 @@ pub enum LabelSize {
 #[derive(Element, Clone)]
 pub struct Label<S: 'static + Send + Sync + Clone> {
     state_type: PhantomData<S>,
-    label: String,
+    label: SharedString,
     color: LabelColor,
     size: LabelSize,
     highlight_indices: Vec<usize>,
@@ -56,10 +56,7 @@ pub struct Label<S: 'static + Send + Sync + Clone> {
 }
 
 impl<S: 'static + Send + Sync + Clone> Label<S> {
-    pub fn new<L>(label: L) -> Self
-    where
-        L: Into<String>,
-    {
+    pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             state_type: PhantomData,
             label: label.into(),
