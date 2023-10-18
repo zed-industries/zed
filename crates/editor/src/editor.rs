@@ -2877,8 +2877,10 @@ impl Editor {
                     i = 0;
                 } else if pair_state.range.start.to_offset(buffer) > range.end {
                     break;
-                } else if pair_state.selection_id == selection.id {
-                    enclosing = Some(pair_state);
+                } else {
+                    if pair_state.selection_id == selection.id {
+                        enclosing = Some(pair_state);
+                    }
                     i += 1;
                 }
             }
