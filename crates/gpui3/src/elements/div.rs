@@ -74,6 +74,9 @@ where
         group_hover: None,
         active_style: StyleRefinement::default(),
         group_active: None,
+        focus_style: StyleRefinement::default(),
+        focus_in_style: StyleRefinement::default(),
+        in_focus_style: StyleRefinement::default(),
         listeners: EventListeners::default(),
     }
 }
@@ -88,6 +91,9 @@ pub struct Div<I: ElementIdentity, F: ElementFocusability, V: 'static + Send + S
     group_hover: Option<GroupStyle>,
     active_style: StyleRefinement,
     group_active: Option<GroupStyle>,
+    focus_style: StyleRefinement,
+    focus_in_style: StyleRefinement,
+    in_focus_style: StyleRefinement,
     listeners: EventListeners<V>,
 }
 
@@ -112,6 +118,9 @@ where
             group_hover: self.group_hover,
             active_style: self.active_style,
             group_active: self.group_active,
+            focus_style: self.focus_style,
+            focus_in_style: self.focus_in_style,
+            in_focus_style: self.in_focus_style,
             listeners: self.listeners,
         }
     }
@@ -191,6 +200,20 @@ where
     ) -> Style {
         let mut computed_style = Style::default();
         computed_style.refine(&self.base_style);
+
+        if let Some(handle) = self.focusability.focus_handle() {
+            if handle.contains_focused(cx) {
+                computed_style.refine(&self.focus_in_style);
+            }
+
+            if handle.within_focused(cx) {
+                computed_style.refine(&self.in_focus_style);
+            }
+
+            if handle.is_focused(cx) {
+                computed_style.refine(&self.focus_style);
+            }
+        }
 
         let mouse_position = cx.mouse_position();
 
@@ -334,6 +357,9 @@ where
             group_hover: self.group_hover,
             active_style: self.active_style,
             group_active: self.group_active,
+            focus_style: self.focus_style,
+            focus_in_style: self.focus_in_style,
+            in_focus_style: self.in_focus_style,
             listeners: self.listeners,
         }
     }
@@ -346,6 +372,18 @@ where
 {
     fn handle(&self) -> &FocusHandle {
         self.focusability.as_ref()
+    }
+
+    fn set_focus_style(&mut self, style: StyleRefinement) {
+        self.focus_style = style;
+    }
+
+    fn set_focus_in_style(&mut self, style: StyleRefinement) {
+        self.focus_in_style = style;
+    }
+
+    fn set_in_focus_style(&mut self, style: StyleRefinement) {
+        self.in_focus_style = style;
     }
 }
 

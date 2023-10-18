@@ -1,9 +1,37 @@
 use crate::{
-    DispatchPhase, FocusEvent, FocusHandle, Interactive, KeyDownEvent, KeyUpEvent, ViewContext,
+    DispatchPhase, FocusEvent, FocusHandle, Interactive, KeyDownEvent, KeyUpEvent, StyleRefinement,
+    ViewContext,
 };
 
 pub trait Focus: Interactive {
+    fn set_focus_style(&mut self, style: StyleRefinement);
+    fn set_focus_in_style(&mut self, style: StyleRefinement);
+    fn set_in_focus_style(&mut self, style: StyleRefinement);
     fn handle(&self) -> &FocusHandle;
+
+    fn focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
+    where
+        Self: Sized,
+    {
+        self.set_focus_style(f(StyleRefinement::default()));
+        self
+    }
+
+    fn focus_in(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
+    where
+        Self: Sized,
+    {
+        self.set_focus_in_style(f(StyleRefinement::default()));
+        self
+    }
+
+    fn in_focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
+    where
+        Self: Sized,
+    {
+        self.set_in_focus_style(f(StyleRefinement::default()));
+        self
+    }
 
     fn on_focus(
         mut self,
