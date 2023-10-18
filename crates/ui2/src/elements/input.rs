@@ -13,17 +13,17 @@ pub enum InputVariant {
 #[derive(Element)]
 pub struct Input<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
-    placeholder: &'static str,
+    placeholder: SharedString,
     value: String,
     state: InteractionState,
     variant: InputVariant,
 }
 
 impl<S: 'static + Send + Sync> Input<S> {
-    pub fn new(placeholder: &'static str) -> Self {
+    pub fn new(placeholder: impl Into<SharedString>) -> Self {
         Self {
             state_type: PhantomData,
-            placeholder,
+            placeholder: placeholder.into(),
             value: "".to_string(),
             state: InteractionState::default(),
             variant: InputVariant::default(),
