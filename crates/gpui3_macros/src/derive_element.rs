@@ -65,7 +65,9 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
             ) -> Self::ElementState {
                 use gpui3::IntoAnyElement;
 
-                self.render(view_state, cx).into_any()
+                let mut element = self.render(view_state, cx).into_any();
+                element.initialize(view_state, cx);
+                element
             }
 
             fn layout(

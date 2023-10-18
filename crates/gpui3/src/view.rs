@@ -67,7 +67,11 @@ impl<V: 'static + Send + Sync> Element for View<V> {
         _: Option<Self::ElementState>,
         cx: &mut ViewContext<()>,
     ) -> Self::ElementState {
-        self.state.update(cx, |state, cx| (self.render)(state, cx))
+        self.state.update(cx, |state, cx| {
+            let mut any_element = (self.render)(state, cx);
+            any_element.initialize(state, cx);
+            any_element
+        })
     }
 
     fn layout(
@@ -161,8 +165,11 @@ impl<V: Send + Sync + 'static> ViewObject for View<V> {
 
     fn initialize(&mut self, cx: &mut WindowContext) -> AnyBox {
         cx.with_element_id(self.entity_id(), |cx| {
-            self.state
-                .update(cx, |state, cx| Box::new((self.render)(state, cx)) as AnyBox)
+            self.state.update(cx, |state, cx| {
+                let mut any_element = Box::new((self.render)(state, cx));
+                any_element.initialize(state, cx);
+                any_element as AnyBox
+            })
         })
     }
 
