@@ -376,7 +376,7 @@ fn assert_channels(
                 (
                     depth,
                     channel.name.to_string(),
-                    store.is_user_admin(channel.id),
+                    store.is_channel_admin(channel.id),
                 )
             })
             .collect::<Vec<_>>()

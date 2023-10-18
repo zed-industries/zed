@@ -125,6 +125,7 @@ impl<'a> ChannelPathsInsertGuard<'a> {
         if let Some(existing_channel) = self.channels_by_id.get_mut(&channel_proto.id) {
             let existing_channel = Arc::make_mut(existing_channel);
             existing_channel.visibility = channel_proto.visibility();
+            existing_channel.role = channel_proto.role();
             existing_channel.name = channel_proto.name;
         } else {
             self.channels_by_id.insert(
@@ -132,6 +133,7 @@ impl<'a> ChannelPathsInsertGuard<'a> {
                 Arc::new(Channel {
                     id: channel_proto.id,
                     visibility: channel_proto.visibility(),
+                    role: channel_proto.role(),
                     name: channel_proto.name,
                     unseen_note_version: None,
                     unseen_message_id: None,

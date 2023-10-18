@@ -2721,7 +2721,11 @@ impl CollabPanel {
                 },
             ));
 
-            if self.channel_store.read(cx).is_user_admin(path.channel_id()) {
+            if self
+                .channel_store
+                .read(cx)
+                .is_channel_admin(path.channel_id())
+            {
                 let parent_id = path.parent_id();
 
                 items.extend([
@@ -3160,7 +3164,7 @@ impl CollabPanel {
 
     fn rename_channel(&mut self, action: &RenameChannel, cx: &mut ViewContext<Self>) {
         let channel_store = self.channel_store.read(cx);
-        if !channel_store.is_user_admin(action.location.channel_id()) {
+        if !channel_store.is_channel_admin(action.location.channel_id()) {
             return;
         }
         if let Some(channel) = channel_store

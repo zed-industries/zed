@@ -9,7 +9,7 @@ use db::RELEASE_CHANNEL;
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task, WeakModelHandle};
 use rpc::{
-    proto::{self, ChannelEdge, ChannelPermission, ChannelRole, ChannelVisibility},
+    proto::{self, ChannelEdge, ChannelVisibility},
     TypedEnvelope,
 };
 use serde_derive::{Deserialize, Serialize};
@@ -30,7 +30,6 @@ pub struct ChannelStore {
     channel_index: ChannelIndex,
     channel_invitations: Vec<Arc<Channel>>,
     channel_participants: HashMap<ChannelId, Vec<Arc<User>>>,
-    channels_with_admin_privileges: HashSet<ChannelId>,
     outgoing_invites: HashSet<(ChannelId, UserId)>,
     update_channels_tx: mpsc::UnboundedSender<proto::UpdateChannels>,
     opened_buffers: HashMap<ChannelId, OpenedModelHandle<ChannelBuffer>>,
@@ -50,6 +49,7 @@ pub struct Channel {
     pub id: ChannelId,
     pub name: String,
     pub visibility: proto::ChannelVisibility,
+    pub role: proto::ChannelRole,
     pub unseen_note_version: Option<(u64, clock::Global)>,
     pub unseen_message_id: Option<u64>,
 }
@@ -164,7 +164,6 @@ impl ChannelStore {
             channel_invitations: Vec::default(),
             channel_index: ChannelIndex::default(),
             channel_participants: Default::default(),
-            channels_with_admin_privileges: Default::default(),
             outgoing_invites: Default::default(),
             opened_buffers: Default::default(),
             opened_chats: Default::default(),
@@ -419,16 +418,11 @@ impl ChannelStore {
             .spawn(async move { task.await.map_err(|error| anyhow!("{}", error)) })
     }
 
-    pub fn is_user_admin(&self, channel_id: ChannelId) -> bool {
-        self.channel_index.iter().any(|path| {
-            if let Some(ix) = path.iter().position(|id| *id == channel_id) {
-                path[..=ix]
-                    .iter()
-                    .any(|id| self.channels_with_admin_privileges.contains(id))
-            } else {
-                false
-            }
-        })
+    pub fn is_channel_admin(&self, channel_id: ChannelId) -> bool {
+        let Some(channel) = self.channel_for_id(channel_id) else {
+            return false;
+        };
+        channel.role == proto::ChannelRole::Admin
     }
 
     pub fn channel_participants(&self, channel_id: ChannelId) -> &[Arc<User>] {
@@ -469,10 +463,6 @@ impl ChannelStore {
                     proto::UpdateChannels {
                         channels: vec![channel],
                         insert_edge: parent_edge,
-                        channel_permissions: vec![ChannelPermission {
-                            channel_id,
-                            role: ChannelRole::Admin.into(),
-                        }],
                         ..Default::default()
                     },
                     cx,
@@ -881,7 +871,6 @@ impl ChannelStore {
         self.channel_index.clear();
         self.channel_invitations.clear();
         self.channel_participants.clear();
-        self.channels_with_admin_privileges.clear();
         self.channel_index.clear();
         self.outgoing_invites.clear();
         cx.notify();
@@ -927,6 +916,7 @@ impl ChannelStore {
                     Arc::new(Channel {
                         id: channel.id,
                         visibility: channel.visibility(),
+                        role: channel.role(),
                         name: channel.name,
                         unseen_note_version: None,
                         unseen_message_id: None,
@@ -947,8 +937,6 @@ impl ChannelStore {
                 self.channel_index.delete_channels(&payload.delete_channels);
                 self.channel_participants
                     .retain(|channel_id, _| !payload.delete_channels.contains(channel_id));
-                self.channels_with_admin_privileges
-                    .retain(|channel_id| !payload.delete_channels.contains(channel_id));
 
                 for channel_id in &payload.delete_channels {
                     let channel_id = *channel_id;
@@ -989,16 +977,6 @@ impl ChannelStore {
 
             for edge in payload.delete_edge {
                 index.delete_edge(edge.parent_id, edge.channel_id);
-            }
-        }
-
-        for permission in payload.channel_permissions {
-            if permission.role() == proto::ChannelRole::Admin {
-                self.channels_with_admin_privileges
-                    .insert(permission.channel_id);
-            } else {
-                self.channels_with_admin_privileges
-                    .remove(&permission.channel_id);
             }
         }
 

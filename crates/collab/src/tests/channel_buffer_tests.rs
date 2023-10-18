@@ -413,7 +413,7 @@ async fn test_channel_buffer_disconnect(
     channel_buffer_a.update(cx_a, |buffer, _| {
         assert_eq!(
             buffer.channel().as_ref(),
-            &channel(channel_id, "the-channel")
+            &channel(channel_id, "the-channel", proto::ChannelRole::Admin)
         );
         assert!(!buffer.is_connected());
     });
@@ -438,15 +438,16 @@ async fn test_channel_buffer_disconnect(
     channel_buffer_b.update(cx_b, |buffer, _| {
         assert_eq!(
             buffer.channel().as_ref(),
-            &channel(channel_id, "the-channel")
+            &channel(channel_id, "the-channel", proto::ChannelRole::Member)
         );
         assert!(!buffer.is_connected());
     });
 }
 
-fn channel(id: u64, name: &'static str) -> Channel {
+fn channel(id: u64, name: &'static str, role: proto::ChannelRole) -> Channel {
     Channel {
         id,
+        role,
         name: name.to_string(),
         visibility: proto::ChannelVisibility::Members,
         unseen_note_version: None,

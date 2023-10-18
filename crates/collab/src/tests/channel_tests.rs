@@ -152,6 +152,7 @@ async fn test_core_channels(
             },
         ],
     );
+    dbg!("-------");
 
     let channel_c_id = client_a
         .channel_store()
@@ -1295,7 +1296,7 @@ fn assert_channel_invitations(
                 depth: 0,
                 name: channel.name.clone(),
                 id: channel.id,
-                user_is_admin: store.is_user_admin(channel.id),
+                user_is_admin: store.is_channel_admin(channel.id),
             })
             .collect::<Vec<_>>()
     });
@@ -1315,7 +1316,7 @@ fn assert_channels(
                 depth,
                 name: channel.name.clone(),
                 id: channel.id,
-                user_is_admin: store.is_user_admin(channel.id),
+                user_is_admin: store.is_channel_admin(channel.id),
             })
             .collect::<Vec<_>>()
     });

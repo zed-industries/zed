@@ -433,13 +433,13 @@ pub struct Channel {
     pub id: ChannelId,
     pub name: String,
     pub visibility: ChannelVisibility,
+    pub role: ChannelRole,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct ChannelsForUser {
     pub channels: ChannelGraph,
     pub channel_participants: HashMap<ChannelId, Vec<UserId>>,
-    pub channels_with_admin_privileges: HashSet<ChannelId>,
     pub unseen_buffer_changes: Vec<proto::UnseenChannelBufferChange>,
     pub channel_messages: Vec<proto::UnseenChannelMessage>,
 }

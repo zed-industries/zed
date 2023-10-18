@@ -970,7 +970,6 @@ message UpdateChannels {
     repeated Channel channel_invitations = 5;
     repeated uint64 remove_channel_invitations = 6;
     repeated ChannelParticipants channel_participants = 7;
-    repeated ChannelPermission channel_permissions = 8;
     repeated UnseenChannelMessage unseen_channel_messages = 9;
     repeated UnseenChannelBufferChange unseen_channel_buffer_changes = 10;
 }
@@ -1568,6 +1567,7 @@ message Channel {
     uint64 id = 1;
     string name = 2;
     ChannelVisibility visibility = 3;
+    ChannelRole role = 4;
 }
 
 message Contact {

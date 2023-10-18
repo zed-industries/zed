@@ -3,8 +3,8 @@ mod connection_pool;
 use crate::{
     auth,
     db::{
-        self, BufferId, ChannelId, ChannelVisibility, ChannelsForUser, Database, MessageId,
-        ProjectId, RoomId, ServerId, User, UserId,
+        self, BufferId, ChannelId, ChannelsForUser, Database, MessageId, ProjectId, RoomId,
+        ServerId, User, UserId,
     },
     executor::Executor,
     AppState, Result,
@@ -2206,14 +2206,13 @@ async fn create_channel(
         .create_channel(&request.name, parent_id, session.user_id)
         .await?;
 
-    let channel = proto::Channel {
-        id: id.to_proto(),
-        name: request.name,
-        visibility: proto::ChannelVisibility::Members as i32,
-    };
-
     response.send(proto::CreateChannelResponse {
-        channel: Some(channel.clone()),
+        channel: Some(proto::Channel {
+            id: id.to_proto(),
+            name: request.name,
+            visibility: proto::ChannelVisibility::Members as i32,
+            role: proto::ChannelRole::Admin.into(),
+        }),
         parent_id: request.parent_id,
     })?;
 
@@ -2221,19 +2220,26 @@ async fn create_channel(
         return Ok(());
     };
 
-    let update = proto::UpdateChannels {
-        channels: vec![channel],
-        insert_edge: vec![ChannelEdge {
-            parent_id: parent_id.to_proto(),
-            channel_id: id.to_proto(),
-        }],
-        ..Default::default()
-    };
+    let members: Vec<proto::ChannelMember> = db
+        .get_channel_participant_details(parent_id, session.user_id)
+        .await?
+        .into_iter()
+        .filter(|member| {
+            member.role() == proto::ChannelRole::Admin
+                || member.role() == proto::ChannelRole::Member
+        })
+        .collect();
 
-    let user_ids_to_notify = db.get_channel_members(parent_id).await?;
+    let mut updates: HashMap<UserId, proto::UpdateChannels> = HashMap::default();
+
+    for member in members {
+        let user_id = UserId::from_proto(member.user_id);
+        let channels = db.get_channel_for_user(parent_id, user_id).await?;
+        updates.insert(user_id, build_initial_channels_update(channels, vec![]));
+    }
 
     let connection_pool = session.connection_pool().await;
-    for user_id in user_ids_to_notify {
+    for (user_id, update) in updates {
         for connection_id in connection_pool.user_connection_ids(user_id) {
             if user_id == session.user_id {
                 continue;
@@ -2297,6 +2303,7 @@ async fn invite_channel_member(
         id: channel.id.to_proto(),
         visibility: channel.visibility.into(),
         name: channel.name,
+        role: request.role().into(),
     });
     for connection_id in session
         .connection_pool()
@@ -2350,18 +2357,23 @@ async fn set_channel_visibility(
         .set_channel_visibility(channel_id, visibility, session.user_id)
         .await?;
 
-    let mut update = proto::UpdateChannels::default();
-    update.channels.push(proto::Channel {
-        id: channel.id.to_proto(),
-        name: channel.name,
-        visibility: channel.visibility.into(),
-    });
-
-    let member_ids = db.get_channel_members(channel_id).await?;
+    let members = db
+        .get_channel_participant_details(channel_id, session.user_id)
+        .await?;
 
     let connection_pool = session.connection_pool().await;
-    for member_id in member_ids {
-        for connection_id in connection_pool.user_connection_ids(member_id) {
+    // TODO: notify people who were guests and are now not allowed.
+    for member in members {
+        for connection_id in connection_pool.user_connection_ids(UserId::from_proto(member.user_id))
+        {
+            let mut update = proto::UpdateChannels::default();
+            update.channels.push(proto::Channel {
+                id: channel.id.to_proto(),
+                name: channel.name.clone(),
+                visibility: channel.visibility.into(),
+                role: member.role.into(),
+            });
+
             session.peer.send(connection_id, update.clone())?;
         }
     }
@@ -2387,13 +2399,17 @@ async fn set_channel_member_role(
         )
         .await?;
 
-    let channel = db.get_channel(channel_id, session.user_id).await?;
-
     let mut update = proto::UpdateChannels::default();
     if channel_member.accepted {
-        update.channel_permissions.push(proto::ChannelPermission {
-            channel_id: channel.id.to_proto(),
-            role: request.role,
+        let channels = db.get_channel_for_user(channel_id, member_id).await?;
+        update = build_initial_channels_update(channels, vec![]);
+    } else {
+        let channel = db.get_channel(channel_id, session.user_id).await?;
+        update.channel_invitations.push(proto::Channel {
+            id: channel_id.to_proto(),
+            visibility: channel.visibility.into(),
+            name: channel.name,
+            role: request.role().into(),
         });
     }
 
@@ -2420,22 +2436,31 @@ async fn rename_channel(
         .rename_channel(channel_id, session.user_id, &request.name)
         .await?;
 
-    let channel = proto::Channel {
-        id: channel.id.to_proto(),
-        name: channel.name,
-        visibility: channel.visibility.into(),
-    };
     response.send(proto::RenameChannelResponse {
-        channel: Some(channel.clone()),
+        channel: Some(proto::Channel {
+            id: channel.id.to_proto(),
+            name: channel.name.clone(),
+            visibility: channel.visibility.into(),
+            role: proto::ChannelRole::Admin.into(),
+        }),
     })?;
-    let mut update = proto::UpdateChannels::default();
-    update.channels.push(channel);
 
-    let member_ids = db.get_channel_members(channel_id).await?;
+    let members = db
+        .get_channel_participant_details(channel_id, session.user_id)
+        .await?;
 
     let connection_pool = session.connection_pool().await;
-    for member_id in member_ids {
-        for connection_id in connection_pool.user_connection_ids(member_id) {
+    for member in members {
+        for connection_id in connection_pool.user_connection_ids(UserId::from_proto(member.user_id))
+        {
+            let mut update = proto::UpdateChannels::default();
+            update.channels.push(proto::Channel {
+                id: channel.id.to_proto(),
+                name: channel.name.clone(),
+                visibility: channel.visibility.into(),
+                role: member.role.into(),
+            });
+
             session.peer.send(connection_id, update.clone())?;
         }
     }
@@ -2463,6 +2488,10 @@ async fn link_channel(
                 id: channel.id.to_proto(),
                 visibility: channel.visibility.into(),
                 name: channel.name,
+                // TODO: not all these members should be able to see all those channels
+                // the channels in channels_to_send are from the admin point of view,
+                // but any public guests should only get updates about public channels.
+                role: todo!(),
             })
             .collect(),
         insert_edge: channels_to_send.edges,
@@ -2521,6 +2550,12 @@ async fn move_channel(
     let from_parent = ChannelId::from_proto(request.from);
     let to = ChannelId::from_proto(request.to);
 
+    let from_public_parent = db
+        .public_path_to_channel(from_parent)
+        .await?
+        .last()
+        .cloned();
+
     let channels_to_send = db
         .move_channel(session.user_id, channel_id, from_parent, to)
         .await?;
@@ -2530,38 +2565,68 @@ async fn move_channel(
         return Ok(());
     }
 
-    let members_from = db.get_channel_members(from_parent).await?;
-    let members_to = db.get_channel_members(to).await?;
+    let to_public_parent = db.public_path_to_channel(to).await?.last().cloned();
 
-    let update = proto::UpdateChannels {
-        delete_edge: vec![proto::ChannelEdge {
-            channel_id: channel_id.to_proto(),
-            parent_id: from_parent.to_proto(),
-        }],
-        ..Default::default()
-    };
-    let connection_pool = session.connection_pool().await;
-    for member_id in members_from {
-        for connection_id in connection_pool.user_connection_ids(member_id) {
-            session.peer.send(connection_id, update.clone())?;
+    let members_from = db
+        .get_channel_participant_details(from_parent, session.user_id)
+        .await?
+        .into_iter()
+        .filter(|member| {
+            member.role() == proto::ChannelRole::Admin || member.role() == proto::ChannelRole::Guest
+        });
+    let members_to = db
+        .get_channel_participant_details(to, session.user_id)
+        .await?
+        .into_iter()
+        .filter(|member| {
+            member.role() == proto::ChannelRole::Admin || member.role() == proto::ChannelRole::Guest
+        });
+
+    let mut updates: HashMap<UserId, proto::UpdateChannels> = HashMap::default();
+
+    for member in members_to {
+        let user_id = UserId::from_proto(member.user_id);
+        let channels = db.get_channel_for_user(to, user_id).await?;
+        updates.insert(user_id, build_initial_channels_update(channels, vec![]));
+    }
+
+    if let Some(to_public_parent) = to_public_parent {
+        // only notify guests of public channels (admins/members are notified by members_to above, and banned users don't care)
+        let public_members_to = db
+            .get_channel_participant_details(to, session.user_id)
+            .await?
+            .into_iter()
+            .filter(|member| member.role() == proto::ChannelRole::Guest);
+
+        for member in public_members_to {
+            let user_id = UserId::from_proto(member.user_id);
+            if updates.contains_key(&user_id) {
+                continue;
+            }
+            let channels = db.get_channel_for_user(to_public_parent, user_id).await?;
+            updates.insert(user_id, build_initial_channels_update(channels, vec![]));
         }
     }
 
-    let update = proto::UpdateChannels {
-        channels: channels_to_send
-            .channels
-            .into_iter()
-            .map(|channel| proto::Channel {
-                id: channel.id.to_proto(),
-                visibility: channel.visibility.into(),
-                name: channel.name,
-            })
-            .collect(),
-        insert_edge: channels_to_send.edges,
-        ..Default::default()
-    };
-    for member_id in members_to {
-        for connection_id in connection_pool.user_connection_ids(member_id) {
+    for member in members_from {
+        let user_id = UserId::from_proto(member.user_id);
+        let update = updates
+            .entry(user_id)
+            .or_insert(proto::UpdateChannels::default());
+        update.delete_edge.push(proto::ChannelEdge {
+            channel_id: channel_id.to_proto(),
+            parent_id: from_parent.to_proto(),
+        })
+    }
+
+    if let Some(_from_public_parent) = from_public_parent {
+        // TODO: for each guest member of the old public parent
+        // delete the edge that they could see (from the from_public_parent down)
+    }
+
+    let connection_pool = session.connection_pool().await;
+    for (user_id, update) in updates {
+        for connection_id in connection_pool.user_connection_ids(user_id) {
             session.peer.send(connection_id, update.clone())?;
         }
     }
@@ -2628,6 +2693,7 @@ async fn channel_membership_updated(
             .map(|channel| proto::Channel {
                 id: channel.id.to_proto(),
                 visibility: channel.visibility.into(),
+                role: channel.role.into(),
                 name: channel.name,
             }),
     );
@@ -2643,17 +2709,6 @@ async fn channel_membership_updated(
                 .map(|(channel_id, user_ids)| proto::ChannelParticipants {
                     channel_id: channel_id.to_proto(),
                     participant_user_ids: user_ids.into_iter().map(UserId::to_proto).collect(),
-                }),
-        );
-    update
-        .channel_permissions
-        .extend(
-            result
-                .channels_with_admin_privileges
-                .into_iter()
-                .map(|channel_id| proto::ChannelPermission {
-                    channel_id: channel_id.to_proto(),
-                    role: proto::ChannelRole::Admin.into(),
                 }),
         );
     session.peer.send(session.connection_id, update)?;
@@ -3149,6 +3204,7 @@ fn build_initial_channels_update(
             id: channel.id.to_proto(),
             name: channel.name,
             visibility: channel.visibility.into(),
+            role: channel.role.into(),
         });
     }
 
@@ -3165,24 +3221,12 @@ fn build_initial_channels_update(
             });
     }
 
-    update
-        .channel_permissions
-        .extend(
-            channels
-                .channels_with_admin_privileges
-                .into_iter()
-                .map(|id| proto::ChannelPermission {
-                    channel_id: id.to_proto(),
-                    role: proto::ChannelRole::Admin.into(),
-                }),
-        );
-
     for channel in channel_invites {
         update.channel_invitations.push(proto::Channel {
             id: channel.id.to_proto(),
             name: channel.name,
-            // TODO: Visibility
-            visibility: ChannelVisibility::Public.into(),
+            visibility: channel.visibility.into(),
+            role: channel.role.into(),
         });
     }
 

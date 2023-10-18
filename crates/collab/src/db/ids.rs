@@ -82,7 +82,7 @@ id_type!(UserId);
 id_type!(ChannelBufferCollaboratorId);
 id_type!(FlagId);
 
-#[derive(Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Default)]
+#[derive(Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Default, Hash)]
 #[sea_orm(rs_type = "String", db_type = "String(None)")]
 pub enum ChannelRole {
     #[sea_orm(string_value = "admin")]

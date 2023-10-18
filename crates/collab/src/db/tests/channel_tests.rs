@@ -8,45 +8,20 @@ use crate::{
     db::{
         queries::channels::ChannelGraph,
         tests::{graph, TEST_RELEASE_CHANNEL},
-        ChannelId, ChannelRole, Database, NewUserParams, RoomId, UserId,
+        ChannelId, ChannelRole, Database, NewUserParams, RoomId, ServerId, UserId,
     },
     test_both_dbs,
 };
 use std::sync::{
-    atomic::{AtomicI32, Ordering},
+    atomic::{AtomicI32, AtomicU32, Ordering},
     Arc,
 };
 
 test_both_dbs!(test_channels, test_channels_postgres, test_channels_sqlite);
 
 async fn test_channels(db: &Arc<Database>) {
-    let a_id = db
-        .create_user(
-            "user1@example.com",
-            false,
-            NewUserParams {
-                github_login: "user1".into(),
-                github_user_id: 5,
-                invite_count: 0,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
-
-    let b_id = db
-        .create_user(
-            "user2@example.com",
-            false,
-            NewUserParams {
-                github_login: "user2".into(),
-                github_user_id: 6,
-                invite_count: 0,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
+    let a_id = new_test_user(db, "user1@example.com").await;
+    let b_id = new_test_user(db, "user2@example.com").await;
 
     let zed_id = db.create_root_channel("zed", a_id).await.unwrap();
 
@@ -91,13 +66,13 @@ async fn test_channels(db: &Arc<Database>) {
         result.channels,
         graph(
             &[
-                (zed_id, "zed"),
-                (crdb_id, "crdb"),
-                (livestreaming_id, "livestreaming"),
-                (replace_id, "replace"),
-                (rust_id, "rust"),
-                (cargo_id, "cargo"),
-                (cargo_ra_id, "cargo-ra")
+                (zed_id, "zed", ChannelRole::Admin),
+                (crdb_id, "crdb", ChannelRole::Admin),
+                (livestreaming_id, "livestreaming", ChannelRole::Admin),
+                (replace_id, "replace", ChannelRole::Admin),
+                (rust_id, "rust", ChannelRole::Admin),
+                (cargo_id, "cargo", ChannelRole::Admin),
+                (cargo_ra_id, "cargo-ra", ChannelRole::Admin)
             ],
             &[
                 (crdb_id, zed_id),
@@ -114,10 +89,10 @@ async fn test_channels(db: &Arc<Database>) {
         result.channels,
         graph(
             &[
-                (zed_id, "zed"),
-                (crdb_id, "crdb"),
-                (livestreaming_id, "livestreaming"),
-                (replace_id, "replace")
+                (zed_id, "zed", ChannelRole::Member),
+                (crdb_id, "crdb", ChannelRole::Member),
+                (livestreaming_id, "livestreaming", ChannelRole::Member),
+                (replace_id, "replace", ChannelRole::Member)
             ],
             &[
                 (crdb_id, zed_id),
@@ -142,10 +117,10 @@ async fn test_channels(db: &Arc<Database>) {
         result.channels,
         graph(
             &[
-                (zed_id, "zed"),
-                (crdb_id, "crdb"),
-                (livestreaming_id, "livestreaming"),
-                (replace_id, "replace")
+                (zed_id, "zed", ChannelRole::Admin),
+                (crdb_id, "crdb", ChannelRole::Admin),
+                (livestreaming_id, "livestreaming", ChannelRole::Admin),
+                (replace_id, "replace", ChannelRole::Admin)
             ],
             &[
                 (crdb_id, zed_id),
@@ -179,32 +154,8 @@ test_both_dbs!(
 async fn test_joining_channels(db: &Arc<Database>) {
     let owner_id = db.create_server("test").await.unwrap().0 as u32;
 
-    let user_1 = db
-        .create_user(
-            "user1@example.com",
-            false,
-            NewUserParams {
-                github_login: "user1".into(),
-                github_user_id: 5,
-                invite_count: 0,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
-    let user_2 = db
-        .create_user(
-            "user2@example.com",
-            false,
-            NewUserParams {
-                github_login: "user2".into(),
-                github_user_id: 6,
-                invite_count: 0,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
+    let user_1 = new_test_user(db, "user1@example.com").await;
+    let user_2 = new_test_user(db, "user2@example.com").await;
 
     let channel_1 = db.create_root_channel("channel_1", user_1).await.unwrap();
 
@@ -523,7 +474,11 @@ async fn test_db_channel_moving(db: &Arc<Database>) {
     pretty_assertions::assert_eq!(
         returned_channels,
         graph(
-            &[(livestreaming_dag_sub_id, "livestreaming_dag_sub")],
+            &[(
+                livestreaming_dag_sub_id,
+                "livestreaming_dag_sub",
+                ChannelRole::Admin
+            )],
             &[(livestreaming_dag_sub_id, livestreaming_id)]
         )
     );
@@ -560,9 +515,17 @@ async fn test_db_channel_moving(db: &Arc<Database>) {
         returned_channels,
         graph(
             &[
-                (livestreaming_id, "livestreaming"),
-                (livestreaming_dag_id, "livestreaming_dag"),
-                (livestreaming_dag_sub_id, "livestreaming_dag_sub"),
+                (livestreaming_id, "livestreaming", ChannelRole::Admin),
+                (
+                    livestreaming_dag_id,
+                    "livestreaming_dag",
+                    ChannelRole::Admin
+                ),
+                (
+                    livestreaming_dag_sub_id,
+                    "livestreaming_dag_sub",
+                    ChannelRole::Admin
+                ),
             ],
             &[
                 (livestreaming_id, gpui2_id),
@@ -1080,13 +1043,46 @@ async fn test_user_joins_correct_channel(db: &Arc<Database>) {
         .unwrap();
 
     let most_public = db
-        .transaction(
-            |tx| async move { db.most_public_ancestor_for_channel(vim_channel, &*tx).await },
-        )
+        .public_path_to_channel(vim_channel)
+        .await
+        .unwrap()
+        .first()
+        .cloned();
+
+    assert_eq!(most_public, Some(zed_channel))
+}
+
+test_both_dbs!(
+    test_guest_access,
+    test_guest_access_postgres,
+    test_guest_access_sqlite
+);
+
+async fn test_guest_access(db: &Arc<Database>) {
+    let server = db.create_server("test").await.unwrap();
+
+    let admin = new_test_user(db, "admin@example.com").await;
+    let guest = new_test_user(db, "guest@example.com").await;
+    let guest_connection = new_test_connection(server);
+
+    let zed_channel = db.create_root_channel("zed", admin).await.unwrap();
+    db.set_channel_visibility(zed_channel, crate::db::ChannelVisibility::Public, admin)
         .await
         .unwrap();
 
-    assert_eq!(most_public, Some(zed_channel))
+    assert!(db
+        .join_channel_chat(zed_channel, guest_connection, guest)
+        .await
+        .is_err());
+
+    db.join_channel(zed_channel, guest, guest_connection, TEST_RELEASE_CHANNEL)
+        .await
+        .unwrap();
+
+    assert!(db
+        .join_channel_chat(zed_channel, guest_connection, guest)
+        .await
+        .is_ok())
 }
 
 #[track_caller]
@@ -1129,4 +1125,12 @@ async fn new_test_user(db: &Arc<Database>, email: &str) -> UserId {
     .await
     .unwrap()
     .user_id
+}
+
+static TEST_CONNECTION_ID: AtomicU32 = AtomicU32::new(1);
+fn new_test_connection(server: ServerId) -> ConnectionId {
+    ConnectionId {
+        id: TEST_CONNECTION_ID.fetch_add(1, Ordering::SeqCst),
+        owner_id: server.0 as u32,
+    }
 }

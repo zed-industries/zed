@@ -360,7 +360,7 @@ impl ChatPanel {
             let is_admin = self
                 .channel_store
                 .read(cx)
-                .is_user_admin(active_chat.channel().id);
+                .is_channel_admin(active_chat.channel().id);
             let last_message = active_chat.message(ix.saturating_sub(1));
             let this_message = active_chat.message(ix);
             let is_continuation = last_message.id != this_message.id

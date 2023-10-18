@@ -149,17 +149,21 @@ impl Drop for TestDb {
 }
 
 /// The second tuples are (channel_id, parent)
-fn graph(channels: &[(ChannelId, &'static str)], edges: &[(ChannelId, ChannelId)]) -> ChannelGraph {
+fn graph(
+    channels: &[(ChannelId, &'static str, ChannelRole)],
+    edges: &[(ChannelId, ChannelId)],
+) -> ChannelGraph {
     let mut graph = ChannelGraph {
         channels: vec![],
         edges: vec![],
     };
 
-    for (id, name) in channels {
+    for (id, name, role) in channels {
         graph.channels.push(Channel {
             id: *id,
             name: name.to_string(),
             visibility: ChannelVisibility::Members,
+            role: *role,
         })
     }
 
