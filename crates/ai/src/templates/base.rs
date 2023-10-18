@@ -17,6 +17,7 @@ pub(crate) enum PromptFileType {
 // TODO: Set this up to manage for defaults well
 pub struct PromptArguments {
     pub model: Arc<dyn LanguageModel>,
+    pub user_prompt: Option<String>,
     pub language_name: Option<String>,
     pub project_name: Option<String>,
     pub snippets: Vec<PromptCodeSnippet>,
@@ -196,6 +197,7 @@ pub(crate) mod tests {
             reserved_tokens: 0,
             buffer: None,
             selected_range: None,
+            user_prompt: None,
         };
 
         let templates: Vec<(PromptPriority, Box<dyn PromptTemplate>)> = vec![
@@ -225,6 +227,7 @@ pub(crate) mod tests {
             reserved_tokens: 0,
             buffer: None,
             selected_range: None,
+            user_prompt: None,
         };
 
         let templates: Vec<(PromptPriority, Box<dyn PromptTemplate>)> = vec![
@@ -255,6 +258,7 @@ pub(crate) mod tests {
             reserved_tokens: 0,
             buffer: None,
             selected_range: None,
+            user_prompt: None,
         };
 
         let templates: Vec<(PromptPriority, Box<dyn PromptTemplate>)> = vec![
@@ -281,6 +285,7 @@ pub(crate) mod tests {
             reserved_tokens,
             buffer: None,
             selected_range: None,
+            user_prompt: None,
         };
         let templates: Vec<(PromptPriority, Box<dyn PromptTemplate>)> = vec![
             (PromptPriority::Medium, Box::new(TestPromptTemplate {})),
