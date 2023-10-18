@@ -7,7 +7,7 @@ use futures::FutureExt;
 use util::ResultExt;
 
 pub struct Img<V: 'static + Send + Sync, K: ElementIdentity = Anonymous> {
-    base: Div<K, NonFocusable, V>,
+    base: Div<V, K, NonFocusable>,
     uri: Option<SharedString>,
     grayscale: bool,
 }

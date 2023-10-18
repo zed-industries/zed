@@ -60,7 +60,7 @@ impl ScrollState {
     }
 }
 
-pub fn div<V>() -> Div<Anonymous, NonFocusable, V>
+pub fn div<V>() -> Div<V, Anonymous, NonFocusable>
 where
     V: 'static + Send + Sync,
 {
@@ -81,7 +81,7 @@ where
     }
 }
 
-pub struct Div<I: ElementIdentity, F: ElementFocusability, V: 'static + Send + Sync> {
+pub struct Div<V: 'static + Send + Sync, I: ElementIdentity, F: ElementFocusability> {
     identity: I,
     focusability: F,
     children: SmallVec<[AnyElement<V>; 2]>,
@@ -102,12 +102,12 @@ struct GroupStyle {
     style: StyleRefinement,
 }
 
-impl<F, V> Div<Anonymous, F, V>
+impl<V, F> Div<V, Anonymous, F>
 where
     F: ElementFocusability,
     V: 'static + Send + Sync,
 {
-    pub fn id(self, id: impl Into<ElementId>) -> Div<Identified, F, V> {
+    pub fn id(self, id: impl Into<ElementId>) -> Div<V, Identified, F> {
         Div {
             identity: Identified(id.into()),
             focusability: self.focusability,
@@ -126,7 +126,7 @@ where
     }
 }
 
-impl<I, F, V> Div<I, F, V>
+impl<V, I, F> Div<V, I, F>
 where
     I: ElementIdentity,
     F: ElementFocusability,
@@ -341,12 +341,12 @@ where
     }
 }
 
-impl<I, V> Div<I, NonFocusable, V>
+impl<V, I> Div<V, I, NonFocusable>
 where
     I: ElementIdentity,
     V: 'static + Send + Sync,
 {
-    pub fn focusable(self, handle: &FocusHandle) -> Div<I, Focusable, V> {
+    pub fn focusable(self, handle: &FocusHandle) -> Div<V, I, Focusable> {
         Div {
             identity: self.identity,
             focusability: handle.clone().into(),
@@ -365,7 +365,7 @@ where
     }
 }
 
-impl<I, V> Focus for Div<I, Focusable, V>
+impl<V, I> Focus for Div<V, I, Focusable>
 where
     I: ElementIdentity,
     V: 'static + Send + Sync,
@@ -387,7 +387,7 @@ where
     }
 }
 
-impl<I, F, V> Element for Div<I, F, V>
+impl<V, I, F> Element for Div<V, I, F>
 where
     I: ElementIdentity,
     F: ElementFocusability,
@@ -502,7 +502,7 @@ where
     }
 }
 
-impl<I, F, V> IntoAnyElement<V> for Div<I, F, V>
+impl<V, I, F> IntoAnyElement<V> for Div<V, I, F>
 where
     I: ElementIdentity,
     F: ElementFocusability,
@@ -513,7 +513,7 @@ where
     }
 }
 
-impl<I, F, V> ParentElement for Div<I, F, V>
+impl<V, I, F> ParentElement for Div<V, I, F>
 where
     I: ElementIdentity,
     F: ElementFocusability,
@@ -524,7 +524,7 @@ where
     }
 }
 
-impl<I, F, V> Styled for Div<I, F, V>
+impl<V, I, F> Styled for Div<V, I, F>
 where
     I: ElementIdentity,
     F: ElementFocusability,
@@ -535,7 +535,7 @@ where
     }
 }
 
-impl<I, F, V> Interactive for Div<I, F, V>
+impl<V, I, F> Interactive for Div<V, I, F>
 where
     I: ElementIdentity,
     F: ElementFocusability,
@@ -546,7 +546,7 @@ where
     }
 }
 
-impl<I, F, V> Hover for Div<I, F, V>
+impl<V, I, F> Hover for Div<V, I, F>
 where
     I: ElementIdentity,
     F: ElementFocusability,
@@ -561,14 +561,14 @@ where
     }
 }
 
-impl<F, V> Click for Div<Identified, F, V>
+impl<V, F> Click for Div<V, Identified, F>
 where
     F: ElementFocusability,
     V: 'static + Send + Sync,
 {
 }
 
-impl<F, V> Active for Div<Identified, F, V>
+impl<V, F> Active for Div<V, Identified, F>
 where
     F: ElementFocusability,
     V: 'static + Send + Sync,
