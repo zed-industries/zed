@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use language::ToOffset;
 
 use crate::templates::base::PromptArguments;
@@ -12,24 +13,23 @@ impl PromptTemplate for FileContext {
         args: &PromptArguments,
         max_token_length: Option<usize>,
     ) -> anyhow::Result<(String, usize)> {
-        let mut prompt = String::new();
-
-        // Add Initial Preamble
-        // TODO: Do we want to add the path in here?
-        writeln!(
-            prompt,
-            "The file you are currently working on has the following content:"
-        )
-        .unwrap();
-
-        let language_name = args
-            .language_name
-            .clone()
-            .unwrap_or("".to_string())
-            .to_lowercase();
-        writeln!(prompt, "```{language_name}").unwrap();
-
         if let Some(buffer) = &args.buffer {
+            let mut prompt = String::new();
+            // Add Initial Preamble
+            // TODO: Do we want to add the path in here?
+            writeln!(
+                prompt,
+                "The file you are currently working on has the following content:"
+            )
+            .unwrap();
+
+            let language_name = args
+                .language_name
+                .clone()
+                .unwrap_or("".to_string())
+                .to_lowercase();
+            writeln!(prompt, "```{language_name}").unwrap();
+
             if let Some(selected_range) = &args.selected_range {
                 let start = selected_range.start.to_offset(buffer);
                 let end = selected_range.end.to_offset(buffer);
@@ -74,15 +74,18 @@ impl PromptTemplate for FileContext {
             } else {
                 // If we dont have a selected range, include entire file.
                 writeln!(prompt, "{}", &buffer.text()).unwrap();
+                writeln!(prompt, "```").unwrap();
             }
-        }
 
-        // Really dumb truncation strategy
-        if let Some(max_tokens) = max_token_length {
-            prompt = args.model.truncate(&prompt, max_tokens)?;
-        }
+            // Really dumb truncation strategy
+            if let Some(max_tokens) = max_token_length {
+                prompt = args.model.truncate(&prompt, max_tokens)?;
+            }
 
-        let token_count = args.model.count_tokens(&prompt)?;
-        anyhow::Ok((prompt, token_count))
+            let token_count = args.model.count_tokens(&prompt)?;
+            anyhow::Ok((prompt, token_count))
+        } else {
+            Err(anyhow!("no buffer provided to retrieve file context from"))
+        }
     }
 }
