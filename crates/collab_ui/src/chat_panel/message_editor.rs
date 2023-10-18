@@ -1,4 +1,4 @@
-use channel::{Channel, ChannelStore};
+use channel::{Channel, ChannelMembership, ChannelStore};
 use client::UserId;
 use collections::HashMap;
 use editor::{AnchorRangeExt, Editor};
@@ -33,6 +33,7 @@ pub struct MessageEditor {
     channel: Option<Arc<Channel>>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct ChatMessage {
     pub text: String,
     pub mentions: Vec<(Range<usize>, UserId)>,
@@ -57,13 +58,6 @@ impl MessageEditor {
             .expect("message editor must be singleton");
 
         cx.subscribe(&buffer, Self::on_buffer_event).detach();
-        cx.subscribe(&editor, |_, _, event, cx| {
-            if let editor::Event::Focused = event {
-                eprintln!("focused");
-                cx.notify()
-            }
-        })
-        .detach();
 
         let markdown = language_registry.language_for_name("Markdown");
         cx.app_context()
@@ -101,18 +95,20 @@ impl MessageEditor {
             });
             cx.spawn(|this, mut cx| async move {
                 let members = members.await?;
-                this.update(&mut cx, |this, _| {
-                    this.users.clear();
-                    this.users.extend(
-                        members
-                            .into_iter()
-                            .map(|member| (member.user.github_login.clone(), member.user.id)),
-                    );
-                })?;
+                this.update(&mut cx, |this, cx| this.set_members(members, cx))?;
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);
         }
+    }
+
+    pub fn set_members(&mut self, members: Vec<ChannelMembership>, cx: &mut ViewContext<Self>) {
+        self.users.clear();
+        self.users.extend(
+            members
+                .into_iter()
+                .map(|member| (member.user.github_login.clone(), member.user.id)),
+        );
     }
 
     pub fn take_message(&mut self, cx: &mut ViewContext<Self>) -> ChatMessage {
@@ -214,5 +210,101 @@ impl View for MessageEditor {
         if cx.is_self_focused() {
             cx.focus(&self.editor);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use client::{Client, User, UserStore};
+    use gpui::{TestAppContext, WindowHandle};
+    use language::{Language, LanguageConfig};
+    use rpc::proto;
+    use settings::SettingsStore;
+    use util::{http::FakeHttpClient, test::marked_text_ranges};
+
+    #[gpui::test]
+    async fn test_message_editor(cx: &mut TestAppContext) {
+        let editor = init_test(cx);
+        let editor = editor.root(cx);
+
+        editor.update(cx, |editor, cx| {
+            editor.set_members(
+                vec![
+                    ChannelMembership {
+                        user: Arc::new(User {
+                            github_login: "a-b".into(),
+                            id: 101,
+                            avatar: None,
+                        }),
+                        kind: proto::channel_member::Kind::Member,
+                        admin: false,
+                    },
+                    ChannelMembership {
+                        user: Arc::new(User {
+                            github_login: "C_D".into(),
+                            id: 102,
+                            avatar: None,
+                        }),
+                        kind: proto::channel_member::Kind::Member,
+                        admin: false,
+                    },
+                ],
+                cx,
+            );
+
+            editor.editor.update(cx, |editor, cx| {
+                editor.set_text("Hello, @a-b! Have you met @C_D?", cx)
+            });
+        });
+
+        cx.foreground().advance_clock(MENTIONS_DEBOUNCE_INTERVAL);
+
+        editor.update(cx, |editor, cx| {
+            let (text, ranges) = marked_text_ranges("Hello, «@a-b»! Have you met «@C_D»?", false);
+            assert_eq!(
+                editor.take_message(cx),
+                ChatMessage {
+                    text,
+                    mentions: vec![(ranges[0].clone(), 101), (ranges[1].clone(), 102)],
+                }
+            );
+        });
+    }
+
+    fn init_test(cx: &mut TestAppContext) -> WindowHandle<MessageEditor> {
+        cx.foreground().forbid_parking();
+
+        cx.update(|cx| {
+            let http = FakeHttpClient::with_404_response();
+            let client = Client::new(http.clone(), cx);
+            let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
+            cx.set_global(SettingsStore::test(cx));
+            theme::init((), cx);
+            language::init(cx);
+            editor::init(cx);
+            client::init(&client, cx);
+            channel::init(&client, user_store, cx);
+        });
+
+        let language_registry = Arc::new(LanguageRegistry::test());
+        language_registry.add(Arc::new(Language::new(
+            LanguageConfig {
+                name: "Markdown".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_markdown::language()),
+        )));
+
+        let editor = cx.add_window(|cx| {
+            MessageEditor::new(
+                language_registry,
+                ChannelStore::global(cx),
+                cx.add_view(|cx| Editor::auto_height(4, None, cx)),
+                cx,
+            )
+        });
+        cx.foreground().run_until_parked();
+        editor
     }
 }

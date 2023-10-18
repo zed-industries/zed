@@ -1575,6 +1575,7 @@ dependencies = [
  "theme",
  "theme_selector",
  "time",
+ "tree-sitter-markdown",
  "util",
  "vcs_menu",
  "workspace",
