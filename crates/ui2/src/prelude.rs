@@ -6,23 +6,8 @@ pub use gpui3::{
 use crate::settings::user_settings;
 pub use crate::{theme, ButtonVariant, ElementExt, Theme};
 
-use gpui3::{hsla, rems, rgb, AbsoluteLength, Hsla, Rems};
+use gpui3::{hsla, rems, rgb, Hsla, Rems};
 use strum::EnumIter;
-
-#[derive(Clone, Copy)]
-pub struct FakeSettings {
-    pub list_indent_depth: AbsoluteLength,
-    pub default_panel_size: AbsoluteLength,
-}
-
-impl Default for FakeSettings {
-    fn default() -> Self {
-        Self {
-            list_indent_depth: rems(0.3).into(),
-            default_panel_size: AbsoluteLength::Rems(rems(16.)),
-        }
-    }
-}
 
 #[derive(Default)]
 pub struct SystemColor {

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use gpui3::{Interactive, MouseButton};
 
-use crate::prelude::*;
+use crate::{h_stack, prelude::*};
 use crate::{theme, ClickHandler, Icon, IconColor, IconElement};
 
 struct IconButtonHandlers<S: 'static + Send + Sync> {
@@ -68,32 +68,30 @@ impl<S: 'static + Send + Sync> IconButton<S> {
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         let icon_color = match (self.state, self.color) {
             (InteractionState::Disabled, _) => IconColor::Disabled,
             _ => self.color,
         };
 
-        let mut div = div();
-        if self.variant == ButtonVariant::Filled {
-            div = div.bg(theme.highest.on.default.background);
-        }
+        let mut button = h_stack()
+            .justify_center()
+            .rounded_md()
+            .py(ui_size(0.25))
+            .px(ui_size(6. / 14.))
+            .when(self.variant == ButtonVariant::Filled, |this| {
+                this.bg(color.filled_element)
+            })
+            .hover(|style| style.bg(theme.highest.base.hovered.background))
+            .child(IconElement::new(self.icon).color(icon_color));
 
         if let Some(click_handler) = self.handlers.click.clone() {
-            div = div.on_mouse_down(MouseButton::Left, move |state, event, cx| {
+            button = button.on_mouse_down(MouseButton::Left, move |state, event, cx| {
                 click_handler(state, cx);
             });
         }
 
-        div.w_7()
-            .h_6()
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_md()
-            .hover(|style| style.bg(theme.highest.base.hovered.background))
-            // .active()
-            // .fill(theme.highest.base.pressed.background)
-            .child(IconElement::new(self.icon).color(icon_color))
+        button
     }
 }
