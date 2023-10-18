@@ -35,7 +35,7 @@ impl<S: 'static + Send + Sync> Default for ButtonHandlers<S> {
 #[derive(Element)]
 pub struct Button<S: 'static + Send + Sync + Clone> {
     state_type: PhantomData<S>,
-    label: String,
+    label: SharedString,
     variant: ButtonVariant,
     state: InteractionState,
     icon: Option<Icon>,
@@ -45,10 +45,7 @@ pub struct Button<S: 'static + Send + Sync + Clone> {
 }
 
 impl<S: 'static + Send + Sync + Clone> Button<S> {
-    pub fn new<L>(label: L) -> Self
-    where
-        L: Into<String>,
-    {
+    pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             state_type: PhantomData,
             label: label.into(),
@@ -61,10 +58,7 @@ impl<S: 'static + Send + Sync + Clone> Button<S> {
         }
     }
 
-    pub fn ghost<L>(label: L) -> Self
-    where
-        L: Into<String>,
-    {
+    pub fn ghost(label: impl Into<SharedString>) -> Self {
         Self::new(label).variant(ButtonVariant::Ghost)
     }
 
