@@ -3,9 +3,10 @@ pub use gpui3::{
     ViewContext, WindowContext,
 };
 
+use crate::settings::user_settings;
 pub use crate::{theme, ButtonVariant, ElementExt, Theme};
 
-use gpui3::{hsla, rems, rgb, AbsoluteLength, Hsla};
+use gpui3::{hsla, rems, rgb, AbsoluteLength, Hsla, Rems};
 use strum::EnumIter;
 
 #[derive(Clone, Copy)]
@@ -154,6 +155,12 @@ impl HighlightColor {
                 .unwrap_or_else(|| rgb::<Hsla>(0xff00ff)),
         }
     }
+}
+
+pub fn ui_size(size: f32) -> Rems {
+    let setting = user_settings();
+
+    rems(*setting.ui_scale * size)
 }
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]

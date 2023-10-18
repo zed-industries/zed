@@ -405,7 +405,7 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
                     // .ml(rems(0.75 * self.indent_level as f32))
                     .children((0..self.indent_level).map(|_| {
                         div()
-                            .w(setting.list_indent_depth())
+                            .w(*setting.list_indent_depth)
                             .h_full()
                             .flex()
                             .justify_center()

@@ -1,7 +1,8 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use gpui3::{rems, DefiniteLength, Hsla, Interactive, MouseButton, WindowContext};
+use gpui3::rems;
+use gpui3::{DefiniteLength, Hsla, Interactive, MouseButton, WindowContext};
 
 use crate::prelude::*;
 use crate::settings::user_settings;
@@ -153,7 +154,7 @@ impl<S: 'static + Send + Sync + Clone> Button<S> {
 
         let mut el = h_stack()
             .p_1()
-            .text_size(rems(1.125 * setting.ui_scale()))
+            .text_size(ui_size(1.125))
             .rounded_md()
             .border()
             .border_color(border_color)

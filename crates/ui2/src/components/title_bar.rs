@@ -126,7 +126,7 @@ impl TitleBar {
                             .flex()
                             .items_center()
                             .gap_1()
-                            .when(setting.titlebar_show_project_owner(), |this| {
+                            .when(*setting.titlebar.show_project_owner, |this| {
                                 this.child(Button::new("iamnbutler"))
                             })
                             .child(Button::new("zed"))

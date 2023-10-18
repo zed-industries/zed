@@ -61,7 +61,7 @@ impl<S: 'static + Send + Sync> Panel<S> {
             scroll_state,
             current_side: PanelSide::default(),
             allowed_sides: PanelAllowedSides::default(),
-            initial_width: setting.default_panel_size(),
+            initial_width: *setting.default_panel_size,
             width: None,
             children: SmallVec::new(),
         }
