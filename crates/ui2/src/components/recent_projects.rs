@@ -21,12 +21,12 @@ impl<S: 'static + Send + Sync + Clone> RecentProjects<S> {
         div().child(
             Palette::new(self.scroll_state.clone())
                 .items(vec![
-                    PaletteItem::new("zed").sublabel("~/projects/zed"),
-                    PaletteItem::new("saga").sublabel("~/projects/saga"),
-                    PaletteItem::new("journal").sublabel("~/journal"),
-                    PaletteItem::new("dotfiles").sublabel("~/dotfiles"),
-                    PaletteItem::new("zed.dev").sublabel("~/projects/zed.dev"),
-                    PaletteItem::new("laminar").sublabel("~/projects/laminar"),
+                    PaletteItem::new("zed").sublabel(SharedString::from("~/projects/zed")),
+                    PaletteItem::new("saga").sublabel(SharedString::from("~/projects/saga")),
+                    PaletteItem::new("journal").sublabel(SharedString::from("~/journal")),
+                    PaletteItem::new("dotfiles").sublabel(SharedString::from("~/dotfiles")),
+                    PaletteItem::new("zed.dev").sublabel(SharedString::from("~/projects/zed.dev")),
+                    PaletteItem::new("laminar").sublabel(SharedString::from("~/projects/laminar")),
                 ])
                 .placeholder("Recent Projects...")
                 .empty_string("No matches")
@@ -56,7 +56,11 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, RecentProjects<S>>(cx))
                 .child(Story::label(cx, "Default"))
