@@ -324,7 +324,10 @@ where
             let focus_handle = focus_handle.clone();
             cx.on_mouse_event(move |_, event: &MouseDownEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
-                    cx.focus(&focus_handle);
+                    if !cx.default_prevented() {
+                        cx.focus(&focus_handle);
+                        cx.prevent_default();
+                    }
                 }
             })
         }

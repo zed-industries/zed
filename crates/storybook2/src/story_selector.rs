@@ -15,6 +15,7 @@ pub enum ElementStory {
     Avatar,
     Button,
     Details,
+    Focus,
     Icon,
     Input,
     Label,
@@ -35,6 +36,7 @@ impl ElementStory {
                 ui::DetailsStory::new().into_any()
             })
             .into_any(),
+            Self::Focus => FocusStory::view(cx).into_any(),
             Self::Icon => {
                 view(cx.entity(|cx| ()), |_, _| ui::IconStory::new().into_any()).into_any()
             }

@@ -89,11 +89,16 @@ pub trait Focus: Interactive {
         self.listeners()
             .focus
             .push(Box::new(move |view, event, cx| {
-                if event
+                let descendant_blurred = event
+                    .blurred
+                    .as_ref()
+                    .map_or(false, |blurred| handle.contains(blurred, cx));
+                let descendant_focused = event
                     .focused
                     .as_ref()
-                    .map_or(false, |focused| focused.contains(&handle, cx))
-                {
+                    .map_or(false, |focused| handle.contains(focused, cx));
+
+                if !descendant_blurred && descendant_focused {
                     listener(view, event, cx)
                 }
             }));
@@ -114,11 +119,15 @@ pub trait Focus: Interactive {
         self.listeners()
             .focus
             .push(Box::new(move |view, event, cx| {
-                if event
+                let descendant_blurred = event
                     .blurred
                     .as_ref()
-                    .map_or(false, |blurred| handle.contains(&blurred, cx))
-                {
+                    .map_or(false, |blurred| handle.contains(blurred, cx));
+                let descendant_focused = event
+                    .focused
+                    .as_ref()
+                    .map_or(false, |focused| handle.contains(focused, cx));
+                if descendant_blurred && !descendant_focused {
                     listener(view, event, cx)
                 }
             }));
