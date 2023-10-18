@@ -77,8 +77,6 @@ impl PromptChain {
         let mut sorted_indices = (0..self.templates.len()).collect::<Vec<_>>();
         sorted_indices.sort_by_key(|&i| Reverse(&self.templates[i].0));
 
-        let mut prompts = Vec::new();
-
         // If Truncate
         let mut tokens_outstanding = if truncate {
             Some(self.args.model.capacity()? - self.args.reserved_tokens)
@@ -86,6 +84,7 @@ impl PromptChain {
             None
         };
 
+        let mut prompts = vec!["".to_string(); sorted_indices.len()];
         for idx in sorted_indices {
             let (_, template) = &self.templates[idx];
             if let Some((template_prompt, prompt_token_count)) =
@@ -96,7 +95,7 @@ impl PromptChain {
                     &prompt_token_count, &template_prompt
                 );
                 if template_prompt != "" {
-                    prompts.push(template_prompt);
+                    prompts[idx] = template_prompt;
 
                     if let Some(remaining_tokens) = tokens_outstanding {
                         let new_tokens = prompt_token_count + seperator_tokens;
