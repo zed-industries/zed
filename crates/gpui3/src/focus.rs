@@ -1,11 +1,9 @@
 use crate::{
-    DispatchPhase, Element, EventListeners, FocusEvent, FocusHandle, KeyDownEvent, KeyUpEvent,
-    ViewContext,
+    DispatchPhase, FocusEvent, FocusHandle, Interactive, KeyDownEvent, KeyUpEvent, ViewContext,
 };
 
-pub trait Focus: Element {
+pub trait Focus: Interactive {
     fn handle(&self) -> &FocusHandle;
-    fn listeners(&mut self) -> &mut EventListeners<Self::ViewState>;
 
     fn on_focus(
         mut self,

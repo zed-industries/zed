@@ -1,9 +1,9 @@
 use crate::{
     Active, Anonymous, AnyElement, AppContext, BorrowWindow, Bounds, Click, DispatchPhase, Element,
-    ElementFocusability, ElementId, ElementIdentity, EventListeners, FocusHandle, Focusable, Hover,
-    Identified, Interactive, IntoAnyElement, KeyDownEvent, LayoutId, MouseClickEvent,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, NonFocusable, Overflow, ParentElement, Pixels,
-    Point, ScrollWheelEvent, SharedString, Style, StyleRefinement, Styled, ViewContext,
+    ElementFocusability, ElementId, ElementIdentity, EventListeners, Focus, FocusHandle, Focusable,
+    Hover, Identified, Interactive, IntoAnyElement, LayoutId, MouseClickEvent, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, NonFocusable, Overflow, ParentElement, Pixels, Point,
+    ScrollWheelEvent, SharedString, Style, StyleRefinement, Styled, ViewContext,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -339,20 +339,13 @@ where
     }
 }
 
-impl<I, V> Div<I, Focusable, V>
+impl<I, V> Focus for Div<I, Focusable, V>
 where
     I: ElementIdentity,
     V: 'static + Send + Sync,
 {
-    pub fn on_key_down<F>(
-        mut self,
-        listener: impl Fn(&mut V, &KeyDownEvent, DispatchPhase, &mut ViewContext<V>)
-            + Send
-            + Sync
-            + 'static,
-    ) -> Self {
-        self.listeners.key_down.push(Box::new(listener));
-        self
+    fn handle(&self) -> &FocusHandle {
+        self.focusability.as_ref()
     }
 }
 

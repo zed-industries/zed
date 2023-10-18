@@ -61,6 +61,12 @@ pub trait ElementFocusability: 'static + Send + Sync {
 
 pub struct Focusable(FocusHandle);
 
+impl AsRef<FocusHandle> for Focusable {
+    fn as_ref(&self) -> &FocusHandle {
+        &self.0
+    }
+}
+
 impl ElementFocusability for Focusable {
     fn focus_handle(&self) -> Option<&FocusHandle> {
         Some(&self.0)
