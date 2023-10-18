@@ -206,7 +206,6 @@ where
                 computed_style.refine(style);
             }
         }
-
         if active_state.element {
             computed_style.refine(&self.active_style);
         }
