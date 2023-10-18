@@ -1,4 +1,7 @@
-use crate::{Element, EventListeners, FocusEvent, FocusHandle, ViewContext};
+use crate::{
+    DispatchPhase, Element, EventListeners, FocusEvent, FocusHandle, KeyDownEvent, KeyUpEvent,
+    ViewContext,
+};
 
 pub trait Focus: Element {
     fn handle(&self) -> &FocusHandle;
@@ -93,6 +96,38 @@ pub trait Focus: Element {
                     listener(view, event, cx)
                 }
             }));
+        self
+    }
+
+    fn on_key_down(
+        mut self,
+        listener: impl Fn(
+                &mut Self::ViewState,
+                &KeyDownEvent,
+                DispatchPhase,
+                &mut ViewContext<Self::ViewState>,
+            ) + Send
+            + Sync
+            + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.listeners().key_down.push(Box::new(listener));
+        self
+    }
+
+    fn on_key_up(
+        mut self,
+        listener: impl Fn(&mut Self::ViewState, &KeyUpEvent, DispatchPhase, &mut ViewContext<Self::ViewState>)
+            + Send
+            + Sync
+            + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.listeners().key_up.push(Box::new(listener));
         self
     }
 }

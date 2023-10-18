@@ -854,7 +854,7 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
-    fn on_event(&self, callback: Box<dyn FnMut(InputEvent) -> bool>) {
+    fn on_input(&self, callback: Box<dyn FnMut(InputEvent) -> bool>) {
         self.0.as_ref().lock().event_callback = Some(callback);
     }
 

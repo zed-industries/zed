@@ -141,7 +141,7 @@ pub(crate) trait PlatformWindow {
     fn minimize(&self);
     fn zoom(&self);
     fn toggle_full_screen(&self);
-    fn on_event(&self, callback: Box<dyn FnMut(InputEvent) -> bool>);
+    fn on_input(&self, callback: Box<dyn FnMut(InputEvent) -> bool>);
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
     fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>);

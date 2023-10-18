@@ -201,6 +201,19 @@ impl InputEvent {
             InputEvent::ScrollWheel(event) => Some(event),
         }
     }
+
+    pub fn keyboard_event<'a>(&'a self) -> Option<&'a dyn Any> {
+        match self {
+            InputEvent::KeyDown(event) => Some(event),
+            InputEvent::KeyUp(event) => Some(event),
+            InputEvent::ModifiersChanged(event) => Some(event),
+            InputEvent::MouseDown(_) => None,
+            InputEvent::MouseUp(_) => None,
+            InputEvent::MouseMoved(_) => None,
+            InputEvent::MouseExited(_) => None,
+            InputEvent::ScrollWheel(_) => None,
+        }
+    }
 }
 
 pub struct FocusEvent {
