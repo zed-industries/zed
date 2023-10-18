@@ -1,7 +1,7 @@
 use super::{display_bounds_from_native, ns_string, MacDisplay, MetalRenderer, NSRange};
 use crate::{
-    display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, Event, Executor,
-    GlobalPixels, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    display_bounds_to_native, point, px, size, AnyWindowHandle, Bounds, Executor, GlobalPixels,
+    InputEvent, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformInputHandler, PlatformWindow, Point, Scene, Size, Timer, WindowAppearance,
     WindowBounds, WindowKind, WindowOptions, WindowPromptLevel,
@@ -286,7 +286,7 @@ struct MacWindowState {
     renderer: MetalRenderer,
     scene_to_render: Option<Scene>,
     kind: WindowKind,
-    event_callback: Option<Box<dyn FnMut(Event) -> bool>>,
+    event_callback: Option<Box<dyn FnMut(InputEvent) -> bool>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     fullscreen_callback: Option<Box<dyn FnMut(bool)>>,
@@ -300,7 +300,7 @@ struct MacWindowState {
     synthetic_drag_counter: usize,
     last_fresh_keydown: Option<Keystroke>,
     traffic_light_position: Option<Point<Pixels>>,
-    previous_modifiers_changed_event: Option<Event>,
+    previous_modifiers_changed_event: Option<InputEvent>,
     // State tracking what the IME did after the last request
     ime_state: ImeState,
     // Retains the last IME Text
@@ -854,7 +854,7 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
-    fn on_event(&self, callback: Box<dyn FnMut(Event) -> bool>) {
+    fn on_input(&self, callback: Box<dyn FnMut(InputEvent) -> bool>) {
         self.0.as_ref().lock().event_callback = Some(callback);
     }
 
@@ -975,9 +975,9 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     let mut lock = window_state.as_ref().lock();
 
     let window_height = lock.content_size().height;
-    let event = unsafe { Event::from_native(native_event, Some(window_height)) };
+    let event = unsafe { InputEvent::from_native(native_event, Some(window_height)) };
 
-    if let Some(Event::KeyDown(event)) = event {
+    if let Some(InputEvent::KeyDown(event)) = event {
         // For certain keystrokes, macOS will first dispatch a "key equivalent" event.
         // If that event isn't handled, it will then dispatch a "key down" event. GPUI
         // makes no distinction between these two types of events, so we need to ignore
@@ -1045,13 +1045,13 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                                 key: ime_text.clone().unwrap(),
                             },
                         };
-                        handled = callback(Event::KeyDown(event_with_ime_text));
+                        handled = callback(InputEvent::KeyDown(event_with_ime_text));
                     }
                     if !handled {
                         // empty key happens when you type a deadkey in input composition.
                         // (e.g. on a brazillian keyboard typing quote is a deadkey)
                         if !event.keystroke.key.is_empty() {
-                            handled = callback(Event::KeyDown(event));
+                            handled = callback(InputEvent::KeyDown(event));
                         }
                     }
                 }
@@ -1097,11 +1097,11 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let is_active = unsafe { lock.native_window.isKeyWindow() == YES };
 
     let window_height = lock.content_size().height;
-    let event = unsafe { Event::from_native(native_event, Some(window_height)) };
+    let event = unsafe { InputEvent::from_native(native_event, Some(window_height)) };
 
     if let Some(mut event) = event {
         let synthesized_second_event = match &mut event {
-            Event::MouseDown(
+            InputEvent::MouseDown(
                 event @ MouseDownEvent {
                     button: MouseButton::Left,
                     modifiers: Modifiers { control: true, .. },
@@ -1118,7 +1118,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                     ..*event
                 };
 
-                Some(Event::MouseDown(MouseDownEvent {
+                Some(InputEvent::MouseDown(MouseDownEvent {
                     button: MouseButton::Right,
                     ..*event
                 }))
@@ -1127,7 +1127,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
             // Because we map a ctrl-left_down to a right_down -> right_up let's ignore
             // the ctrl-left_up to avoid having a mismatch in button down/up events if the
             // user is still holding ctrl when releasing the left mouse button
-            Event::MouseUp(MouseUpEvent {
+            InputEvent::MouseUp(MouseUpEvent {
                 button: MouseButton::Left,
                 modifiers: Modifiers { control: true, .. },
                 ..
@@ -1140,7 +1140,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
         };
 
         match &event {
-            Event::MouseMoved(
+            InputEvent::MouseMoved(
                 event @ MouseMoveEvent {
                     pressed_button: Some(_),
                     ..
@@ -1157,18 +1157,18 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                     .detach();
             }
 
-            Event::MouseMoved(_) if !(is_active || lock.kind == WindowKind::PopUp) => return,
+            InputEvent::MouseMoved(_) if !(is_active || lock.kind == WindowKind::PopUp) => return,
 
-            Event::MouseUp(MouseUpEvent {
+            InputEvent::MouseUp(MouseUpEvent {
                 button: MouseButton::Left,
                 ..
             }) => {
                 lock.synthetic_drag_counter += 1;
             }
 
-            Event::ModifiersChanged(ModifiersChangedEvent { modifiers }) => {
+            InputEvent::ModifiersChanged(ModifiersChangedEvent { modifiers }) => {
                 // Only raise modifiers changed event when they have actually changed
-                if let Some(Event::ModifiersChanged(ModifiersChangedEvent {
+                if let Some(InputEvent::ModifiersChanged(ModifiersChangedEvent {
                     modifiers: prev_modifiers,
                 })) = &lock.previous_modifiers_changed_event
                 {
@@ -1204,7 +1204,7 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
         modifiers: Default::default(),
         key: ".".into(),
     };
-    let event = Event::KeyDown(KeyDownEvent {
+    let event = InputEvent::KeyDown(KeyDownEvent {
         keystroke: keystroke.clone(),
         is_held: false,
     });
@@ -1605,7 +1605,7 @@ async fn synthetic_drag(
             if lock.synthetic_drag_counter == drag_id {
                 if let Some(mut callback) = lock.event_callback.take() {
                     drop(lock);
-                    callback(Event::MouseMoved(event.clone()));
+                    callback(InputEvent::MouseMoved(event.clone()));
                     window_state.lock().event_callback = Some(callback);
                 }
             } else {

@@ -1,6 +1,6 @@
 use super::BoolExt;
 use crate::{
-    AnyWindowHandle, ClipboardItem, CursorStyle, DisplayId, Event, Executor, MacDispatcher,
+    AnyWindowHandle, ClipboardItem, CursorStyle, DisplayId, Executor, InputEvent, MacDispatcher,
     MacDisplay, MacDisplayLinker, MacTextSystem, MacWindow, PathPromptOptions, Platform,
     PlatformDisplay, PlatformTextSystem, PlatformWindow, Result, SemanticVersion, VideoTimestamp,
     WindowOptions,
@@ -153,7 +153,7 @@ pub struct MacPlatformState {
     resign_active: Option<Box<dyn FnMut()>>,
     reopen: Option<Box<dyn FnMut()>>,
     quit: Option<Box<dyn FnMut()>>,
-    event: Option<Box<dyn FnMut(Event) -> bool>>,
+    event: Option<Box<dyn FnMut(InputEvent) -> bool>>,
     // menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     // validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     will_open_menu: Option<Box<dyn FnMut()>>,
@@ -621,7 +621,7 @@ impl Platform for MacPlatform {
         self.0.lock().reopen = Some(callback);
     }
 
-    fn on_event(&self, callback: Box<dyn FnMut(Event) -> bool>) {
+    fn on_event(&self, callback: Box<dyn FnMut(InputEvent) -> bool>) {
         self.0.lock().event = Some(callback);
     }
 
@@ -937,7 +937,7 @@ unsafe fn get_foreground_platform(object: &mut Object) -> &MacPlatform {
 
 extern "C" fn send_event(this: &mut Object, _sel: Sel, native_event: id) {
     unsafe {
-        if let Some(event) = Event::from_native(native_event, None) {
+        if let Some(event) = InputEvent::from_native(native_event, None) {
             let platform = get_foreground_platform(this);
             if let Some(callback) = platform.0.lock().event.as_mut() {
                 if !callback(event) {

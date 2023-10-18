@@ -39,31 +39,40 @@ impl<S: 'static + Send + Sync> IntoAnyElement<S> for String {
     }
 }
 
-pub struct Text<S> {
+pub struct Text<V> {
     text: SharedString,
-    state_type: PhantomData<S>,
+    state_type: PhantomData<V>,
 }
 
-impl<S: 'static + Send + Sync> IntoAnyElement<S> for Text<S> {
-    fn into_any(self) -> AnyElement<S> {
+impl<V: 'static + Send + Sync> IntoAnyElement<V> for Text<V> {
+    fn into_any(self) -> AnyElement<V> {
         AnyElement::new(self)
     }
 }
 
-impl<S: 'static + Send + Sync> Element for Text<S> {
-    type ViewState = S;
+impl<V: 'static + Send + Sync> Element for Text<V> {
+    type ViewState = V;
     type ElementState = Arc<Mutex<Option<TextElementState>>>;
 
     fn id(&self) -> Option<crate::ElementId> {
         None
     }
 
+    fn initialize(
+        &mut self,
+        _view_state: &mut V,
+        element_state: Option<Self::ElementState>,
+        _cx: &mut ViewContext<V>,
+    ) -> Self::ElementState {
+        element_state.unwrap_or_default()
+    }
+
     fn layout(
         &mut self,
-        _view: &mut S,
-        _element_state: Option<Self::ElementState>,
-        cx: &mut ViewContext<S>,
-    ) -> (LayoutId, Self::ElementState) {
+        _view: &mut V,
+        element_state: &mut Self::ElementState,
+        cx: &mut ViewContext<V>,
+    ) -> LayoutId {
         let text_system = cx.text_system().clone();
         let text_style = cx.text_style();
         let font_size = text_style.font_size * cx.rem_size();
@@ -71,7 +80,6 @@ impl<S: 'static + Send + Sync> Element for Text<S> {
             .line_height
             .to_pixels(font_size.into(), cx.rem_size());
         let text = self.text.clone();
-        let element_state = Arc::new(Mutex::new(None));
 
         let rem_size = cx.rem_size();
         let layout_id = cx.request_measured_layout(Default::default(), rem_size, {
@@ -102,15 +110,15 @@ impl<S: 'static + Send + Sync> Element for Text<S> {
             }
         });
 
-        (layout_id, element_state)
+        layout_id
     }
 
-    fn paint<'a>(
+    fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _: &mut Self::ViewState,
+        _: &mut V,
         element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<S>,
+        cx: &mut ViewContext<V>,
     ) {
         let element_state = element_state.lock();
         let element_state = element_state

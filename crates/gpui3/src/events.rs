@@ -1,4 +1,7 @@
-use crate::{point, Keystroke, Modifiers, Pixels, Point};
+use crate::{
+    point, Bounds, DispatchPhase, FocusHandle, Keystroke, Modifiers, Pixels, Point, ViewContext,
+};
+use smallvec::SmallVec;
 use std::{any::Any, ops::Deref};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -26,7 +29,7 @@ impl Deref for ModifiersChangedEvent {
 }
 
 /// The phase of a touch motion event.
-/// Based on the winit enum of the same name,
+/// Based on the winit enum of the same name.
 #[derive(Clone, Copy, Debug)]
 pub enum TouchPhase {
     Started,
@@ -48,6 +51,12 @@ pub struct MouseUpEvent {
     pub position: Point<Pixels>,
     pub modifiers: Modifiers,
     pub click_count: usize,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MouseClickEvent {
+    pub down: MouseDownEvent,
+    pub up: MouseUpEvent,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
@@ -155,7 +164,7 @@ impl Deref for MouseExitEvent {
 }
 
 #[derive(Clone, Debug)]
-pub enum Event {
+pub enum InputEvent {
     KeyDown(KeyDownEvent),
     KeyUp(KeyUpEvent),
     ModifiersChanged(ModifiersChangedEvent),
@@ -166,30 +175,112 @@ pub enum Event {
     ScrollWheel(ScrollWheelEvent),
 }
 
-impl Event {
+impl InputEvent {
     pub fn position(&self) -> Option<Point<Pixels>> {
         match self {
-            Event::KeyDown { .. } => None,
-            Event::KeyUp { .. } => None,
-            Event::ModifiersChanged { .. } => None,
-            Event::MouseDown(event) => Some(event.position),
-            Event::MouseUp(event) => Some(event.position),
-            Event::MouseMoved(event) => Some(event.position),
-            Event::MouseExited(event) => Some(event.position),
-            Event::ScrollWheel(event) => Some(event.position),
+            InputEvent::KeyDown { .. } => None,
+            InputEvent::KeyUp { .. } => None,
+            InputEvent::ModifiersChanged { .. } => None,
+            InputEvent::MouseDown(event) => Some(event.position),
+            InputEvent::MouseUp(event) => Some(event.position),
+            InputEvent::MouseMoved(event) => Some(event.position),
+            InputEvent::MouseExited(event) => Some(event.position),
+            InputEvent::ScrollWheel(event) => Some(event.position),
         }
     }
 
     pub fn mouse_event<'a>(&'a self) -> Option<&'a dyn Any> {
         match self {
-            Event::KeyDown { .. } => None,
-            Event::KeyUp { .. } => None,
-            Event::ModifiersChanged { .. } => None,
-            Event::MouseDown(event) => Some(event),
-            Event::MouseUp(event) => Some(event),
-            Event::MouseMoved(event) => Some(event),
-            Event::MouseExited(event) => Some(event),
-            Event::ScrollWheel(event) => Some(event),
+            InputEvent::KeyDown { .. } => None,
+            InputEvent::KeyUp { .. } => None,
+            InputEvent::ModifiersChanged { .. } => None,
+            InputEvent::MouseDown(event) => Some(event),
+            InputEvent::MouseUp(event) => Some(event),
+            InputEvent::MouseMoved(event) => Some(event),
+            InputEvent::MouseExited(event) => Some(event),
+            InputEvent::ScrollWheel(event) => Some(event),
+        }
+    }
+
+    pub fn keyboard_event<'a>(&'a self) -> Option<&'a dyn Any> {
+        match self {
+            InputEvent::KeyDown(event) => Some(event),
+            InputEvent::KeyUp(event) => Some(event),
+            InputEvent::ModifiersChanged(event) => Some(event),
+            InputEvent::MouseDown(_) => None,
+            InputEvent::MouseUp(_) => None,
+            InputEvent::MouseMoved(_) => None,
+            InputEvent::MouseExited(_) => None,
+            InputEvent::ScrollWheel(_) => None,
+        }
+    }
+}
+
+pub struct FocusEvent {
+    pub blurred: Option<FocusHandle>,
+    pub focused: Option<FocusHandle>,
+}
+
+pub type MouseDownListener<V> = Box<
+    dyn Fn(&mut V, &MouseDownEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
+        + Send
+        + Sync
+        + 'static,
+>;
+pub type MouseUpListener<V> = Box<
+    dyn Fn(&mut V, &MouseUpEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
+        + Send
+        + Sync
+        + 'static,
+>;
+pub type MouseClickListener<V> =
+    Box<dyn Fn(&mut V, &MouseClickEvent, &mut ViewContext<V>) + Send + Sync + 'static>;
+
+pub type MouseMoveListener<V> = Box<
+    dyn Fn(&mut V, &MouseMoveEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
+        + Send
+        + Sync
+        + 'static,
+>;
+
+pub type ScrollWheelListener<V> = Box<
+    dyn Fn(&mut V, &ScrollWheelEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
+        + Send
+        + Sync
+        + 'static,
+>;
+
+pub type KeyDownListener<V> =
+    Box<dyn Fn(&mut V, &KeyDownEvent, DispatchPhase, &mut ViewContext<V>) + Send + Sync + 'static>;
+
+pub type KeyUpListener<V> =
+    Box<dyn Fn(&mut V, &KeyUpEvent, DispatchPhase, &mut ViewContext<V>) + Send + Sync + 'static>;
+
+pub type FocusListener<V> =
+    Box<dyn Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + Sync + 'static>;
+
+pub struct EventListeners<V: 'static> {
+    pub mouse_down: SmallVec<[MouseDownListener<V>; 2]>,
+    pub mouse_up: SmallVec<[MouseUpListener<V>; 2]>,
+    pub mouse_click: SmallVec<[MouseClickListener<V>; 2]>,
+    pub mouse_move: SmallVec<[MouseMoveListener<V>; 2]>,
+    pub scroll_wheel: SmallVec<[ScrollWheelListener<V>; 2]>,
+    pub key_down: SmallVec<[KeyDownListener<V>; 2]>,
+    pub key_up: SmallVec<[KeyUpListener<V>; 2]>,
+    pub focus: SmallVec<[FocusListener<V>; 2]>,
+}
+
+impl<V> Default for EventListeners<V> {
+    fn default() -> Self {
+        Self {
+            mouse_down: SmallVec::new(),
+            mouse_up: SmallVec::new(),
+            mouse_click: SmallVec::new(),
+            mouse_move: SmallVec::new(),
+            scroll_wheel: SmallVec::new(),
+            key_down: SmallVec::new(),
+            key_up: SmallVec::new(),
+            focus: SmallVec::new(),
         }
     }
 }

@@ -1,16 +1,21 @@
 use crate::{
-    div, Active, AnonymousElement, AnyElement, Bounds, Click, Div, DivState, Element, ElementId,
-    ElementIdentity, Hover, IdentifiedElement, Interactive, IntoAnyElement, LayoutId,
-    MouseEventListeners, Pixels, SharedString, StyleRefinement, Styled,
+    div, Active, Anonymous, AnyElement, Bounds, Click, Div, DivState, Element, ElementFocusability,
+    ElementId, ElementIdentity, EventListeners, Focus, Focusable, Hover, Identified, Interactive,
+    IntoAnyElement, LayoutId, NonFocusable, Pixels, SharedString, StyleRefinement, Styled,
+    ViewContext,
 };
 use util::ResultExt;
 
-pub struct Svg<V: 'static + Send + Sync, K: ElementIdentity = AnonymousElement> {
-    base: Div<V, K>,
+pub struct Svg<
+    V: 'static + Send + Sync,
+    I: ElementIdentity = Anonymous,
+    F: ElementFocusability = NonFocusable,
+> {
+    base: Div<V, I, F>,
     path: Option<SharedString>,
 }
 
-pub fn svg<V>() -> Svg<V, AnonymousElement>
+pub fn svg<V>() -> Svg<V, Anonymous, NonFocusable>
 where
     V: 'static + Send + Sync,
 {
@@ -20,10 +25,11 @@ where
     }
 }
 
-impl<V, K> Svg<V, K>
+impl<V, I, F> Svg<V, I, F>
 where
     V: 'static + Send + Sync,
-    K: ElementIdentity,
+    I: ElementIdentity,
+    F: ElementFocusability,
 {
     pub fn path(mut self, path: impl Into<SharedString>) -> Self {
         self.path = Some(path.into());
@@ -31,8 +37,12 @@ where
     }
 }
 
-impl<V: 'static + Send + Sync> Svg<V, AnonymousElement> {
-    pub fn id(self, id: impl Into<ElementId>) -> Svg<V, IdentifiedElement> {
+impl<V, F> Svg<V, Anonymous, F>
+where
+    V: 'static + Send + Sync,
+    F: ElementFocusability,
+{
+    pub fn id(self, id: impl Into<ElementId>) -> Svg<V, Identified, F> {
         Svg {
             base: self.base.id(id),
             path: self.path,
@@ -40,20 +50,22 @@ impl<V: 'static + Send + Sync> Svg<V, AnonymousElement> {
     }
 }
 
-impl<V, K> IntoAnyElement<V> for Svg<V, K>
+impl<V, I, F> IntoAnyElement<V> for Svg<V, I, F>
 where
     V: 'static + Send + Sync,
-    K: ElementIdentity,
+    I: ElementIdentity,
+    F: ElementFocusability,
 {
     fn into_any(self) -> AnyElement<V> {
         AnyElement::new(self)
     }
 }
 
-impl<V, K> Element for Svg<V, K>
+impl<V, I, F> Element for Svg<V, I, F>
 where
     V: 'static + Send + Sync,
-    K: ElementIdentity,
+    I: ElementIdentity,
+    F: ElementFocusability,
 {
     type ViewState = V;
     type ElementState = DivState;
@@ -62,16 +74,22 @@ where
         self.base.id()
     }
 
+    fn initialize(
+        &mut self,
+        view_state: &mut V,
+        element_state: Option<Self::ElementState>,
+        cx: &mut ViewContext<V>,
+    ) -> Self::ElementState {
+        self.base.initialize(view_state, element_state, cx)
+    }
+
     fn layout(
         &mut self,
-        view: &mut V,
-        element_state: Option<Self::ElementState>,
-        cx: &mut crate::ViewContext<V>,
-    ) -> (LayoutId, Self::ElementState)
-    where
-        Self: Sized,
-    {
-        self.base.layout(view, element_state, cx)
+        view_state: &mut V,
+        element_state: &mut Self::ElementState,
+        cx: &mut ViewContext<Self::ViewState>,
+    ) -> LayoutId {
+        self.base.layout(view_state, element_state, cx)
     }
 
     fn paint(
@@ -79,7 +97,7 @@ where
         bounds: Bounds<Pixels>,
         view: &mut Self::ViewState,
         element_state: &mut Self::ElementState,
-        cx: &mut crate::ViewContext<V>,
+        cx: &mut ViewContext<V>,
     ) where
         Self: Sized,
     {
@@ -95,43 +113,74 @@ where
     }
 }
 
-impl<V, K> Styled for Svg<V, K>
+impl<V, I, F> Styled for Svg<V, I, F>
 where
     V: 'static + Send + Sync,
-    K: ElementIdentity,
+    I: ElementIdentity,
+    F: ElementFocusability,
 {
     fn style(&mut self) -> &mut StyleRefinement {
         self.base.style()
     }
 }
 
-impl<V, K> Interactive for Svg<V, K>
+impl<V, I, F> Interactive for Svg<V, I, F>
 where
     V: 'static + Send + Sync,
-    K: ElementIdentity,
+    I: ElementIdentity,
+    F: ElementFocusability,
 {
-    fn listeners(&mut self) -> &mut MouseEventListeners<V> {
+    fn listeners(&mut self) -> &mut EventListeners<V> {
         self.base.listeners()
     }
 }
 
-impl<V, K> Hover for Svg<V, K>
+impl<V, I, F> Hover for Svg<V, I, F>
 where
     V: 'static + Send + Sync,
-    K: ElementIdentity,
+    I: ElementIdentity,
+    F: ElementFocusability,
 {
     fn set_hover_style(&mut self, group: Option<SharedString>, style: StyleRefinement) {
         self.base.set_hover_style(group, style);
     }
 }
 
-impl<V> Click for Svg<V, IdentifiedElement> where V: 'static + Send + Sync {}
-
-impl<V> Active for Svg<V, IdentifiedElement>
+impl<V, F> Click for Svg<V, Identified, F>
 where
     V: 'static + Send + Sync,
+    F: ElementFocusability,
+{
+}
+
+impl<V, F> Active for Svg<V, Identified, F>
+where
+    V: 'static + Send + Sync,
+    F: ElementFocusability,
 {
     fn set_active_style(&mut self, group: Option<SharedString>, style: StyleRefinement) {
         self.base.set_active_style(group, style)
+    }
+}
+
+impl<V, I> Focus for Svg<V, I, Focusable>
+where
+    V: 'static + Send + Sync,
+    I: ElementIdentity,
+{
+    fn set_focus_style(&mut self, style: StyleRefinement) {
+        self.base.set_focus_style(style)
+    }
+
+    fn set_focus_in_style(&mut self, style: StyleRefinement) {
+        self.base.set_focus_in_style(style)
+    }
+
+    fn set_in_focus_style(&mut self, style: StyleRefinement) {
+        self.base.set_in_focus_style(style)
+    }
+
+    fn handle(&self) -> &crate::FocusHandle {
+        self.base.handle()
     }
 }

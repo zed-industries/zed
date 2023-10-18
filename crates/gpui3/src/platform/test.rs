@@ -125,7 +125,7 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
-    fn on_event(&self, _callback: Box<dyn FnMut(crate::Event) -> bool>) {
+    fn on_event(&self, _callback: Box<dyn FnMut(crate::InputEvent) -> bool>) {
         unimplemented!()
     }
 

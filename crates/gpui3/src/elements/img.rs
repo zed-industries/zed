@@ -1,18 +1,23 @@
 use crate::{
-    div, Active, AnonymousElement, AnyElement, BorrowWindow, Bounds, Click, Div, DivState, Element,
-    ElementId, ElementIdentity, Hover, IdentifiedElement, Interactive, IntoAnyElement, LayoutId,
-    MouseEventListeners, Pixels, SharedString, StyleRefinement, Styled, ViewContext,
+    div, Active, Anonymous, AnyElement, BorrowWindow, Bounds, Click, Div, DivState, Element,
+    ElementFocusability, ElementId, ElementIdentity, EventListeners, Focus, Focusable, Hover,
+    Identified, Interactive, IntoAnyElement, LayoutId, NonFocusable, Pixels, SharedString,
+    StyleRefinement, Styled, ViewContext,
 };
 use futures::FutureExt;
 use util::ResultExt;
 
-pub struct Img<V: 'static + Send + Sync, K: ElementIdentity = AnonymousElement> {
-    base: Div<V, K>,
+pub struct Img<
+    V: 'static + Send + Sync,
+    I: ElementIdentity = Anonymous,
+    F: ElementFocusability = NonFocusable,
+> {
+    base: Div<V, I, F>,
     uri: Option<SharedString>,
     grayscale: bool,
 }
 
-pub fn img<V>() -> Img<V, AnonymousElement>
+pub fn img<V>() -> Img<V, Anonymous, NonFocusable>
 where
     V: 'static + Send + Sync,
 {
@@ -23,10 +28,11 @@ where
     }
 }
 
-impl<V, K> Img<V, K>
+impl<V, I, F> Img<V, I, F>
 where
     V: 'static + Send + Sync,
-    K: ElementIdentity,
+    I: ElementIdentity,
+    F: ElementFocusability,
 {
     pub fn uri(mut self, uri: impl Into<SharedString>) -> Self {
         self.uri = Some(uri.into());
@@ -39,8 +45,12 @@ where
     }
 }
 
-impl<V: 'static + Send + Sync> Img<V, AnonymousElement> {
-    pub fn id(self, id: impl Into<ElementId>) -> Img<V, IdentifiedElement> {
+impl<V, F> Img<V, Anonymous, F>
+where
+    V: 'static + Send + Sync,
+    F: ElementFocusability,
+{
+    pub fn id(self, id: impl Into<ElementId>) -> Img<V, Identified, F> {
         Img {
             base: self.base.id(id),
             uri: self.uri,
@@ -49,20 +59,22 @@ impl<V: 'static + Send + Sync> Img<V, AnonymousElement> {
     }
 }
 
-impl<V, K> IntoAnyElement<V> for Img<V, K>
+impl<V, I, F> IntoAnyElement<V> for Img<V, I, F>
 where
     V: 'static + Send + Sync,
-    K: ElementIdentity,
+    I: ElementIdentity,
+    F: ElementFocusability,
 {
     fn into_any(self) -> AnyElement<V> {
         AnyElement::new(self)
     }
 }
 
-impl<V, K> Element for Img<V, K>
+impl<V, I, F> Element for Img<V, I, F>
 where
     V: Send + Sync + 'static,
-    K: ElementIdentity,
+    I: ElementIdentity,
+    F: ElementFocusability,
 {
     type ViewState = V;
     type ElementState = DivState;
@@ -71,24 +83,30 @@ where
         self.base.id()
     }
 
+    fn initialize(
+        &mut self,
+        view_state: &mut V,
+        element_state: Option<Self::ElementState>,
+        cx: &mut ViewContext<V>,
+    ) -> Self::ElementState {
+        self.base.initialize(view_state, element_state, cx)
+    }
+
     fn layout(
         &mut self,
-        view_state: &mut Self::ViewState,
-        element_state: Option<Self::ElementState>,
+        view_state: &mut V,
+        element_state: &mut Self::ElementState,
         cx: &mut ViewContext<Self::ViewState>,
-    ) -> (LayoutId, Self::ElementState)
-    where
-        Self: Sized,
-    {
+    ) -> LayoutId {
         self.base.layout(view_state, element_state, cx)
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        view: &mut Self::ViewState,
+        view: &mut V,
         element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<V>,
     ) {
         cx.stack(0, |cx| {
             self.base.paint(bounds, view, element_state, cx);
@@ -121,43 +139,74 @@ where
     }
 }
 
-impl<V, K> Styled for Img<V, K>
+impl<V, I, F> Styled for Img<V, I, F>
 where
     V: 'static + Send + Sync,
-    K: ElementIdentity,
+    I: ElementIdentity,
+    F: ElementFocusability,
 {
     fn style(&mut self) -> &mut StyleRefinement {
         self.base.style()
     }
 }
 
-impl<V, K> Interactive for Img<V, K>
+impl<V, I, F> Interactive for Img<V, I, F>
 where
     V: 'static + Send + Sync,
-    K: ElementIdentity,
+    I: ElementIdentity,
+    F: ElementFocusability,
 {
-    fn listeners(&mut self) -> &mut MouseEventListeners<V> {
+    fn listeners(&mut self) -> &mut EventListeners<V> {
         self.base.listeners()
     }
 }
 
-impl<V, K> Hover for Img<V, K>
+impl<V, I, F> Hover for Img<V, I, F>
 where
     V: 'static + Send + Sync,
-    K: ElementIdentity,
+    I: ElementIdentity,
+    F: ElementFocusability,
 {
     fn set_hover_style(&mut self, group: Option<SharedString>, style: StyleRefinement) {
         self.base.set_hover_style(group, style);
     }
 }
 
-impl<V> Click for Img<V, IdentifiedElement> where V: 'static + Send + Sync {}
-
-impl<V> Active for Img<V, IdentifiedElement>
+impl<V, F> Click for Img<V, Identified, F>
 where
     V: 'static + Send + Sync,
+    F: ElementFocusability,
+{
+}
+
+impl<V, F> Active for Img<V, Identified, F>
+where
+    V: 'static + Send + Sync,
+    F: ElementFocusability,
 {
     fn set_active_style(&mut self, group: Option<SharedString>, style: StyleRefinement) {
         self.base.set_active_style(group, style)
+    }
+}
+
+impl<V, I> Focus for Img<V, I, Focusable>
+where
+    V: 'static + Send + Sync,
+    I: ElementIdentity,
+{
+    fn set_focus_style(&mut self, style: StyleRefinement) {
+        self.base.set_focus_style(style)
+    }
+
+    fn set_focus_in_style(&mut self, style: StyleRefinement) {
+        self.base.set_focus_in_style(style)
+    }
+
+    fn set_in_focus_style(&mut self, style: StyleRefinement) {
+        self.base.set_in_focus_style(style)
+    }
+
+    fn handle(&self) -> &crate::FocusHandle {
+        self.base.handle()
     }
 }

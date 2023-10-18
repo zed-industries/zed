@@ -5,9 +5,9 @@ mod mac;
 mod test;
 
 use crate::{
-    AnyWindowHandle, Bounds, DevicePixels, Event, Executor, Font, FontId, FontMetrics, FontRun,
-    GlobalPixels, GlyphId, LineLayout, Pixels, Point, RenderGlyphParams, RenderImageParams,
-    RenderSvgParams, Result, Scene, SharedString, Size,
+    AnyWindowHandle, Bounds, DevicePixels, Executor, Font, FontId, FontMetrics, FontRun,
+    GlobalPixels, GlyphId, InputEvent, LineLayout, Pixels, Point, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, Result, Scene, SharedString, Size,
 };
 use anyhow::anyhow;
 use async_task::Runnable;
@@ -81,7 +81,7 @@ pub(crate) trait Platform: 'static {
     fn on_resign_active(&self, callback: Box<dyn FnMut()>);
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
-    fn on_event(&self, callback: Box<dyn FnMut(Event) -> bool>);
+    fn on_event(&self, callback: Box<dyn FnMut(InputEvent) -> bool>);
 
     fn os_name(&self) -> &'static str;
     fn os_version(&self) -> Result<SemanticVersion>;
@@ -141,7 +141,7 @@ pub(crate) trait PlatformWindow {
     fn minimize(&self);
     fn zoom(&self);
     fn toggle_full_screen(&self);
-    fn on_event(&self, callback: Box<dyn FnMut(Event) -> bool>);
+    fn on_input(&self, callback: Box<dyn FnMut(InputEvent) -> bool>);
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
     fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>);

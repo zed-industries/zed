@@ -1,7 +1,8 @@
 use crate::{
     px, size, AnyBox, AnyView, AppContext, AsyncWindowContext, AvailableSpace, BorrowAppContext,
     Bounds, BoxShadow, Context, Corners, DevicePixels, DisplayId, Edges, Effect, Element, EntityId,
-    Event, EventEmitter, FontId, GlobalElementId, GlyphId, Handle, Hsla, ImageData, IsZero,
+    EventEmitter, FocusEvent, FocusListener, FontId, GlobalElementId, GlyphId, Handle, Hsla,
+    ImageData, InputEvent, IsZero, KeyDownEvent, KeyDownListener, KeyUpEvent, KeyUpListener,
     LayoutId, MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path, Pixels, Platform,
     PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams,
     RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
@@ -21,7 +22,7 @@ use std::{
     mem,
     sync::Arc,
 };
-use util::ResultExt;
+use util::{post_inc, ResultExt};
 
 #[derive(Deref, DerefMut, Ord, PartialOrd, Eq, PartialEq, Clone, Default)]
 pub struct StackingOrder(pub(crate) SmallVec<[u32; 16]>);
@@ -39,8 +40,55 @@ pub enum DispatchPhase {
     Capture,
 }
 
-type MouseEventHandler =
-    Arc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
+type AnyMouseEventListener =
+    Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
+type AnyKeyboardEventListener =
+    Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
+type AnyFocusListener = Box<dyn Fn(&FocusEvent, &mut WindowContext) + Send + Sync + 'static>;
+type AnyKeyDownListener =
+    Box<dyn Fn(&KeyDownEvent, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
+type AnyKeyUpListener =
+    Box<dyn Fn(&KeyUpEvent, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub struct FocusId(usize);
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct FocusHandle {
+    pub(crate) id: FocusId,
+}
+
+impl FocusHandle {
+    pub(crate) fn new(id: FocusId) -> Self {
+        Self { id }
+    }
+
+    pub fn is_focused(&self, cx: &WindowContext) -> bool {
+        cx.window.focus == Some(self.id)
+    }
+
+    pub fn contains_focused(&self, cx: &WindowContext) -> bool {
+        cx.focused()
+            .map_or(false, |focused| self.contains(&focused, cx))
+    }
+
+    pub fn within_focused(&self, cx: &WindowContext) -> bool {
+        let focused = cx.focused();
+        focused.map_or(false, |focused| focused.contains(self, cx))
+    }
+
+    pub(crate) fn contains(&self, other: &Self, cx: &WindowContext) -> bool {
+        let mut ancestor = Some(other.id);
+        while let Some(ancestor_id) = ancestor {
+            if self.id == ancestor_id {
+                return true;
+            } else {
+                ancestor = cx.window.focus_parents_by_child.get(&ancestor_id).copied();
+            }
+        }
+        false
+    }
+}
 
 pub struct Window {
     handle: AnyWindowHandle,
@@ -56,12 +104,19 @@ pub struct Window {
     element_states: HashMap<GlobalElementId, AnyBox>,
     z_index_stack: StackingOrder,
     content_mask_stack: Vec<ContentMask<Pixels>>,
-    mouse_event_handlers: HashMap<TypeId, Vec<(StackingOrder, MouseEventHandler)>>,
+    mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyMouseEventListener)>>,
+    keyboard_listeners: HashMap<TypeId, Vec<AnyKeyboardEventListener>>,
+    focus_stack: Vec<FocusStackFrame>,
+    focus_parents_by_child: HashMap<FocusId, FocusId>,
+    pub(crate) focus_listeners: Vec<AnyFocusListener>,
     propagate_event: bool,
     mouse_position: Point<Pixels>,
     scale_factor: f32,
     pub(crate) scene_builder: SceneBuilder,
     pub(crate) dirty: bool,
+    pub(crate) last_blur: Option<Option<FocusId>>,
+    pub(crate) focus: Option<FocusId>,
+    next_focus_id: FocusId,
 }
 
 impl Window {
@@ -95,7 +150,7 @@ impl Window {
             }
         }));
 
-        platform_window.on_event({
+        platform_window.on_input({
             let cx = cx.to_async();
             Box::new(move |event| {
                 cx.update_window(handle, |cx| cx.dispatch_event(event))
@@ -120,12 +175,19 @@ impl Window {
             element_states: HashMap::default(),
             z_index_stack: StackingOrder(SmallVec::new()),
             content_mask_stack: Vec::new(),
-            mouse_event_handlers: HashMap::default(),
+            mouse_listeners: HashMap::default(),
+            keyboard_listeners: HashMap::default(),
+            focus_stack: Vec::new(),
+            focus_parents_by_child: HashMap::default(),
+            focus_listeners: Vec::new(),
             propagate_event: true,
             mouse_position,
             scale_factor,
             scene_builder: SceneBuilder::new(),
             dirty: true,
+            last_blur: None,
+            focus: None,
+            next_focus_id: FocusId(0),
         }
     }
 }
@@ -149,6 +211,12 @@ impl ContentMask<Pixels> {
     }
 }
 
+struct FocusStackFrame {
+    handle: FocusHandle,
+    key_down_listeners: SmallVec<[AnyKeyDownListener; 2]>,
+    key_up_listeners: SmallVec<[AnyKeyUpListener; 2]>,
+}
+
 pub struct WindowContext<'a, 'w> {
     app: Reference<'a, AppContext>,
     pub(crate) window: Reference<'w, Window>,
@@ -164,6 +232,43 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub fn notify(&mut self) {
         self.window.dirty = true;
+    }
+
+    pub fn focus_handle(&mut self) -> FocusHandle {
+        let id = FocusId(post_inc(&mut self.window.next_focus_id.0));
+        FocusHandle { id }
+    }
+
+    pub fn focused(&self) -> Option<FocusHandle> {
+        self.window.focus.map(|id| FocusHandle::new(id))
+    }
+
+    pub fn focus(&mut self, handle: &FocusHandle) {
+        if self.window.last_blur.is_none() {
+            self.window.last_blur = Some(self.window.focus);
+        }
+
+        let window_id = self.window.handle.id;
+        self.window.focus = Some(handle.id);
+        self.push_effect(Effect::FocusChanged {
+            window_id,
+            focused: Some(handle.id),
+        });
+        self.notify();
+    }
+
+    pub fn blur(&mut self) {
+        if self.window.last_blur.is_none() {
+            self.window.last_blur = Some(self.window.focus);
+        }
+
+        let window_id = self.window.handle.id;
+        self.window.focus = None;
+        self.push_effect(Effect::FocusChanged {
+            window_id,
+            focused: None,
+        });
+        self.notify();
     }
 
     pub fn run_on_main<R>(
@@ -298,15 +403,28 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     ) {
         let order = self.window.z_index_stack.clone();
         self.window
-            .mouse_event_handlers
+            .mouse_listeners
             .entry(TypeId::of::<Event>())
             .or_default()
             .push((
                 order,
-                Arc::new(move |event: &dyn Any, phase, cx| {
+                Box::new(move |event: &dyn Any, phase, cx| {
                     handler(event.downcast_ref().unwrap(), phase, cx)
                 }),
             ))
+    }
+
+    pub fn on_keyboard_event<Event: 'static>(
+        &mut self,
+        handler: impl Fn(&Event, DispatchPhase, &mut WindowContext) + Send + Sync + 'static,
+    ) {
+        self.window
+            .keyboard_listeners
+            .entry(TypeId::of::<Event>())
+            .or_default()
+            .push(Box::new(move |event: &dyn Any, phase, cx| {
+                handler(event.downcast_ref().unwrap(), phase, cx)
+            }))
     }
 
     pub fn mouse_position(&self) -> Point<Pixels> {
@@ -628,7 +746,8 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             element_state: Option<AnyBox>,
             cx: &mut ViewContext<()>,
         ) -> AnyBox {
-            let (layout_id, mut element_state) = root_view.layout(&mut (), element_state, cx);
+            let mut element_state = root_view.initialize(&mut (), element_state, cx);
+            let layout_id = root_view.layout(&mut (), &mut element_state, cx);
             let available_space = cx.window.content_size.map(Into::into);
             cx.window
                 .layout_engine
@@ -645,21 +764,24 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         // reference during the upcoming frame.
         let window = &mut *self.window;
         mem::swap(&mut window.element_states, &mut window.prev_element_states);
-        self.window.element_states.clear();
+        window.element_states.clear();
 
         // Clear mouse event listeners, because elements add new element listeners
         // when the upcoming frame is painted.
-        self.window
-            .mouse_event_handlers
-            .values_mut()
-            .for_each(Vec::clear);
+        window.mouse_listeners.values_mut().for_each(Vec::clear);
+
+        // Clear focus state, because we determine what is focused when the new elements
+        // in the upcoming frame are initialized.
+        window.focus_listeners.clear();
+        window.keyboard_listeners.values_mut().for_each(Vec::clear);
+        window.focus_parents_by_child.clear();
     }
 
     fn end_frame(&mut self) {
         self.text_system().end_frame();
     }
 
-    fn dispatch_event(&mut self, event: Event) -> bool {
+    fn dispatch_event(&mut self, event: InputEvent) -> bool {
         if let Some(any_mouse_event) = event.mouse_event() {
             if let Some(MouseMoveEvent { position, .. }) = any_mouse_event.downcast_ref() {
                 self.window.mouse_position = *position;
@@ -667,7 +789,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
             if let Some(mut handlers) = self
                 .window
-                .mouse_event_handlers
+                .mouse_listeners
                 .remove(&any_mouse_event.type_id())
             {
                 // Because handlers may add other handlers, we sort every time.
@@ -698,14 +820,47 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 // Just in case any handlers added new handlers, which is weird, but possible.
                 handlers.extend(
                     self.window
-                        .mouse_event_handlers
+                        .mouse_listeners
                         .get_mut(&any_mouse_event.type_id())
                         .into_iter()
                         .flat_map(|handlers| handlers.drain(..)),
                 );
                 self.window
-                    .mouse_event_handlers
+                    .mouse_listeners
                     .insert(any_mouse_event.type_id(), handlers);
+            }
+        } else if let Some(any_keyboard_event) = event.keyboard_event() {
+            if let Some(mut handlers) = self
+                .window
+                .keyboard_listeners
+                .remove(&any_keyboard_event.type_id())
+            {
+                for handler in &handlers {
+                    handler(any_keyboard_event, DispatchPhase::Capture, self);
+                    if !self.window.propagate_event {
+                        break;
+                    }
+                }
+
+                if self.window.propagate_event {
+                    for handler in handlers.iter().rev() {
+                        handler(any_keyboard_event, DispatchPhase::Bubble, self);
+                        if !self.window.propagate_event {
+                            break;
+                        }
+                    }
+                }
+
+                handlers.extend(
+                    self.window
+                        .keyboard_listeners
+                        .get_mut(&any_keyboard_event.type_id())
+                        .into_iter()
+                        .flat_map(|handlers| handlers.drain(..)),
+                );
+                self.window
+                    .keyboard_listeners
+                    .insert(any_keyboard_event.type_id(), handlers);
             }
         }
 
@@ -882,7 +1037,7 @@ impl<S> BorrowWindow for ViewContext<'_, '_, S> {
     }
 }
 
-impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
+impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
     fn mutable(app: &'a mut AppContext, window: &'w mut Window, entity_id: EntityId) -> Self {
         Self {
             window_cx: WindowContext::mutable(app, window),
@@ -891,7 +1046,7 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
         }
     }
 
-    pub fn handle(&self) -> WeakHandle<S> {
+    pub fn handle(&self) -> WeakHandle<V> {
         self.entities.weak_handle(self.entity_id)
     }
 
@@ -902,7 +1057,7 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
         result
     }
 
-    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut S, &mut ViewContext<S>) + Send + 'static) {
+    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + Send + 'static) {
         let entity = self.handle();
         self.window_cx.on_next_frame(move |cx| {
             entity.update(cx, f).ok();
@@ -912,7 +1067,7 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
     pub fn observe<E: Send + Sync + 'static>(
         &mut self,
         handle: &Handle<E>,
-        on_notify: impl Fn(&mut S, Handle<E>, &mut ViewContext<'_, '_, S>) + Send + Sync + 'static,
+        on_notify: impl Fn(&mut V, Handle<E>, &mut ViewContext<'_, '_, V>) + Send + Sync + 'static,
     ) -> Subscription {
         let this = self.handle();
         let handle = handle.downgrade();
@@ -936,7 +1091,7 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
     pub fn subscribe<E: EventEmitter + Send + Sync + 'static>(
         &mut self,
         handle: &Handle<E>,
-        on_event: impl Fn(&mut S, Handle<E>, &E::Event, &mut ViewContext<'_, '_, S>)
+        on_event: impl Fn(&mut V, Handle<E>, &E::Event, &mut ViewContext<'_, '_, V>)
             + Send
             + Sync
             + 'static,
@@ -963,7 +1118,7 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
 
     pub fn on_release(
         &mut self,
-        on_release: impl Fn(&mut S, &mut WindowContext) + Send + Sync + 'static,
+        on_release: impl Fn(&mut V, &mut WindowContext) + Send + Sync + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
         self.app.release_handlers.insert(
@@ -979,7 +1134,7 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
     pub fn observe_release<E: Send + Sync + 'static>(
         &mut self,
         handle: &Handle<E>,
-        on_release: impl Fn(&mut S, &mut E, &mut ViewContext<'_, '_, S>) + Send + Sync + 'static,
+        on_release: impl Fn(&mut V, &mut E, &mut ViewContext<'_, '_, V>) + Send + Sync + 'static,
     ) -> Subscription {
         let this = self.handle();
         let window_handle = self.window.handle;
@@ -1002,10 +1157,86 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
         });
     }
 
+    pub fn with_focus<R>(
+        &mut self,
+        focus_handle: Option<FocusHandle>,
+        key_down: impl IntoIterator<Item = KeyDownListener<V>>,
+        key_up: impl IntoIterator<Item = KeyUpListener<V>>,
+        focus: impl IntoIterator<Item = FocusListener<V>>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let Some(focus_handle) = focus_handle else {
+            return f(self);
+        };
+
+        let handle = self.handle();
+        let window = &mut *self.window;
+
+        for listener in focus {
+            let handle = handle.clone();
+            window.focus_listeners.push(Box::new(move |event, cx| {
+                handle
+                    .update(cx, |view, cx| listener(view, event, cx))
+                    .log_err();
+            }));
+        }
+
+        let mut focus_stack = mem::take(&mut window.focus_stack);
+        if let Some(parent_frame) = focus_stack.last() {
+            window
+                .focus_parents_by_child
+                .insert(focus_handle.id, parent_frame.handle.id);
+        }
+
+        let mut frame = FocusStackFrame {
+            handle: focus_handle.clone(),
+            key_down_listeners: SmallVec::new(),
+            key_up_listeners: SmallVec::new(),
+        };
+
+        for listener in key_down {
+            let handle = handle.clone();
+            frame
+                .key_down_listeners
+                .push(Box::new(move |event, phase, cx| {
+                    handle
+                        .update(cx, |view, cx| listener(view, event, phase, cx))
+                        .log_err();
+                }));
+        }
+        for listener in key_up {
+            let handle = handle.clone();
+            frame
+                .key_up_listeners
+                .push(Box::new(move |event, phase, cx| {
+                    handle
+                        .update(cx, |view, cx| listener(view, event, phase, cx))
+                        .log_err();
+                }));
+        }
+        focus_stack.push(frame);
+
+        if Some(focus_handle.id) == window.focus {
+            for focus_frame in &mut focus_stack {
+                for listener in focus_frame.key_down_listeners.drain(..) {
+                    self.window_cx.on_keyboard_event(listener);
+                }
+                for listener in focus_frame.key_up_listeners.drain(..) {
+                    self.window_cx.on_keyboard_event(listener);
+                }
+            }
+        }
+
+        self.window.focus_stack = focus_stack;
+        let result = f(self);
+        self.window.focus_stack.pop();
+        result
+    }
+
     pub fn run_on_main<R>(
         &mut self,
-        view: &mut S,
-        f: impl FnOnce(&mut S, &mut MainThread<ViewContext<'_, '_, S>>) -> R + Send + 'static,
+        view: &mut V,
+        f: impl FnOnce(&mut V, &mut MainThread<ViewContext<'_, '_, V>>) -> R + Send + 'static,
     ) -> Task<Result<R>>
     where
         R: Send + 'static,
@@ -1021,7 +1252,7 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
 
     pub fn spawn<Fut, R>(
         &mut self,
-        f: impl FnOnce(WeakHandle<S>, AsyncWindowContext) -> Fut + Send + 'static,
+        f: impl FnOnce(WeakHandle<V>, AsyncWindowContext) -> Fut + Send + 'static,
     ) -> Task<R>
     where
         R: Send + 'static,
@@ -1036,10 +1267,22 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
 
     pub fn on_mouse_event<Event: 'static>(
         &mut self,
-        handler: impl Fn(&mut S, &Event, DispatchPhase, &mut ViewContext<S>) + Send + Sync + 'static,
+        handler: impl Fn(&mut V, &Event, DispatchPhase, &mut ViewContext<V>) + Send + Sync + 'static,
     ) {
         let handle = self.handle().upgrade(self).unwrap();
         self.window_cx.on_mouse_event(move |event, phase, cx| {
+            handle.update(cx, |view, cx| {
+                handler(view, event, phase, cx);
+            })
+        });
+    }
+
+    pub fn on_keyboard_event<Event: 'static>(
+        &mut self,
+        handler: impl Fn(&mut V, &Event, DispatchPhase, &mut ViewContext<V>) + Send + Sync + 'static,
+    ) {
+        let handle = self.handle().upgrade(self).unwrap();
+        self.window_cx.on_keyboard_event(move |event, phase, cx| {
             handle.update(cx, |view, cx| {
                 handler(view, event, phase, cx);
             })

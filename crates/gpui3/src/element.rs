@@ -1,6 +1,7 @@
-use crate::{BorrowWindow, Bounds, ElementId, LayoutId, Pixels, Point, ViewContext};
+use crate::{BorrowWindow, Bounds, ElementId, FocusHandle, LayoutId, Pixels, Point, ViewContext};
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
+use std::mem;
 
 pub trait Element: 'static + Send + Sync + IntoAnyElement<Self::ViewState> {
     type ViewState: 'static + Send + Sync;
@@ -8,17 +9,24 @@ pub trait Element: 'static + Send + Sync + IntoAnyElement<Self::ViewState> {
 
     fn id(&self) -> Option<ElementId>;
 
-    fn layout(
+    fn initialize(
         &mut self,
-        state: &mut Self::ViewState,
+        view_state: &mut Self::ViewState,
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<Self::ViewState>,
-    ) -> (LayoutId, Self::ElementState);
+    ) -> Self::ElementState;
+
+    fn layout(
+        &mut self,
+        view_state: &mut Self::ViewState,
+        element_state: &mut Self::ElementState,
+        cx: &mut ViewContext<Self::ViewState>,
+    ) -> LayoutId;
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        state: &mut Self::ViewState,
+        view_state: &mut Self::ViewState,
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<Self::ViewState>,
     );
@@ -31,17 +39,50 @@ pub trait ElementIdentity: 'static + Send + Sync {
     fn id(&self) -> Option<ElementId>;
 }
 
-pub struct IdentifiedElement(pub(crate) ElementId);
-pub struct AnonymousElement;
+pub struct Identified(pub(crate) ElementId);
 
-impl ElementIdentity for IdentifiedElement {
+impl ElementIdentity for Identified {
     fn id(&self) -> Option<ElementId> {
         Some(self.0.clone())
     }
 }
 
-impl ElementIdentity for AnonymousElement {
+pub struct Anonymous;
+
+impl ElementIdentity for Anonymous {
     fn id(&self) -> Option<ElementId> {
+        None
+    }
+}
+
+pub trait ElementFocusability: 'static + Send + Sync {
+    fn focus_handle(&self) -> Option<&FocusHandle>;
+}
+
+pub struct Focusable(FocusHandle);
+
+impl AsRef<FocusHandle> for Focusable {
+    fn as_ref(&self) -> &FocusHandle {
+        &self.0
+    }
+}
+
+impl ElementFocusability for Focusable {
+    fn focus_handle(&self) -> Option<&FocusHandle> {
+        Some(&self.0)
+    }
+}
+
+impl From<FocusHandle> for Focusable {
+    fn from(value: FocusHandle) -> Self {
+        Self(value)
+    }
+}
+
+pub struct NonFocusable;
+
+impl ElementFocusability for NonFocusable {
+    fn focus_handle(&self) -> Option<&FocusHandle> {
         None
     }
 }
@@ -70,9 +111,10 @@ pub trait ParentElement: Element {
     }
 }
 
-trait ElementObject<S>: 'static + Send + Sync {
-    fn layout(&mut self, state: &mut S, cx: &mut ViewContext<S>) -> LayoutId;
-    fn paint(&mut self, state: &mut S, offset: Option<Point<Pixels>>, cx: &mut ViewContext<S>);
+trait ElementObject<V>: 'static + Send + Sync {
+    fn initialize(&mut self, view_state: &mut V, cx: &mut ViewContext<V>);
+    fn layout(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) -> LayoutId;
+    fn paint(&mut self, view_state: &mut V, offset: Option<Point<Pixels>>, cx: &mut ViewContext<V>);
 }
 
 struct RenderedElement<E: Element> {
@@ -81,17 +123,17 @@ struct RenderedElement<E: Element> {
 }
 
 #[derive(Default)]
-enum ElementRenderPhase<S> {
+enum ElementRenderPhase<V> {
     #[default]
-    Rendered,
+    Start,
+    Initialized {
+        frame_state: Option<V>,
+    },
     LayoutRequested {
         layout_id: LayoutId,
-        frame_state: Option<S>,
+        frame_state: Option<V>,
     },
-    Painted {
-        bounds: Bounds<Pixels>,
-        frame_state: Option<S>,
-    },
+    Painted,
 }
 
 /// Internal struct that wraps an element to store Layout and ElementState after the element is rendered.
@@ -101,52 +143,57 @@ impl<E: Element> RenderedElement<E> {
     fn new(element: E) -> Self {
         RenderedElement {
             element,
-            phase: ElementRenderPhase::Rendered,
-        }
-    }
-
-    fn paint_with_element_state(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        view_state: &mut E::ViewState,
-        frame_state: &mut Option<E::ElementState>,
-        cx: &mut ViewContext<E::ViewState>,
-    ) {
-        if let Some(id) = self.element.id() {
-            cx.with_element_state(id, |element_state, cx| {
-                let mut element_state = element_state.unwrap();
-                self.element
-                    .paint(bounds, view_state, &mut element_state, cx);
-                ((), element_state)
-            });
-        } else {
-            self.element
-                .paint(bounds, view_state, frame_state.as_mut().unwrap(), cx);
+            phase: ElementRenderPhase::Start,
         }
     }
 }
 
-impl<E, S> ElementObject<E::ViewState> for RenderedElement<E>
+impl<E> ElementObject<E::ViewState> for RenderedElement<E>
 where
-    E: Element<ElementState = S>,
-    S: 'static + Send + Sync,
+    E: Element,
 {
-    fn layout(&mut self, state: &mut E::ViewState, cx: &mut ViewContext<E::ViewState>) -> LayoutId {
-        let (layout_id, frame_state) = if let Some(id) = self.element.id() {
-            let layout_id = cx.with_element_state(id, |element_state, cx| {
-                self.element.layout(state, element_state, cx)
+    fn initialize(&mut self, view_state: &mut E::ViewState, cx: &mut ViewContext<E::ViewState>) {
+        let frame_state = if let Some(id) = self.element.id() {
+            cx.with_element_state(id, |element_state, cx| {
+                let element_state = self.element.initialize(view_state, element_state, cx);
+                ((), element_state)
             });
-            (layout_id, None)
+            None
         } else {
-            let (layout_id, frame_state) = self.element.layout(state, None, cx);
-            (layout_id, Some(frame_state))
+            let frame_state = self.element.initialize(view_state, None, cx);
+            Some(frame_state)
+        };
+
+        self.phase = ElementRenderPhase::Initialized { frame_state };
+    }
+
+    fn layout(&mut self, state: &mut E::ViewState, cx: &mut ViewContext<E::ViewState>) -> LayoutId {
+        let layout_id;
+        let mut frame_state;
+        match mem::take(&mut self.phase) {
+            ElementRenderPhase::Initialized {
+                frame_state: initial_frame_state,
+            } => {
+                frame_state = initial_frame_state;
+                if let Some(id) = self.element.id() {
+                    layout_id = cx.with_element_state(id, |element_state, cx| {
+                        let mut element_state = element_state.unwrap();
+                        let layout_id = self.element.layout(state, &mut element_state, cx);
+                        (layout_id, element_state)
+                    });
+                } else {
+                    layout_id = self
+                        .element
+                        .layout(state, frame_state.as_mut().unwrap(), cx);
+                }
+            }
+            _ => panic!("must call initialize before layout"),
         };
 
         self.phase = ElementRenderPhase::LayoutRequested {
             layout_id,
             frame_state,
         };
-
         layout_id
     }
 
@@ -156,60 +203,63 @@ where
         offset: Option<Point<Pixels>>,
         cx: &mut ViewContext<E::ViewState>,
     ) {
-        self.phase = match std::mem::take(&mut self.phase) {
-            ElementRenderPhase::Rendered => panic!("must call layout before paint"),
-
+        self.phase = match mem::take(&mut self.phase) {
             ElementRenderPhase::LayoutRequested {
                 layout_id,
                 mut frame_state,
             } => {
                 let mut bounds = cx.layout_bounds(layout_id);
                 offset.map(|offset| bounds.origin += offset);
-                self.paint_with_element_state(bounds, view_state, &mut frame_state, cx);
-                ElementRenderPhase::Painted {
-                    bounds,
-                    frame_state,
+                if let Some(id) = self.element.id() {
+                    cx.with_element_state(id, |element_state, cx| {
+                        let mut element_state = element_state.unwrap();
+                        self.element
+                            .paint(bounds, view_state, &mut element_state, cx);
+                        ((), element_state)
+                    });
+                } else {
+                    self.element
+                        .paint(bounds, view_state, frame_state.as_mut().unwrap(), cx);
                 }
+                ElementRenderPhase::Painted
             }
 
-            ElementRenderPhase::Painted {
-                bounds,
-                mut frame_state,
-            } => {
-                self.paint_with_element_state(bounds, view_state, &mut frame_state, cx);
-                ElementRenderPhase::Painted {
-                    bounds,
-                    frame_state,
-                }
-            }
+            _ => panic!("must call layout before paint"),
         };
     }
 }
 
-pub struct AnyElement<S>(Box<dyn ElementObject<S>>);
+pub struct AnyElement<V>(Box<dyn ElementObject<V>>);
 
-impl<S: 'static + Send + Sync> AnyElement<S> {
-    pub fn new<E: Element<ViewState = S>>(element: E) -> Self {
+impl<V: 'static + Send + Sync> AnyElement<V> {
+    pub fn new<E: Element<ViewState = V>>(element: E) -> Self {
         AnyElement(Box::new(RenderedElement::new(element)))
     }
-}
 
-impl<S: 'static + Send + Sync> AnyElement<S> {
-    pub fn layout(&mut self, state: &mut S, cx: &mut ViewContext<S>) -> LayoutId {
-        self.0.layout(state, cx)
+    pub fn initialize(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) {
+        self.0.initialize(view_state, cx);
     }
 
-    pub fn paint(&mut self, state: &mut S, offset: Option<Point<Pixels>>, cx: &mut ViewContext<S>) {
-        self.0.paint(state, offset, cx)
+    pub fn layout(&mut self, view_state: &mut V, cx: &mut ViewContext<V>) -> LayoutId {
+        self.0.layout(view_state, cx)
+    }
+
+    pub fn paint(
+        &mut self,
+        view_state: &mut V,
+        offset: Option<Point<Pixels>>,
+        cx: &mut ViewContext<V>,
+    ) {
+        self.0.paint(view_state, offset, cx)
     }
 }
 
-pub trait IntoAnyElement<S> {
-    fn into_any(self) -> AnyElement<S>;
+pub trait IntoAnyElement<V> {
+    fn into_any(self) -> AnyElement<V>;
 }
 
-impl<S> IntoAnyElement<S> for AnyElement<S> {
-    fn into_any(self) -> AnyElement<S> {
+impl<V> IntoAnyElement<V> for AnyElement<V> {
+    fn into_any(self) -> AnyElement<V> {
         self
     }
 }
