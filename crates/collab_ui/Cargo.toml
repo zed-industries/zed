@@ -54,6 +54,7 @@ zed-actions = {path = "../zed-actions"}
 
 anyhow.workspace = true
 futures.workspace = true
+lazy_static.workspace = true
 log.workspace = true
 schemars.workspace = true
 postage.workspace = true

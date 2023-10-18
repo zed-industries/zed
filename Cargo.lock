@@ -1558,6 +1558,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
+ "lazy_static",
  "log",
  "menu",
  "notifications",

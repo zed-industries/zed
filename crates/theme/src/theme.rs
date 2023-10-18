@@ -638,6 +638,7 @@ pub struct ChatPanel {
     pub avatar: AvatarStyle,
     pub avatar_container: ContainerStyle,
     pub message: ChatMessage,
+    pub mention_highlight: HighlightStyle,
     pub continuation_message: ChatMessage,
     pub last_message_bottom_spacing: f32,
     pub pending_message: ChatMessage,

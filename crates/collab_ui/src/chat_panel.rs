@@ -18,8 +18,9 @@ use gpui::{
     AnyViewHandle, AppContext, AsyncAppContext, Entity, ModelHandle, Subscription, Task, View,
     ViewContext, ViewHandle, WeakViewHandle,
 };
-use language::{language_settings::SoftWrap, LanguageRegistry};
+use language::LanguageRegistry;
 use menu::Confirm;
+use message_editor::MessageEditor;
 use project::Fs;
 use rich_text::RichText;
 use serde::{Deserialize, Serialize};
@@ -33,6 +34,8 @@ use workspace::{
     Workspace,
 };
 
+mod message_editor;
+
 const MESSAGE_LOADING_THRESHOLD: usize = 50;
 const CHAT_PANEL_KEY: &'static str = "ChatPanel";
 
@@ -42,7 +45,7 @@ pub struct ChatPanel {
     languages: Arc<LanguageRegistry>,
     active_chat: Option<(ModelHandle<ChannelChat>, Subscription)>,
     message_list: ListState<ChatPanel>,
-    input_editor: ViewHandle<Editor>,
+    input_editor: ViewHandle<MessageEditor>,
     channel_select: ViewHandle<Select>,
     local_timezone: UtcOffset,
     fs: Arc<dyn Fs>,
@@ -87,13 +90,18 @@ impl ChatPanel {
         let languages = workspace.app_state().languages.clone();
 
         let input_editor = cx.add_view(|cx| {
-            let mut editor = Editor::auto_height(
-                4,
-                Some(Arc::new(|theme| theme.chat_panel.input_editor.clone())),
+            MessageEditor::new(
+                languages.clone(),
+                channel_store.clone(),
+                cx.add_view(|cx| {
+                    Editor::auto_height(
+                        4,
+                        Some(Arc::new(|theme| theme.chat_panel.input_editor.clone())),
+                        cx,
+                    )
+                }),
                 cx,
-            );
-            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-            editor
+            )
         });
 
         let workspace_handle = workspace.weak_handle();
@@ -138,7 +146,6 @@ impl ChatPanel {
                 client,
                 channel_store,
                 languages,
-
                 active_chat: Default::default(),
                 pending_serialization: Task::ready(None),
                 message_list,
@@ -186,25 +193,6 @@ impl ChatPanel {
                 }
             })
             .detach();
-
-            let markdown = this.languages.language_for_name("Markdown");
-            cx.spawn(|this, mut cx| async move {
-                let markdown = markdown.await?;
-
-                this.update(&mut cx, |this, cx| {
-                    this.input_editor.update(cx, |editor, cx| {
-                        editor.buffer().update(cx, |multi_buffer, cx| {
-                            multi_buffer
-                                .as_singleton()
-                                .unwrap()
-                                .update(cx, |buffer, cx| buffer.set_language(Some(markdown), cx))
-                        })
-                    })
-                })?;
-
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
 
             this
         })
@@ -269,15 +257,15 @@ impl ChatPanel {
 
     fn set_active_chat(&mut self, chat: ModelHandle<ChannelChat>, cx: &mut ViewContext<Self>) {
         if self.active_chat.as_ref().map(|e| &e.0) != Some(&chat) {
-            let id = chat.read(cx).channel().id;
-            {
+            let id = {
                 let chat = chat.read(cx);
+                let channel = chat.channel().clone();
                 self.message_list.reset(chat.message_count());
-                let placeholder = format!("Message #{}", chat.channel().name);
-                self.input_editor.update(cx, move |editor, cx| {
-                    editor.set_placeholder_text(placeholder, cx);
+                self.input_editor.update(cx, |editor, cx| {
+                    editor.set_channel(channel.clone(), cx);
                 });
-            }
+                channel.id
+            };
             let subscription = cx.subscribe(&chat, Self::channel_did_change);
             self.active_chat = Some((chat, subscription));
             self.acknowledge_last_message(cx);
@@ -606,14 +594,12 @@ impl ChatPanel {
 
     fn send(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if let Some((chat, _)) = self.active_chat.as_ref() {
-            let body = self.input_editor.update(cx, |editor, cx| {
-                let body = editor.text(cx);
-                editor.clear(cx);
-                body
-            });
+            let message = self
+                .input_editor
+                .update(cx, |editor, cx| editor.take_message(cx));
 
             if let Some(task) = chat
-                .update(cx, |chat, cx| chat.send_message(body, cx))
+                .update(cx, |chat, cx| chat.send_message(message.text, cx))
                 .log_err()
             {
                 task.detach();
@@ -747,7 +733,8 @@ impl View for ChatPanel {
             *self.client.status().borrow(),
             client::Status::Connected { .. }
         ) {
-            cx.focus(&self.input_editor);
+            let editor = self.input_editor.read(cx).editor.clone();
+            cx.focus(&editor);
         }
     }
 

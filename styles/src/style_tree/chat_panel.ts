@@ -91,6 +91,7 @@ export default function chat_panel(): any {
                 top: 4,
             },
         },
+        mention_highlight: { weight: 'bold' },
         message: {
             ...interactive({
                 base: {

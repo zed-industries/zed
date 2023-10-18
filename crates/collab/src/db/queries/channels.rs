@@ -552,7 +552,8 @@ impl Database {
         user_id: UserId,
     ) -> Result<Vec<proto::ChannelMember>> {
         self.transaction(|tx| async move {
-            self.check_user_is_channel_admin(channel_id, user_id, &*tx)
+            let user_membership = self
+                .check_user_is_channel_member(channel_id, user_id, &*tx)
                 .await?;
 
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
@@ -613,6 +614,14 @@ impl Database {
                 });
             }
 
+            // If the user is not an admin, don't give them all of the details
+            if !user_membership.admin {
+                rows.retain_mut(|row| {
+                    row.admin = false;
+                    row.kind != proto::channel_member::Kind::Invitee as i32
+                });
+            }
+
             Ok(rows)
         })
         .await
@@ -644,9 +653,9 @@ impl Database {
         channel_id: ChannelId,
         user_id: UserId,
         tx: &DatabaseTransaction,
-    ) -> Result<()> {
+    ) -> Result<channel_member::Model> {
         let channel_ids = self.get_channel_ancestors(channel_id, tx).await?;
-        channel_member::Entity::find()
+        Ok(channel_member::Entity::find()
             .filter(
                 channel_member::Column::ChannelId
                     .is_in(channel_ids)
@@ -654,8 +663,7 @@ impl Database {
             )
             .one(&*tx)
             .await?
-            .ok_or_else(|| anyhow!("user is not a channel member or channel does not exist"))?;
-        Ok(())
+            .ok_or_else(|| anyhow!("user is not a channel member or channel does not exist"))?)
     }
 
     pub async fn check_user_is_channel_admin(
