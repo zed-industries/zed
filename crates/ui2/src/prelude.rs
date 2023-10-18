@@ -9,26 +9,18 @@ use gpui3::{hsla, rems, rgb, AbsoluteLength, Hsla};
 use strum::EnumIter;
 
 #[derive(Clone, Copy)]
-pub struct Token {
+pub struct FakeSettings {
     pub list_indent_depth: AbsoluteLength,
     pub default_panel_size: AbsoluteLength,
-    pub state_hover_background: Hsla,
-    pub state_active_background: Hsla,
 }
 
-impl Default for Token {
+impl Default for FakeSettings {
     fn default() -> Self {
         Self {
             list_indent_depth: rems(0.3).into(),
             default_panel_size: AbsoluteLength::Rems(rems(16.)),
-            state_hover_background: hsla(0.0, 0.0, 0.0, 0.08),
-            state_active_background: hsla(0.0, 0.0, 0.0, 0.16),
         }
     }
-}
-
-pub fn token() -> Token {
-    Token::default()
 }
 
 #[derive(Default)]
@@ -37,6 +29,8 @@ pub struct SystemColor {
     pub mac_os_traffic_light_red: Hsla,
     pub mac_os_traffic_light_yellow: Hsla,
     pub mac_os_traffic_light_green: Hsla,
+    pub state_hover_background: Hsla,
+    pub state_active_background: Hsla,
 }
 
 impl SystemColor {
@@ -46,6 +40,8 @@ impl SystemColor {
             mac_os_traffic_light_red: rgb::<Hsla>(0xEC695E),
             mac_os_traffic_light_yellow: rgb::<Hsla>(0xF4BF4F),
             mac_os_traffic_light_green: rgb::<Hsla>(0x62C554),
+            state_hover_background: hsla(0.0, 0.0, 0.0, 0.08),
+            state_active_background: hsla(0.0, 0.0, 0.0, 0.16),
         }
     }
     pub fn color(&self) -> Hsla {
@@ -62,6 +58,8 @@ pub struct ThemeColor {
     /// The background color of an elevated surface, like a modal, tooltip or toast.
     pub elevated_surface: Hsla,
     pub surface: Hsla,
+    /// Window background color
+    pub background: Hsla,
     /// Default background for elements like filled buttons,
     /// text fields, checkboxes, radio buttons, etc.
     /// - TODO: Map to step 3.
@@ -99,6 +97,7 @@ impl ThemeColor {
             border_transparent: system_color.transparent,
             elevated_surface: theme.middle.base.default.background,
             surface: theme.middle.base.default.background,
+            background: theme.lowest.base.default.background,
             filled_element: theme.lowest.base.default.background,
             filled_element_hover: theme.lowest.base.hovered.background,
             filled_element_active: theme.lowest.base.active.background,
@@ -249,6 +248,23 @@ pub enum DisclosureControlVisibility {
     #[default]
     OnHover,
     Always,
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
+pub enum DisclosureControlStyle {
+    /// Shows the disclosure control only when hovered where possible.
+    ///
+    /// More compact, but not available everywhere.
+    ChevronOnHover,
+    /// Shows an icon where possible, otherwise shows a chevron.
+    ///
+    /// For example, in a file tree a folder or file icon is shown
+    /// instead of a chevron
+    Icon,
+    /// Always shows a chevron.
+    Chevron,
+    /// Completely hides the disclosure control where possible.
+    None,
 }
 
 #[derive(Default, PartialEq, Copy, Clone, EnumIter, strum::Display)]

@@ -1,6 +1,6 @@
 use crate::{
-    self as gpui3, hsla, point, px, relative, rems, AlignItems, Display, Fill, FlexDirection, Hsla,
-    JustifyContent, Length, Position, SharedString, StyleRefinement,
+    self as gpui3, hsla, point, px, relative, rems, AbsoluteLength, AlignItems, Display, Fill,
+    FlexDirection, Hsla, JustifyContent, Length, Position, Rems, SharedString, StyleRefinement,
 };
 use crate::{BoxShadow, TextStyleRefinement};
 use smallvec::smallvec;
@@ -347,6 +347,16 @@ pub trait Styled {
         Self: Sized,
     {
         self.text_style().get_or_insert_with(Default::default).color = Some(color.into());
+        self
+    }
+
+    fn text_size(mut self, size: Rems) -> Self
+    where
+        Self: Sized,
+    {
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .font_size = Some(size);
         self
     }
 

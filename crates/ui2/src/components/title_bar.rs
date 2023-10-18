@@ -4,6 +4,7 @@ use std::sync::Arc;
 use gpui3::{view, Context, View};
 
 use crate::prelude::*;
+use crate::settings::user_settings;
 use crate::{
     random_players_with_call_status, theme, Avatar, Button, Icon, IconButton, IconColor, MicStatus,
     PlayerStack, PlayerWithCallStatus, ScreenShareStatus, ToolDivider, TrafficLights,
@@ -93,6 +94,9 @@ impl TitleBar {
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
         let theme = theme(cx);
+        let color = ThemeColor::new(cx);
+        let setting = user_settings();
+
         // let has_focus = cx.window_is_active();
         let has_focus = true;
 
@@ -107,8 +111,7 @@ impl TitleBar {
             .items_center()
             .justify_between()
             .w_full()
-            .h_8()
-            .bg(theme.lowest.base.default.background)
+            .bg(color.background)
             .child(
                 div()
                     .flex()
@@ -123,6 +126,9 @@ impl TitleBar {
                             .flex()
                             .items_center()
                             .gap_1()
+                            .when(setting.titlebar_show_project_owner(), |this| {
+                                this.child(Button::new("iamnbutler"))
+                            })
                             .child(Button::new("zed"))
                             .child(Button::new("nate/gpui2-ui-components")),
                     )

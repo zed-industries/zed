@@ -3,8 +3,9 @@ use std::marker::PhantomData;
 use gpui3::{AbsoluteLength, AnyElement};
 use smallvec::SmallVec;
 
+use crate::settings::user_settings;
+use crate::v_stack;
 use crate::{prelude::*, theme};
-use crate::{token, v_stack};
 
 #[derive(Default, Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum PanelAllowedSides {
@@ -53,14 +54,14 @@ pub struct Panel<S: 'static + Send + Sync> {
 
 impl<S: 'static + Send + Sync> Panel<S> {
     pub fn new(scroll_state: ScrollState) -> Self {
-        let token = token();
+        let setting = user_settings();
 
         Self {
             state_type: PhantomData,
             scroll_state,
             current_side: PanelSide::default(),
             allowed_sides: PanelAllowedSides::default(),
-            initial_width: token.default_panel_size,
+            initial_width: setting.default_panel_size(),
             width: None,
             children: SmallVec::new(),
         }
@@ -96,7 +97,6 @@ impl<S: 'static + Send + Sync> Panel<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let token = token();
         let theme = theme(cx);
 
         let panel_base;
