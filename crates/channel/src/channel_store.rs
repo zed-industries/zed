@@ -940,6 +940,13 @@ impl ChannelStore {
 
                 for channel_id in &payload.delete_channels {
                     let channel_id = *channel_id;
+                    if payload
+                        .channels
+                        .iter()
+                        .any(|channel| channel.id == channel_id)
+                    {
+                        continue;
+                    }
                     if let Some(OpenedModelHandle::Open(buffer)) =
                         self.opened_buffers.remove(&channel_id)
                     {

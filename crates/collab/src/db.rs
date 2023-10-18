@@ -436,6 +436,23 @@ pub struct Channel {
     pub role: ChannelRole,
 }
 
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct ChannelMember {
+    pub role: ChannelRole,
+    pub user_id: UserId,
+    pub kind: proto::channel_member::Kind,
+}
+
+impl ChannelMember {
+    pub fn to_proto(&self) -> proto::ChannelMember {
+        proto::ChannelMember {
+            role: self.role.into(),
+            user_id: self.user_id.to_proto(),
+            kind: self.kind.into(),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct ChannelsForUser {
     pub channels: ChannelGraph,

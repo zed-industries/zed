@@ -114,6 +114,22 @@ impl ChannelRole {
             other
         }
     }
+
+    pub fn can_see_all_descendants(&self) -> bool {
+        use ChannelRole::*;
+        match self {
+            Admin | Member => true,
+            Guest | Banned => false,
+        }
+    }
+
+    pub fn can_only_see_public_descendants(&self) -> bool {
+        use ChannelRole::*;
+        match self {
+            Guest => true,
+            Admin | Member | Banned => false,
+        }
+    }
 }
 
 impl From<proto::ChannelRole> for ChannelRole {

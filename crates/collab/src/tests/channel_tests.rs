@@ -5,6 +5,7 @@ use crate::{
 use call::ActiveCall;
 use channel::{ChannelId, ChannelMembership, ChannelStore};
 use client::User;
+use futures::future::try_join_all;
 use gpui::{executor::Deterministic, ModelHandle, TestAppContext};
 use rpc::{
     proto::{self, ChannelRole},
@@ -913,6 +914,210 @@ async fn test_lost_channel_creation(
         ],
     );
 }
+
+#[gpui::test]
+async fn test_channel_link_notifications(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
+
+    let user_b = client_b.user_id().unwrap();
+    let user_c = client_c.user_id().unwrap();
+
+    let channels = server
+        .make_channel_tree(&[("zed", None)], (&client_a, cx_a))
+        .await;
+    let zed_channel = channels[0];
+
+    try_join_all(client_a.channel_store().update(cx_a, |channel_store, cx| {
+        [
+            channel_store.set_channel_visibility(zed_channel, proto::ChannelVisibility::Public, cx),
+            channel_store.invite_member(zed_channel, user_b, proto::ChannelRole::Member, cx),
+            channel_store.invite_member(zed_channel, user_c, proto::ChannelRole::Guest, cx),
+        ]
+    }))
+    .await
+    .unwrap();
+
+    deterministic.run_until_parked();
+
+    client_b
+        .channel_store()
+        .update(cx_b, |channel_store, _| {
+            channel_store.respond_to_channel_invite(zed_channel, true)
+        })
+        .await
+        .unwrap();
+
+    client_c
+        .channel_store()
+        .update(cx_c, |channel_store, _| {
+            channel_store.respond_to_channel_invite(zed_channel, true)
+        })
+        .await
+        .unwrap();
+
+    deterministic.run_until_parked();
+
+    // we have an admin (a), member (b) and guest (c) all part of the zed channel.
+
+    // create a new private sub-channel
+    // create a new priate channel, make it public, and move it under the previous one, and verify it shows for b and c
+    let active_channel = client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.create_channel("active", Some(zed_channel), cx)
+        })
+        .await
+        .unwrap();
+
+    // the new channel shows for b and not c
+    assert_channels_list_shape(
+        client_a.channel_store(),
+        cx_a,
+        &[(zed_channel, 0), (active_channel, 1)],
+    );
+    assert_channels_list_shape(
+        client_b.channel_store(),
+        cx_b,
+        &[(zed_channel, 0), (active_channel, 1)],
+    );
+    assert_channels_list_shape(client_c.channel_store(), cx_c, &[(zed_channel, 0)]);
+
+    let vim_channel = client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.create_channel("vim", None, cx)
+        })
+        .await
+        .unwrap();
+
+    client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.set_channel_visibility(vim_channel, proto::ChannelVisibility::Public, cx)
+        })
+        .await
+        .unwrap();
+
+    client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.link_channel(vim_channel, active_channel, cx)
+        })
+        .await
+        .unwrap();
+
+    deterministic.run_until_parked();
+
+    // the new channel shows for b and c
+    assert_channels_list_shape(
+        client_a.channel_store(),
+        cx_a,
+        &[(zed_channel, 0), (active_channel, 1), (vim_channel, 2)],
+    );
+    assert_channels_list_shape(
+        client_b.channel_store(),
+        cx_b,
+        &[(zed_channel, 0), (active_channel, 1), (vim_channel, 2)],
+    );
+    assert_channels_list_shape(
+        client_c.channel_store(),
+        cx_c,
+        &[(zed_channel, 0), (vim_channel, 1)],
+    );
+
+    let helix_channel = client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.create_channel("helix", None, cx)
+        })
+        .await
+        .unwrap();
+
+    client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.link_channel(helix_channel, vim_channel, cx)
+        })
+        .await
+        .unwrap();
+
+    client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.set_channel_visibility(
+                helix_channel,
+                proto::ChannelVisibility::Public,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    // the new channel shows for b and c
+    assert_channels_list_shape(
+        client_b.channel_store(),
+        cx_b,
+        &[
+            (zed_channel, 0),
+            (active_channel, 1),
+            (vim_channel, 2),
+            (helix_channel, 3),
+        ],
+    );
+    assert_channels_list_shape(
+        client_c.channel_store(),
+        cx_c,
+        &[(zed_channel, 0), (vim_channel, 1), (helix_channel, 2)],
+    );
+
+    client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.set_channel_visibility(vim_channel, proto::ChannelVisibility::Members, cx)
+        })
+        .await
+        .unwrap();
+
+    // the members-only channel is still shown for c, but hidden for b
+    assert_channels_list_shape(
+        client_b.channel_store(),
+        cx_b,
+        &[
+            (zed_channel, 0),
+            (active_channel, 1),
+            (vim_channel, 2),
+            (helix_channel, 3),
+        ],
+    );
+    client_b
+        .channel_store()
+        .read_with(cx_b, |channel_store, _| {
+            assert_eq!(
+                channel_store
+                    .channel_for_id(vim_channel)
+                    .unwrap()
+                    .visibility,
+                proto::ChannelVisibility::Members
+            )
+        });
+
+    assert_channels_list_shape(
+        client_c.channel_store(),
+        cx_c,
+        &[(zed_channel, 0), (helix_channel, 1)],
+    );
+}
+
 #[gpui::test]
 async fn test_guest_access(
     deterministic: Arc<Deterministic>,
