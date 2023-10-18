@@ -1,12 +1,13 @@
 use crate::{
     px, size, AnyBox, AnyView, AppContext, AsyncWindowContext, AvailableSpace, BorrowAppContext,
     Bounds, BoxShadow, Context, Corners, DevicePixels, DisplayId, Edges, Effect, Element, EntityId,
-    Event, EventEmitter, FontId, GlobalElementId, GlyphId, Handle, Hsla, ImageData, IsZero,
-    KeyDownEvent, KeyDownListener, KeyUpEvent, KeyUpListener, LayoutId, MainThread, MainThreadOnly,
-    MonochromeSprite, MouseMoveEvent, Path, Pixels, Platform, PlatformAtlas, PlatformWindow, Point,
-    PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderImageParams, RenderSvgParams,
-    ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine,
-    Task, Underline, UnderlineStyle, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
+    EventEmitter, FocusEvent, FontId, GlobalElementId, GlyphId, Handle, Hsla, ImageData,
+    InputEvent, IsZero, KeyDownEvent, KeyDownListener, KeyUpEvent, KeyUpListener, LayoutId,
+    MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path, Pixels, Platform,
+    PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
+    Style, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle,
+    WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::{HashMap, HashSet};
@@ -47,13 +48,12 @@ pub struct FocusId(usize);
 
 #[derive(Clone)]
 pub struct FocusHandle {
-    id: FocusId,
+    pub(crate) id: FocusId,
 }
 
 impl FocusHandle {
-    pub fn focus(&self, cx: &mut WindowContext) {
-        cx.window.focus = Some(self.id);
-        cx.notify();
+    pub(crate) fn new(id: FocusId) -> Self {
+        Self { id }
     }
 
     pub fn is_focused(&self, cx: &WindowContext) -> bool {
@@ -95,6 +95,8 @@ pub struct Window {
     focus_stack: Vec<FocusStackFrame>,
     focus_parents_by_child: HashMap<FocusId, FocusId>,
     containing_focus: HashSet<FocusId>,
+    pub(crate) focus_change_listeners:
+        Vec<Arc<dyn Fn(&FocusEvent, &mut WindowContext) + Send + Sync + 'static>>,
     key_down_listeners:
         Vec<Arc<dyn Fn(&KeyDownEvent, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>>,
     key_up_listeners:
@@ -104,7 +106,8 @@ pub struct Window {
     scale_factor: f32,
     pub(crate) scene_builder: SceneBuilder,
     pub(crate) dirty: bool,
-    focus: Option<FocusId>,
+    pub(crate) last_blur: Option<Option<FocusId>>,
+    pub(crate) focus: Option<FocusId>,
     next_focus_id: FocusId,
 }
 
@@ -168,6 +171,7 @@ impl Window {
             focus_parents_by_child: HashMap::default(),
             containing_focus: HashSet::default(),
             mouse_listeners: HashMap::default(),
+            focus_change_listeners: Vec::new(),
             key_down_listeners: Vec::new(),
             key_up_listeners: Vec::new(),
             propagate_event: true,
@@ -175,6 +179,7 @@ impl Window {
             scale_factor,
             scene_builder: SceneBuilder::new(),
             dirty: true,
+            last_blur: None,
             focus: None,
             next_focus_id: FocusId(0),
         }
@@ -230,6 +235,34 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     pub fn focus_handle(&mut self) -> FocusHandle {
         let id = FocusId(post_inc(&mut self.window.next_focus_id.0));
         FocusHandle { id }
+    }
+
+    pub fn focus(&mut self, handle: &FocusHandle) {
+        if self.window.last_blur.is_none() {
+            self.window.last_blur = Some(self.window.focus);
+        }
+
+        let window_id = self.window.handle.id;
+        self.window.focus = Some(handle.id);
+        self.push_effect(Effect::FocusChanged {
+            window_id,
+            focused: Some(handle.id),
+        });
+        self.notify();
+    }
+
+    pub fn blur(&mut self) {
+        if self.window.last_blur.is_none() {
+            self.window.last_blur = Some(self.window.focus);
+        }
+
+        let window_id = self.window.handle.id;
+        self.window.focus = None;
+        self.push_effect(Effect::FocusChanged {
+            window_id,
+            focused: None,
+        });
+        self.notify();
     }
 
     pub fn run_on_main<R>(
@@ -720,6 +753,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
         // Clear focus state, because we determine what is focused when the new elements
         // in the upcoming frame are initialized.
+        window.focus_change_listeners.clear();
         window.key_down_listeners.clear();
         window.key_up_listeners.clear();
         window.containing_focus.clear();
@@ -730,7 +764,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         self.text_system().end_frame();
     }
 
-    fn dispatch_event(&mut self, event: Event) -> bool {
+    fn dispatch_event(&mut self, event: InputEvent) -> bool {
         if let Some(any_mouse_event) = event.mouse_event() {
             if let Some(MouseMoveEvent { position, .. }) = any_mouse_event.downcast_ref() {
                 self.window.mouse_position = *position;

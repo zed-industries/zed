@@ -1,5 +1,5 @@
 use crate::{
-    point, px, Event, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
+    point, px, InputEvent, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
     Pixels, ScrollDelta, ScrollWheelEvent, TouchPhase,
 };
@@ -84,7 +84,7 @@ unsafe fn read_modifiers(native_event: id) -> Modifiers {
     }
 }
 
-impl Event {
+impl InputEvent {
     pub unsafe fn from_native(native_event: id, window_height: Option<Pixels>) -> Option<Self> {
         let event_type = native_event.eventType();
 

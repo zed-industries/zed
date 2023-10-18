@@ -8,9 +8,10 @@ pub use model_context::*;
 use refineable::Refineable;
 
 use crate::{
-    current_platform, image_cache::ImageCache, AssetSource, Context, DisplayId, Executor, LayoutId,
-    MainThread, MainThreadOnly, Platform, SubscriberSet, SvgRenderer, Task, TextStyle,
-    TextStyleRefinement, TextSystem, View, Window, WindowContext, WindowHandle, WindowId,
+    current_platform, image_cache::ImageCache, AssetSource, Context, DisplayId, Executor,
+    FocusEvent, FocusHandle, FocusId, LayoutId, MainThread, MainThreadOnly, Platform,
+    SubscriberSet, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, Window,
+    WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
@@ -54,6 +55,7 @@ impl App {
                 this: this.clone(),
                 text_system: Arc::new(TextSystem::new(platform.text_system())),
                 pending_updates: 0,
+                flushing_effects: false,
                 next_frame_callbacks: Default::default(),
                 platform: MainThreadOnly::new(platform, executor.clone()),
                 executor,
@@ -97,6 +99,7 @@ pub struct AppContext {
     this: Weak<Mutex<AppContext>>,
     pub(crate) platform: MainThreadOnly<dyn Platform>,
     text_system: Arc<TextSystem>,
+    flushing_effects: bool,
     pending_updates: usize,
     pub(crate) next_frame_callbacks: HashMap<DisplayId, Vec<FrameCallback>>,
     pub(crate) executor: Executor,
@@ -119,8 +122,10 @@ impl AppContext {
     pub(crate) fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
         self.pending_updates += 1;
         let result = update(self);
-        if self.pending_updates == 1 {
+        if !self.flushing_effects && self.pending_updates == 1 {
+            self.flushing_effects = true;
             self.flush_effects();
+            self.flushing_effects = false;
         }
         self.pending_updates -= 1;
         result
@@ -158,6 +163,7 @@ impl AppContext {
                 }
             }
             Effect::Emit { .. } => self.pending_effects.push_back(effect),
+            Effect::FocusChanged { .. } => self.pending_effects.push_back(effect),
         }
     }
 
@@ -168,6 +174,9 @@ impl AppContext {
                 match effect {
                     Effect::Notify { emitter } => self.apply_notify_effect(emitter),
                     Effect::Emit { emitter, event } => self.apply_emit_effect(emitter, event),
+                    Effect::FocusChanged { window_id, focused } => {
+                        self.apply_focus_changed(window_id, focused)
+                    }
                 }
             } else {
                 break;
@@ -220,6 +229,24 @@ impl AppContext {
         self.event_handlers
             .clone()
             .retain(&emitter, |handler| handler(&event, self));
+    }
+
+    fn apply_focus_changed(&mut self, window_id: WindowId, focused: Option<FocusId>) {
+        self.update_window(window_id, |cx| {
+            if cx.window.focus == focused {
+                let mut listeners = mem::take(&mut cx.window.focus_change_listeners);
+                let focused = focused.map(FocusHandle::new);
+                let blurred = cx.window.last_blur.unwrap().map(FocusHandle::new);
+                let event = FocusEvent { focused, blurred };
+                for listener in &listeners {
+                    listener(&event, cx);
+                }
+
+                listeners.extend(cx.window.focus_change_listeners.drain(..));
+                cx.window.focus_change_listeners = listeners;
+            }
+        })
+        .ok();
     }
 
     pub fn to_async(&self) -> AsyncAppContext {
@@ -425,6 +452,10 @@ pub(crate) enum Effect {
     Emit {
         emitter: EntityId,
         event: Box<dyn Any + Send + Sync + 'static>,
+    },
+    FocusChanged {
+        window_id: WindowId,
+        focused: Option<FocusId>,
     },
 }
 
