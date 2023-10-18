@@ -17,6 +17,7 @@ use gpui3::{
 };
 use log::LevelFilter;
 use simplelog::SimpleLogger;
+use story_selector::ComponentStory;
 use ui::prelude::*;
 use ui::themed;
 
@@ -56,41 +57,28 @@ fn main() {
 
     let asset_source = Arc::new(Assets);
     gpui3::App::production(asset_source).run(move |cx| {
-        match story_selector {
-            Some(selector) => {
-                let window = cx.open_window(
-                    WindowOptions {
-                        bounds: WindowBounds::Fixed(Bounds {
-                            origin: Default::default(),
-                            size: size(px(1700.), px(980.)).into(),
-                        }),
-                        ..Default::default()
-                    },
-                    move |cx| {
-                        view(
-                            cx.entity(|cx| {
-                                cx.with_global(theme.clone(), |cx| {
-                                    StoryWrapper::new(selector.story(cx), theme)
-                                })
-                            }),
-                            StoryWrapper::render,
-                        )
-                    },
-                );
-            }
-            None => {
-                let window = cx.open_window(
-                    WindowOptions {
-                        bounds: WindowBounds::Fixed(Bounds {
-                            origin: Default::default(),
-                            size: size(px(800.), px(600.)).into(),
-                        }),
-                        ..Default::default()
-                    },
-                    |cx| workspace(cx),
-                );
-            }
-        };
+        let selector =
+            story_selector.unwrap_or(StorySelector::Component(ComponentStory::Workspace));
+
+        let window = cx.open_window(
+            WindowOptions {
+                bounds: WindowBounds::Fixed(Bounds {
+                    origin: Default::default(),
+                    size: size(px(1700.), px(980.)).into(),
+                }),
+                ..Default::default()
+            },
+            move |cx| {
+                view(
+                    cx.entity(|cx| {
+                        cx.with_global(theme.clone(), |cx| {
+                            StoryWrapper::new(selector.story(cx), theme)
+                        })
+                    }),
+                    StoryWrapper::render,
+                )
+            },
+        );
 
         cx.activate(true);
     });
