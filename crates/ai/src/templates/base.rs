@@ -1,6 +1,9 @@
 use std::cmp::Reverse;
+use std::ops::Range;
 use std::sync::Arc;
 
+use gpui::ModelHandle;
+use language::{Anchor, Buffer, BufferSnapshot, ToOffset};
 use util::ResultExt;
 
 use crate::models::LanguageModel;
@@ -18,6 +21,8 @@ pub struct PromptArguments {
     pub project_name: Option<String>,
     pub snippets: Vec<PromptCodeSnippet>,
     pub reserved_tokens: usize,
+    pub buffer: Option<BufferSnapshot>,
+    pub selected_range: Option<Range<usize>>,
 }
 
 impl PromptArguments {
@@ -189,6 +194,8 @@ pub(crate) mod tests {
             project_name: None,
             snippets: Vec::new(),
             reserved_tokens: 0,
+            buffer: None,
+            selected_range: None,
         };
 
         let templates: Vec<(PromptPriority, Box<dyn PromptTemplate>)> = vec![
@@ -216,6 +223,8 @@ pub(crate) mod tests {
             project_name: None,
             snippets: Vec::new(),
             reserved_tokens: 0,
+            buffer: None,
+            selected_range: None,
         };
 
         let templates: Vec<(PromptPriority, Box<dyn PromptTemplate>)> = vec![
@@ -244,6 +253,8 @@ pub(crate) mod tests {
             project_name: None,
             snippets: Vec::new(),
             reserved_tokens: 0,
+            buffer: None,
+            selected_range: None,
         };
 
         let templates: Vec<(PromptPriority, Box<dyn PromptTemplate>)> = vec![
@@ -268,6 +279,8 @@ pub(crate) mod tests {
             project_name: None,
             snippets: Vec::new(),
             reserved_tokens,
+            buffer: None,
+            selected_range: None,
         };
         let templates: Vec<(PromptPriority, Box<dyn PromptTemplate>)> = vec![
             (PromptPriority::Medium, Box::new(TestPromptTemplate {})),
