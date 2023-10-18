@@ -50,6 +50,33 @@ pub struct FocusHandle {
     id: FocusId,
 }
 
+impl FocusHandle {
+    pub fn focus(&self, cx: &mut WindowContext) {
+        cx.window.focus = Some(self.id);
+        cx.notify();
+    }
+
+    pub fn is_focused(&self, cx: &WindowContext) -> bool {
+        cx.window.focus == Some(self.id)
+    }
+
+    pub fn contains_focused(&self, cx: &WindowContext) -> bool {
+        cx.window.containing_focus.contains(&self.id)
+    }
+
+    pub fn within_focused(&self, cx: &WindowContext) -> bool {
+        let mut ancestor = Some(self.id);
+        while let Some(ancestor_id) = ancestor {
+            if cx.window.focus == Some(ancestor_id) {
+                return true;
+            } else {
+                ancestor = cx.window.focus_parents_by_child.get(&ancestor_id).copied();
+            }
+        }
+        false
+    }
+}
+
 pub struct Window {
     handle: AnyWindowHandle,
     platform_window: MainThreadOnly<Box<dyn PlatformWindow>>,
@@ -67,7 +94,7 @@ pub struct Window {
     mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, MouseEventHandler)>>,
     focus_stack: Vec<FocusStackFrame>,
     focus_parents_by_child: HashMap<FocusId, FocusId>,
-    focused_in: HashSet<FocusId>,
+    containing_focus: HashSet<FocusId>,
     key_down_listeners:
         Vec<Arc<dyn Fn(&KeyDownEvent, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>>,
     key_up_listeners:
@@ -139,7 +166,7 @@ impl Window {
             content_mask_stack: Vec::new(),
             focus_stack: Vec::new(),
             focus_parents_by_child: HashMap::default(),
-            focused_in: HashSet::default(),
+            containing_focus: HashSet::default(),
             mouse_listeners: HashMap::default(),
             key_down_listeners: Vec::new(),
             key_up_listeners: Vec::new(),
@@ -695,7 +722,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         // in the upcoming frame are initialized.
         window.key_down_listeners.clear();
         window.key_up_listeners.clear();
-        window.focused_in.clear();
+        window.containing_focus.clear();
         window.focus_parents_by_child.clear();
     }
 
@@ -1096,7 +1123,7 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
 
         if Some(focus_handle.id) == window.focus {
             for frame in &window.focus_stack {
-                window.focused_in.insert(frame.handle.id);
+                window.containing_focus.insert(frame.handle.id);
                 window
                     .key_down_listeners
                     .extend_from_slice(&frame.key_down_listeners);
