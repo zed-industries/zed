@@ -51,7 +51,6 @@ pub struct Label<S: 'static + Send + Sync + Clone> {
     label: SharedString,
     color: LabelColor,
     size: LabelSize,
-    highlight_indices: Vec<usize>,
     strikethrough: bool,
 }
 
@@ -62,7 +61,6 @@ impl<S: 'static + Send + Sync + Clone> Label<S> {
             label: label.into(),
             color: LabelColor::Default,
             size: LabelSize::Default,
-            highlight_indices: Vec::new(),
             strikethrough: false,
         }
     }
@@ -77,8 +75,60 @@ impl<S: 'static + Send + Sync + Clone> Label<S> {
         self
     }
 
-    pub fn with_highlights(mut self, indices: Vec<usize>) -> Self {
-        self.highlight_indices = indices;
+    pub fn set_strikethrough(mut self, strikethrough: bool) -> Self {
+        self.strikethrough = strikethrough;
+        self
+    }
+
+    fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        let theme = theme(cx);
+
+        div()
+            .when(self.strikethrough, |this| {
+                this.relative().child(
+                    div()
+                        .absolute()
+                        .top_px()
+                        .my_auto()
+                        .w_full()
+                        .h_px()
+                        .bg(LabelColor::Hidden.hsla(cx)),
+                )
+            })
+            .text_color(self.color.hsla(cx))
+            .child(self.label.clone())
+    }
+}
+
+#[derive(Element, Clone)]
+pub struct HighlightedLabel<S: 'static + Send + Sync + Clone> {
+    state_type: PhantomData<S>,
+    label: SharedString,
+    color: LabelColor,
+    size: LabelSize,
+    highlight_indices: Vec<usize>,
+    strikethrough: bool,
+}
+
+impl<S: 'static + Send + Sync + Clone> HighlightedLabel<S> {
+    pub fn new(label: impl Into<SharedString>, highlight_indices: Vec<usize>) -> Self {
+        Self {
+            state_type: PhantomData,
+            label: label.into(),
+            color: LabelColor::Default,
+            size: LabelSize::Default,
+            highlight_indices,
+            strikethrough: false,
+        }
+    }
+
+    pub fn color(mut self, color: LabelColor) -> Self {
+        self.color = color;
+        self
+    }
+
+    pub fn size(mut self, size: LabelSize) -> Self {
+        self.size = size;
         self
     }
 
@@ -192,7 +242,10 @@ mod stories {
                 .child(Story::label(cx, "Default"))
                 .child(Label::new("Hello, world!"))
                 .child(Story::label(cx, "Highlighted"))
-                .child(Label::new("Hello, world!").with_highlights(vec![0, 1, 2, 7, 8, 12]))
+                .child(HighlightedLabel::new(
+                    "Hello, world!",
+                    vec![0, 1, 2, 7, 8, 12],
+                ))
         }
     }
 }
