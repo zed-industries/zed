@@ -45,7 +45,7 @@ impl<S: 'static + Send + Sync + Clone> Keybinding<S> {
                     .gap_1()
                     .children(ModifierKey::iter().filter_map(|modifier| {
                         if modifiers.0.contains(&modifier) {
-                            Some(Key::new(modifier.glyph()))
+                            Some(Key::new(modifier.glyph().to_string()))
                         } else {
                             None
                         }
@@ -58,14 +58,11 @@ impl<S: 'static + Send + Sync + Clone> Keybinding<S> {
 #[derive(Element)]
 pub struct Key<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
-    key: String,
+    key: SharedString,
 }
 
 impl<S: 'static + Send + Sync> Key<S> {
-    pub fn new<K>(key: K) -> Self
-    where
-        K: Into<String>,
-    {
+    pub fn new(key: impl Into<SharedString>) -> Self {
         Self {
             state_type: PhantomData,
             key: key.into(),
