@@ -164,31 +164,42 @@ impl<E: Element> Element for Themed<E> {
         None
     }
 
+    fn initialize(
+        &mut self,
+        view_state: &mut Self::ViewState,
+        element_state: Option<Self::ElementState>,
+        cx: &mut ViewContext<Self::ViewState>,
+    ) -> Self::ElementState {
+        cx.with_global(self.theme.clone(), |cx| {
+            self.child.initialize(view_state, element_state, cx)
+        })
+    }
+
     fn layout(
         &mut self,
-        state: &mut E::ViewState,
-        element_state: Option<Self::ElementState>,
+        view_state: &mut E::ViewState,
+        element_state: &mut Self::ElementState,
         cx: &mut ViewContext<E::ViewState>,
-    ) -> (LayoutId, Self::ElementState)
+    ) -> LayoutId
     where
         Self: Sized,
     {
         cx.with_global(self.theme.clone(), |cx| {
-            self.child.layout(state, element_state, cx)
+            self.child.layout(view_state, element_state, cx)
         })
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        state: &mut Self::ViewState,
+        view_state: &mut Self::ViewState,
         frame_state: &mut Self::ElementState,
         cx: &mut ViewContext<Self::ViewState>,
     ) where
         Self: Sized,
     {
         cx.with_global(self.theme.clone(), |cx| {
-            self.child.paint(bounds, state, frame_state, cx);
+            self.child.paint(bounds, view_state, frame_state, cx);
         });
     }
 }

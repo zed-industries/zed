@@ -57,27 +57,34 @@ pub fn derive_element(input: TokenStream) -> TokenStream {
                 None
             }
 
+            fn initialize(
+                &mut self,
+                view_state: &mut Self::ViewState,
+                _: Option<Self::ElementState>,
+                cx: &mut gpui3::ViewContext<Self::ViewState>
+            ) -> Self::ElementState {
+                use gpui3::IntoAnyElement;
+
+                self.render(view_state, cx).into_any()
+            }
+
             fn layout(
                 &mut self,
                 view_state: &mut Self::ViewState,
-                element_state: Option<Self::ElementState>,
+                rendered_element: &mut Self::ElementState,
                 cx: &mut gpui3::ViewContext<Self::ViewState>,
-            ) -> (gpui3::LayoutId, Self::ElementState) {
-                use gpui3::IntoAnyElement;
-
-                let mut rendered_element = self.render(view_state, cx).into_any();
-                let layout_id = rendered_element.layout(view_state, cx);
-                (layout_id, rendered_element)
+            ) -> gpui3::LayoutId {
+                rendered_element.layout(view_state, cx)
             }
 
             fn paint(
                 &mut self,
                 bounds: gpui3::Bounds<gpui3::Pixels>,
                 view_state: &mut Self::ViewState,
-                element_state: &mut Self::ElementState,
+                rendered_element: &mut Self::ElementState,
                 cx: &mut gpui3::ViewContext<Self::ViewState>,
             ) {
-                element_state.paint(view_state, None, cx)
+                rendered_element.paint(view_state, None, cx)
             }
         }
     };
