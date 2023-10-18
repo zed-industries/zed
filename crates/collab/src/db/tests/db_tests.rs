@@ -22,7 +22,6 @@ async fn test_get_users(db: &Arc<Database>) {
                 NewUserParams {
                     github_login: format!("user{i}"),
                     github_user_id: i,
-                    invite_count: 0,
                 },
             )
             .await
@@ -88,7 +87,6 @@ async fn test_get_or_create_user_by_github_account(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "login1".into(),
                 github_user_id: 101,
-                invite_count: 0,
             },
         )
         .await
@@ -101,7 +99,6 @@ async fn test_get_or_create_user_by_github_account(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "login2".into(),
                 github_user_id: 102,
-                invite_count: 0,
             },
         )
         .await
@@ -156,7 +153,6 @@ async fn test_create_access_tokens(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "u1".into(),
                 github_user_id: 1,
-                invite_count: 0,
             },
         )
         .await
@@ -238,7 +234,6 @@ async fn test_add_contacts(db: &Arc<Database>) {
                 NewUserParams {
                     github_login: format!("user{i}"),
                     github_user_id: i,
-                    invite_count: 0,
                 },
             )
             .await
@@ -400,7 +395,6 @@ async fn test_metrics_id(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "person1".into(),
                 github_user_id: 101,
-                invite_count: 5,
             },
         )
         .await
@@ -416,7 +410,6 @@ async fn test_metrics_id(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "person2".into(),
                 github_user_id: 102,
-                invite_count: 5,
             },
         )
         .await
@@ -445,7 +438,6 @@ async fn test_project_count(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "admin".into(),
                 github_user_id: 0,
-                invite_count: 0,
             },
         )
         .await
@@ -457,7 +449,6 @@ async fn test_project_count(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "user".into(),
                 github_user_id: 1,
-                invite_count: 0,
             },
         )
         .await
@@ -539,7 +530,6 @@ async fn test_fuzzy_search_users() {
             NewUserParams {
                 github_login: github_login.into(),
                 github_user_id: i as i32,
-                invite_count: 0,
             },
         )
         .await
@@ -581,7 +571,6 @@ async fn test_non_matching_release_channels(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "admin".into(),
                 github_user_id: 0,
-                invite_count: 0,
             },
         )
         .await
@@ -593,7 +582,6 @@ async fn test_non_matching_release_channels(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "user".into(),
                 github_user_id: 1,
-                invite_count: 0,
             },
         )
         .await

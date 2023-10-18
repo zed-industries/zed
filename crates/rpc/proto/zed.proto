@@ -1088,6 +1088,7 @@ message SendChannelMessage {
     uint64 channel_id = 1;
     string body = 2;
     Nonce nonce = 3;
+    repeated ChatMention mentions = 4;
 }
 
 message RemoveChannelMessage {
@@ -1149,6 +1150,12 @@ message ChannelMessage {
     uint64 timestamp = 3;
     uint64 sender_id = 4;
     Nonce nonce = 5;
+    repeated ChatMention mentions = 6;
+}
+
+message ChatMention {
+    Range range = 1;
+    uint64 user_id = 2;
 }
 
 message RejoinChannelBuffers {

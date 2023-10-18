@@ -7,6 +7,7 @@ pub mod channel_buffer_collaborator;
 pub mod channel_chat_participant;
 pub mod channel_member;
 pub mod channel_message;
+pub mod channel_message_mention;
 pub mod channel_path;
 pub mod contact;
 pub mod feature_flag;

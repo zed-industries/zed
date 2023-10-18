@@ -215,6 +215,14 @@ CREATE TABLE IF NOT EXISTS "channel_messages" (
 CREATE INDEX "index_channel_messages_on_channel_id" ON "channel_messages" ("channel_id");
 CREATE UNIQUE INDEX "index_channel_messages_on_nonce" ON "channel_messages" ("nonce");
 
+CREATE TABLE "channel_message_mentions" (
+    "message_id" INTEGER NOT NULL REFERENCES channel_messages (id) ON DELETE CASCADE,
+    "start_offset" INTEGER NOT NULL,
+    "end_offset" INTEGER NOT NULL,
+    "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    PRIMARY KEY(message_id, start_offset)
+);
+
 CREATE TABLE "channel_paths" (
     "id_path" TEXT NOT NULL PRIMARY KEY,
     "channel_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE

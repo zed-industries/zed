@@ -24,7 +24,6 @@ async fn test_channels(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "user1".into(),
                 github_user_id: 5,
-                invite_count: 0,
             },
         )
         .await
@@ -38,7 +37,6 @@ async fn test_channels(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "user2".into(),
                 github_user_id: 6,
-                invite_count: 0,
             },
         )
         .await
@@ -179,7 +177,6 @@ async fn test_joining_channels(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "user1".into(),
                 github_user_id: 5,
-                invite_count: 0,
             },
         )
         .await
@@ -192,7 +189,6 @@ async fn test_joining_channels(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "user2".into(),
                 github_user_id: 6,
-                invite_count: 0,
             },
         )
         .await
@@ -246,7 +242,6 @@ async fn test_channel_invites(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "user1".into(),
                 github_user_id: 5,
-                invite_count: 0,
             },
         )
         .await
@@ -259,7 +254,6 @@ async fn test_channel_invites(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "user2".into(),
                 github_user_id: 6,
-                invite_count: 0,
             },
         )
         .await
@@ -273,7 +267,6 @@ async fn test_channel_invites(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "user3".into(),
                 github_user_id: 7,
-                invite_count: 0,
             },
         )
         .await
@@ -385,7 +378,6 @@ async fn test_channel_renames(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "user1".into(),
                 github_user_id: 5,
-                invite_count: 0,
             },
         )
         .await
@@ -399,7 +391,6 @@ async fn test_channel_renames(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "user2".into(),
                 github_user_id: 6,
-                invite_count: 0,
             },
         )
         .await
@@ -444,7 +435,6 @@ async fn test_db_channel_moving(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "user1".into(),
                 github_user_id: 5,
-                invite_count: 0,
             },
         )
         .await
@@ -802,7 +792,6 @@ async fn test_db_channel_moving_bugs(db: &Arc<Database>) {
             NewUserParams {
                 github_login: "user1".into(),
                 github_user_id: 5,
-                invite_count: 0,
             },
         )
         .await

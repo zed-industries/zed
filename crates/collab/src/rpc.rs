@@ -2885,6 +2885,8 @@ async fn send_channel_message(
         return Err(anyhow!("message can't be blank"))?;
     }
 
+    // TODO: adjust mentions if body is trimmed
+
     let timestamp = OffsetDateTime::now_utc();
     let nonce = request
         .nonce
@@ -2898,6 +2900,7 @@ async fn send_channel_message(
             channel_id,
             session.user_id,
             &body,
+            &request.mentions,
             timestamp,
             nonce.clone().into(),
         )
@@ -2906,6 +2909,7 @@ async fn send_channel_message(
         sender_id: session.user_id.to_proto(),
         id: message_id.to_proto(),
         body,
+        mentions: request.mentions,
         timestamp: timestamp.unix_timestamp() as u64,
         nonce: Some(nonce),
     };

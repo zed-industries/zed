@@ -3,7 +3,7 @@ use anyhow::{anyhow, Result};
 use client::{
     proto,
     user::{User, UserStore},
-    Client, Subscription, TypedEnvelope,
+    Client, Subscription, TypedEnvelope, UserId,
 };
 use futures::lock::Mutex;
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task};
@@ -27,6 +27,12 @@ pub struct ChannelChat {
     _subscription: Subscription,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct MessageParams {
+    pub text: String,
+    pub mentions: Vec<(Range<usize>, UserId)>,
+}
+
 #[derive(Clone, Debug)]
 pub struct ChannelMessage {
     pub id: ChannelMessageId,
@@ -34,6 +40,7 @@ pub struct ChannelMessage {
     pub timestamp: OffsetDateTime,
     pub sender: Arc<User>,
     pub nonce: u128,
+    pub mentions: Vec<(Range<usize>, UserId)>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -120,12 +127,16 @@ impl ChannelChat {
         &self.channel
     }
 
+    pub fn client(&self) -> &Arc<Client> {
+        &self.rpc
+    }
+
     pub fn send_message(
         &mut self,
-        body: String,
+        message: MessageParams,
         cx: &mut ModelContext<Self>,
     ) -> Result<Task<Result<()>>> {
-        if body.is_empty() {
+        if message.text.is_empty() {
             Err(anyhow!("message body can't be empty"))?;
         }
 
@@ -142,9 +153,10 @@ impl ChannelChat {
             SumTree::from_item(
                 ChannelMessage {
                     id: pending_id,
-                    body: body.clone(),
+                    body: message.text.clone(),
                     sender: current_user,
                     timestamp: OffsetDateTime::now_utc(),
+                    mentions: message.mentions.clone(),
                     nonce,
                 },
                 &(),
@@ -158,8 +170,9 @@ impl ChannelChat {
             let outgoing_message_guard = outgoing_messages_lock.lock().await;
             let request = rpc.request(proto::SendChannelMessage {
                 channel_id,
-                body,
+                body: message.text,
                 nonce: Some(nonce.into()),
+                mentions: mentions_to_proto(&message.mentions),
             });
             let response = request.await?;
             drop(outgoing_message_guard);
@@ -284,6 +297,7 @@ impl ChannelChat {
                     let request = rpc.request(proto::SendChannelMessage {
                         channel_id,
                         body: pending_message.body,
+                        mentions: mentions_to_proto(&pending_message.mentions),
                         nonce: Some(pending_message.nonce.into()),
                     });
                     let response = request.await?;
@@ -471,6 +485,14 @@ impl ChannelMessage {
         Ok(ChannelMessage {
             id: ChannelMessageId::Saved(message.id),
             body: message.body,
+            mentions: message
+                .mentions
+                .into_iter()
+                .filter_map(|mention| {
+                    let range = mention.range?;
+                    Some((range.start as usize..range.end as usize, mention.user_id))
+                })
+                .collect(),
             timestamp: OffsetDateTime::from_unix_timestamp(message.timestamp as i64)?,
             sender,
             nonce: message
@@ -509,6 +531,19 @@ impl ChannelMessage {
     }
 }
 
+pub fn mentions_to_proto(mentions: &[(Range<usize>, UserId)]) -> Vec<proto::ChatMention> {
+    mentions
+        .iter()
+        .map(|(range, user_id)| proto::ChatMention {
+            range: Some(proto::Range {
+                start: range.start as u64,
+                end: range.end as u64,
+            }),
+            user_id: *user_id as u64,
+        })
+        .collect()
+}
+
 impl sum_tree::Item for ChannelMessage {
     type Summary = ChannelMessageSummary;
 
@@ -545,5 +580,14 @@ impl<'a> sum_tree::Dimension<'a, ChannelMessageSummary> for ChannelMessageId {
 impl<'a> sum_tree::Dimension<'a, ChannelMessageSummary> for Count {
     fn add_summary(&mut self, summary: &'a ChannelMessageSummary, _: &()) {
         self.0 += summary.count;
+    }
+}
+
+impl<'a> From<&'a str> for MessageParams {
+    fn from(value: &'a str) -> Self {
+        Self {
+            text: value.into(),
+            mentions: Vec::new(),
+        }
     }
 }

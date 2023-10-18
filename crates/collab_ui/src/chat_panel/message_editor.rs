@@ -1,4 +1,4 @@
-use channel::{Channel, ChannelMembership, ChannelStore};
+use channel::{Channel, ChannelMembership, ChannelStore, MessageParams};
 use client::UserId;
 use collections::HashMap;
 use editor::{AnchorRangeExt, Editor};
@@ -9,7 +9,7 @@ use gpui::{
 use language::{language_settings::SoftWrap, Buffer, BufferSnapshot, LanguageRegistry};
 use lazy_static::lazy_static;
 use project::search::SearchQuery;
-use std::{ops::Range, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 const MENTIONS_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -31,12 +31,6 @@ pub struct MessageEditor {
     mentions: Vec<UserId>,
     mentions_task: Option<Task<()>>,
     channel: Option<Arc<Channel>>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct ChatMessage {
-    pub text: String,
-    pub mentions: Vec<(Range<usize>, UserId)>,
 }
 
 impl MessageEditor {
@@ -102,7 +96,7 @@ impl MessageEditor {
         }
     }
 
-    pub fn set_members(&mut self, members: Vec<ChannelMembership>, cx: &mut ViewContext<Self>) {
+    pub fn set_members(&mut self, members: Vec<ChannelMembership>, _: &mut ViewContext<Self>) {
         self.users.clear();
         self.users.extend(
             members
@@ -111,7 +105,7 @@ impl MessageEditor {
         );
     }
 
-    pub fn take_message(&mut self, cx: &mut ViewContext<Self>) -> ChatMessage {
+    pub fn take_message(&mut self, cx: &mut ViewContext<Self>) -> MessageParams {
         self.editor.update(cx, |editor, cx| {
             let highlights = editor.text_highlights::<Self>(cx);
             let text = editor.text(cx);
@@ -129,7 +123,7 @@ impl MessageEditor {
             editor.clear(cx);
             self.mentions.clear();
 
-            ChatMessage { text, mentions }
+            MessageParams { text, mentions }
         })
     }
 
@@ -264,7 +258,7 @@ mod tests {
             let (text, ranges) = marked_text_ranges("Hello, «@a-b»! Have you met «@C_D»?", false);
             assert_eq!(
                 editor.take_message(cx),
-                ChatMessage {
+                MessageParams {
                     text,
                     mentions: vec![(ranges[0].clone(), 101), (ranges[1].clone(), 102)],
                 }

@@ -194,6 +194,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
                     body: "a".into(),
                     timestamp: 1000,
                     sender_id: 5,
+                    mentions: vec![],
                     nonce: Some(1.into()),
                 },
                 proto::ChannelMessage {
@@ -201,6 +202,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
                     body: "b".into(),
                     timestamp: 1001,
                     sender_id: 6,
+                    mentions: vec![],
                     nonce: Some(2.into()),
                 },
             ],
@@ -247,6 +249,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
             body: "c".into(),
             timestamp: 1002,
             sender_id: 7,
+            mentions: vec![],
             nonce: Some(3.into()),
         }),
     });
@@ -300,6 +303,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
                     timestamp: 998,
                     sender_id: 5,
                     nonce: Some(4.into()),
+                    mentions: vec![],
                 },
                 proto::ChannelMessage {
                     id: 9,
@@ -307,6 +311,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
                     timestamp: 999,
                     sender_id: 6,
                     nonce: Some(5.into()),
+                    mentions: vec![],
                 },
             ],
         },

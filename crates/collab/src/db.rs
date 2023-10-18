@@ -418,7 +418,6 @@ pub struct WaitlistSummary {
 pub struct NewUserParams {
     pub github_login: String,
     pub github_user_id: i32,
-    pub invite_count: i32,
 }
 
 #[derive(Debug)]

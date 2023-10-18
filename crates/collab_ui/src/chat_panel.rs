@@ -599,7 +599,7 @@ impl ChatPanel {
                 .update(cx, |editor, cx| editor.take_message(cx));
 
             if let Some(task) = chat
-                .update(cx, |chat, cx| chat.send_message(message.text, cx))
+                .update(cx, |chat, cx| chat.send_message(message, cx))
                 .log_err()
             {
                 task.detach();

@@ -140,7 +140,6 @@ impl TestServer {
                     NewUserParams {
                         github_login: name.into(),
                         github_user_id: 0,
-                        invite_count: 0,
                     },
                 )
                 .await
