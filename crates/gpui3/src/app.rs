@@ -270,9 +270,11 @@ impl AppContext {
                     .take()
                     .unwrap()
                     .and_then(|id| FocusHandle::for_id(id, &cx.window.focus_handles));
-                let event = FocusEvent { focused, blurred };
-                for listener in &listeners {
-                    listener(&event, cx);
+                if focused.is_some() || blurred.is_some() {
+                    let event = FocusEvent { focused, blurred };
+                    for listener in &listeners {
+                        listener(&event, cx);
+                    }
                 }
 
                 listeners.extend(cx.window.focus_listeners.drain(..));
