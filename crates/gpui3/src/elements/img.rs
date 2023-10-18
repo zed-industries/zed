@@ -1,29 +1,33 @@
 use crate::{
-    AnyElement, BorrowWindow, Bounds, Element, IntoAnyElement, LayoutId, Pixels, SharedString,
-    Style, Styled, ViewContext,
+    div, Active, AnonymousElement, AnyElement, BorrowWindow, Bounds, Click, Div, DivState, Element,
+    ElementId, ElementIdentity, Hover, IdentifiedElement, Interactive, IntoAnyElement, LayoutId,
+    MouseEventListeners, Pixels, SharedString, StyleRefinement, Styled, ViewContext,
 };
 use futures::FutureExt;
-use refineable::Cascade;
-use std::marker::PhantomData;
 use util::ResultExt;
 
-pub struct Img<S> {
-    style: Cascade<Style>,
+pub struct Img<V: 'static + Send + Sync, K: ElementIdentity = AnonymousElement> {
+    base: Div<V, K>,
     uri: Option<SharedString>,
     grayscale: bool,
-    state_type: PhantomData<S>,
 }
 
-pub fn img<S>() -> Img<S> {
+pub fn img<V>() -> Img<V, AnonymousElement>
+where
+    V: 'static + Send + Sync,
+{
     Img {
-        style: Cascade::default(),
+        base: div(),
         uri: None,
         grayscale: false,
-        state_type: PhantomData,
     }
 }
 
-impl<S> Img<S> {
+impl<V, K> Img<V, K>
+where
+    V: 'static + Send + Sync,
+    K: ElementIdentity,
+{
     pub fn uri(mut self, uri: impl Into<SharedString>) -> Self {
         self.uri = Some(uri.into());
         self
@@ -35,47 +39,63 @@ impl<S> Img<S> {
     }
 }
 
-impl<S> IntoAnyElement<S> for Img<S>
+impl<V: 'static + Send + Sync> Img<V, AnonymousElement> {
+    pub fn id(self, id: impl Into<ElementId>) -> Img<V, IdentifiedElement> {
+        Img {
+            base: self.base.id(id),
+            uri: self.uri,
+            grayscale: self.grayscale,
+        }
+    }
+}
+
+impl<V, K> IntoAnyElement<V> for Img<V, K>
 where
-    S: 'static + Send + Sync,
+    V: 'static + Send + Sync,
+    K: ElementIdentity,
 {
-    fn into_any(self) -> AnyElement<S> {
+    fn into_any(self) -> AnyElement<V> {
         AnyElement::new(self)
     }
 }
 
-impl<S: Send + Sync + 'static> Element for Img<S> {
-    type ViewState = S;
-    type ElementState = ();
+impl<V, K> Element for Img<V, K>
+where
+    V: Send + Sync + 'static,
+    K: ElementIdentity,
+{
+    type ViewState = V;
+    type ElementState = DivState;
 
-    fn element_id(&self) -> Option<crate::ElementId> {
-        None
+    fn id(&self) -> Option<crate::ElementId> {
+        self.base.id()
     }
 
     fn layout(
         &mut self,
-        _: &mut Self::ViewState,
-        _: Option<Self::ElementState>,
+        view_state: &mut Self::ViewState,
+        element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<Self::ViewState>,
     ) -> (LayoutId, Self::ElementState)
     where
         Self: Sized,
     {
-        let style = self.computed_style();
-        let layout_id = cx.request_layout(style, []);
-        (layout_id, ())
+        self.base.layout(view_state, element_state, cx)
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _: &mut Self::ViewState,
-        _: &mut Self::ElementState,
+        view: &mut Self::ViewState,
+        element_state: &mut Self::ElementState,
         cx: &mut ViewContext<Self::ViewState>,
     ) {
-        let style = self.computed_style();
+        cx.stack(0, |cx| {
+            self.base.paint(bounds, view, element_state, cx);
+        });
 
-        style.paint(bounds, cx);
+        let style = self.base.compute_style(bounds, element_state, cx);
+        let corner_radii = style.corner_radii;
 
         if let Some(uri) = self.uri.clone() {
             let image_future = cx.image_cache.get(uri);
@@ -84,7 +104,7 @@ impl<S: Send + Sync + 'static> Element for Img<S> {
                 .now_or_never()
                 .and_then(ResultExt::log_err)
             {
-                let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
+                let corner_radii = corner_radii.to_pixels(bounds.size, cx.rem_size());
                 cx.stack(1, |cx| {
                     cx.paint_image(bounds, corner_radii, data, self.grayscale)
                         .log_err()
@@ -101,14 +121,43 @@ impl<S: Send + Sync + 'static> Element for Img<S> {
     }
 }
 
-impl<S> Styled for Img<S> {
-    type Style = Style;
-
-    fn style_cascade(&mut self) -> &mut Cascade<Self::Style> {
-        &mut self.style
+impl<V, K> Styled for Img<V, K>
+where
+    V: 'static + Send + Sync,
+    K: ElementIdentity,
+{
+    fn style(&mut self) -> &mut StyleRefinement {
+        self.base.style()
     }
+}
 
-    fn declared_style(&mut self) -> &mut <Self::Style as refineable::Refineable>::Refinement {
-        self.style.base()
+impl<V, K> Interactive for Img<V, K>
+where
+    V: 'static + Send + Sync,
+    K: ElementIdentity,
+{
+    fn listeners(&mut self) -> &mut MouseEventListeners<V> {
+        self.base.listeners()
+    }
+}
+
+impl<V, K> Hover for Img<V, K>
+where
+    V: 'static + Send + Sync,
+    K: ElementIdentity,
+{
+    fn set_hover_style(&mut self, group: Option<SharedString>, style: StyleRefinement) {
+        self.base.set_hover_style(group, style);
+    }
+}
+
+impl<V> Click for Img<V, IdentifiedElement> where V: 'static + Send + Sync {}
+
+impl<V> Active for Img<V, IdentifiedElement>
+where
+    V: 'static + Send + Sync,
+{
+    fn set_active_style(&mut self, group: Option<SharedString>, style: StyleRefinement) {
+        self.base.set_active_style(group, style)
     }
 }

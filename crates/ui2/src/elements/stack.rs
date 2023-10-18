@@ -2,7 +2,7 @@ use gpui3::{div, Div};
 
 use crate::prelude::*;
 
-pub trait Stack: StyleHelpers {
+pub trait Stack: Styled + Sized {
     /// Horizontally stacks elements.
     fn h_stack(self) -> Self {
         self.flex().flex_row().items_center()

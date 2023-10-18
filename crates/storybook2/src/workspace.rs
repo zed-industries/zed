@@ -3,7 +3,7 @@ use crate::{
     themes::rose_pine,
 };
 use gpui3::{
-    div, img, svg, view, Context, Element, ParentElement, StyleHelpers, Styled, View, ViewContext,
+    div, img, svg, view, Context, Element, Hover, ParentElement, Styled, View, ViewContext,
     WindowContext,
 };
 use ui::{theme, themed};
@@ -34,18 +34,18 @@ impl Workspace {
                 .w_full()
                 .h_5()
                 .mt_10()
-                .fill(theme.middle.warning.default.foreground)
+                .bg(theme.middle.warning.default.foreground)
                 .flex()
                 .flex_row()
                 .justify_center()
                 .child(
                     div()
                         .size_5()
-                        .fill(theme.middle.negative.default.foreground)
-                        .group_hover("")
-                        .fill(theme.middle.positive.default.foreground)
-                        .hover()
-                        .fill(theme.middle.variant.default.foreground),
+                        .bg(theme.middle.negative.default.foreground)
+                        .group_hover("", |style| {
+                            style.bg(theme.middle.positive.default.foreground)
+                        })
+                        .hover(|style| style.bg(theme.middle.variant.default.foreground)),
                 ),
         )
     }
@@ -63,7 +63,7 @@ impl Workspace {
                 .justify_start()
                 .items_start()
                 .text_color(theme.lowest.base.default.foreground)
-                .fill(theme.middle.base.default.background)
+                .bg(theme.middle.base.default.background)
                 .child(titlebar(cx))
                 .child(
                     div()
@@ -91,7 +91,7 @@ pub fn titlebar<S: 'static + Send + Sync>(cx: &mut ViewContext<S>) -> impl Eleme
         .justify_between()
         .w_full()
         .h_8()
-        .fill(theme.lowest.base.default.background)
+        .bg(theme.lowest.base.default.background)
         .child(this.left_group(cx))
         .child(this.right_group(cx))
 }
@@ -108,7 +108,7 @@ impl Titlebar {
             .justify_between()
             .w_full()
             .h_8()
-            .fill(theme.lowest.base.default.background)
+            .bg(theme.lowest.base.default.background)
             .child(self.left_group(cx))
             .child(self.right_group(cx))
     }
@@ -131,25 +131,25 @@ impl Titlebar {
                     .items_center()
                     .gap_2()
                     .child(
-                        div()
-                            .w_3()
-                            .h_3()
-                            .rounded_full()
-                            .fill(theme.lowest.positive.default.foreground),
+                        div().w_3().h_3().rounded_full().bg(theme
+                            .lowest
+                            .positive
+                            .default
+                            .foreground),
                     )
                     .child(
-                        div()
-                            .w_3()
-                            .h_3()
-                            .rounded_full()
-                            .fill(theme.lowest.warning.default.foreground),
+                        div().w_3().h_3().rounded_full().bg(theme
+                            .lowest
+                            .warning
+                            .default
+                            .foreground),
                     )
                     .child(
-                        div()
-                            .w_3()
-                            .h_3()
-                            .rounded_full()
-                            .fill(theme.lowest.negative.default.foreground),
+                        div().w_3().h_3().rounded_full().bg(theme
+                            .lowest
+                            .negative
+                            .default
+                            .foreground),
                     ),
             )
             // === Project Info === //
@@ -215,12 +215,12 @@ impl Titlebar {
                             svg()
                                 .path("icons/exit.svg")
                                 .size_4()
-                                .fill(theme.lowest.base.default.foreground),
+                                .text_color(theme.lowest.base.default.foreground),
                         ),
                     ),
                 ),
             )
-            .child(div().w_px().h_3().fill(theme.lowest.base.default.border))
+            .child(div().w_px().h_3().bg(theme.lowest.base.default.border))
             // === Comms === //
             .child(
                 div().child(
@@ -245,7 +245,7 @@ impl Titlebar {
                                     svg()
                                         .path("icons/mic.svg")
                                         .size_3p5()
-                                        .fill(theme.lowest.base.default.foreground),
+                                        .text_color(theme.lowest.base.default.foreground),
                                 ),
                         )
                         .child(
@@ -265,7 +265,7 @@ impl Titlebar {
                                     svg()
                                         .path("icons/speaker-loud.svg")
                                         .size_3p5()
-                                        .fill(theme.lowest.base.default.foreground),
+                                        .text_color(theme.lowest.base.default.foreground),
                                 ),
                         )
                         .child(
@@ -285,12 +285,12 @@ impl Titlebar {
                                     svg()
                                         .path("icons/desktop.svg")
                                         .size_3p5()
-                                        .fill(theme.lowest.base.default.foreground),
+                                        .text_color(theme.lowest.base.default.foreground),
                                 ),
                         ),
                 ),
             )
-            .child(div().w_px().h_3().fill(theme.lowest.base.default.border))
+            .child(div().w_px().h_3().bg(theme.lowest.base.default.border))
             // User Group
             .child(
                 div().child(
@@ -311,14 +311,14 @@ impl Titlebar {
                                 .uri("https://avatars.githubusercontent.com/u/1714999?v=4")
                                 .size_4()
                                 .rounded_md()
-                                .fill(theme.middle.on.default.foreground),
+                                .bg(theme.middle.on.default.foreground),
                         )
                         .child(
                             svg()
                                 .path("icons/caret_down.svg")
                                 .w_2()
                                 .h_2()
-                                .fill(theme.lowest.variant.default.foreground),
+                                .text_color(theme.lowest.variant.default.foreground),
                         ),
                 ),
             )
@@ -341,7 +341,7 @@ mod statusbar {
             .justify_between()
             .w_full()
             .h_8()
-            .fill(theme.lowest.base.default.background)
+            .bg(theme.lowest.base.default.background)
         // .child(left_group(cx))
         // .child(right_group(cx))
     }
@@ -374,7 +374,7 @@ mod statusbar {
                                     .path("icons/project.svg")
                                     .w_4()
                                     .h_4()
-                                    .fill(theme.lowest.base.default.foreground),
+                                    .text_color(theme.lowest.base.default.foreground),
                             ),
                     )
                     .child(
@@ -389,7 +389,7 @@ mod statusbar {
                                     .path("icons/conversations.svg")
                                     .w_4()
                                     .h_4()
-                                    .fill(theme.lowest.base.default.foreground),
+                                    .text_color(theme.lowest.base.default.foreground),
                             ),
                     )
                     .child(
@@ -404,7 +404,7 @@ mod statusbar {
                                     .path("icons/file_icons/notebook.svg")
                                     .w_4()
                                     .h_4()
-                                    .fill(theme.lowest.accent.default.foreground),
+                                    .text_color(theme.lowest.accent.default.foreground),
                             ),
                     ),
             )
@@ -432,7 +432,7 @@ mod statusbar {
                                     .path("icons/error.svg")
                                     .w_4()
                                     .h_4()
-                                    .fill(theme.lowest.negative.default.foreground),
+                                    .text_color(theme.lowest.negative.default.foreground),
                             )
                             .child(div().text_sm().child("2")),
                     )
@@ -473,7 +473,7 @@ mod statusbar {
                                     .path("icons/check_circle.svg")
                                     .w_4()
                                     .h_4()
-                                    .fill(theme.lowest.base.default.foreground),
+                                    .text_color(theme.lowest.base.default.foreground),
                             ),
                     )
                     .child(
@@ -488,7 +488,7 @@ mod statusbar {
                                     .path("icons/copilot.svg")
                                     .w_4()
                                     .h_4()
-                                    .fill(theme.lowest.accent.default.foreground),
+                                    .text_color(theme.lowest.accent.default.foreground),
                             ),
                     ),
             )

@@ -162,7 +162,7 @@ impl<S: 'static + Send + Sync + Clone> Button<S> {
             .rounded_md()
             .border()
             .border_color(border_color)
-            .fill(self.background_color(cx));
+            .bg(self.background_color(cx));
 
         match (self.icon, self.icon_position) {
             (Some(_), Some(IconPosition::Left)) => {

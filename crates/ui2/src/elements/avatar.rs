@@ -39,7 +39,7 @@ impl<S: 'static + Send + Sync> Avatar<S> {
 
         img.uri(self.src.clone())
             .size_4()
-            .fill(theme.middle.warning.default.foreground)
+            .bg(theme.middle.warning.default.foreground)
     }
 }
 
@@ -64,7 +64,11 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Avatar<S>>(cx))
                 .child(Story::label(cx, "Default"))

@@ -1,85 +1,137 @@
 use crate::{
-    AnyElement, Bounds, Element, IntoAnyElement, LayoutId, Pixels, SharedString, Style, Styled,
+    div, Active, AnonymousElement, AnyElement, Bounds, Click, Div, DivState, Element, ElementId,
+    ElementIdentity, Hover, IdentifiedElement, Interactive, IntoAnyElement, LayoutId,
+    MouseEventListeners, Pixels, SharedString, StyleRefinement, Styled,
 };
-use refineable::Cascade;
-use std::marker::PhantomData;
 use util::ResultExt;
 
-pub struct Svg<S> {
+pub struct Svg<V: 'static + Send + Sync, K: ElementIdentity = AnonymousElement> {
+    base: Div<V, K>,
     path: Option<SharedString>,
-    style: Cascade<Style>,
-    state_type: PhantomData<S>,
 }
 
-pub fn svg<S>() -> Svg<S> {
+pub fn svg<V>() -> Svg<V, AnonymousElement>
+where
+    V: 'static + Send + Sync,
+{
     Svg {
+        base: div(),
         path: None,
-        style: Cascade::<Style>::default(),
-        state_type: PhantomData,
     }
 }
 
-impl<S> Svg<S> {
+impl<V, K> Svg<V, K>
+where
+    V: 'static + Send + Sync,
+    K: ElementIdentity,
+{
     pub fn path(mut self, path: impl Into<SharedString>) -> Self {
         self.path = Some(path.into());
         self
     }
 }
 
-impl<S> IntoAnyElement<S> for Svg<S>
+impl<V: 'static + Send + Sync> Svg<V, AnonymousElement> {
+    pub fn id(self, id: impl Into<ElementId>) -> Svg<V, IdentifiedElement> {
+        Svg {
+            base: self.base.id(id),
+            path: self.path,
+        }
+    }
+}
+
+impl<V, K> IntoAnyElement<V> for Svg<V, K>
 where
-    S: 'static + Send + Sync,
+    V: 'static + Send + Sync,
+    K: ElementIdentity,
 {
-    fn into_any(self) -> AnyElement<S> {
+    fn into_any(self) -> AnyElement<V> {
         AnyElement::new(self)
     }
 }
 
-impl<S: 'static + Send + Sync> Element for Svg<S> {
-    type ViewState = S;
-    type ElementState = ();
+impl<V, K> Element for Svg<V, K>
+where
+    V: 'static + Send + Sync,
+    K: ElementIdentity,
+{
+    type ViewState = V;
+    type ElementState = DivState;
 
-    fn element_id(&self) -> Option<crate::ElementId> {
-        None
+    fn id(&self) -> Option<crate::ElementId> {
+        self.base.id()
     }
 
     fn layout(
         &mut self,
-        _: &mut S,
-        _: Option<Self::ElementState>,
-        cx: &mut crate::ViewContext<S>,
+        view: &mut V,
+        element_state: Option<Self::ElementState>,
+        cx: &mut crate::ViewContext<V>,
     ) -> (LayoutId, Self::ElementState)
     where
         Self: Sized,
     {
-        let style = self.computed_style();
-        (cx.request_layout(style, []), ())
+        self.base.layout(view, element_state, cx)
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _: &mut Self::ViewState,
-        _: &mut Self::ElementState,
-        cx: &mut crate::ViewContext<S>,
+        view: &mut Self::ViewState,
+        element_state: &mut Self::ElementState,
+        cx: &mut crate::ViewContext<V>,
     ) where
         Self: Sized,
     {
-        let fill_color = self.computed_style().fill.and_then(|fill| fill.color());
-        if let Some((path, fill_color)) = self.path.as_ref().zip(fill_color) {
-            cx.paint_svg(bounds, path.clone(), fill_color).log_err();
+        self.base.paint(bounds, view, element_state, cx);
+        let color = self
+            .base
+            .compute_style(bounds, element_state, cx)
+            .text
+            .color;
+        if let Some((path, color)) = self.path.as_ref().zip(color) {
+            cx.paint_svg(bounds, path.clone(), color).log_err();
         }
     }
 }
 
-impl<S: 'static + Send + Sync> Styled for Svg<S> {
-    type Style = Style;
-
-    fn style_cascade(&mut self) -> &mut refineable::Cascade<Self::Style> {
-        &mut self.style
+impl<V, K> Styled for Svg<V, K>
+where
+    V: 'static + Send + Sync,
+    K: ElementIdentity,
+{
+    fn style(&mut self) -> &mut StyleRefinement {
+        self.base.style()
     }
+}
 
-    fn declared_style(&mut self) -> &mut <Self::Style as refineable::Refineable>::Refinement {
-        self.style.base()
+impl<V, K> Interactive for Svg<V, K>
+where
+    V: 'static + Send + Sync,
+    K: ElementIdentity,
+{
+    fn listeners(&mut self) -> &mut MouseEventListeners<V> {
+        self.base.listeners()
+    }
+}
+
+impl<V, K> Hover for Svg<V, K>
+where
+    V: 'static + Send + Sync,
+    K: ElementIdentity,
+{
+    fn set_hover_style(&mut self, group: Option<SharedString>, style: StyleRefinement) {
+        self.base.set_hover_style(group, style);
+    }
+}
+
+impl<V> Click for Svg<V, IdentifiedElement> where V: 'static + Send + Sync {}
+
+impl<V> Active for Svg<V, IdentifiedElement>
+where
+    V: 'static + Send + Sync,
+{
+    fn set_active_style(&mut self, group: Option<SharedString>, style: StyleRefinement) {
+        self.base.set_active_style(group, style)
     }
 }

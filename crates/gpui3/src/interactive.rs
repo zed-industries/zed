@@ -1,17 +1,21 @@
-use crate::{
-    Bounds, DispatchPhase, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    ScrollWheelEvent, ViewContext,
-};
 use smallvec::SmallVec;
+
+use crate::{
+    Bounds, DispatchPhase, Element, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, ScrollWheelEvent, ViewContext,
+};
 use std::sync::Arc;
 
-pub trait Interactive<S: 'static + Send + Sync> {
-    fn listeners(&mut self) -> &mut MouseEventListeners<S>;
+pub trait Interactive: Element {
+    fn listeners(&mut self) -> &mut MouseEventListeners<Self::ViewState>;
 
     fn on_mouse_down(
         mut self,
         button: MouseButton,
-        handler: impl Fn(&mut S, &MouseDownEvent, &mut ViewContext<S>) + Send + Sync + 'static,
+        handler: impl Fn(&mut Self::ViewState, &MouseDownEvent, &mut ViewContext<Self::ViewState>)
+            + Send
+            + Sync
+            + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -21,7 +25,7 @@ pub trait Interactive<S: 'static + Send + Sync> {
             .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble
                     && event.button == button
-                    && bounds.contains_point(event.position)
+                    && bounds.contains_point(&event.position)
                 {
                     handler(view, event, cx)
                 }
@@ -32,7 +36,10 @@ pub trait Interactive<S: 'static + Send + Sync> {
     fn on_mouse_up(
         mut self,
         button: MouseButton,
-        handler: impl Fn(&mut S, &MouseUpEvent, &mut ViewContext<S>) + Send + Sync + 'static,
+        handler: impl Fn(&mut Self::ViewState, &MouseUpEvent, &mut ViewContext<Self::ViewState>)
+            + Send
+            + Sync
+            + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -42,7 +49,7 @@ pub trait Interactive<S: 'static + Send + Sync> {
             .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble
                     && event.button == button
-                    && bounds.contains_point(event.position)
+                    && bounds.contains_point(&event.position)
                 {
                     handler(view, event, cx)
                 }
@@ -53,7 +60,10 @@ pub trait Interactive<S: 'static + Send + Sync> {
     fn on_mouse_down_out(
         mut self,
         button: MouseButton,
-        handler: impl Fn(&mut S, &MouseDownEvent, &mut ViewContext<S>) + Send + Sync + 'static,
+        handler: impl Fn(&mut Self::ViewState, &MouseDownEvent, &mut ViewContext<Self::ViewState>)
+            + Send
+            + Sync
+            + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -63,7 +73,7 @@ pub trait Interactive<S: 'static + Send + Sync> {
             .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Capture
                     && event.button == button
-                    && !bounds.contains_point(event.position)
+                    && !bounds.contains_point(&event.position)
                 {
                     handler(view, event, cx)
                 }
@@ -74,7 +84,10 @@ pub trait Interactive<S: 'static + Send + Sync> {
     fn on_mouse_up_out(
         mut self,
         button: MouseButton,
-        handler: impl Fn(&mut S, &MouseUpEvent, &mut ViewContext<S>) + Send + Sync + 'static,
+        handler: impl Fn(&mut Self::ViewState, &MouseUpEvent, &mut ViewContext<Self::ViewState>)
+            + Send
+            + Sync
+            + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -84,7 +97,7 @@ pub trait Interactive<S: 'static + Send + Sync> {
             .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Capture
                     && event.button == button
-                    && !bounds.contains_point(event.position)
+                    && !bounds.contains_point(&event.position)
                 {
                     handler(view, event, cx);
                 }
@@ -94,7 +107,10 @@ pub trait Interactive<S: 'static + Send + Sync> {
 
     fn on_mouse_move(
         mut self,
-        handler: impl Fn(&mut S, &MouseMoveEvent, &mut ViewContext<S>) + Send + Sync + 'static,
+        handler: impl Fn(&mut Self::ViewState, &MouseMoveEvent, &mut ViewContext<Self::ViewState>)
+            + Send
+            + Sync
+            + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -102,7 +118,7 @@ pub trait Interactive<S: 'static + Send + Sync> {
         self.listeners()
             .mouse_move
             .push(Arc::new(move |view, event, bounds, phase, cx| {
-                if phase == DispatchPhase::Bubble && bounds.contains_point(event.position) {
+                if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
                     handler(view, event, cx);
                 }
             }));
@@ -111,7 +127,10 @@ pub trait Interactive<S: 'static + Send + Sync> {
 
     fn on_scroll_wheel(
         mut self,
-        handler: impl Fn(&mut S, &ScrollWheelEvent, &mut ViewContext<S>) + Send + Sync + 'static,
+        handler: impl Fn(&mut Self::ViewState, &ScrollWheelEvent, &mut ViewContext<Self::ViewState>)
+            + Send
+            + Sync
+            + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -119,10 +138,28 @@ pub trait Interactive<S: 'static + Send + Sync> {
         self.listeners()
             .scroll_wheel
             .push(Arc::new(move |view, event, bounds, phase, cx| {
-                if phase == DispatchPhase::Bubble && bounds.contains_point(event.position) {
+                if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
                     handler(view, event, cx);
                 }
             }));
+        self
+    }
+}
+
+pub trait Click: Interactive {
+    fn on_click(
+        mut self,
+        handler: impl Fn(&mut Self::ViewState, &MouseClickEvent, &mut ViewContext<Self::ViewState>)
+            + Send
+            + Sync
+            + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.listeners()
+            .mouse_click
+            .push(Arc::new(move |view, event, cx| handler(view, event, cx)));
         self
     }
 }
@@ -139,6 +176,8 @@ type MouseUpHandler<V> = Arc<
         + Sync
         + 'static,
 >;
+type MouseClickHandler<V> =
+    Arc<dyn Fn(&mut V, &MouseClickEvent, &mut ViewContext<V>) + Send + Sync + 'static>;
 
 type MouseMoveHandler<V> = Arc<
     dyn Fn(&mut V, &MouseMoveEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
@@ -154,45 +193,26 @@ type ScrollWheelHandler<V> = Arc<
 >;
 
 pub struct MouseEventListeners<V: 'static> {
-    mouse_down: SmallVec<[MouseDownHandler<V>; 2]>,
-    mouse_up: SmallVec<[MouseUpHandler<V>; 2]>,
-    mouse_move: SmallVec<[MouseMoveHandler<V>; 2]>,
-    scroll_wheel: SmallVec<[ScrollWheelHandler<V>; 2]>,
-}
-
-impl<S: Send + Sync + 'static> MouseEventListeners<S> {
-    pub fn paint(&self, bounds: Bounds<Pixels>, cx: &mut ViewContext<S>) {
-        for handler in self.mouse_down.iter().cloned() {
-            cx.on_mouse_event(move |view, event: &MouseDownEvent, phase, cx| {
-                handler(view, event, &bounds, phase, cx);
-            })
-        }
-        for handler in self.mouse_up.iter().cloned() {
-            cx.on_mouse_event(move |view, event: &MouseUpEvent, phase, cx| {
-                handler(view, event, &bounds, phase, cx);
-            })
-        }
-        for handler in self.mouse_move.iter().cloned() {
-            cx.on_mouse_event(move |view, event: &MouseMoveEvent, phase, cx| {
-                handler(view, event, &bounds, phase, cx);
-            })
-        }
-
-        for handler in self.scroll_wheel.iter().cloned() {
-            cx.on_mouse_event(move |view, event: &ScrollWheelEvent, phase, cx| {
-                handler(view, event, &bounds, phase, cx);
-            })
-        }
-    }
+    pub mouse_down: SmallVec<[MouseDownHandler<V>; 2]>,
+    pub mouse_up: SmallVec<[MouseUpHandler<V>; 2]>,
+    pub mouse_click: SmallVec<[MouseClickHandler<V>; 2]>,
+    pub mouse_move: SmallVec<[MouseMoveHandler<V>; 2]>,
+    pub scroll_wheel: SmallVec<[ScrollWheelHandler<V>; 2]>,
 }
 
 impl<V> Default for MouseEventListeners<V> {
     fn default() -> Self {
         Self {
-            mouse_down: Default::default(),
-            mouse_up: Default::default(),
-            mouse_move: Default::default(),
-            scroll_wheel: Default::default(),
+            mouse_down: SmallVec::new(),
+            mouse_up: SmallVec::new(),
+            mouse_click: SmallVec::new(),
+            mouse_move: SmallVec::new(),
+            scroll_wheel: SmallVec::new(),
         }
     }
+}
+
+pub struct MouseClickEvent {
+    pub down: MouseDownEvent,
+    pub up: MouseUpEvent,
 }

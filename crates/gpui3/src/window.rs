@@ -45,7 +45,7 @@ type MouseEventHandler =
 pub struct Window {
     handle: AnyWindowHandle,
     platform_window: MainThreadOnly<Box<dyn PlatformWindow>>,
-    pub(crate) display_id: DisplayId, // todo!("make private again?")
+    display_id: DisplayId,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     rem_size: Pixels,
     content_size: Size<Pixels>,
@@ -248,7 +248,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub fn request_layout(
         &mut self,
-        style: Style,
+        style: &Style,
         children: impl IntoIterator<Item = LayoutId>,
     ) -> LayoutId {
         self.app.layout_id_buffer.clear();
@@ -600,7 +600,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
             let mut root_view = cx.window.root_view.take().unwrap();
 
-            if let Some(element_id) = root_view.element_id() {
+            if let Some(element_id) = root_view.id() {
                 cx.with_element_state(element_id, |element_state, cx| {
                     let element_state = draw_with_element_state(&mut root_view, element_state, cx);
                     ((), element_state)
@@ -1145,6 +1145,13 @@ impl From<SmallVec<[u32; 16]>> for StackingOrder {
 pub enum ElementId {
     View(EntityId),
     Number(usize),
+    Name(SharedString),
+}
+
+impl From<EntityId> for ElementId {
+    fn from(id: EntityId) -> Self {
+        ElementId::View(id)
+    }
 }
 
 impl From<usize> for ElementId {
@@ -1156,5 +1163,17 @@ impl From<usize> for ElementId {
 impl From<i32> for ElementId {
     fn from(id: i32) -> Self {
         Self::Number(id as usize)
+    }
+}
+
+impl From<SharedString> for ElementId {
+    fn from(name: SharedString) -> Self {
+        ElementId::Name(name)
+    }
+}
+
+impl From<&'static str> for ElementId {
+    fn from(name: &'static str) -> Self {
+        ElementId::Name(name.into())
     }
 }

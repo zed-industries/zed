@@ -1,3 +1,4 @@
+mod active;
 mod app;
 mod assets;
 mod color;
@@ -6,12 +7,12 @@ mod elements;
 mod events;
 mod executor;
 mod geometry;
+mod hover;
 mod image_cache;
 mod interactive;
 mod platform;
 mod scene;
 mod style;
-mod style_helpers;
 mod styled;
 mod subscription;
 mod svg_renderer;
@@ -21,6 +22,7 @@ mod util;
 mod view;
 mod window;
 
+pub use active::*;
 pub use anyhow::Result;
 pub use app::*;
 pub use assets::*;
@@ -31,6 +33,7 @@ pub use events::*;
 pub use executor::*;
 pub use geometry::*;
 pub use gpui3_macros::*;
+pub use hover::*;
 pub use image_cache::*;
 pub use interactive::*;
 pub use platform::*;
@@ -41,7 +44,6 @@ pub use serde_json;
 pub use smallvec;
 pub use smol::Timer;
 pub use style::*;
-pub use style_helpers::*;
 pub use styled::*;
 pub use subscription::*;
 pub use svg_renderer::*;
@@ -51,6 +53,7 @@ pub use util::arc_cow::ArcCow;
 pub use view::*;
 pub use window::*;
 
+use derive_more::{Deref, DerefMut};
 use std::{
     any::{Any, TypeId},
     mem,
@@ -180,7 +183,7 @@ impl<T> Flatten<T> for Result<T> {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Hash)]
+#[derive(Deref, DerefMut, Eq, PartialEq, Hash, Clone)]
 pub struct SharedString(ArcCow<'static, str>);
 
 impl Default for SharedString {

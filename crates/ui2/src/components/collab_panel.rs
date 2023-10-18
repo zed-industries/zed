@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use gpui3::{img, svg, ArcCow};
+use gpui3::{img, svg, SharedString};
 
 use crate::prelude::*;
 use crate::theme::{theme, Theme};
@@ -29,14 +29,14 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
 
         v_stack()
             .h_full()
-            .fill(color.surface)
+            .bg(color.surface)
             .child(
                 v_stack()
                     .w_full()
                     .overflow_y_scroll(self.scroll_state.clone())
                     .child(
                         div()
-                            .fill(theme.lowest.base.default.background)
+                            .bg(theme.lowest.base.default.background)
                             .pb_1()
                             .border_color(theme.lowest.base.default.border)
                             .border_b()
@@ -100,7 +100,7 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
 
     fn list_section_header(
         &self,
-        label: impl Into<ArcCow<'static, str>>,
+        label: impl Into<SharedString>,
         expanded: bool,
         theme: &Theme,
     ) -> impl Element<ViewState = S> {
@@ -121,15 +121,15 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
                         })
                         .w_3p5()
                         .h_3p5()
-                        .fill(theme.middle.variant.default.foreground),
+                        .text_color(theme.middle.variant.default.foreground),
                 ),
             )
     }
 
     fn list_item(
         &self,
-        avatar_uri: impl Into<ArcCow<'static, str>>,
-        label: impl Into<ArcCow<'static, str>>,
+        avatar_uri: impl Into<SharedString>,
+        label: impl Into<SharedString>,
         theme: &Theme,
     ) -> impl Element<ViewState = S> {
         div()
@@ -137,10 +137,8 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
             .px_2()
             .flex()
             .items_center()
-            .hover()
-            .fill(theme.lowest.variant.hovered.background)
-            // .active()
-            // .fill(theme.lowest.variant.pressed.background)
+            .hover(|style| style.bg(theme.lowest.variant.hovered.background))
+            // .active(|style| style.fill(theme.lowest.variant.pressed.background))
             .child(
                 div()
                     .flex()
@@ -148,11 +146,11 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
                     .gap_1()
                     .text_sm()
                     .child(
-                        img()
-                            .uri(avatar_uri)
-                            .size_3p5()
-                            .rounded_full()
-                            .fill(theme.middle.positive.default.foreground),
+                        img().uri(avatar_uri).size_3p5().rounded_full().bg(theme
+                            .middle
+                            .positive
+                            .default
+                            .foreground),
                     )
                     .child(label.into()),
             )
@@ -180,7 +178,11 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, CollabPanel<S>>(cx))
                 .child(Story::label(cx, "Default"))

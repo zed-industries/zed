@@ -141,7 +141,7 @@ impl<S: 'static + Send + Sync + Clone> Label<S> {
                         .my_auto()
                         .w_full()
                         .h_px()
-                        .fill(LabelColor::Hidden.hsla(cx)),
+                        .bg(LabelColor::Hidden.hsla(cx)),
                 )
             })
             .children(runs.into_iter().map(|run| {

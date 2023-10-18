@@ -155,8 +155,9 @@ impl Refineable for TextStyleRefinement {
         }
     }
 
-    fn refined(self, refinement: Self::Refinement) -> Self {
-        todo!()
+    fn refined(mut self, refinement: Self::Refinement) -> Self {
+        self.refine(&refinement);
+        self
     }
 }
 

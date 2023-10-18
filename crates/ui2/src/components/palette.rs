@@ -53,7 +53,7 @@ impl<S: 'static + Send + Sync + Clone> Palette<S> {
         v_stack()
             .w_96()
             .rounded_lg()
-            .fill(theme.lowest.base.default.background)
+            .bg(theme.lowest.base.default.background)
             .border()
             .border_color(theme.lowest.base.default.border)
             .child(
@@ -64,7 +64,7 @@ impl<S: 'static + Send + Sync + Clone> Palette<S> {
                             Label::new(self.input_placeholder).color(LabelColor::Placeholder),
                         ),
                     ))
-                    .child(div().h_px().w_full().fill(theme.lowest.base.default.border))
+                    .child(div().h_px().w_full().bg(theme.lowest.base.default.border))
                     .child(
                         v_stack()
                             .py_0p5()
@@ -89,8 +89,7 @@ impl<S: 'static + Send + Sync + Clone> Palette<S> {
                                     .px_2()
                                     .py_0p5()
                                     .rounded_lg()
-                                    .hover()
-                                    .fill(theme.lowest.base.hovered.background)
+                                    .hover(|style| style.bg(theme.lowest.base.hovered.background))
                                     // .active()
                                     // .fill(theme.lowest.base.pressed.background)
                                     .child(item.clone())
@@ -172,7 +171,11 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Palette<S>>(cx))
                 .child(Story::label(cx, "Default"))

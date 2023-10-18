@@ -28,7 +28,7 @@ impl TaffyLayoutEngine {
 
     pub fn request_layout(
         &mut self,
-        style: Style,
+        style: &Style,
         rem_size: Pixels,
         children: &[LayoutId],
     ) -> LayoutId {

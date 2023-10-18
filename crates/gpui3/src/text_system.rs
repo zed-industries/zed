@@ -1,13 +1,14 @@
 mod font_features;
 mod line;
+mod line_layout;
 mod line_wrapper;
-mod text_layout_cache;
 
 use anyhow::anyhow;
 pub use font_features::*;
 pub use line::*;
+pub use line_layout::*;
 use line_wrapper::*;
-pub use text_layout_cache::*;
+use smallvec::SmallVec;
 
 use crate::{
     px, Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
@@ -17,6 +18,7 @@ use collections::HashMap;
 use core::fmt;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use std::{
+    cmp,
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
     ops::{Deref, DerefMut},
@@ -33,18 +35,18 @@ pub struct FontFamilyId(pub usize);
 pub const SUBPIXEL_VARIANTS: u8 = 4;
 
 pub struct TextSystem {
-    text_layout_cache: Arc<TextLayoutCache>,
+    line_layout_cache: Arc<LineLayoutCache>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
     font_ids_by_font: RwLock<HashMap<Font, FontId>>,
     font_metrics: RwLock<HashMap<FontId, FontMetrics>>,
     wrapper_pool: Mutex<HashMap<FontIdWithSize, Vec<LineWrapper>>>,
-    font_runs_pool: Mutex<Vec<Vec<(usize, FontId)>>>,
+    font_runs_pool: Mutex<Vec<Vec<FontRun>>>,
 }
 
 impl TextSystem {
     pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
         TextSystem {
-            text_layout_cache: Arc::new(TextLayoutCache::new(platform_text_system.clone())),
+            line_layout_cache: Arc::new(LineLayoutCache::new(platform_text_system.clone())),
             platform_text_system,
             font_metrics: RwLock::new(HashMap::default()),
             font_ids_by_font: RwLock::new(HashMap::default()),
@@ -143,38 +145,82 @@ impl TextSystem {
         }
     }
 
-    pub fn layout_line(
+    pub fn layout_text(
         &self,
-        text: &str,
+        text: &SharedString,
         font_size: Pixels,
-        runs: &[(usize, RunStyle)],
-    ) -> Result<Line> {
+        runs: &[TextRun],
+        wrap_width: Option<Pixels>,
+    ) -> Result<SmallVec<[Line; 1]>> {
+        let mut runs = runs.iter().cloned().peekable();
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
 
-        let mut last_font: Option<&Font> = None;
-        for (len, style) in runs {
-            if let Some(last_font) = last_font.as_ref() {
-                if **last_font == style.font {
-                    font_runs.last_mut().unwrap().0 += len;
-                    continue;
+        let mut lines = SmallVec::new();
+        let mut line_start = 0;
+        for line_text in text.split('\n') {
+            let line_text = SharedString::from(line_text.to_string());
+            let line_end = line_start + line_text.len();
+
+            let mut last_font: Option<Font> = None;
+            let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
+            let mut run_start = line_start;
+            while run_start < line_end {
+                let Some(run) = runs.peek_mut() else {
+                    break;
+                };
+
+                let run_len_within_line = cmp::min(line_end, run_start + run.len) - run_start;
+
+                if last_font == Some(run.font.clone()) {
+                    font_runs.last_mut().unwrap().len += run_len_within_line;
+                } else {
+                    last_font = Some(run.font.clone());
+                    font_runs.push(FontRun {
+                        len: run_len_within_line,
+                        font_id: self.platform_text_system.font_id(&run.font)?,
+                    });
                 }
+
+                if decoration_runs.last().map_or(false, |last_run| {
+                    last_run.color == run.color && last_run.underline == run.underline
+                }) {
+                    decoration_runs.last_mut().unwrap().len += run_len_within_line as u32;
+                } else {
+                    decoration_runs.push(DecorationRun {
+                        len: run_len_within_line as u32,
+                        color: run.color,
+                        underline: run.underline.clone(),
+                    });
+                }
+
+                if run_len_within_line == run.len {
+                    runs.next();
+                } else {
+                    // Preserve the remainder of the run for the next line
+                    run.len -= run_len_within_line;
+                }
+                run_start += run_len_within_line;
             }
-            last_font = Some(&style.font);
-            font_runs.push((*len, self.font_id(&style.font)?));
+
+            let layout = self
+                .line_layout_cache
+                .layout_line(&line_text, font_size, &font_runs, wrap_width);
+            lines.push(Line {
+                layout,
+                decorations: decoration_runs,
+            });
+
+            line_start = line_end + 1; // Skip `\n` character.
+            font_runs.clear();
         }
 
-        let layout = self
-            .text_layout_cache
-            .layout_line(text, font_size, &font_runs);
-
-        font_runs.clear();
         self.font_runs_pool.lock().push(font_runs);
 
-        Ok(Line::new(layout.clone(), runs))
+        Ok(lines)
     }
 
     pub fn end_frame(&self) {
-        self.text_layout_cache.end_frame()
+        self.line_layout_cache.end_frame()
     }
 
     pub fn line_wrapper(
@@ -317,7 +363,8 @@ impl Display for FontStyle {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RunStyle {
+pub struct TextRun {
+    pub len: usize,
     pub font: Font,
     pub color: Hsla,
     pub underline: Option<UnderlineStyle>,
@@ -343,30 +390,6 @@ impl From<u32> for GlyphId {
     fn from(num: u32) -> Self {
         GlyphId(num)
     }
-}
-
-#[derive(Default, Debug)]
-pub struct ShapedLine {
-    pub font_size: Pixels,
-    pub width: Pixels,
-    pub ascent: Pixels,
-    pub descent: Pixels,
-    pub runs: Vec<ShapedRun>,
-    pub len: usize,
-}
-
-#[derive(Debug)]
-pub struct ShapedRun {
-    pub font_id: FontId,
-    pub glyphs: Vec<ShapedGlyph>,
-}
-
-#[derive(Clone, Debug)]
-pub struct ShapedGlyph {
-    pub id: GlyphId,
-    pub position: Point<Pixels>,
-    pub index: usize,
-    pub is_emoji: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -59,7 +59,7 @@ impl<S: 'static + Send + Sync> Toolbar<S> {
         let theme = theme(cx);
 
         div()
-            .fill(theme.highest.base.default.background)
+            .bg(theme.highest.base.default.background)
             .p_2()
             .flex()
             .justify_between()

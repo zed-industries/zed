@@ -39,13 +39,11 @@ impl<S: 'static + Send + Sync> PlayerStack<S> {
             .gap_px()
             .justify_center()
             .child(
-                div().flex().justify_center().w_full().child(
-                    div()
-                        .w_4()
-                        .h_0p5()
-                        .rounded_sm()
-                        .fill(player.cursor_color(cx)),
-                ),
+                div()
+                    .flex()
+                    .justify_center()
+                    .w_full()
+                    .child(div().w_4().h_0p5().rounded_sm().bg(player.cursor_color(cx))),
             )
             .child(
                 div()
@@ -55,7 +53,7 @@ impl<S: 'static + Send + Sync> PlayerStack<S> {
                     .h_6()
                     .pl_1()
                     .rounded_lg()
-                    .fill(if followers.is_none() {
+                    .bg(if followers.is_none() {
                         system_color.transparent
                     } else {
                         player.selection_color(cx)

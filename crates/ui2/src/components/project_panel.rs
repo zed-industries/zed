@@ -29,7 +29,7 @@ impl<S: 'static + Send + Sync + Clone> ProjectPanel<S> {
             .flex_col()
             .w_full()
             .h_full()
-            .fill(color.surface)
+            .bg(color.surface)
             .child(
                 div()
                     .w_full()

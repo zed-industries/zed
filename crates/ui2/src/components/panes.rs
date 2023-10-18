@@ -48,7 +48,7 @@ impl<S: 'static + Send + Sync> Pane<S> {
         div()
             .flex()
             .flex_initial()
-            .fill(self.fill)
+            .bg(self.fill)
             .w(self.size.width)
             .h(self.size.height)
             .overflow_y_scroll(self.scroll_state.clone())
@@ -57,9 +57,7 @@ impl<S: 'static + Send + Sync> Pane<S> {
 }
 
 impl<S: 'static + Send + Sync> ParentElement for Pane<S> {
-    type State = S;
-
-    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::State>; 2]> {
+    fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::ViewState>; 2]> {
         &mut self.children
     }
 }
@@ -101,7 +99,7 @@ impl<S: 'static + Send + Sync> PaneGroup<S> {
                 .gap_px()
                 .w_full()
                 .h_full()
-                .fill(theme.lowest.base.default.background)
+                .bg(theme.lowest.base.default.background)
                 .children(self.panes.iter_mut().map(|pane| pane.render(view, cx)));
 
             if self.split_direction == SplitDirection::Horizontal {
@@ -118,7 +116,7 @@ impl<S: 'static + Send + Sync> PaneGroup<S> {
                 .gap_px()
                 .w_full()
                 .h_full()
-                .fill(theme.lowest.base.default.background)
+                .bg(theme.lowest.base.default.background)
                 .children(self.groups.iter_mut().map(|group| group.render(view, cx)));
 
             if self.split_direction == SplitDirection::Horizontal {

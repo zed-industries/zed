@@ -1,6 +1,6 @@
 use gpui3::{
-    div, svg, view, AppContext, Context, Element, ElementId, IntoAnyElement, ParentElement,
-    ScrollState, SharedString, StyleHelpers, Styled, View, ViewContext, WindowContext,
+    div, svg, view, Active, AppContext, Context, Element, ElementId, Hover, IntoAnyElement,
+    ParentElement, ScrollState, SharedString, Styled, View, ViewContext, WindowContext,
 };
 use ui::{theme, Theme};
 
@@ -34,7 +34,7 @@ impl CollabPanel {
             .text_color(theme.middle.base.default.foreground)
             .border_color(theme.middle.base.default.border)
             .border()
-            .fill(theme.middle.base.default.background)
+            .bg(theme.middle.base.default.background)
             .child(
                 div()
                     .w_full()
@@ -132,8 +132,7 @@ impl CollabPanel {
             .flex()
             .justify_between()
             .items_center()
-            .active()
-            .fill(theme.highest.accent.default.background)
+            .active(|style| style.bg(theme.highest.accent.default.background))
             .child(div().flex().gap_1().text_sm().child(label))
             .child(
                 div().flex().h_full().gap_1().items_center().child(
@@ -145,7 +144,7 @@ impl CollabPanel {
                         })
                         .w_3p5()
                         .h_3p5()
-                        .fill(theme.middle.variant.default.foreground),
+                        .text_color(theme.middle.variant.default.foreground),
                 ),
             )
     }
@@ -174,18 +173,19 @@ impl CollabPanel {
                     .text_sm()
                     .child(
                         div()
-                            .id(0)
+                            .id("avatar")
                             // .uri(avatar_uri)
                             .size_3p5()
                             .rounded_full()
-                            .fill(theme.middle.positive.default.foreground)
+                            .bg(theme.middle.positive.default.foreground)
                             .shadow()
-                            .group_hover("")
-                            .fill(theme.middle.negative.default.foreground)
-                            .hover()
-                            .fill(theme.middle.warning.default.foreground)
-                            .group_active("")
-                            .fill(theme.middle.accent.default.foreground),
+                            .group_hover("", |style| {
+                                style.bg(theme.middle.negative.default.foreground)
+                            })
+                            .hover(|style| style.bg(theme.middle.warning.default.foreground))
+                            .group_active("", |style| {
+                                style.bg(theme.middle.accent.default.foreground)
+                            }),
                     )
                     .child(label),
             )

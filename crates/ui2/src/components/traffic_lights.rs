@@ -37,7 +37,7 @@ impl<S: 'static + Send + Sync> TrafficLight<S> {
             (false, _) => theme.lowest.base.active.background,
         };
 
-        div().w_3().h_3().rounded_full().fill(fill)
+        div().w_3().h_3().rounded_full().bg(fill)
     }
 }
 
@@ -104,7 +104,11 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, TrafficLights<S>>(cx))
                 .child(Story::label(cx, "Default"))

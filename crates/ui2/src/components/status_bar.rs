@@ -96,7 +96,7 @@ impl StatusBar {
             .items_center()
             .justify_between()
             .w_full()
-            .fill(theme.lowest.base.default.background)
+            .bg(theme.lowest.base.default.background)
             .child(self.left_tools(view, &theme))
             .child(self.right_tools(view, &theme))
     }

@@ -1,8 +1,8 @@
 use crate::{
-    phi, point, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds, ContentMask, Corners,
-    CornersRefinement, DefiniteLength, Edges, EdgesRefinement, Font, FontFeatures, FontStyle,
-    FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rems, Result, RunStyle, SharedString,
-    Size, SizeRefinement, ViewContext, WindowContext,
+    black, phi, point, rems, AbsoluteLength, BorrowAppContext, BorrowWindow, Bounds, ContentMask,
+    Corners, CornersRefinement, DefiniteLength, Edges, EdgesRefinement, Font, FontFeatures,
+    FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rems, Result,
+    SharedString, Size, SizeRefinement, Styled, TextRun, ViewContext, WindowContext,
 };
 use refineable::{Cascade, Refineable};
 use smallvec::SmallVec;
@@ -83,7 +83,7 @@ pub struct Style {
     pub flex_shrink: f32,
 
     /// The fill color of this element
-    pub fill: Option<Fill>,
+    pub background: Option<Fill>,
 
     /// The border color of this element
     pub border_color: Option<Hsla>,
@@ -99,6 +99,12 @@ pub struct Style {
     pub text: TextStyleRefinement,
 
     pub z_index: Option<u32>,
+}
+
+impl Styled for StyleRefinement {
+    fn style(&mut self) -> &mut StyleRefinement {
+        self
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -125,8 +131,8 @@ pub struct TextStyle {
 impl Default for TextStyle {
     fn default() -> Self {
         TextStyle {
-            color: Hsla::default(),
-            font_family: SharedString::default(),
+            color: black(),
+            font_family: "Helvetica".into(), // todo!("Get a font we know exists on the system")
             font_features: FontFeatures::default(),
             font_size: rems(1.),
             line_height: phi(),
@@ -161,8 +167,9 @@ impl TextStyle {
         Ok(self)
     }
 
-    pub fn to_run(&self) -> RunStyle {
-        RunStyle {
+    pub fn to_run(&self, len: usize) -> TextRun {
+        TextRun {
+            len,
             font: Font {
                 family: self.font_family.clone(),
                 features: Default::default(),
@@ -256,7 +263,7 @@ impl Style {
             );
         });
 
-        let background_color = self.fill.as_ref().and_then(Fill::color);
+        let background_color = self.background.as_ref().and_then(Fill::color);
         if background_color.is_some() || self.is_border_visible() {
             cx.stack(1, |cx| {
                 cx.paint_quad(
@@ -307,7 +314,7 @@ impl Default for Style {
             flex_grow: 0.0,
             flex_shrink: 1.0,
             flex_basis: Length::Auto,
-            fill: None,
+            background: None,
             border_color: None,
             corner_radii: Corners::default(),
             box_shadow: Default::default(),

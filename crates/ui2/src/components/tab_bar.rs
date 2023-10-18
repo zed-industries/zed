@@ -31,7 +31,7 @@ impl<S: 'static + Send + Sync + Clone> TabBar<S> {
         div()
             .w_full()
             .flex()
-            .fill(theme.middle.base.default.background)
+            .bg(theme.middle.base.default.background)
             // Left Side
             .child(
                 div()
@@ -105,7 +105,11 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, TabBar<S>>(cx))
                 .child(Story::label(cx, "Default"))
