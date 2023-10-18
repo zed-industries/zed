@@ -3,10 +3,10 @@ use std::marker::PhantomData;
 use gpui3::{div, Div};
 
 use crate::prelude::*;
+use crate::settings::user_settings;
 use crate::theme::theme;
 use crate::{
-    h_stack, token, v_stack, Avatar, Icon, IconColor, IconElement, IconSize, Label, LabelColor,
-    LabelSize,
+    h_stack, v_stack, Avatar, Icon, IconColor, IconElement, IconSize, Label, LabelColor, LabelSize,
 };
 
 #[derive(Clone, Copy, Default, Debug, PartialEq)]
@@ -94,7 +94,6 @@ impl<S: 'static + Send + Sync + Clone> ListHeader<S> {
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
-        let token = token();
         let system_color = SystemColor::new();
         let color = ThemeColor::new(cx);
 
@@ -166,7 +165,6 @@ impl<S: 'static + Send + Sync + Clone> ListSubHeader<S> {
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
-        let token = token();
 
         h_stack().flex_1().w_full().relative().py_1().child(
             div()
@@ -351,7 +349,6 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
         cx: &mut ViewContext<S>,
     ) -> Option<impl Element<ViewState = S>> {
         let theme = theme(cx);
-        let token = token();
 
         let disclosure_control_icon = if let Some(ToggleState::Toggled) = self.toggle {
             IconElement::new(Icon::ChevronDown)
@@ -374,9 +371,9 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
-        let token = token();
         let system_color = SystemColor::new();
         let color = ThemeColor::new(cx);
+        let setting = user_settings();
 
         let left_content = match self.left_content.clone() {
             Some(LeftContent::Icon(i)) => Some(
@@ -408,7 +405,7 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
                     // .ml(rems(0.75 * self.indent_level as f32))
                     .children((0..self.indent_level).map(|_| {
                         div()
-                            .w(token.list_indent_depth)
+                            .w(*setting.list_indent_depth)
                             .h_full()
                             .flex()
                             .justify_center()
@@ -484,7 +481,6 @@ impl<S: 'static + Send + Sync + Clone> List<S> {
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
-        let token = token();
         let is_toggleable = self.toggleable != Toggleable::NotToggleable;
         let is_toggled = Toggleable::is_toggled(&self.toggleable);
 

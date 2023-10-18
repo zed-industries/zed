@@ -1,9 +1,11 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use gpui3::rems;
 use gpui3::{DefiniteLength, Hsla, Interactive, MouseButton, WindowContext};
 
 use crate::prelude::*;
+use crate::settings::user_settings;
 use crate::{h_stack, Icon, IconColor, IconElement, Label, LabelColor, LabelSize};
 
 #[derive(Default, PartialEq, Clone, Copy)]
@@ -148,11 +150,11 @@ impl<S: 'static + Send + Sync + Clone> Button<S> {
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let icon_color = self.icon_color();
         let border_color = self.border_color(cx);
+        let setting = user_settings();
 
         let mut el = h_stack()
-            .h_6()
-            .px_1()
-            .items_center()
+            .p_1()
+            .text_size(ui_size(1.125))
             .rounded_md()
             .border()
             .border_color(border_color)

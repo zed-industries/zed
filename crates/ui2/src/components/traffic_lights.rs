@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::prelude::*;
-use crate::{theme, token, SystemColor};
+use crate::{theme, SystemColor};
 
 #[derive(Clone, Copy)]
 enum TrafficLightColor {
@@ -62,7 +62,6 @@ impl<S: 'static + Send + Sync> TrafficLights<S> {
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
-        let token = token();
 
         div()
             .flex()
