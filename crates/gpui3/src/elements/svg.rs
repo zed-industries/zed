@@ -1,7 +1,7 @@
 use crate::{
     div, Active, Anonymous, AnyElement, Bounds, Click, Div, DivState, Element, ElementId,
     ElementIdentity, EventListeners, Hover, Identified, Interactive, IntoAnyElement, LayoutId,
-    NonFocusable, Pixels, SharedString, StyleRefinement, Styled,
+    NonFocusable, Pixels, SharedString, StyleRefinement, Styled, ViewContext,
 };
 use util::ResultExt;
 
@@ -62,16 +62,22 @@ where
         self.base.id()
     }
 
+    fn initialize(
+        &mut self,
+        view_state: &mut V,
+        element_state: Option<Self::ElementState>,
+        cx: &mut ViewContext<V>,
+    ) -> Self::ElementState {
+        self.base.initialize(view_state, element_state, cx)
+    }
+
     fn layout(
         &mut self,
-        view: &mut V,
-        element_state: Option<Self::ElementState>,
-        cx: &mut crate::ViewContext<V>,
-    ) -> (LayoutId, Self::ElementState)
-    where
-        Self: Sized,
-    {
-        self.base.layout(view, element_state, cx)
+        view_state: &mut V,
+        element_state: &mut Self::ElementState,
+        cx: &mut ViewContext<Self::ViewState>,
+    ) -> LayoutId {
+        self.base.layout(view_state, element_state, cx)
     }
 
     fn paint(
@@ -79,7 +85,7 @@ where
         bounds: Bounds<Pixels>,
         view: &mut Self::ViewState,
         element_state: &mut Self::ElementState,
-        cx: &mut crate::ViewContext<V>,
+        cx: &mut ViewContext<V>,
     ) where
         Self: Sized,
     {

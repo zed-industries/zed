@@ -369,14 +369,25 @@ where
         self.identity.id()
     }
 
-    fn layout(
+    fn initialize(
         &mut self,
         view_state: &mut Self::ViewState,
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<Self::ViewState>,
-    ) -> (LayoutId, Self::ElementState) {
-        let element_state = element_state.unwrap_or_default();
-        let style = self.compute_style(Bounds::default(), &element_state, cx);
+    ) -> Self::ElementState {
+        for child in &mut self.children {
+            child.initialize(view_state, cx);
+        }
+        element_state.unwrap_or_default()
+    }
+
+    fn layout(
+        &mut self,
+        view_state: &mut Self::ViewState,
+        element_state: &mut Self::ElementState,
+        cx: &mut ViewContext<Self::ViewState>,
+    ) -> LayoutId {
+        let style = self.compute_style(Bounds::default(), element_state, cx);
         style.apply_text_style(cx, |cx| {
             self.with_element_id(cx, |this, cx| {
                 let layout_ids = this
@@ -384,9 +395,7 @@ where
                     .iter_mut()
                     .map(|child| child.layout(view_state, cx))
                     .collect::<Vec<_>>();
-
-                let layout_id = cx.request_layout(&style, layout_ids);
-                (layout_id, element_state)
+                cx.request_layout(&style, layout_ids)
             })
         })
     }

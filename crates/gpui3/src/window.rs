@@ -653,7 +653,8 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             element_state: Option<AnyBox>,
             cx: &mut ViewContext<()>,
         ) -> AnyBox {
-            let (layout_id, mut element_state) = root_view.layout(&mut (), element_state, cx);
+            let mut element_state = root_view.initialize(&mut (), element_state, cx);
+            let layout_id = root_view.layout(&mut (), &mut element_state, cx);
             let available_space = cx.window.content_size.map(Into::into);
             cx.window
                 .layout_engine

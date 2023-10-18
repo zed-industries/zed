@@ -71,24 +71,30 @@ where
         self.base.id()
     }
 
+    fn initialize(
+        &mut self,
+        view_state: &mut V,
+        element_state: Option<Self::ElementState>,
+        cx: &mut ViewContext<V>,
+    ) -> Self::ElementState {
+        self.base.initialize(view_state, element_state, cx)
+    }
+
     fn layout(
         &mut self,
-        view_state: &mut Self::ViewState,
-        element_state: Option<Self::ElementState>,
+        view_state: &mut V,
+        element_state: &mut Self::ElementState,
         cx: &mut ViewContext<Self::ViewState>,
-    ) -> (LayoutId, Self::ElementState)
-    where
-        Self: Sized,
-    {
+    ) -> LayoutId {
         self.base.layout(view_state, element_state, cx)
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        view: &mut Self::ViewState,
+        view: &mut V,
         element_state: &mut Self::ElementState,
-        cx: &mut ViewContext<Self::ViewState>,
+        cx: &mut ViewContext<V>,
     ) {
         cx.stack(0, |cx| {
             self.base.paint(bounds, view, element_state, cx);
