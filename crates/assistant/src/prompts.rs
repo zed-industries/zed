@@ -1,4 +1,3 @@
-use crate::codegen::CodegenKind;
 use ai::models::{LanguageModel, OpenAILanguageModel};
 use ai::templates::base::{PromptArguments, PromptChain, PromptPriority, PromptTemplate};
 use ai::templates::file_context::FileContext;
@@ -7,10 +6,8 @@ use ai::templates::preamble::EngineerPreamble;
 use ai::templates::repository_context::{PromptCodeSnippet, RepositoryContext};
 use language::{BufferSnapshot, OffsetRangeExt, ToOffset};
 use std::cmp::{self, Reverse};
-use std::fmt::Write;
 use std::ops::Range;
 use std::sync::Arc;
-use tiktoken_rs::ChatCompletionRequestMessage;
 
 #[allow(dead_code)]
 fn summarize(buffer: &BufferSnapshot, selected_range: Range<impl ToOffset>) -> String {
@@ -152,10 +149,19 @@ pub fn generate_content_prompt(
     };
 
     let templates: Vec<(PromptPriority, Box<dyn PromptTemplate>)> = vec![
-        (PromptPriority::High, Box::new(EngineerPreamble {})),
-        (PromptPriority::Low, Box::new(RepositoryContext {})),
-        (PromptPriority::Medium, Box::new(FileContext {})),
-        (PromptPriority::High, Box::new(GenerateInlineContent {})),
+        (PromptPriority::Mandatory, Box::new(EngineerPreamble {})),
+        (
+            PromptPriority::Ordered { order: 1 },
+            Box::new(RepositoryContext {}),
+        ),
+        (
+            PromptPriority::Ordered { order: 0 },
+            Box::new(FileContext {}),
+        ),
+        (
+            PromptPriority::Mandatory,
+            Box::new(GenerateInlineContent {}),
+        ),
     ];
     let chain = PromptChain::new(args, templates);
     let (prompt, _) = chain.generate(true)?;

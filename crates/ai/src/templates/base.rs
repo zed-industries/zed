@@ -1,9 +1,9 @@
+use anyhow::anyhow;
 use std::cmp::Reverse;
 use std::ops::Range;
 use std::sync::Arc;
 
-use gpui::ModelHandle;
-use language::{Anchor, Buffer, BufferSnapshot, ToOffset};
+use language::BufferSnapshot;
 use util::ResultExt;
 
 use crate::models::LanguageModel;
@@ -50,11 +50,21 @@ pub trait PromptTemplate {
 }
 
 #[repr(i8)]
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, Ord)]
 pub enum PromptPriority {
-    Low,
-    Medium,
-    High,
+    Mandatory,                // Ignores truncation
+    Ordered { order: usize }, // Truncates based on priority
+}
+
+impl PartialOrd for PromptPriority {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (Self::Mandatory, Self::Mandatory) => Some(std::cmp::Ordering::Equal),
+            (Self::Mandatory, Self::Ordered { .. }) => Some(std::cmp::Ordering::Greater),
+            (Self::Ordered { .. }, Self::Mandatory) => Some(std::cmp::Ordering::Less),
+            (Self::Ordered { order: a }, Self::Ordered { order: b }) => b.partial_cmp(a),
+        }
+    }
 }
 
 pub struct PromptChain {
@@ -86,14 +96,36 @@ impl PromptChain {
 
         let mut prompts = vec!["".to_string(); sorted_indices.len()];
         for idx in sorted_indices {
-            let (_, template) = &self.templates[idx];
+            let (priority, template) = &self.templates[idx];
+
+            // If PromptPriority is marked as mandatory, we ignore the tokens outstanding
+            // However, if a prompt is generated in excess of the available tokens,
+            // we raise an error outlining that a mandatory prompt has exceeded the available
+            // balance
+            let template_tokens = if let Some(template_tokens) = tokens_outstanding {
+                match priority {
+                    &PromptPriority::Mandatory => None,
+                    _ => Some(template_tokens),
+                }
+            } else {
+                None
+            };
+
             if let Some((template_prompt, prompt_token_count)) =
-                template.generate(&self.args, tokens_outstanding).log_err()
+                template.generate(&self.args, template_tokens).log_err()
             {
                 if template_prompt != "" {
                     prompts[idx] = template_prompt;
 
                     if let Some(remaining_tokens) = tokens_outstanding {
+                        if prompt_token_count > remaining_tokens
+                            && priority == &PromptPriority::Mandatory
+                        {
+                            return Err(anyhow!(
+                                "mandatory template added in excess of model capacity"
+                            ));
+                        }
+
                         let new_tokens = prompt_token_count + seperator_tokens;
                         tokens_outstanding = if remaining_tokens > new_tokens {
                             Some(remaining_tokens - new_tokens)
@@ -104,6 +136,8 @@ impl PromptChain {
                 }
             }
         }
+
+        prompts.retain(|x| x != "");
 
         let full_prompt = prompts.join(seperator);
         let total_token_count = self.args.model.count_tokens(&full_prompt)?;
@@ -196,8 +230,14 @@ pub(crate) mod tests {
         };
 
         let templates: Vec<(PromptPriority, Box<dyn PromptTemplate>)> = vec![
-            (PromptPriority::High, Box::new(TestPromptTemplate {})),
-            (PromptPriority::Medium, Box::new(TestLowPriorityTemplate {})),
+            (
+                PromptPriority::Ordered { order: 0 },
+                Box::new(TestPromptTemplate {}),
+            ),
+            (
+                PromptPriority::Ordered { order: 1 },
+                Box::new(TestLowPriorityTemplate {}),
+            ),
         ];
         let chain = PromptChain::new(args, templates);
 
@@ -226,8 +266,14 @@ pub(crate) mod tests {
         };
 
         let templates: Vec<(PromptPriority, Box<dyn PromptTemplate>)> = vec![
-            (PromptPriority::High, Box::new(TestPromptTemplate {})),
-            (PromptPriority::Medium, Box::new(TestLowPriorityTemplate {})),
+            (
+                PromptPriority::Ordered { order: 0 },
+                Box::new(TestPromptTemplate {}),
+            ),
+            (
+                PromptPriority::Ordered { order: 1 },
+                Box::new(TestLowPriorityTemplate {}),
+            ),
         ];
         let chain = PromptChain::new(args, templates);
 
@@ -257,9 +303,18 @@ pub(crate) mod tests {
         };
 
         let templates: Vec<(PromptPriority, Box<dyn PromptTemplate>)> = vec![
-            (PromptPriority::High, Box::new(TestPromptTemplate {})),
-            (PromptPriority::Medium, Box::new(TestLowPriorityTemplate {})),
-            (PromptPriority::Low, Box::new(TestLowPriorityTemplate {})),
+            (
+                PromptPriority::Ordered { order: 0 },
+                Box::new(TestPromptTemplate {}),
+            ),
+            (
+                PromptPriority::Ordered { order: 1 },
+                Box::new(TestLowPriorityTemplate {}),
+            ),
+            (
+                PromptPriority::Ordered { order: 2 },
+                Box::new(TestLowPriorityTemplate {}),
+            ),
         ];
         let chain = PromptChain::new(args, templates);
 
@@ -283,14 +338,22 @@ pub(crate) mod tests {
             user_prompt: None,
         };
         let templates: Vec<(PromptPriority, Box<dyn PromptTemplate>)> = vec![
-            (PromptPriority::Medium, Box::new(TestPromptTemplate {})),
-            (PromptPriority::High, Box::new(TestLowPriorityTemplate {})),
-            (PromptPriority::Low, Box::new(TestLowPriorityTemplate {})),
+            (
+                PromptPriority::Mandatory,
+                Box::new(TestLowPriorityTemplate {}),
+            ),
+            (
+                PromptPriority::Ordered { order: 0 },
+                Box::new(TestPromptTemplate {}),
+            ),
+            (
+                PromptPriority::Ordered { order: 1 },
+                Box::new(TestLowPriorityTemplate {}),
+            ),
         ];
         let chain = PromptChain::new(args, templates);
 
         let (prompt, token_count) = chain.generate(true).unwrap();
-        println!("TOKEN COUNT: {:?}", token_count);
 
         assert_eq!(
             prompt,

@@ -60,7 +60,7 @@ impl PromptTemplate for RepositoryContext {
         max_token_length: Option<usize>,
     ) -> anyhow::Result<(String, usize)> {
         const MAXIMUM_SNIPPET_TOKEN_COUNT: usize = 500;
-        let mut template = "You are working inside a large repository, here are a few code snippets that may be useful.";
+        let template = "You are working inside a large repository, here are a few code snippets that may be useful.";
         let mut prompt = String::new();
 
         let mut remaining_tokens = max_token_length.clone();

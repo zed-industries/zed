@@ -30,8 +30,6 @@ impl PromptTemplate for FileContext {
         writeln!(prompt, "```{language_name}").unwrap();
 
         if let Some(buffer) = &args.buffer {
-            let mut content = String::new();
-
             if let Some(selected_range) = &args.selected_range {
                 let start = selected_range.start.to_offset(buffer);
                 let end = selected_range.end.to_offset(buffer);
