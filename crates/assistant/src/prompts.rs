@@ -166,6 +166,8 @@ pub fn generate_content_prompt(
     let chain = PromptChain::new(args, templates);
     let (prompt, _) = chain.generate(true)?;
 
+    println!("PROMPT: {:?}", &prompt);
+
     anyhow::Ok(prompt)
 }
 

@@ -6,6 +6,7 @@ pub trait LanguageModel {
     fn name(&self) -> String;
     fn count_tokens(&self, content: &str) -> anyhow::Result<usize>;
     fn truncate(&self, content: &str, length: usize) -> anyhow::Result<String>;
+    fn truncate_start(&self, content: &str, length: usize) -> anyhow::Result<String>;
     fn capacity(&self) -> anyhow::Result<usize>;
 }
 
@@ -40,6 +41,18 @@ impl LanguageModel for OpenAILanguageModel {
             let tokens = bpe.encode_with_special_tokens(content);
             if tokens.len() > length {
                 bpe.decode(tokens[..length].to_vec())
+            } else {
+                bpe.decode(tokens)
+            }
+        } else {
+            Err(anyhow!("bpe for open ai model was not retrieved"))
+        }
+    }
+    fn truncate_start(&self, content: &str, length: usize) -> anyhow::Result<String> {
+        if let Some(bpe) = &self.bpe {
+            let tokens = bpe.encode_with_special_tokens(content);
+            if tokens.len() > length {
+                bpe.decode(tokens[length..].to_vec())
             } else {
                 bpe.decode(tokens)
             }

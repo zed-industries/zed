@@ -190,6 +190,13 @@ pub(crate) mod tests {
                         .collect::<String>(),
                 )
             }
+            fn truncate_start(&self, content: &str, length: usize) -> anyhow::Result<String> {
+                anyhow::Ok(
+                    content.chars().collect::<Vec<char>>()[length..]
+                        .into_iter()
+                        .collect::<String>(),
+                )
+            }
             fn capacity(&self) -> anyhow::Result<usize> {
                 anyhow::Ok(self.capacity)
             }
