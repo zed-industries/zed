@@ -1,7 +1,6 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use gpui3::rems;
 use gpui3::{DefiniteLength, Hsla, Interactive, MouseButton, WindowContext};
 
 use crate::prelude::*;

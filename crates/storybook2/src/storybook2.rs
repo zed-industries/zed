@@ -1,12 +1,10 @@
 #![allow(dead_code, unused_variables)]
 
 mod assets;
-mod collab_panel;
 mod stories;
 mod story;
 mod story_selector;
 mod themes;
-mod workspace;
 
 use std::sync::Arc;
 
@@ -23,7 +21,6 @@ use ui::themed;
 
 use crate::assets::Assets;
 use crate::story_selector::StorySelector;
-use crate::workspace::workspace;
 
 // gpui2::actions! {
 //     storybook,
