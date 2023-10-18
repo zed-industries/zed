@@ -2,11 +2,11 @@ use crate::{
     px, size, AnyBox, AnyView, AppContext, AsyncWindowContext, AvailableSpace, BorrowAppContext,
     Bounds, BoxShadow, Context, Corners, DevicePixels, DisplayId, Edges, Effect, Element, EntityId,
     Event, EventEmitter, FontId, GlobalElementId, GlyphId, Handle, Hsla, ImageData, IsZero,
-    LayoutId, MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path, Pixels, Platform,
-    PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
-    Style, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle,
-    WindowOptions, SUBPIXEL_VARIANTS,
+    KeyDownEvent, KeyDownListener, KeyUpEvent, KeyUpListener, LayoutId, MainThread, MainThreadOnly,
+    MonochromeSprite, MouseMoveEvent, Path, Pixels, Platform, PlatformAtlas, PlatformWindow, Point,
+    PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderImageParams, RenderSvgParams,
+    ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine,
+    Task, Underline, UnderlineStyle, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -21,7 +21,7 @@ use std::{
     mem,
     sync::Arc,
 };
-use util::ResultExt;
+use util::{post_inc, ResultExt};
 
 #[derive(Deref, DerefMut, Ord, PartialOrd, Eq, PartialEq, Clone, Default)]
 pub struct StackingOrder(pub(crate) SmallVec<[u32; 16]>);
@@ -42,6 +42,14 @@ pub enum DispatchPhase {
 type MouseEventHandler =
     Arc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub struct FocusId(usize);
+
+#[derive(Clone)]
+pub struct FocusHandle {
+    id: FocusId,
+}
+
 pub struct Window {
     handle: AnyWindowHandle,
     platform_window: MainThreadOnly<Box<dyn PlatformWindow>>,
@@ -57,11 +65,18 @@ pub struct Window {
     z_index_stack: StackingOrder,
     content_mask_stack: Vec<ContentMask<Pixels>>,
     mouse_event_handlers: HashMap<TypeId, Vec<(StackingOrder, MouseEventHandler)>>,
+    key_down_listener_stack:
+        Vec<Arc<dyn Fn(&KeyDownEvent, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>>,
+    key_up_listener_stack:
+        Vec<Arc<dyn Fn(&KeyUpEvent, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>>,
     propagate_event: bool,
     mouse_position: Point<Pixels>,
     scale_factor: f32,
     pub(crate) scene_builder: SceneBuilder,
     pub(crate) dirty: bool,
+    focus: Option<FocusId>,
+    next_focus_id: FocusId,
+    painted_focused_element: bool,
 }
 
 impl Window {
@@ -121,11 +136,16 @@ impl Window {
             z_index_stack: StackingOrder(SmallVec::new()),
             content_mask_stack: Vec::new(),
             mouse_event_handlers: HashMap::default(),
+            key_down_listener_stack: Vec::new(),
+            key_up_listener_stack: Vec::new(),
             propagate_event: true,
             mouse_position,
             scale_factor,
             scene_builder: SceneBuilder::new(),
             dirty: true,
+            focus: None,
+            next_focus_id: FocusId(0),
+            painted_focused_element: false,
         }
     }
 }
@@ -164,6 +184,11 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub fn notify(&mut self) {
         self.window.dirty = true;
+    }
+
+    pub fn focus_handle(&mut self) -> FocusHandle {
+        let id = FocusId(post_inc(&mut self.window.next_focus_id.0));
+        FocusHandle { id }
     }
 
     pub fn run_on_main<R>(
@@ -645,14 +670,16 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         // reference during the upcoming frame.
         let window = &mut *self.window;
         mem::swap(&mut window.element_states, &mut window.prev_element_states);
-        self.window.element_states.clear();
+        window.element_states.clear();
 
         // Clear mouse event listeners, because elements add new element listeners
         // when the upcoming frame is painted.
-        self.window
+        window
             .mouse_event_handlers
             .values_mut()
             .for_each(Vec::clear);
+
+        window.painted_focused_element = false;
     }
 
     fn end_frame(&mut self) {
@@ -882,7 +909,7 @@ impl<S> BorrowWindow for ViewContext<'_, '_, S> {
     }
 }
 
-impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
+impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
     fn mutable(app: &'a mut AppContext, window: &'w mut Window, entity_id: EntityId) -> Self {
         Self {
             window_cx: WindowContext::mutable(app, window),
@@ -891,7 +918,7 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
         }
     }
 
-    pub fn handle(&self) -> WeakHandle<S> {
+    pub fn handle(&self) -> WeakHandle<V> {
         self.entities.weak_handle(self.entity_id)
     }
 
@@ -902,7 +929,7 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
         result
     }
 
-    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut S, &mut ViewContext<S>) + Send + 'static) {
+    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + Send + 'static) {
         let entity = self.handle();
         self.window_cx.on_next_frame(move |cx| {
             entity.update(cx, f).ok();
@@ -912,7 +939,7 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
     pub fn observe<E: Send + Sync + 'static>(
         &mut self,
         handle: &Handle<E>,
-        on_notify: impl Fn(&mut S, Handle<E>, &mut ViewContext<'_, '_, S>) + Send + Sync + 'static,
+        on_notify: impl Fn(&mut V, Handle<E>, &mut ViewContext<'_, '_, V>) + Send + Sync + 'static,
     ) -> Subscription {
         let this = self.handle();
         let handle = handle.downgrade();
@@ -936,7 +963,7 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
     pub fn subscribe<E: EventEmitter + Send + Sync + 'static>(
         &mut self,
         handle: &Handle<E>,
-        on_event: impl Fn(&mut S, Handle<E>, &E::Event, &mut ViewContext<'_, '_, S>)
+        on_event: impl Fn(&mut V, Handle<E>, &E::Event, &mut ViewContext<'_, '_, V>)
             + Send
             + Sync
             + 'static,
@@ -963,7 +990,7 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
 
     pub fn on_release(
         &mut self,
-        on_release: impl Fn(&mut S, &mut WindowContext) + Send + Sync + 'static,
+        on_release: impl Fn(&mut V, &mut WindowContext) + Send + Sync + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
         self.app.release_handlers.insert(
@@ -979,7 +1006,7 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
     pub fn observe_release<E: Send + Sync + 'static>(
         &mut self,
         handle: &Handle<E>,
-        on_release: impl Fn(&mut S, &mut E, &mut ViewContext<'_, '_, S>) + Send + Sync + 'static,
+        on_release: impl Fn(&mut V, &mut E, &mut ViewContext<'_, '_, V>) + Send + Sync + 'static,
     ) -> Subscription {
         let this = self.handle();
         let window_handle = self.window.handle;
@@ -1002,10 +1029,67 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
         });
     }
 
+    pub fn with_key_listeners<R>(
+        &mut self,
+        focus_handle: Option<FocusHandle>,
+        key_down: impl IntoIterator<Item = KeyDownListener<V>>,
+        key_up: impl IntoIterator<Item = KeyUpListener<V>>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let Some(focus_handle) = focus_handle else {
+            return f(self);
+        };
+        let Some(focused_id) = self.window.focus else {
+            return f(self);
+        };
+        if self.window.painted_focused_element {
+            return f(self);
+        }
+
+        let prev_key_down_len = self.window.key_down_listener_stack.len();
+        let prev_key_up_len = self.window.key_up_listener_stack.len();
+
+        for listener in key_down {
+            let handle = self.handle();
+            self.window
+                .key_down_listener_stack
+                .push(Arc::new(move |event, phase, cx| {
+                    handle
+                        .update(cx, |view, cx| listener(view, event, phase, cx))
+                        .log_err();
+                }));
+        }
+        for listener in key_up {
+            let handle = self.handle();
+            self.window
+                .key_up_listener_stack
+                .push(Arc::new(move |event, phase, cx| {
+                    handle
+                        .update(cx, |view, cx| listener(view, event, phase, cx))
+                        .log_err();
+                }));
+        }
+
+        if focus_handle.id == focused_id {
+            self.window.painted_focused_element = true;
+        }
+
+        let result = f(self);
+
+        if focus_handle.id != focused_id {
+            self.window
+                .key_down_listener_stack
+                .truncate(prev_key_down_len);
+            self.window.key_up_listener_stack.truncate(prev_key_up_len);
+        }
+
+        result
+    }
+
     pub fn run_on_main<R>(
         &mut self,
-        view: &mut S,
-        f: impl FnOnce(&mut S, &mut MainThread<ViewContext<'_, '_, S>>) -> R + Send + 'static,
+        view: &mut V,
+        f: impl FnOnce(&mut V, &mut MainThread<ViewContext<'_, '_, V>>) -> R + Send + 'static,
     ) -> Task<Result<R>>
     where
         R: Send + 'static,
@@ -1021,7 +1105,7 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
 
     pub fn spawn<Fut, R>(
         &mut self,
-        f: impl FnOnce(WeakHandle<S>, AsyncWindowContext) -> Fut + Send + 'static,
+        f: impl FnOnce(WeakHandle<V>, AsyncWindowContext) -> Fut + Send + 'static,
     ) -> Task<R>
     where
         R: Send + 'static,
@@ -1036,7 +1120,7 @@ impl<'a, 'w, S: Send + Sync + 'static> ViewContext<'a, 'w, S> {
 
     pub fn on_mouse_event<Event: 'static>(
         &mut self,
-        handler: impl Fn(&mut S, &Event, DispatchPhase, &mut ViewContext<S>) + Send + Sync + 'static,
+        handler: impl Fn(&mut V, &Event, DispatchPhase, &mut ViewContext<V>) + Send + Sync + 'static,
     ) {
         let handle = self.handle().upgrade(self).unwrap();
         self.window_cx.on_mouse_event(move |event, phase, cx| {

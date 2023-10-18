@@ -1,4 +1,4 @@
-use crate::{BorrowWindow, Bounds, ElementId, LayoutId, Pixels, Point, ViewContext};
+use crate::{BorrowWindow, Bounds, ElementId, FocusHandle, LayoutId, Pixels, Point, ViewContext};
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
 
@@ -31,17 +31,44 @@ pub trait ElementIdentity: 'static + Send + Sync {
     fn id(&self) -> Option<ElementId>;
 }
 
-pub struct IdentifiedElement(pub(crate) ElementId);
-pub struct AnonymousElement;
+pub struct Identified(pub(crate) ElementId);
 
-impl ElementIdentity for IdentifiedElement {
+impl ElementIdentity for Identified {
     fn id(&self) -> Option<ElementId> {
         Some(self.0.clone())
     }
 }
 
-impl ElementIdentity for AnonymousElement {
+pub struct Anonymous;
+
+impl ElementIdentity for Anonymous {
     fn id(&self) -> Option<ElementId> {
+        None
+    }
+}
+
+pub trait ElementFocusability: 'static + Send + Sync {
+    fn focus_handle(&self) -> Option<&FocusHandle>;
+}
+
+pub struct Focusable(FocusHandle);
+
+impl ElementFocusability for Focusable {
+    fn focus_handle(&self) -> Option<&FocusHandle> {
+        Some(&self.0)
+    }
+}
+
+impl From<FocusHandle> for Focusable {
+    fn from(value: FocusHandle) -> Self {
+        Self(value)
+    }
+}
+
+pub struct NonFocusable;
+
+impl ElementFocusability for NonFocusable {
+    fn focus_handle(&self) -> Option<&FocusHandle> {
         None
     }
 }

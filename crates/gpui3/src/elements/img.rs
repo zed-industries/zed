@@ -1,18 +1,18 @@
 use crate::{
-    div, Active, AnonymousElement, AnyElement, BorrowWindow, Bounds, Click, Div, DivState, Element,
-    ElementId, ElementIdentity, Hover, IdentifiedElement, Interactive, IntoAnyElement, LayoutId,
-    MouseEventListeners, Pixels, SharedString, StyleRefinement, Styled, ViewContext,
+    div, Active, Anonymous, AnyElement, BorrowWindow, Bounds, Click, Div, DivState, Element,
+    ElementId, ElementIdentity, EventListeners, Hover, Identified, Interactive, IntoAnyElement,
+    LayoutId, NonFocusable, Pixels, SharedString, StyleRefinement, Styled, ViewContext,
 };
 use futures::FutureExt;
 use util::ResultExt;
 
-pub struct Img<V: 'static + Send + Sync, K: ElementIdentity = AnonymousElement> {
-    base: Div<V, K>,
+pub struct Img<V: 'static + Send + Sync, K: ElementIdentity = Anonymous> {
+    base: Div<K, NonFocusable, V>,
     uri: Option<SharedString>,
     grayscale: bool,
 }
 
-pub fn img<V>() -> Img<V, AnonymousElement>
+pub fn img<V>() -> Img<V, Anonymous>
 where
     V: 'static + Send + Sync,
 {
@@ -39,8 +39,8 @@ where
     }
 }
 
-impl<V: 'static + Send + Sync> Img<V, AnonymousElement> {
-    pub fn id(self, id: impl Into<ElementId>) -> Img<V, IdentifiedElement> {
+impl<V: 'static + Send + Sync> Img<V, Anonymous> {
+    pub fn id(self, id: impl Into<ElementId>) -> Img<V, Identified> {
         Img {
             base: self.base.id(id),
             uri: self.uri,
@@ -136,7 +136,7 @@ where
     V: 'static + Send + Sync,
     K: ElementIdentity,
 {
-    fn listeners(&mut self) -> &mut MouseEventListeners<V> {
+    fn listeners(&mut self) -> &mut EventListeners<V> {
         self.base.listeners()
     }
 }
@@ -151,9 +151,9 @@ where
     }
 }
 
-impl<V> Click for Img<V, IdentifiedElement> where V: 'static + Send + Sync {}
+impl<V> Click for Img<V, Identified> where V: 'static + Send + Sync {}
 
-impl<V> Active for Img<V, IdentifiedElement>
+impl<V> Active for Img<V, Identified>
 where
     V: 'static + Send + Sync,
 {

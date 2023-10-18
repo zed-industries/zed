@@ -199,6 +199,16 @@ pub struct WeakHandle<T> {
     entity_map: Weak<RwLock<EntityMapState>>,
 }
 
+impl<T: 'static + Send + Sync> Clone for WeakHandle<T> {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            entity_type: self.entity_type,
+            entity_map: self.entity_map.clone(),
+        }
+    }
+}
+
 impl<T: Send + Sync + 'static> WeakHandle<T> {
     pub fn upgrade(&self, _: &impl Context) -> Option<Handle<T>> {
         let entity_map = &self.entity_map.upgrade()?;

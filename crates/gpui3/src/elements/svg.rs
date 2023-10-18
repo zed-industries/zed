@@ -1,16 +1,16 @@
 use crate::{
-    div, Active, AnonymousElement, AnyElement, Bounds, Click, Div, DivState, Element, ElementId,
-    ElementIdentity, Hover, IdentifiedElement, Interactive, IntoAnyElement, LayoutId,
-    MouseEventListeners, Pixels, SharedString, StyleRefinement, Styled,
+    div, Active, Anonymous, AnyElement, Bounds, Click, Div, DivState, Element, ElementId,
+    ElementIdentity, EventListeners, Hover, Identified, Interactive, IntoAnyElement, LayoutId,
+    NonFocusable, Pixels, SharedString, StyleRefinement, Styled,
 };
 use util::ResultExt;
 
-pub struct Svg<V: 'static + Send + Sync, K: ElementIdentity = AnonymousElement> {
-    base: Div<V, K>,
+pub struct Svg<V: 'static + Send + Sync, K: ElementIdentity = Anonymous> {
+    base: Div<K, NonFocusable, V>,
     path: Option<SharedString>,
 }
 
-pub fn svg<V>() -> Svg<V, AnonymousElement>
+pub fn svg<V>() -> Svg<V, Anonymous>
 where
     V: 'static + Send + Sync,
 {
@@ -31,8 +31,8 @@ where
     }
 }
 
-impl<V: 'static + Send + Sync> Svg<V, AnonymousElement> {
-    pub fn id(self, id: impl Into<ElementId>) -> Svg<V, IdentifiedElement> {
+impl<V: 'static + Send + Sync> Svg<V, Anonymous> {
+    pub fn id(self, id: impl Into<ElementId>) -> Svg<V, Identified> {
         Svg {
             base: self.base.id(id),
             path: self.path,
@@ -110,7 +110,7 @@ where
     V: 'static + Send + Sync,
     K: ElementIdentity,
 {
-    fn listeners(&mut self) -> &mut MouseEventListeners<V> {
+    fn listeners(&mut self) -> &mut EventListeners<V> {
         self.base.listeners()
     }
 }
@@ -125,9 +125,9 @@ where
     }
 }
 
-impl<V> Click for Svg<V, IdentifiedElement> where V: 'static + Send + Sync {}
+impl<V> Click for Svg<V, Identified> where V: 'static + Send + Sync {}
 
-impl<V> Active for Svg<V, IdentifiedElement>
+impl<V> Active for Svg<V, Identified>
 where
     V: 'static + Send + Sync,
 {
