@@ -296,6 +296,7 @@ where
         cx: &mut ViewContext<V>,
     ) {
         let click_listeners = mem::take(&mut self.listeners.mouse_click);
+
         let mouse_down = pending_click.lock().clone();
         if let Some(mouse_down) = mouse_down {
             cx.on_mouse_event(move |state, event: &MouseUpEvent, phase, cx| {
@@ -317,6 +318,15 @@ where
                     *pending_click.lock() = Some(event.clone());
                 }
             });
+        }
+
+        if let Some(focus_handle) = self.focusability.focus_handle() {
+            let focus_handle = focus_handle.clone();
+            cx.on_mouse_event(move |_, event: &MouseDownEvent, phase, cx| {
+                if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
+                    cx.focus(&focus_handle);
+                }
+            })
         }
 
         for listener in mem::take(&mut self.listeners.mouse_down) {
