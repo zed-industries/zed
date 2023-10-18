@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use language::ToOffset;
 
 use crate::templates::base::PromptArguments;
@@ -12,6 +13,12 @@ impl PromptTemplate for FileContext {
         args: &PromptArguments,
         max_token_length: Option<usize>,
     ) -> anyhow::Result<(String, usize)> {
+        if max_token_length.is_some() {
+            return Err(anyhow!(
+                "no truncation strategy established for file_context template"
+            ));
+        }
+
         let mut prompt = String::new();
 
         // Add Initial Preamble
