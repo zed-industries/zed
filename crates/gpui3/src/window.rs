@@ -9,7 +9,7 @@ use crate::{
     Task, Underline, UnderlineStyle, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
 use std::{
@@ -42,7 +42,7 @@ pub enum DispatchPhase {
 type MouseEventHandler =
     Arc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct FocusId(usize);
 
 #[derive(Clone)]
@@ -64,10 +64,13 @@ pub struct Window {
     element_states: HashMap<GlobalElementId, AnyBox>,
     z_index_stack: StackingOrder,
     content_mask_stack: Vec<ContentMask<Pixels>>,
-    mouse_event_handlers: HashMap<TypeId, Vec<(StackingOrder, MouseEventHandler)>>,
-    key_down_listener_stack:
+    mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, MouseEventHandler)>>,
+    focus_stack: Vec<FocusStackFrame>,
+    focus_parents_by_child: HashMap<FocusId, FocusId>,
+    focused_in: HashSet<FocusId>,
+    key_down_listeners:
         Vec<Arc<dyn Fn(&KeyDownEvent, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>>,
-    key_up_listener_stack:
+    key_up_listeners:
         Vec<Arc<dyn Fn(&KeyUpEvent, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>>,
     propagate_event: bool,
     mouse_position: Point<Pixels>,
@@ -76,7 +79,6 @@ pub struct Window {
     pub(crate) dirty: bool,
     focus: Option<FocusId>,
     next_focus_id: FocusId,
-    painted_focused_element: bool,
 }
 
 impl Window {
@@ -135,9 +137,12 @@ impl Window {
             element_states: HashMap::default(),
             z_index_stack: StackingOrder(SmallVec::new()),
             content_mask_stack: Vec::new(),
-            mouse_event_handlers: HashMap::default(),
-            key_down_listener_stack: Vec::new(),
-            key_up_listener_stack: Vec::new(),
+            focus_stack: Vec::new(),
+            focus_parents_by_child: HashMap::default(),
+            focused_in: HashSet::default(),
+            mouse_listeners: HashMap::default(),
+            key_down_listeners: Vec::new(),
+            key_up_listeners: Vec::new(),
             propagate_event: true,
             mouse_position,
             scale_factor,
@@ -145,7 +150,6 @@ impl Window {
             dirty: true,
             focus: None,
             next_focus_id: FocusId(0),
-            painted_focused_element: false,
         }
     }
 }
@@ -167,6 +171,16 @@ impl ContentMask<Pixels> {
         let bounds = self.bounds.intersect(&other.bounds);
         ContentMask { bounds }
     }
+}
+
+struct FocusStackFrame {
+    handle: FocusHandle,
+    key_down_listeners: SmallVec<
+        [Arc<dyn Fn(&KeyDownEvent, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>; 2],
+    >,
+    key_up_listeners: SmallVec<
+        [Arc<dyn Fn(&KeyUpEvent, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>; 2],
+    >,
 }
 
 pub struct WindowContext<'a, 'w> {
@@ -323,7 +337,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     ) {
         let order = self.window.z_index_stack.clone();
         self.window
-            .mouse_event_handlers
+            .mouse_listeners
             .entry(TypeId::of::<Event>())
             .or_default()
             .push((
@@ -675,12 +689,14 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
         // Clear mouse event listeners, because elements add new element listeners
         // when the upcoming frame is painted.
-        window
-            .mouse_event_handlers
-            .values_mut()
-            .for_each(Vec::clear);
+        window.mouse_listeners.values_mut().for_each(Vec::clear);
 
-        window.painted_focused_element = false;
+        // Clear focus state, because we determine what is focused when the new elements
+        // in the upcoming frame are initialized.
+        window.key_down_listeners.clear();
+        window.key_up_listeners.clear();
+        window.focused_in.clear();
+        window.focus_parents_by_child.clear();
     }
 
     fn end_frame(&mut self) {
@@ -695,7 +711,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
             if let Some(mut handlers) = self
                 .window
-                .mouse_event_handlers
+                .mouse_listeners
                 .remove(&any_mouse_event.type_id())
             {
                 // Because handlers may add other handlers, we sort every time.
@@ -726,13 +742,13 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 // Just in case any handlers added new handlers, which is weird, but possible.
                 handlers.extend(
                     self.window
-                        .mouse_event_handlers
+                        .mouse_listeners
                         .get_mut(&any_mouse_event.type_id())
                         .into_iter()
                         .flat_map(|handlers| handlers.drain(..)),
                 );
                 self.window
-                    .mouse_event_handlers
+                    .mouse_listeners
                     .insert(any_mouse_event.type_id(), handlers);
             }
         }
@@ -1030,7 +1046,7 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         });
     }
 
-    pub fn with_key_listeners<R>(
+    pub fn with_focus<R>(
         &mut self,
         focus_handle: Option<FocusHandle>,
         key_down: impl IntoIterator<Item = KeyDownListener<V>>,
@@ -1040,20 +1056,25 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         let Some(focus_handle) = focus_handle else {
             return f(self);
         };
-        let Some(focused_id) = self.window.focus else {
-            return f(self);
-        };
-        if self.window.painted_focused_element {
-            return f(self);
+
+        let handle = self.handle();
+        let window = &mut *self.window;
+        if let Some(parent_frame) = window.focus_stack.last() {
+            window
+                .focus_parents_by_child
+                .insert(focus_handle.id, parent_frame.handle.id);
         }
 
-        let prev_key_down_len = self.window.key_down_listener_stack.len();
-        let prev_key_up_len = self.window.key_up_listener_stack.len();
+        let mut frame = FocusStackFrame {
+            handle: focus_handle.clone(),
+            key_down_listeners: SmallVec::new(),
+            key_up_listeners: SmallVec::new(),
+        };
 
         for listener in key_down {
-            let handle = self.handle();
-            self.window
-                .key_down_listener_stack
+            let handle = handle.clone();
+            frame
+                .key_down_listeners
                 .push(Arc::new(move |event, phase, cx| {
                     handle
                         .update(cx, |view, cx| listener(view, event, phase, cx))
@@ -1061,9 +1082,9 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
                 }));
         }
         for listener in key_up {
-            let handle = self.handle();
-            self.window
-                .key_up_listener_stack
+            let handle = handle.clone();
+            frame
+                .key_up_listeners
                 .push(Arc::new(move |event, phase, cx| {
                     handle
                         .update(cx, |view, cx| listener(view, event, phase, cx))
@@ -1071,19 +1092,22 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
                 }));
         }
 
-        if focus_handle.id == focused_id {
-            self.window.painted_focused_element = true;
+        window.focus_stack.push(frame);
+
+        if Some(focus_handle.id) == window.focus {
+            for frame in &window.focus_stack {
+                window.focused_in.insert(frame.handle.id);
+                window
+                    .key_down_listeners
+                    .extend_from_slice(&frame.key_down_listeners);
+                window
+                    .key_up_listeners
+                    .extend_from_slice(&frame.key_up_listeners);
+            }
         }
 
         let result = f(self);
-
-        if focus_handle.id != focused_id {
-            self.window
-                .key_down_listener_stack
-                .truncate(prev_key_down_len);
-            self.window.key_up_listener_stack.truncate(prev_key_up_len);
-        }
-
+        self.window.focus_stack.pop();
         result
     }
 

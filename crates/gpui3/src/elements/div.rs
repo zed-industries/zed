@@ -375,10 +375,17 @@ where
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<Self::ViewState>,
     ) -> Self::ElementState {
-        for child in &mut self.children {
-            child.initialize(view_state, cx);
-        }
-        element_state.unwrap_or_default()
+        cx.with_focus(
+            self.focusability.focus_handle().cloned(),
+            self.listeners.key_down.clone(),
+            self.listeners.key_up.clone(),
+            |cx| {
+                for child in &mut self.children {
+                    child.initialize(view_state, cx);
+                }
+                element_state.unwrap_or_default()
+            },
+        )
     }
 
     fn layout(
@@ -408,68 +415,57 @@ where
         cx: &mut ViewContext<Self::ViewState>,
     ) {
         self.with_element_id(cx, |this, cx| {
-            cx.with_key_listeners(
-                this.focusability.focus_handle().cloned(),
-                this.listeners.key_down.clone(),
-                this.listeners.key_up.clone(),
-                |cx| {
-                    if let Some(group) = this.group.clone() {
-                        cx.default_global::<GroupBounds>()
-                            .0
-                            .entry(group)
-                            .or_default()
-                            .push(bounds);
-                    }
+            if let Some(group) = this.group.clone() {
+                cx.default_global::<GroupBounds>()
+                    .0
+                    .entry(group)
+                    .or_default()
+                    .push(bounds);
+            }
 
-                    let hover_group_bounds = this
-                        .group_hover
-                        .as_ref()
-                        .and_then(|group_hover| group_bounds(&group_hover.group, cx));
-                    let active_group_bounds = this
-                        .group_active
-                        .as_ref()
-                        .and_then(|group_active| group_bounds(&group_active.group, cx));
-                    let style = this.compute_style(bounds, element_state, cx);
-                    let z_index = style.z_index.unwrap_or(0);
+            let hover_group_bounds = this
+                .group_hover
+                .as_ref()
+                .and_then(|group_hover| group_bounds(&group_hover.group, cx));
+            let active_group_bounds = this
+                .group_active
+                .as_ref()
+                .and_then(|group_active| group_bounds(&group_active.group, cx));
+            let style = this.compute_style(bounds, element_state, cx);
+            let z_index = style.z_index.unwrap_or(0);
 
-                    // Paint background and event handlers.
-                    cx.stack(z_index, |cx| {
-                        cx.stack(0, |cx| {
-                            style.paint(bounds, cx);
-                            this.paint_hover_listeners(bounds, hover_group_bounds, cx);
-                            this.paint_active_listener(
-                                bounds,
-                                active_group_bounds,
-                                element_state.active_state.clone(),
-                                cx,
-                            );
-                            this.paint_event_listeners(
-                                bounds,
-                                element_state.pending_click.clone(),
-                                cx,
-                            );
-                        });
+            // Paint background and event handlers.
+            cx.stack(z_index, |cx| {
+                cx.stack(0, |cx| {
+                    style.paint(bounds, cx);
+                    this.paint_hover_listeners(bounds, hover_group_bounds, cx);
+                    this.paint_active_listener(
+                        bounds,
+                        active_group_bounds,
+                        element_state.active_state.clone(),
+                        cx,
+                    );
+                    this.paint_event_listeners(bounds, element_state.pending_click.clone(), cx);
+                });
 
-                        cx.stack(1, |cx| {
-                            style.apply_text_style(cx, |cx| {
-                                style.apply_overflow(bounds, cx, |cx| {
-                                    for child in &mut this.children {
-                                        child.paint(view_state, None, cx);
-                                    }
-                                })
-                            })
-                        });
-                    });
+                cx.stack(1, |cx| {
+                    style.apply_text_style(cx, |cx| {
+                        style.apply_overflow(bounds, cx, |cx| {
+                            for child in &mut this.children {
+                                child.paint(view_state, None, cx);
+                            }
+                        })
+                    })
+                });
+            });
 
-                    if let Some(group) = this.group.as_ref() {
-                        cx.default_global::<GroupBounds>()
-                            .0
-                            .get_mut(group)
-                            .unwrap()
-                            .pop();
-                    }
-                },
-            )
+            if let Some(group) = this.group.as_ref() {
+                cx.default_global::<GroupBounds>()
+                    .0
+                    .get_mut(group)
+                    .unwrap()
+                    .pop();
+            }
         })
     }
 }
