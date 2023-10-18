@@ -215,7 +215,7 @@ impl Titlebar {
                             svg()
                                 .path("icons/exit.svg")
                                 .size_4()
-                                .fill(theme.lowest.base.default.foreground),
+                                .text_color(theme.lowest.base.default.foreground),
                         ),
                     ),
                 ),
@@ -245,7 +245,7 @@ impl Titlebar {
                                     svg()
                                         .path("icons/mic.svg")
                                         .size_3p5()
-                                        .fill(theme.lowest.base.default.foreground),
+                                        .text_color(theme.lowest.base.default.foreground),
                                 ),
                         )
                         .child(
@@ -265,7 +265,7 @@ impl Titlebar {
                                     svg()
                                         .path("icons/speaker-loud.svg")
                                         .size_3p5()
-                                        .fill(theme.lowest.base.default.foreground),
+                                        .text_color(theme.lowest.base.default.foreground),
                                 ),
                         )
                         .child(
@@ -285,7 +285,7 @@ impl Titlebar {
                                     svg()
                                         .path("icons/desktop.svg")
                                         .size_3p5()
-                                        .fill(theme.lowest.base.default.foreground),
+                                        .text_color(theme.lowest.base.default.foreground),
                                 ),
                         ),
                 ),
@@ -318,7 +318,7 @@ impl Titlebar {
                                 .path("icons/caret_down.svg")
                                 .w_2()
                                 .h_2()
-                                .fill(theme.lowest.variant.default.foreground),
+                                .text_color(theme.lowest.variant.default.foreground),
                         ),
                 ),
             )
@@ -374,7 +374,7 @@ mod statusbar {
                                     .path("icons/project.svg")
                                     .w_4()
                                     .h_4()
-                                    .fill(theme.lowest.base.default.foreground),
+                                    .text_color(theme.lowest.base.default.foreground),
                             ),
                     )
                     .child(
@@ -389,7 +389,7 @@ mod statusbar {
                                     .path("icons/conversations.svg")
                                     .w_4()
                                     .h_4()
-                                    .fill(theme.lowest.base.default.foreground),
+                                    .text_color(theme.lowest.base.default.foreground),
                             ),
                     )
                     .child(
@@ -404,7 +404,7 @@ mod statusbar {
                                     .path("icons/file_icons/notebook.svg")
                                     .w_4()
                                     .h_4()
-                                    .fill(theme.lowest.accent.default.foreground),
+                                    .text_color(theme.lowest.accent.default.foreground),
                             ),
                     ),
             )
@@ -432,7 +432,7 @@ mod statusbar {
                                     .path("icons/error.svg")
                                     .w_4()
                                     .h_4()
-                                    .fill(theme.lowest.negative.default.foreground),
+                                    .text_color(theme.lowest.negative.default.foreground),
                             )
                             .child(div().text_sm().child("2")),
                     )
@@ -473,7 +473,7 @@ mod statusbar {
                                     .path("icons/check_circle.svg")
                                     .w_4()
                                     .h_4()
-                                    .fill(theme.lowest.base.default.foreground),
+                                    .text_color(theme.lowest.base.default.foreground),
                             ),
                     )
                     .child(
@@ -488,7 +488,7 @@ mod statusbar {
                                     .path("icons/copilot.svg")
                                     .w_4()
                                     .h_4()
-                                    .fill(theme.lowest.accent.default.foreground),
+                                    .text_color(theme.lowest.accent.default.foreground),
                             ),
                     ),
             )

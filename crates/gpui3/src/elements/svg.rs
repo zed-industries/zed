@@ -84,14 +84,13 @@ where
         Self: Sized,
     {
         self.base.paint(bounds, view, element_state, cx);
-        let fill_color = self
+        let color = self
             .base
             .compute_style(bounds, element_state, cx)
-            .fill
-            .as_ref()
-            .and_then(|fill| fill.color());
-        if let Some((path, fill_color)) = self.path.as_ref().zip(fill_color) {
-            cx.paint_svg(bounds, path.clone(), fill_color).log_err();
+            .text
+            .color;
+        if let Some((path, color)) = self.path.as_ref().zip(color) {
+            cx.paint_svg(bounds, path.clone(), color).log_err();
         }
     }
 }

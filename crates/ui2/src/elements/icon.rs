@@ -183,7 +183,10 @@ impl<S: 'static + Send + Sync> IconElement<S> {
             IconSize::Large => svg().size_4(),
         };
 
-        sized_svg.flex_none().path(self.icon.path()).fill(fill)
+        sized_svg
+            .flex_none()
+            .path(self.icon.path())
+            .text_color(fill)
     }
 }
 

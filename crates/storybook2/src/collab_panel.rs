@@ -144,7 +144,7 @@ impl CollabPanel {
                         })
                         .w_3p5()
                         .h_3p5()
-                        .fill(theme.middle.variant.default.foreground),
+                        .text_color(theme.middle.variant.default.foreground),
                 ),
             )
     }
