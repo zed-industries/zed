@@ -11,7 +11,7 @@ use crate::theme::{theme, Theme};
 pub enum IconSize {
     Small,
     #[default]
-    Large,
+    Medium,
 }
 
 #[derive(Default, PartialEq, Copy, Clone)]
@@ -58,6 +58,7 @@ pub enum Icon {
     ChevronRight,
     ChevronUp,
     Close,
+    Exit,
     ExclamationTriangle,
     File,
     FileGeneric,
@@ -109,6 +110,7 @@ impl Icon {
             Icon::ChevronRight => "icons/chevron_right.svg",
             Icon::ChevronUp => "icons/chevron_up.svg",
             Icon::Close => "icons/x.svg",
+            Icon::Exit => "icons/exit.svg",
             Icon::ExclamationTriangle => "icons/warning.svg",
             Icon::File => "icons/file.svg",
             Icon::FileGeneric => "icons/file_icons/file.svg",
@@ -177,13 +179,13 @@ impl<S: 'static + Send + Sync> IconElement<S> {
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let theme = theme(cx);
         let fill = self.color.color(theme);
-
-        let sized_svg = match self.size {
-            IconSize::Small => svg().size_3p5(),
-            IconSize::Large => svg().size_4(),
+        let svg_size = match self.size {
+            IconSize::Small => ui_size(12. / 14.),
+            IconSize::Medium => ui_size(15. / 14.),
         };
 
-        sized_svg
+        svg()
+            .size(svg_size)
             .flex_none()
             .path(self.icon.path())
             .text_color(fill)

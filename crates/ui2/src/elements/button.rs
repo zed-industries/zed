@@ -3,9 +3,9 @@ use std::sync::Arc;
 
 use gpui3::{DefiniteLength, Hsla, Interactive, MouseButton, WindowContext};
 
-use crate::prelude::*;
 use crate::settings::user_settings;
 use crate::{h_stack, Icon, IconColor, IconElement, Label, LabelColor};
+use crate::{prelude::*, LineHeightStyle};
 
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum IconPosition {
@@ -137,7 +137,9 @@ impl<S: 'static + Send + Sync + Clone> Button<S> {
     }
 
     fn render_label(&self) -> Label<S> {
-        Label::new(self.label.clone()).color(self.label_color())
+        Label::new(self.label.clone())
+            .color(self.label_color())
+            .line_height_style(LineHeightStyle::UILabel)
     }
 
     fn render_icon(&self, icon_color: IconColor) -> Option<IconElement<S>> {

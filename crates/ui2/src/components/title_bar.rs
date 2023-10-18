@@ -112,6 +112,7 @@ impl TitleBar {
             .justify_between()
             .w_full()
             .bg(color.background)
+            .py_1()
             .child(
                 div()
                     .flex()
@@ -132,7 +133,7 @@ impl TitleBar {
                             .child(Button::new("zed"))
                             .child(Button::new("nate/gpui2-ui-components")),
                     )
-                    .children(player_list.map(|p| PlayerStack::new(p)))
+                    // .children(player_list.map(|p| PlayerStack::new(p)))
                     .child(IconButton::new(Icon::Plus)),
             )
             .child(
@@ -146,7 +147,7 @@ impl TitleBar {
                             .items_center()
                             .gap_1()
                             .child(IconButton::new(Icon::FolderX))
-                            .child(IconButton::new(Icon::Close)),
+                            .child(IconButton::new(Icon::Exit)),
                     )
                     .child(ToolDivider::new())
                     .child(

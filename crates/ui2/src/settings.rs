@@ -8,6 +8,7 @@ use crate::DisclosureControlStyle;
 pub fn user_settings() -> Settings {
     let mut settings = Settings::default();
     settings.list_indent_depth = SettingValue::UserDefined(rems(0.5).into());
+    // settings.ui_scale = SettingValue::UserDefined(2.);
     settings
 }
 

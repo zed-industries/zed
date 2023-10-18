@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use gpui3::{Hsla, WindowContext};
+use gpui3::{relative, Hsla, WindowContext};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -38,10 +38,19 @@ impl LabelColor {
     }
 }
 
+#[derive(Default, PartialEq, Copy, Clone)]
+pub enum LineHeightStyle {
+    #[default]
+    TextLabel,
+    /// Sets the line height to 1
+    UILabel,
+}
+
 #[derive(Element, Clone)]
 pub struct Label<S: 'static + Send + Sync + Clone> {
     state_type: PhantomData<S>,
     label: SharedString,
+    line_height_style: LineHeightStyle,
     color: LabelColor,
     strikethrough: bool,
 }
@@ -51,6 +60,7 @@ impl<S: 'static + Send + Sync + Clone> Label<S> {
         Self {
             state_type: PhantomData,
             label: label.into(),
+            line_height_style: LineHeightStyle::default(),
             color: LabelColor::Default,
             strikethrough: false,
         }
@@ -58,6 +68,11 @@ impl<S: 'static + Send + Sync + Clone> Label<S> {
 
     pub fn color(mut self, color: LabelColor) -> Self {
         self.color = color;
+        self
+    }
+
+    pub fn line_height_style(mut self, line_height_style: LineHeightStyle) -> Self {
+        self.line_height_style = line_height_style;
         self
     }
 
@@ -82,6 +97,9 @@ impl<S: 'static + Send + Sync + Clone> Label<S> {
                 )
             })
             .text_size(ui_size(1.))
+            .when(self.line_height_style == LineHeightStyle::UILabel, |this| {
+                this.line_height(relative(1.))
+            })
             .text_color(self.color.hsla(cx))
             .child(self.label.clone())
     }
