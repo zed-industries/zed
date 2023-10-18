@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use gpui3::{img, ArcCow};
+use gpui3::img;
 
 use crate::prelude::*;
 use crate::theme::theme;
@@ -8,12 +8,12 @@ use crate::theme::theme;
 #[derive(Element, Clone)]
 pub struct Avatar<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
-    src: ArcCow<'static, str>,
+    src: SharedString,
     shape: Shape,
 }
 
 impl<S: 'static + Send + Sync> Avatar<S> {
-    pub fn new(src: impl Into<ArcCow<'static, str>>) -> Self {
+    pub fn new(src: impl Into<SharedString>) -> Self {
         Self {
             state_type: PhantomData,
             src: src.into(),

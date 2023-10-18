@@ -3,7 +3,7 @@ use crate::{theme, v_stack, Label, List, ListEntry, ListItem, ListSeparator, Lis
 
 #[derive(Clone)]
 pub enum ContextMenuItem<S: 'static + Send + Sync + Clone> {
-    Header(&'static str),
+    Header(SharedString),
     Entry(Label<S>),
     Separator,
 }
@@ -19,8 +19,8 @@ impl<S: 'static + Send + Sync + Clone> ContextMenuItem<S> {
         }
     }
 
-    pub fn header(label: &'static str) -> Self {
-        Self::Header(label)
+    pub fn header(label: impl Into<SharedString>) -> Self {
+        Self::Header(label.into())
     }
 
     pub fn separator() -> Self {

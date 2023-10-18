@@ -20,7 +20,7 @@ pub enum ListItemVariant {
 #[derive(Element, Clone)]
 pub struct ListHeader<S: 'static + Send + Sync + Clone> {
     state_type: PhantomData<S>,
-    label: &'static str,
+    label: SharedString,
     left_icon: Option<Icon>,
     variant: ListItemVariant,
     state: InteractionState,
@@ -28,10 +28,10 @@ pub struct ListHeader<S: 'static + Send + Sync + Clone> {
 }
 
 impl<S: 'static + Send + Sync + Clone> ListHeader<S> {
-    pub fn new(label: &'static str) -> Self {
+    pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             state_type: PhantomData,
-            label,
+            label: label.into(),
             left_icon: None,
             variant: ListItemVariant::default(),
             state: InteractionState::default(),
@@ -131,7 +131,7 @@ impl<S: 'static + Send + Sync + Clone> ListHeader<S> {
                                     .size(IconSize::Small)
                             }))
                             .child(
-                                Label::new(self.label)
+                                Label::new(self.label.clone())
                                     .color(LabelColor::Muted)
                                     .size(LabelSize::Small),
                             ),
@@ -144,16 +144,16 @@ impl<S: 'static + Send + Sync + Clone> ListHeader<S> {
 #[derive(Element, Clone)]
 pub struct ListSubHeader<S: 'static + Send + Sync + Clone> {
     state_type: PhantomData<S>,
-    label: &'static str,
+    label: SharedString,
     left_icon: Option<Icon>,
     variant: ListItemVariant,
 }
 
 impl<S: 'static + Send + Sync + Clone> ListSubHeader<S> {
-    pub fn new(label: &'static str) -> Self {
+    pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             state_type: PhantomData,
-            label,
+            label: label.into(),
             left_icon: None,
             variant: ListItemVariant::default(),
         }
@@ -189,7 +189,7 @@ impl<S: 'static + Send + Sync + Clone> ListSubHeader<S> {
                                 .size(IconSize::Small)
                         }))
                         .child(
-                            Label::new(self.label)
+                            Label::new(self.label.clone())
                                 .color(LabelColor::Muted)
                                 .size(LabelSize::Small),
                         ),
@@ -201,7 +201,7 @@ impl<S: 'static + Send + Sync + Clone> ListSubHeader<S> {
 #[derive(Clone)]
 pub enum LeftContent {
     Icon(Icon),
-    Avatar(&'static str),
+    Avatar(SharedString),
 }
 
 #[derive(Default, PartialEq, Copy, Clone)]
@@ -309,8 +309,8 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
         self
     }
 
-    pub fn set_left_avatar(mut self, left_avatar: &'static str) -> Self {
-        self.left_content = Some(LeftContent::Avatar(left_avatar));
+    pub fn set_left_avatar(mut self, left_avatar: impl Into<SharedString>) -> Self {
+        self.left_content = Some(LeftContent::Avatar(left_avatar.into()));
         self
     }
 
@@ -378,7 +378,7 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
         let system_color = SystemColor::new();
         let color = ThemeColor::new(cx);
 
-        let left_content = match self.left_content {
+        let left_content = match self.left_content.clone() {
             Some(LeftContent::Icon(i)) => Some(
                 h_stack().child(
                     IconElement::new(i)
@@ -452,7 +452,7 @@ impl<S: 'static + Send + Sync> ListSeparator<S> {
 #[derive(Element)]
 pub struct List<S: 'static + Send + Sync + Clone> {
     items: Vec<ListItem<S>>,
-    empty_message: &'static str,
+    empty_message: SharedString,
     header: Option<ListHeader<S>>,
     toggleable: Toggleable,
 }
@@ -461,14 +461,14 @@ impl<S: 'static + Send + Sync + Clone> List<S> {
     pub fn new(items: Vec<ListItem<S>>) -> Self {
         Self {
             items,
-            empty_message: "No items",
+            empty_message: "No items".into(),
             header: None,
             toggleable: Toggleable::default(),
         }
     }
 
-    pub fn empty_message(mut self, empty_message: &'static str) -> Self {
-        self.empty_message = empty_message;
+    pub fn empty_message(mut self, empty_message: impl Into<SharedString>) -> Self {
+        self.empty_message = empty_message.into();
         self
     }
 
@@ -491,7 +491,9 @@ impl<S: 'static + Send + Sync + Clone> List<S> {
         let list_content = match (self.items.is_empty(), is_toggled) {
             (_, false) => div(),
             (false, _) => div().children(self.items.iter().cloned()),
-            (true, _) => div().child(Label::new(self.empty_message).color(LabelColor::Muted)),
+            (true, _) => {
+                div().child(Label::new(self.empty_message.clone()).color(LabelColor::Muted))
+            }
         };
 
         v_stack()
