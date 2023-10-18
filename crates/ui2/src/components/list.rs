@@ -5,9 +5,7 @@ use gpui3::{div, Div};
 use crate::prelude::*;
 use crate::settings::user_settings;
 use crate::theme::theme;
-use crate::{
-    h_stack, v_stack, Avatar, Icon, IconColor, IconElement, IconSize, Label, LabelColor, LabelSize,
-};
+use crate::{h_stack, v_stack, Avatar, Icon, IconColor, IconElement, IconSize, Label, LabelColor};
 
 #[derive(Clone, Copy, Default, Debug, PartialEq)]
 pub enum ListItemVariant {
@@ -129,11 +127,7 @@ impl<S: 'static + Send + Sync + Clone> ListHeader<S> {
                                     .color(IconColor::Muted)
                                     .size(IconSize::Small)
                             }))
-                            .child(
-                                Label::new(self.label.clone())
-                                    .color(LabelColor::Muted)
-                                    .size(LabelSize::Small),
-                            ),
+                            .child(Label::new(self.label.clone()).color(LabelColor::Muted)),
                     )
                     .child(disclosure_control),
             )
@@ -186,11 +180,7 @@ impl<S: 'static + Send + Sync + Clone> ListSubHeader<S> {
                                 .color(IconColor::Muted)
                                 .size(IconSize::Small)
                         }))
-                        .child(
-                            Label::new(self.label.clone())
-                                .color(LabelColor::Muted)
-                                .size(LabelSize::Small),
-                        ),
+                        .child(Label::new(self.label.clone()).color(LabelColor::Muted)),
                 ),
         )
     }

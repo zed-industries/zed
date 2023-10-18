@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::prelude::*;
-use crate::{v_stack, Buffer, Icon, IconButton, Label, LabelSize};
+use crate::{v_stack, Buffer, Icon, IconButton, Label};
 
 #[derive(Element)]
 pub struct MultiBuffer<S: 'static + Send + Sync + Clone> {
@@ -33,7 +33,7 @@ impl<S: 'static + Send + Sync + Clone> MultiBuffer<S> {
                             .justify_between()
                             .p_4()
                             .bg(theme.lowest.base.default.background)
-                            .child(Label::new("main.rs").size(LabelSize::Small))
+                            .child(Label::new("main.rs"))
                             .child(IconButton::new(Icon::ArrowUpRight)),
                     )
                     .child(buffer)

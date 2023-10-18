@@ -38,19 +38,11 @@ impl LabelColor {
     }
 }
 
-#[derive(Default, PartialEq, Copy, Clone)]
-pub enum LabelSize {
-    #[default]
-    Default,
-    Small,
-}
-
 #[derive(Element, Clone)]
 pub struct Label<S: 'static + Send + Sync + Clone> {
     state_type: PhantomData<S>,
     label: SharedString,
     color: LabelColor,
-    size: LabelSize,
     strikethrough: bool,
 }
 
@@ -60,18 +52,12 @@ impl<S: 'static + Send + Sync + Clone> Label<S> {
             state_type: PhantomData,
             label: label.into(),
             color: LabelColor::Default,
-            size: LabelSize::Default,
             strikethrough: false,
         }
     }
 
     pub fn color(mut self, color: LabelColor) -> Self {
         self.color = color;
-        self
-    }
-
-    pub fn size(mut self, size: LabelSize) -> Self {
-        self.size = size;
         self
     }
 
@@ -95,6 +81,7 @@ impl<S: 'static + Send + Sync + Clone> Label<S> {
                         .bg(LabelColor::Hidden.hsla(cx)),
                 )
             })
+            .text_size(ui_size(1.))
             .text_color(self.color.hsla(cx))
             .child(self.label.clone())
     }
@@ -105,7 +92,6 @@ pub struct HighlightedLabel<S: 'static + Send + Sync + Clone> {
     state_type: PhantomData<S>,
     label: SharedString,
     color: LabelColor,
-    size: LabelSize,
     highlight_indices: Vec<usize>,
     strikethrough: bool,
 }
@@ -116,7 +102,6 @@ impl<S: 'static + Send + Sync + Clone> HighlightedLabel<S> {
             state_type: PhantomData,
             label: label.into(),
             color: LabelColor::Default,
-            size: LabelSize::Default,
             highlight_indices,
             strikethrough: false,
         }
@@ -124,11 +109,6 @@ impl<S: 'static + Send + Sync + Clone> HighlightedLabel<S> {
 
     pub fn color(mut self, color: LabelColor) -> Self {
         self.color = color;
-        self
-    }
-
-    pub fn size(mut self, size: LabelSize) -> Self {
-        self.size = size;
         self
     }
 
@@ -191,17 +171,10 @@ impl<S: 'static + Send + Sync + Clone> HighlightedLabel<S> {
                         .bg(LabelColor::Hidden.hsla(cx)),
                 )
             })
-            .children(runs.into_iter().map(|run| {
-                let mut div = div();
-
-                if self.size == LabelSize::Small {
-                    div = div.text_xs();
-                } else {
-                    div = div.text_sm();
-                }
-
-                div.text_color(run.color).child(run.text)
-            }))
+            .children(
+                runs.into_iter()
+                    .map(|run| div().text_color(run.color).child(run.text)),
+            )
     }
 }
 

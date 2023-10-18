@@ -158,9 +158,16 @@ impl HighlightColor {
 }
 
 pub fn ui_size(size: f32) -> Rems {
+    const UI_SCALE_RATIO: f32 = 0.875;
+
     let setting = user_settings();
 
-    rems(*setting.ui_scale * size)
+    let rems = rems(*setting.ui_scale * UI_SCALE_RATIO * size);
+    let px = rems * 16.0;
+
+    dbg!(rems, rems * 16.0);
+
+    rems
 }
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]

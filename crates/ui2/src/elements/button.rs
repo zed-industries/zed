@@ -5,7 +5,7 @@ use gpui3::{DefiniteLength, Hsla, Interactive, MouseButton, WindowContext};
 
 use crate::prelude::*;
 use crate::settings::user_settings;
-use crate::{h_stack, Icon, IconColor, IconElement, Label, LabelColor, LabelSize};
+use crate::{h_stack, Icon, IconColor, IconElement, Label, LabelColor};
 
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum IconPosition {
@@ -137,9 +137,7 @@ impl<S: 'static + Send + Sync + Clone> Button<S> {
     }
 
     fn render_label(&self) -> Label<S> {
-        Label::new(self.label.clone())
-            .size(LabelSize::Small)
-            .color(self.label_color())
+        Label::new(self.label.clone()).color(self.label_color())
     }
 
     fn render_icon(&self, icon_color: IconColor) -> Option<IconElement<S>> {
@@ -153,7 +151,7 @@ impl<S: 'static + Send + Sync + Clone> Button<S> {
 
         let mut el = h_stack()
             .p_1()
-            .text_size(ui_size(1.125))
+            .text_size(ui_size(1.))
             .rounded_md()
             .border()
             .border_color(border_color)
@@ -205,7 +203,7 @@ mod stories {
     use gpui3::rems;
     use strum::IntoEnumIterator;
 
-    use crate::{h_stack, v_stack, LabelColor, LabelSize, Story};
+    use crate::{h_stack, v_stack, LabelColor, Story};
 
     use super::*;
 
@@ -241,9 +239,7 @@ mod stories {
                                     v_stack()
                                         .gap_1()
                                         .child(
-                                            Label::new(state.to_string())
-                                                .color(LabelColor::Muted)
-                                                .size(LabelSize::Small),
+                                            Label::new(state.to_string()).color(LabelColor::Muted),
                                         )
                                         .child(
                                             Button::new("Label")
@@ -256,9 +252,7 @@ mod stories {
                                     v_stack()
                                         .gap_1()
                                         .child(
-                                            Label::new(state.to_string())
-                                                .color(LabelColor::Muted)
-                                                .size(LabelSize::Small),
+                                            Label::new(state.to_string()).color(LabelColor::Muted),
                                         )
                                         .child(
                                             Button::new("Label")
@@ -273,9 +267,7 @@ mod stories {
                                     v_stack()
                                         .gap_1()
                                         .child(
-                                            Label::new(state.to_string())
-                                                .color(LabelColor::Muted)
-                                                .size(LabelSize::Small),
+                                            Label::new(state.to_string()).color(LabelColor::Muted),
                                         )
                                         .child(
                                             Button::new("Label")
@@ -293,9 +285,7 @@ mod stories {
                                     v_stack()
                                         .gap_1()
                                         .child(
-                                            Label::new(state.to_string())
-                                                .color(LabelColor::Muted)
-                                                .size(LabelSize::Small),
+                                            Label::new(state.to_string()).color(LabelColor::Muted),
                                         )
                                         .child(
                                             Button::new("Label")
@@ -308,9 +298,7 @@ mod stories {
                                     v_stack()
                                         .gap_1()
                                         .child(
-                                            Label::new(state.to_string())
-                                                .color(LabelColor::Muted)
-                                                .size(LabelSize::Small),
+                                            Label::new(state.to_string()).color(LabelColor::Muted),
                                         )
                                         .child(
                                             Button::new("Label")
@@ -325,9 +313,7 @@ mod stories {
                                     v_stack()
                                         .gap_1()
                                         .child(
-                                            Label::new(state.to_string())
-                                                .color(LabelColor::Muted)
-                                                .size(LabelSize::Small),
+                                            Label::new(state.to_string()).color(LabelColor::Muted),
                                         )
                                         .child(
                                             Button::new("Label")
@@ -345,9 +331,7 @@ mod stories {
                                     v_stack()
                                         .gap_1()
                                         .child(
-                                            Label::new(state.to_string())
-                                                .color(LabelColor::Muted)
-                                                .size(LabelSize::Small),
+                                            Label::new(state.to_string()).color(LabelColor::Muted),
                                         )
                                         .child(
                                             Button::new("Label")
@@ -361,9 +345,7 @@ mod stories {
                                     v_stack()
                                         .gap_1()
                                         .child(
-                                            Label::new(state.to_string())
-                                                .color(LabelColor::Muted)
-                                                .size(LabelSize::Small),
+                                            Label::new(state.to_string()).color(LabelColor::Muted),
                                         )
                                         .child(
                                             Button::new("Label")
@@ -379,9 +361,7 @@ mod stories {
                                     v_stack()
                                         .gap_1()
                                         .child(
-                                            Label::new(state.to_string())
-                                                .color(LabelColor::Muted)
-                                                .size(LabelSize::Small),
+                                            Label::new(state.to_string()).color(LabelColor::Muted),
                                         )
                                         .child(
                                             Button::new("Label")
