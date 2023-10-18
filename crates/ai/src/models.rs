@@ -38,7 +38,11 @@ impl LanguageModel for OpenAILanguageModel {
     fn truncate(&self, content: &str, length: usize) -> anyhow::Result<String> {
         if let Some(bpe) = &self.bpe {
             let tokens = bpe.encode_with_special_tokens(content);
-            bpe.decode(tokens[..length].to_vec())
+            if tokens.len() > length {
+                bpe.decode(tokens[..length].to_vec())
+            } else {
+                bpe.decode(tokens)
+            }
         } else {
             Err(anyhow!("bpe for open ai model was not retrieved"))
         }
