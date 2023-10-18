@@ -238,7 +238,6 @@ impl AppContext {
                 });
 
                 if blur_window {
-                    cx.window.focus = None;
                     cx.blur();
                 }
             })
@@ -263,12 +262,14 @@ impl AppContext {
         self.update_window(window_id, |cx| {
             if cx.window.focus == focused {
                 let mut listeners = mem::take(&mut cx.window.focus_listeners);
-                let focused = focused.map(|id| FocusHandle::for_id(id, &cx.window.focus_handles));
+                let focused =
+                    focused.map(|id| FocusHandle::for_id(id, &cx.window.focus_handles).unwrap());
                 let blurred = cx
                     .window
                     .last_blur
+                    .take()
                     .unwrap()
-                    .map(|id| FocusHandle::for_id(id, &cx.window.focus_handles));
+                    .and_then(|id| FocusHandle::for_id(id, &cx.window.focus_handles));
                 let event = FocusEvent { focused, blurred };
                 for listener in &listeners {
                     listener(&event, cx);

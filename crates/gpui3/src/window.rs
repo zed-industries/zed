@@ -12,7 +12,7 @@ use crate::{
 use anyhow::Result;
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
-use parking_lot::{RwLock, RwLockUpgradableReadGuard};
+use parking_lot::RwLock;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
 use std::{
@@ -24,7 +24,7 @@ use std::{
     mem,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
-        Arc, Weak,
+        Arc,
     },
 };
 use util::ResultExt;
@@ -57,10 +57,9 @@ type AnyKeyUpListener =
 
 slotmap::new_key_type! { pub struct FocusId; }
 
-#[derive(Clone)]
 pub struct FocusHandle {
     pub(crate) id: FocusId,
-    handles: Weak<RwLock<SlotMap<FocusId, AtomicUsize>>>,
+    handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
 }
 
 impl FocusHandle {
@@ -68,20 +67,24 @@ impl FocusHandle {
         let id = handles.write().insert(AtomicUsize::new(1));
         Self {
             id,
-            handles: Arc::downgrade(handles),
+            handles: handles.clone(),
         }
     }
 
     pub(crate) fn for_id(
         id: FocusId,
         handles: &Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
-    ) -> Self {
-        let lock = handles.upgradable_read();
-        let ref_count = lock.get(id).expect("all focus handles dropped for id");
-        ref_count.fetch_add(1, SeqCst);
-        Self {
-            id,
-            handles: Arc::downgrade(handles),
+    ) -> Option<Self> {
+        let lock = handles.read();
+        let ref_count = lock.get(id)?;
+        if ref_count.load(SeqCst) == 0 {
+            None
+        } else {
+            ref_count.fetch_add(1, SeqCst);
+            Some(Self {
+                id,
+                handles: handles.clone(),
+            })
         }
     }
 
@@ -112,6 +115,12 @@ impl FocusHandle {
     }
 }
 
+impl Clone for FocusHandle {
+    fn clone(&self) -> Self {
+        Self::for_id(self.id, &self.handles).unwrap()
+    }
+}
+
 impl PartialEq for FocusHandle {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
@@ -122,9 +131,11 @@ impl Eq for FocusHandle {}
 
 impl Drop for FocusHandle {
     fn drop(&mut self) {
-        if let Some(handles) = self.handles.upgrade() {
-            handles.read().get(self.id).unwrap().fetch_sub(1, SeqCst);
-        }
+        self.handles
+            .read()
+            .get(self.id)
+            .unwrap()
+            .fetch_sub(1, SeqCst);
     }
 }
 
@@ -279,7 +290,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     pub fn focused(&self) -> Option<FocusHandle> {
         self.window
             .focus
-            .map(|id| FocusHandle::for_id(id, &self.window.focus_handles))
+            .and_then(|id| FocusHandle::for_id(id, &self.window.focus_handles))
     }
 
     pub fn focus(&mut self, handle: &FocusHandle) {
