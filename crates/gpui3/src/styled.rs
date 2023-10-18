@@ -60,7 +60,7 @@ pub trait Styled {
         self
     }
 
-    /// Sets the flex directino of the element to `column`.
+    /// Sets the flex direction of the element to `column`.
     /// [Docs](https://tailwindcss.com/docs/flex-direction#column)
     fn flex_col(mut self) -> Self
     where
@@ -70,7 +70,7 @@ pub trait Styled {
         self
     }
 
-    /// Sets the flex directino of the element to `row`.
+    /// Sets the flex direction of the element to `row`.
     /// [Docs](https://tailwindcss.com/docs/flex-direction#row)
     fn flex_row(mut self) -> Self
     where
