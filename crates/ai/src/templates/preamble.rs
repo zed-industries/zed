@@ -25,7 +25,7 @@ impl PromptTemplate for EngineerPreamble {
 
         if let Some(project_name) = args.project_name.clone() {
             prompts.push(format!(
-                "You are currently working inside the '{project_name}' in Zed the code editor."
+                "You are currently working inside the '{project_name}' project in code editor Zed."
             ));
         }
 

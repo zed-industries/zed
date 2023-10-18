@@ -90,10 +90,6 @@ impl PromptChain {
             if let Some((template_prompt, prompt_token_count)) =
                 template.generate(&self.args, tokens_outstanding).log_err()
             {
-                println!(
-                    "GENERATED PROMPT ({:?}): {:?}",
-                    &prompt_token_count, &template_prompt
-                );
                 if template_prompt != "" {
                     prompts[idx] = template_prompt;
 

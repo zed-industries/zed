@@ -612,6 +612,18 @@ impl AssistantPanel {
 
         let project = pending_assist.project.clone();
 
+        let project_name = if let Some(project) = project.upgrade(cx) {
+            Some(
+                project
+                    .read(cx)
+                    .worktree_root_names(cx)
+                    .collect::<Vec<&str>>()
+                    .join("/"),
+            )
+        } else {
+            None
+        };
+
         self.inline_prompt_history
             .retain(|prompt| prompt != user_prompt);
         self.inline_prompt_history.push_back(user_prompt.into());
@@ -649,7 +661,6 @@ impl AssistantPanel {
             None
         };
 
-        let codegen_kind = codegen.read(cx).kind().clone();
         let user_prompt = user_prompt.to_string();
 
         let snippets = if retrieve_context {
@@ -692,11 +703,11 @@ impl AssistantPanel {
             generate_content_prompt(
                 user_prompt,
                 language_name,
-                &buffer,
+                buffer,
                 range,
-                codegen_kind,
                 snippets,
                 model_name,
+                project_name,
             )
         });
 

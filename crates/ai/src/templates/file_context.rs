@@ -44,22 +44,22 @@ impl PromptTemplate for FileContext {
                 .unwrap();
 
                 if start == end {
-                    writeln!(prompt, "<|START|>").unwrap();
+                    write!(prompt, "<|START|>").unwrap();
                 } else {
-                    writeln!(prompt, "<|START|").unwrap();
+                    write!(prompt, "<|START|").unwrap();
                 }
 
-                writeln!(
+                write!(
                     prompt,
                     "{}",
                     buffer.text_for_range(start..end).collect::<String>()
                 )
                 .unwrap();
                 if start != end {
-                    writeln!(prompt, "|END|>").unwrap();
+                    write!(prompt, "|END|>").unwrap();
                 }
 
-                writeln!(
+                write!(
                     prompt,
                     "{}",
                     buffer.text_for_range(end..buffer.len()).collect::<String>()
