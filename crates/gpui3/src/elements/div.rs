@@ -331,17 +331,19 @@ where
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<Self::ViewState>,
     ) -> (LayoutId, Self::ElementState) {
-        self.with_element_id(cx, |this, cx| {
-            let layout_ids = this
-                .children
-                .iter_mut()
-                .map(|child| child.layout(view_state, cx))
-                .collect::<Vec<_>>();
+        let element_state = element_state.unwrap_or_default();
+        let style = self.compute_style(Bounds::default(), &element_state, cx);
+        style.apply_text_style(cx, |cx| {
+            self.with_element_id(cx, |this, cx| {
+                let layout_ids = this
+                    .children
+                    .iter_mut()
+                    .map(|child| child.layout(view_state, cx))
+                    .collect::<Vec<_>>();
 
-            let element_state = element_state.unwrap_or_default();
-            let style = this.compute_style(Bounds::default(), &element_state, cx);
-            let layout_id = cx.request_layout(&style, layout_ids);
-            (layout_id, element_state)
+                let layout_id = cx.request_layout(&style, layout_ids);
+                (layout_id, element_state)
+            })
         })
     }
 
