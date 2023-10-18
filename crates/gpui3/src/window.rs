@@ -160,6 +160,7 @@ pub struct Window {
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
     propagate_event: bool,
+    default_prevented: bool,
     mouse_position: Point<Pixels>,
     scale_factor: f32,
     pub(crate) scene_builder: SceneBuilder,
@@ -230,6 +231,7 @@ impl Window {
             focus_parents_by_child: HashMap::default(),
             focus_listeners: Vec::new(),
             propagate_event: true,
+            default_prevented: true,
             mouse_position,
             scale_factor,
             scene_builder: SceneBuilder::new(),
@@ -445,6 +447,14 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
     pub fn stop_propagation(&mut self) {
         self.window.propagate_event = false;
+    }
+
+    pub fn prevent_default(&mut self) {
+        self.window.default_prevented = true;
+    }
+
+    pub fn default_prevented(&self) -> bool {
+        self.window.default_prevented
     }
 
     pub fn on_mouse_event<Event: 'static>(
@@ -837,6 +847,10 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 self.window.mouse_position = *position;
             }
 
+            // Handlers may set this to false by calling `stop_propagation`
+            self.window.propagate_event = true;
+            self.window.default_prevented = false;
+
             if let Some(mut handlers) = self
                 .window
                 .mouse_listeners
@@ -844,9 +858,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             {
                 // Because handlers may add other handlers, we sort every time.
                 handlers.sort_by(|(a, _), (b, _)| a.cmp(b));
-
-                // Handlers may set this to false by calling `stop_propagation`
-                self.window.propagate_event = true;
 
                 // Capture phase, events bubble from back to front. Handlers for this phase are used for
                 // special purposes, such as detecting events outside of a given Bounds.
