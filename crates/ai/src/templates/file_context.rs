@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use language::ToOffset;
 
 use crate::templates::base::PromptArguments;
@@ -13,12 +12,6 @@ impl PromptTemplate for FileContext {
         args: &PromptArguments,
         max_token_length: Option<usize>,
     ) -> anyhow::Result<(String, usize)> {
-        if max_token_length.is_some() {
-            return Err(anyhow!(
-                "no truncation strategy established for file_context template"
-            ));
-        }
-
         let mut prompt = String::new();
 
         // Add Initial Preamble
@@ -82,6 +75,11 @@ impl PromptTemplate for FileContext {
                 // If we dont have a selected range, include entire file.
                 writeln!(prompt, "{}", &buffer.text()).unwrap();
             }
+        }
+
+        // Really dumb truncation strategy
+        if let Some(max_tokens) = max_token_length {
+            prompt = args.model.truncate(&prompt, max_tokens)?;
         }
 
         let token_count = args.model.count_tokens(&prompt)?;

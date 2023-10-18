@@ -18,12 +18,6 @@ impl PromptTemplate for GenerateInlineContent {
         args: &PromptArguments,
         max_token_length: Option<usize>,
     ) -> anyhow::Result<(String, usize)> {
-        if max_token_length.is_some() {
-            return Err(anyhow!(
-                "no truncation strategy established for generating inline content template"
-            ));
-        }
-
         let Some(user_prompt) = &args.user_prompt else {
             return Err(anyhow!("user prompt not provided"));
         };
@@ -86,6 +80,11 @@ impl PromptTemplate for GenerateInlineContent {
                 writeln!(prompt, "Always wrap your code in a Markdown block.").unwrap();
             }
             _ => {}
+        }
+
+        // Really dumb truncation strategy
+        if let Some(max_tokens) = max_token_length {
+            prompt = args.model.truncate(&prompt, max_tokens)?;
         }
 
         let token_count = args.model.count_tokens(&prompt)?;

@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use std::cmp::Reverse;
 use std::ops::Range;
 use std::sync::Arc;
@@ -96,36 +95,15 @@ impl PromptChain {
 
         let mut prompts = vec!["".to_string(); sorted_indices.len()];
         for idx in sorted_indices {
-            let (priority, template) = &self.templates[idx];
-
-            // If PromptPriority is marked as mandatory, we ignore the tokens outstanding
-            // However, if a prompt is generated in excess of the available tokens,
-            // we raise an error outlining that a mandatory prompt has exceeded the available
-            // balance
-            let template_tokens = if let Some(template_tokens) = tokens_outstanding {
-                match priority {
-                    &PromptPriority::Mandatory => None,
-                    _ => Some(template_tokens),
-                }
-            } else {
-                None
-            };
+            let (_, template) = &self.templates[idx];
 
             if let Some((template_prompt, prompt_token_count)) =
-                template.generate(&self.args, template_tokens).log_err()
+                template.generate(&self.args, tokens_outstanding).log_err()
             {
                 if template_prompt != "" {
                     prompts[idx] = template_prompt;
 
                     if let Some(remaining_tokens) = tokens_outstanding {
-                        if prompt_token_count > remaining_tokens
-                            && priority == &PromptPriority::Mandatory
-                        {
-                            return Err(anyhow!(
-                                "mandatory template added in excess of model capacity"
-                            ));
-                        }
-
                         let new_tokens = prompt_token_count + seperator_tokens;
                         tokens_outstanding = if remaining_tokens > new_tokens {
                             Some(remaining_tokens - new_tokens)
