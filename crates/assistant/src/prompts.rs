@@ -222,7 +222,7 @@ pub fn generate_content_prompt(
     }
     prompts.push("Never make remarks about the output.".to_string());
     prompts.push("Do not return any text, except the generated code.".to_string());
-    prompts.push("Do not wrap your text in a Markdown block".to_string());
+    prompts.push("Always wrap your code in a Markdown block".to_string());
 
     let current_messages = [ChatCompletionRequestMessage {
         role: "user".to_string(),
@@ -235,7 +235,11 @@ pub fn generate_content_prompt(
         tiktoken_rs::num_tokens_from_messages(model, &current_messages)
     {
         let max_token_count = tiktoken_rs::model::get_context_size(model);
-        let intermediate_token_count = max_token_count - current_token_count;
+        let intermediate_token_count = if max_token_count > current_token_count {
+            max_token_count - current_token_count
+        } else {
+            0
+        };
 
         if intermediate_token_count < RESERVED_TOKENS_FOR_GENERATION {
             0

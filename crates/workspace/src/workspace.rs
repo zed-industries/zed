@@ -289,6 +289,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     cx.add_global_action(restart);
     cx.add_async_action(Workspace::save_all);
     cx.add_action(Workspace::add_folder_to_project);
+
     cx.add_action(
         |workspace: &mut Workspace, _: &Unfollow, cx: &mut ViewContext<Workspace>| {
             let pane = workspace.active_pane().clone();

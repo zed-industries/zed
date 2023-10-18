@@ -1626,6 +1626,7 @@ dependencies = [
  "theme",
  "util",
  "workspace",
+ "zed-actions",
 ]
 
 [[package]]
@@ -10175,6 +10176,7 @@ name = "zed-actions"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "serde",
 ]
 
 [[package]]

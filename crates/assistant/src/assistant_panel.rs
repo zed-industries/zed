@@ -3221,7 +3221,7 @@ impl InlineAssistant {
                         }
                     }
                     Some(
-                        Svg::new("icons/bolt.svg")
+                        Svg::new("icons/update.svg")
                             .with_color(theme.assistant.inline.context_status.in_progress_icon.color)
                             .constrained()
                             .with_width(theme.assistant.inline.context_status.in_progress_icon.width)
@@ -3239,7 +3239,7 @@ impl InlineAssistant {
                     )
                 }
                 SemanticIndexStatus::Indexed {} => Some(
-                    Svg::new("icons/circle_check.svg")
+                    Svg::new("icons/check.svg")
                         .with_color(theme.assistant.inline.context_status.complete_icon.color)
                         .constrained()
                         .with_width(theme.assistant.inline.context_status.complete_icon.width)
@@ -3247,7 +3247,7 @@ impl InlineAssistant {
                         .with_style(theme.assistant.inline.context_status.complete_icon.container)
                         .with_tooltip::<ContextStatusIcon>(
                             self.id,
-                            "Indexing Complete",
+                            "Index up to date",
                             None,
                             theme.tooltip.clone(),
                             cx,

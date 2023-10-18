@@ -6,8 +6,12 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate, PickerEvent};
 use std::cmp::{self, Reverse};
-use util::ResultExt;
+use util::{
+    channel::{parse_zed_link, ReleaseChannel, RELEASE_CHANNEL},
+    ResultExt,
+};
 use workspace::Workspace;
+use zed_actions::OpenZedURL;
 
 pub fn init(cx: &mut AppContext) {
     cx.add_action(toggle_command_palette);
@@ -167,13 +171,22 @@ impl PickerDelegate for CommandPaletteDelegate {
                 )
                 .await
             };
-            let intercept_result = cx.read(|cx| {
+            let mut intercept_result = cx.read(|cx| {
                 if cx.has_global::<CommandPaletteInterceptor>() {
                     cx.global::<CommandPaletteInterceptor>()(&query, cx)
                 } else {
                     None
                 }
             });
+            if *RELEASE_CHANNEL == ReleaseChannel::Dev {
+                if parse_zed_link(&query).is_some() {
+                    intercept_result = Some(CommandInterceptResult {
+                        action: OpenZedURL { url: query.clone() }.boxed_clone(),
+                        string: query.clone(),
+                        positions: vec![],
+                    })
+                }
+            }
             if let Some(CommandInterceptResult {
                 action,
                 string,
