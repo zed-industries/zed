@@ -7,7 +7,7 @@ use crate::prelude::*;
 use crate::settings::user_settings;
 use crate::{
     random_players_with_call_status, theme, Avatar, Button, Icon, IconButton, IconColor, MicStatus,
-    PlayerStack, PlayerWithCallStatus, ScreenShareStatus, ToolDivider, TrafficLights,
+    PlayerWithCallStatus, ScreenShareStatus, ToolDivider, TrafficLights,
 };
 
 #[derive(Clone)]

@@ -147,12 +147,7 @@ pub fn ui_size(size: f32) -> Rems {
 
     let setting = user_settings();
 
-    let rems = rems(*setting.ui_scale * UI_SCALE_RATIO * size);
-    let px = rems * 16.0;
-
-    dbg!(rems, rems * 16.0);
-
-    rems
+    rems(*setting.ui_scale * UI_SCALE_RATIO * size)
 }
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]
