@@ -3,8 +3,8 @@ mod connection_pool;
 use crate::{
     auth,
     db::{
-        self, BufferId, ChannelId, ChannelsForUser, Database, MessageId, ProjectId, RoomId,
-        ServerId, User, UserId,
+        self, BufferId, ChannelId, ChannelRole, ChannelVisibility, ChannelsForUser, Database,
+        MessageId, ProjectId, RoomId, ServerId, User, UserId,
     },
     executor::Executor,
     AppState, Result,
@@ -38,8 +38,8 @@ use lazy_static::lazy_static;
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
-        self, Ack, AnyTypedEnvelope, ChannelEdge, EntityMessage, EnvelopedMessage,
-        LiveKitConnectionInfo, RequestMessage, UpdateChannelBufferCollaborators,
+        self, Ack, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, LiveKitConnectionInfo,
+        RequestMessage, UpdateChannelBufferCollaborators,
     },
     Connection, ConnectionId, Peer, Receipt, TypedEnvelope,
 };
@@ -2366,15 +2366,18 @@ async fn set_channel_visibility(
     for member in members {
         for connection_id in connection_pool.user_connection_ids(UserId::from_proto(member.user_id))
         {
-            let mut update = proto::UpdateChannels::default();
-            update.channels.push(proto::Channel {
-                id: channel.id.to_proto(),
-                name: channel.name.clone(),
-                visibility: channel.visibility.into(),
-                role: member.role.into(),
-            });
-
-            session.peer.send(connection_id, update.clone())?;
+            session.peer.send(
+                connection_id,
+                proto::UpdateChannels {
+                    channels: vec![proto::Channel {
+                        id: channel.id.to_proto(),
+                        name: channel.name.clone(),
+                        visibility: channel.visibility.into(),
+                        role: member.role.into(),
+                    }],
+                    ..Default::default()
+                },
+            )?;
         }
     }
 
@@ -2468,6 +2471,8 @@ async fn rename_channel(
     Ok(())
 }
 
+// TODO: Implement in terms of symlinks
+// Current behavior of this is more like 'Move root channel'
 async fn link_channel(
     request: proto::LinkChannel,
     response: Response<proto::LinkChannel>,
@@ -2476,30 +2481,46 @@ async fn link_channel(
     let db = session.db().await;
     let channel_id = ChannelId::from_proto(request.channel_id);
     let to = ChannelId::from_proto(request.to);
-    let channels_to_send = db.link_channel(session.user_id, channel_id, to).await?;
 
-    let members = db.get_channel_members(to).await?;
+    // TODO: Remove this restriction once we have symlinks
+    db.assert_root_channel(channel_id).await?;
+
+    let channels_to_send = db.link_channel(session.user_id, channel_id, to).await?;
+    let members = db.get_channel_members_and_roles(to).await?;
     let connection_pool = session.connection_pool().await;
-    let update = proto::UpdateChannels {
-        channels: channels_to_send
-            .channels
-            .into_iter()
-            .map(|channel| proto::Channel {
-                id: channel.id.to_proto(),
-                visibility: channel.visibility.into(),
-                name: channel.name,
-                // TODO: not all these members should be able to see all those channels
-                // the channels in channels_to_send are from the admin point of view,
-                // but any public guests should only get updates about public channels.
-                role: todo!(),
-            })
-            .collect(),
-        insert_edge: channels_to_send.edges,
-        ..Default::default()
-    };
-    for member_id in members {
+
+    for (member_id, role) in members {
+        let build_channel_proto = |channel: &db::Channel| proto::Channel {
+            id: channel.id.to_proto(),
+            visibility: channel.visibility.into(),
+            name: channel.name.clone(),
+            role: role.into(),
+        };
+
         for connection_id in connection_pool.user_connection_ids(member_id) {
-            session.peer.send(connection_id, update.clone())?;
+            let channels: Vec<_> = if role == ChannelRole::Guest {
+                channels_to_send
+                    .channels
+                    .iter()
+                    .filter(|channel| channel.visibility != ChannelVisibility::Public)
+                    .map(build_channel_proto)
+                    .collect()
+            } else {
+                channels_to_send
+                    .channels
+                    .iter()
+                    .map(build_channel_proto)
+                    .collect()
+            };
+
+            session.peer.send(
+                connection_id,
+                proto::UpdateChannels {
+                    channels,
+                    insert_edge: channels_to_send.edges.clone(),
+                    ..Default::default()
+                },
+            )?;
         }
     }
 
@@ -2508,36 +2529,13 @@ async fn link_channel(
     Ok(())
 }
 
+// TODO: Implement in terms of symlinks
 async fn unlink_channel(
-    request: proto::UnlinkChannel,
-    response: Response<proto::UnlinkChannel>,
-    session: Session,
+    _request: proto::UnlinkChannel,
+    _response: Response<proto::UnlinkChannel>,
+    _session: Session,
 ) -> Result<()> {
-    let db = session.db().await;
-    let channel_id = ChannelId::from_proto(request.channel_id);
-    let from = ChannelId::from_proto(request.from);
-
-    db.unlink_channel(session.user_id, channel_id, from).await?;
-
-    let members = db.get_channel_members(from).await?;
-
-    let update = proto::UpdateChannels {
-        delete_edge: vec![proto::ChannelEdge {
-            channel_id: channel_id.to_proto(),
-            parent_id: from.to_proto(),
-        }],
-        ..Default::default()
-    };
-    let connection_pool = session.connection_pool().await;
-    for member_id in members {
-        for connection_id in connection_pool.user_connection_ids(member_id) {
-            session.peer.send(connection_id, update.clone())?;
-        }
-    }
-
-    response.send(Ack {})?;
-
-    Ok(())
+    Err(anyhow!("unimplemented").into())
 }
 
 async fn move_channel(
@@ -2554,7 +2552,7 @@ async fn move_channel(
         .public_path_to_channel(from_parent)
         .await?
         .last()
-        .cloned();
+        .copied();
 
     let channels_to_send = db
         .move_channel(session.user_id, channel_id, from_parent, to)
@@ -2574,6 +2572,7 @@ async fn move_channel(
         .filter(|member| {
             member.role() == proto::ChannelRole::Admin || member.role() == proto::ChannelRole::Guest
         });
+
     let members_to = db
         .get_channel_participant_details(to, session.user_id)
         .await?

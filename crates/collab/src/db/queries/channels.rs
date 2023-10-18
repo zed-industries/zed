@@ -419,7 +419,7 @@ impl Database {
             }
 
             let channels = channel::Entity::find()
-                .filter(channel::Column::Id.is_in(role_for_channel.keys().cloned()))
+                .filter(channel::Column::Id.is_in(role_for_channel.keys().copied()))
                 .all(&*tx)
                 .await?;
 
@@ -631,6 +631,36 @@ impl Database {
     pub async fn get_channel_members(&self, id: ChannelId) -> Result<Vec<UserId>> {
         self.transaction(|tx| async move { self.get_channel_participants_internal(id, &*tx).await })
             .await
+    }
+
+    pub async fn get_channel_members_and_roles(
+        &self,
+        id: ChannelId,
+    ) -> Result<Vec<(UserId, ChannelRole)>> {
+        self.transaction(|tx| async move {
+            #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+            enum QueryUserIdsAndRoles {
+                UserId,
+                Role,
+            }
+
+            let ancestor_ids = self.get_channel_ancestors(id, &*tx).await?;
+            let user_ids_and_roles = channel_member::Entity::find()
+                .distinct()
+                .filter(
+                    channel_member::Column::ChannelId
+                        .is_in(ancestor_ids.iter().copied())
+                        .and(channel_member::Column::Accepted.eq(true)),
+                )
+                .select_only()
+                .column(channel_member::Column::UserId)
+                .column(channel_member::Column::Role)
+                .into_values::<_, QueryUserIdsAndRoles>()
+                .all(&*tx)
+                .await?;
+            Ok(user_ids_and_roles)
+        })
+        .await
     }
 
     pub async fn set_channel_member_role(
@@ -1138,9 +1168,6 @@ impl Database {
         to: ChannelId,
     ) -> Result<ChannelGraph> {
         self.transaction(|tx| async move {
-            // Note that even with these maxed permissions, this linking operation
-            // is still insecure because you can't remove someone's permissions to a
-            // channel if they've linked the channel to one where they're an admin.
             self.check_user_is_channel_admin(channel, user, &*tx)
                 .await?;
 
@@ -1324,6 +1351,23 @@ impl Database {
                 .await?;
 
             Ok(moved_channels)
+        })
+        .await
+    }
+
+    pub async fn assert_root_channel(&self, channel: ChannelId) -> Result<()> {
+        self.transaction(|tx| async move {
+            let path = channel_path::Entity::find()
+                .filter(channel_path::Column::ChannelId.eq(channel))
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such channel found"))?;
+
+            let mut id_parts = path.id_path.trim_matches('/').split('/');
+
+            (id_parts.next().is_some() && id_parts.next().is_none())
+                .then_some(())
+                .ok_or_else(|| anyhow!("channel is not a root channel").into())
         })
         .await
     }

@@ -970,9 +970,15 @@ message UpdateChannels {
     repeated Channel channel_invitations = 5;
     repeated uint64 remove_channel_invitations = 6;
     repeated ChannelParticipants channel_participants = 7;
+    //repeated ChannelRoles channel_roles = 8;
     repeated UnseenChannelMessage unseen_channel_messages = 9;
     repeated UnseenChannelBufferChange unseen_channel_buffer_changes = 10;
 }
+
+//message ChannelRoles {
+//    ChannelRole role = 1;
+//    uint64 channel_id = 2;
+//}
 
 message UnseenChannelMessage {
     uint64 channel_id = 1;

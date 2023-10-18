@@ -121,19 +121,8 @@ struct StartLinkChannelFor {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-struct LinkChannel {
-    to: ChannelId,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct MoveChannel {
     to: ChannelId,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-struct UnlinkChannel {
-    channel_id: ChannelId,
-    parent_id: ChannelId,
 }
 
 type DraggedChannel = (Channel, Option<ChannelId>);
@@ -147,8 +136,7 @@ actions!(
         CollapseSelectedChannel,
         ExpandSelectedChannel,
         StartMoveChannel,
-        StartLinkChannel,
-        MoveOrLinkToSelected,
+        MoveSelected,
         InsertSpace,
     ]
 );
@@ -166,11 +154,8 @@ impl_actions!(
         JoinChannelCall,
         JoinChannelChat,
         CopyChannelLink,
-        LinkChannel,
         StartMoveChannelFor,
-        StartLinkChannelFor,
         MoveChannel,
-        UnlinkChannel,
         ToggleSelectedIx
     ]
 );
@@ -185,7 +170,7 @@ struct ChannelMoveClipboard {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum ClipboardIntent {
     Move,
-    Link,
+    // Link,
 }
 
 const COLLABORATION_PANEL_KEY: &'static str = "CollaborationPanel";
@@ -239,18 +224,6 @@ pub fn init(cx: &mut AppContext) {
     );
 
     cx.add_action(
-        |panel: &mut CollabPanel,
-         action: &StartLinkChannelFor,
-         _: &mut ViewContext<CollabPanel>| {
-            panel.channel_clipboard = Some(ChannelMoveClipboard {
-                channel_id: action.channel_id,
-                parent_id: action.parent_id,
-                intent: ClipboardIntent::Link,
-            })
-        },
-    );
-
-    cx.add_action(
         |panel: &mut CollabPanel, _: &StartMoveChannel, _: &mut ViewContext<CollabPanel>| {
             if let Some((_, path)) = panel.selected_channel() {
                 panel.channel_clipboard = Some(ChannelMoveClipboard {
@@ -263,55 +236,29 @@ pub fn init(cx: &mut AppContext) {
     );
 
     cx.add_action(
-        |panel: &mut CollabPanel, _: &StartLinkChannel, _: &mut ViewContext<CollabPanel>| {
-            if let Some((_, path)) = panel.selected_channel() {
-                panel.channel_clipboard = Some(ChannelMoveClipboard {
-                    channel_id: path.channel_id(),
-                    parent_id: path.parent_id(),
-                    intent: ClipboardIntent::Link,
-                })
-            }
-        },
-    );
-
-    cx.add_action(
-        |panel: &mut CollabPanel, _: &MoveOrLinkToSelected, cx: &mut ViewContext<CollabPanel>| {
+        |panel: &mut CollabPanel, _: &MoveSelected, cx: &mut ViewContext<CollabPanel>| {
             let clipboard = panel.channel_clipboard.take();
             if let Some(((selected_channel, _), clipboard)) =
                 panel.selected_channel().zip(clipboard)
             {
                 match clipboard.intent {
-                    ClipboardIntent::Move if clipboard.parent_id.is_some() => {
-                        let parent_id = clipboard.parent_id.unwrap();
-                        panel.channel_store.update(cx, |channel_store, cx| {
-                            channel_store
-                                .move_channel(
-                                    clipboard.channel_id,
-                                    parent_id,
-                                    selected_channel.id,
-                                    cx,
-                                )
-                                .detach_and_log_err(cx)
-                        })
-                    }
-                    _ => panel.channel_store.update(cx, |channel_store, cx| {
-                        channel_store
-                            .link_channel(clipboard.channel_id, selected_channel.id, cx)
-                            .detach_and_log_err(cx)
+                    ClipboardIntent::Move => panel.channel_store.update(cx, |channel_store, cx| {
+                        match clipboard.parent_id {
+                            Some(parent_id) => channel_store.move_channel(
+                                clipboard.channel_id,
+                                parent_id,
+                                selected_channel.id,
+                                cx,
+                            ),
+                            None => channel_store.link_channel(
+                                clipboard.channel_id,
+                                selected_channel.id,
+                                cx,
+                            ),
+                        }
+                        .detach_and_log_err(cx)
                     }),
                 }
-            }
-        },
-    );
-
-    cx.add_action(
-        |panel: &mut CollabPanel, action: &LinkChannel, cx: &mut ViewContext<CollabPanel>| {
-            if let Some(clipboard) = panel.channel_clipboard.take() {
-                panel.channel_store.update(cx, |channel_store, cx| {
-                    channel_store
-                        .link_channel(clipboard.channel_id, action.to, cx)
-                        .detach_and_log_err(cx)
-                })
             }
         },
     );
@@ -320,27 +267,18 @@ pub fn init(cx: &mut AppContext) {
         |panel: &mut CollabPanel, action: &MoveChannel, cx: &mut ViewContext<CollabPanel>| {
             if let Some(clipboard) = panel.channel_clipboard.take() {
                 panel.channel_store.update(cx, |channel_store, cx| {
-                    if let Some(parent) = clipboard.parent_id {
-                        channel_store
-                            .move_channel(clipboard.channel_id, parent, action.to, cx)
-                            .detach_and_log_err(cx)
-                    } else {
-                        channel_store
-                            .link_channel(clipboard.channel_id, action.to, cx)
-                            .detach_and_log_err(cx)
+                    match clipboard.parent_id {
+                        Some(parent_id) => channel_store.move_channel(
+                            clipboard.channel_id,
+                            parent_id,
+                            action.to,
+                            cx,
+                        ),
+                        None => channel_store.link_channel(clipboard.channel_id, action.to, cx),
                     }
+                    .detach_and_log_err(cx)
                 })
             }
-        },
-    );
-
-    cx.add_action(
-        |panel: &mut CollabPanel, action: &UnlinkChannel, cx: &mut ViewContext<CollabPanel>| {
-            panel.channel_store.update(cx, |channel_store, cx| {
-                channel_store
-                    .unlink_channel(action.channel_id, action.parent_id, cx)
-                    .detach_and_log_err(cx)
-            })
         },
     );
 }
@@ -2235,33 +2173,23 @@ impl CollabPanel {
                 this.deploy_channel_context_menu(Some(e.position), &path, ix, cx);
             }
         })
-        .on_up(MouseButton::Left, move |e, this, cx| {
+        .on_up(MouseButton::Left, move |_, this, cx| {
             if let Some((_, dragged_channel)) = cx
                 .global::<DragAndDrop<Workspace>>()
                 .currently_dragged::<DraggedChannel>(cx.window())
             {
-                if e.modifiers.alt {
-                    this.channel_store.update(cx, |channel_store, cx| {
-                        channel_store
-                            .link_channel(dragged_channel.0.id, channel_id, cx)
-                            .detach_and_log_err(cx)
-                    })
-                } else {
-                    this.channel_store.update(cx, |channel_store, cx| {
-                        match dragged_channel.1 {
-                            Some(parent_id) => channel_store.move_channel(
-                                dragged_channel.0.id,
-                                parent_id,
-                                channel_id,
-                                cx,
-                            ),
-                            None => {
-                                channel_store.link_channel(dragged_channel.0.id, channel_id, cx)
-                            }
-                        }
-                        .detach_and_log_err(cx)
-                    })
-                }
+                this.channel_store.update(cx, |channel_store, cx| {
+                    match dragged_channel.1 {
+                        Some(parent_id) => channel_store.move_channel(
+                            dragged_channel.0.id,
+                            parent_id,
+                            channel_id,
+                            cx,
+                        ),
+                        None => channel_store.link_channel(dragged_channel.0.id, channel_id, cx),
+                    }
+                    .detach_and_log_err(cx)
+                })
             }
         })
         .on_move({
@@ -2288,18 +2216,10 @@ impl CollabPanel {
         })
         .as_draggable(
             (channel.clone(), path.parent_id()),
-            move |modifiers, (channel, _), cx: &mut ViewContext<Workspace>| {
+            move |_, (channel, _), cx: &mut ViewContext<Workspace>| {
                 let theme = &theme::current(cx).collab_panel;
 
                 Flex::<Workspace>::row()
-                    .with_children(modifiers.alt.then(|| {
-                        Svg::new("icons/plus.svg")
-                            .with_color(theme.channel_hash.color)
-                            .constrained()
-                            .with_width(theme.channel_hash.width)
-                            .aligned()
-                            .left()
-                    }))
                     .with_child(
                         Svg::new("icons/hash.svg")
                             .with_color(theme.channel_hash.color)
@@ -2743,29 +2663,9 @@ impl CollabPanel {
                         },
                     ),
                     ContextMenuItem::Separator,
-                ]);
-
-                if let Some(parent_id) = parent_id {
-                    items.push(ContextMenuItem::action(
-                        "Unlink from parent",
-                        UnlinkChannel {
-                            channel_id: path.channel_id(),
-                            parent_id,
-                        },
-                    ));
-                }
-
-                items.extend([
                     ContextMenuItem::action(
                         "Move this channel",
                         StartMoveChannelFor {
-                            channel_id: path.channel_id(),
-                            parent_id,
-                        },
-                    ),
-                    ContextMenuItem::action(
-                        "Link this channel",
-                        StartLinkChannelFor {
                             channel_id: path.channel_id(),
                             parent_id,
                         },
@@ -2777,12 +2677,6 @@ impl CollabPanel {
                     items.push(ContextMenuItem::action(
                         format!("Move '#{}' here", channel_name),
                         MoveChannel {
-                            to: path.channel_id(),
-                        },
-                    ));
-                    items.push(ContextMenuItem::action(
-                        format!("Link '#{}' here", channel_name),
-                        LinkChannel {
                             to: path.channel_id(),
                         },
                     ));

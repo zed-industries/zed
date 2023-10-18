@@ -19,17 +19,15 @@ fn test_update_channels(cx: &mut AppContext) {
                     id: 1,
                     name: "b".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
+                    role: proto::ChannelRole::Admin.into(),
                 },
                 proto::Channel {
                     id: 2,
                     name: "a".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
+                    role: proto::ChannelRole::Member.into(),
                 },
             ],
-            channel_permissions: vec![proto::ChannelPermission {
-                channel_id: 1,
-                role: proto::ChannelRole::Admin.into(),
-            }],
             ..Default::default()
         },
         cx,
@@ -52,11 +50,13 @@ fn test_update_channels(cx: &mut AppContext) {
                     id: 3,
                     name: "x".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
+                    role: proto::ChannelRole::Member.into(),
                 },
                 proto::Channel {
                     id: 4,
                     name: "y".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
+                    role: proto::ChannelRole::Member.into(),
                 },
             ],
             insert_edge: vec![
@@ -97,16 +97,19 @@ fn test_dangling_channel_paths(cx: &mut AppContext) {
                     id: 0,
                     name: "a".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
+                    role: proto::ChannelRole::Admin.into(),
                 },
                 proto::Channel {
                     id: 1,
                     name: "b".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
+                    role: proto::ChannelRole::Admin.into(),
                 },
                 proto::Channel {
                     id: 2,
                     name: "c".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
+                    role: proto::ChannelRole::Admin.into(),
                 },
             ],
             insert_edge: vec![
@@ -119,10 +122,6 @@ fn test_dangling_channel_paths(cx: &mut AppContext) {
                     channel_id: 2,
                 },
             ],
-            channel_permissions: vec![proto::ChannelPermission {
-                channel_id: 0,
-                role: proto::ChannelRole::Admin.into(),
-            }],
             ..Default::default()
         },
         cx,
@@ -166,6 +165,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
             id: channel_id,
             name: "the-channel".to_string(),
             visibility: proto::ChannelVisibility::Members as i32,
+            role: proto::ChannelRole::Admin.into(),
         }],
         ..Default::default()
     });
