@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use gpui3::{DefiniteLength, Hsla, MouseButton, StatelesslyInteractive, WindowContext};
+use gpui3::{DefiniteLength, Hsla, MouseButton, WindowContext};
 
 use crate::settings::user_settings;
 use crate::{h_stack, Icon, IconColor, IconElement, Label, LabelColor};

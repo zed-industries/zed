@@ -1,12 +1,10 @@
-use std::marker::PhantomData;
-
-use gpui3::{img, svg, SharedString};
-
 use crate::prelude::*;
 use crate::{
     static_collab_panel_channels, static_collab_panel_current_call, v_stack, Icon, List,
     ListHeader, ToggleState,
 };
+use gpui3::{img, svg, SharedString};
+use std::marker::PhantomData;
 
 #[derive(Element)]
 pub struct CollabPanel<S: 'static + Send + Sync + Clone> {
