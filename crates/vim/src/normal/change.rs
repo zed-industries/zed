@@ -20,7 +20,7 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
             | Motion::StartOfLine { .. }
     );
     vim.update_active_editor(cx, |editor, cx| {
-        let text_layout_details = TextLayoutDetails::new(editor, cx);
+        let text_layout_details = editor.text_layout_details(cx);
         editor.transact(cx, |editor, cx| {
             // We are swapping to insert mode anyway. Just set the line end clipping behavior now
             editor.set_clip_at_line_ends(false, cx);

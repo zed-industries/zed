@@ -1288,7 +1288,7 @@ pub mod tests {
 
         cx.update_window(window, |cx| {
             let text_layout_details =
-                editor.read_with(cx, |editor, cx| TextLayoutDetails::new(editor, cx));
+                editor.read_with(cx, |editor, cx| editor.text_layout_details(cx));
 
             let font_cache = cx.font_cache().clone();
 

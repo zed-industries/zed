@@ -4,7 +4,7 @@ use std::{cmp, sync::Arc};
 use collections::HashMap;
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
-    movement::{self, TextLayoutDetails},
+    movement,
     scroll::autoscroll::Autoscroll,
     Bias, DisplayPoint, Editor,
 };
@@ -57,7 +57,7 @@ pub fn init(cx: &mut AppContext) {
 pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.update_active_editor(cx, |editor, cx| {
-            let text_layout_details = TextLayoutDetails::new(editor, cx);
+            let text_layout_details = editor.text_layout_details(cx);
             if vim.state().mode == Mode::VisualBlock
                 && !matches!(
                     motion,
@@ -140,25 +140,23 @@ pub fn visual_block_motion(
         SelectionGoal,
     ) -> Option<(DisplayPoint, SelectionGoal)>,
 ) {
-    let text_layout_details = TextLayoutDetails::new(editor, cx);
+    let text_layout_details = editor.text_layout_details(cx);
     editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
         let map = &s.display_map();
         let mut head = s.newest_anchor().head().to_display_point(map);
         let mut tail = s.oldest_anchor().tail().to_display_point(map);
-        dbg!(head, tail);
-        dbg!(s.newest_anchor().goal);
+
+        let mut head_x = map.x_for_point(head, &text_layout_details);
+        let mut tail_x = map.x_for_point(tail, &text_layout_details);
 
         let (start, end) = match s.newest_anchor().goal {
             SelectionGoal::HorizontalRange { start, end } if preserve_goal => (start, end),
             SelectionGoal::HorizontalPosition(start) if preserve_goal => (start, start),
-            _ => (
-                map.x_for_point(tail, &text_layout_details),
-                map.x_for_point(head, &text_layout_details),
-            ),
+            _ => (tail_x, head_x),
         };
         let mut goal = SelectionGoal::HorizontalRange { start, end };
 
-        let was_reversed = tail.column() > head.column();
+        let was_reversed = head_x > tail_x;
         if !was_reversed && !preserve_goal {
             head = movement::saturating_left(map, head);
         }
@@ -167,24 +165,25 @@ pub fn visual_block_motion(
             return;
         };
         head = new_head;
+        head_x = map.x_for_point(head, &text_layout_details);
 
-        let is_reversed = tail.column() > head.column();
+        let is_reversed = tail_x > head_x;
         if was_reversed && !is_reversed {
-            tail = movement::left(map, tail)
+            tail = movement::left(map, tail);
+            tail_x = map.x_for_point(tail, &text_layout_details);
         } else if !was_reversed && is_reversed {
-            tail = movement::right(map, tail)
+            tail = movement::right(map, tail);
+            tail_x = map.x_for_point(tail, &text_layout_details);
         }
         if !is_reversed && !preserve_goal {
-            head = movement::saturating_right(map, head)
+            head = movement::saturating_right(map, head);
+            head_x = map.x_for_point(head, &text_layout_details);
         }
 
         let positions = if is_reversed {
-            map.x_for_point(head, &text_layout_details)..map.x_for_point(tail, &text_layout_details)
-        } else if head.column() == tail.column() {
-            let head_forward = movement::saturating_right(map, head);
-            map.x_for_point(head, &text_layout_details)..map.x_for_point(head, &text_layout_details)
+            head_x..tail_x
         } else {
-            map.x_for_point(tail, &text_layout_details)..map.x_for_point(head, &text_layout_details)
+            tail_x..head_x
         };
 
         if !preserve_goal {
@@ -215,11 +214,7 @@ pub fn visual_block_motion(
                 }
             }
 
-            if positions.start
-                <=
-                //map.x_for_point(DisplayPoint::new(row, map.line_len(row)), &text_layout_details)
-                layed_out_line.width()
-            {
+            if positions.start <= layed_out_line.width() {
                 let selection = Selection {
                     id: s.new_selection_id(),
                     start: start.to_point(map),

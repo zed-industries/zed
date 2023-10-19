@@ -1,4 +1,4 @@
-use editor::movement::{self, TextLayoutDetails};
+use editor::movement;
 use gpui::{actions, AppContext, WindowContext};
 use language::Point;
 use workspace::Workspace;
@@ -32,7 +32,7 @@ pub fn substitute(vim: &mut Vim, count: Option<usize>, line_mode: bool, cx: &mut
     vim.update_active_editor(cx, |editor, cx| {
         editor.set_clip_at_line_ends(false, cx);
         editor.transact(cx, |editor, cx| {
-            let text_layout_details = TextLayoutDetails::new(editor, cx);
+            let text_layout_details = editor.text_layout_details(cx);
             editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
                     if selection.start == selection.end {

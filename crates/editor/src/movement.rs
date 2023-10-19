@@ -1,6 +1,6 @@
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
-use crate::{char_kind, CharKind, Editor, EditorStyle, ToOffset, ToPoint};
-use gpui::{FontCache, TextLayoutCache, WindowContext};
+use crate::{char_kind, CharKind, EditorStyle, ToOffset, ToPoint};
+use gpui::{FontCache, TextLayoutCache};
 use language::Point;
 use std::{ops::Range, sync::Arc};
 
@@ -16,16 +16,6 @@ pub struct TextLayoutDetails {
     pub font_cache: Arc<FontCache>,
     pub text_layout_cache: Arc<TextLayoutCache>,
     pub editor_style: EditorStyle,
-}
-
-impl TextLayoutDetails {
-    pub fn new(editor: &Editor, cx: &WindowContext) -> TextLayoutDetails {
-        TextLayoutDetails {
-            font_cache: cx.font_cache().clone(),
-            text_layout_cache: cx.text_layout_cache().clone(),
-            editor_style: editor.style(cx),
-        }
-    }
 }
 
 pub fn left(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
@@ -743,7 +733,7 @@ mod tests {
         let window = cx.window.clone();
         cx.update_window(window, |cx| {
             let text_layout_details =
-                editor.read_with(cx, |editor, cx| TextLayoutDetails::new(editor, cx));
+                editor.read_with(cx, |editor, cx| editor.text_layout_details(cx));
 
             let family_id = cx
                 .font_cache()

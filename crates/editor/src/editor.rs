@@ -3065,6 +3065,14 @@ impl Editor {
             .collect()
     }
 
+    pub fn text_layout_details(&self, cx: &WindowContext) -> TextLayoutDetails {
+        TextLayoutDetails {
+            font_cache: cx.font_cache().clone(),
+            text_layout_cache: cx.text_layout_cache().clone(),
+            editor_style: self.style(cx),
+        }
+    }
+
     fn splice_inlay_hints(
         &self,
         to_remove: Vec<InlayId>,
@@ -4988,7 +4996,7 @@ impl Editor {
     }
 
     pub fn transpose(&mut self, _: &Transpose, cx: &mut ViewContext<Self>) {
-        let text_layout_details = TextLayoutDetails::new(&self, cx);
+        let text_layout_details = &self.text_layout_details(cx);
         self.transact(cx, |this, cx| {
             let edits = this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 let mut edits: Vec<(Range<usize>, String)> = Default::default();
@@ -5279,7 +5287,7 @@ impl Editor {
             return;
         }
 
-        let text_layout_details = TextLayoutDetails::new(&self, cx);
+        let text_layout_details = &self.text_layout_details(cx);
 
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             let line_mode = s.line_mode;
@@ -5321,7 +5329,7 @@ impl Editor {
             Autoscroll::fit()
         };
 
-        let text_layout_details = TextLayoutDetails::new(&self, cx);
+        let text_layout_details = &self.text_layout_details(cx);
 
         self.change_selections(Some(autoscroll), cx, |s| {
             let line_mode = s.line_mode;
@@ -5343,7 +5351,7 @@ impl Editor {
     }
 
     pub fn select_up(&mut self, _: &SelectUp, cx: &mut ViewContext<Self>) {
-        let text_layout_details = TextLayoutDetails::new(&self, cx);
+        let text_layout_details = &self.text_layout_details(cx);
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_heads_with(|map, head, goal| {
                 movement::up(map, head, goal, false, &text_layout_details)
@@ -5359,7 +5367,7 @@ impl Editor {
             return;
         }
 
-        let text_layout_details = TextLayoutDetails::new(&self, cx);
+        let text_layout_details = &self.text_layout_details(cx);
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             let line_mode = s.line_mode;
             s.move_with(|map, selection| {
@@ -5409,7 +5417,7 @@ impl Editor {
             Autoscroll::fit()
         };
 
-        let text_layout_details = TextLayoutDetails::new(&self, cx);
+        let text_layout_details = &self.text_layout_details(cx);
         self.change_selections(Some(autoscroll), cx, |s| {
             let line_mode = s.line_mode;
             s.move_with(|map, selection| {
@@ -5430,7 +5438,7 @@ impl Editor {
     }
 
     pub fn select_down(&mut self, _: &SelectDown, cx: &mut ViewContext<Self>) {
-        let text_layout_details = TextLayoutDetails::new(&self, cx);
+        let text_layout_details = &self.text_layout_details(cx);
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_heads_with(|map, head, goal| {
                 movement::down(map, head, goal, false, &text_layout_details)
@@ -5953,7 +5961,7 @@ impl Editor {
     fn add_selection(&mut self, above: bool, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections.all::<Point>(cx);
-        let text_layout_details = TextLayoutDetails::new(self, cx);
+        let text_layout_details = self.text_layout_details(cx);
         let mut state = self.add_selections_state.take().unwrap_or_else(|| {
             let oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
             let range = oldest_selection.display_range(&display_map).sorted();
@@ -6315,7 +6323,7 @@ impl Editor {
     }
 
     pub fn toggle_comments(&mut self, action: &ToggleComments, cx: &mut ViewContext<Self>) {
-        let text_layout_details = TextLayoutDetails::new(&self, cx);
+        let text_layout_details = &self.text_layout_details(cx);
         self.transact(cx, |this, cx| {
             let mut selections = this.selections.all::<Point>(cx);
             let mut edits = Vec::new();

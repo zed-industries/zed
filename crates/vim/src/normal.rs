@@ -18,7 +18,7 @@ use crate::{
     Vim,
 };
 use collections::HashSet;
-use editor::{movement::TextLayoutDetails, scroll::autoscroll::Autoscroll};
+use editor::scroll::autoscroll::Autoscroll;
 use editor::{Bias, DisplayPoint};
 use gpui::{actions, AppContext, ViewContext, WindowContext};
 use language::SelectionGoal;
@@ -177,7 +177,7 @@ pub(crate) fn move_cursor(
     cx: &mut WindowContext,
 ) {
     vim.update_active_editor(cx, |editor, cx| {
-        let text_layout_details = TextLayoutDetails::new(editor, cx);
+        let text_layout_details = editor.text_layout_details(cx);
         editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_cursors_with(|map, cursor, goal| {
                 motion
@@ -280,7 +280,7 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
         vim.start_recording(cx);
         vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |editor, cx| {
-            let text_layout_details = TextLayoutDetails::new(editor, cx);
+            let text_layout_details = editor.text_layout_details(cx);
             editor.transact(cx, |editor, cx| {
                 let (map, old_selections) = editor.selections.all_display(cx);
 

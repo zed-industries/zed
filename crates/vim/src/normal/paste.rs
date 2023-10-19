@@ -1,10 +1,8 @@
 use std::{borrow::Cow, cmp};
 
 use editor::{
-    display_map::ToDisplayPoint,
-    movement::{self, TextLayoutDetails},
-    scroll::autoscroll::Autoscroll,
-    ClipboardSelection, DisplayPoint,
+    display_map::ToDisplayPoint, movement, scroll::autoscroll::Autoscroll, ClipboardSelection,
+    DisplayPoint,
 };
 use gpui::{impl_actions, AppContext, ViewContext};
 use language::{Bias, SelectionGoal};
@@ -32,7 +30,7 @@ fn paste(_: &mut Workspace, action: &Paste, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         vim.record_current_action(cx);
         vim.update_active_editor(cx, |editor, cx| {
-            let text_layout_details = TextLayoutDetails::new(editor, cx);
+            let text_layout_details = editor.text_layout_details(cx);
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
 
