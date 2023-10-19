@@ -2,11 +2,11 @@ use crate::{
     px, size, AnyBox, AnyView, AppContext, AsyncWindowContext, AvailableSpace, BorrowAppContext,
     Bounds, BoxShadow, Context, Corners, DevicePixels, DisplayId, Edges, Effect, Element, EntityId,
     EventEmitter, FocusEvent, FontId, GlobalElementId, GlyphId, Handle, Hsla, ImageData,
-    InputEvent, IsZero, KeyListener, LayoutId, MainThread, MainThreadOnly, MonochromeSprite,
-    MouseMoveEvent, Path, Pixels, Platform, PlatformAtlas, PlatformWindow, Point, PolychromeSprite,
-    Quad, Reference, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels,
-    SceneBuilder, Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine, Task,
-    Underline, UnderlineStyle, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
+    InputEvent, IsZero, KeyListener, KeyMatch, Keystroke, LayoutId, MainThread, MainThreadOnly,
+    MonochromeSprite, MouseMoveEvent, Path, Pixels, Platform, PlatformAtlas, PlatformWindow, Point,
+    PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderImageParams, RenderSvgParams,
+    ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine,
+    Task, Underline, UnderlineStyle, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -45,6 +45,9 @@ pub enum DispatchPhase {
 }
 
 type AnyListener = Arc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
+type AnyKeyListener = Arc<
+    dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) -> Option<AnyBox> + Send + Sync + 'static,
+>;
 type AnyFocusListener = Arc<dyn Fn(&FocusEvent, &mut WindowContext) + Send + Sync + 'static>;
 
 slotmap::new_key_type! { pub struct FocusId; }
@@ -146,13 +149,13 @@ pub struct Window {
     z_index_stack: StackingOrder,
     content_mask_stack: Vec<ContentMask<Pixels>>,
     mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyListener)>>,
-    key_listeners: HashMap<TypeId, Vec<AnyListener>>,
+    key_listeners: Vec<(TypeId, AnyKeyListener)>,
     key_events_enabled: bool,
     focus_stack: Vec<FocusId>,
     focus_parents_by_child: HashMap<FocusId, FocusId>,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
-    propagate_event: bool,
+    propagate: bool,
     default_prevented: bool,
     mouse_position: Point<Pixels>,
     scale_factor: f32,
@@ -219,12 +222,12 @@ impl Window {
             z_index_stack: StackingOrder(SmallVec::new()),
             content_mask_stack: Vec::new(),
             mouse_listeners: HashMap::default(),
-            key_listeners: HashMap::default(),
+            key_listeners: Vec::new(),
             key_events_enabled: true,
             focus_stack: Vec::new(),
             focus_parents_by_child: HashMap::default(),
             focus_listeners: Vec::new(),
-            propagate_event: true,
+            propagate: true,
             default_prevented: true,
             mouse_position,
             scale_factor,
@@ -434,7 +437,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 
     pub fn stop_propagation(&mut self) {
-        self.window.propagate_event = false;
+        self.window.propagate = false;
     }
 
     pub fn prevent_default(&mut self) {
@@ -460,19 +463,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                     handler(event.downcast_ref().unwrap(), phase, cx)
                 }),
             ))
-    }
-
-    pub fn on_keyboard_event<Event: 'static>(
-        &mut self,
-        handler: impl Fn(&Event, DispatchPhase, &mut WindowContext) + Send + Sync + 'static,
-    ) {
-        self.window
-            .key_listeners
-            .entry(TypeId::of::<Event>())
-            .or_default()
-            .push(Arc::new(move |event: &dyn Any, phase, cx| {
-                handler(event.downcast_ref().unwrap(), phase, cx)
-            }))
     }
 
     pub fn mouse_position(&self) -> Point<Pixels> {
@@ -821,7 +811,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         // Clear focus state, because we determine what is focused when the new elements
         // in the upcoming frame are initialized.
         window.focus_listeners.clear();
-        window.key_listeners.values_mut().for_each(Vec::clear);
+        window.key_listeners.clear();
         window.focus_parents_by_child.clear();
         window.key_events_enabled = true;
     }
@@ -837,7 +827,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             }
 
             // Handlers may set this to false by calling `stop_propagation`
-            self.window.propagate_event = true;
+            self.window.propagate = true;
             self.window.default_prevented = false;
 
             if let Some(mut handlers) = self
@@ -852,16 +842,16 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 // special purposes, such as detecting events outside of a given Bounds.
                 for (_, handler) in &handlers {
                     handler(any_mouse_event, DispatchPhase::Capture, self);
-                    if !self.window.propagate_event {
+                    if !self.window.propagate {
                         break;
                     }
                 }
 
                 // Bubble phase, where most normal handlers do their work.
-                if self.window.propagate_event {
+                if self.window.propagate {
                     for (_, handler) in handlers.iter().rev() {
                         handler(any_mouse_event, DispatchPhase::Bubble, self);
-                        if !self.window.propagate_event {
+                        if !self.window.propagate {
                             break;
                         }
                     }
@@ -879,42 +869,67 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                     .mouse_listeners
                     .insert(any_mouse_event.type_id(), handlers);
             }
-        } else if let Some(any_keyboard_event) = event.keyboard_event() {
-            if let Some(mut handlers) = self
-                .window
-                .key_listeners
-                .remove(&any_keyboard_event.type_id())
-            {
-                for handler in &handlers {
-                    handler(any_keyboard_event, DispatchPhase::Capture, self);
-                    if !self.window.propagate_event {
+        } else if let Some(any_key_event) = event.keyboard_event() {
+            let key_listeners = mem::take(&mut self.window.key_listeners);
+            let key_event_type = any_key_event.type_id();
+
+            for (ix, (listener_event_type, listener)) in key_listeners.iter().enumerate() {
+                if key_event_type == *listener_event_type {
+                    if let Some(action) = listener(any_key_event, DispatchPhase::Capture, self) {
+                        self.dispatch_action(action, &key_listeners[..ix]);
+                    }
+                    if !self.window.propagate {
                         break;
                     }
                 }
+            }
 
-                if self.window.propagate_event {
-                    for handler in handlers.iter().rev() {
-                        handler(any_keyboard_event, DispatchPhase::Bubble, self);
-                        if !self.window.propagate_event {
+            if self.window.propagate {
+                for (ix, (listener_event_type, listener)) in key_listeners.iter().enumerate().rev()
+                {
+                    if key_event_type == *listener_event_type {
+                        if let Some(action) = listener(any_key_event, DispatchPhase::Bubble, self) {
+                            self.dispatch_action(action, &key_listeners[..ix]);
+                        }
+
+                        if !self.window.propagate {
                             break;
                         }
                     }
                 }
-
-                handlers.extend(
-                    self.window
-                        .key_listeners
-                        .get_mut(&any_keyboard_event.type_id())
-                        .into_iter()
-                        .flat_map(|handlers| handlers.drain(..)),
-                );
-                self.window
-                    .key_listeners
-                    .insert(any_keyboard_event.type_id(), handlers);
             }
+
+            self.window.key_listeners = key_listeners;
         }
 
         true
+    }
+
+    pub fn match_keystroke(&mut self, element_id: &ElementId, keystroke: &Keystroke) -> KeyMatch {
+        todo!();
+    }
+
+    fn dispatch_action(&mut self, action: AnyBox, listeners: &[(TypeId, AnyKeyListener)]) {
+        let action_type = action.type_id();
+        for (event_type, listener) in listeners {
+            if action_type == *event_type {
+                listener(action.as_ref(), DispatchPhase::Capture, self);
+                if !self.window.propagate {
+                    break;
+                }
+            }
+        }
+
+        if self.window.propagate {
+            for (event_type, listener) in listeners.iter().rev() {
+                if action_type == *event_type {
+                    listener(action.as_ref(), DispatchPhase::Capture, self);
+                    if !self.window.propagate {
+                        break;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1225,28 +1240,25 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         if self.window.key_events_enabled {
-            let handle = self.handle();
-            for (type_id, listener) in key_listeners {
-                let handle = handle.clone();
-                let listener = listener.clone();
-                self.window
-                    .key_listeners
-                    .entry(*type_id)
-                    .or_default()
-                    .push(Arc::new(move |event, phase, cx| {
+            for (event_type, listener) in key_listeners.iter().cloned() {
+                let handle = self.handle();
+                let listener = Arc::new(
+                    move |event: &dyn Any, phase: DispatchPhase, cx: &mut WindowContext<'_, '_>| {
                         handle
                             .update(cx, |view, cx| listener(view, event, phase, cx))
-                            .log_err();
-                    }));
+                            .log_err()
+                            .flatten()
+                    },
+                );
+                self.window.key_listeners.push((event_type, listener));
             }
         }
 
         let result = f(self);
 
         if self.window.key_events_enabled {
-            for (type_id, _) in key_listeners {
-                self.window.key_listeners.get_mut(type_id).unwrap().pop();
-            }
+            let prev_len = self.window.key_listeners.len() - key_listeners.len();
+            self.window.key_listeners.truncate(prev_len);
         }
 
         result
@@ -1312,18 +1324,6 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
     ) {
         let handle = self.handle().upgrade(self).unwrap();
         self.window_cx.on_mouse_event(move |event, phase, cx| {
-            handle.update(cx, |view, cx| {
-                handler(view, event, phase, cx);
-            })
-        });
-    }
-
-    pub fn on_keyboard_event<Event: 'static>(
-        &mut self,
-        handler: impl Fn(&mut V, &Event, DispatchPhase, &mut ViewContext<V>) + Send + Sync + 'static,
-    ) {
-        let handle = self.handle().upgrade(self).unwrap();
-        self.window_cx.on_keyboard_event(move |event, phase, cx| {
             handle.update(cx, |view, cx| {
                 handler(view, event, phase, cx);
             })

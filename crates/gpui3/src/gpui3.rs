@@ -11,6 +11,7 @@ mod geometry;
 mod hover;
 mod image_cache;
 mod interactive;
+mod keymap;
 mod platform;
 mod scene;
 mod style;
@@ -38,6 +39,7 @@ pub use gpui3_macros::*;
 pub use hover::*;
 pub use image_cache::*;
 pub use interactive::*;
+pub use keymap::*;
 pub use platform::*;
 pub use refineable::*;
 pub use scene::*;
@@ -64,7 +66,7 @@ use std::{
 };
 use taffy::TaffyLayoutEngine;
 
-type AnyBox = Box<dyn Any + Send + Sync + 'static>;
+type AnyBox = Box<dyn Any + Send + Sync>;
 
 pub trait Context {
     type EntityContext<'a, 'w, T: 'static + Send + Sync>;

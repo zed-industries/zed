@@ -1,15 +1,16 @@
 use crate::{
     Active, Anonymous, AnyElement, AppContext, BorrowWindow, Bounds, Click, DispatchPhase, Element,
     ElementFocusability, ElementId, ElementIdentity, EventListeners, Focus, FocusHandle, Focusable,
-    Hover, Identified, Interactive, IntoAnyElement, LayoutId, MouseClickEvent, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, NonFocusable, Overflow, ParentElement, Pixels, Point,
-    ScrollWheelEvent, SharedString, Style, StyleRefinement, Styled, ViewContext,
+    Hover, Identified, Interactive, IntoAnyElement, KeyDownEvent, KeyMatch, LayoutId,
+    MouseClickEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, NonFocusable, Overflow,
+    ParentElement, Pixels, Point, ScrollWheelEvent, SharedString, Style, StyleRefinement, Styled,
+    ViewContext,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
 use refineable::Refineable;
 use smallvec::SmallVec;
-use std::{mem, sync::Arc};
+use std::{any::TypeId, mem, sync::Arc};
 
 #[derive(Default)]
 pub struct DivState {
@@ -423,11 +424,30 @@ where
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<Self::ViewState>,
     ) -> Self::ElementState {
+        let element_state = element_state.unwrap_or_default();
         for listener in self.listeners.focus.iter().cloned() {
             cx.on_focus_changed(move |view, event, cx| listener(view, event, cx));
         }
 
-        let key_listeners = mem::take(&mut self.listeners.key);
+        let mut key_listeners = mem::take(&mut self.listeners.key);
+
+        if let Some(id) = self.id() {
+            key_listeners.push((
+                TypeId::of::<KeyDownEvent>(),
+                Arc::new(move |_, key_down, phase, cx| {
+                    if phase == DispatchPhase::Bubble {
+                        let key_down = key_down.downcast_ref::<KeyDownEvent>().unwrap();
+                        if let KeyMatch::Some(action) = cx.match_keystroke(&id, &key_down.keystroke)
+                        {
+                            return Some(action);
+                        }
+                    }
+
+                    None
+                }),
+            ));
+        }
+
         cx.with_key_listeners(&key_listeners, |cx| {
             if let Some(focus_handle) = self.focusability.focus_handle().cloned() {
                 cx.with_focus(focus_handle, |cx| {
@@ -443,7 +463,7 @@ where
         });
         self.listeners.key = key_listeners;
 
-        element_state.unwrap_or_default()
+        element_state
     }
 
     fn layout(
