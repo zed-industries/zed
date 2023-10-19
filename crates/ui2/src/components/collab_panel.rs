@@ -3,7 +3,6 @@ use std::marker::PhantomData;
 use gpui3::{img, svg, SharedString};
 
 use crate::prelude::*;
-use crate::theme::{theme, Theme};
 use crate::{
     static_collab_panel_channels, static_collab_panel_current_call, v_stack, Icon, List,
     ListHeader, ToggleState,
@@ -24,7 +23,7 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
         let color = ThemeColor::new(cx);
 
         v_stack()
@@ -35,20 +34,15 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
                     .w_full()
                     .overflow_y_scroll(self.scroll_state.clone())
                     .child(
-                        div()
-                            .bg(theme.lowest.base.default.background)
-                            .pb_1()
-                            .border_color(theme.lowest.base.default.border)
-                            .border_b()
-                            .child(
-                                List::new(static_collab_panel_current_call())
-                                    .header(
-                                        ListHeader::new("CRDB")
-                                            .set_left_icon(Icon::Hash.into())
-                                            .set_toggle(ToggleState::Toggled),
-                                    )
-                                    .set_toggle(ToggleState::Toggled),
-                            ),
+                        div().pb_1().border_color(color.border).border_b().child(
+                            List::new(static_collab_panel_current_call())
+                                .header(
+                                    ListHeader::new("CRDB")
+                                        .set_left_icon(Icon::Hash.into())
+                                        .set_toggle(ToggleState::Toggled),
+                                )
+                                .set_toggle(ToggleState::Toggled),
+                        ),
                     )
                     .child(
                         v_stack().py_1().child(
@@ -86,13 +80,13 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
                     .h_7()
                     .px_2()
                     .border_t()
-                    .border_color(theme.middle.variant.default.border)
+                    .border_color(color.border)
                     .flex()
                     .items_center()
                     .child(
                         div()
                             .text_sm()
-                            .text_color(theme.middle.variant.default.foreground)
+                            .text_color(color.text_placeholder)
                             .child("Find..."),
                     ),
             )
@@ -102,8 +96,9 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
         &self,
         label: impl Into<SharedString>,
         expanded: bool,
-        theme: &Theme,
+        cx: &WindowContext,
     ) -> impl Element<ViewState = S> {
+        let color = ThemeColor::new(cx);
         div()
             .h_7()
             .px_2()
@@ -121,7 +116,7 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
                         })
                         .w_3p5()
                         .h_3p5()
-                        .text_color(theme.middle.variant.default.foreground),
+                        .text_color(color.icon_muted),
                 ),
             )
     }
@@ -130,16 +125,18 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
         &self,
         avatar_uri: impl Into<SharedString>,
         label: impl Into<SharedString>,
-        theme: &Theme,
+        cx: &WindowContext,
     ) -> impl Element<ViewState = S> {
+        let color = ThemeColor::new(cx);
+
         div()
             .id("list_item")
             .h_7()
             .px_2()
             .flex()
             .items_center()
-            .hover(|style| style.bg(theme.lowest.variant.hovered.background))
-            .active(|style| style.bg(theme.lowest.variant.pressed.background))
+            .hover(|style| style.bg(color.ghost_element_hover))
+            .active(|style| style.bg(color.ghost_element_active))
             .child(
                 div()
                     .flex()
@@ -147,11 +144,11 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
                     .gap_1()
                     .text_sm()
                     .child(
-                        img().uri(avatar_uri).size_3p5().rounded_full().bg(theme
-                            .middle
-                            .positive
-                            .default
-                            .foreground),
+                        img()
+                            .uri(avatar_uri)
+                            .size_3p5()
+                            .rounded_full()
+                            .bg(color.image_fallback_background),
                     )
                     .child(label.into()),
             )

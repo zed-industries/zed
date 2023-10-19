@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use gpui3::{relative, rems, Size};
 
 use crate::prelude::*;
-use crate::{theme, Icon, IconButton, Pane, Tab};
+use crate::{Icon, IconButton, Pane, Tab};
 
 #[derive(Element)]
 pub struct Terminal<S: 'static + Send + Sync + Clone> {
@@ -18,7 +18,7 @@ impl<S: 'static + Send + Sync + Clone> Terminal<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         let can_navigate_back = true;
         let can_navigate_forward = false;
@@ -32,7 +32,7 @@ impl<S: 'static + Send + Sync + Clone> Terminal<S> {
                 div()
                     .w_full()
                     .flex()
-                    .bg(theme.middle.base.default.background)
+                    .bg(color.surface)
                     .child(
                         div().px_1().flex().flex_none().gap_2().child(
                             div()
@@ -54,14 +54,14 @@ impl<S: 'static + Send + Sync + Clone> Terminal<S> {
                             div()
                                 .flex()
                                 .child(
-                                    Tab::new()
+                                    Tab::new(1)
                                         .title("zed — fish".to_string())
                                         .icon(Icon::Terminal)
                                         .close_side(IconSide::Right)
                                         .current(true),
                                 )
                                 .child(
-                                    Tab::new()
+                                    Tab::new(2)
                                         .title("zed — fish".to_string())
                                         .icon(Icon::Terminal)
                                         .close_side(IconSide::Right)
@@ -79,7 +79,7 @@ impl<S: 'static + Send + Sync + Clone> Terminal<S> {
                         height: rems(36.).into(),
                     },
                 )
-                .child(crate::static_data::terminal_buffer(&theme)),
+                .child(crate::static_data::terminal_buffer(&color)),
             )
     }
 }

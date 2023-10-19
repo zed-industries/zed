@@ -1,7 +1,6 @@
 use std::marker::PhantomData;
 
 use crate::prelude::*;
-use crate::theme::theme;
 use crate::{h_stack, v_stack, Keybinding, Label, LabelColor};
 
 #[derive(Element)]
@@ -48,21 +47,21 @@ impl<S: 'static + Send + Sync + Clone> Palette<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         v_stack()
             .w_96()
             .rounded_lg()
-            .bg(theme.lowest.base.default.background)
+            .bg(color.elevated_surface)
             .border()
-            .border_color(theme.lowest.base.default.border)
+            .border_color(color.border)
             .child(
                 v_stack()
                     .gap_px()
                     .child(v_stack().py_0p5().px_1().child(div().px_2().py_0p5().child(
                         Label::new(self.input_placeholder.clone()).color(LabelColor::Placeholder),
                     )))
-                    .child(div().h_px().w_full().bg(theme.lowest.base.default.border))
+                    .child(div().h_px().w_full().bg(color.filled_element))
                     .child(
                         v_stack()
                             .py_0p5()
@@ -91,8 +90,8 @@ impl<S: 'static + Send + Sync + Clone> Palette<S> {
                                     .px_2()
                                     .py_0p5()
                                     .rounded_lg()
-                                    .hover(|style| style.bg(theme.lowest.base.hovered.background))
-                                    .active(|style| style.bg(theme.lowest.base.pressed.background))
+                                    .hover(|style| style.bg(color.ghost_element_hover))
+                                    .active(|style| style.bg(color.ghost_element_active))
                                     .child(item.clone())
                             })),
                     ),
@@ -135,7 +134,7 @@ impl<S: 'static + Send + Sync + Clone> PaletteItem<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         div()
             .flex()

@@ -1,11 +1,12 @@
 use std::marker::PhantomData;
 
 use crate::prelude::*;
-use crate::{theme, Icon, IconColor, IconElement, Label, LabelColor};
+use crate::{Icon, IconColor, IconElement, Label, LabelColor};
 
 #[derive(Element, Clone)]
 pub struct Tab<S: 'static + Send + Sync + Clone> {
     state_type: PhantomData<S>,
+    id: ElementId,
     title: String,
     icon: Option<Icon>,
     current: bool,
@@ -17,9 +18,10 @@ pub struct Tab<S: 'static + Send + Sync + Clone> {
 }
 
 impl<S: 'static + Send + Sync + Clone> Tab<S> {
-    pub fn new() -> Self {
+    pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             state_type: PhantomData,
+            id: id.into(),
             title: "untitled".to_string(),
             icon: None,
             current: false,
@@ -75,7 +77,7 @@ impl<S: 'static + Send + Sync + Clone> Tab<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
         let has_fs_conflict = self.fs_status == FileSystemStatus::Conflict;
         let is_deleted = self.fs_status == FileSystemStatus::Deleted;
 
@@ -94,19 +96,31 @@ impl<S: 'static + Send + Sync + Clone> Tab<S> {
             (GitStatus::Conflict, false) => Label::new(self.title.clone()),
         };
 
-        let close_icon = IconElement::new(Icon::Close).color(IconColor::Muted);
+        let close_icon = || IconElement::new(Icon::Close).color(IconColor::Muted);
+
+        let (tab_bg, tab_hover_bg, tab_active_bg) = match self.current {
+            true => (
+                color.ghost_element,
+                color.ghost_element_hover,
+                color.ghost_element_active,
+            ),
+            false => (
+                color.filled_element,
+                color.filled_element_hover,
+                color.filled_element_active,
+            ),
+        };
 
         div()
+            .id(self.id.clone())
             .px_2()
             .py_0p5()
             .flex()
             .items_center()
             .justify_center()
-            .bg(if self.current {
-                theme.highest.base.default.background
-            } else {
-                theme.middle.base.default.background
-            })
+            .bg(tab_bg)
+            .hover(|h| h.bg(tab_hover_bg))
+            .active(|a| a.bg(tab_active_bg))
             .child(
                 div()
                     .px_1()
@@ -120,13 +134,13 @@ impl<S: 'static + Send + Sync + Clone> Tab<S> {
                     }))
                     .children(self.icon.map(IconElement::new))
                     .children(if self.close_side == IconSide::Left {
-                        Some(close_icon.clone())
+                        Some(close_icon())
                     } else {
                         None
                     })
                     .child(label)
                     .children(if self.close_side == IconSide::Right {
-                        Some(close_icon)
+                        Some(close_icon())
                     } else {
                         None
                     }),
@@ -134,6 +148,7 @@ impl<S: 'static + Send + Sync + Clone> Tab<S> {
     }
 }
 
+use gpui3::ElementId;
 #[cfg(feature = "stories")]
 pub use stories::*;
 
@@ -172,7 +187,7 @@ mod stories {
                         v_stack()
                             .gap_2()
                             .child(Story::label(cx, "Default"))
-                            .child(Tab::new()),
+                            .child(Tab::new("default")),
                     ),
                 )
                 .child(
@@ -180,8 +195,16 @@ mod stories {
                         v_stack().gap_2().child(Story::label(cx, "Current")).child(
                             h_stack()
                                 .gap_4()
-                                .child(Tab::new().title("Current".to_string()).current(true))
-                                .child(Tab::new().title("Not Current".to_string()).current(false)),
+                                .child(
+                                    Tab::new("current")
+                                        .title("Current".to_string())
+                                        .current(true),
+                                )
+                                .child(
+                                    Tab::new("not_current")
+                                        .title("Not Current".to_string())
+                                        .current(false),
+                                ),
                         ),
                     ),
                 )
@@ -190,7 +213,7 @@ mod stories {
                         v_stack()
                             .gap_2()
                             .child(Story::label(cx, "Titled"))
-                            .child(Tab::new().title("label".to_string())),
+                            .child(Tab::new("titled").title("label".to_string())),
                     ),
                 )
                 .child(
@@ -199,7 +222,7 @@ mod stories {
                             .gap_2()
                             .child(Story::label(cx, "With Icon"))
                             .child(
-                                Tab::new()
+                                Tab::new("with_icon")
                                     .title("label".to_string())
                                     .icon(Some(Icon::Envelope)),
                             ),
@@ -214,11 +237,11 @@ mod stories {
                                 h_stack()
                                     .gap_4()
                                     .child(
-                                        Tab::new()
+                                        Tab::new("left")
                                             .title("Left".to_string())
                                             .close_side(IconSide::Left),
                                     )
-                                    .child(Tab::new().title("Right".to_string())),
+                                    .child(Tab::new("right").title("Right".to_string())),
                             ),
                     ),
                 )
@@ -227,7 +250,7 @@ mod stories {
                         .gap_2()
                         .child(Story::label(cx, "Git Status"))
                         .child(h_stack().gap_4().children(git_statuses.map(|git_status| {
-                            Tab::new()
+                            Tab::new("git_status")
                                 .title(git_status.to_string())
                                 .git_status(git_status)
                         }))),
@@ -237,7 +260,9 @@ mod stories {
                         .gap_2()
                         .child(Story::label(cx, "File System Status"))
                         .child(h_stack().gap_4().children(fs_statuses.map(|fs_status| {
-                            Tab::new().title(fs_status.to_string()).fs_status(fs_status)
+                            Tab::new("file_system_status")
+                                .title(fs_status.to_string())
+                                .fs_status(fs_status)
                         }))),
                 )
         }

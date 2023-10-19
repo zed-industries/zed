@@ -6,8 +6,8 @@ use gpui3::{view, Context, View};
 use crate::prelude::*;
 use crate::settings::user_settings;
 use crate::{
-    theme, Avatar, Button, Icon, IconButton, IconColor, MicStatus, PlayerStack,
-    PlayerWithCallStatus, ScreenShareStatus, ToolDivider, TrafficLights,
+    Avatar, Button, Icon, IconButton, IconColor, MicStatus, PlayerStack, PlayerWithCallStatus,
+    ScreenShareStatus, ToolDivider, TrafficLights,
 };
 
 #[derive(Clone)]
@@ -88,7 +88,7 @@ impl TitleBar {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
         let color = ThemeColor::new(cx);
         let settings = user_settings(cx);
 

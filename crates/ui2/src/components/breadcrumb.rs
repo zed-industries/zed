@@ -25,10 +25,9 @@ impl<S: 'static + Send + Sync + Clone> Breadcrumb<S> {
         }
     }
 
-    fn render_separator(&self, theme: &Theme) -> Div<S> {
-        div()
-            .child(" › ")
-            .text_color(HighlightColor::Default.hsla(theme))
+    fn render_separator(&self, cx: &WindowContext) -> Div<S> {
+        let color = ThemeColor::new(cx);
+        div().child(" › ").text_color(color.text_muted)
     }
 
     fn render(
@@ -36,21 +35,22 @@ impl<S: 'static + Send + Sync + Clone> Breadcrumb<S> {
         view_state: &mut S,
         cx: &mut ViewContext<S>,
     ) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
+        let color = ThemeColor::new(cx);
 
         let symbols_len = self.symbols.len();
 
         h_stack()
+            .id("breadcrumb")
             .px_1()
-            // TODO: Read font from theme (or settings?).
-            .font("Zed Mono Extended")
             .text_sm()
-            .text_color(theme.middle.base.default.foreground)
+            .text_color(color.text_muted)
             .rounded_md()
-            .hover(|style| style.bg(theme.highest.base.hovered.background))
+            .hover(|style| style.bg(color.ghost_element_hover))
+            .active(|style| style.bg(color.ghost_element_active))
             .child(self.path.clone().to_str().unwrap().to_string())
             .child(if !self.symbols.is_empty() {
-                self.render_separator(&theme)
+                self.render_separator(cx)
             } else {
                 div()
             })
@@ -68,7 +68,7 @@ impl<S: 'static + Send + Sync + Clone> Breadcrumb<S> {
 
                             let is_last_segment = ix == symbols_len - 1;
                             if !is_last_segment {
-                                items.push(self.render_separator(&theme));
+                                items.push(self.render_separator(cx));
                             }
 
                             items
@@ -107,7 +107,7 @@ mod stories {
             view_state: &mut S,
             cx: &mut ViewContext<S>,
         ) -> impl Element<ViewState = S> {
-            let theme = theme(cx);
+            let color = ThemeColor::new(cx);
 
             Story::container(cx)
                 .child(Story::title_for::<_, Breadcrumb<S>>(cx))
@@ -118,21 +118,21 @@ mod stories {
                         Symbol(vec![
                             HighlightedText {
                                 text: "impl ".to_string(),
-                                color: HighlightColor::Keyword.hsla(&theme),
+                                color: color.syntax.keyword,
                             },
                             HighlightedText {
                                 text: "BreadcrumbStory".to_string(),
-                                color: HighlightColor::Function.hsla(&theme),
+                                color: color.syntax.function,
                             },
                         ]),
                         Symbol(vec![
                             HighlightedText {
                                 text: "fn ".to_string(),
-                                color: HighlightColor::Keyword.hsla(&theme),
+                                color: color.syntax.keyword,
                             },
                             HighlightedText {
                                 text: "render".to_string(),
-                                color: HighlightColor::Function.hsla(&theme),
+                                color: color.syntax.function,
                             },
                         ]),
                     ],

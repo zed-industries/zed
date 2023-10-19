@@ -43,7 +43,7 @@ impl EditorPane {
     }
 
     pub fn view(cx: &mut WindowContext) -> View<Self> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         view(
             cx.entity(|cx| hello_world_rust_editor_with_status_example(cx)),
@@ -56,7 +56,7 @@ impl EditorPane {
             .w_full()
             .h_full()
             .flex_1()
-            .child(TabBar::new(self.tabs.clone()))
+            .child(TabBar::new(self.tabs.clone()).can_navigate((false, true)))
             .child(
                 Toolbar::new()
                     .left_item(Breadcrumb::new(self.path.clone(), self.symbols.clone()))

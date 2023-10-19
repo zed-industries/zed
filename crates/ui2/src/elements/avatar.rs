@@ -3,7 +3,6 @@ use std::marker::PhantomData;
 use gpui3::img;
 
 use crate::prelude::*;
-use crate::theme::theme;
 
 #[derive(Element, Clone)]
 pub struct Avatar<S: 'static + Send + Sync> {
@@ -27,7 +26,7 @@ impl<S: 'static + Send + Sync> Avatar<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         let mut img = img();
 
@@ -39,7 +38,7 @@ impl<S: 'static + Send + Sync> Avatar<S> {
 
         img.uri(self.src.clone())
             .size_4()
-            .bg(theme.middle.warning.default.foreground)
+            .bg(color.image_fallback_background)
     }
 }
 

@@ -1,14 +1,13 @@
 use crate::{prelude::*, ListItemVariant};
-use crate::{theme, v_stack, Label, List, ListEntry, ListItem, ListSeparator, ListSubHeader};
+use crate::{v_stack, Label, List, ListEntry, ListItem, ListSeparator, ListSubHeader};
 
-#[derive(Clone)]
-pub enum ContextMenuItem<S: 'static + Send + Sync + Clone> {
+pub enum ContextMenuItem<S: 'static + Send + Sync> {
     Header(SharedString),
     Entry(Label<S>),
     Separator,
 }
 
-impl<S: 'static + Send + Sync + Clone> ContextMenuItem<S> {
+impl<S: 'static + Send + Sync> ContextMenuItem<S> {
     fn to_list_item(self) -> ListItem<S> {
         match self {
             ContextMenuItem::Header(label) => ListSubHeader::new(label).into(),
@@ -33,29 +32,28 @@ impl<S: 'static + Send + Sync + Clone> ContextMenuItem<S> {
 }
 
 #[derive(Element)]
-pub struct ContextMenu<S: 'static + Send + Sync + Clone> {
+pub struct ContextMenu<S: 'static + Send + Sync> {
     items: Vec<ContextMenuItem<S>>,
 }
 
-impl<S: 'static + Send + Sync + Clone> ContextMenu<S> {
+impl<S: 'static + Send + Sync> ContextMenu<S> {
     pub fn new(items: impl IntoIterator<Item = ContextMenuItem<S>>) -> Self {
         Self {
             items: items.into_iter().collect(),
         }
     }
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         v_stack()
             .flex()
-            .bg(theme.lowest.base.default.background)
+            .bg(color.elevated_surface)
             .border()
-            .border_color(theme.lowest.base.default.border)
+            .border_color(color.border)
             .child(
                 List::new(
                     self.items
-                        .clone()
-                        .into_iter()
+                        .drain(..)
                         .map(ContextMenuItem::to_list_item)
                         .collect(),
                 )

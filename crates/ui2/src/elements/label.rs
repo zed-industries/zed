@@ -22,17 +22,19 @@ pub enum LabelColor {
 
 impl LabelColor {
     pub fn hsla(&self, cx: &WindowContext) -> Hsla {
+        let color = ThemeColor::new(cx);
+        // TODO: Remove
         let theme = theme(cx);
 
         match self {
-            Self::Default => theme.middle.base.default.foreground,
-            Self::Muted => theme.middle.variant.default.foreground,
+            Self::Default => color.text,
+            Self::Muted => color.text_muted,
             Self::Created => theme.middle.positive.default.foreground,
             Self::Modified => theme.middle.warning.default.foreground,
             Self::Deleted => theme.middle.negative.default.foreground,
-            Self::Disabled => theme.middle.base.disabled.foreground,
+            Self::Disabled => color.text_disabled,
             Self::Hidden => theme.middle.variant.default.foreground,
-            Self::Placeholder => theme.middle.base.disabled.foreground,
+            Self::Placeholder => color.text_placeholder,
             Self::Accent => theme.middle.accent.default.foreground,
         }
     }
@@ -46,8 +48,8 @@ pub enum LineHeightStyle {
     UILabel,
 }
 
-#[derive(Element, Clone)]
-pub struct Label<S: 'static + Send + Sync + Clone> {
+#[derive(Element)]
+pub struct Label<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     label: SharedString,
     line_height_style: LineHeightStyle,
@@ -55,7 +57,7 @@ pub struct Label<S: 'static + Send + Sync + Clone> {
     strikethrough: bool,
 }
 
-impl<S: 'static + Send + Sync + Clone> Label<S> {
+impl<S: 'static + Send + Sync> Label<S> {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             state_type: PhantomData,
@@ -82,7 +84,7 @@ impl<S: 'static + Send + Sync + Clone> Label<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         div()
             .when(self.strikethrough, |this| {
@@ -105,8 +107,8 @@ impl<S: 'static + Send + Sync + Clone> Label<S> {
     }
 }
 
-#[derive(Element, Clone)]
-pub struct HighlightedLabel<S: 'static + Send + Sync + Clone> {
+#[derive(Element)]
+pub struct HighlightedLabel<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     label: SharedString,
     color: LabelColor,
@@ -114,7 +116,7 @@ pub struct HighlightedLabel<S: 'static + Send + Sync + Clone> {
     strikethrough: bool,
 }
 
-impl<S: 'static + Send + Sync + Clone> HighlightedLabel<S> {
+impl<S: 'static + Send + Sync> HighlightedLabel<S> {
     pub fn new(label: impl Into<SharedString>, highlight_indices: Vec<usize>) -> Self {
         Self {
             state_type: PhantomData,
@@ -136,9 +138,9 @@ impl<S: 'static + Send + Sync + Clone> HighlightedLabel<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
-        let highlight_color = theme.lowest.accent.default.foreground;
+        let highlight_color = color.text_accent;
 
         let mut highlight_indices = self.highlight_indices.iter().copied().peekable();
 
@@ -212,11 +214,11 @@ mod stories {
     use super::*;
 
     #[derive(Element)]
-    pub struct LabelStory<S: 'static + Send + Sync + Clone> {
+    pub struct LabelStory<S: 'static + Send + Sync> {
         state_type: PhantomData<S>,
     }
 
-    impl<S: 'static + Send + Sync + Clone> LabelStory<S> {
+    impl<S: 'static + Send + Sync> LabelStory<S> {
         pub fn new() -> Self {
             Self {
                 state_type: PhantomData,

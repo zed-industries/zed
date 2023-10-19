@@ -18,7 +18,7 @@ impl<S: 'static + Send + Sync + Clone> MultiBuffer<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         v_stack()
             .w_full()
@@ -32,7 +32,7 @@ impl<S: 'static + Send + Sync + Clone> MultiBuffer<S> {
                             .items_center()
                             .justify_between()
                             .p_4()
-                            .bg(theme.lowest.base.default.background)
+                            .bg(color.editor_subheader)
                             .child(Label::new("main.rs"))
                             .child(IconButton::new(Icon::ArrowUpRight)),
                     )
@@ -67,17 +67,17 @@ mod stories {
             _view: &mut S,
             cx: &mut ViewContext<S>,
         ) -> impl Element<ViewState = S> {
-            let theme = theme(cx);
+            let color = ThemeColor::new(cx);
 
             Story::container(cx)
                 .child(Story::title_for::<_, MultiBuffer<S>>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(MultiBuffer::new(vec![
-                    hello_world_rust_buffer_example(&theme),
-                    hello_world_rust_buffer_example(&theme),
-                    hello_world_rust_buffer_example(&theme),
-                    hello_world_rust_buffer_example(&theme),
-                    hello_world_rust_buffer_example(&theme),
+                    hello_world_rust_buffer_example(&color),
+                    hello_world_rust_buffer_example(&color),
+                    hello_world_rust_buffer_example(&color),
+                    hello_world_rust_buffer_example(&color),
+                    hello_world_rust_buffer_example(&color),
                 ]))
         }
     }

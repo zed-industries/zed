@@ -2,8 +2,7 @@ use std::marker::PhantomData;
 
 use crate::prelude::*;
 use crate::{
-    static_project_panel_project_items, static_project_panel_single_items, theme, Input, List,
-    ListHeader,
+    static_project_panel_project_items, static_project_panel_single_items, Input, List, ListHeader,
 };
 
 #[derive(Element)]
@@ -21,7 +20,7 @@ impl<S: 'static + Send + Sync + Clone> ProjectPanel<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
         let color = ThemeColor::new(cx);
 
         div()

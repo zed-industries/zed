@@ -1,12 +1,14 @@
 use std::marker::PhantomData;
 
 use crate::prelude::*;
-use crate::{theme, Icon, IconButton, Tab};
+use crate::{Icon, IconButton, Tab};
 
 #[derive(Element)]
 pub struct TabBar<S: 'static + Send + Sync + Clone> {
     state_type: PhantomData<S>,
     scroll_state: ScrollState,
+    /// Backwards, Forwards
+    can_navigate: (bool, bool),
     tabs: Vec<Tab<S>>,
 }
 
@@ -15,6 +17,7 @@ impl<S: 'static + Send + Sync + Clone> TabBar<S> {
         Self {
             state_type: PhantomData,
             scroll_state: ScrollState::default(),
+            can_navigate: (false, false),
             tabs,
         }
     }
@@ -23,15 +26,20 @@ impl<S: 'static + Send + Sync + Clone> TabBar<S> {
         self.scroll_state = scroll_state;
     }
 
+    pub fn can_navigate(mut self, can_navigate: (bool, bool)) -> Self {
+        self.can_navigate = can_navigate;
+        self
+    }
+
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
-        let can_navigate_back = true;
-        let can_navigate_forward = false;
+        let color = ThemeColor::new(cx);
+
+        let (can_navigate_back, can_navigate_forward) = self.can_navigate;
 
         div()
             .w_full()
             .flex()
-            .bg(theme.middle.base.default.background)
+            .bg(color.tab_bar)
             // Left Side
             .child(
                 div()
@@ -114,33 +122,33 @@ mod stories {
                 .child(Story::title_for::<_, TabBar<S>>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(TabBar::new(vec![
-                    Tab::new()
+                    Tab::new(1)
                         .title("Cargo.toml".to_string())
                         .current(false)
                         .git_status(GitStatus::Modified),
-                    Tab::new()
+                    Tab::new(2)
                         .title("Channels Panel".to_string())
                         .current(false),
-                    Tab::new()
+                    Tab::new(3)
                         .title("channels_panel.rs".to_string())
                         .current(true)
                         .git_status(GitStatus::Modified),
-                    Tab::new()
+                    Tab::new(4)
                         .title("workspace.rs".to_string())
                         .current(false)
                         .git_status(GitStatus::Modified),
-                    Tab::new()
+                    Tab::new(5)
                         .title("icon_button.rs".to_string())
                         .current(false),
-                    Tab::new()
+                    Tab::new(6)
                         .title("storybook.rs".to_string())
                         .current(false)
                         .git_status(GitStatus::Created),
-                    Tab::new().title("theme.rs".to_string()).current(false),
-                    Tab::new()
+                    Tab::new(7).title("theme.rs".to_string()).current(false),
+                    Tab::new(8)
                         .title("theme_registry.rs".to_string())
                         .current(false),
-                    Tab::new()
+                    Tab::new(9)
                         .title("styleable_helpers.rs".to_string())
                         .current(false),
                 ]))

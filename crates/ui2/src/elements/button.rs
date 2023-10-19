@@ -34,7 +34,7 @@ impl<S: 'static + Send + Sync> Default for ButtonHandlers<S> {
 }
 
 #[derive(Element)]
-pub struct Button<S: 'static + Send + Sync + Clone> {
+pub struct Button<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     label: SharedString,
     variant: ButtonVariant,
@@ -45,7 +45,7 @@ pub struct Button<S: 'static + Send + Sync + Clone> {
     handlers: ButtonHandlers<S>,
 }
 
-impl<S: 'static + Send + Sync + Clone> Button<S> {
+impl<S: 'static + Send + Sync> Button<S> {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             state_type: PhantomData,

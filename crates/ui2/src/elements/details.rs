@@ -1,16 +1,15 @@
 use std::marker::PhantomData;
 
 use crate::prelude::*;
-use crate::theme;
 
-#[derive(Element, Clone)]
-pub struct Details<S: 'static + Send + Sync + Clone> {
+#[derive(Element)]
+pub struct Details<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     text: &'static str,
     meta: Option<&'static str>,
 }
 
-impl<S: 'static + Send + Sync + Clone> Details<S> {
+impl<S: 'static + Send + Sync> Details<S> {
     pub fn new(text: &'static str) -> Self {
         Self {
             state_type: PhantomData,
@@ -25,7 +24,7 @@ impl<S: 'static + Send + Sync + Clone> Details<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         div()
             // .flex()
@@ -33,7 +32,7 @@ impl<S: 'static + Send + Sync + Clone> Details<S> {
             .p_1()
             .gap_0p5()
             .text_xs()
-            .text_color(theme.lowest.base.default.foreground)
+            .text_color(color.text)
             .child(self.text)
             .children(self.meta.map(|m| m))
     }
@@ -60,7 +59,11 @@ mod stories {
             }
         }
 
-        fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
+        fn render(
+            &mut self,
+            _view: &mut S,
+            cx: &mut ViewContext<S>,
+        ) -> impl Element<ViewState = S> {
             Story::container(cx)
                 .child(Story::title_for::<_, Details<S>>(cx))
                 .child(Story::label(cx, "Default"))
