@@ -2,14 +2,14 @@ use std::marker::PhantomData;
 
 use crate::prelude::*;
 
-#[derive(Element, Clone)]
-pub struct Details<S: 'static + Send + Sync + Clone> {
+#[derive(Element)]
+pub struct Details<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     text: &'static str,
     meta: Option<&'static str>,
 }
 
-impl<S: 'static + Send + Sync + Clone> Details<S> {
+impl<S: 'static + Send + Sync> Details<S> {
     pub fn new(text: &'static str) -> Self {
         Self {
             state_type: PhantomData,
