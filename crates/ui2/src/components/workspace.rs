@@ -108,6 +108,7 @@ impl Workspace {
         self.show_chat_panel = !self.show_chat_panel;
 
         self.show_assistant_panel = false;
+        self.show_notifications_panel = false;
 
         cx.notify();
     }
@@ -119,7 +120,8 @@ impl Workspace {
     pub fn toggle_notifications_panel(&mut self, cx: &mut ViewContext<Self>) {
         self.show_notifications_panel = !self.show_notifications_panel;
 
-        self.show_notifications_panel = false;
+        self.show_chat_panel = false;
+        self.show_assistant_panel = false;
 
         cx.notify();
     }
@@ -132,6 +134,7 @@ impl Workspace {
         self.show_assistant_panel = !self.show_assistant_panel;
 
         self.show_chat_panel = false;
+        self.show_notifications_panel = false;
 
         cx.notify();
     }
