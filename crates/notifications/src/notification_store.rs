@@ -131,6 +131,17 @@ impl NotificationStore {
         cursor.item()
     }
 
+    pub fn notification_for_id(&self, id: u64) -> Option<&NotificationEntry> {
+        let mut cursor = self.notifications.cursor::<NotificationId>();
+        cursor.seek(&NotificationId(id), Bias::Left, &());
+        if let Some(item) = cursor.item() {
+            if item.id == id {
+                return Some(item);
+            }
+        }
+        None
+    }
+
     pub fn load_more_notifications(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let request = self
             .client
@@ -145,6 +156,7 @@ impl NotificationStore {
     fn handle_connect(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         self.notifications = Default::default();
         self.channel_messages = Default::default();
+        cx.notify();
         self.load_more_notifications(cx)
     }
 

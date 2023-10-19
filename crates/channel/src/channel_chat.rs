@@ -257,11 +257,16 @@ impl ChannelChat {
                         let mut cursor = chat.messages.cursor::<(ChannelMessageId, Count)>();
                         let message_id = ChannelMessageId::Saved(message_id);
                         cursor.seek(&message_id, Bias::Left, &());
-                        return ControlFlow::Break(if cursor.start().0 == message_id {
-                            Some(cursor.start().1 .0)
-                        } else {
-                            None
-                        });
+                        return ControlFlow::Break(
+                            if cursor
+                                .item()
+                                .map_or(false, |message| message.id == message_id)
+                            {
+                                Some(cursor.start().1 .0)
+                            } else {
+                                None
+                            },
+                        );
                     }
                 }
                 ControlFlow::Continue(chat.load_more_messages(cx))

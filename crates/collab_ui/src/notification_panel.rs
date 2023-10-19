@@ -119,6 +119,7 @@ impl NotificationPanel {
 
             let mut old_dock_position = this.position(cx);
             this.subscriptions.extend([
+                cx.observe(&this.notification_store, |_, _, cx| cx.notify()),
                 cx.subscribe(&this.notification_store, Self::on_notification_event),
                 cx.observe_global::<SettingsStore, _>(move |this: &mut Self, cx| {
                     let new_dock_position = this.position(cx);
@@ -469,12 +470,12 @@ impl NotificationPanel {
             return;
         };
 
-        let id = entry.id;
+        let notification_id = entry.id;
         self.current_notification_toast = Some((
-            id,
+            notification_id,
             cx.spawn(|this, mut cx| async move {
                 cx.background().timer(TOAST_DURATION).await;
-                this.update(&mut cx, |this, cx| this.remove_toast(id, cx))
+                this.update(&mut cx, |this, cx| this.remove_toast(notification_id, cx))
                     .ok();
             }),
         ));
@@ -484,6 +485,7 @@ impl NotificationPanel {
                 workspace.show_notification(0, cx, |cx| {
                     let workspace = cx.weak_handle();
                     cx.add_view(|_| NotificationToast {
+                        notification_id,
                         actor,
                         text,
                         workspace,
@@ -645,6 +647,7 @@ fn render_icon_button<V: View>(style: &IconButton, svg_path: &'static str) -> im
 }
 
 pub struct NotificationToast {
+    notification_id: u64,
     actor: Option<Arc<User>>,
     text: String,
     workspace: WeakViewHandle<Workspace>,
@@ -657,10 +660,18 @@ pub enum ToastEvent {
 impl NotificationToast {
     fn focus_notification_panel(&self, cx: &mut AppContext) {
         let workspace = self.workspace.clone();
+        let notification_id = self.notification_id;
         cx.defer(move |cx| {
             workspace
                 .update(cx, |workspace, cx| {
-                    workspace.focus_panel::<NotificationPanel>(cx);
+                    if let Some(panel) = workspace.focus_panel::<NotificationPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            let store = panel.notification_store.read(cx);
+                            if let Some(entry) = store.notification_for_id(notification_id) {
+                                panel.did_click_notification(&entry.clone().notification, cx);
+                            }
+                        });
+                    }
                 })
                 .ok();
         })

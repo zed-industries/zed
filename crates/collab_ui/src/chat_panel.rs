@@ -257,6 +257,7 @@ impl ChatPanel {
 
     fn set_active_chat(&mut self, chat: ModelHandle<ChannelChat>, cx: &mut ViewContext<Self>) {
         if self.active_chat.as_ref().map(|e| &e.0) != Some(&chat) {
+            self.markdown_data.clear();
             let id = {
                 let chat = chat.read(cx);
                 let channel = chat.channel().clone();
@@ -635,31 +636,38 @@ impl ChatPanel {
         scroll_to_message_id: Option<u64>,
         cx: &mut ViewContext<ChatPanel>,
     ) -> Task<Result<()>> {
-        if let Some((chat, _)) = &self.active_chat {
-            if chat.read(cx).channel().id == selected_channel_id {
-                return Task::ready(Ok(()));
-            }
-        }
+        let open_chat = self
+            .active_chat
+            .as_ref()
+            .and_then(|(chat, _)| {
+                (chat.read(cx).channel().id == selected_channel_id)
+                    .then(|| Task::ready(anyhow::Ok(chat.clone())))
+            })
+            .unwrap_or_else(|| {
+                self.channel_store.update(cx, |store, cx| {
+                    store.open_channel_chat(selected_channel_id, cx)
+                })
+            });
 
-        let open_chat = self.channel_store.update(cx, |store, cx| {
-            store.open_channel_chat(selected_channel_id, cx)
-        });
         cx.spawn(|this, mut cx| async move {
             let chat = open_chat.await?;
             this.update(&mut cx, |this, cx| {
-                this.markdown_data = Default::default();
                 this.set_active_chat(chat.clone(), cx);
             })?;
 
             if let Some(message_id) = scroll_to_message_id {
                 if let Some(item_ix) =
-                    ChannelChat::load_history_since_message(chat, message_id, cx.clone()).await
+                    ChannelChat::load_history_since_message(chat.clone(), message_id, cx.clone())
+                        .await
                 {
-                    this.update(&mut cx, |this, _| {
-                        this.message_list.scroll_to(ListOffset {
-                            item_ix,
-                            offset_in_item: 0.,
-                        });
+                    this.update(&mut cx, |this, cx| {
+                        if this.active_chat.as_ref().map_or(false, |(c, _)| *c == chat) {
+                            this.message_list.scroll_to(ListOffset {
+                                item_ix,
+                                offset_in_item: 0.,
+                            });
+                            cx.notify();
+                        }
                     })?;
                 }
             }
