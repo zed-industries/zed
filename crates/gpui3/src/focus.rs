@@ -1,3 +1,5 @@
+use std::{any::TypeId, sync::Arc};
+
 use crate::{
     DispatchPhase, FocusEvent, FocusHandle, Interactive, KeyDownEvent, KeyUpEvent, StyleRefinement,
     ViewContext,
@@ -46,7 +48,7 @@ pub trait Focus: Interactive {
         let handle = self.handle().clone();
         self.listeners()
             .focus
-            .push(Box::new(move |view, event, cx| {
+            .push(Arc::new(move |view, event, cx| {
                 if event.focused.as_ref() == Some(&handle) {
                     listener(view, event, cx)
                 }
@@ -67,7 +69,7 @@ pub trait Focus: Interactive {
         let handle = self.handle().clone();
         self.listeners()
             .focus
-            .push(Box::new(move |view, event, cx| {
+            .push(Arc::new(move |view, event, cx| {
                 if event.blurred.as_ref() == Some(&handle) {
                     listener(view, event, cx)
                 }
@@ -88,7 +90,7 @@ pub trait Focus: Interactive {
         let handle = self.handle().clone();
         self.listeners()
             .focus
-            .push(Box::new(move |view, event, cx| {
+            .push(Arc::new(move |view, event, cx| {
                 let descendant_blurred = event
                     .blurred
                     .as_ref()
@@ -118,7 +120,7 @@ pub trait Focus: Interactive {
         let handle = self.handle().clone();
         self.listeners()
             .focus
-            .push(Box::new(move |view, event, cx| {
+            .push(Arc::new(move |view, event, cx| {
                 let descendant_blurred = event
                     .blurred
                     .as_ref()
@@ -148,7 +150,13 @@ pub trait Focus: Interactive {
     where
         Self: Sized,
     {
-        self.listeners().key_down.push(Box::new(listener));
+        self.listeners().key.push((
+            TypeId::of::<KeyDownEvent>(),
+            Arc::new(move |view, event, phase, cx| {
+                let event = event.downcast_ref().unwrap();
+                listener(view, event, phase, cx)
+            }),
+        ));
         self
     }
 
@@ -162,7 +170,13 @@ pub trait Focus: Interactive {
     where
         Self: Sized,
     {
-        self.listeners().key_up.push(Box::new(listener));
+        self.listeners().key.push((
+            TypeId::of::<KeyUpEvent>(),
+            Arc::new(move |view, event, phase, cx| {
+                let event = event.downcast_ref().unwrap();
+                listener(view, event, phase, cx)
+            }),
+        ));
         self
     }
 }

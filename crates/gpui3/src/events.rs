@@ -2,7 +2,11 @@ use crate::{
     point, Bounds, DispatchPhase, FocusHandle, Keystroke, Modifiers, Pixels, Point, ViewContext,
 };
 use smallvec::SmallVec;
-use std::{any::Any, ops::Deref};
+use std::{
+    any::{Any, TypeId},
+    ops::Deref,
+    sync::Arc,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KeyDownEvent {
@@ -221,43 +225,40 @@ pub struct FocusEvent {
     pub focused: Option<FocusHandle>,
 }
 
-pub type MouseDownListener<V> = Box<
+pub type MouseDownListener<V> = Arc<
     dyn Fn(&mut V, &MouseDownEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
         + Send
         + Sync
         + 'static,
 >;
-pub type MouseUpListener<V> = Box<
+pub type MouseUpListener<V> = Arc<
     dyn Fn(&mut V, &MouseUpEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
         + Send
         + Sync
         + 'static,
 >;
 pub type MouseClickListener<V> =
-    Box<dyn Fn(&mut V, &MouseClickEvent, &mut ViewContext<V>) + Send + Sync + 'static>;
+    Arc<dyn Fn(&mut V, &MouseClickEvent, &mut ViewContext<V>) + Send + Sync + 'static>;
 
-pub type MouseMoveListener<V> = Box<
+pub type MouseMoveListener<V> = Arc<
     dyn Fn(&mut V, &MouseMoveEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
         + Send
         + Sync
         + 'static,
 >;
 
-pub type ScrollWheelListener<V> = Box<
+pub type ScrollWheelListener<V> = Arc<
     dyn Fn(&mut V, &ScrollWheelEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
         + Send
         + Sync
         + 'static,
 >;
 
-pub type KeyDownListener<V> =
-    Box<dyn Fn(&mut V, &KeyDownEvent, DispatchPhase, &mut ViewContext<V>) + Send + Sync + 'static>;
-
-pub type KeyUpListener<V> =
-    Box<dyn Fn(&mut V, &KeyUpEvent, DispatchPhase, &mut ViewContext<V>) + Send + Sync + 'static>;
+pub type KeyListener<V> =
+    Arc<dyn Fn(&mut V, &dyn Any, DispatchPhase, &mut ViewContext<V>) + Send + Sync + 'static>;
 
 pub type FocusListener<V> =
-    Box<dyn Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + Sync + 'static>;
+    Arc<dyn Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + Sync + 'static>;
 
 pub struct EventListeners<V: 'static> {
     pub mouse_down: SmallVec<[MouseDownListener<V>; 2]>,
@@ -265,8 +266,7 @@ pub struct EventListeners<V: 'static> {
     pub mouse_click: SmallVec<[MouseClickListener<V>; 2]>,
     pub mouse_move: SmallVec<[MouseMoveListener<V>; 2]>,
     pub scroll_wheel: SmallVec<[ScrollWheelListener<V>; 2]>,
-    pub key_down: SmallVec<[KeyDownListener<V>; 2]>,
-    pub key_up: SmallVec<[KeyUpListener<V>; 2]>,
+    pub key: SmallVec<[(TypeId, KeyListener<V>); 32]>,
     pub focus: SmallVec<[FocusListener<V>; 2]>,
 }
 
@@ -278,8 +278,7 @@ impl<V> Default for EventListeners<V> {
             mouse_click: SmallVec::new(),
             mouse_move: SmallVec::new(),
             scroll_wheel: SmallVec::new(),
-            key_down: SmallVec::new(),
-            key_up: SmallVec::new(),
+            key: SmallVec::new(),
             focus: SmallVec::new(),
         }
     }

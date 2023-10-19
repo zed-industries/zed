@@ -423,18 +423,21 @@ where
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<Self::ViewState>,
     ) -> Self::ElementState {
+        let key_listeners = mem::take(&mut self.listeners.key);
+        let focus_listeners = mem::take(&mut self.listeners.focus);
         cx.with_focus(
             self.focusability.focus_handle().cloned(),
-            mem::take(&mut self.listeners.key_down),
-            mem::take(&mut self.listeners.key_up),
-            mem::take(&mut self.listeners.focus),
+            &key_listeners,
+            &focus_listeners,
             |cx| {
                 for child in &mut self.children {
                     child.initialize(view_state, cx);
                 }
-                element_state.unwrap_or_default()
             },
-        )
+        );
+        self.listeners.key = key_listeners;
+        self.listeners.focus = focus_listeners;
+        element_state.unwrap_or_default()
     }
 
     fn layout(

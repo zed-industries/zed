@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     DispatchPhase, Element, EventListeners, MouseButton, MouseClickEvent, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, ScrollWheelEvent, ViewContext,
@@ -19,7 +21,7 @@ pub trait Interactive: Element {
     {
         self.listeners()
             .mouse_down
-            .push(Box::new(move |view, event, bounds, phase, cx| {
+            .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble
                     && event.button == button
                     && bounds.contains_point(&event.position)
@@ -43,7 +45,7 @@ pub trait Interactive: Element {
     {
         self.listeners()
             .mouse_up
-            .push(Box::new(move |view, event, bounds, phase, cx| {
+            .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble
                     && event.button == button
                     && bounds.contains_point(&event.position)
@@ -67,7 +69,7 @@ pub trait Interactive: Element {
     {
         self.listeners()
             .mouse_down
-            .push(Box::new(move |view, event, bounds, phase, cx| {
+            .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Capture
                     && event.button == button
                     && !bounds.contains_point(&event.position)
@@ -91,7 +93,7 @@ pub trait Interactive: Element {
     {
         self.listeners()
             .mouse_up
-            .push(Box::new(move |view, event, bounds, phase, cx| {
+            .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Capture
                     && event.button == button
                     && !bounds.contains_point(&event.position)
@@ -114,7 +116,7 @@ pub trait Interactive: Element {
     {
         self.listeners()
             .mouse_move
-            .push(Box::new(move |view, event, bounds, phase, cx| {
+            .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
                     handler(view, event, cx);
                 }
@@ -134,7 +136,7 @@ pub trait Interactive: Element {
     {
         self.listeners()
             .scroll_wheel
-            .push(Box::new(move |view, event, bounds, phase, cx| {
+            .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
                     handler(view, event, cx);
                 }
@@ -156,7 +158,7 @@ pub trait Click: Interactive {
     {
         self.listeners()
             .mouse_click
-            .push(Box::new(move |view, event, cx| handler(view, event, cx)));
+            .push(Arc::new(move |view, event, cx| handler(view, event, cx)));
         self
     }
 }
