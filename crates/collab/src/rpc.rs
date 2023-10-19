@@ -3,8 +3,8 @@ mod connection_pool;
 use crate::{
     auth,
     db::{
-        self, BufferId, ChannelId, ChannelVisibility, ChannelsForUser, Database, MessageId,
-        ProjectId, RoomId, ServerId, User, UserId,
+        self, BufferId, ChannelId, ChannelVisibility, ChannelsForUser, CreatedChannelMessage,
+        Database, MessageId, ProjectId, RoomId, ServerId, User, UserId,
     },
     executor::Executor,
     AppState, Result,
@@ -271,6 +271,7 @@ impl Server {
             .add_request_handler(send_channel_message)
             .add_request_handler(remove_channel_message)
             .add_request_handler(get_channel_messages)
+            .add_request_handler(get_channel_messages_by_id)
             .add_request_handler(get_notifications)
             .add_request_handler(link_channel)
             .add_request_handler(unlink_channel)
@@ -2969,7 +2970,12 @@ async fn send_channel_message(
         .ok_or_else(|| anyhow!("nonce can't be blank"))?;
 
     let channel_id = ChannelId::from_proto(request.channel_id);
-    let (message_id, connection_ids, non_participants) = session
+    let CreatedChannelMessage {
+        message_id,
+        participant_connection_ids,
+        channel_members,
+        notifications,
+    } = session
         .db()
         .await
         .create_channel_message(
@@ -2989,15 +2995,19 @@ async fn send_channel_message(
         timestamp: timestamp.unix_timestamp() as u64,
         nonce: Some(nonce),
     };
-    broadcast(Some(session.connection_id), connection_ids, |connection| {
-        session.peer.send(
-            connection,
-            proto::ChannelMessageSent {
-                channel_id: channel_id.to_proto(),
-                message: Some(message.clone()),
-            },
-        )
-    });
+    broadcast(
+        Some(session.connection_id),
+        participant_connection_ids,
+        |connection| {
+            session.peer.send(
+                connection,
+                proto::ChannelMessageSent {
+                    channel_id: channel_id.to_proto(),
+                    message: Some(message.clone()),
+                },
+            )
+        },
+    );
     response.send(proto::SendChannelMessageResponse {
         message: Some(message),
     })?;
@@ -3005,7 +3015,7 @@ async fn send_channel_message(
     let pool = &*session.connection_pool().await;
     broadcast(
         None,
-        non_participants
+        channel_members
             .iter()
             .flat_map(|user_id| pool.user_connection_ids(*user_id)),
         |peer_id| {
@@ -3021,6 +3031,7 @@ async fn send_channel_message(
             )
         },
     );
+    send_notifications(pool, &session.peer, notifications);
 
     Ok(())
 }
@@ -3121,6 +3132,28 @@ async fn get_channel_messages(
             MESSAGE_COUNT_PER_PAGE,
             Some(MessageId::from_proto(request.before_message_id)),
         )
+        .await?;
+    response.send(proto::GetChannelMessagesResponse {
+        done: messages.len() < MESSAGE_COUNT_PER_PAGE,
+        messages,
+    })?;
+    Ok(())
+}
+
+async fn get_channel_messages_by_id(
+    request: proto::GetChannelMessagesById,
+    response: Response<proto::GetChannelMessagesById>,
+    session: Session,
+) -> Result<()> {
+    let message_ids = request
+        .message_ids
+        .iter()
+        .map(|id| MessageId::from_proto(*id))
+        .collect::<Vec<_>>();
+    let messages = session
+        .db()
+        .await
+        .get_channel_messages_by_id(session.user_id, &message_ids)
         .await?;
     response.send(proto::GetChannelMessagesResponse {
         done: messages.len() < MESSAGE_COUNT_PER_PAGE,

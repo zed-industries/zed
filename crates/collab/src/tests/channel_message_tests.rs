@@ -2,6 +2,7 @@ use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 use channel::{ChannelChat, ChannelMessageId, MessageParams};
 use collab_ui::chat_panel::ChatPanel;
 use gpui::{executor::Deterministic, BorrowAppContext, ModelHandle, TestAppContext};
+use rpc::Notification;
 use std::sync::Arc;
 use workspace::dock::Panel;
 
@@ -38,7 +39,7 @@ async fn test_basic_channel_messages(
         .await
         .unwrap();
 
-    channel_chat_a
+    let message_id = channel_chat_a
         .update(cx_a, |c, cx| {
             c.send_message(
                 MessageParams {
@@ -91,6 +92,27 @@ async fn test_basic_channel_messages(
             );
         });
     }
+
+    client_c.notification_store().update(cx_c, |store, _| {
+        assert_eq!(store.notification_count(), 2);
+        assert_eq!(store.unread_notification_count(), 1);
+        assert_eq!(
+            store.notification_at(0).unwrap().notification,
+            Notification::ChannelMessageMention {
+                message_id,
+                sender_id: client_a.id(),
+                channel_id,
+            }
+        );
+        assert_eq!(
+            store.notification_at(1).unwrap().notification,
+            Notification::ChannelInvitation {
+                channel_id,
+                channel_name: "the-channel".to_string(),
+                inviter_id: client_a.id()
+            }
+        );
+    });
 }
 
 #[gpui::test]

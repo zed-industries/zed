@@ -135,7 +135,7 @@ impl ChannelChat {
         &mut self,
         message: MessageParams,
         cx: &mut ModelContext<Self>,
-    ) -> Result<Task<Result<()>>> {
+    ) -> Result<Task<Result<u64>>> {
         if message.text.is_empty() {
             Err(anyhow!("message body can't be empty"))?;
         }
@@ -176,15 +176,12 @@ impl ChannelChat {
             });
             let response = request.await?;
             drop(outgoing_message_guard);
-            let message = ChannelMessage::from_proto(
-                response.message.ok_or_else(|| anyhow!("invalid message"))?,
-                &user_store,
-                &mut cx,
-            )
-            .await?;
+            let response = response.message.ok_or_else(|| anyhow!("invalid message"))?;
+            let id = response.id;
+            let message = ChannelMessage::from_proto(response, &user_store, &mut cx).await?;
             this.update(&mut cx, |this, cx| {
                 this.insert_messages(SumTree::from_item(message, &()), cx);
-                Ok(())
+                Ok(id)
             })
         }))
     }

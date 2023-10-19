@@ -386,6 +386,13 @@ impl Contact {
 
 pub type NotificationBatch = Vec<(UserId, proto::Notification)>;
 
+pub struct CreatedChannelMessage {
+    pub message_id: MessageId,
+    pub participant_connection_ids: Vec<ConnectionId>,
+    pub channel_members: Vec<UserId>,
+    pub notifications: NotificationBatch,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, FromQueryResult, Serialize, Deserialize)]
 pub struct Invite {
     pub email_address: String,

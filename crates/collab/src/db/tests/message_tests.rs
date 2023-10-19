@@ -35,7 +35,7 @@ async fn test_channel_message_retrieval(db: &Arc<Database>) {
             )
             .await
             .unwrap()
-            .0
+            .message_id
             .to_proto(),
         );
     }
@@ -109,7 +109,7 @@ async fn test_channel_message_nonces(db: &Arc<Database>) {
         )
         .await
         .unwrap()
-        .0;
+        .message_id;
     let id2 = db
         .create_channel_message(
             channel,
@@ -121,7 +121,7 @@ async fn test_channel_message_nonces(db: &Arc<Database>) {
         )
         .await
         .unwrap()
-        .0;
+        .message_id;
     let id3 = db
         .create_channel_message(
             channel,
@@ -133,7 +133,7 @@ async fn test_channel_message_nonces(db: &Arc<Database>) {
         )
         .await
         .unwrap()
-        .0;
+        .message_id;
     let id4 = db
         .create_channel_message(
             channel,
@@ -145,7 +145,7 @@ async fn test_channel_message_nonces(db: &Arc<Database>) {
         )
         .await
         .unwrap()
-        .0;
+        .message_id;
 
     // As a different user, reuse one of the same nonces. This request succeeds
     // and returns a different id.
@@ -160,7 +160,7 @@ async fn test_channel_message_nonces(db: &Arc<Database>) {
         )
         .await
         .unwrap()
-        .0;
+        .message_id;
 
     assert_ne!(id1, id2);
     assert_eq!(id1, id3);
@@ -235,24 +235,27 @@ async fn test_unseen_channel_messages(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    let (second_message, _, _) = db
+    let second_message = db
         .create_channel_message(channel_1, user, "1_2", &[], OffsetDateTime::now_utc(), 2)
         .await
-        .unwrap();
+        .unwrap()
+        .message_id;
 
-    let (third_message, _, _) = db
+    let third_message = db
         .create_channel_message(channel_1, user, "1_3", &[], OffsetDateTime::now_utc(), 3)
         .await
-        .unwrap();
+        .unwrap()
+        .message_id;
 
     db.join_channel_chat(channel_2, user_connection_id, user)
         .await
         .unwrap();
 
-    let (fourth_message, _, _) = db
+    let fourth_message = db
         .create_channel_message(channel_2, user, "2_1", &[], OffsetDateTime::now_utc(), 4)
         .await
-        .unwrap();
+        .unwrap()
+        .message_id;
 
     // Check that observer has new messages
     let unseen_messages = db

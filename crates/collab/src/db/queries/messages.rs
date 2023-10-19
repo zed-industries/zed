@@ -1,4 +1,5 @@
 use super::*;
+use futures::Stream;
 use sea_orm::TryInsertResult;
 use time::OffsetDateTime;
 
@@ -88,66 +89,107 @@ impl Database {
                 condition = condition.add(channel_message::Column::Id.lt(before_message_id));
             }
 
-            let mut rows = channel_message::Entity::find()
+            let rows = channel_message::Entity::find()
                 .filter(condition)
                 .order_by_desc(channel_message::Column::Id)
                 .limit(count as u64)
                 .stream(&*tx)
                 .await?;
 
-            let mut messages = Vec::new();
-            while let Some(row) = rows.next().await {
-                let row = row?;
-                let nonce = row.nonce.as_u64_pair();
-                messages.push(proto::ChannelMessage {
-                    id: row.id.to_proto(),
-                    sender_id: row.sender_id.to_proto(),
-                    body: row.body,
-                    timestamp: row.sent_at.assume_utc().unix_timestamp() as u64,
-                    mentions: vec![],
-                    nonce: Some(proto::Nonce {
-                        upper_half: nonce.0,
-                        lower_half: nonce.1,
-                    }),
-                });
-            }
-            drop(rows);
-            messages.reverse();
+            self.load_channel_messages(rows, &*tx).await
+        })
+        .await
+    }
 
-            let mut mentions = channel_message_mention::Entity::find()
-                .filter(
-                    channel_message_mention::Column::MessageId.is_in(messages.iter().map(|m| m.id)),
-                )
-                .order_by_asc(channel_message_mention::Column::MessageId)
-                .order_by_asc(channel_message_mention::Column::StartOffset)
+    pub async fn get_channel_messages_by_id(
+        &self,
+        user_id: UserId,
+        message_ids: &[MessageId],
+    ) -> Result<Vec<proto::ChannelMessage>> {
+        self.transaction(|tx| async move {
+            let rows = channel_message::Entity::find()
+                .filter(channel_message::Column::Id.is_in(message_ids.iter().copied()))
+                .order_by_desc(channel_message::Column::Id)
                 .stream(&*tx)
                 .await?;
 
-            let mut message_ix = 0;
-            while let Some(mention) = mentions.next().await {
-                let mention = mention?;
-                let message_id = mention.message_id.to_proto();
-                while let Some(message) = messages.get_mut(message_ix) {
-                    if message.id < message_id {
-                        message_ix += 1;
-                    } else {
-                        if message.id == message_id {
-                            message.mentions.push(proto::ChatMention {
-                                range: Some(proto::Range {
-                                    start: mention.start_offset as u64,
-                                    end: mention.end_offset as u64,
-                                }),
-                                user_id: mention.user_id.to_proto(),
-                            });
-                        }
-                        break;
-                    }
-                }
+            let mut channel_ids = HashSet::<ChannelId>::default();
+            let messages = self
+                .load_channel_messages(
+                    rows.map(|row| {
+                        row.map(|row| {
+                            channel_ids.insert(row.channel_id);
+                            row
+                        })
+                    }),
+                    &*tx,
+                )
+                .await?;
+
+            for channel_id in channel_ids {
+                self.check_user_is_channel_member(channel_id, user_id, &*tx)
+                    .await?;
             }
 
             Ok(messages)
         })
         .await
+    }
+
+    async fn load_channel_messages(
+        &self,
+        mut rows: impl Send + Unpin + Stream<Item = Result<channel_message::Model, sea_orm::DbErr>>,
+        tx: &DatabaseTransaction,
+    ) -> Result<Vec<proto::ChannelMessage>> {
+        let mut messages = Vec::new();
+        while let Some(row) = rows.next().await {
+            let row = row?;
+            let nonce = row.nonce.as_u64_pair();
+            messages.push(proto::ChannelMessage {
+                id: row.id.to_proto(),
+                sender_id: row.sender_id.to_proto(),
+                body: row.body,
+                timestamp: row.sent_at.assume_utc().unix_timestamp() as u64,
+                mentions: vec![],
+                nonce: Some(proto::Nonce {
+                    upper_half: nonce.0,
+                    lower_half: nonce.1,
+                }),
+            });
+        }
+        drop(rows);
+        messages.reverse();
+
+        let mut mentions = channel_message_mention::Entity::find()
+            .filter(channel_message_mention::Column::MessageId.is_in(messages.iter().map(|m| m.id)))
+            .order_by_asc(channel_message_mention::Column::MessageId)
+            .order_by_asc(channel_message_mention::Column::StartOffset)
+            .stream(&*tx)
+            .await?;
+
+        let mut message_ix = 0;
+        while let Some(mention) = mentions.next().await {
+            let mention = mention?;
+            let message_id = mention.message_id.to_proto();
+            while let Some(message) = messages.get_mut(message_ix) {
+                if message.id < message_id {
+                    message_ix += 1;
+                } else {
+                    if message.id == message_id {
+                        message.mentions.push(proto::ChatMention {
+                            range: Some(proto::Range {
+                                start: mention.start_offset as u64,
+                                end: mention.end_offset as u64,
+                            }),
+                            user_id: mention.user_id.to_proto(),
+                        });
+                    }
+                    break;
+                }
+            }
+        }
+
+        Ok(messages)
     }
 
     pub async fn create_channel_message(
@@ -158,7 +200,7 @@ impl Database {
         mentions: &[proto::ChatMention],
         timestamp: OffsetDateTime,
         nonce: u128,
-    ) -> Result<(MessageId, Vec<ConnectionId>, Vec<UserId>)> {
+    ) -> Result<CreatedChannelMessage> {
         self.transaction(|tx| async move {
             let mut rows = channel_chat_participant::Entity::find()
                 .filter(channel_chat_participant::Column::ChannelId.eq(channel_id))
@@ -206,10 +248,13 @@ impl Database {
             .await?;
 
             let message_id;
+            let mut notifications = Vec::new();
             match result {
                 TryInsertResult::Inserted(result) => {
                     message_id = result.last_insert_id;
-                    let models = mentions
+                    let mentioned_user_ids =
+                        mentions.iter().map(|m| m.user_id).collect::<HashSet<_>>();
+                    let mentions = mentions
                         .iter()
                         .filter_map(|mention| {
                             let range = mention.range.as_ref()?;
@@ -226,10 +271,26 @@ impl Database {
                             })
                         })
                         .collect::<Vec<_>>();
-                    if !models.is_empty() {
-                        channel_message_mention::Entity::insert_many(models)
+                    if !mentions.is_empty() {
+                        channel_message_mention::Entity::insert_many(mentions)
                             .exec(&*tx)
                             .await?;
+                    }
+
+                    for mentioned_user in mentioned_user_ids {
+                        notifications.extend(
+                            self.create_notification(
+                                UserId::from_proto(mentioned_user),
+                                rpc::Notification::ChannelMessageMention {
+                                    message_id: message_id.to_proto(),
+                                    sender_id: user_id.to_proto(),
+                                    channel_id: channel_id.to_proto(),
+                                },
+                                false,
+                                &*tx,
+                            )
+                            .await?,
+                        );
                     }
 
                     self.observe_channel_message_internal(channel_id, user_id, message_id, &*tx)
@@ -250,7 +311,12 @@ impl Database {
                 .await?;
             channel_members.retain(|member| !participant_user_ids.contains(member));
 
-            Ok((message_id, participant_connection_ids, channel_members))
+            Ok(CreatedChannelMessage {
+                message_id,
+                participant_connection_ids,
+                channel_members,
+                notifications,
+            })
         })
         .await
     }
