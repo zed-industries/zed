@@ -78,7 +78,7 @@ where
     E: Element,
     F: FnOnce(&mut ViewContext<E::ViewState>) -> E,
 {
-    let child = cx.with_global(theme.clone(), |cx| build_child(cx));
+    let child = cx.with_global(settings.clone(), |cx| build_child(cx));
     WithSettings { settings, child }
 }
 
