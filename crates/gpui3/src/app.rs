@@ -10,14 +10,14 @@ use smallvec::SmallVec;
 
 use crate::{
     current_platform, image_cache::ImageCache, AssetSource, Context, DisplayId, Executor,
-    FocusEvent, FocusHandle, FocusId, LayoutId, MainThread, MainThreadOnly, Platform,
-    SubscriberSet, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, Window,
-    WindowContext, WindowHandle, WindowId,
+    FocusEvent, FocusHandle, FocusId, KeyBinding, Keymap, LayoutId, MainThread, MainThreadOnly,
+    Platform, SubscriberSet, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View,
+    Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
 use futures::Future;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use slotmap::SlotMap;
 use std::{
     any::{type_name, Any, TypeId},
@@ -67,6 +67,7 @@ impl App {
                 unit_entity,
                 entities,
                 windows: SlotMap::with_key(),
+                keymap: Arc::new(RwLock::new(Keymap::default())),
                 pending_notifications: Default::default(),
                 pending_effects: Default::default(),
                 observers: SubscriberSet::new(),
@@ -111,6 +112,7 @@ pub struct AppContext {
     pub(crate) unit_entity: Handle<()>,
     pub(crate) entities: EntityMap,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
+    pub(crate) keymap: Arc<RwLock<Keymap>>,
     pub(crate) pending_notifications: HashSet<EntityId>,
     pending_effects: VecDeque<Effect>,
     pub(crate) observers: SubscriberSet<EntityId, Handler>,
@@ -165,6 +167,7 @@ impl AppContext {
             }
             Effect::Emit { .. } => self.pending_effects.push_back(effect),
             Effect::FocusChanged { .. } => self.pending_effects.push_back(effect),
+            Effect::Refresh => self.pending_effects.push_back(effect),
         }
     }
 
@@ -178,6 +181,9 @@ impl AppContext {
                     Effect::Emit { emitter, event } => self.apply_emit_effect(emitter, event),
                     Effect::FocusChanged { window_id, focused } => {
                         self.apply_focus_changed(window_id, focused)
+                    }
+                    Effect::Refresh => {
+                        self.apply_refresh();
                     }
                 }
             } else {
@@ -282,6 +288,14 @@ impl AppContext {
             }
         })
         .ok();
+    }
+
+    pub fn apply_refresh(&mut self) {
+        for window in self.windows.values_mut() {
+            if let Some(window) = window.as_mut() {
+                window.dirty = true;
+            }
+        }
     }
 
     pub fn to_async(&self) -> AsyncAppContext {
@@ -403,6 +417,11 @@ impl AppContext {
     pub(crate) fn pop_text_style(&mut self) {
         self.text_style_stack.pop();
     }
+
+    pub fn bind_keys(&mut self, bindings: impl IntoIterator<Item = KeyBinding>) {
+        self.keymap.write().add_bindings(bindings);
+        self.push_effect(Effect::Refresh);
+    }
 }
 
 impl Context for AppContext {
@@ -492,6 +511,7 @@ pub(crate) enum Effect {
         window_id: WindowId,
         focused: Option<FocusId>,
     },
+    Refresh,
 }
 
 #[cfg(test)]

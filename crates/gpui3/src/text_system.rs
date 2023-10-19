@@ -219,8 +219,8 @@ impl TextSystem {
         Ok(lines)
     }
 
-    pub fn end_frame(&self) {
-        self.line_layout_cache.end_frame()
+    pub fn start_frame(&self) {
+        self.line_layout_cache.start_frame()
     }
 
     pub fn line_wrapper(

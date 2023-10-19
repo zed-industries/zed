@@ -1,9 +1,5 @@
-use std::{any::TypeId, sync::Arc};
-
-use crate::{
-    DispatchPhase, FocusEvent, FocusHandle, Interactive, KeyDownEvent, KeyUpEvent, StyleRefinement,
-    ViewContext,
-};
+use crate::{FocusEvent, FocusHandle, Interactive, StyleRefinement, ViewContext};
+use std::sync::Arc;
 
 pub trait Focus: Interactive {
     fn set_focus_style(&mut self, style: StyleRefinement);
@@ -133,50 +129,6 @@ pub trait Focus: Interactive {
                     listener(view, event, cx)
                 }
             }));
-        self
-    }
-
-    fn on_key_down(
-        mut self,
-        listener: impl Fn(
-                &mut Self::ViewState,
-                &KeyDownEvent,
-                DispatchPhase,
-                &mut ViewContext<Self::ViewState>,
-            ) + Send
-            + Sync
-            + 'static,
-    ) -> Self
-    where
-        Self: Sized,
-    {
-        self.listeners().key.push((
-            TypeId::of::<KeyDownEvent>(),
-            Arc::new(move |view, event, phase, cx| {
-                let event = event.downcast_ref().unwrap();
-                listener(view, event, phase, cx)
-            }),
-        ));
-        self
-    }
-
-    fn on_key_up(
-        mut self,
-        listener: impl Fn(&mut Self::ViewState, &KeyUpEvent, DispatchPhase, &mut ViewContext<Self::ViewState>)
-            + Send
-            + Sync
-            + 'static,
-    ) -> Self
-    where
-        Self: Sized,
-    {
-        self.listeners().key.push((
-            TypeId::of::<KeyUpEvent>(),
-            Arc::new(move |view, event, phase, cx| {
-                let event = event.downcast_ref().unwrap();
-                listener(view, event, phase, cx)
-            }),
-        ));
         self
     }
 }
