@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use chrono::DateTime;
-use gpui3::{px, relative, view, Context, Size, View};
+use gpui3::{px, relative, rems, view, Context, Size, View};
 
-use crate::settings::Settings;
-use crate::{prelude::*, Button};
+use crate::settings::FakeSettings;
+use crate::{prelude::*, user_settings_mut, Button, SettingValue};
 use crate::{
     theme, v_stack, AssistantPanel, ChatMessage, ChatPanel, CollabPanel, EditorPane, Label,
     LanguageSelector, Pane, PaneGroup, Panel, PanelAllowedSides, PanelSide, ProjectPanel,
@@ -12,13 +12,13 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub struct GPUI2UIDebug {
+pub struct Gpui2UiDebug {
     pub in_livestream: bool,
     pub enable_user_settings: bool,
     pub show_toast: bool,
 }
 
-impl Default for GPUI2UIDebug {
+impl Default for Gpui2UiDebug {
     fn default() -> Self {
         Self {
             in_livestream: false,
@@ -44,8 +44,7 @@ pub struct Workspace {
     right_panel_scroll_state: ScrollState,
     tab_bar_scroll_state: ScrollState,
     bottom_panel_scroll_state: ScrollState,
-    debug: GPUI2UIDebug,
-    settings: Settings,
+    debug: Gpui2UiDebug,
 }
 
 impl Workspace {
@@ -65,8 +64,7 @@ impl Workspace {
             right_panel_scroll_state: ScrollState::default(),
             tab_bar_scroll_state: ScrollState::default(),
             bottom_panel_scroll_state: ScrollState::default(),
-            debug: GPUI2UIDebug::default(),
-            settings: Settings::default(),
+            debug: Gpui2UiDebug::default(),
         }
     }
 
@@ -155,11 +153,8 @@ impl Workspace {
     }
 
     pub fn debug_toggle_user_settings(&mut self, cx: &mut ViewContext<Self>) {
-        if self.debug.enable_user_settings {
-            self.debug.enable_user_settings = false;
-        } else {
-            self.debug.enable_user_settings = true;
-        }
+        self.debug.enable_user_settings = !self.debug.enable_user_settings;
+
         cx.notify();
     }
 
@@ -187,6 +182,20 @@ impl Workspace {
 
     pub fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
         let theme = theme(cx).clone();
+
+        // HACK: This should happen inside of `debug_toggle_user_settings`, but
+        // we don't have `cx.global::<FakeSettings>()` in event handlers at the moment.
+        // Need to talk with Nathan/Antonio about this.
+        {
+            let settings = user_settings_mut(cx);
+
+            if self.debug.enable_user_settings {
+                settings.list_indent_depth = SettingValue::UserDefined(rems(0.5).into());
+                settings.ui_scale = SettingValue::UserDefined(1.25);
+            } else {
+                *settings = FakeSettings::default();
+            }
+        }
 
         let root_group = PaneGroup::new_panes(
             vec![Pane::new(
