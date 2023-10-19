@@ -267,11 +267,15 @@ impl ChatPanel {
 
     fn set_active_chat(&mut self, chat: ModelHandle<ChannelChat>, cx: &mut ViewContext<Self>) {
         if self.active_chat.as_ref().map(|e| &e.0) != Some(&chat) {
-            let id = chat.read(cx).channel().id;
+            let id = chat.read(cx).channel_id;
             {
                 let chat = chat.read(cx);
                 self.message_list.reset(chat.message_count());
-                let placeholder = format!("Message #{}", chat.channel().name);
+                let placeholder = if let Some(channel) = chat.channel(cx) {
+                    format!("Message #{}", channel.name)
+                } else {
+                    "Message Channel".to_string()
+                };
                 self.input_editor.update(cx, move |editor, cx| {
                     editor.set_placeholder_text(placeholder, cx);
                 });
@@ -360,7 +364,7 @@ impl ChatPanel {
             let is_admin = self
                 .channel_store
                 .read(cx)
-                .is_channel_admin(active_chat.channel().id);
+                .is_channel_admin(active_chat.channel_id);
             let last_message = active_chat.message(ix.saturating_sub(1));
             let this_message = active_chat.message(ix);
             let is_continuation = last_message.id != this_message.id
@@ -645,7 +649,7 @@ impl ChatPanel {
         cx: &mut ViewContext<ChatPanel>,
     ) -> Task<Result<()>> {
         if let Some((chat, _)) = &self.active_chat {
-            if chat.read(cx).channel().id == selected_channel_id {
+            if chat.read(cx).channel_id == selected_channel_id {
                 return Task::ready(Ok(()));
             }
         }
@@ -664,7 +668,7 @@ impl ChatPanel {
 
     fn open_notes(&mut self, _: &OpenChannelNotes, cx: &mut ViewContext<Self>) {
         if let Some((chat, _)) = &self.active_chat {
-            let channel_id = chat.read(cx).channel().id;
+            let channel_id = chat.read(cx).channel_id;
             if let Some(workspace) = self.workspace.upgrade(cx) {
                 ChannelView::open(channel_id, workspace, cx).detach();
             }
@@ -673,7 +677,7 @@ impl ChatPanel {
 
     fn join_call(&mut self, _: &JoinCall, cx: &mut ViewContext<Self>) {
         if let Some((chat, _)) = &self.active_chat {
-            let channel_id = chat.read(cx).channel().id;
+            let channel_id = chat.read(cx).channel_id;
             ActiveCall::global(cx)
                 .update(cx, |call, cx| call.join_channel(channel_id, cx))
                 .detach_and_log_err(cx);

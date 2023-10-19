@@ -72,6 +72,10 @@ impl Channel {
 
         slug.trim_matches(|c| c == '-').to_string()
     }
+
+    pub fn can_edit_notes(&self) -> bool {
+        self.role == proto::ChannelRole::Member || self.role == proto::ChannelRole::Admin
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
@@ -265,10 +269,11 @@ impl ChannelStore {
     ) -> Task<Result<ModelHandle<ChannelBuffer>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
+        let channel_store = cx.handle();
         self.open_channel_resource(
             channel_id,
             |this| &mut this.opened_buffers,
-            |channel, cx| ChannelBuffer::new(channel, client, user_store, cx),
+            |channel, cx| ChannelBuffer::new(channel, client, user_store, channel_store, cx),
             cx,
         )
     }
@@ -778,7 +783,7 @@ impl ChannelStore {
                     let channel_buffer = buffer.read(cx);
                     let buffer = channel_buffer.buffer().read(cx);
                     buffer_versions.push(proto::ChannelBufferVersion {
-                        channel_id: channel_buffer.channel().id,
+                        channel_id: channel_buffer.channel_id,
                         epoch: channel_buffer.epoch(),
                         version: language::proto::serialize_version(&buffer.version()),
                     });
@@ -805,13 +810,13 @@ impl ChannelStore {
                         };
 
                         channel_buffer.update(cx, |channel_buffer, cx| {
-                            let channel_id = channel_buffer.channel().id;
+                            let channel_id = channel_buffer.channel_id;
                             if let Some(remote_buffer) = response
                                 .buffers
                                 .iter_mut()
                                 .find(|buffer| buffer.channel_id == channel_id)
                             {
-                                let channel_id = channel_buffer.channel().id;
+                                let channel_id = channel_buffer.channel_id;
                                 let remote_version =
                                     language::proto::deserialize_version(&remote_buffer.version);
 
@@ -934,11 +939,27 @@ impl ChannelStore {
 
         if channels_changed {
             if !payload.delete_channels.is_empty() {
-                self.channel_index.delete_channels(&payload.delete_channels);
-                self.channel_participants
-                    .retain(|channel_id, _| !payload.delete_channels.contains(channel_id));
+                let mut channels_to_delete: Vec<u64> = Vec::new();
+                let mut channels_to_rehome: Vec<u64> = Vec::new();
+                for channel_id in payload.delete_channels {
+                    if payload
+                        .channels
+                        .iter()
+                        .any(|channel| channel.id == channel_id)
+                    {
+                        channels_to_rehome.push(channel_id)
+                    } else {
+                        channels_to_delete.push(channel_id)
+                    }
+                }
 
-                for channel_id in &payload.delete_channels {
+                self.channel_index.delete_channels(&channels_to_delete);
+                self.channel_index
+                    .delete_paths_through_channels(&channels_to_rehome);
+                self.channel_participants
+                    .retain(|channel_id, _| !channels_to_delete.contains(channel_id));
+
+                for channel_id in &channels_to_delete {
                     let channel_id = *channel_id;
                     if payload
                         .channels
@@ -959,7 +980,16 @@ impl ChannelStore {
 
             let mut index = self.channel_index.bulk_insert();
             for channel in payload.channels {
-                index.insert(channel)
+                let id = channel.id;
+                let channel_changed = index.insert(channel);
+
+                if channel_changed {
+                    if let Some(OpenedModelHandle::Open(buffer)) = self.opened_buffers.get(&id) {
+                        if let Some(buffer) = buffer.upgrade(cx) {
+                            buffer.update(cx, ChannelBuffer::channel_changed);
+                        }
+                    }
+                }
             }
 
             for unseen_buffer_change in payload.unseen_channel_buffer_changes {

@@ -55,7 +55,7 @@ pub enum Event {
 
 pub struct Room {
     id: u64,
-    channel_id: Option<u64>,
+    pub channel_id: Option<u64>,
     live_kit: Option<LiveKitRoom>,
     status: RoomStatus,
     shared_projects: HashSet<WeakModelHandle<Project>>,

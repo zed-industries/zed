@@ -412,7 +412,7 @@ async fn test_channel_buffer_disconnect(
 
     channel_buffer_a.update(cx_a, |buffer, _| {
         assert_eq!(
-            buffer.channel().as_ref(),
+            buffer.channel(cx).unwrap().as_ref(),
             &channel(channel_id, "the-channel", proto::ChannelRole::Admin)
         );
         assert!(!buffer.is_connected());
@@ -437,7 +437,7 @@ async fn test_channel_buffer_disconnect(
     // Channel buffer observed the deletion
     channel_buffer_b.update(cx_b, |buffer, _| {
         assert_eq!(
-            buffer.channel().as_ref(),
+            buffer.channel(cx).unwrap().as_ref(),
             &channel(channel_id, "the-channel", proto::ChannelRole::Member)
         );
         assert!(!buffer.is_connected());
