@@ -133,12 +133,13 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
         theme: &Theme,
     ) -> impl Element<ViewState = S> {
         div()
+            .id("list_item")
             .h_7()
             .px_2()
             .flex()
             .items_center()
             .hover(|style| style.bg(theme.lowest.variant.hovered.background))
-            // .active(|style| style.fill(theme.lowest.variant.pressed.background))
+            .active(|style| style.bg(theme.lowest.variant.pressed.background))
             .child(
                 div()
                     .flex()
