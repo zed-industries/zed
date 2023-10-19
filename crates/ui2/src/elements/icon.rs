@@ -148,7 +148,7 @@ impl Icon {
     }
 }
 
-#[derive(Element, Clone)]
+#[derive(Element)]
 pub struct IconElement<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     icon: Icon,

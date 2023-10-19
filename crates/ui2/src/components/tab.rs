@@ -94,7 +94,7 @@ impl<S: 'static + Send + Sync + Clone> Tab<S> {
             (GitStatus::Conflict, false) => Label::new(self.title.clone()),
         };
 
-        let close_icon = IconElement::new(Icon::Close).color(IconColor::Muted);
+        let close_icon = || IconElement::new(Icon::Close).color(IconColor::Muted);
 
         let (tab_bg, tab_hover_bg, tab_active_bg) = match self.current {
             true => (
@@ -131,13 +131,13 @@ impl<S: 'static + Send + Sync + Clone> Tab<S> {
                     }))
                     .children(self.icon.map(IconElement::new))
                     .children(if self.close_side == IconSide::Left {
-                        Some(close_icon.clone())
+                        Some(close_icon())
                     } else {
                         None
                     })
                     .child(label)
                     .children(if self.close_side == IconSide::Right {
-                        Some(close_icon)
+                        Some(close_icon())
                     } else {
                         None
                     }),
