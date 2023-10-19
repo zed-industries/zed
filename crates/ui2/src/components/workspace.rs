@@ -4,7 +4,7 @@ use chrono::DateTime;
 use gpui3::{px, relative, view, Context, Size, View};
 
 use crate::settings::Settings;
-use crate::{h_stack, prelude::*, Button};
+use crate::{prelude::*, Button};
 use crate::{
     theme, v_stack, AssistantPanel, ChatMessage, ChatPanel, CollabPanel, EditorPane, Label,
     LanguageSelector, Pane, PaneGroup, Panel, PanelAllowedSides, PanelSide, ProjectPanel,
@@ -163,6 +163,24 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn debug_toggle_livestream(&mut self, cx: &mut ViewContext<Self>) {
+        if self.debug.in_livestream {
+            self.debug.in_livestream = false;
+        } else {
+            self.debug.in_livestream = true;
+        }
+        cx.notify();
+    }
+
+    pub fn debug_toggle_toast(&mut self, cx: &mut ViewContext<Self>) {
+        if self.debug.show_toast {
+            self.debug.show_toast = false;
+        } else {
+            self.debug.show_toast = true;
+        }
+        cx.notify();
+    }
+
     pub fn view(cx: &mut WindowContext) -> View<Self> {
         view(cx.entity(|cx| Self::new(cx)), Self::render)
     }
@@ -182,77 +200,64 @@ impl Workspace {
             SplitDirection::Horizontal,
         );
 
-        v_stack()
+        div()
+            .relative()
+            .size_full()
+            .flex()
+            .flex_col()
+            .font("Zed Sans Extended")
+            .gap_0()
+            .justify_start()
+            .items_start()
+            .text_color(theme.lowest.base.default.foreground)
+            .bg(theme.lowest.base.default.background)
+            .child(self.title_bar.clone())
             .child(
                 div()
-                    .relative()
-                    .size_full()
+                    .flex_1()
+                    .w_full()
                     .flex()
-                    .flex_col()
-                    .font("Zed Sans Extended")
-                    .gap_0()
-                    .justify_start()
-                    .items_start()
-                    .text_color(theme.lowest.base.default.foreground)
-                    .bg(theme.lowest.base.default.background)
-                    .child(self.title_bar.clone())
+                    .flex_row()
+                    .overflow_hidden()
+                    .border_t()
+                    .border_b()
+                    .border_color(theme.lowest.base.default.border)
+                    .children(
+                        Some(
+                            Panel::new(self.left_panel_scroll_state.clone())
+                                .side(PanelSide::Left)
+                                .child(ProjectPanel::new(ScrollState::default())),
+                        )
+                        .filter(|_| self.is_project_panel_open()),
+                    )
+                    .children(
+                        Some(
+                            Panel::new(self.left_panel_scroll_state.clone())
+                                .child(CollabPanel::new(ScrollState::default()))
+                                .side(PanelSide::Left),
+                        )
+                        .filter(|_| self.is_collab_panel_open()),
+                    )
                     .child(
-                        div()
+                        v_stack()
                             .flex_1()
-                            .w_full()
-                            .flex()
-                            .flex_row()
-                            .overflow_hidden()
-                            .border_t()
-                            .border_b()
-                            .border_color(theme.lowest.base.default.border)
+                            .h_full()
+                            .child(div().flex().flex_1().child(root_group))
                             .children(
                                 Some(
-                                    Panel::new(self.left_panel_scroll_state.clone())
-                                        .side(PanelSide::Left)
-                                        .child(ProjectPanel::new(ScrollState::default())),
+                                    Panel::new(self.bottom_panel_scroll_state.clone())
+                                        .child(Terminal::new())
+                                        .allowed_sides(PanelAllowedSides::BottomOnly)
+                                        .side(PanelSide::Bottom),
                                 )
-                                .filter(|_| self.is_project_panel_open()),
-                            )
-                            .children(
-                                Some(
-                                    Panel::new(self.left_panel_scroll_state.clone())
-                                        .child(CollabPanel::new(ScrollState::default()))
-                                        .side(PanelSide::Left),
-                                )
-                                .filter(|_| self.is_collab_panel_open()),
-                            )
-                            .child(
-                                v_stack()
-                                    .flex_1()
-                                    .h_full()
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_1()
-                                            // CSS Hack: Flex 1 has to have a set height to properly fill the space
-                                            // Or it will give you a height of 0
-                                            // Marshall: We may not need this anymore with `gpui3`. It seems to render
-                                            //           fine without it.
-                                            .h_px()
-                                            .child(root_group),
-                                    )
-                                    .children(
-                                        Some(
-                                            Panel::new(self.bottom_panel_scroll_state.clone())
-                                                .child(Terminal::new())
-                                                .allowed_sides(PanelAllowedSides::BottomOnly)
-                                                .side(PanelSide::Bottom),
-                                        )
-                                        .filter(|_| self.is_terminal_open()),
-                                    ),
-                            )
-                            .children(
-                                Some(
-                                    Panel::new(self.right_panel_scroll_state.clone())
-                                        .side(PanelSide::Right)
-                                        .child(ChatPanel::new(ScrollState::default()).messages(
-                                            vec![
+                                .filter(|_| self.is_terminal_open()),
+                            ),
+                    )
+                    .children(
+                        Some(
+                            Panel::new(self.right_panel_scroll_state.clone())
+                                .side(PanelSide::Right)
+                                .child(ChatPanel::new(ScrollState::default()).messages(vec![
                                     ChatMessage::new(
                                         "osiewicz".to_string(),
                                         "is this thing on?".to_string(),
@@ -267,46 +272,70 @@ impl Workspace {
                                             .unwrap()
                                             .naive_local(),
                                     ),
-                                ],
-                                        )),
-                                )
-                                .filter(|_| self.is_chat_panel_open()),
-                            )
-                            .children(
-                                Some(
-                                    Panel::new(self.right_panel_scroll_state.clone())
-                                        .side(PanelSide::Right)
-                                        .child(div().w_96().h_full().child("Notifications")),
-                                )
-                                .filter(|_| self.is_notifications_panel_open()),
-                            )
-                            .children(
-                                Some(
-                                    Panel::new(self.right_panel_scroll_state.clone())
-                                        .child(AssistantPanel::new()),
-                                )
-                                .filter(|_| self.is_assistant_panel_open()),
-                            ),
+                                ])),
+                        )
+                        .filter(|_| self.is_chat_panel_open()),
                     )
-                    .child(StatusBar::new())
                     .children(
                         Some(
-                            div()
-                                .absolute()
-                                .top(px(50.))
-                                .left(px(640.))
-                                .z_index(999)
-                                .child(LanguageSelector::new()),
+                            Panel::new(self.right_panel_scroll_state.clone())
+                                .side(PanelSide::Right)
+                                .child(div().w_96().h_full().child("Notifications")),
                         )
-                        .filter(|_| self.is_language_selector_open()),
+                        .filter(|_| self.is_notifications_panel_open()),
                     )
-                    .child(Toast::new(ToastOrigin::Bottom).child(Label::new("A toast"))),
+                    .children(
+                        Some(
+                            Panel::new(self.right_panel_scroll_state.clone())
+                                .child(AssistantPanel::new()),
+                        )
+                        .filter(|_| self.is_assistant_panel_open()),
+                    ),
             )
+            .child(StatusBar::new())
+            .when(self.debug.show_toast, |this| {
+                this.child(Toast::new(ToastOrigin::Bottom).child(Label::new("A toast")))
+            })
+            .children(
+                Some(
+                    div()
+                        .absolute()
+                        .top(px(50.))
+                        .left(px(640.))
+                        .z_index(8)
+                        .child(LanguageSelector::new()),
+                )
+                .filter(|_| self.is_language_selector_open()),
+            )
+            .z_index(8)
+            // Debug
             .child(
-                h_stack().gap_2().child(
-                    Button::<Workspace>::new("Toggle Debug")
-                        .on_click(Arc::new(|workspace, cx| workspace.toggle_debug(cx))),
-                ),
+                v_stack()
+                    .z_index(9)
+                    .absolute()
+                    .bottom_10()
+                    .left_1_4()
+                    .w_40()
+                    .gap_2()
+                    .when(self.show_debug, |this| {
+                        this.child(Button::<Workspace>::new("Toggle User Settings").on_click(
+                            Arc::new(|workspace, cx| workspace.debug_toggle_user_settings(cx)),
+                        ))
+                        .child(
+                            Button::<Workspace>::new("Toggle Toasts").on_click(Arc::new(
+                                |workspace, cx| workspace.debug_toggle_toast(cx),
+                            )),
+                        )
+                        .child(
+                            Button::<Workspace>::new("Toggle Livestream").on_click(Arc::new(
+                                |workspace, cx| workspace.debug_toggle_livestream(cx),
+                            )),
+                        )
+                    })
+                    .child(
+                        Button::<Workspace>::new("Toggle Debug")
+                            .on_click(Arc::new(|workspace, cx| workspace.toggle_debug(cx))),
+                    ),
             )
     }
 }
