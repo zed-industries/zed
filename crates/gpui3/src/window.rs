@@ -945,7 +945,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 
     fn dispatch_action(&mut self, action: Box<dyn Action>, listeners: &[(TypeId, AnyKeyListener)]) {
-        let action_type = action.type_id();
+        let action_type = action.as_any().type_id();
         for (event_type, listener) in listeners {
             if action_type == *event_type {
                 listener(action.as_any(), DispatchPhase::Capture, self);
@@ -958,7 +958,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         if self.window.propagate {
             for (event_type, listener) in listeners.iter().rev() {
                 if action_type == *event_type {
-                    listener(action.as_any(), DispatchPhase::Capture, self);
+                    listener(action.as_any(), DispatchPhase::Bubble, self);
                     if !self.window.propagate {
                         break;
                     }

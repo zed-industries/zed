@@ -69,7 +69,7 @@ impl FocusStory {
                     println!("Action A dispatched on parent during {:?}", phase);
                 })
                 .on_action(|_, action: &ActionB, phase, cx| {
-                    println!("Action A dispatched on parent during {:?}", phase);
+                    println!("Action B dispatched on parent during {:?}", phase);
                 })
                 .focusable(&parent)
                 .on_focus(|_, _, _| println!("Parent focused"))
