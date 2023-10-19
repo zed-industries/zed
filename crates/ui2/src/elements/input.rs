@@ -12,7 +12,7 @@ pub enum InputVariant {
 }
 
 #[derive(Element)]
-pub struct Input<S: 'static + Send + Sync + Clone> {
+pub struct Input<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     placeholder: SharedString,
     value: String,
@@ -22,7 +22,7 @@ pub struct Input<S: 'static + Send + Sync + Clone> {
     is_active: bool,
 }
 
-impl<S: 'static + Send + Sync + Clone> Input<S> {
+impl<S: 'static + Send + Sync> Input<S> {
     pub fn new(placeholder: impl Into<SharedString>) -> Self {
         Self {
             state_type: PhantomData,
