@@ -25,10 +25,7 @@ impl Keymap {
         self.version
     }
 
-    pub(crate) fn bindings_for_action(
-        &self,
-        action_id: TypeId,
-    ) -> impl Iterator<Item = &'_ Binding> {
+    pub fn bindings_for_action(&self, action_id: TypeId) -> impl Iterator<Item = &'_ Binding> {
         self.binding_indices_by_action_id
             .get(&action_id)
             .map(SmallVec::as_slice)

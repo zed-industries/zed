@@ -1,6 +1,7 @@
-use crate::{Binding, Keymap, KeymapContext, KeymapVersion, Keystroke};
+use crate::{Keymap, KeymapContext, KeymapVersion, Keystroke};
+use parking_lot::RwLock;
 use smallvec::SmallVec;
-use std::any::{Any, TypeId};
+use std::{any::Any, sync::Arc};
 
 pub trait Action: Any + Send + Sync {
     fn partial_eq(&self, action: &dyn Action) -> bool;
@@ -10,22 +11,24 @@ pub trait Action: Any + Send + Sync {
 
 pub struct KeyMatcher {
     pending_keystrokes: Vec<Keystroke>,
-    keymap: Keymap,
+    keymap: Arc<RwLock<Keymap>>,
     keymap_version: KeymapVersion,
 }
 
 impl KeyMatcher {
-    pub fn new(keymap: Keymap) -> Self {
+    pub fn new(keymap: Arc<RwLock<Keymap>>) -> Self {
+        let keymap_version = keymap.read().version();
         Self {
             pending_keystrokes: Vec::new(),
-            keymap_version: keymap.version(),
+            keymap_version,
             keymap,
         }
     }
 
-    pub fn bindings_for_action(&self, action_id: TypeId) -> impl Iterator<Item = &Binding> {
-        self.keymap.bindings_for_action(action_id)
-    }
+    // todo!("replace with a function that calls an FnMut for every binding matching the action")
+    // pub fn bindings_for_action(&self, action_id: TypeId) -> impl Iterator<Item = &Binding> {
+    //     self.keymap.read().bindings_for_action(action_id)
+    // }
 
     pub fn clear_pending(&mut self) {
         self.pending_keystrokes.clear();
@@ -49,20 +52,21 @@ impl KeyMatcher {
         keystroke: &Keystroke,
         context_stack: &[KeymapContext],
     ) -> KeyMatch {
+        let keymap = self.keymap.read();
         // Clear pending keystrokes if the keymap has changed since the last matched keystroke.
-        if self.keymap.version() != self.keymap_version {
-            self.keymap_version = self.keymap.version();
+        if keymap.version() != self.keymap_version {
+            self.keymap_version = keymap.version();
             self.pending_keystrokes.clear();
         }
 
         let mut pending_key = None;
 
-        for binding in self.keymap.bindings().iter().rev() {
+        for binding in keymap.bindings().iter().rev() {
             for candidate in keystroke.match_candidates() {
                 self.pending_keystrokes.push(candidate.clone());
                 match binding.match_keystrokes(&self.pending_keystrokes, context_stack) {
                     KeyMatch::Some(action) => {
-                        self.clear_pending();
+                        self.pending_keystrokes.clear();
                         return KeyMatch::Some(action);
                     }
                     KeyMatch::Pending => {
@@ -91,16 +95,11 @@ impl KeyMatcher {
         contexts: &[KeymapContext],
     ) -> Option<SmallVec<[Keystroke; 2]>> {
         self.keymap
+            .read()
             .bindings()
             .iter()
             .rev()
             .find_map(|binding| binding.keystrokes_for_action(action, contexts))
-    }
-}
-
-impl Default for KeyMatcher {
-    fn default() -> Self {
-        Self::new(Keymap::default())
     }
 }
 
