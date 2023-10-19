@@ -1,21 +1,21 @@
-use crate::{Action, KeyMatch, KeymapContext, KeymapContextPredicate, Keystroke};
+use crate::{Action, ActionContext, ActionContextPredicate, KeyMatch, Keystroke};
 use anyhow::Result;
 use smallvec::SmallVec;
 
-pub struct Binding {
+pub struct KeyBinding {
     action: Box<dyn Action>,
     pub(super) keystrokes: SmallVec<[Keystroke; 2]>,
-    pub(super) context_predicate: Option<KeymapContextPredicate>,
+    pub(super) context_predicate: Option<ActionContextPredicate>,
 }
 
-impl Binding {
+impl KeyBinding {
     pub fn new<A: Action>(keystrokes: &str, action: A, context_predicate: Option<&str>) -> Self {
         Self::load(keystrokes, Box::new(action), context_predicate).unwrap()
     }
 
     pub fn load(keystrokes: &str, action: Box<dyn Action>, context: Option<&str>) -> Result<Self> {
         let context = if let Some(context) = context {
-            Some(KeymapContextPredicate::parse(context)?)
+            Some(ActionContextPredicate::parse(context)?)
         } else {
             None
         };
@@ -32,7 +32,7 @@ impl Binding {
         })
     }
 
-    pub fn matches_context(&self, contexts: &[KeymapContext]) -> bool {
+    pub fn matches_context(&self, contexts: &[ActionContext]) -> bool {
         self.context_predicate
             .as_ref()
             .map(|predicate| predicate.eval(contexts))
@@ -42,7 +42,7 @@ impl Binding {
     pub fn match_keystrokes(
         &self,
         pending_keystrokes: &[Keystroke],
-        contexts: &[KeymapContext],
+        contexts: &[ActionContext],
     ) -> KeyMatch {
         if self.keystrokes.as_ref().starts_with(&pending_keystrokes)
             && self.matches_context(contexts)
@@ -61,7 +61,7 @@ impl Binding {
     pub fn keystrokes_for_action(
         &self,
         action: &dyn Action,
-        contexts: &[KeymapContext],
+        contexts: &[ActionContext],
     ) -> Option<SmallVec<[Keystroke; 2]>> {
         if self.action.partial_eq(action) && self.matches_context(contexts) {
             Some(self.keystrokes.clone())

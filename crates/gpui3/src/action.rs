@@ -1,16 +1,23 @@
+use crate::SharedString;
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet};
-use std::borrow::Cow;
+use std::any::Any;
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct KeymapContext {
-    set: HashSet<Cow<'static, str>>,
-    map: HashMap<Cow<'static, str>, Cow<'static, str>>,
+pub trait Action: Any + Send + Sync {
+    fn partial_eq(&self, action: &dyn Action) -> bool;
+    fn boxed_clone(&self) -> Box<dyn Action>;
+    fn as_any(&self) -> &dyn Any;
 }
 
-impl KeymapContext {
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ActionContext {
+    set: HashSet<SharedString>,
+    map: HashMap<SharedString, SharedString>,
+}
+
+impl ActionContext {
     pub fn new() -> Self {
-        KeymapContext {
+        ActionContext {
             set: HashSet::default(),
             map: HashMap::default(),
         }
@@ -30,31 +37,27 @@ impl KeymapContext {
         }
     }
 
-    pub fn add_identifier<I: Into<Cow<'static, str>>>(&mut self, identifier: I) {
+    pub fn add_identifier<I: Into<SharedString>>(&mut self, identifier: I) {
         self.set.insert(identifier.into());
     }
 
-    pub fn add_key<S1: Into<Cow<'static, str>>, S2: Into<Cow<'static, str>>>(
-        &mut self,
-        key: S1,
-        value: S2,
-    ) {
+    pub fn add_key<S1: Into<SharedString>, S2: Into<SharedString>>(&mut self, key: S1, value: S2) {
         self.map.insert(key.into(), value.into());
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub enum KeymapContextPredicate {
-    Identifier(String),
-    Equal(String, String),
-    NotEqual(String, String),
-    Child(Box<KeymapContextPredicate>, Box<KeymapContextPredicate>),
-    Not(Box<KeymapContextPredicate>),
-    And(Box<KeymapContextPredicate>, Box<KeymapContextPredicate>),
-    Or(Box<KeymapContextPredicate>, Box<KeymapContextPredicate>),
+pub enum ActionContextPredicate {
+    Identifier(SharedString),
+    Equal(SharedString, SharedString),
+    NotEqual(SharedString, SharedString),
+    Child(Box<ActionContextPredicate>, Box<ActionContextPredicate>),
+    Not(Box<ActionContextPredicate>),
+    And(Box<ActionContextPredicate>, Box<ActionContextPredicate>),
+    Or(Box<ActionContextPredicate>, Box<ActionContextPredicate>),
 }
 
-impl KeymapContextPredicate {
+impl ActionContextPredicate {
     pub fn parse(source: &str) -> Result<Self> {
         let source = Self::skip_whitespace(source);
         let (predicate, rest) = Self::parse_expr(source, 0)?;
@@ -65,20 +68,20 @@ impl KeymapContextPredicate {
         }
     }
 
-    pub fn eval(&self, contexts: &[KeymapContext]) -> bool {
+    pub fn eval(&self, contexts: &[ActionContext]) -> bool {
         let Some(context) = contexts.first() else {
             return false;
         };
         match self {
-            Self::Identifier(name) => (&context.set).contains(name.as_str()),
+            Self::Identifier(name) => context.set.contains(&name),
             Self::Equal(left, right) => context
                 .map
-                .get(left.as_str())
+                .get(&left)
                 .map(|value| value == right)
                 .unwrap_or(false),
             Self::NotEqual(left, right) => context
                 .map
-                .get(left.as_str())
+                .get(&left)
                 .map(|value| value != right)
                 .unwrap_or(true),
             Self::Not(pred) => !pred.eval(contexts),
@@ -90,7 +93,7 @@ impl KeymapContextPredicate {
 
     fn parse_expr(mut source: &str, min_precedence: u32) -> anyhow::Result<(Self, &str)> {
         type Op =
-            fn(KeymapContextPredicate, KeymapContextPredicate) -> Result<KeymapContextPredicate>;
+            fn(ActionContextPredicate, ActionContextPredicate) -> Result<ActionContextPredicate>;
 
         let (mut predicate, rest) = Self::parse_primary(source)?;
         source = rest;
@@ -136,7 +139,7 @@ impl KeymapContextPredicate {
             '!' => {
                 let source = Self::skip_whitespace(&source[1..]);
                 let (predicate, source) = Self::parse_expr(&source, PRECEDENCE_NOT)?;
-                Ok((KeymapContextPredicate::Not(Box::new(predicate)), source))
+                Ok((ActionContextPredicate::Not(Box::new(predicate)), source))
             }
             _ if next.is_alphanumeric() || next == '_' => {
                 let len = source
@@ -145,7 +148,7 @@ impl KeymapContextPredicate {
                 let (identifier, rest) = source.split_at(len);
                 source = Self::skip_whitespace(rest);
                 Ok((
-                    KeymapContextPredicate::Identifier(identifier.into()),
+                    ActionContextPredicate::Identifier(identifier.to_string().into()),
                     source,
                 ))
             }
@@ -197,17 +200,17 @@ const PRECEDENCE_NOT: u32 = 5;
 
 #[cfg(test)]
 mod tests {
-    use super::KeymapContextPredicate::{self, *};
+    use super::ActionContextPredicate::{self, *};
 
     #[test]
     fn test_parse_identifiers() {
         // Identifiers
         assert_eq!(
-            KeymapContextPredicate::parse("abc12").unwrap(),
+            ActionContextPredicate::parse("abc12").unwrap(),
             Identifier("abc12".into())
         );
         assert_eq!(
-            KeymapContextPredicate::parse("_1a").unwrap(),
+            ActionContextPredicate::parse("_1a").unwrap(),
             Identifier("_1a".into())
         );
     }
@@ -215,11 +218,11 @@ mod tests {
     #[test]
     fn test_parse_negations() {
         assert_eq!(
-            KeymapContextPredicate::parse("!abc").unwrap(),
+            ActionContextPredicate::parse("!abc").unwrap(),
             Not(Box::new(Identifier("abc".into())))
         );
         assert_eq!(
-            KeymapContextPredicate::parse(" ! ! abc").unwrap(),
+            ActionContextPredicate::parse(" ! ! abc").unwrap(),
             Not(Box::new(Not(Box::new(Identifier("abc".into())))))
         );
     }
@@ -227,15 +230,15 @@ mod tests {
     #[test]
     fn test_parse_equality_operators() {
         assert_eq!(
-            KeymapContextPredicate::parse("a == b").unwrap(),
+            ActionContextPredicate::parse("a == b").unwrap(),
             Equal("a".into(), "b".into())
         );
         assert_eq!(
-            KeymapContextPredicate::parse("c!=d").unwrap(),
+            ActionContextPredicate::parse("c!=d").unwrap(),
             NotEqual("c".into(), "d".into())
         );
         assert_eq!(
-            KeymapContextPredicate::parse("c == !d")
+            ActionContextPredicate::parse("c == !d")
                 .unwrap_err()
                 .to_string(),
             "operands must be identifiers"
@@ -245,14 +248,14 @@ mod tests {
     #[test]
     fn test_parse_boolean_operators() {
         assert_eq!(
-            KeymapContextPredicate::parse("a || b").unwrap(),
+            ActionContextPredicate::parse("a || b").unwrap(),
             Or(
                 Box::new(Identifier("a".into())),
                 Box::new(Identifier("b".into()))
             )
         );
         assert_eq!(
-            KeymapContextPredicate::parse("a || !b && c").unwrap(),
+            ActionContextPredicate::parse("a || !b && c").unwrap(),
             Or(
                 Box::new(Identifier("a".into())),
                 Box::new(And(
@@ -262,7 +265,7 @@ mod tests {
             )
         );
         assert_eq!(
-            KeymapContextPredicate::parse("a && b || c&&d").unwrap(),
+            ActionContextPredicate::parse("a && b || c&&d").unwrap(),
             Or(
                 Box::new(And(
                     Box::new(Identifier("a".into())),
@@ -275,7 +278,7 @@ mod tests {
             )
         );
         assert_eq!(
-            KeymapContextPredicate::parse("a == b && c || d == e && f").unwrap(),
+            ActionContextPredicate::parse("a == b && c || d == e && f").unwrap(),
             Or(
                 Box::new(And(
                     Box::new(Equal("a".into(), "b".into())),
@@ -288,7 +291,7 @@ mod tests {
             )
         );
         assert_eq!(
-            KeymapContextPredicate::parse("a && b && c && d").unwrap(),
+            ActionContextPredicate::parse("a && b && c && d").unwrap(),
             And(
                 Box::new(And(
                     Box::new(And(
@@ -305,7 +308,7 @@ mod tests {
     #[test]
     fn test_parse_parenthesized_expressions() {
         assert_eq!(
-            KeymapContextPredicate::parse("a && (b == c || d != e)").unwrap(),
+            ActionContextPredicate::parse("a && (b == c || d != e)").unwrap(),
             And(
                 Box::new(Identifier("a".into())),
                 Box::new(Or(
@@ -315,7 +318,7 @@ mod tests {
             ),
         );
         assert_eq!(
-            KeymapContextPredicate::parse(" ( a || b ) ").unwrap(),
+            ActionContextPredicate::parse(" ( a || b ) ").unwrap(),
             Or(
                 Box::new(Identifier("a".into())),
                 Box::new(Identifier("b".into())),

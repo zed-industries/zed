@@ -10,14 +10,14 @@ use smallvec::SmallVec;
 
 use crate::{
     current_platform, image_cache::ImageCache, AssetSource, Context, DisplayId, Executor,
-    FocusEvent, FocusHandle, FocusId, LayoutId, MainThread, MainThreadOnly, Platform,
-    SubscriberSet, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View, Window,
-    WindowContext, WindowHandle, WindowId,
+    FocusEvent, FocusHandle, FocusId, KeyBinding, Keymap, LayoutId, MainThread, MainThreadOnly,
+    Platform, SubscriberSet, SvgRenderer, Task, TextStyle, TextStyleRefinement, TextSystem, View,
+    Window, WindowContext, WindowHandle, WindowId,
 };
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, VecDeque};
 use futures::Future;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use slotmap::SlotMap;
 use std::{
     any::{type_name, Any, TypeId},
@@ -67,6 +67,7 @@ impl App {
                 unit_entity,
                 entities,
                 windows: SlotMap::with_key(),
+                keymap: Arc::new(RwLock::new(Keymap::default())),
                 pending_notifications: Default::default(),
                 pending_effects: Default::default(),
                 observers: SubscriberSet::new(),
@@ -111,6 +112,7 @@ pub struct AppContext {
     pub(crate) unit_entity: Handle<()>,
     pub(crate) entities: EntityMap,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
+    keymap: Arc<RwLock<Keymap>>,
     pub(crate) pending_notifications: HashSet<EntityId>,
     pending_effects: VecDeque<Effect>,
     pub(crate) observers: SubscriberSet<EntityId, Handler>,
@@ -402,6 +404,14 @@ impl AppContext {
 
     pub(crate) fn pop_text_style(&mut self) {
         self.text_style_stack.pop();
+    }
+
+    pub fn bind_keys(&mut self, bindings: impl IntoIterator<Item = KeyBinding>) {
+        self.keymap.write().add_bindings(bindings);
+        let window_ids = self.windows.keys().collect::<SmallVec<[_; 8]>>();
+        for window_id in window_ids {
+            self.update_window(window_id, |cx| cx.notify()).unwrap();
+        }
     }
 }
 

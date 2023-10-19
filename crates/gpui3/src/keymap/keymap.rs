@@ -1,4 +1,4 @@
-use crate::{Binding, KeymapContextPredicate, Keystroke};
+use crate::{ActionContextPredicate, KeyBinding, Keystroke};
 use collections::HashSet;
 use smallvec::SmallVec;
 use std::{any::TypeId, collections::HashMap};
@@ -8,14 +8,14 @@ pub struct KeymapVersion(usize);
 
 #[derive(Default)]
 pub struct Keymap {
-    bindings: Vec<Binding>,
+    bindings: Vec<KeyBinding>,
     binding_indices_by_action_id: HashMap<TypeId, SmallVec<[usize; 3]>>,
-    disabled_keystrokes: HashMap<SmallVec<[Keystroke; 2]>, HashSet<Option<KeymapContextPredicate>>>,
+    disabled_keystrokes: HashMap<SmallVec<[Keystroke; 2]>, HashSet<Option<ActionContextPredicate>>>,
     version: KeymapVersion,
 }
 
 impl Keymap {
-    pub fn new(bindings: Vec<Binding>) -> Self {
+    pub fn new(bindings: Vec<KeyBinding>) -> Self {
         let mut this = Self::default();
         this.add_bindings(bindings);
         this
@@ -25,7 +25,7 @@ impl Keymap {
         self.version
     }
 
-    pub fn bindings_for_action(&self, action_id: TypeId) -> impl Iterator<Item = &'_ Binding> {
+    pub fn bindings_for_action(&self, action_id: TypeId) -> impl Iterator<Item = &'_ KeyBinding> {
         self.binding_indices_by_action_id
             .get(&action_id)
             .map(SmallVec::as_slice)
@@ -35,7 +35,7 @@ impl Keymap {
             .filter(|binding| !self.binding_disabled(binding))
     }
 
-    pub fn add_bindings<T: IntoIterator<Item = Binding>>(&mut self, bindings: T) {
+    pub fn add_bindings<T: IntoIterator<Item = KeyBinding>>(&mut self, bindings: T) {
         // todo!("no action")
         // let no_action_id = (NoAction {}).id();
         let mut new_bindings = Vec::new();
@@ -87,14 +87,14 @@ impl Keymap {
         self.version.0 += 1;
     }
 
-    pub fn bindings(&self) -> Vec<&Binding> {
+    pub fn bindings(&self) -> Vec<&KeyBinding> {
         self.bindings
             .iter()
             .filter(|binding| !self.binding_disabled(binding))
             .collect()
     }
 
-    fn binding_disabled(&self, binding: &Binding) -> bool {
+    fn binding_disabled(&self, binding: &KeyBinding) -> bool {
         match self.disabled_keystrokes.get(&binding.keystrokes) {
             Some(disabled_predicates) => disabled_predicates.contains(&binding.context_predicate),
             None => false,

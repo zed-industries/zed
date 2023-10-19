@@ -1,13 +1,7 @@
-use crate::{Keymap, KeymapContext, KeymapVersion, Keystroke};
+use crate::{Action, ActionContext, Keymap, KeymapVersion, Keystroke};
 use parking_lot::RwLock;
 use smallvec::SmallVec;
-use std::{any::Any, sync::Arc};
-
-pub trait Action: Any + Send + Sync {
-    fn partial_eq(&self, action: &dyn Action) -> bool;
-    fn boxed_clone(&self) -> Box<dyn Action>;
-    fn as_any(&self) -> &dyn Any;
-}
+use std::sync::Arc;
 
 pub struct KeyMatcher {
     pending_keystrokes: Vec<Keystroke>,
@@ -50,7 +44,7 @@ impl KeyMatcher {
     pub fn match_keystroke(
         &mut self,
         keystroke: &Keystroke,
-        context_stack: &[KeymapContext],
+        context_stack: &[ActionContext],
     ) -> KeyMatch {
         let keymap = self.keymap.read();
         // Clear pending keystrokes if the keymap has changed since the last matched keystroke.
@@ -92,7 +86,7 @@ impl KeyMatcher {
     pub fn keystrokes_for_action(
         &self,
         action: &dyn Action,
-        contexts: &[KeymapContext],
+        contexts: &[ActionContext],
     ) -> Option<SmallVec<[Keystroke; 2]>> {
         self.keymap
             .read()
@@ -120,7 +114,7 @@ impl KeyMatch {
 //     use anyhow::Result;
 //     use serde::Deserialize;
 
-//     use crate::{actions, impl_actions, keymap_matcher::KeymapContext};
+//     use crate::{actions, impl_actions, keymap_matcher::ActionContext};
 
 //     use super::*;
 
@@ -128,10 +122,10 @@ impl KeyMatch {
 //     fn test_keymap_and_view_ordering() -> Result<()> {
 //         actions!(test, [EditorAction, ProjectPanelAction]);
 
-//         let mut editor = KeymapContext::default();
+//         let mut editor = ActionContext::default();
 //         editor.add_identifier("Editor");
 
-//         let mut project_panel = KeymapContext::default();
+//         let mut project_panel = ActionContext::default();
 //         project_panel.add_identifier("ProjectPanel");
 
 //         // Editor 'deeper' in than project panel
@@ -160,10 +154,10 @@ impl KeyMatch {
 //     fn test_push_keystroke() -> Result<()> {
 //         actions!(test, [B, AB, C, D, DA, E, EF]);
 
-//         let mut context1 = KeymapContext::default();
+//         let mut context1 = ActionContext::default();
 //         context1.add_identifier("1");
 
-//         let mut context2 = KeymapContext::default();
+//         let mut context2 = ActionContext::default();
 //         context2.add_identifier("2");
 
 //         let dispatch_path = vec![(2, context2), (1, context1)];
@@ -300,27 +294,27 @@ impl KeyMatch {
 //     fn test_context_predicate_eval() {
 //         let predicate = KeymapContextPredicate::parse("a && b || c == d").unwrap();
 
-//         let mut context = KeymapContext::default();
+//         let mut context = ActionContext::default();
 //         context.add_identifier("a");
 //         assert!(!predicate.eval(&[context]));
 
-//         let mut context = KeymapContext::default();
+//         let mut context = ActionContext::default();
 //         context.add_identifier("a");
 //         context.add_identifier("b");
 //         assert!(predicate.eval(&[context]));
 
-//         let mut context = KeymapContext::default();
+//         let mut context = ActionContext::default();
 //         context.add_identifier("a");
 //         context.add_key("c", "x");
 //         assert!(!predicate.eval(&[context]));
 
-//         let mut context = KeymapContext::default();
+//         let mut context = ActionContext::default();
 //         context.add_identifier("a");
 //         context.add_key("c", "d");
 //         assert!(predicate.eval(&[context]));
 
 //         let predicate = KeymapContextPredicate::parse("!a").unwrap();
-//         assert!(predicate.eval(&[KeymapContext::default()]));
+//         assert!(predicate.eval(&[ActionContext::default()]));
 //     }
 
 //     #[test]
@@ -355,8 +349,8 @@ impl KeyMatch {
 //         assert!(!predicate.eval(&contexts[5..]));
 //         assert!(!predicate.eval(&contexts[6..]));
 
-//         fn context_set(names: &[&str]) -> KeymapContext {
-//             let mut keymap = KeymapContext::new();
+//         fn context_set(names: &[&str]) -> ActionContext {
+//             let mut keymap = ActionContext::new();
 //             names
 //                 .iter()
 //                 .for_each(|name| keymap.add_identifier(name.to_string()));
@@ -386,10 +380,10 @@ impl KeyMatch {
 //             Binding::new("ctrl-`", Backtick, Some("a")),
 //         ]);
 
-//         let mut context_a = KeymapContext::default();
+//         let mut context_a = ActionContext::default();
 //         context_a.add_identifier("a");
 
-//         let mut context_b = KeymapContext::default();
+//         let mut context_b = ActionContext::default();
 //         context_b.add_identifier("b");
 
 //         let mut matcher = KeymapMatcher::new(keymap);
@@ -434,7 +428,7 @@ impl KeyMatch {
 //         );
 //         matcher.clear_pending();
 
-//         let mut context_c = KeymapContext::default();
+//         let mut context_c = ActionContext::default();
 //         context_c.add_identifier("c");
 
 //         // Pending keystrokes are maintained per-view

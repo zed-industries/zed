@@ -1,3 +1,4 @@
+mod action;
 mod active;
 mod app;
 mod assets;
@@ -24,6 +25,7 @@ mod util;
 mod view;
 mod window;
 
+pub use action::*;
 pub use active::*;
 pub use anyhow::Result;
 pub use app::*;
