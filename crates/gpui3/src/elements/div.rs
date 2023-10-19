@@ -1,8 +1,8 @@
 use crate::{
-    Active, AnyElement, BorrowWindow, Bounds, DispatchPhase, Element, ElementFocusability,
-    ElementId, ElementInteractivity, Focus, FocusHandle, FocusListeners, Focusable,
-    GlobalElementId, GroupBounds, GroupStyle, Hover, IntoAnyElement, LayoutId, MouseDownEvent,
-    MouseUpEvent, NonFocusable, Overflow, ParentElement, Pixels, Point, SharedString,
+    Active, AnyElement, BorrowWindow, Bounds, Element, ElementFocusability, ElementId,
+    ElementInteractivity, Focus, FocusHandle, FocusListeners, Focusable, GlobalElementId,
+    GroupBounds, GroupStyle, Hover, InteractiveElementState, IntoAnyElement, LayoutId,
+    MouseDownEvent, NonFocusable, Overflow, ParentElement, Pixels, Point, SharedString,
     StatefulInteractivity, StatefullyInteractive, StatelessInteractivity, StatelesslyInteractive,
     Style, StyleRefinement, Styled, ViewContext,
 };
@@ -13,20 +13,8 @@ use std::sync::Arc;
 
 #[derive(Default)]
 pub struct DivState {
-    active_state: Arc<Mutex<ActiveState>>,
+    active_state: Arc<Mutex<InteractiveElementState>>,
     pending_click: Arc<Mutex<Option<MouseDownEvent>>>,
-}
-
-#[derive(Copy, Clone, Default, Eq, PartialEq)]
-struct ActiveState {
-    group: bool,
-    element: bool,
-}
-
-impl ActiveState {
-    pub fn is_none(&self) -> bool {
-        !self.group && !self.element
-    }
 }
 
 #[derive(Default, Clone)]
@@ -60,8 +48,6 @@ pub struct Div<
     children: SmallVec<[AnyElement<V>; 2]>,
     group: Option<SharedString>,
     base_style: StyleRefinement,
-    active_style: StyleRefinement,
-    group_active: Option<GroupStyle>,
 }
 
 pub fn div<V>() -> Div<V, StatelessInteractivity<V>, NonFocusable>
@@ -74,8 +60,6 @@ where
         children: SmallVec::new(),
         group: None,
         base_style: StyleRefinement::default(),
-        active_style: StyleRefinement::default(),
-        group_active: None,
     }
 }
 
@@ -91,8 +75,6 @@ where
             children: self.children,
             group: self.group,
             base_style: self.base_style,
-            active_style: self.active_style,
-            group_active: self.group_active,
         }
     }
 }
@@ -171,51 +153,10 @@ where
     ) -> Style {
         let mut computed_style = Style::default();
         computed_style.refine(&self.base_style);
-
         self.focusability.refine_style(&mut computed_style, cx);
         self.interactivity
-            .refine_style(&mut computed_style, bounds, cx);
-
-        let active_state = *state.active_state.lock();
-        if active_state.group {
-            if let Some(GroupStyle { style, .. }) = self.group_active.as_ref() {
-                computed_style.refine(style);
-            }
-        }
-        if active_state.element {
-            computed_style.refine(&self.active_style);
-        }
-
+            .refine_style(&mut computed_style, bounds, &state.active_state, cx);
         computed_style
-    }
-
-    fn paint_active_listener(
-        &self,
-        bounds: Bounds<Pixels>,
-        group_bounds: Option<Bounds<Pixels>>,
-        active_state: Arc<Mutex<ActiveState>>,
-        cx: &mut ViewContext<V>,
-    ) {
-        if active_state.lock().is_none() {
-            cx.on_mouse_event(move |_view, down: &MouseDownEvent, phase, cx| {
-                if phase == DispatchPhase::Bubble {
-                    let group =
-                        group_bounds.map_or(false, |bounds| bounds.contains_point(&down.position));
-                    let element = bounds.contains_point(&down.position);
-                    if group || element {
-                        *active_state.lock() = ActiveState { group, element };
-                        cx.notify();
-                    }
-                }
-            });
-        } else {
-            cx.on_mouse_event(move |_, _: &MouseUpEvent, phase, cx| {
-                if phase == DispatchPhase::Capture {
-                    *active_state.lock() = ActiveState::default();
-                    cx.notify();
-                }
-            });
-        }
     }
 }
 
@@ -231,8 +172,6 @@ where
             children: self.children,
             group: self.group,
             base_style: self.base_style,
-            active_style: self.active_style,
-            group_active: self.group_active,
         }
     }
 }
@@ -325,10 +264,6 @@ where
                 GroupBounds::push(group, bounds, cx);
             }
 
-            let active_group_bounds = this
-                .group_active
-                .as_ref()
-                .and_then(|group_active| GroupBounds::get(&group_active.group, cx));
             let style = this.compute_style(bounds, element_state, cx);
             let z_index = style.z_index.unwrap_or(0);
 
@@ -336,15 +271,14 @@ where
             cx.stack(z_index, |cx| {
                 cx.stack(0, |cx| {
                     style.paint(bounds, cx);
-                    this.paint_active_listener(
+
+                    this.focusability.paint(bounds, cx);
+                    this.interactivity.paint(
                         bounds,
-                        active_group_bounds,
+                        element_state.pending_click.clone(),
                         element_state.active_state.clone(),
                         cx,
                     );
-                    this.focusability.paint(bounds, cx);
-                    this.interactivity
-                        .paint(bounds, element_state.pending_click.clone(), cx);
                 });
 
                 cx.stack(1, |cx| {
@@ -418,7 +352,7 @@ where
     fn set_hover_style(&mut self, group: Option<SharedString>, style: StyleRefinement) {
         let stateless = self.interactivity.as_stateless_mut();
         if let Some(group) = group {
-            stateless.group_hover = Some(GroupStyle { group, style });
+            stateless.group_hover_style = Some(GroupStyle { group, style });
         } else {
             stateless.hover_style = style;
         }
@@ -442,9 +376,9 @@ where
 {
     fn set_active_style(&mut self, group: Option<SharedString>, style: StyleRefinement) {
         if let Some(group) = group {
-            self.group_active = Some(GroupStyle { group, style });
+            self.interactivity.group_active_style = Some(GroupStyle { group, style });
         } else {
-            self.active_style = style;
+            self.interactivity.active_style = style;
         }
     }
 }

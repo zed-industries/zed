@@ -81,11 +81,17 @@ pub trait ElementInteractivity<V: 'static + Send + Sync>: 'static + Send + Sync 
         }
     }
 
-    fn refine_style(&self, style: &mut Style, bounds: Bounds<Pixels>, cx: &mut ViewContext<V>) {
+    fn refine_style(
+        &self,
+        style: &mut Style,
+        bounds: Bounds<Pixels>,
+        active_state: &Mutex<InteractiveElementState>,
+        cx: &mut ViewContext<V>,
+    ) {
         let mouse_position = cx.mouse_position();
         let stateless = self.as_stateless();
-        if let Some(group_hover) = stateless.group_hover.as_ref() {
-            if let Some(group_bounds) = group_bounds(&group_hover.group, cx) {
+        if let Some(group_hover) = stateless.group_hover_style.as_ref() {
+            if let Some(group_bounds) = GroupBounds::get(&group_hover.group, cx) {
                 if group_bounds.contains_point(&mouse_position) {
                     style.refine(&group_hover.style);
                 }
@@ -94,12 +100,25 @@ pub trait ElementInteractivity<V: 'static + Send + Sync>: 'static + Send + Sync 
         if bounds.contains_point(&mouse_position) {
             style.refine(&stateless.hover_style);
         }
+
+        if let Some(stateful) = self.as_stateful() {
+            let active_state = active_state.lock();
+            if active_state.group {
+                if let Some(group_style) = stateful.group_active_style.as_ref() {
+                    style.refine(&group_style.style);
+                }
+            }
+            if active_state.element {
+                style.refine(&stateful.active_style);
+            }
+        }
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
         pending_click: Arc<Mutex<Option<MouseDownEvent>>>,
+        interactive_state: Arc<Mutex<InteractiveElementState>>,
         cx: &mut ViewContext<V>,
     ) {
         let stateless = self.as_stateless();
@@ -128,7 +147,7 @@ pub trait ElementInteractivity<V: 'static + Send + Sync>: 'static + Send + Sync 
         }
 
         let hover_group_bounds = stateless
-            .group_hover
+            .group_hover_style
             .as_ref()
             .and_then(|group_hover| GroupBounds::get(&group_hover.group, cx));
 
@@ -164,7 +183,32 @@ pub trait ElementInteractivity<V: 'static + Send + Sync>: 'static + Send + Sync 
                         *pending_click.lock() = Some(event.clone());
                     }
                 });
-            };
+            }
+
+            if interactive_state.lock().is_none() {
+                let active_group_bounds = stateful
+                    .group_active_style
+                    .as_ref()
+                    .and_then(|group_active| GroupBounds::get(&group_active.group, cx));
+                cx.on_mouse_event(move |_view, down: &MouseDownEvent, phase, cx| {
+                    if phase == DispatchPhase::Bubble {
+                        let group = active_group_bounds
+                            .map_or(false, |bounds| bounds.contains_point(&down.position));
+                        let element = bounds.contains_point(&down.position);
+                        if group || element {
+                            *interactive_state.lock() = InteractiveElementState { group, element };
+                            cx.notify();
+                        }
+                    }
+                });
+            } else {
+                cx.on_mouse_event(move |_, _: &MouseUpEvent, phase, cx| {
+                    if phase == DispatchPhase::Capture {
+                        *interactive_state.lock() = InteractiveElementState::default();
+                        cx.notify();
+                    }
+                });
+            }
         }
     }
 }
@@ -190,6 +234,8 @@ pub struct StatefulInteractivity<V: 'static + Send + Sync> {
     #[deref_mut]
     stateless: StatelessInteractivity<V>,
     pub mouse_click_listeners: SmallVec<[MouseClickListener<V>; 2]>,
+    pub active_style: StyleRefinement,
+    pub group_active_style: Option<GroupStyle>,
 }
 
 impl<V> ElementInteractivity<V> for StatefulInteractivity<V>
@@ -222,6 +268,8 @@ where
             id,
             stateless: StatelessInteractivity::default(),
             mouse_click_listeners: SmallVec::new(),
+            active_style: StyleRefinement::default(),
+            group_active_style: None,
         }
     }
 }
@@ -233,7 +281,7 @@ pub struct StatelessInteractivity<V> {
     pub scroll_wheel_listeners: SmallVec<[ScrollWheelListener<V>; 2]>,
     pub key_listeners: SmallVec<[(TypeId, KeyListener<V>); 32]>,
     pub hover_style: StyleRefinement,
-    pub group_hover: Option<GroupStyle>,
+    pub group_hover_style: Option<GroupStyle>,
 }
 
 pub struct GroupStyle {
@@ -270,11 +318,16 @@ impl GroupBounds {
     }
 }
 
-pub fn group_bounds(name: &SharedString, cx: &mut AppContext) -> Option<Bounds<Pixels>> {
-    cx.default_global::<GroupBounds>()
-        .0
-        .get(name)
-        .and_then(|bounds_stack| bounds_stack.last().cloned())
+#[derive(Copy, Clone, Default, Eq, PartialEq)]
+pub struct InteractiveElementState {
+    pub group: bool,
+    pub element: bool,
+}
+
+impl InteractiveElementState {
+    pub fn is_none(&self) -> bool {
+        !self.group && !self.element
+    }
 }
 
 impl<V> Default for StatelessInteractivity<V> {
@@ -286,7 +339,7 @@ impl<V> Default for StatelessInteractivity<V> {
             scroll_wheel_listeners: SmallVec::new(),
             key_listeners: SmallVec::new(),
             hover_style: StyleRefinement::default(),
-            group_hover: None,
+            group_hover_style: None,
         }
     }
 }
