@@ -1,6 +1,6 @@
 use crate::{
     BorrowWindow, Bounds, ElementId, FocusHandle, FocusListeners, LayoutId, Pixels, Point,
-    ViewContext,
+    StyleRefinement, ViewContext,
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
@@ -59,22 +59,18 @@ impl ElementIdentity for Anonymous {
 }
 
 pub trait ElementFocusability<V: 'static + Send + Sync>: 'static + Send + Sync {
-    fn focus_handle(&self) -> Option<&FocusHandle>;
-    fn focus_listeners(&self) -> Option<&FocusListeners<V>>;
+    fn as_focusable(&self) -> Option<&Focusable<V>>;
 
     fn initialize<R>(
         &self,
         cx: &mut ViewContext<V>,
         f: impl FnOnce(&mut ViewContext<V>) -> R,
     ) -> R {
-        if let Some(focus_listeners) = self.focus_listeners() {
-            for listener in focus_listeners.iter().cloned() {
+        if let Some(focusable) = self.as_focusable() {
+            for listener in focusable.focus_listeners.iter().cloned() {
                 cx.on_focus_changed(move |view, event, cx| listener(view, event, cx));
             }
-        }
-
-        if let Some(focus_handle) = self.focus_handle().cloned() {
-            cx.with_focus(focus_handle, |cx| f(cx))
+            cx.with_focus(focusable.focus_handle.clone(), |cx| f(cx))
         } else {
             f(cx)
         }
@@ -84,18 +80,17 @@ pub trait ElementFocusability<V: 'static + Send + Sync>: 'static + Send + Sync {
 pub struct Focusable<V: 'static + Send + Sync> {
     pub focus_handle: FocusHandle,
     pub focus_listeners: FocusListeners<V>,
+    pub focus_style: StyleRefinement,
+    pub focus_in_style: StyleRefinement,
+    pub in_focus_style: StyleRefinement,
 }
 
 impl<V> ElementFocusability<V> for Focusable<V>
 where
     V: 'static + Send + Sync,
 {
-    fn focus_handle(&self) -> Option<&FocusHandle> {
-        Some(&self.focus_handle)
-    }
-
-    fn focus_listeners(&self) -> Option<&FocusListeners<V>> {
-        Some(&self.focus_listeners)
+    fn as_focusable(&self) -> Option<&Focusable<V>> {
+        Some(self)
     }
 }
 
@@ -106,7 +101,10 @@ where
     fn from(value: FocusHandle) -> Self {
         Self {
             focus_handle: value,
-            focus_listeners: Default::default(),
+            focus_listeners: FocusListeners::default(),
+            focus_style: StyleRefinement::default(),
+            focus_in_style: StyleRefinement::default(),
+            in_focus_style: StyleRefinement::default(),
         }
     }
 }
@@ -117,11 +115,7 @@ impl<V> ElementFocusability<V> for NonFocusable
 where
     V: 'static + Send + Sync,
 {
-    fn focus_handle(&self) -> Option<&FocusHandle> {
-        None
-    }
-
-    fn focus_listeners(&self) -> Option<&FocusListeners<V>> {
+    fn as_focusable(&self) -> Option<&Focusable<V>> {
         None
     }
 }

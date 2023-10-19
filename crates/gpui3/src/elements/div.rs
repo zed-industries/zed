@@ -75,9 +75,6 @@ pub struct Div<
     group_hover: Option<GroupStyle>,
     active_style: StyleRefinement,
     group_active: Option<GroupStyle>,
-    focus_style: StyleRefinement,
-    focus_in_style: StyleRefinement,
-    in_focus_style: StyleRefinement,
     interactive_state: InteractiveState<V>,
 }
 
@@ -95,9 +92,6 @@ where
         group_hover: None,
         active_style: StyleRefinement::default(),
         group_active: None,
-        focus_style: StyleRefinement::default(),
-        focus_in_style: StyleRefinement::default(),
-        in_focus_style: StyleRefinement::default(),
         interactive_state: InteractiveState::default(),
     }
 }
@@ -123,9 +117,6 @@ where
             group_hover: self.group_hover,
             active_style: self.active_style,
             group_active: self.group_active,
-            focus_style: self.focus_style,
-            focus_in_style: self.focus_in_style,
-            in_focus_style: self.in_focus_style,
             interactive_state: self.interactive_state,
         }
     }
@@ -206,17 +197,17 @@ where
         let mut computed_style = Style::default();
         computed_style.refine(&self.base_style);
 
-        if let Some(handle) = self.focusability.focus_handle() {
-            if handle.contains_focused(cx) {
-                computed_style.refine(&self.focus_in_style);
+        if let Some(focusable) = self.focusability.as_focusable() {
+            if focusable.focus_handle.contains_focused(cx) {
+                computed_style.refine(&focusable.focus_in_style);
             }
 
-            if handle.within_focused(cx) {
-                computed_style.refine(&self.in_focus_style);
+            if focusable.focus_handle.within_focused(cx) {
+                computed_style.refine(&focusable.in_focus_style);
             }
 
-            if handle.is_focused(cx) {
-                computed_style.refine(&self.focus_style);
+            if focusable.focus_handle.is_focused(cx) {
+                computed_style.refine(&focusable.focus_style);
             }
         }
 
@@ -321,8 +312,8 @@ where
             });
         }
 
-        if let Some(focus_handle) = self.focusability.focus_handle() {
-            let focus_handle = focus_handle.clone();
+        if let Some(focusable) = self.focusability.as_focusable() {
+            let focus_handle = focusable.focus_handle.clone();
             cx.on_mouse_event(move |_, event: &MouseDownEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
                     if !cx.default_prevented() {
@@ -375,9 +366,6 @@ where
             group_hover: self.group_hover,
             active_style: self.active_style,
             group_active: self.group_active,
-            focus_style: self.focus_style,
-            focus_in_style: self.focus_in_style,
-            in_focus_style: self.in_focus_style,
             interactive_state: self.interactive_state,
         }
     }
@@ -397,15 +385,15 @@ where
     }
 
     fn set_focus_style(&mut self, style: StyleRefinement) {
-        self.focus_style = style;
+        self.focusability.focus_style = style;
     }
 
     fn set_focus_in_style(&mut self, style: StyleRefinement) {
-        self.focus_in_style = style;
+        self.focusability.focus_in_style = style;
     }
 
     fn set_in_focus_style(&mut self, style: StyleRefinement) {
-        self.in_focus_style = style;
+        self.focusability.in_focus_style = style;
     }
 }
 
