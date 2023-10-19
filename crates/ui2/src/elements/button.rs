@@ -149,11 +149,11 @@ impl<S: 'static + Send + Sync + Clone> Button<S> {
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let icon_color = self.icon_color();
         let border_color = self.border_color(cx);
-        let setting = user_settings();
+        let settings = user_settings(cx);
 
         let mut el = h_stack()
             .p_1()
-            .text_size(ui_size(1.))
+            .text_size(ui_size(cx, 1.))
             .rounded_md()
             .border()
             .border_color(border_color)

@@ -17,7 +17,7 @@ use log::LevelFilter;
 use simplelog::SimpleLogger;
 use story_selector::ComponentStory;
 use ui::prelude::*;
-use ui::themed;
+use ui::{themed, FakeSettings};
 
 use crate::assets::Assets;
 use crate::story_selector::StorySelector;
@@ -68,8 +68,10 @@ fn main() {
             move |cx| {
                 view(
                     cx.entity(|cx| {
-                        cx.with_global(theme.clone(), |cx| {
-                            StoryWrapper::new(selector.story(cx), theme)
+                        cx.with_global(FakeSettings::default(), |cx| {
+                            cx.with_global(theme.clone(), |cx| {
+                                StoryWrapper::new(selector.story(cx), theme)
+                            })
                         })
                     }),
                     StoryWrapper::render,
@@ -85,20 +87,27 @@ fn main() {
 pub struct StoryWrapper {
     story: AnyView,
     theme: Theme,
+    settings: FakeSettings,
 }
 
 impl StoryWrapper {
     pub(crate) fn new(story: AnyView, theme: Theme) -> Self {
-        Self { story, theme }
+        Self {
+            story,
+            theme,
+            settings: FakeSettings::default(),
+        }
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
-        themed(self.theme.clone(), cx, |cx| {
-            div()
-                .flex()
-                .flex_col()
-                .size_full()
-                .child(self.story.clone())
+        cx.with_global(self.settings.clone(), |cx| {
+            themed(self.theme.clone(), cx, |cx| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .size_full()
+                    .child(self.story.clone())
+            })
         })
     }
 }

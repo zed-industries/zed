@@ -87,7 +87,7 @@ mod stories {
                 .child(Story::title_for::<_, ProjectPanel<S>>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(
-                    Panel::new(ScrollState::default())
+                    Panel::new(cx)
                         .child(ProjectPanel::new(ScrollState::default())),
                 )
         }

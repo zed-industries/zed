@@ -95,7 +95,7 @@ impl TitleBar {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
         let theme = theme(cx);
         let color = ThemeColor::new(cx);
-        let setting = user_settings();
+        let settings = user_settings(cx);
 
         // let has_focus = cx.window_is_active();
         let has_focus = true;
@@ -127,7 +127,7 @@ impl TitleBar {
                             .flex()
                             .items_center()
                             .gap_1()
-                            .when(*setting.titlebar.show_project_owner, |this| {
+                            .when(*settings.titlebar.show_project_owner, |this| {
                                 this.child(Button::new("iamnbutler"))
                             })
                             .child(Button::new("zed"))

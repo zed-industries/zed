@@ -1,15 +1,13 @@
 use std::ops::Deref;
 
-use gpui3::{rems, AbsoluteLength};
+use gpui3::{rems, AbsoluteLength, WindowContext};
 
 use crate::DisclosureControlStyle;
 
-// This is a fake static example of user settings overriding the default settings
-pub fn user_settings() -> Settings {
-    let mut settings = Settings::default();
-    settings.list_indent_depth = SettingValue::UserDefined(rems(0.5).into());
-    // settings.ui_scale = SettingValue::UserDefined(2.);
-    settings
+/// Returns the user settings.
+pub fn user_settings(cx: &WindowContext) -> FakeSettings {
+    // cx.global::<FakeSettings>().clone()
+    FakeSettings::default()
 }
 
 #[derive(Clone)]
@@ -48,7 +46,7 @@ impl Default for TitlebarSettings {
 
 // These should be merged into settings
 #[derive(Clone)]
-pub struct Settings {
+pub struct FakeSettings {
     pub default_panel_size: SettingValue<AbsoluteLength>,
     pub list_disclosure_style: SettingValue<DisclosureControlStyle>,
     pub list_indent_depth: SettingValue<AbsoluteLength>,
@@ -56,7 +54,7 @@ pub struct Settings {
     pub ui_scale: SettingValue<f32>,
 }
 
-impl Default for Settings {
+impl Default for FakeSettings {
     fn default() -> Self {
         Self {
             titlebar: TitlebarSettings::default(),
@@ -68,4 +66,4 @@ impl Default for Settings {
     }
 }
 
-impl Settings {}
+impl FakeSettings {}

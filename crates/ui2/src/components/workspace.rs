@@ -165,7 +165,7 @@ impl Workspace {
                     .border_color(theme.lowest.base.default.border)
                     .children(
                         Some(
-                            Panel::new(self.left_panel_scroll_state.clone())
+                            Panel::new(cx)
                                 .side(PanelSide::Left)
                                 .child(ProjectPanel::new(ScrollState::default())),
                         )
@@ -173,7 +173,7 @@ impl Workspace {
                     )
                     .children(
                         Some(
-                            Panel::new(self.left_panel_scroll_state.clone())
+                            Panel::new(cx)
                                 .child(CollabPanel::new(ScrollState::default()))
                                 .side(PanelSide::Left),
                         )
@@ -196,7 +196,7 @@ impl Workspace {
                             )
                             .children(
                                 Some(
-                                    Panel::new(self.bottom_panel_scroll_state.clone())
+                                    Panel::new(cx)
                                         .child(Terminal::new())
                                         .allowed_sides(PanelAllowedSides::BottomOnly)
                                         .side(PanelSide::Bottom),
@@ -205,10 +205,8 @@ impl Workspace {
                             ),
                     )
                     .children(
-                        Some(
-                            Panel::new(self.right_panel_scroll_state.clone())
-                                .side(PanelSide::Right)
-                                .child(ChatPanel::new(ScrollState::default()).messages(vec![
+                        Some(Panel::new(cx).side(PanelSide::Right).child(
+                            ChatPanel::new(ScrollState::default()).messages(vec![
                                     ChatMessage::new(
                                         "osiewicz".to_string(),
                                         "is this thing on?".to_string(),
@@ -223,24 +221,21 @@ impl Workspace {
                                             .unwrap()
                                             .naive_local(),
                                     ),
-                                ])),
-                        )
+                                ]),
+                        ))
                         .filter(|_| self.is_chat_panel_open()),
                     )
                     .children(
                         Some(
-                            Panel::new(self.right_panel_scroll_state.clone())
+                            Panel::new(cx)
                                 .side(PanelSide::Right)
                                 .child(div().w_96().h_full().child("Notifications")),
                         )
                         .filter(|_| self.is_notifications_panel_open()),
                     )
                     .children(
-                        Some(
-                            Panel::new(self.right_panel_scroll_state.clone())
-                                .child(AssistantPanel::new()),
-                        )
-                        .filter(|_| self.is_assistant_panel_open()),
+                        Some(Panel::new(cx).child(AssistantPanel::new()))
+                            .filter(|_| self.is_assistant_panel_open()),
                     ),
             )
             .child(StatusBar::new())
