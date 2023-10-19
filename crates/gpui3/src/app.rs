@@ -167,6 +167,7 @@ impl AppContext {
             }
             Effect::Emit { .. } => self.pending_effects.push_back(effect),
             Effect::FocusChanged { .. } => self.pending_effects.push_back(effect),
+            Effect::Refresh => self.pending_effects.push_back(effect),
         }
     }
 
@@ -180,6 +181,9 @@ impl AppContext {
                     Effect::Emit { emitter, event } => self.apply_emit_effect(emitter, event),
                     Effect::FocusChanged { window_id, focused } => {
                         self.apply_focus_changed(window_id, focused)
+                    }
+                    Effect::Refresh => {
+                        self.apply_refresh();
                     }
                 }
             } else {
@@ -284,6 +288,14 @@ impl AppContext {
             }
         })
         .ok();
+    }
+
+    pub fn apply_refresh(&mut self) {
+        for window in self.windows.values_mut() {
+            if let Some(window) = window.as_mut() {
+                window.dirty = true;
+            }
+        }
     }
 
     pub fn to_async(&self) -> AsyncAppContext {
@@ -408,10 +420,7 @@ impl AppContext {
 
     pub fn bind_keys(&mut self, bindings: impl IntoIterator<Item = KeyBinding>) {
         self.keymap.write().add_bindings(bindings);
-        let window_ids = self.windows.keys().collect::<SmallVec<[_; 8]>>();
-        for window_id in window_ids {
-            self.update_window(window_id, |cx| cx.notify()).unwrap();
-        }
+        self.push_effect(Effect::Refresh);
     }
 }
 
@@ -502,6 +511,7 @@ pub(crate) enum Effect {
         window_id: WindowId,
         focused: Option<FocusId>,
     },
+    Refresh,
 }
 
 #[cfg(test)]
