@@ -423,12 +423,14 @@ where
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<Self::ViewState>,
     ) -> Self::ElementState {
+        for listener in self.listeners.focus.iter().cloned() {
+            cx.on_focus_changed(move |view, event, cx| listener(view, event, cx));
+        }
+
         let key_listeners = mem::take(&mut self.listeners.key);
-        let focus_listeners = mem::take(&mut self.listeners.focus);
         cx.with_focus(
             self.focusability.focus_handle().cloned(),
             &key_listeners,
-            &focus_listeners,
             |cx| {
                 for child in &mut self.children {
                     child.initialize(view_state, cx);
@@ -436,7 +438,7 @@ where
             },
         );
         self.listeners.key = key_listeners;
-        self.listeners.focus = focus_listeners;
+
         element_state.unwrap_or_default()
     }
 

@@ -1,12 +1,12 @@
 use crate::{
     px, size, AnyBox, AnyView, AppContext, AsyncWindowContext, AvailableSpace, BorrowAppContext,
     Bounds, BoxShadow, Context, Corners, DevicePixels, DisplayId, Edges, Effect, Element, EntityId,
-    EventEmitter, FocusEvent, FocusListener, FontId, GlobalElementId, GlyphId, Handle, Hsla,
-    ImageData, InputEvent, IsZero, KeyListener, LayoutId, MainThread, MainThreadOnly,
-    MonochromeSprite, MouseMoveEvent, Path, Pixels, Platform, PlatformAtlas, PlatformWindow, Point,
-    PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderImageParams, RenderSvgParams,
-    ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine,
-    Task, Underline, UnderlineStyle, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
+    EventEmitter, FocusEvent, FontId, GlobalElementId, GlyphId, Handle, Hsla, ImageData,
+    InputEvent, IsZero, KeyListener, LayoutId, MainThread, MainThreadOnly, MonochromeSprite,
+    MouseMoveEvent, Path, Pixels, Platform, PlatformAtlas, PlatformWindow, Point, PolychromeSprite,
+    Quad, Reference, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels,
+    SceneBuilder, Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine, Task,
+    Underline, UnderlineStyle, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -1207,11 +1207,22 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         });
     }
 
+    pub fn on_focus_changed(
+        &mut self,
+        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + Sync + 'static,
+    ) {
+        let handle = self.handle();
+        self.window.focus_listeners.push(Arc::new(move |event, cx| {
+            handle
+                .update(cx, |view, cx| listener(view, event, cx))
+                .log_err();
+        }));
+    }
+
     pub fn with_focus<R>(
         &mut self,
         focus_handle: Option<FocusHandle>,
         key_listeners: &[(TypeId, KeyListener<V>)],
-        focus_listeners: &[FocusListener<V>],
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         let Some(focus_handle) = focus_handle else {
@@ -1220,15 +1231,6 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
 
         let handle = self.handle();
         let window = &mut *self.window;
-
-        for listener in focus_listeners.iter().cloned() {
-            let handle = handle.clone();
-            window.focus_listeners.push(Arc::new(move |event, cx| {
-                handle
-                    .update(cx, |view, cx| listener(view, event, cx))
-                    .log_err();
-            }));
-        }
 
         if let Some(parent_focus_id) = window.focus_stack.last() {
             window
