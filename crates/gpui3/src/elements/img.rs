@@ -1,8 +1,8 @@
 use crate::{
-    div, Active, AnyElement, BorrowWindow, Bounds, Click, Div, DivState, Element,
-    ElementFocusability, ElementId, ElementInteractivity, Focus, FocusListeners, Focusable, Hover,
-    Interactive, Interactivity, IntoAnyElement, LayoutId, NonFocusable, Pixels, SharedString,
-    StatefulInteractivity, StatelessInteractivity, StyleRefinement, Styled, ViewContext,
+    div, Active, AnyElement, BorrowWindow, Bounds, Div, DivState, Element, ElementFocusability,
+    ElementId, ElementInteractivity, Focus, FocusListeners, Focusable, Hover, IntoAnyElement,
+    LayoutId, NonFocusable, Pixels, SharedString, StatefulInteractivity, StatefullyInteractive,
+    StatelessInteractivity, StatelesslyInteractive, StyleRefinement, Styled, ViewContext,
 };
 use futures::FutureExt;
 use util::ResultExt;
@@ -150,14 +150,14 @@ where
     }
 }
 
-impl<V, I, F> Interactive for Img<V, I, F>
+impl<V, I, F> StatelesslyInteractive for Img<V, I, F>
 where
     V: 'static + Send + Sync,
     I: ElementInteractivity<V>,
     F: ElementFocusability<V>,
 {
-    fn interactivity(&mut self) -> &mut Interactivity<V> {
-        self.base.interactivity()
+    fn stateless_interactivity(&mut self) -> &mut StatelessInteractivity<V> {
+        self.base.stateless_interactivity()
     }
 }
 
@@ -172,11 +172,14 @@ where
     }
 }
 
-impl<V, F> Click for Img<V, StatefulInteractivity<V>, F>
+impl<V, F> StatefullyInteractive for Img<V, StatefulInteractivity<V>, F>
 where
     V: 'static + Send + Sync,
     F: ElementFocusability<V>,
 {
+    fn stateful_interactivity(&mut self) -> &mut StatefulInteractivity<Self::ViewState> {
+        self.base.stateful_interactivity()
+    }
 }
 
 impl<V, F> Active for Img<V, StatefulInteractivity<V>, F>

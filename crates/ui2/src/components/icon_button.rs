@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use gpui3::{Interactive, MouseButton};
+use gpui3::{MouseButton, StatelesslyInteractive};
 
 use crate::{h_stack, prelude::*};
 use crate::{theme, ClickHandler, Icon, IconColor, IconElement};

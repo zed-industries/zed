@@ -1,11 +1,15 @@
 use crate::{
-    BorrowWindow, Bounds, DispatchPhase, ElementId, FocusHandle, FocusListeners, LayoutId,
-    MouseDownEvent, Pixels, Point, Style, StyleRefinement, ViewContext, WindowContext,
+    BorrowWindow, Bounds, DispatchPhase, ElementId, FocusHandle, FocusListeners, KeyDownEvent,
+    KeyListener, KeyMatch, LayoutId, MouseClickEvent, MouseClickListener, MouseDownEvent,
+    MouseDownListener, MouseMoveEvent, MouseMoveListener, MouseUpEvent, MouseUpListener, Pixels,
+    Point, ScrollWheelEvent, ScrollWheelListener, Style, StyleRefinement, ViewContext,
+    WindowContext,
 };
 use derive_more::{Deref, DerefMut};
+use parking_lot::Mutex;
 use refineable::Refineable;
 pub(crate) use smallvec::SmallVec;
-use std::{marker::PhantomData, mem};
+use std::{any::TypeId, mem, sync::Arc};
 
 pub trait Element: 'static + Send + Sync + IntoAnyElement<Self::ViewState> {
     type ViewState: 'static + Send + Sync;
@@ -40,19 +44,98 @@ pub trait Element: 'static + Send + Sync + IntoAnyElement<Self::ViewState> {
 pub struct GlobalElementId(SmallVec<[ElementId; 32]>);
 
 pub trait ElementInteractivity<V: 'static + Send + Sync>: 'static + Send + Sync {
+    fn as_stateless(&self) -> &StatelessInteractivity<V>;
+    fn as_stateless_mut(&mut self) -> &mut StatelessInteractivity<V>;
     fn as_stateful(&self) -> Option<&StatefulInteractivity<V>>;
+    fn as_stateful_mut(&mut self) -> Option<&mut StatefulInteractivity<V>>;
+
+    fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        pending_click: Arc<Mutex<Option<MouseDownEvent>>>,
+        cx: &mut ViewContext<V>,
+    ) {
+        let stateless = self.as_stateless();
+        for listener in stateless.mouse_down_listeners.iter().cloned() {
+            cx.on_mouse_event(move |state, event: &MouseDownEvent, phase, cx| {
+                listener(state, event, &bounds, phase, cx);
+            })
+        }
+
+        for listener in stateless.mouse_up_listeners.iter().cloned() {
+            cx.on_mouse_event(move |state, event: &MouseUpEvent, phase, cx| {
+                listener(state, event, &bounds, phase, cx);
+            })
+        }
+
+        for listener in stateless.mouse_move_listeners.iter().cloned() {
+            cx.on_mouse_event(move |state, event: &MouseMoveEvent, phase, cx| {
+                listener(state, event, &bounds, phase, cx);
+            })
+        }
+
+        for listener in stateless.scroll_wheel_listeners.iter().cloned() {
+            cx.on_mouse_event(move |state, event: &ScrollWheelEvent, phase, cx| {
+                listener(state, event, &bounds, phase, cx);
+            })
+        }
+
+        if let Some(stateful) = self.as_stateful() {
+            let click_listeners = stateful.mouse_click_listeners.clone();
+
+            let mouse_down = pending_click.lock().clone();
+            if let Some(mouse_down) = mouse_down {
+                cx.on_mouse_event(move |state, event: &MouseUpEvent, phase, cx| {
+                    if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
+                        let mouse_click = MouseClickEvent {
+                            down: mouse_down.clone(),
+                            up: event.clone(),
+                        };
+                        for listener in &click_listeners {
+                            listener(state, &mouse_click, cx);
+                        }
+                    }
+
+                    *pending_click.lock() = None;
+                });
+            } else {
+                cx.on_mouse_event(move |_state, event: &MouseDownEvent, phase, _cx| {
+                    if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
+                        *pending_click.lock() = Some(event.clone());
+                    }
+                });
+            };
+        }
+    }
 
     fn initialize<R>(
-        &self,
+        &mut self,
         cx: &mut ViewContext<V>,
-        f: impl FnOnce(Option<GlobalElementId>, &mut ViewContext<V>) -> R,
+        f: impl FnOnce(&mut ViewContext<V>) -> R,
     ) -> R {
-        if let Some(identified) = self.as_stateful() {
-            cx.with_element_id(identified.id.clone(), |global_id, cx| {
-                f(Some(global_id), cx)
+        if let Some(stateful) = self.as_stateful_mut() {
+            cx.with_element_id(stateful.id.clone(), |global_id, cx| {
+                stateful.key_listeners.push((
+                    TypeId::of::<KeyDownEvent>(),
+                    Arc::new(move |_, key_down, context, phase, cx| {
+                        if phase == DispatchPhase::Bubble {
+                            let key_down = key_down.downcast_ref::<KeyDownEvent>().unwrap();
+                            if let KeyMatch::Some(action) =
+                                cx.match_keystroke(&global_id, &key_down.keystroke, context)
+                            {
+                                return Some(action);
+                            }
+                        }
+
+                        None
+                    }),
+                ));
+                let result = stateful.stateless.initialize(cx, f);
+                stateful.key_listeners.pop();
+                result
             })
         } else {
-            f(None, cx)
+            cx.with_key_listeners(&self.as_stateless().key_listeners, f)
         }
     }
 }
@@ -62,7 +145,8 @@ pub struct StatefulInteractivity<V: 'static + Send + Sync> {
     pub id: ElementId,
     #[deref]
     #[deref_mut]
-    common: StatelessInteractivity<V>,
+    stateless: StatelessInteractivity<V>,
+    pub mouse_click_listeners: SmallVec<[MouseClickListener<V>; 2]>,
 }
 
 impl<V> ElementInteractivity<V> for StatefulInteractivity<V>
@@ -71,6 +155,18 @@ where
 {
     fn as_stateful(&self) -> Option<&StatefulInteractivity<V>> {
         Some(self)
+    }
+
+    fn as_stateful_mut(&mut self) -> Option<&mut StatefulInteractivity<V>> {
+        Some(self)
+    }
+
+    fn as_stateless(&self) -> &StatelessInteractivity<V> {
+        &self.stateless
+    }
+
+    fn as_stateless_mut(&mut self) -> &mut StatelessInteractivity<V> {
+        &mut self.stateless
     }
 }
 
@@ -81,16 +177,29 @@ where
     fn from(id: ElementId) -> Self {
         Self {
             id,
-            common: StatelessInteractivity::default(),
+            stateless: StatelessInteractivity::default(),
+            mouse_click_listeners: SmallVec::new(),
         }
     }
 }
 
-pub struct StatelessInteractivity<V>(PhantomData<V>);
+pub struct StatelessInteractivity<V> {
+    pub mouse_down_listeners: SmallVec<[MouseDownListener<V>; 2]>,
+    pub mouse_up_listeners: SmallVec<[MouseUpListener<V>; 2]>,
+    pub mouse_move_listeners: SmallVec<[MouseMoveListener<V>; 2]>,
+    pub scroll_wheel_listeners: SmallVec<[ScrollWheelListener<V>; 2]>,
+    pub key_listeners: SmallVec<[(TypeId, KeyListener<V>); 32]>,
+}
 
 impl<V> Default for StatelessInteractivity<V> {
     fn default() -> Self {
-        Self(PhantomData)
+        Self {
+            mouse_down_listeners: SmallVec::new(),
+            mouse_up_listeners: SmallVec::new(),
+            mouse_move_listeners: SmallVec::new(),
+            scroll_wheel_listeners: SmallVec::new(),
+            key_listeners: SmallVec::new(),
+        }
     }
 }
 
@@ -100,6 +209,18 @@ where
 {
     fn as_stateful(&self) -> Option<&StatefulInteractivity<V>> {
         None
+    }
+
+    fn as_stateful_mut(&mut self) -> Option<&mut StatefulInteractivity<V>> {
+        None
+    }
+
+    fn as_stateless(&self) -> &StatelessInteractivity<V> {
+        self
+    }
+
+    fn as_stateless_mut(&mut self) -> &mut StatelessInteractivity<V> {
+        self
     }
 }
 

@@ -1,16 +1,16 @@
 use crate::{
-    Active, AnyElement, AppContext, BorrowWindow, Bounds, Click, DispatchPhase, Element,
+    Active, AnyElement, AppContext, BorrowWindow, Bounds, DispatchPhase, Element,
     ElementFocusability, ElementId, ElementInteractivity, Focus, FocusHandle, FocusListeners,
-    Focusable, GlobalElementId, Hover, Interactive, Interactivity, IntoAnyElement, KeyDownEvent,
-    KeyMatch, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, NonFocusable, Overflow,
-    ParentElement, Pixels, Point, SharedString, StatefulInteractivity, StatelessInteractivity,
+    Focusable, GlobalElementId, Hover, IntoAnyElement, LayoutId, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, NonFocusable, Overflow, ParentElement, Pixels, Point, SharedString,
+    StatefulInteractivity, StatefullyInteractive, StatelessInteractivity, StatelesslyInteractive,
     Style, StyleRefinement, Styled, ViewContext,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
 use refineable::Refineable;
 use smallvec::SmallVec;
-use std::{any::TypeId, mem, sync::Arc};
+use std::sync::Arc;
 
 #[derive(Default)]
 pub struct DivState {
@@ -66,9 +66,8 @@ pub struct Div<
     I: ElementInteractivity<V> = StatelessInteractivity<V>,
     F: ElementFocusability<V> = NonFocusable,
 > {
-    identity: I,
+    interactivity: I,
     focusability: F,
-    interactivity: Interactivity<V>,
     children: SmallVec<[AnyElement<V>; 2]>,
     group: Option<SharedString>,
     base_style: StyleRefinement,
@@ -83,9 +82,8 @@ where
     V: 'static + Send + Sync,
 {
     Div {
-        identity: StatelessInteractivity::default(),
+        interactivity: StatelessInteractivity::default(),
         focusability: NonFocusable,
-        interactivity: Interactivity::default(),
         children: SmallVec::new(),
         group: None,
         base_style: StyleRefinement::default(),
@@ -108,9 +106,8 @@ where
 {
     pub fn id(self, id: impl Into<ElementId>) -> Div<V, StatefulInteractivity<V>, F> {
         Div {
-            identity: id.into().into(),
+            interactivity: id.into().into(),
             focusability: self.focusability,
-            interactivity: self.interactivity,
             children: self.children,
             group: self.group,
             base_style: self.base_style,
@@ -277,7 +274,7 @@ where
 {
     pub fn focusable(self, handle: &FocusHandle) -> Div<V, I, Focusable<V>> {
         Div {
-            identity: self.identity,
+            interactivity: self.interactivity,
             focusability: handle.clone().into(),
             children: self.children,
             group: self.group,
@@ -286,7 +283,6 @@ where
             group_hover: self.group_hover,
             active_style: self.active_style,
             group_active: self.group_active,
-            interactivity: self.interactivity,
         }
     }
 }
@@ -327,7 +323,7 @@ where
     type ElementState = DivState;
 
     fn id(&self) -> Option<ElementId> {
-        self.identity
+        self.interactivity
             .as_stateful()
             .map(|identified| identified.id.clone())
     }
@@ -338,39 +334,14 @@ where
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<Self::ViewState>,
     ) -> Self::ElementState {
-        self.with_element_id(cx, |this, global_id, cx| {
-            let element_state = element_state.unwrap_or_default();
-
-            let mut key_listeners = mem::take(&mut this.interactivity.key);
-            if let Some(global_id) = global_id {
-                key_listeners.push((
-                    TypeId::of::<KeyDownEvent>(),
-                    Arc::new(move |_, key_down, context, phase, cx| {
-                        if phase == DispatchPhase::Bubble {
-                            let key_down = key_down.downcast_ref::<KeyDownEvent>().unwrap();
-                            if let KeyMatch::Some(action) =
-                                cx.match_keystroke(&global_id, &key_down.keystroke, context)
-                            {
-                                return Some(action);
-                            }
-                        }
-
-                        None
-                    }),
-                ));
-            }
-
-            cx.with_key_listeners(&key_listeners, |cx| {
-                this.focusability.initialize(cx, |cx| {
-                    for child in &mut this.children {
-                        child.initialize(view_state, cx);
-                    }
-                });
+        self.interactivity.initialize(cx, |cx| {
+            self.focusability.initialize(cx, |cx| {
+                for child in &mut self.children {
+                    child.initialize(view_state, cx);
+                }
             });
-            this.interactivity.key = key_listeners;
-
-            element_state
-        })
+        });
+        element_state.unwrap_or_default()
     }
 
     fn layout(
@@ -490,14 +461,14 @@ where
     }
 }
 
-impl<V, I, F> Interactive for Div<V, I, F>
+impl<V, I, F> StatelesslyInteractive for Div<V, I, F>
 where
     I: ElementInteractivity<V>,
     F: ElementFocusability<V>,
     V: 'static + Send + Sync,
 {
-    fn interactivity(&mut self) -> &mut Interactivity<V> {
-        &mut self.interactivity
+    fn stateless_interactivity(&mut self) -> &mut StatelessInteractivity<V> {
+        self.interactivity.as_stateless_mut()
     }
 }
 
@@ -516,11 +487,14 @@ where
     }
 }
 
-impl<V, F> Click for Div<V, StatefulInteractivity<V>, F>
+impl<V, F> StatefullyInteractive for Div<V, StatefulInteractivity<V>, F>
 where
     F: ElementFocusability<V>,
     V: 'static + Send + Sync,
 {
+    fn stateful_interactivity(&mut self) -> &mut StatefulInteractivity<Self::ViewState> {
+        &mut self.interactivity
+    }
 }
 
 impl<V, F> Active for Div<V, StatefulInteractivity<V>, F>
