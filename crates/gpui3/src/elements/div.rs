@@ -1,9 +1,10 @@
 use crate::{
-    Active, Anonymous, AnyElement, AppContext, BorrowWindow, Bounds, Click, DispatchPhase, Element,
-    ElementFocusability, ElementId, ElementIdentity, Focus, FocusHandle, FocusListeners, Focusable,
-    GlobalElementId, Hover, Identified, Interactive, Interactivity, IntoAnyElement, KeyDownEvent,
+    Active, AnyElement, AppContext, BorrowWindow, Bounds, Click, DispatchPhase, Element,
+    ElementFocusability, ElementId, ElementInteractivity, Focus, FocusHandle, FocusListeners,
+    Focusable, GlobalElementId, Hover, Interactive, Interactivity, IntoAnyElement, KeyDownEvent,
     KeyMatch, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, NonFocusable, Overflow,
-    ParentElement, Pixels, Point, SharedString, Style, StyleRefinement, Styled, ViewContext,
+    ParentElement, Pixels, Point, SharedString, StatefulInteractivity, StatelessInteractivity,
+    Style, StyleRefinement, Styled, ViewContext,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -62,7 +63,7 @@ impl ScrollState {
 
 pub struct Div<
     V: 'static + Send + Sync,
-    I: ElementIdentity = Anonymous,
+    I: ElementInteractivity<V> = StatelessInteractivity<V>,
     F: ElementFocusability<V> = NonFocusable,
 > {
     identity: I,
@@ -77,12 +78,12 @@ pub struct Div<
     group_active: Option<GroupStyle>,
 }
 
-pub fn div<V>() -> Div<V, Anonymous, NonFocusable>
+pub fn div<V>() -> Div<V, StatelessInteractivity<V>, NonFocusable>
 where
     V: 'static + Send + Sync,
 {
     Div {
-        identity: Anonymous,
+        identity: StatelessInteractivity::default(),
         focusability: NonFocusable,
         interactivity: Interactivity::default(),
         children: SmallVec::new(),
@@ -100,14 +101,14 @@ struct GroupStyle {
     style: StyleRefinement,
 }
 
-impl<V, F> Div<V, Anonymous, F>
+impl<V, F> Div<V, StatelessInteractivity<V>, F>
 where
     F: ElementFocusability<V>,
     V: 'static + Send + Sync,
 {
-    pub fn id(self, id: impl Into<ElementId>) -> Div<V, Identified, F> {
+    pub fn id(self, id: impl Into<ElementId>) -> Div<V, StatefulInteractivity<V>, F> {
         Div {
-            identity: Identified(id.into()),
+            identity: id.into().into(),
             focusability: self.focusability,
             interactivity: self.interactivity,
             children: self.children,
@@ -123,7 +124,7 @@ where
 
 impl<V, I, F> Div<V, I, F>
 where
-    I: ElementIdentity,
+    I: ElementInteractivity<V>,
     F: ElementFocusability<V>,
     V: 'static + Send + Sync,
 {
@@ -271,7 +272,7 @@ where
 
 impl<V, I> Div<V, I, NonFocusable>
 where
-    I: ElementIdentity,
+    I: ElementInteractivity<V>,
     V: 'static + Send + Sync,
 {
     pub fn focusable(self, handle: &FocusHandle) -> Div<V, I, Focusable<V>> {
@@ -292,7 +293,7 @@ where
 
 impl<V, I> Focus for Div<V, I, Focusable<V>>
 where
-    I: ElementIdentity,
+    I: ElementInteractivity<V>,
     V: 'static + Send + Sync,
 {
     fn focus_listeners(&mut self) -> &mut FocusListeners<V> {
@@ -318,7 +319,7 @@ where
 
 impl<V, I, F> Element for Div<V, I, F>
 where
-    I: ElementIdentity,
+    I: ElementInteractivity<V>,
     F: ElementFocusability<V>,
     V: 'static + Send + Sync,
 {
@@ -326,7 +327,9 @@ where
     type ElementState = DivState;
 
     fn id(&self) -> Option<ElementId> {
-        self.identity.id()
+        self.identity
+            .as_stateful()
+            .map(|identified| identified.id.clone())
     }
 
     fn initialize(
@@ -456,7 +459,7 @@ where
 
 impl<V, I, F> IntoAnyElement<V> for Div<V, I, F>
 where
-    I: ElementIdentity,
+    I: ElementInteractivity<V>,
     F: ElementFocusability<V>,
     V: 'static + Send + Sync,
 {
@@ -467,7 +470,7 @@ where
 
 impl<V, I, F> ParentElement for Div<V, I, F>
 where
-    I: ElementIdentity,
+    I: ElementInteractivity<V>,
     F: ElementFocusability<V>,
     V: 'static + Send + Sync,
 {
@@ -478,7 +481,7 @@ where
 
 impl<V, I, F> Styled for Div<V, I, F>
 where
-    I: ElementIdentity,
+    I: ElementInteractivity<V>,
     F: ElementFocusability<V>,
     V: 'static + Send + Sync,
 {
@@ -489,7 +492,7 @@ where
 
 impl<V, I, F> Interactive for Div<V, I, F>
 where
-    I: ElementIdentity,
+    I: ElementInteractivity<V>,
     F: ElementFocusability<V>,
     V: 'static + Send + Sync,
 {
@@ -500,7 +503,7 @@ where
 
 impl<V, I, F> Hover for Div<V, I, F>
 where
-    I: ElementIdentity,
+    I: ElementInteractivity<V>,
     F: ElementFocusability<V>,
     V: 'static + Send + Sync,
 {
@@ -513,14 +516,14 @@ where
     }
 }
 
-impl<V, F> Click for Div<V, Identified, F>
+impl<V, F> Click for Div<V, StatefulInteractivity<V>, F>
 where
     F: ElementFocusability<V>,
     V: 'static + Send + Sync,
 {
 }
 
-impl<V, F> Active for Div<V, Identified, F>
+impl<V, F> Active for Div<V, StatefulInteractivity<V>, F>
 where
     F: ElementFocusability<V>,
     V: 'static + Send + Sync,

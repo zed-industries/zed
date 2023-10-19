@@ -5,7 +5,7 @@ use crate::{
 use derive_more::{Deref, DerefMut};
 use refineable::Refineable;
 pub(crate) use smallvec::SmallVec;
-use std::mem;
+use std::{marker::PhantomData, mem};
 
 pub trait Element: 'static + Send + Sync + IntoAnyElement<Self::ViewState> {
     type ViewState: 'static + Send + Sync;
@@ -39,22 +39,66 @@ pub trait Element: 'static + Send + Sync + IntoAnyElement<Self::ViewState> {
 #[derive(Deref, DerefMut, Default, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct GlobalElementId(SmallVec<[ElementId; 32]>);
 
-pub trait ElementIdentity: 'static + Send + Sync {
-    fn id(&self) -> Option<ElementId>;
-}
+pub trait ElementInteractivity<V: 'static + Send + Sync>: 'static + Send + Sync {
+    fn as_stateful(&self) -> Option<&StatefulInteractivity<V>>;
 
-pub struct Identified(pub(crate) ElementId);
-
-impl ElementIdentity for Identified {
-    fn id(&self) -> Option<ElementId> {
-        Some(self.0.clone())
+    fn initialize<R>(
+        &self,
+        cx: &mut ViewContext<V>,
+        f: impl FnOnce(Option<GlobalElementId>, &mut ViewContext<V>) -> R,
+    ) -> R {
+        if let Some(identified) = self.as_stateful() {
+            cx.with_element_id(identified.id.clone(), |global_id, cx| {
+                f(Some(global_id), cx)
+            })
+        } else {
+            f(None, cx)
+        }
     }
 }
 
-pub struct Anonymous;
+#[derive(Deref, DerefMut)]
+pub struct StatefulInteractivity<V: 'static + Send + Sync> {
+    pub id: ElementId,
+    #[deref]
+    #[deref_mut]
+    common: StatelessInteractivity<V>,
+}
 
-impl ElementIdentity for Anonymous {
-    fn id(&self) -> Option<ElementId> {
+impl<V> ElementInteractivity<V> for StatefulInteractivity<V>
+where
+    V: 'static + Send + Sync,
+{
+    fn as_stateful(&self) -> Option<&StatefulInteractivity<V>> {
+        Some(self)
+    }
+}
+
+impl<V> From<ElementId> for StatefulInteractivity<V>
+where
+    V: 'static + Send + Sync,
+{
+    fn from(id: ElementId) -> Self {
+        Self {
+            id,
+            common: StatelessInteractivity::default(),
+        }
+    }
+}
+
+pub struct StatelessInteractivity<V>(PhantomData<V>);
+
+impl<V> Default for StatelessInteractivity<V> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<V> ElementInteractivity<V> for StatelessInteractivity<V>
+where
+    V: 'static + Send + Sync,
+{
+    fn as_stateful(&self) -> Option<&StatefulInteractivity<V>> {
         None
     }
 }
