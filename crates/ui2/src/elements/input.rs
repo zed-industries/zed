@@ -82,6 +82,7 @@ impl<S: 'static + Send + Sync> Input<S> {
         }
 
         div()
+            .id("input")
             .h_7()
             .w_full()
             .px_2()
@@ -93,7 +94,7 @@ impl<S: 'static + Send + Sync> Input<S> {
                     .border_color(border_color_hover)
                     .bg(background_color_active)
             })
-            // .active(|a| .border_color(border_color_active))
+            .active(|style| style.border_color(theme.middle.base.active.border))
             .flex()
             .items_center()
             .child(
