@@ -713,7 +713,7 @@ impl Database {
         user_id: UserId,
     ) -> Result<Vec<proto::ChannelMember>> {
         self.transaction(|tx| async move {
-            let role = self
+            let user_role = self
                 .check_user_is_channel_member(channel_id, user_id, &*tx)
                 .await?;
 
@@ -797,13 +797,19 @@ impl Database {
 
             Ok(user_details
                 .into_iter()
-                .filter_map(|(user_id, details)| {
-                    // If the user is not an admin, don't give them all of the details
-                    if role != ChannelRole::Admin {
-                        if details.kind == Kind::AncestorMember {
+                .filter_map(|(user_id, mut details)| {
+                    // If the user is not an admin, don't give them as much
+                    // information about the other members.
+                    if user_role != ChannelRole::Admin {
+                        if details.kind == Kind::Invitee
+                            || details.channel_role == ChannelRole::Banned
+                        {
                             return None;
                         }
-                        return None;
+
+                        if details.channel_role == ChannelRole::Admin {
+                            details.channel_role = ChannelRole::Member;
+                        }
                     }
 
                     Some(proto::ChannelMember {
