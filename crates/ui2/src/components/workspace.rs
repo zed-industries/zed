@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use chrono::DateTime;
 use gpui3::{px, relative, view, Context, Size, View};
 
@@ -303,7 +305,7 @@ impl Workspace {
             .child(
                 h_stack().gap_2().child(
                     Button::<Workspace>::new("Toggle Debug")
-                        .on_click(|workspace, cx| workspace.toggle_debug(cx)),
+                        .on_click(Arc::new(|workspace, cx| workspace.toggle_debug(cx))),
                 ),
             )
     }
