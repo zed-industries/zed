@@ -939,27 +939,11 @@ impl ChannelStore {
 
         if channels_changed {
             if !payload.delete_channels.is_empty() {
-                let mut channels_to_delete: Vec<u64> = Vec::new();
-                let mut channels_to_rehome: Vec<u64> = Vec::new();
-                for channel_id in payload.delete_channels {
-                    if payload
-                        .channels
-                        .iter()
-                        .any(|channel| channel.id == channel_id)
-                    {
-                        channels_to_rehome.push(channel_id)
-                    } else {
-                        channels_to_delete.push(channel_id)
-                    }
-                }
-
-                self.channel_index.delete_channels(&channels_to_delete);
-                self.channel_index
-                    .delete_paths_through_channels(&channels_to_rehome);
+                self.channel_index.delete_channels(&payload.delete_channels);
                 self.channel_participants
-                    .retain(|channel_id, _| !channels_to_delete.contains(channel_id));
+                    .retain(|channel_id, _| !&payload.delete_channels.contains(channel_id));
 
-                for channel_id in &channels_to_delete {
+                for channel_id in &payload.delete_channels {
                     let channel_id = *channel_id;
                     if payload
                         .channels

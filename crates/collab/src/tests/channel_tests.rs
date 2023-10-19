@@ -48,13 +48,13 @@ async fn test_core_channels(
                 id: channel_a_id,
                 name: "channel-a".to_string(),
                 depth: 0,
-                user_is_admin: true,
+                role: ChannelRole::Admin,
             },
             ExpectedChannel {
                 id: channel_b_id,
                 name: "channel-b".to_string(),
                 depth: 1,
-                user_is_admin: true,
+                role: ChannelRole::Admin,
             },
         ],
     );
@@ -95,7 +95,7 @@ async fn test_core_channels(
             id: channel_a_id,
             name: "channel-a".to_string(),
             depth: 0,
-            user_is_admin: false,
+            role: ChannelRole::Member,
         }],
     );
 
@@ -142,13 +142,13 @@ async fn test_core_channels(
             ExpectedChannel {
                 id: channel_a_id,
                 name: "channel-a".to_string(),
-                user_is_admin: false,
+                role: ChannelRole::Member,
                 depth: 0,
             },
             ExpectedChannel {
                 id: channel_b_id,
                 name: "channel-b".to_string(),
-                user_is_admin: false,
+                role: ChannelRole::Member,
                 depth: 1,
             },
         ],
@@ -171,19 +171,19 @@ async fn test_core_channels(
             ExpectedChannel {
                 id: channel_a_id,
                 name: "channel-a".to_string(),
-                user_is_admin: false,
+                role: ChannelRole::Member,
                 depth: 0,
             },
             ExpectedChannel {
                 id: channel_b_id,
                 name: "channel-b".to_string(),
-                user_is_admin: false,
+                role: ChannelRole::Member,
                 depth: 1,
             },
             ExpectedChannel {
                 id: channel_c_id,
                 name: "channel-c".to_string(),
-                user_is_admin: false,
+                role: ChannelRole::Member,
                 depth: 2,
             },
         ],
@@ -215,19 +215,19 @@ async fn test_core_channels(
                 id: channel_a_id,
                 name: "channel-a".to_string(),
                 depth: 0,
-                user_is_admin: true,
+                role: ChannelRole::Admin,
             },
             ExpectedChannel {
                 id: channel_b_id,
                 name: "channel-b".to_string(),
                 depth: 1,
-                user_is_admin: true,
+                role: ChannelRole::Admin,
             },
             ExpectedChannel {
                 id: channel_c_id,
                 name: "channel-c".to_string(),
                 depth: 2,
-                user_is_admin: true,
+                role: ChannelRole::Admin,
             },
         ],
     );
@@ -249,7 +249,7 @@ async fn test_core_channels(
             id: channel_a_id,
             name: "channel-a".to_string(),
             depth: 0,
-            user_is_admin: true,
+            role: ChannelRole::Admin,
         }],
     );
     assert_channels(
@@ -259,7 +259,7 @@ async fn test_core_channels(
             id: channel_a_id,
             name: "channel-a".to_string(),
             depth: 0,
-            user_is_admin: true,
+            role: ChannelRole::Admin,
         }],
     );
 
@@ -282,7 +282,7 @@ async fn test_core_channels(
             id: channel_a_id,
             name: "channel-a".to_string(),
             depth: 0,
-            user_is_admin: true,
+            role: ChannelRole::Admin,
         }],
     );
 
@@ -304,7 +304,7 @@ async fn test_core_channels(
             id: channel_a_id,
             name: "channel-a".to_string(),
             depth: 0,
-            user_is_admin: true,
+            role: ChannelRole::Admin,
         }],
     );
 }
@@ -412,7 +412,7 @@ async fn test_channel_room(
             id: zed_id,
             name: "zed".to_string(),
             depth: 0,
-            user_is_admin: false,
+            role: ChannelRole::Member,
         }],
     );
     client_b.channel_store().read_with(cx_b, |channels, _| {
@@ -645,7 +645,7 @@ async fn test_permissions_update_while_invited(
             depth: 0,
             id: rust_id,
             name: "rust".to_string(),
-            user_is_admin: false,
+            role: ChannelRole::Member,
         }],
     );
     assert_channels(client_b.channel_store(), cx_b, &[]);
@@ -673,7 +673,7 @@ async fn test_permissions_update_while_invited(
             depth: 0,
             id: rust_id,
             name: "rust".to_string(),
-            user_is_admin: false,
+            role: ChannelRole::Member,
         }],
     );
     assert_channels(client_b.channel_store(), cx_b, &[]);
@@ -713,7 +713,7 @@ async fn test_channel_rename(
             depth: 0,
             id: rust_id,
             name: "rust-archive".to_string(),
-            user_is_admin: true,
+            role: ChannelRole::Admin,
         }],
     );
 
@@ -725,7 +725,7 @@ async fn test_channel_rename(
             depth: 0,
             id: rust_id,
             name: "rust-archive".to_string(),
-            user_is_admin: false,
+            role: ChannelRole::Member,
         }],
     );
 }
@@ -848,7 +848,7 @@ async fn test_lost_channel_creation(
             depth: 0,
             id: channel_id,
             name: "x".to_string(),
-            user_is_admin: false,
+            role: ChannelRole::Member,
         }],
     );
 
@@ -872,13 +872,13 @@ async fn test_lost_channel_creation(
                 depth: 0,
                 id: channel_id,
                 name: "x".to_string(),
-                user_is_admin: true,
+                role: ChannelRole::Admin,
             },
             ExpectedChannel {
                 depth: 1,
                 id: subchannel_id,
                 name: "subchannel".to_string(),
-                user_is_admin: true,
+                role: ChannelRole::Admin,
             },
         ],
     );
@@ -903,13 +903,13 @@ async fn test_lost_channel_creation(
                 depth: 0,
                 id: channel_id,
                 name: "x".to_string(),
-                user_is_admin: false,
+                role: ChannelRole::Member,
             },
             ExpectedChannel {
                 depth: 1,
                 id: subchannel_id,
                 name: "subchannel".to_string(),
-                user_is_admin: false,
+                role: ChannelRole::Member,
             },
         ],
     );
@@ -969,8 +969,7 @@ async fn test_channel_link_notifications(
 
     // we have an admin (a), member (b) and guest (c) all part of the zed channel.
 
-    // create a new private sub-channel
-    // create a new priate channel, make it public, and move it under the previous one, and verify it shows for b and c
+    // create a new private channel, make it public, and move it under the previous one, and verify it shows for b and not c
     let active_channel = client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
@@ -1116,6 +1115,117 @@ async fn test_channel_link_notifications(
         cx_c,
         &[(zed_channel, 0), (helix_channel, 1)],
     );
+}
+
+#[gpui::test]
+async fn test_channel_membership_notifications(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+
+    deterministic.forbid_parking();
+
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_c").await;
+
+    let user_b = client_b.user_id().unwrap();
+
+    let channels = server
+        .make_channel_tree(
+            &[
+                ("zed", None),
+                ("active", Some("zed")),
+                ("vim", Some("active")),
+            ],
+            (&client_a, cx_a),
+        )
+        .await;
+    let zed_channel = channels[0];
+    let _active_channel = channels[1];
+    let vim_channel = channels[2];
+
+    try_join_all(client_a.channel_store().update(cx_a, |channel_store, cx| {
+        [
+            channel_store.set_channel_visibility(zed_channel, proto::ChannelVisibility::Public, cx),
+            channel_store.set_channel_visibility(vim_channel, proto::ChannelVisibility::Public, cx),
+            channel_store.invite_member(vim_channel, user_b, proto::ChannelRole::Member, cx),
+            channel_store.invite_member(zed_channel, user_b, proto::ChannelRole::Guest, cx),
+        ]
+    }))
+    .await
+    .unwrap();
+
+    deterministic.run_until_parked();
+
+    client_b
+        .channel_store()
+        .update(cx_b, |channel_store, _| {
+            channel_store.respond_to_channel_invite(zed_channel, true)
+        })
+        .await
+        .unwrap();
+
+    client_b
+        .channel_store()
+        .update(cx_b, |channel_store, _| {
+            channel_store.respond_to_channel_invite(vim_channel, true)
+        })
+        .await
+        .unwrap();
+
+    deterministic.run_until_parked();
+
+    // we have an admin (a), and a guest (b) with access to all of zed, and membership in vim.
+    assert_channels(
+        client_b.channel_store(),
+        cx_b,
+        &[
+            ExpectedChannel {
+                depth: 0,
+                id: zed_channel,
+                name: "zed".to_string(),
+                role: ChannelRole::Guest,
+            },
+            ExpectedChannel {
+                depth: 1,
+                id: vim_channel,
+                name: "vim".to_string(),
+                role: ChannelRole::Member,
+            },
+        ],
+    );
+
+    client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.remove_member(vim_channel, user_b, cx)
+        })
+        .await
+        .unwrap();
+
+    deterministic.run_until_parked();
+
+    assert_channels(
+        client_b.channel_store(),
+        cx_b,
+        &[
+            ExpectedChannel {
+                depth: 0,
+                id: zed_channel,
+                name: "zed".to_string(),
+                role: ChannelRole::Guest,
+            },
+            ExpectedChannel {
+                depth: 1,
+                id: vim_channel,
+                name: "vim".to_string(),
+                role: ChannelRole::Guest,
+            },
+        ],
+    )
 }
 
 #[gpui::test]
@@ -1485,7 +1595,7 @@ struct ExpectedChannel {
     depth: usize,
     id: ChannelId,
     name: String,
-    user_is_admin: bool,
+    role: ChannelRole,
 }
 
 #[track_caller]
@@ -1502,7 +1612,7 @@ fn assert_channel_invitations(
                 depth: 0,
                 name: channel.name.clone(),
                 id: channel.id,
-                user_is_admin: store.is_channel_admin(channel.id),
+                role: channel.role,
             })
             .collect::<Vec<_>>()
     });
@@ -1522,7 +1632,7 @@ fn assert_channels(
                 depth,
                 name: channel.name.clone(),
                 id: channel.id,
-                user_is_admin: store.is_channel_admin(channel.id),
+                role: channel.role,
             })
             .collect::<Vec<_>>()
     });

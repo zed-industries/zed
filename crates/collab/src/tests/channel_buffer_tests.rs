@@ -410,7 +410,7 @@ async fn test_channel_buffer_disconnect(
     server.disconnect_client(client_a.peer_id().unwrap());
     deterministic.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
 
-    channel_buffer_a.update(cx_a, |buffer, _| {
+    channel_buffer_a.update(cx_a, |buffer, cx| {
         assert_eq!(
             buffer.channel(cx).unwrap().as_ref(),
             &channel(channel_id, "the-channel", proto::ChannelRole::Admin)
@@ -435,7 +435,7 @@ async fn test_channel_buffer_disconnect(
     deterministic.run_until_parked();
 
     // Channel buffer observed the deletion
-    channel_buffer_b.update(cx_b, |buffer, _| {
+    channel_buffer_b.update(cx_b, |buffer, cx| {
         assert_eq!(
             buffer.channel(cx).unwrap().as_ref(),
             &channel(channel_id, "the-channel", proto::ChannelRole::Member)
@@ -699,7 +699,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
         .await
         .unwrap();
     channel_view_1_a.update(cx_a, |notes, cx| {
-        assert_eq!(notes.channel(cx).name, "channel-1");
+        assert_eq!(notes.channel(cx).unwrap().name, "channel-1");
         notes.editor.update(cx, |editor, cx| {
             editor.insert("Hello from A.", cx);
             editor.change_selections(None, cx, |selections| {
@@ -731,7 +731,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
             .expect("active item is not a channel view")
     });
     channel_view_1_b.read_with(cx_b, |notes, cx| {
-        assert_eq!(notes.channel(cx).name, "channel-1");
+        assert_eq!(notes.channel(cx).unwrap().name, "channel-1");
         let editor = notes.editor.read(cx);
         assert_eq!(editor.text(cx), "Hello from A.");
         assert_eq!(editor.selections.ranges::<usize>(cx), &[3..4]);
@@ -743,7 +743,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
         .await
         .unwrap();
     channel_view_2_a.read_with(cx_a, |notes, cx| {
-        assert_eq!(notes.channel(cx).name, "channel-2");
+        assert_eq!(notes.channel(cx).unwrap().name, "channel-2");
     });
 
     // Client B is taken to the notes for channel 2.
@@ -760,7 +760,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
             .expect("active item is not a channel view")
     });
     channel_view_2_b.read_with(cx_b, |notes, cx| {
-        assert_eq!(notes.channel(cx).name, "channel-2");
+        assert_eq!(notes.channel(cx).unwrap().name, "channel-2");
     });
 }
 

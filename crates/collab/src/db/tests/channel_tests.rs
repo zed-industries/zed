@@ -160,7 +160,7 @@ async fn test_joining_channels(db: &Arc<Database>) {
     let channel_1 = db.create_root_channel("channel_1", user_1).await.unwrap();
 
     // can join a room with membership to its channel
-    let (joined_room, _) = db
+    let (joined_room, _, _) = db
         .join_channel(
             channel_1,
             user_1,

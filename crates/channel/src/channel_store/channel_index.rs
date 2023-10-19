@@ -24,14 +24,8 @@ impl ChannelIndex {
 
     /// Delete the given channels from this index.
     pub fn delete_channels(&mut self, channels: &[ChannelId]) {
-        dbg!("delete_channels", &channels);
         self.channels_by_id
             .retain(|channel_id, _| !channels.contains(channel_id));
-        self.delete_paths_through_channels(channels)
-    }
-
-    pub fn delete_paths_through_channels(&mut self, channels: &[ChannelId]) {
-        dbg!("rehome_channels", &channels);
         self.paths
             .retain(|path| !path.iter().any(|channel_id| channels.contains(channel_id)));
     }

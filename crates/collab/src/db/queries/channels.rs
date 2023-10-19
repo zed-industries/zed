@@ -128,9 +128,9 @@ impl Database {
         user_id: UserId,
         connection: ConnectionId,
         environment: &str,
-    ) -> Result<(JoinRoom, Option<ChannelId>)> {
+    ) -> Result<(JoinRoom, Option<MembershipUpdated>, ChannelRole)> {
         self.transaction(move |tx| async move {
-            let mut joined_channel_id = None;
+            let mut accept_invite_result = None;
 
             let channel = channel::Entity::find()
                 .filter(channel::Column::Id.eq(channel_id))
@@ -147,15 +147,18 @@ impl Database {
                     .await?
                 {
                     // note, this may be a parent channel
-                    joined_channel_id = Some(invitation.channel_id);
                     role = Some(invitation.role);
-
                     channel_member::Entity::update(channel_member::ActiveModel {
                         accepted: ActiveValue::Set(true),
                         ..invitation.into_active_model()
                     })
                     .exec(&*tx)
                     .await?;
+
+                    accept_invite_result = Some(
+                        self.calculate_membership_updated(channel_id, user_id, &*tx)
+                            .await?,
+                    );
 
                     debug_assert!(
                         self.channel_role_for_user(channel_id, user_id, &*tx)
@@ -167,15 +170,13 @@ impl Database {
             if role.is_none()
                 && channel.as_ref().map(|c| c.visibility) == Some(ChannelVisibility::Public)
             {
+                role = Some(ChannelRole::Guest);
                 let channel_id_to_join = self
                     .public_path_to_channel(channel_id, &*tx)
                     .await?
                     .first()
                     .cloned()
                     .unwrap_or(channel_id);
-
-                role = Some(ChannelRole::Guest);
-                joined_channel_id = Some(channel_id_to_join);
 
                 channel_member::Entity::insert(channel_member::ActiveModel {
                     id: ActiveValue::NotSet,
@@ -186,6 +187,11 @@ impl Database {
                 })
                 .exec(&*tx)
                 .await?;
+
+                accept_invite_result = Some(
+                    self.calculate_membership_updated(channel_id, user_id, &*tx)
+                        .await?,
+                );
 
                 debug_assert!(
                     self.channel_role_for_user(channel_id, user_id, &*tx)
@@ -205,7 +211,7 @@ impl Database {
 
             self.join_channel_room_internal(channel_id, room_id, user_id, connection, &*tx)
                 .await
-                .map(|jr| (jr, joined_channel_id))
+                .map(|jr| (jr, accept_invite_result, role.unwrap()))
         })
         .await
     }
@@ -345,7 +351,7 @@ impl Database {
         invitee_id: UserId,
         admin_id: UserId,
         role: ChannelRole,
-    ) -> Result<()> {
+    ) -> Result<Channel> {
         self.transaction(move |tx| async move {
             self.check_user_is_channel_admin(channel_id, admin_id, &*tx)
                 .await?;
@@ -360,7 +366,17 @@ impl Database {
             .insert(&*tx)
             .await?;
 
-            Ok(())
+            let channel = channel::Entity::find_by_id(channel_id)
+                .one(&*tx)
+                .await?
+                .unwrap();
+
+            Ok(Channel {
+                id: channel.id,
+                visibility: channel.visibility,
+                name: channel.name,
+                role,
+            })
         })
         .await
     }
@@ -429,10 +445,10 @@ impl Database {
         channel_id: ChannelId,
         user_id: UserId,
         accept: bool,
-    ) -> Result<()> {
+    ) -> Result<Option<MembershipUpdated>> {
         self.transaction(move |tx| async move {
-            let rows_affected = if accept {
-                channel_member::Entity::update_many()
+            if accept {
+                let rows_affected = channel_member::Entity::update_many()
                     .set(channel_member::ActiveModel {
                         accepted: ActiveValue::Set(accept),
                         ..Default::default()
@@ -445,25 +461,88 @@ impl Database {
                     )
                     .exec(&*tx)
                     .await?
-                    .rows_affected
-            } else {
-                channel_member::ActiveModel {
-                    channel_id: ActiveValue::Unchanged(channel_id),
-                    user_id: ActiveValue::Unchanged(user_id),
-                    ..Default::default()
+                    .rows_affected;
+
+                if rows_affected == 0 {
+                    Err(anyhow!("no such invitation"))?;
                 }
-                .delete(&*tx)
-                .await?
-                .rows_affected
-            };
+
+                return Ok(Some(
+                    self.calculate_membership_updated(channel_id, user_id, &*tx)
+                        .await?,
+                ));
+            }
+
+            let rows_affected = channel_member::ActiveModel {
+                channel_id: ActiveValue::Unchanged(channel_id),
+                user_id: ActiveValue::Unchanged(user_id),
+                ..Default::default()
+            }
+            .delete(&*tx)
+            .await?
+            .rows_affected;
 
             if rows_affected == 0 {
                 Err(anyhow!("no such invitation"))?;
             }
 
-            Ok(())
+            Ok(None)
         })
         .await
+    }
+
+    async fn calculate_membership_updated(
+        &self,
+        channel_id: ChannelId,
+        user_id: UserId,
+        tx: &DatabaseTransaction,
+    ) -> Result<MembershipUpdated> {
+        let mut channel_to_refresh = channel_id;
+        let mut removed_channels: Vec<ChannelId> = Vec::new();
+
+        // if the user was previously a guest of a parent public channel they may have seen this
+        // channel (or its descendants) in the tree already.
+        // Now they have new permissions, the graph of channels needs updating from that point.
+        if let Some(public_parent) = self.public_parent_channel_id(channel_id, &*tx).await? {
+            if self
+                .channel_role_for_user(public_parent, user_id, &*tx)
+                .await?
+                == Some(ChannelRole::Guest)
+            {
+                channel_to_refresh = public_parent;
+            }
+        }
+
+        // remove all descendant channels from the user's tree
+        removed_channels.append(
+            &mut self
+                .get_channel_descendants(vec![channel_to_refresh], &*tx)
+                .await?
+                .into_iter()
+                .map(|edge| ChannelId::from_proto(edge.channel_id))
+                .collect(),
+        );
+
+        let new_channels = self
+            .get_user_channels(user_id, Some(channel_to_refresh), &*tx)
+            .await?;
+
+        // We only add the current channel to "moved" if the user has lost access,
+        // otherwise it would be made a root channel on the client.
+        if !new_channels
+            .channels
+            .channels
+            .iter()
+            .any(|c| c.id == channel_id)
+        {
+            removed_channels.push(channel_id);
+        }
+
+        Ok(MembershipUpdated {
+            channel_id,
+            new_channels,
+            removed_channels,
+        })
     }
 
     pub async fn remove_channel_member(
@@ -471,7 +550,7 @@ impl Database {
         channel_id: ChannelId,
         member_id: UserId,
         admin_id: UserId,
-    ) -> Result<()> {
+    ) -> Result<MembershipUpdated> {
         self.transaction(|tx| async move {
             self.check_user_is_channel_admin(channel_id, admin_id, &*tx)
                 .await?;
@@ -489,7 +568,9 @@ impl Database {
                 Err(anyhow!("no such member"))?;
             }
 
-            Ok(())
+            Ok(self
+                .calculate_membership_updated(channel_id, member_id, &*tx)
+                .await?)
         })
         .await
     }
@@ -535,44 +616,7 @@ impl Database {
         self.transaction(|tx| async move {
             let tx = tx;
 
-            let channel_memberships = channel_member::Entity::find()
-                .filter(
-                    channel_member::Column::UserId
-                        .eq(user_id)
-                        .and(channel_member::Column::Accepted.eq(true)),
-                )
-                .all(&*tx)
-                .await?;
-
-            self.get_user_channels(user_id, channel_memberships, &tx)
-                .await
-        })
-        .await
-    }
-
-    pub async fn get_channel_for_user(
-        &self,
-        channel_id: ChannelId,
-        user_id: UserId,
-    ) -> Result<ChannelsForUser> {
-        self.transaction(|tx| async move {
-            let tx = tx;
-            let role = self
-                .check_user_is_channel_participant(channel_id, user_id, &*tx)
-                .await?;
-
-            self.get_user_channels(
-                user_id,
-                vec![channel_member::Model {
-                    id: Default::default(),
-                    channel_id,
-                    user_id,
-                    role,
-                    accepted: true,
-                }],
-                &tx,
-            )
-            .await
+            self.get_user_channels(user_id, None, &tx).await
         })
         .await
     }
@@ -580,18 +624,41 @@ impl Database {
     pub async fn get_user_channels(
         &self,
         user_id: UserId,
-        channel_memberships: Vec<channel_member::Model>,
+        parent_channel_id: Option<ChannelId>,
         tx: &DatabaseTransaction,
     ) -> Result<ChannelsForUser> {
+        // note: we could (maybe) win some efficiency here when parent_channel_id
+        // is set by getting just the role for that channel, then getting descendants
+        // with roles attached; but that's not as straightforward as it sounds
+        // because we need to calculate the path to the channel to make the query
+        // efficient, which currently requires an extra round trip to the database.
+        // Fix this later...
+        let channel_memberships = channel_member::Entity::find()
+            .filter(
+                channel_member::Column::UserId
+                    .eq(user_id)
+                    .and(channel_member::Column::Accepted.eq(true)),
+            )
+            .all(&*tx)
+            .await?;
+
+        dbg!((user_id, &channel_memberships));
+
         let mut edges = self
             .get_channel_descendants(channel_memberships.iter().map(|m| m.channel_id), &*tx)
             .await?;
 
-        let mut role_for_channel: HashMap<ChannelId, ChannelRole> = HashMap::default();
+        dbg!((user_id, &edges));
+
+        let mut role_for_channel: HashMap<ChannelId, (ChannelRole, bool)> = HashMap::default();
 
         for membership in channel_memberships.iter() {
-            role_for_channel.insert(membership.channel_id, membership.role);
+            let included =
+                parent_channel_id.is_none() || membership.channel_id == parent_channel_id.unwrap();
+            role_for_channel.insert(membership.channel_id, (membership.role, included));
         }
+
+        dbg!((&role_for_channel, parent_channel_id));
 
         for ChannelEdge {
             parent_id,
@@ -601,14 +668,26 @@ impl Database {
             let parent_id = ChannelId::from_proto(*parent_id);
             let channel_id = ChannelId::from_proto(*channel_id);
             debug_assert!(role_for_channel.get(&parent_id).is_some());
-            let parent_role = role_for_channel[&parent_id];
-            if let Some(existing_role) = role_for_channel.get(&channel_id) {
-                if existing_role.should_override(parent_role) {
-                    continue;
-                }
+            let (parent_role, parent_included) = role_for_channel[&parent_id];
+
+            if let Some((existing_role, included)) = role_for_channel.get(&channel_id) {
+                role_for_channel.insert(
+                    channel_id,
+                    (existing_role.max(parent_role), *included || parent_included),
+                );
+            } else {
+                role_for_channel.insert(
+                    channel_id,
+                    (
+                        parent_role,
+                        parent_included
+                            || parent_channel_id.is_none()
+                            || Some(channel_id) == parent_channel_id,
+                    ),
+                );
             }
-            role_for_channel.insert(channel_id, parent_role);
         }
+        dbg!((&role_for_channel, parent_channel_id));
 
         let mut channels: Vec<Channel> = Vec::new();
         let mut channels_to_remove: HashSet<u64> = HashSet::default();
@@ -620,11 +699,13 @@ impl Database {
 
         while let Some(row) = rows.next().await {
             let channel = row?;
-            let role = role_for_channel[&channel.id];
+            let (role, included) = role_for_channel[&channel.id];
 
-            if role == ChannelRole::Banned
+            if !included
+                || role == ChannelRole::Banned
                 || role == ChannelRole::Guest && channel.visibility != ChannelVisibility::Public
             {
+                dbg!("remove", channel.id);
                 channels_to_remove.insert(channel.id.0 as u64);
                 continue;
             }
@@ -633,7 +714,7 @@ impl Database {
                 id: channel.id,
                 name: channel.name,
                 visibility: channel.visibility,
-                role: role,
+                role,
             });
         }
         drop(rows);
@@ -740,18 +821,8 @@ impl Database {
             }
             results.push((
                 member.user_id,
-                self.get_user_channels(
-                    member.user_id,
-                    vec![channel_member::Model {
-                        id: Default::default(),
-                        channel_id: new_parent,
-                        user_id: member.user_id,
-                        role: member.role,
-                        accepted: true,
-                    }],
-                    &*tx,
-                )
-                .await?,
+                self.get_user_channels(member.user_id, Some(new_parent), &*tx)
+                    .await?,
             ))
         }
 
@@ -782,18 +853,8 @@ impl Database {
             };
             results.push((
                 member.user_id,
-                self.get_user_channels(
-                    member.user_id,
-                    vec![channel_member::Model {
-                        id: Default::default(),
-                        channel_id: public_parent,
-                        user_id: member.user_id,
-                        role: member.role,
-                        accepted: true,
-                    }],
-                    &*tx,
-                )
-                .await?,
+                self.get_user_channels(member.user_id, Some(public_parent), &*tx)
+                    .await?,
             ))
         }
 
@@ -806,7 +867,7 @@ impl Database {
         admin_id: UserId,
         for_user: UserId,
         role: ChannelRole,
-    ) -> Result<channel_member::Model> {
+    ) -> Result<SetMemberRoleResult> {
         self.transaction(|tx| async move {
             self.check_user_is_channel_admin(channel_id, admin_id, &*tx)
                 .await?;
@@ -828,7 +889,24 @@ impl Database {
             update.role = ActiveValue::Set(role);
             let updated = channel_member::Entity::update(update).exec(&*tx).await?;
 
-            Ok(updated)
+            if !updated.accepted {
+                let channel = channel::Entity::find_by_id(channel_id)
+                    .one(&*tx)
+                    .await?
+                    .unwrap();
+
+                return Ok(SetMemberRoleResult::InviteUpdated(Channel {
+                    id: channel.id,
+                    visibility: channel.visibility,
+                    name: channel.name,
+                    role,
+                }));
+            }
+
+            Ok(SetMemberRoleResult::MembershipUpdated(
+                self.calculate_membership_updated(channel_id, for_user, &*tx)
+                    .await?,
+            ))
         })
         .await
     }
@@ -1396,16 +1474,7 @@ impl Database {
                 .await?;
         }
 
-        let membership = channel_member::Entity::find()
-            .filter(
-                channel_member::Column::ChannelId
-                    .eq(channel)
-                    .and(channel_member::Column::UserId.eq(user)),
-            )
-            .all(tx)
-            .await?;
-
-        let mut channel_info = self.get_user_channels(user, membership, &*tx).await?;
+        let mut channel_info = self.get_user_channels(user, Some(channel), &*tx).await?;
 
         channel_info.channels.edges.push(ChannelEdge {
             channel_id: channel.to_proto(),
@@ -1466,8 +1535,6 @@ impl Database {
             .await?
             == 0;
 
-        dbg!(is_stranded, &paths);
-
         // Make sure that there is always at least one path to the channel
         if is_stranded {
             let root_paths: Vec<_> = paths
@@ -1481,7 +1548,6 @@ impl Database {
                 })
                 .collect();
 
-            dbg!(is_stranded, &root_paths);
             channel_path::Entity::insert_many(root_paths)
                 .exec(&*tx)
                 .await?;
@@ -1527,6 +1593,8 @@ impl Database {
                 .await?
                 .into_iter()
                 .collect();
+
+            dbg!(&participants_to_update);
 
             let mut moved_channels: HashSet<ChannelId> = HashSet::default();
             moved_channels.insert(channel_id);

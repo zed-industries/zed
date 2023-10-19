@@ -99,14 +99,14 @@ impl RandomizedTest for RandomChannelBufferTest {
                 30..=40 => {
                     if let Some(buffer) = channel_buffers.iter().choose(rng) {
                         let channel_name =
-                            buffer.read_with(cx, |b, _| b.channel(cx).unwrap().name.clone());
+                            buffer.read_with(cx, |b, cx| b.channel(cx).unwrap().name.clone());
                         break ChannelBufferOperation::LeaveChannelNotes { channel_name };
                     }
                 }
 
                 _ => {
                     if let Some(buffer) = channel_buffers.iter().choose(rng) {
-                        break buffer.read_with(cx, |b, _| {
+                        break buffer.read_with(cx, |b, cx| {
                             let channel_name = b.channel(cx).unwrap().name.clone();
                             let edits = b
                                 .buffer()

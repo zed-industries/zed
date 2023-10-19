@@ -453,6 +453,19 @@ pub struct SetChannelVisibilityResult {
     pub participants_to_remove: HashSet<UserId>,
 }
 
+#[derive(Debug)]
+pub struct MembershipUpdated {
+    pub channel_id: ChannelId,
+    pub new_channels: ChannelsForUser,
+    pub removed_channels: Vec<ChannelId>,
+}
+
+#[derive(Debug)]
+pub enum SetMemberRoleResult {
+    InviteUpdated(Channel),
+    MembershipUpdated(MembershipUpdated),
+}
+
 #[derive(FromQueryResult, Debug, PartialEq, Eq, Hash)]
 pub struct Channel {
     pub id: ChannelId,
