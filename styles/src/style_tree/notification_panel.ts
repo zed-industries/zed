@@ -16,7 +16,7 @@ export default function chat_panel(): any {
             outer_width: 24,
             outer_corner_radius: 16,
         },
-        read_text: text(layer, "sans", "base"),
+        read_text: text(layer, "sans", "disabled"),
         unread_text: text(layer, "sans", "base"),
         button: interactive({
             base: {
@@ -40,11 +40,9 @@ export default function chat_panel(): any {
                 left: 2,
                 top: 2,
                 bottom: 2,
-            }
+            },
         },
-        list: {
-
-        },
+        list: {},
         icon_button: icon_button({
             variant: "ghost",
             color: "variant",
@@ -52,6 +50,6 @@ export default function chat_panel(): any {
         }),
         sign_in_prompt: {
             default: text(layer, "sans", "base"),
-        }
+        },
     }
 }
