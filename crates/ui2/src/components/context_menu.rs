@@ -1,14 +1,13 @@
 use crate::{prelude::*, ListItemVariant};
 use crate::{v_stack, Label, List, ListEntry, ListItem, ListSeparator, ListSubHeader};
 
-#[derive(Clone)]
-pub enum ContextMenuItem<S: 'static + Send + Sync + Clone> {
+pub enum ContextMenuItem<S: 'static + Send + Sync> {
     Header(SharedString),
     Entry(Label<S>),
     Separator,
 }
 
-impl<S: 'static + Send + Sync + Clone> ContextMenuItem<S> {
+impl<S: 'static + Send + Sync> ContextMenuItem<S> {
     fn to_list_item(self) -> ListItem<S> {
         match self {
             ContextMenuItem::Header(label) => ListSubHeader::new(label).into(),
@@ -33,11 +32,11 @@ impl<S: 'static + Send + Sync + Clone> ContextMenuItem<S> {
 }
 
 #[derive(Element)]
-pub struct ContextMenu<S: 'static + Send + Sync + Clone> {
+pub struct ContextMenu<S: 'static + Send + Sync> {
     items: Vec<ContextMenuItem<S>>,
 }
 
-impl<S: 'static + Send + Sync + Clone> ContextMenu<S> {
+impl<S: 'static + Send + Sync> ContextMenu<S> {
     pub fn new(items: impl IntoIterator<Item = ContextMenuItem<S>>) -> Self {
         Self {
             items: items.into_iter().collect(),
@@ -54,8 +53,7 @@ impl<S: 'static + Send + Sync + Clone> ContextMenu<S> {
             .child(
                 List::new(
                     self.items
-                        .clone()
-                        .into_iter()
+                        .drain(..)
                         .map(ContextMenuItem::to_list_item)
                         .collect(),
                 )

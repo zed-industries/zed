@@ -14,8 +14,8 @@ pub enum ListItemVariant {
     Inset,
 }
 
-#[derive(Element, Clone)]
-pub struct ListHeader<S: 'static + Send + Sync + Clone> {
+#[derive(Element)]
+pub struct ListHeader<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     label: SharedString,
     left_icon: Option<Icon>,
@@ -24,7 +24,7 @@ pub struct ListHeader<S: 'static + Send + Sync + Clone> {
     toggleable: Toggleable,
 }
 
-impl<S: 'static + Send + Sync + Clone> ListHeader<S> {
+impl<S: 'static + Send + Sync> ListHeader<S> {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             state_type: PhantomData,
@@ -133,15 +133,15 @@ impl<S: 'static + Send + Sync + Clone> ListHeader<S> {
     }
 }
 
-#[derive(Element, Clone)]
-pub struct ListSubHeader<S: 'static + Send + Sync + Clone> {
+#[derive(Element)]
+pub struct ListSubHeader<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     label: SharedString,
     left_icon: Option<Icon>,
     variant: ListItemVariant,
 }
 
-impl<S: 'static + Send + Sync + Clone> ListSubHeader<S> {
+impl<S: 'static + Send + Sync> ListSubHeader<S> {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             state_type: PhantomData,
@@ -198,32 +198,32 @@ pub enum ListEntrySize {
     Medium,
 }
 
-#[derive(Clone, Element)]
-pub enum ListItem<S: 'static + Send + Sync + Clone> {
+#[derive(Element)]
+pub enum ListItem<S: 'static + Send + Sync> {
     Entry(ListEntry<S>),
     Separator(ListSeparator<S>),
     Header(ListSubHeader<S>),
 }
 
-impl<S: 'static + Send + Sync + Clone> From<ListEntry<S>> for ListItem<S> {
+impl<S: 'static + Send + Sync> From<ListEntry<S>> for ListItem<S> {
     fn from(entry: ListEntry<S>) -> Self {
         Self::Entry(entry)
     }
 }
 
-impl<S: 'static + Send + Sync + Clone> From<ListSeparator<S>> for ListItem<S> {
+impl<S: 'static + Send + Sync> From<ListSeparator<S>> for ListItem<S> {
     fn from(entry: ListSeparator<S>) -> Self {
         Self::Separator(entry)
     }
 }
 
-impl<S: 'static + Send + Sync + Clone> From<ListSubHeader<S>> for ListItem<S> {
+impl<S: 'static + Send + Sync> From<ListSubHeader<S>> for ListItem<S> {
     fn from(entry: ListSubHeader<S>) -> Self {
         Self::Header(entry)
     }
 }
 
-impl<S: 'static + Send + Sync + Clone> ListItem<S> {
+impl<S: 'static + Send + Sync> ListItem<S> {
     fn render(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         match self {
             ListItem::Entry(entry) => div().child(entry.render(view, cx)),
@@ -245,11 +245,11 @@ impl<S: 'static + Send + Sync + Clone> ListItem<S> {
     }
 }
 
-#[derive(Element, Clone)]
-pub struct ListEntry<S: 'static + Send + Sync + Clone> {
+#[derive(Element)]
+pub struct ListEntry<S: 'static + Send + Sync> {
     disclosure_control_style: DisclosureControlVisibility,
     indent_level: u32,
-    label: Label<S>,
+    label: Option<Label<S>>,
     left_content: Option<LeftContent>,
     variant: ListItemVariant,
     size: ListEntrySize,
@@ -257,12 +257,12 @@ pub struct ListEntry<S: 'static + Send + Sync + Clone> {
     toggle: Option<ToggleState>,
 }
 
-impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
+impl<S: 'static + Send + Sync> ListEntry<S> {
     pub fn new(label: Label<S>) -> Self {
         Self {
             disclosure_control_style: DisclosureControlVisibility::default(),
             indent_level: 0,
-            label,
+            label: Some(label),
             variant: ListItemVariant::default(),
             left_content: None,
             size: ListEntrySize::default(),
@@ -411,7 +411,7 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
                     .relative()
                     .children(self.disclosure_control(cx))
                     .children(left_content)
-                    .child(self.label.clone()),
+                    .children(self.label.take()),
             )
     }
 }
@@ -436,14 +436,14 @@ impl<S: 'static + Send + Sync> ListSeparator<S> {
 }
 
 #[derive(Element)]
-pub struct List<S: 'static + Send + Sync + Clone> {
+pub struct List<S: 'static + Send + Sync> {
     items: Vec<ListItem<S>>,
     empty_message: SharedString,
     header: Option<ListHeader<S>>,
     toggleable: Toggleable,
 }
 
-impl<S: 'static + Send + Sync + Clone> List<S> {
+impl<S: 'static + Send + Sync> List<S> {
     pub fn new(items: Vec<ListItem<S>>) -> Self {
         Self {
             items,
@@ -475,7 +475,7 @@ impl<S: 'static + Send + Sync + Clone> List<S> {
 
         let list_content = match (self.items.is_empty(), is_toggled) {
             (_, false) => div(),
-            (false, _) => div().children(self.items.iter().cloned()),
+            (false, _) => div().children(self.items.drain(..)),
             (true, _) => {
                 div().child(Label::new(self.empty_message.clone()).color(LabelColor::Muted))
             }
@@ -485,7 +485,7 @@ impl<S: 'static + Send + Sync + Clone> List<S> {
             .py_1()
             .children(
                 self.header
-                    .clone()
+                    .take()
                     .map(|header| header.set_toggleable(self.toggleable)),
             )
             .child(list_content)

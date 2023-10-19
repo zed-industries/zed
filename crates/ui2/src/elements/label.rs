@@ -48,8 +48,8 @@ pub enum LineHeightStyle {
     UILabel,
 }
 
-#[derive(Element, Clone)]
-pub struct Label<S: 'static + Send + Sync + Clone> {
+#[derive(Element)]
+pub struct Label<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     label: SharedString,
     line_height_style: LineHeightStyle,
@@ -57,7 +57,7 @@ pub struct Label<S: 'static + Send + Sync + Clone> {
     strikethrough: bool,
 }
 
-impl<S: 'static + Send + Sync + Clone> Label<S> {
+impl<S: 'static + Send + Sync> Label<S> {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             state_type: PhantomData,
