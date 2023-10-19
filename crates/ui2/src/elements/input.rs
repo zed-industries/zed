@@ -12,7 +12,7 @@ pub enum InputVariant {
 }
 
 #[derive(Element)]
-pub struct Input<S: 'static + Send + Sync> {
+pub struct Input<S: 'static + Send + Sync + Clone> {
     state_type: PhantomData<S>,
     placeholder: SharedString,
     value: String,
@@ -22,7 +22,7 @@ pub struct Input<S: 'static + Send + Sync> {
     is_active: bool,
 }
 
-impl<S: 'static + Send + Sync> Input<S> {
+impl<S: 'static + Send + Sync + Clone> Input<S> {
     pub fn new(placeholder: impl Into<SharedString>) -> Self {
         Self {
             state_type: PhantomData,
@@ -77,7 +77,7 @@ impl<S: 'static + Send + Sync> Input<S> {
             ),
         };
 
-        let placeholder_label = Label::new(self.placeholder).color(if self.disabled {
+        let placeholder_label = Label::new(self.placeholder.clone()).color(if self.disabled {
             LabelColor::Disabled
         } else {
             LabelColor::Placeholder

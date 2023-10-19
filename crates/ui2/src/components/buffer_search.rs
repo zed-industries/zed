@@ -3,6 +3,7 @@ use gpui3::{view, Context, View};
 use crate::prelude::*;
 use crate::{h_stack, Icon, IconButton, IconColor, Input};
 
+#[derive(Clone)]
 pub struct BufferSearch {
     is_replace_open: bool,
 }
