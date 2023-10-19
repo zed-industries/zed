@@ -78,7 +78,7 @@ impl PromptTemplate for GenerateInlineContent {
 
         match file_type {
             PromptFileType::Code => {
-                writeln!(prompt, "Always wrap your code in a Markdown block.").unwrap();
+                // writeln!(prompt, "Always wrap your code in a Markdown block.").unwrap();
             }
             _ => {}
         }
