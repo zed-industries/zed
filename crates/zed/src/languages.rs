@@ -76,7 +76,10 @@ pub fn init(
         elixir::ElixirLspSetting::ElixirLs => language(
             "elixir",
             tree_sitter_elixir::language(),
-            vec![Arc::new(elixir::ElixirLspAdapter)],
+            vec![
+                Arc::new(elixir::ElixirLspAdapter),
+                Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+            ],
         ),
         elixir::ElixirLspSetting::NextLs => language(
             "elixir",
@@ -101,7 +104,10 @@ pub fn init(
     language(
         "heex",
         tree_sitter_heex::language(),
-        vec![Arc::new(elixir::ElixirLspAdapter)],
+        vec![
+            Arc::new(elixir::ElixirLspAdapter),
+            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+        ],
     );
     language(
         "json",
@@ -184,9 +190,10 @@ pub fn init(
     language(
         "svelte",
         tree_sitter_svelte::language(),
-        vec![Arc::new(svelte::SvelteLspAdapter::new(
-            node_runtime.clone(),
-        ))],
+        vec![
+            Arc::new(svelte::SvelteLspAdapter::new(node_runtime.clone())),
+            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+        ],
     );
     language(
         "php",
