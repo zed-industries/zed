@@ -2662,7 +2662,6 @@ impl CollabPanel {
                             location: path.clone(),
                         },
                     ),
-                    ContextMenuItem::Separator,
                     ContextMenuItem::action(
                         "Move this channel",
                         StartMoveChannelFor {

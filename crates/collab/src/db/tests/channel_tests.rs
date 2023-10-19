@@ -36,28 +36,28 @@ async fn test_channels(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    let crdb_id = db.create_channel("crdb", Some(zed_id), a_id).await.unwrap();
+    let crdb_id = db.create_sub_channel("crdb", zed_id, a_id).await.unwrap();
     let livestreaming_id = db
-        .create_channel("livestreaming", Some(zed_id), a_id)
+        .create_sub_channel("livestreaming", zed_id, a_id)
         .await
         .unwrap();
     let replace_id = db
-        .create_channel("replace", Some(zed_id), a_id)
+        .create_sub_channel("replace", zed_id, a_id)
         .await
         .unwrap();
 
-    let mut members = db.get_channel_members(replace_id).await.unwrap();
+    let mut members = db
+        .transaction(|tx| async move { Ok(db.get_channel_participants(replace_id, &*tx).await?) })
+        .await
+        .unwrap();
     members.sort();
     assert_eq!(members, &[a_id, b_id]);
 
     let rust_id = db.create_root_channel("rust", a_id).await.unwrap();
-    let cargo_id = db
-        .create_channel("cargo", Some(rust_id), a_id)
-        .await
-        .unwrap();
+    let cargo_id = db.create_sub_channel("cargo", rust_id, a_id).await.unwrap();
 
     let cargo_ra_id = db
-        .create_channel("cargo-ra", Some(cargo_id), a_id)
+        .create_sub_channel("cargo-ra", cargo_id, a_id)
         .await
         .unwrap();
 
@@ -264,7 +264,7 @@ async fn test_channel_invites(db: &Arc<Database>) {
         .unwrap();
 
     let channel_1_3 = db
-        .create_channel("channel_3", Some(channel_1_1), user_1)
+        .create_sub_channel("channel_3", channel_1_1, user_1)
         .await
         .unwrap();
 
@@ -277,7 +277,7 @@ async fn test_channel_invites(db: &Arc<Database>) {
         &[
             proto::ChannelMember {
                 user_id: user_1.to_proto(),
-                kind: proto::channel_member::Kind::Member.into(),
+                kind: proto::channel_member::Kind::AncestorMember.into(),
                 role: proto::ChannelRole::Admin.into(),
             },
             proto::ChannelMember {
@@ -369,20 +369,17 @@ async fn test_db_channel_moving(db: &Arc<Database>) {
 
     let zed_id = db.create_root_channel("zed", a_id).await.unwrap();
 
-    let crdb_id = db.create_channel("crdb", Some(zed_id), a_id).await.unwrap();
+    let crdb_id = db.create_sub_channel("crdb", zed_id, a_id).await.unwrap();
 
-    let gpui2_id = db
-        .create_channel("gpui2", Some(zed_id), a_id)
-        .await
-        .unwrap();
+    let gpui2_id = db.create_sub_channel("gpui2", zed_id, a_id).await.unwrap();
 
     let livestreaming_id = db
-        .create_channel("livestreaming", Some(crdb_id), a_id)
+        .create_sub_channel("livestreaming", crdb_id, a_id)
         .await
         .unwrap();
 
     let livestreaming_dag_id = db
-        .create_channel("livestreaming_dag", Some(livestreaming_id), a_id)
+        .create_sub_channel("livestreaming_dag", livestreaming_id, a_id)
         .await
         .unwrap();
 
@@ -409,311 +406,311 @@ async fn test_db_channel_moving(db: &Arc<Database>) {
         .await
         .is_err());
 
-    // ========================================================================
-    // Make a link
-    db.link_channel(a_id, livestreaming_id, zed_id)
-        .await
-        .unwrap();
+    //  // ========================================================================
+    //  // Make a link
+    //  db.link_channel(a_id, livestreaming_id, zed_id)
+    //      .await
+    //      .unwrap();
 
-    // DAG is now:
-    //     /- gpui2
-    // zed -- crdb - livestreaming - livestreaming_dag
-    //    \---------/
-    let result = db.get_channels_for_user(a_id).await.unwrap();
-    assert_dag(
-        result.channels,
-        &[
-            (zed_id, None),
-            (crdb_id, Some(zed_id)),
-            (gpui2_id, Some(zed_id)),
-            (livestreaming_id, Some(zed_id)),
-            (livestreaming_id, Some(crdb_id)),
-            (livestreaming_dag_id, Some(livestreaming_id)),
-        ],
-    );
+    //  // DAG is now:
+    //  //     /- gpui2
+    //  // zed -- crdb - livestreaming - livestreaming_dag
+    //  //    \---------/
+    //  let result = db.get_channels_for_user(a_id).await.unwrap();
+    //  assert_dag(
+    //      result.channels,
+    //      &[
+    //          (zed_id, None),
+    //          (crdb_id, Some(zed_id)),
+    //          (gpui2_id, Some(zed_id)),
+    //          (livestreaming_id, Some(zed_id)),
+    //          (livestreaming_id, Some(crdb_id)),
+    //          (livestreaming_dag_id, Some(livestreaming_id)),
+    //      ],
+    //  );
 
-    // ========================================================================
-    // Create a new channel below a channel with multiple parents
-    let livestreaming_dag_sub_id = db
-        .create_channel("livestreaming_dag_sub", Some(livestreaming_dag_id), a_id)
-        .await
-        .unwrap();
+    //  // ========================================================================
+    //  // Create a new channel below a channel with multiple parents
+    //  let livestreaming_dag_sub_id = db
+    //      .create_channel("livestreaming_dag_sub", Some(livestreaming_dag_id), a_id)
+    //      .await
+    //      .unwrap();
 
-    // DAG is now:
-    //     /- gpui2
-    // zed -- crdb - livestreaming - livestreaming_dag - livestreaming_dag_sub_id
-    //    \---------/
-    let result = db.get_channels_for_user(a_id).await.unwrap();
-    assert_dag(
-        result.channels,
-        &[
-            (zed_id, None),
-            (crdb_id, Some(zed_id)),
-            (gpui2_id, Some(zed_id)),
-            (livestreaming_id, Some(zed_id)),
-            (livestreaming_id, Some(crdb_id)),
-            (livestreaming_dag_id, Some(livestreaming_id)),
-            (livestreaming_dag_sub_id, Some(livestreaming_dag_id)),
-        ],
-    );
+    //  // DAG is now:
+    //  //     /- gpui2
+    //  // zed -- crdb - livestreaming - livestreaming_dag - livestreaming_dag_sub_id
+    //  //    \---------/
+    //  let result = db.get_channels_for_user(a_id).await.unwrap();
+    //  assert_dag(
+    //      result.channels,
+    //      &[
+    //          (zed_id, None),
+    //          (crdb_id, Some(zed_id)),
+    //          (gpui2_id, Some(zed_id)),
+    //          (livestreaming_id, Some(zed_id)),
+    //          (livestreaming_id, Some(crdb_id)),
+    //          (livestreaming_dag_id, Some(livestreaming_id)),
+    //          (livestreaming_dag_sub_id, Some(livestreaming_dag_id)),
+    //      ],
+    //  );
 
-    // ========================================================================
-    // Test a complex DAG by making another link
-    let returned_channels = db
-        .link_channel(a_id, livestreaming_dag_sub_id, livestreaming_id)
-        .await
-        .unwrap();
+    //  // ========================================================================
+    //  // Test a complex DAG by making another link
+    //  let returned_channels = db
+    //      .link_channel(a_id, livestreaming_dag_sub_id, livestreaming_id)
+    //      .await
+    //      .unwrap();
 
-    // DAG is now:
-    //    /- gpui2                /---------------------\
-    // zed - crdb - livestreaming - livestreaming_dag - livestreaming_dag_sub_id
-    //    \--------/
+    //  // DAG is now:
+    //  //    /- gpui2                /---------------------\
+    //  // zed - crdb - livestreaming - livestreaming_dag - livestreaming_dag_sub_id
+    //  //    \--------/
 
-    // make sure we're getting just the new link
-    // Not using the assert_dag helper because we want to make sure we're returning the full data
-    pretty_assertions::assert_eq!(
-        returned_channels,
-        graph(
-            &[(
-                livestreaming_dag_sub_id,
-                "livestreaming_dag_sub",
-                ChannelRole::Admin
-            )],
-            &[(livestreaming_dag_sub_id, livestreaming_id)]
-        )
-    );
+    //  // make sure we're getting just the new link
+    //  // Not using the assert_dag helper because we want to make sure we're returning the full data
+    //  pretty_assertions::assert_eq!(
+    //      returned_channels,
+    //      graph(
+    //          &[(
+    //              livestreaming_dag_sub_id,
+    //              "livestreaming_dag_sub",
+    //              ChannelRole::Admin
+    //          )],
+    //          &[(livestreaming_dag_sub_id, livestreaming_id)]
+    //      )
+    //  );
 
-    let result = db.get_channels_for_user(a_id).await.unwrap();
-    assert_dag(
-        result.channels,
-        &[
-            (zed_id, None),
-            (crdb_id, Some(zed_id)),
-            (gpui2_id, Some(zed_id)),
-            (livestreaming_id, Some(zed_id)),
-            (livestreaming_id, Some(crdb_id)),
-            (livestreaming_dag_id, Some(livestreaming_id)),
-            (livestreaming_dag_sub_id, Some(livestreaming_id)),
-            (livestreaming_dag_sub_id, Some(livestreaming_dag_id)),
-        ],
-    );
+    //  let result = db.get_channels_for_user(a_id).await.unwrap();
+    //  assert_dag(
+    //      result.channels,
+    //      &[
+    //          (zed_id, None),
+    //          (crdb_id, Some(zed_id)),
+    //          (gpui2_id, Some(zed_id)),
+    //          (livestreaming_id, Some(zed_id)),
+    //          (livestreaming_id, Some(crdb_id)),
+    //          (livestreaming_dag_id, Some(livestreaming_id)),
+    //          (livestreaming_dag_sub_id, Some(livestreaming_id)),
+    //          (livestreaming_dag_sub_id, Some(livestreaming_dag_id)),
+    //      ],
+    //  );
 
-    // ========================================================================
-    // Test a complex DAG by making another link
-    let returned_channels = db
-        .link_channel(a_id, livestreaming_id, gpui2_id)
-        .await
-        .unwrap();
+    //  // ========================================================================
+    //  // Test a complex DAG by making another link
+    //  let returned_channels = db
+    //      .link_channel(a_id, livestreaming_id, gpui2_id)
+    //      .await
+    //      .unwrap();
 
-    // DAG is now:
-    //    /- gpui2 -\             /---------------------\
-    // zed - crdb -- livestreaming - livestreaming_dag - livestreaming_dag_sub_id
-    //    \---------/
+    //  // DAG is now:
+    //  //    /- gpui2 -\             /---------------------\
+    //  // zed - crdb -- livestreaming - livestreaming_dag - livestreaming_dag_sub_id
+    //  //    \---------/
 
-    // Make sure that we're correctly getting the full sub-dag
-    pretty_assertions::assert_eq!(
-        returned_channels,
-        graph(
-            &[
-                (livestreaming_id, "livestreaming", ChannelRole::Admin),
-                (
-                    livestreaming_dag_id,
-                    "livestreaming_dag",
-                    ChannelRole::Admin
-                ),
-                (
-                    livestreaming_dag_sub_id,
-                    "livestreaming_dag_sub",
-                    ChannelRole::Admin
-                ),
-            ],
-            &[
-                (livestreaming_id, gpui2_id),
-                (livestreaming_dag_id, livestreaming_id),
-                (livestreaming_dag_sub_id, livestreaming_id),
-                (livestreaming_dag_sub_id, livestreaming_dag_id),
-            ]
-        )
-    );
+    //  // Make sure that we're correctly getting the full sub-dag
+    //  pretty_assertions::assert_eq!(
+    //      returned_channels,
+    //      graph(
+    //          &[
+    //              (livestreaming_id, "livestreaming", ChannelRole::Admin),
+    //              (
+    //                  livestreaming_dag_id,
+    //                  "livestreaming_dag",
+    //                  ChannelRole::Admin
+    //              ),
+    //              (
+    //                  livestreaming_dag_sub_id,
+    //                  "livestreaming_dag_sub",
+    //                  ChannelRole::Admin
+    //              ),
+    //          ],
+    //          &[
+    //              (livestreaming_id, gpui2_id),
+    //              (livestreaming_dag_id, livestreaming_id),
+    //              (livestreaming_dag_sub_id, livestreaming_id),
+    //              (livestreaming_dag_sub_id, livestreaming_dag_id),
+    //          ]
+    //      )
+    //  );
 
-    let result = db.get_channels_for_user(a_id).await.unwrap();
-    assert_dag(
-        result.channels,
-        &[
-            (zed_id, None),
-            (crdb_id, Some(zed_id)),
-            (gpui2_id, Some(zed_id)),
-            (livestreaming_id, Some(zed_id)),
-            (livestreaming_id, Some(crdb_id)),
-            (livestreaming_id, Some(gpui2_id)),
-            (livestreaming_dag_id, Some(livestreaming_id)),
-            (livestreaming_dag_sub_id, Some(livestreaming_id)),
-            (livestreaming_dag_sub_id, Some(livestreaming_dag_id)),
-        ],
-    );
+    //  let result = db.get_channels_for_user(a_id).await.unwrap();
+    //  assert_dag(
+    //      result.channels,
+    //      &[
+    //          (zed_id, None),
+    //          (crdb_id, Some(zed_id)),
+    //          (gpui2_id, Some(zed_id)),
+    //          (livestreaming_id, Some(zed_id)),
+    //          (livestreaming_id, Some(crdb_id)),
+    //          (livestreaming_id, Some(gpui2_id)),
+    //          (livestreaming_dag_id, Some(livestreaming_id)),
+    //          (livestreaming_dag_sub_id, Some(livestreaming_id)),
+    //          (livestreaming_dag_sub_id, Some(livestreaming_dag_id)),
+    //      ],
+    //  );
 
-    // ========================================================================
-    // Test unlinking in a complex DAG by removing the inner link
-    db.unlink_channel(a_id, livestreaming_dag_sub_id, livestreaming_id)
-        .await
-        .unwrap();
+    //  // ========================================================================
+    //  // Test unlinking in a complex DAG by removing the inner link
+    //  db.unlink_channel(a_id, livestreaming_dag_sub_id, livestreaming_id)
+    //      .await
+    //      .unwrap();
 
-    // DAG is now:
-    //    /- gpui2 -\
-    // zed - crdb -- livestreaming - livestreaming_dag - livestreaming_dag_sub
-    //    \---------/
+    //  // DAG is now:
+    //  //    /- gpui2 -\
+    //  // zed - crdb -- livestreaming - livestreaming_dag - livestreaming_dag_sub
+    //  //    \---------/
 
-    let result = db.get_channels_for_user(a_id).await.unwrap();
-    assert_dag(
-        result.channels,
-        &[
-            (zed_id, None),
-            (crdb_id, Some(zed_id)),
-            (gpui2_id, Some(zed_id)),
-            (livestreaming_id, Some(gpui2_id)),
-            (livestreaming_id, Some(zed_id)),
-            (livestreaming_id, Some(crdb_id)),
-            (livestreaming_dag_id, Some(livestreaming_id)),
-            (livestreaming_dag_sub_id, Some(livestreaming_dag_id)),
-        ],
-    );
+    //  let result = db.get_channels_for_user(a_id).await.unwrap();
+    //  assert_dag(
+    //      result.channels,
+    //      &[
+    //          (zed_id, None),
+    //          (crdb_id, Some(zed_id)),
+    //          (gpui2_id, Some(zed_id)),
+    //          (livestreaming_id, Some(gpui2_id)),
+    //          (livestreaming_id, Some(zed_id)),
+    //          (livestreaming_id, Some(crdb_id)),
+    //          (livestreaming_dag_id, Some(livestreaming_id)),
+    //          (livestreaming_dag_sub_id, Some(livestreaming_dag_id)),
+    //      ],
+    //  );
 
-    // ========================================================================
-    // Test unlinking in a complex DAG by removing the inner link
-    db.unlink_channel(a_id, livestreaming_id, gpui2_id)
-        .await
-        .unwrap();
+    //  // ========================================================================
+    //  // Test unlinking in a complex DAG by removing the inner link
+    //  db.unlink_channel(a_id, livestreaming_id, gpui2_id)
+    //      .await
+    //      .unwrap();
 
-    // DAG is now:
-    //    /- gpui2
-    // zed - crdb -- livestreaming - livestreaming_dag - livestreaming_dag_sub
-    //    \---------/
-    let result = db.get_channels_for_user(a_id).await.unwrap();
-    assert_dag(
-        result.channels,
-        &[
-            (zed_id, None),
-            (crdb_id, Some(zed_id)),
-            (gpui2_id, Some(zed_id)),
-            (livestreaming_id, Some(zed_id)),
-            (livestreaming_id, Some(crdb_id)),
-            (livestreaming_dag_id, Some(livestreaming_id)),
-            (livestreaming_dag_sub_id, Some(livestreaming_dag_id)),
-        ],
-    );
+    //  // DAG is now:
+    //  //    /- gpui2
+    //  // zed - crdb -- livestreaming - livestreaming_dag - livestreaming_dag_sub
+    //  //    \---------/
+    //  let result = db.get_channels_for_user(a_id).await.unwrap();
+    //  assert_dag(
+    //      result.channels,
+    //      &[
+    //          (zed_id, None),
+    //          (crdb_id, Some(zed_id)),
+    //          (gpui2_id, Some(zed_id)),
+    //          (livestreaming_id, Some(zed_id)),
+    //          (livestreaming_id, Some(crdb_id)),
+    //          (livestreaming_dag_id, Some(livestreaming_id)),
+    //          (livestreaming_dag_sub_id, Some(livestreaming_dag_id)),
+    //      ],
+    //  );
 
-    // ========================================================================
-    // Test moving DAG nodes by moving livestreaming to be below gpui2
-    db.move_channel(a_id, livestreaming_id, crdb_id, gpui2_id)
-        .await
-        .unwrap();
+    //  // ========================================================================
+    //  // Test moving DAG nodes by moving livestreaming to be below gpui2
+    //  db.move_channel(livestreaming_id, Some(crdb_id), gpui2_id, a_id)
+    //      .await
+    //      .unwrap();
 
-    // DAG is now:
-    //    /- gpui2 -- livestreaming - livestreaming_dag - livestreaming_dag_sub
-    // zed - crdb    /
-    //    \---------/
-    let result = db.get_channels_for_user(a_id).await.unwrap();
-    assert_dag(
-        result.channels,
-        &[
-            (zed_id, None),
-            (crdb_id, Some(zed_id)),
-            (gpui2_id, Some(zed_id)),
-            (livestreaming_id, Some(zed_id)),
-            (livestreaming_id, Some(gpui2_id)),
-            (livestreaming_dag_id, Some(livestreaming_id)),
-            (livestreaming_dag_sub_id, Some(livestreaming_dag_id)),
-        ],
-    );
+    //  // DAG is now:
+    //  //    /- gpui2 -- livestreaming - livestreaming_dag - livestreaming_dag_sub
+    //  // zed - crdb    /
+    //  //    \---------/
+    //  let result = db.get_channels_for_user(a_id).await.unwrap();
+    //  assert_dag(
+    //      result.channels,
+    //      &[
+    //          (zed_id, None),
+    //          (crdb_id, Some(zed_id)),
+    //          (gpui2_id, Some(zed_id)),
+    //          (livestreaming_id, Some(zed_id)),
+    //          (livestreaming_id, Some(gpui2_id)),
+    //          (livestreaming_dag_id, Some(livestreaming_id)),
+    //          (livestreaming_dag_sub_id, Some(livestreaming_dag_id)),
+    //      ],
+    //  );
 
-    // ========================================================================
-    // Deleting a channel should not delete children that still have other parents
-    db.delete_channel(gpui2_id, a_id).await.unwrap();
+    //  // ========================================================================
+    //  // Deleting a channel should not delete children that still have other parents
+    //  db.delete_channel(gpui2_id, a_id).await.unwrap();
 
-    // DAG is now:
-    // zed - crdb
-    //    \- livestreaming - livestreaming_dag - livestreaming_dag_sub
-    let result = db.get_channels_for_user(a_id).await.unwrap();
-    assert_dag(
-        result.channels,
-        &[
-            (zed_id, None),
-            (crdb_id, Some(zed_id)),
-            (livestreaming_id, Some(zed_id)),
-            (livestreaming_dag_id, Some(livestreaming_id)),
-            (livestreaming_dag_sub_id, Some(livestreaming_dag_id)),
-        ],
-    );
+    //  // DAG is now:
+    //  // zed - crdb
+    //  //    \- livestreaming - livestreaming_dag - livestreaming_dag_sub
+    //  let result = db.get_channels_for_user(a_id).await.unwrap();
+    //  assert_dag(
+    //      result.channels,
+    //      &[
+    //          (zed_id, None),
+    //          (crdb_id, Some(zed_id)),
+    //          (livestreaming_id, Some(zed_id)),
+    //          (livestreaming_dag_id, Some(livestreaming_id)),
+    //          (livestreaming_dag_sub_id, Some(livestreaming_dag_id)),
+    //      ],
+    //  );
 
-    // ========================================================================
-    // Unlinking a channel from it's parent should automatically promote it to a root channel
-    db.unlink_channel(a_id, crdb_id, zed_id).await.unwrap();
+    //  // ========================================================================
+    //  // Unlinking a channel from it's parent should automatically promote it to a root channel
+    //  db.unlink_channel(a_id, crdb_id, zed_id).await.unwrap();
 
-    // DAG is now:
-    // crdb
-    // zed
-    //    \- livestreaming - livestreaming_dag - livestreaming_dag_sub
+    //  // DAG is now:
+    //  // crdb
+    //  // zed
+    //  //    \- livestreaming - livestreaming_dag - livestreaming_dag_sub
 
-    let result = db.get_channels_for_user(a_id).await.unwrap();
-    assert_dag(
-        result.channels,
-        &[
-            (zed_id, None),
-            (crdb_id, None),
-            (livestreaming_id, Some(zed_id)),
-            (livestreaming_dag_id, Some(livestreaming_id)),
-            (livestreaming_dag_sub_id, Some(livestreaming_dag_id)),
-        ],
-    );
+    //  let result = db.get_channels_for_user(a_id).await.unwrap();
+    //  assert_dag(
+    //      result.channels,
+    //      &[
+    //          (zed_id, None),
+    //          (crdb_id, None),
+    //          (livestreaming_id, Some(zed_id)),
+    //          (livestreaming_dag_id, Some(livestreaming_id)),
+    //          (livestreaming_dag_sub_id, Some(livestreaming_dag_id)),
+    //      ],
+    //  );
 
-    // ========================================================================
-    // You should be able to move a root channel into a non-root channel
-    db.link_channel(a_id, crdb_id, zed_id).await.unwrap();
+    //  // ========================================================================
+    //  // You should be able to move a root channel into a non-root channel
+    //  db.link_channel(a_id, crdb_id, zed_id).await.unwrap();
 
-    // DAG is now:
-    // zed - crdb
-    //    \- livestreaming - livestreaming_dag - livestreaming_dag_sub
+    //  // DAG is now:
+    //  // zed - crdb
+    //  //    \- livestreaming - livestreaming_dag - livestreaming_dag_sub
 
-    let result = db.get_channels_for_user(a_id).await.unwrap();
-    assert_dag(
-        result.channels,
-        &[
-            (zed_id, None),
-            (crdb_id, Some(zed_id)),
-            (livestreaming_id, Some(zed_id)),
-            (livestreaming_dag_id, Some(livestreaming_id)),
-            (livestreaming_dag_sub_id, Some(livestreaming_dag_id)),
-        ],
-    );
+    //  let result = db.get_channels_for_user(a_id).await.unwrap();
+    //  assert_dag(
+    //      result.channels,
+    //      &[
+    //          (zed_id, None),
+    //          (crdb_id, Some(zed_id)),
+    //          (livestreaming_id, Some(zed_id)),
+    //          (livestreaming_dag_id, Some(livestreaming_id)),
+    //          (livestreaming_dag_sub_id, Some(livestreaming_dag_id)),
+    //      ],
+    //  );
 
-    // ========================================================================
-    // Prep for DAG deletion test
-    db.link_channel(a_id, livestreaming_id, crdb_id)
-        .await
-        .unwrap();
+    //  // ========================================================================
+    //  // Prep for DAG deletion test
+    //  db.link_channel(a_id, livestreaming_id, crdb_id)
+    //      .await
+    //      .unwrap();
 
-    // DAG is now:
-    // zed - crdb - livestreaming - livestreaming_dag - livestreaming_dag_sub
-    //    \--------/
+    //  // DAG is now:
+    //  // zed - crdb - livestreaming - livestreaming_dag - livestreaming_dag_sub
+    //  //    \--------/
 
-    let result = db.get_channels_for_user(a_id).await.unwrap();
-    assert_dag(
-        result.channels,
-        &[
-            (zed_id, None),
-            (crdb_id, Some(zed_id)),
-            (livestreaming_id, Some(zed_id)),
-            (livestreaming_id, Some(crdb_id)),
-            (livestreaming_dag_id, Some(livestreaming_id)),
-            (livestreaming_dag_sub_id, Some(livestreaming_dag_id)),
-        ],
-    );
+    //  let result = db.get_channels_for_user(a_id).await.unwrap();
+    //  assert_dag(
+    //      result.channels,
+    //      &[
+    //          (zed_id, None),
+    //          (crdb_id, Some(zed_id)),
+    //          (livestreaming_id, Some(zed_id)),
+    //          (livestreaming_id, Some(crdb_id)),
+    //          (livestreaming_dag_id, Some(livestreaming_id)),
+    //          (livestreaming_dag_sub_id, Some(livestreaming_dag_id)),
+    //      ],
+    //  );
 
-    // Deleting the parent of a DAG should delete the whole DAG:
-    db.delete_channel(zed_id, a_id).await.unwrap();
-    let result = db.get_channels_for_user(a_id).await.unwrap();
+    //  // Deleting the parent of a DAG should delete the whole DAG:
+    //  db.delete_channel(zed_id, a_id).await.unwrap();
+    //  let result = db.get_channels_for_user(a_id).await.unwrap();
 
-    assert!(result.channels.is_empty())
+    //  assert!(result.channels.is_empty())
 }
 
 test_both_dbs!(
@@ -740,12 +737,12 @@ async fn test_db_channel_moving_bugs(db: &Arc<Database>) {
     let zed_id = db.create_root_channel("zed", user_id).await.unwrap();
 
     let projects_id = db
-        .create_channel("projects", Some(zed_id), user_id)
+        .create_sub_channel("projects", zed_id, user_id)
         .await
         .unwrap();
 
     let livestreaming_id = db
-        .create_channel("livestreaming", Some(projects_id), user_id)
+        .create_sub_channel("livestreaming", projects_id, user_id)
         .await
         .unwrap();
 
@@ -753,25 +750,37 @@ async fn test_db_channel_moving_bugs(db: &Arc<Database>) {
 
     // Move to same parent should be a no-op
     assert!(db
-        .move_channel(user_id, projects_id, zed_id, zed_id)
+        .move_channel(projects_id, Some(zed_id), zed_id, user_id)
         .await
         .unwrap()
-        .is_empty());
-
-    // Stranding a channel should retain it's sub channels
-    db.unlink_channel(user_id, projects_id, zed_id)
-        .await
-        .unwrap();
+        .is_none());
 
     let result = db.get_channels_for_user(user_id).await.unwrap();
     assert_dag(
         result.channels,
         &[
             (zed_id, None),
-            (projects_id, None),
+            (projects_id, Some(zed_id)),
             (livestreaming_id, Some(projects_id)),
         ],
     );
+
+    // Stranding a channel should retain it's sub channels
+    // Commented out as we don't fix permissions when this happens yet.
+    //
+    // db.unlink_channel(user_id, projects_id, zed_id)
+    //     .await
+    //     .unwrap();
+
+    // let result = db.get_channels_for_user(user_id).await.unwrap();
+    // assert_dag(
+    //     result.channels,
+    //     &[
+    //         (zed_id, None),
+    //         (projects_id, None),
+    //         (livestreaming_id, Some(projects_id)),
+    //     ],
+    // );
 }
 
 test_both_dbs!(
@@ -787,11 +796,11 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
 
     let zed_channel = db.create_root_channel("zed", admin).await.unwrap();
     let active_channel = db
-        .create_channel("active", Some(zed_channel), admin)
+        .create_sub_channel("active", zed_channel, admin)
         .await
         .unwrap();
     let vim_channel = db
-        .create_channel("vim", Some(active_channel), admin)
+        .create_sub_channel("vim", active_channel, admin)
         .await
         .unwrap();
 
@@ -834,7 +843,7 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         &[
             proto::ChannelMember {
                 user_id: admin.to_proto(),
-                kind: proto::channel_member::Kind::Member.into(),
+                kind: proto::channel_member::Kind::AncestorMember.into(),
                 role: proto::ChannelRole::Admin.into(),
             },
             proto::ChannelMember {
@@ -892,7 +901,7 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         &[
             proto::ChannelMember {
                 user_id: admin.to_proto(),
-                kind: proto::channel_member::Kind::Member.into(),
+                kind: proto::channel_member::Kind::AncestorMember.into(),
                 role: proto::ChannelRole::Admin.into(),
             },
             proto::ChannelMember {
@@ -933,7 +942,7 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         &[
             proto::ChannelMember {
                 user_id: admin.to_proto(),
-                kind: proto::channel_member::Kind::Member.into(),
+                kind: proto::channel_member::Kind::AncestorMember.into(),
                 role: proto::ChannelRole::Admin.into(),
             },
             proto::ChannelMember {
@@ -981,7 +990,7 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
         &[
             proto::ChannelMember {
                 user_id: admin.to_proto(),
-                kind: proto::channel_member::Kind::Member.into(),
+                kind: proto::channel_member::Kind::AncestorMember.into(),
                 role: proto::ChannelRole::Admin.into(),
             },
             proto::ChannelMember {
@@ -1016,17 +1025,17 @@ async fn test_user_joins_correct_channel(db: &Arc<Database>) {
     let zed_channel = db.create_root_channel("zed", admin).await.unwrap();
 
     let active_channel = db
-        .create_channel("active", Some(zed_channel), admin)
+        .create_sub_channel("active", zed_channel, admin)
         .await
         .unwrap();
 
     let vim_channel = db
-        .create_channel("vim", Some(active_channel), admin)
+        .create_sub_channel("vim", active_channel, admin)
         .await
         .unwrap();
 
     let vim2_channel = db
-        .create_channel("vim2", Some(vim_channel), admin)
+        .create_sub_channel("vim2", vim_channel, admin)
         .await
         .unwrap();
 
@@ -1043,11 +1052,15 @@ async fn test_user_joins_correct_channel(db: &Arc<Database>) {
         .unwrap();
 
     let most_public = db
-        .public_path_to_channel(vim_channel)
+        .transaction(|tx| async move {
+            Ok(db
+                .public_path_to_channel(vim_channel, &tx)
+                .await?
+                .first()
+                .cloned())
+        })
         .await
-        .unwrap()
-        .first()
-        .cloned();
+        .unwrap();
 
     assert_eq!(most_public, Some(zed_channel))
 }

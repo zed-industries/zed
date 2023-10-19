@@ -482,9 +482,7 @@ impl Database {
                 )
                 .await?;
 
-                channel_members = self
-                    .get_channel_participants_internal(channel_id, &*tx)
-                    .await?;
+                channel_members = self.get_channel_participants(channel_id, &*tx).await?;
                 let collaborators = self
                     .get_channel_buffer_collaborators_internal(channel_id, &*tx)
                     .await?;

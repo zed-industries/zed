@@ -428,12 +428,48 @@ pub struct NewUserResult {
     pub signup_device_id: Option<String>,
 }
 
+#[derive(Debug)]
+pub struct MoveChannelResult {
+    pub participants_to_update: HashMap<UserId, ChannelsForUser>,
+    pub participants_to_remove: HashSet<UserId>,
+    pub moved_channels: HashSet<ChannelId>,
+}
+
+#[derive(Debug)]
+pub struct RenameChannelResult {
+    pub channel: Channel,
+    pub participants_to_update: HashMap<UserId, Channel>,
+}
+
+#[derive(Debug)]
+pub struct CreateChannelResult {
+    pub channel: Channel,
+    pub participants_to_update: Vec<(UserId, ChannelsForUser)>,
+}
+
+#[derive(Debug)]
+pub struct SetChannelVisibilityResult {
+    pub participants_to_update: HashMap<UserId, ChannelsForUser>,
+    pub participants_to_remove: HashSet<UserId>,
+}
+
 #[derive(FromQueryResult, Debug, PartialEq, Eq, Hash)]
 pub struct Channel {
     pub id: ChannelId,
     pub name: String,
     pub visibility: ChannelVisibility,
     pub role: ChannelRole,
+}
+
+impl Channel {
+    pub fn to_proto(&self) -> proto::Channel {
+        proto::Channel {
+            id: self.id.to_proto(),
+            name: self.name.clone(),
+            visibility: self.visibility.into(),
+            role: self.role.into(),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]

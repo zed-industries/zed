@@ -183,9 +183,7 @@ impl Database {
             )
             .await?;
 
-            let mut channel_members = self
-                .get_channel_participants_internal(channel_id, &*tx)
-                .await?;
+            let mut channel_members = self.get_channel_participants(channel_id, &*tx).await?;
             channel_members.retain(|member| !participant_user_ids.contains(member));
 
             Ok((
