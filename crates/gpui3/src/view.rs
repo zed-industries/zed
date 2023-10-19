@@ -164,7 +164,7 @@ impl<V: Send + Sync + 'static> ViewObject for View<V> {
     }
 
     fn initialize(&mut self, cx: &mut WindowContext) -> AnyBox {
-        cx.with_element_id(self.entity_id(), |cx| {
+        cx.with_element_id(self.entity_id(), |_global_id, cx| {
             self.state.update(cx, |state, cx| {
                 let mut any_element = Box::new((self.render)(state, cx));
                 any_element.initialize(state, cx);
@@ -174,7 +174,7 @@ impl<V: Send + Sync + 'static> ViewObject for View<V> {
     }
 
     fn layout(&mut self, element: &mut AnyBox, cx: &mut WindowContext) -> LayoutId {
-        cx.with_element_id(self.entity_id(), |cx| {
+        cx.with_element_id(self.entity_id(), |_global_id, cx| {
             self.state.update(cx, |state, cx| {
                 let element = element.downcast_mut::<AnyElement<V>>().unwrap();
                 element.layout(state, cx)
@@ -183,7 +183,7 @@ impl<V: Send + Sync + 'static> ViewObject for View<V> {
     }
 
     fn paint(&mut self, _: Bounds<Pixels>, element: &mut AnyBox, cx: &mut WindowContext) {
-        cx.with_element_id(self.entity_id(), |cx| {
+        cx.with_element_id(self.entity_id(), |_global_id, cx| {
             self.state.update(cx, |state, cx| {
                 let element = element.downcast_mut::<AnyElement<V>>().unwrap();
                 element.paint(state, None, cx);

@@ -1043,6 +1043,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                                 // we don't match cmd/fn because they don't seem to use IME
                                 modifiers: Default::default(),
                                 key: ime_text.clone().unwrap(),
+                                ime_key: None, // todo!("handle IME key")
                             },
                         };
                         handled = callback(InputEvent::KeyDown(event_with_ime_text));
@@ -1203,6 +1204,7 @@ extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
     let keystroke = Keystroke {
         modifiers: Default::default(),
         key: ".".into(),
+        ime_key: None,
     };
     let event = InputEvent::KeyDown(KeyDownEvent {
         keystroke: keystroke.clone(),

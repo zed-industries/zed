@@ -1,10 +1,10 @@
 use crate::{
     Active, Anonymous, AnyElement, AppContext, BorrowWindow, Bounds, Click, DispatchPhase, Element,
     ElementFocusability, ElementId, ElementIdentity, EventListeners, Focus, FocusHandle, Focusable,
-    Hover, Identified, Interactive, IntoAnyElement, KeyDownEvent, KeyMatch, LayoutId,
-    MouseClickEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, NonFocusable, Overflow,
-    ParentElement, Pixels, Point, ScrollWheelEvent, SharedString, Style, StyleRefinement, Styled,
-    ViewContext,
+    GlobalElementId, Hover, Identified, Interactive, IntoAnyElement, KeyDownEvent, KeyMatch,
+    LayoutId, MouseClickEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, NonFocusable,
+    Overflow, ParentElement, Pixels, Point, ScrollWheelEvent, SharedString, Style, StyleRefinement,
+    Styled, ViewContext,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -188,12 +188,12 @@ where
     fn with_element_id<R>(
         &mut self,
         cx: &mut ViewContext<V>,
-        f: impl FnOnce(&mut Self, &mut ViewContext<V>) -> R,
+        f: impl FnOnce(&mut Self, Option<GlobalElementId>, &mut ViewContext<V>) -> R,
     ) -> R {
         if let Some(id) = self.id() {
-            cx.with_element_id(id, |cx| f(self, cx))
+            cx.with_element_id(id, |global_id, cx| f(self, Some(global_id), cx))
         } else {
-            f(self, cx)
+            f(self, None, cx)
         }
     }
 
@@ -424,46 +424,49 @@ where
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<Self::ViewState>,
     ) -> Self::ElementState {
-        let element_state = element_state.unwrap_or_default();
-        for listener in self.listeners.focus.iter().cloned() {
-            cx.on_focus_changed(move |view, event, cx| listener(view, event, cx));
-        }
+        self.with_element_id(cx, |this, global_id, cx| {
+            let element_state = element_state.unwrap_or_default();
+            for listener in this.listeners.focus.iter().cloned() {
+                cx.on_focus_changed(move |view, event, cx| listener(view, event, cx));
+            }
 
-        let mut key_listeners = mem::take(&mut self.listeners.key);
+            let mut key_listeners = mem::take(&mut this.listeners.key);
 
-        if let Some(id) = self.id() {
-            key_listeners.push((
-                TypeId::of::<KeyDownEvent>(),
-                Arc::new(move |_, key_down, phase, cx| {
-                    if phase == DispatchPhase::Bubble {
-                        let key_down = key_down.downcast_ref::<KeyDownEvent>().unwrap();
-                        if let KeyMatch::Some(action) = cx.match_keystroke(&id, &key_down.keystroke)
-                        {
-                            return Some(action);
+            if let Some(global_id) = global_id {
+                key_listeners.push((
+                    TypeId::of::<KeyDownEvent>(),
+                    Arc::new(move |_, key_down, phase, cx| {
+                        if phase == DispatchPhase::Bubble {
+                            let key_down = key_down.downcast_ref::<KeyDownEvent>().unwrap();
+                            if let KeyMatch::Some(action) =
+                                cx.match_keystroke(&global_id, &key_down.keystroke)
+                            {
+                                return Some(action);
+                            }
                         }
-                    }
 
-                    None
-                }),
-            ));
-        }
+                        None
+                    }),
+                ));
+            }
 
-        cx.with_key_listeners(&key_listeners, |cx| {
-            if let Some(focus_handle) = self.focusability.focus_handle().cloned() {
-                cx.with_focus(focus_handle, |cx| {
-                    for child in &mut self.children {
+            cx.with_key_listeners(&key_listeners, |cx| {
+                if let Some(focus_handle) = this.focusability.focus_handle().cloned() {
+                    cx.with_focus(focus_handle, |cx| {
+                        for child in &mut this.children {
+                            child.initialize(view_state, cx);
+                        }
+                    })
+                } else {
+                    for child in &mut this.children {
                         child.initialize(view_state, cx);
                     }
-                })
-            } else {
-                for child in &mut self.children {
-                    child.initialize(view_state, cx);
                 }
-            }
-        });
-        self.listeners.key = key_listeners;
+            });
+            this.listeners.key = key_listeners;
 
-        element_state
+            element_state
+        })
     }
 
     fn layout(
@@ -474,7 +477,7 @@ where
     ) -> LayoutId {
         let style = self.compute_style(Bounds::default(), element_state, cx);
         style.apply_text_style(cx, |cx| {
-            self.with_element_id(cx, |this, cx| {
+            self.with_element_id(cx, |this, _global_id, cx| {
                 let layout_ids = this
                     .children
                     .iter_mut()
@@ -492,7 +495,7 @@ where
         element_state: &mut Self::ElementState,
         cx: &mut ViewContext<Self::ViewState>,
     ) {
-        self.with_element_id(cx, |this, cx| {
+        self.with_element_id(cx, |this, _global_id, cx| {
             if let Some(group) = this.group.clone() {
                 cx.default_global::<GroupBounds>()
                     .0

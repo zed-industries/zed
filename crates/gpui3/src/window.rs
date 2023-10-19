@@ -1,12 +1,13 @@
 use crate::{
-    px, size, AnyBox, AnyView, AppContext, AsyncWindowContext, AvailableSpace, BorrowAppContext,
-    Bounds, BoxShadow, Context, Corners, DevicePixels, DisplayId, Edges, Effect, Element, EntityId,
-    EventEmitter, FocusEvent, FontId, GlobalElementId, GlyphId, Handle, Hsla, ImageData,
-    InputEvent, IsZero, KeyListener, KeyMatch, Keystroke, LayoutId, MainThread, MainThreadOnly,
-    MonochromeSprite, MouseMoveEvent, Path, Pixels, Platform, PlatformAtlas, PlatformWindow, Point,
-    PolychromeSprite, Quad, Reference, RenderGlyphParams, RenderImageParams, RenderSvgParams,
-    ScaledPixels, SceneBuilder, Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine,
-    Task, Underline, UnderlineStyle, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
+    px, size, Action, AnyBox, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
+    BorrowAppContext, Bounds, BoxShadow, Context, Corners, DevicePixels, DisplayId, Edges, Effect,
+    Element, EntityId, EventEmitter, FocusEvent, FontId, GlobalElementId, GlyphId, Handle, Hsla,
+    ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeymapMatcher, Keystroke, LayoutId,
+    MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path, Pixels, Platform,
+    PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
+    Style, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle,
+    WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -46,7 +47,10 @@ pub enum DispatchPhase {
 
 type AnyListener = Arc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
 type AnyKeyListener = Arc<
-    dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) -> Option<AnyBox> + Send + Sync + 'static,
+    dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) -> Option<Box<dyn Action>>
+        + Send
+        + Sync
+        + 'static,
 >;
 type AnyFocusListener = Arc<dyn Fn(&FocusEvent, &mut WindowContext) + Send + Sync + 'static>;
 
@@ -144,8 +148,10 @@ pub struct Window {
     layout_engine: TaffyLayoutEngine,
     pub(crate) root_view: Option<AnyView>,
     pub(crate) element_id_stack: GlobalElementId,
-    prev_element_states: HashMap<GlobalElementId, AnyBox>,
+    prev_frame_element_states: HashMap<GlobalElementId, AnyBox>,
     element_states: HashMap<GlobalElementId, AnyBox>,
+    prev_frame_key_matchers: HashMap<GlobalElementId, KeymapMatcher>,
+    key_matchers: HashMap<GlobalElementId, KeymapMatcher>,
     z_index_stack: StackingOrder,
     content_mask_stack: Vec<ContentMask<Pixels>>,
     mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyListener)>>,
@@ -217,8 +223,10 @@ impl Window {
             layout_engine: TaffyLayoutEngine::new(),
             root_view: None,
             element_id_stack: GlobalElementId::default(),
-            prev_element_states: HashMap::default(),
+            prev_frame_element_states: HashMap::default(),
             element_states: HashMap::default(),
+            prev_frame_key_matchers: HashMap::default(),
+            key_matchers: HashMap::default(),
             z_index_stack: StackingOrder(SmallVec::new()),
             content_mask_stack: Vec::new(),
             mouse_listeners: HashMap::default(),
@@ -767,7 +775,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
             cx.window.root_view = Some(root_view);
             let scene = cx.window.scene_builder.build();
-            cx.end_frame();
 
             cx.run_on_main(view, |_, cx| {
                 cx.window
@@ -797,12 +804,27 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 
     fn start_frame(&mut self) {
-        // Make the current element states the previous, and then clear the current.
-        // The empty element states map will be populated for any element states we
-        // reference during the upcoming frame.
+        self.text_system().start_frame();
+
         let window = &mut *self.window;
-        mem::swap(&mut window.element_states, &mut window.prev_element_states);
+
+        // Move the current frame element states to the previous frame.
+        // The new empty element states map will be populated for any element states we
+        // reference during the upcoming frame.
+        mem::swap(
+            &mut window.element_states,
+            &mut window.prev_frame_element_states,
+        );
         window.element_states.clear();
+
+        // Make the current key matchers the previous, and then clear the current.
+        // An empty key matcher map will be created for every identified element in the
+        // upcoming frame.
+        mem::swap(
+            &mut window.key_matchers,
+            &mut window.prev_frame_key_matchers,
+        );
+        window.key_matchers.clear();
 
         // Clear mouse event listeners, because elements add new element listeners
         // when the upcoming frame is painted.
@@ -814,10 +836,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         window.key_listeners.clear();
         window.focus_parents_by_child.clear();
         window.key_events_enabled = true;
-    }
-
-    fn end_frame(&mut self) {
-        self.text_system().end_frame();
     }
 
     fn dispatch_event(&mut self, event: InputEvent) -> bool {
@@ -905,15 +923,32 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         true
     }
 
-    pub fn match_keystroke(&mut self, element_id: &ElementId, keystroke: &Keystroke) -> KeyMatch {
-        todo!();
+    pub fn match_keystroke(
+        &mut self,
+        element_id: &GlobalElementId,
+        keystroke: &Keystroke,
+    ) -> KeyMatch {
+        let key_match = self
+            .window
+            .key_matchers
+            .get_mut(element_id)
+            .unwrap()
+            .match_keystroke(keystroke, &[]);
+
+        if key_match.is_some() {
+            for matcher in self.window.key_matchers.values_mut() {
+                matcher.clear_pending();
+            }
+        }
+
+        key_match
     }
 
-    fn dispatch_action(&mut self, action: AnyBox, listeners: &[(TypeId, AnyKeyListener)]) {
+    fn dispatch_action(&mut self, action: Box<dyn Action>, listeners: &[(TypeId, AnyKeyListener)]) {
         let action_type = action.type_id();
         for (event_type, listener) in listeners {
             if action_type == *event_type {
-                listener(action.as_ref(), DispatchPhase::Capture, self);
+                listener(action.as_any(), DispatchPhase::Capture, self);
                 if !self.window.propagate {
                     break;
                 }
@@ -923,7 +958,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         if self.window.propagate {
             for (event_type, listener) in listeners.iter().rev() {
                 if action_type == *event_type {
-                    listener(action.as_ref(), DispatchPhase::Capture, self);
+                    listener(action.as_any(), DispatchPhase::Capture, self);
                     if !self.window.propagate {
                         break;
                     }
@@ -998,10 +1033,11 @@ pub trait BorrowWindow: BorrowAppContext {
     fn with_element_id<R>(
         &mut self,
         id: impl Into<ElementId>,
-        f: impl FnOnce(&mut Self) -> R,
+        f: impl FnOnce(GlobalElementId, &mut Self) -> R,
     ) -> R {
         self.window_mut().element_id_stack.push(id.into());
-        let result = f(self);
+        let global_id = self.window_mut().element_id_stack.clone();
+        let result = f(global_id, self);
         self.window_mut().element_id_stack.pop();
         result
     }
@@ -1023,13 +1059,12 @@ pub trait BorrowWindow: BorrowAppContext {
         id: ElementId,
         f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
     ) -> R {
-        self.with_element_id(id, |cx| {
-            let global_id = cx.window_mut().element_id_stack.clone();
+        self.with_element_id(id, |global_id, cx| {
             if let Some(any) = cx
                 .window_mut()
                 .element_states
                 .remove(&global_id)
-                .or_else(|| cx.window_mut().prev_element_states.remove(&global_id))
+                .or_else(|| cx.window_mut().prev_frame_element_states.remove(&global_id))
             {
                 // Using the extra inner option to avoid needing to reallocate a new box.
                 let mut state_box = any

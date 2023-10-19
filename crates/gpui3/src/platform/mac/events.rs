@@ -325,6 +325,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             function,
         },
         key,
+        ime_key: None,
     }
 }
 

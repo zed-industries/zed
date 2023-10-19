@@ -167,7 +167,7 @@ impl LineLayoutCache {
         }
     }
 
-    pub fn end_frame(&self) {
+    pub fn start_frame(&self) {
         let mut prev_frame = self.prev_frame.lock();
         let mut curr_frame = self.curr_frame.write();
         std::mem::swap(&mut *prev_frame, &mut *curr_frame);

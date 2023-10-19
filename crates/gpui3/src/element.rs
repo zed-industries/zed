@@ -33,7 +33,7 @@ pub trait Element: 'static + Send + Sync + IntoAnyElement<Self::ViewState> {
 }
 
 #[derive(Deref, DerefMut, Default, Clone, Debug, Eq, PartialEq, Hash)]
-pub(crate) struct GlobalElementId(SmallVec<[ElementId; 8]>);
+pub struct GlobalElementId(SmallVec<[ElementId; 8]>);
 
 pub trait ElementIdentity: 'static + Send + Sync {
     fn id(&self) -> Option<ElementId>;
