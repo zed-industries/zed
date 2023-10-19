@@ -103,7 +103,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
- "tiktoken-rs 0.5.4",
+ "tiktoken-rs",
  "util",
 ]
 
@@ -316,12 +316,13 @@ dependencies = [
  "regex",
  "schemars",
  "search",
+ "semantic_index",
  "serde",
  "serde_json",
  "settings",
  "smol",
  "theme",
- "tiktoken-rs 0.4.5",
+ "tiktoken-rs",
  "util",
  "uuid 1.4.1",
  "workspace",
@@ -1466,7 +1467,7 @@ dependencies = [
 
 [[package]]
 name = "collab"
-version = "0.24.0"
+version = "0.25.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1629,6 +1630,7 @@ dependencies = [
  "theme",
  "util",
  "workspace",
+ "zed-actions",
 ]
 
 [[package]]
@@ -6975,7 +6977,7 @@ dependencies = [
  "smol",
  "tempdir",
  "theme",
- "tiktoken-rs 0.5.4",
+ "tiktoken-rs",
  "tree-sitter",
  "tree-sitter-cpp",
  "tree-sitter-elixir",
@@ -8164,21 +8166,6 @@ dependencies = [
  "jpeg-decoder",
  "miniz_oxide 0.4.4",
  "weezl",
-]
-
-[[package]]
-name = "tiktoken-rs"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52aacc1cff93ba9d5f198c62c49c77fa0355025c729eed3326beaf7f33bc8614"
-dependencies = [
- "anyhow",
- "base64 0.21.4",
- "bstr",
- "fancy-regex",
- "lazy_static",
- "parking_lot 0.12.1",
- "rustc-hash",
 ]
 
 [[package]]
@@ -10103,7 +10090,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.109.0"
+version = "0.110.0"
 dependencies = [
  "activity_indicator",
  "ai",
@@ -10238,6 +10225,7 @@ name = "zed-actions"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "serde",
 ]
 
 [[package]]

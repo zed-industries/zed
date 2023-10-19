@@ -1,7 +1,7 @@
-use crate::db::{channel_member, ChannelId, ChannelMemberId, UserId};
+use crate::db::{channel_member, ChannelId, ChannelMemberId, ChannelRole, UserId};
 use sea_orm::entity::prelude::*;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, DeriveEntityModel)]
+#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "channel_members")]
 pub struct Model {
     #[sea_orm(primary_key)]
@@ -9,7 +9,7 @@ pub struct Model {
     pub channel_id: ChannelId,
     pub user_id: UserId,
     pub accepted: bool,
-    pub admin: bool,
+    pub role: ChannelRole,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

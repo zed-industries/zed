@@ -44,7 +44,7 @@ CREATE UNIQUE INDEX "index_rooms_on_channel_id" ON "rooms" ("channel_id");
 
 CREATE TABLE "projects" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "room_id" INTEGER REFERENCES rooms (id) NOT NULL,
+    "room_id" INTEGER REFERENCES rooms (id) ON DELETE CASCADE NOT NULL,
     "host_user_id" INTEGER REFERENCES users (id) NOT NULL,
     "host_connection_id" INTEGER,
     "host_connection_server_id" INTEGER REFERENCES servers (id) ON DELETE CASCADE,
@@ -192,7 +192,8 @@ CREATE INDEX "index_followers_on_room_id" ON "followers" ("room_id");
 CREATE TABLE "channels" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "name" VARCHAR NOT NULL,
-    "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "visibility" VARCHAR NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS "channel_chat_participants" (
@@ -234,6 +235,7 @@ CREATE TABLE "channel_members" (
     "channel_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE,
     "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     "admin" BOOLEAN NOT NULL DEFAULT false,
+    "role" VARCHAR,
     "accepted" BOOLEAN NOT NULL DEFAULT false,
     "updated_at" TIMESTAMP NOT NULL DEFAULT now
 );

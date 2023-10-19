@@ -233,7 +233,9 @@ impl Database {
             self.observe_channel_message_internal(channel_id, user_id, message_id, &*tx)
                 .await?;
 
-            let mut channel_members = self.get_channel_members_internal(channel_id, &*tx).await?;
+            let mut channel_members = self
+                .get_channel_participants_internal(channel_id, &*tx)
+                .await?;
             channel_members.retain(|member| !participant_user_ids.contains(member));
 
             Ok((message_id, participant_connection_ids, channel_members))
@@ -386,8 +388,22 @@ impl Database {
                 .filter(channel_message::Column::SenderId.eq(user_id))
                 .exec(&*tx)
                 .await?;
+
             if result.rows_affected == 0 {
-                Err(anyhow!("no such message"))?;
+                if self
+                    .check_user_is_channel_admin(channel_id, user_id, &*tx)
+                    .await
+                    .is_ok()
+                {
+                    let result = channel_message::Entity::delete_by_id(message_id)
+                        .exec(&*tx)
+                        .await?;
+                    if result.rows_affected == 0 {
+                        Err(anyhow!("no such message"))?;
+                    }
+                } else {
+                    Err(anyhow!("operation could not be completed"))?;
+                }
             }
 
             Ok(participant_connection_ids)

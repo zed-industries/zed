@@ -2,7 +2,7 @@ use crate::tests::TestServer;
 use gpui::{executor::Deterministic, TestAppContext};
 use notifications::NotificationEvent;
 use parking_lot::Mutex;
-use rpc::Notification;
+use rpc::{proto, Notification};
 use std::sync::Arc;
 
 #[gpui::test]
@@ -120,7 +120,7 @@ async fn test_notifications(
     client_a
         .channel_store()
         .update(cx_a, |store, cx| {
-            store.invite_member(channel_id, client_b.id(), false, cx)
+            store.invite_member(channel_id, client_b.id(), proto::ChannelRole::Member, cx)
         })
         .await
         .unwrap();

@@ -1,5 +1,5 @@
 use crate::{
-    db::{Database, MessageId, NewUserParams},
+    db::{ChannelRole, Database, MessageId, NewUserParams},
     test_both_dbs,
 };
 use channel::mentions_to_proto;
@@ -158,12 +158,13 @@ async fn test_unseen_channel_messages(db: &Arc<Database>) {
     let channel_1 = db.create_channel("channel", None, user).await.unwrap();
     let channel_2 = db.create_channel("channel-2", None, user).await.unwrap();
 
-    db.invite_channel_member(channel_1, observer, user, false)
+    db.invite_channel_member(channel_1, observer, user, ChannelRole::Member)
         .await
         .unwrap();
-    db.invite_channel_member(channel_2, observer, user, false)
+    db.invite_channel_member(channel_2, observer, user, ChannelRole::Member)
         .await
         .unwrap();
+
     db.respond_to_channel_invite(channel_1, observer, true)
         .await
         .unwrap();
@@ -341,7 +342,7 @@ async fn test_channel_message_mentions(db: &Arc<Database>) {
         .user_id;
 
     let channel = db.create_channel("channel", None, user_a).await.unwrap();
-    db.invite_channel_member(channel, user_b, user_a, false)
+    db.invite_channel_member(channel, user_b, user_a, ChannelRole::Member)
         .await
         .unwrap();
     db.respond_to_channel_invite(channel, user_b, true)

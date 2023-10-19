@@ -161,6 +161,7 @@ fn graph(channels: &[(ChannelId, &'static str)], edges: &[(ChannelId, ChannelId)
         graph.channels.push(Channel {
             id: *id,
             name: name.to_string(),
+            visibility: ChannelVisibility::Members,
         })
     }
 

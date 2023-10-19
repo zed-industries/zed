@@ -232,7 +232,7 @@ mod tests {
                             avatar: None,
                         }),
                         kind: proto::channel_member::Kind::Member,
-                        admin: false,
+                        role: proto::ChannelRole::Member,
                     },
                     ChannelMembership {
                         user: Arc::new(User {
@@ -241,7 +241,7 @@ mod tests {
                             avatar: None,
                         }),
                         kind: proto::channel_member::Kind::Member,
-                        admin: false,
+                        role: proto::ChannelRole::Member,
                     },
                 ],
                 cx,

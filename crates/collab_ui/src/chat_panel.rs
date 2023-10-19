@@ -345,8 +345,12 @@ impl ChatPanel {
     }
 
     fn render_message(&mut self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement<Self> {
-        let (message, is_continuation, is_last) = {
+        let (message, is_continuation, is_last, is_admin) = {
             let active_chat = self.active_chat.as_ref().unwrap().0.read(cx);
+            let is_admin = self
+                .channel_store
+                .read(cx)
+                .is_user_admin(active_chat.channel().id);
             let last_message = active_chat.message(ix.saturating_sub(1));
             let this_message = active_chat.message(ix);
             let is_continuation = last_message.id != this_message.id
@@ -356,6 +360,7 @@ impl ChatPanel {
                 active_chat.message(ix).clone(),
                 is_continuation,
                 active_chat.message_count() == ix + 1,
+                is_admin,
             )
         };
 
@@ -376,12 +381,13 @@ impl ChatPanel {
         };
 
         let belongs_to_user = Some(message.sender.id) == self.client.user_id();
-        let message_id_to_remove =
-            if let (ChannelMessageId::Saved(id), true) = (message.id, belongs_to_user) {
-                Some(id)
-            } else {
-                None
-            };
+        let message_id_to_remove = if let (ChannelMessageId::Saved(id), true) =
+            (message.id, belongs_to_user || is_admin)
+        {
+            Some(id)
+        } else {
+            None
+        };
 
         enum MessageBackgroundHighlight {}
         MouseEventHandler::new::<MessageBackgroundHighlight, _>(ix, cx, |state, cx| {
