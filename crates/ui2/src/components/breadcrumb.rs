@@ -41,13 +41,13 @@ impl<S: 'static + Send + Sync + Clone> Breadcrumb<S> {
         let symbols_len = self.symbols.len();
 
         h_stack()
+            .id("breadcrumb")
             .px_1()
             .text_sm()
             .text_color(color.text_muted)
             .rounded_md()
             .hover(|style| style.bg(color.ghost_element_hover))
-            // TODO: Add this when active is ready
-            // .active(|style| style.bg(color.ghost_element_active))
+            .active(|style| style.bg(color.ghost_element_active))
             .child(self.path.clone().to_str().unwrap().to_string())
             .child(if !self.symbols.is_empty() {
                 self.render_separator(cx)
