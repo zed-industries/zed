@@ -214,7 +214,7 @@ CREATE TABLE IF NOT EXISTS "channel_messages" (
     "nonce" BLOB NOT NULL
 );
 CREATE INDEX "index_channel_messages_on_channel_id" ON "channel_messages" ("channel_id");
-CREATE UNIQUE INDEX "index_channel_messages_on_nonce" ON "channel_messages" ("nonce");
+CREATE UNIQUE INDEX "index_channel_messages_on_sender_id_nonce" ON "channel_messages" ("sender_id", "nonce");
 
 CREATE TABLE "channel_message_mentions" (
     "message_id" INTEGER NOT NULL REFERENCES channel_messages (id) ON DELETE CASCADE,

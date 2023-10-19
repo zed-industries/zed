@@ -1,4 +1,5 @@
 use super::*;
+use sea_orm::TryInsertResult;
 use time::OffsetDateTime;
 
 impl Database {
@@ -184,7 +185,7 @@ impl Database {
             let timestamp = timestamp.to_offset(time::UtcOffset::UTC);
             let timestamp = time::PrimitiveDateTime::new(timestamp.date(), timestamp.time());
 
-            let message_id = channel_message::Entity::insert(channel_message::ActiveModel {
+            let result = channel_message::Entity::insert(channel_message::ActiveModel {
                 channel_id: ActiveValue::Set(channel_id),
                 sender_id: ActiveValue::Set(user_id),
                 body: ActiveValue::Set(body.to_string()),
@@ -193,45 +194,56 @@ impl Database {
                 id: ActiveValue::NotSet,
             })
             .on_conflict(
-                OnConflict::column(channel_message::Column::Nonce)
-                    .update_column(channel_message::Column::Nonce)
-                    .to_owned(),
+                OnConflict::columns([
+                    channel_message::Column::SenderId,
+                    channel_message::Column::Nonce,
+                ])
+                .do_nothing()
+                .to_owned(),
             )
+            .do_nothing()
             .exec(&*tx)
-            .await?
-            .last_insert_id;
+            .await?;
 
-            let models = mentions
-                .iter()
-                .filter_map(|mention| {
-                    let range = mention.range.as_ref()?;
-                    if !body.is_char_boundary(range.start as usize)
-                        || !body.is_char_boundary(range.end as usize)
-                    {
-                        return None;
+            let message_id;
+            match result {
+                TryInsertResult::Inserted(result) => {
+                    message_id = result.last_insert_id;
+                    let models = mentions
+                        .iter()
+                        .filter_map(|mention| {
+                            let range = mention.range.as_ref()?;
+                            if !body.is_char_boundary(range.start as usize)
+                                || !body.is_char_boundary(range.end as usize)
+                            {
+                                return None;
+                            }
+                            Some(channel_message_mention::ActiveModel {
+                                message_id: ActiveValue::Set(message_id),
+                                start_offset: ActiveValue::Set(range.start as i32),
+                                end_offset: ActiveValue::Set(range.end as i32),
+                                user_id: ActiveValue::Set(UserId::from_proto(mention.user_id)),
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    if !models.is_empty() {
+                        channel_message_mention::Entity::insert_many(models)
+                            .exec(&*tx)
+                            .await?;
                     }
-                    Some(channel_message_mention::ActiveModel {
-                        message_id: ActiveValue::Set(message_id),
-                        start_offset: ActiveValue::Set(range.start as i32),
-                        end_offset: ActiveValue::Set(range.end as i32),
-                        user_id: ActiveValue::Set(UserId::from_proto(mention.user_id)),
-                    })
-                })
-                .collect::<Vec<_>>();
-            if !models.is_empty() {
-                channel_message_mention::Entity::insert_many(models)
-                    .exec(&*tx)
-                    .await?;
-            }
 
-            #[derive(Debug, Clone, Copy, EnumIter, DeriveColumn)]
-            enum QueryConnectionId {
-                ConnectionId,
+                    self.observe_channel_message_internal(channel_id, user_id, message_id, &*tx)
+                        .await?;
+                }
+                _ => {
+                    message_id = channel_message::Entity::find()
+                        .filter(channel_message::Column::Nonce.eq(Uuid::from_u128(nonce)))
+                        .one(&*tx)
+                        .await?
+                        .ok_or_else(|| anyhow!("failed to insert message"))?
+                        .id;
+                }
             }
-
-            // Observe this message for the sender
-            self.observe_channel_message_internal(channel_id, user_id, message_id, &*tx)
-                .await?;
 
             let mut channel_members = self
                 .get_channel_participants_internal(channel_id, &*tx)

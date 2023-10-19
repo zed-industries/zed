@@ -1,5 +1,6 @@
+use super::new_test_user;
 use crate::{
-    db::{ChannelRole, Database, MessageId, NewUserParams},
+    db::{ChannelRole, Database, MessageId},
     test_both_dbs,
 };
 use channel::mentions_to_proto;
@@ -13,18 +14,7 @@ test_both_dbs!(
 );
 
 async fn test_channel_message_retrieval(db: &Arc<Database>) {
-    let user = db
-        .create_user(
-            "user@example.com",
-            false,
-            NewUserParams {
-                github_login: "user".into(),
-                github_user_id: 1,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
+    let user = new_test_user(db, "user@example.com").await;
     let channel = db.create_channel("channel", None, user).await.unwrap();
 
     let owner_id = db.create_server("test").await.unwrap().0 as u32;
@@ -81,46 +71,129 @@ test_both_dbs!(
 );
 
 async fn test_channel_message_nonces(db: &Arc<Database>) {
-    let user = db
-        .create_user(
-            "user@example.com",
-            false,
-            NewUserParams {
-                github_login: "user".into(),
-                github_user_id: 1,
-            },
+    let user_a = new_test_user(db, "user_a@example.com").await;
+    let user_b = new_test_user(db, "user_b@example.com").await;
+    let user_c = new_test_user(db, "user_c@example.com").await;
+    let channel = db.create_channel("channel", None, user_a).await.unwrap();
+    db.invite_channel_member(channel, user_b, user_a, ChannelRole::Member)
+        .await
+        .unwrap();
+    db.invite_channel_member(channel, user_c, user_a, ChannelRole::Member)
+        .await
+        .unwrap();
+    db.respond_to_channel_invite(channel, user_b, true)
+        .await
+        .unwrap();
+    db.respond_to_channel_invite(channel, user_c, true)
+        .await
+        .unwrap();
+
+    let owner_id = db.create_server("test").await.unwrap().0 as u32;
+    db.join_channel_chat(channel, rpc::ConnectionId { owner_id, id: 0 }, user_a)
+        .await
+        .unwrap();
+    db.join_channel_chat(channel, rpc::ConnectionId { owner_id, id: 1 }, user_b)
+        .await
+        .unwrap();
+
+    // As user A, create messages that re-use the same nonces. The requests
+    // succeed, but return the same ids.
+    let id1 = db
+        .create_channel_message(
+            channel,
+            user_a,
+            "hi @user_b",
+            &mentions_to_proto(&[(3..10, user_b.to_proto())]),
+            OffsetDateTime::now_utc(),
+            100,
         )
         .await
         .unwrap()
-        .user_id;
-    let channel = db.create_channel("channel", None, user).await.unwrap();
+        .0;
+    let id2 = db
+        .create_channel_message(
+            channel,
+            user_a,
+            "hello, fellow users",
+            &mentions_to_proto(&[]),
+            OffsetDateTime::now_utc(),
+            200,
+        )
+        .await
+        .unwrap()
+        .0;
+    let id3 = db
+        .create_channel_message(
+            channel,
+            user_a,
+            "bye @user_c (same nonce as first message)",
+            &mentions_to_proto(&[(4..11, user_c.to_proto())]),
+            OffsetDateTime::now_utc(),
+            100,
+        )
+        .await
+        .unwrap()
+        .0;
+    let id4 = db
+        .create_channel_message(
+            channel,
+            user_a,
+            "omg (same nonce as second message)",
+            &mentions_to_proto(&[]),
+            OffsetDateTime::now_utc(),
+            200,
+        )
+        .await
+        .unwrap()
+        .0;
 
-    let owner_id = db.create_server("test").await.unwrap().0 as u32;
+    // As a different user, reuse one of the same nonces. This request succeeds
+    // and returns a different id.
+    let id5 = db
+        .create_channel_message(
+            channel,
+            user_b,
+            "omg @user_a (same nonce as user_a's first message)",
+            &mentions_to_proto(&[(4..11, user_a.to_proto())]),
+            OffsetDateTime::now_utc(),
+            100,
+        )
+        .await
+        .unwrap()
+        .0;
 
-    db.join_channel_chat(channel, rpc::ConnectionId { owner_id, id: 0 }, user)
-        .await
-        .unwrap();
+    assert_ne!(id1, id2);
+    assert_eq!(id1, id3);
+    assert_eq!(id2, id4);
+    assert_ne!(id5, id1);
 
-    let msg1_id = db
-        .create_channel_message(channel, user, "1", &[], OffsetDateTime::now_utc(), 1)
+    let messages = db
+        .get_channel_messages(channel, user_a, 5, None)
         .await
-        .unwrap();
-    let msg2_id = db
-        .create_channel_message(channel, user, "2", &[], OffsetDateTime::now_utc(), 2)
-        .await
-        .unwrap();
-    let msg3_id = db
-        .create_channel_message(channel, user, "3", &[], OffsetDateTime::now_utc(), 1)
-        .await
-        .unwrap();
-    let msg4_id = db
-        .create_channel_message(channel, user, "4", &[], OffsetDateTime::now_utc(), 2)
-        .await
-        .unwrap();
-
-    assert_ne!(msg1_id, msg2_id);
-    assert_eq!(msg1_id, msg3_id);
-    assert_eq!(msg2_id, msg4_id);
+        .unwrap()
+        .into_iter()
+        .map(|m| (m.id, m.body, m.mentions))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        messages,
+        &[
+            (
+                id1.to_proto(),
+                "hi @user_b".into(),
+                mentions_to_proto(&[(3..10, user_b.to_proto())]),
+            ),
+            (
+                id2.to_proto(),
+                "hello, fellow users".into(),
+                mentions_to_proto(&[])
+            ),
+            (
+                id5.to_proto(),
+                "omg @user_a (same nonce as user_a's first message)".into(),
+                mentions_to_proto(&[(4..11, user_a.to_proto())]),
+            ),
+        ]
+    );
 }
 
 test_both_dbs!(
@@ -130,30 +203,8 @@ test_both_dbs!(
 );
 
 async fn test_unseen_channel_messages(db: &Arc<Database>) {
-    let user = db
-        .create_user(
-            "user_a@example.com",
-            false,
-            NewUserParams {
-                github_login: "user_a".into(),
-                github_user_id: 1,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
-    let observer = db
-        .create_user(
-            "user_b@example.com",
-            false,
-            NewUserParams {
-                github_login: "user_b".into(),
-                github_user_id: 2,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
+    let user = new_test_user(db, "user_a@example.com").await;
+    let observer = new_test_user(db, "user_b@example.com").await;
 
     let channel_1 = db.create_channel("channel", None, user).await.unwrap();
     let channel_2 = db.create_channel("channel-2", None, user).await.unwrap();
@@ -304,42 +355,9 @@ test_both_dbs!(
 );
 
 async fn test_channel_message_mentions(db: &Arc<Database>) {
-    let user_a = db
-        .create_user(
-            "user_a@example.com",
-            false,
-            NewUserParams {
-                github_login: "user_a".into(),
-                github_user_id: 1,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
-    let user_b = db
-        .create_user(
-            "user_b@example.com",
-            false,
-            NewUserParams {
-                github_login: "user_b".into(),
-                github_user_id: 2,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
-    let user_c = db
-        .create_user(
-            "user_b@example.com",
-            false,
-            NewUserParams {
-                github_login: "user_c".into(),
-                github_user_id: 3,
-            },
-        )
-        .await
-        .unwrap()
-        .user_id;
+    let user_a = new_test_user(db, "user_a@example.com").await;
+    let user_b = new_test_user(db, "user_b@example.com").await;
+    let user_c = new_test_user(db, "user_c@example.com").await;
 
     let channel = db.create_channel("channel", None, user_a).await.unwrap();
     db.invite_channel_member(channel, user_b, user_a, ChannelRole::Member)

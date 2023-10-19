@@ -1,21 +1,17 @@
+use crate::{
+    db::{
+        queries::channels::ChannelGraph,
+        tests::{graph, new_test_user, TEST_RELEASE_CHANNEL},
+        ChannelId, ChannelRole, Database, NewUserParams, RoomId,
+    },
+    test_both_dbs,
+};
 use collections::{HashMap, HashSet};
 use rpc::{
     proto::{self},
     ConnectionId,
 };
-
-use crate::{
-    db::{
-        queries::channels::ChannelGraph,
-        tests::{graph, TEST_RELEASE_CHANNEL},
-        ChannelId, ChannelRole, Database, NewUserParams, RoomId, UserId,
-    },
-    test_both_dbs,
-};
-use std::sync::{
-    atomic::{AtomicI32, Ordering},
-    Arc,
-};
+use std::sync::Arc;
 
 test_both_dbs!(test_channels, test_channels_postgres, test_channels_sqlite);
 
@@ -1104,20 +1100,4 @@ fn assert_dag(actual: ChannelGraph, expected: &[(ChannelId, Option<ChannelId>)])
     }
 
     pretty_assertions::assert_eq!(actual_map, expected_map)
-}
-
-static GITHUB_USER_ID: AtomicI32 = AtomicI32::new(5);
-
-async fn new_test_user(db: &Arc<Database>, email: &str) -> UserId {
-    db.create_user(
-        email,
-        false,
-        NewUserParams {
-            github_login: email[0..email.find("@").unwrap()].to_string(),
-            github_user_id: GITHUB_USER_ID.fetch_add(1, Ordering::SeqCst),
-        },
-    )
-    .await
-    .unwrap()
-    .user_id
 }

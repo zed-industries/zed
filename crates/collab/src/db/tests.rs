@@ -10,7 +10,10 @@ use parking_lot::Mutex;
 use rpc::proto::ChannelEdge;
 use sea_orm::ConnectionTrait;
 use sqlx::migrate::MigrateDatabase;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicI32, Ordering::SeqCst},
+    Arc,
+};
 
 const TEST_RELEASE_CHANNEL: &'static str = "test";
 
@@ -173,4 +176,20 @@ fn graph(channels: &[(ChannelId, &'static str)], edges: &[(ChannelId, ChannelId)
     }
 
     graph
+}
+
+static GITHUB_USER_ID: AtomicI32 = AtomicI32::new(5);
+
+async fn new_test_user(db: &Arc<Database>, email: &str) -> UserId {
+    db.create_user(
+        email,
+        false,
+        NewUserParams {
+            github_login: email[0..email.find("@").unwrap()].to_string(),
+            github_user_id: GITHUB_USER_ID.fetch_add(1, SeqCst),
+        },
+    )
+    .await
+    .unwrap()
+    .user_id
 }
