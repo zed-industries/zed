@@ -3,12 +3,12 @@ use std::sync::Arc;
 use chrono::DateTime;
 use gpui3::{px, relative, rems, view, Context, Size, View};
 
-use crate::settings::FakeSettings;
-use crate::{prelude::*, user_settings_mut, Button, SettingValue};
+use crate::prelude::*;
 use crate::{
-    theme, v_stack, AssistantPanel, ChatMessage, ChatPanel, CollabPanel, EditorPane, Label,
-    LanguageSelector, Pane, PaneGroup, Panel, PanelAllowedSides, PanelSide, ProjectPanel,
-    SplitDirection, StatusBar, Terminal, TitleBar, Toast, ToastOrigin,
+    static_livestream, theme, user_settings_mut, v_stack, AssistantPanel, Button, ChatMessage,
+    ChatPanel, CollabPanel, EditorPane, FakeSettings, Label, LanguageSelector, Livestream, Pane,
+    PaneGroup, Panel, PanelAllowedSides, PanelSide, ProjectPanel, SettingValue, SplitDirection,
+    StatusBar, Terminal, TitleBar, Toast, ToastOrigin,
 };
 
 #[derive(Clone)]
@@ -50,7 +50,7 @@ pub struct Workspace {
 impl Workspace {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         Self {
-            title_bar: TitleBar::view(cx),
+            title_bar: TitleBar::view(cx, None),
             editor_1: EditorPane::view(cx),
             show_project_panel: true,
             show_collab_panel: false,
@@ -159,20 +159,19 @@ impl Workspace {
     }
 
     pub fn debug_toggle_livestream(&mut self, cx: &mut ViewContext<Self>) {
-        if self.debug.in_livestream {
-            self.debug.in_livestream = false;
-        } else {
-            self.debug.in_livestream = true;
-        }
+        self.debug.in_livestream = !self.debug.in_livestream;
+
+        self.title_bar = TitleBar::view(
+            cx,
+            Some(static_livestream()).filter(|_| self.debug.in_livestream),
+        );
+
         cx.notify();
     }
 
     pub fn debug_toggle_toast(&mut self, cx: &mut ViewContext<Self>) {
-        if self.debug.show_toast {
-            self.debug.show_toast = false;
-        } else {
-            self.debug.show_toast = true;
-        }
+        self.debug.show_toast = !self.debug.show_toast;
+
         cx.notify();
     }
 
