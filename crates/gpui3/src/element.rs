@@ -1,8 +1,9 @@
 use crate::{
-    BorrowWindow, Bounds, ElementId, FocusHandle, FocusListeners, LayoutId, Pixels, Point,
-    StyleRefinement, ViewContext,
+    BorrowWindow, Bounds, DispatchPhase, ElementId, FocusHandle, FocusListeners, LayoutId,
+    MouseDownEvent, Pixels, Point, Style, StyleRefinement, ViewContext, WindowContext,
 };
 use derive_more::{Deref, DerefMut};
+use refineable::Refineable;
 pub(crate) use smallvec::SmallVec;
 use std::mem;
 
@@ -73,6 +74,36 @@ pub trait ElementFocusability<V: 'static + Send + Sync>: 'static + Send + Sync {
             cx.with_focus(focusable.focus_handle.clone(), |cx| f(cx))
         } else {
             f(cx)
+        }
+    }
+
+    fn refine_style(&self, style: &mut Style, cx: &WindowContext) {
+        if let Some(focusable) = self.as_focusable() {
+            if focusable.focus_handle.contains_focused(cx) {
+                style.refine(&focusable.focus_in_style);
+            }
+
+            if focusable.focus_handle.within_focused(cx) {
+                style.refine(&focusable.in_focus_style);
+            }
+
+            if focusable.focus_handle.is_focused(cx) {
+                style.refine(&focusable.focus_style);
+            }
+        }
+    }
+
+    fn paint(&self, bounds: Bounds<Pixels>, cx: &mut WindowContext) {
+        if let Some(focusable) = self.as_focusable() {
+            let focus_handle = focusable.focus_handle.clone();
+            cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
+                if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
+                    if !cx.default_prevented() {
+                        cx.focus(&focus_handle);
+                        cx.prevent_default();
+                    }
+                }
+            })
         }
     }
 }

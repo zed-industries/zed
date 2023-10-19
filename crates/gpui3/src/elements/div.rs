@@ -197,19 +197,7 @@ where
         let mut computed_style = Style::default();
         computed_style.refine(&self.base_style);
 
-        if let Some(focusable) = self.focusability.as_focusable() {
-            if focusable.focus_handle.contains_focused(cx) {
-                computed_style.refine(&focusable.focus_in_style);
-            }
-
-            if focusable.focus_handle.within_focused(cx) {
-                computed_style.refine(&focusable.in_focus_style);
-            }
-
-            if focusable.focus_handle.is_focused(cx) {
-                computed_style.refine(&focusable.focus_style);
-            }
-        }
+        self.focusability.refine_style(&mut computed_style, cx);
 
         let mouse_position = cx.mouse_position();
 
@@ -310,18 +298,6 @@ where
                     *pending_click.lock() = Some(event.clone());
                 }
             });
-        }
-
-        if let Some(focusable) = self.focusability.as_focusable() {
-            let focus_handle = focusable.focus_handle.clone();
-            cx.on_mouse_event(move |_, event: &MouseDownEvent, phase, cx| {
-                if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
-                    if !cx.default_prevented() {
-                        cx.focus(&focus_handle);
-                        cx.prevent_default();
-                    }
-                }
-            })
         }
 
         for listener in mem::take(&mut self.interactive_state.mouse_down) {
@@ -508,6 +484,7 @@ where
                         element_state.active_state.clone(),
                         cx,
                     );
+                    this.focusability.paint(bounds, cx);
                     this.paint_event_listeners(bounds, element_state.pending_click.clone(), cx);
                 });
 
