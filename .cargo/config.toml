@@ -3,4 +3,4 @@ xtask = "run --package xtask --"
 
 [build]
 # v0 mangling scheme provides more detailed backtraces around closures
-rustflags = ["-C", "symbol-mangling-version=v0", "-C", "link-arg=-fuse-ld=/opt/homebrew/Cellar/llvm/16.0.6/bin/ld64.lld"]
+rustflags = ["-C", "symbol-mangling-version=v0"]
