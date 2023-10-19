@@ -1,6 +1,7 @@
 use crate::{
-    point, Action, Bounds, DispatchContext, DispatchPhase, Element, FocusHandle, Keystroke,
-    Modifiers, Pixels, Point, StatefulInteractivity, StatelessInteractivity, ViewContext,
+    point, Action, Bounds, DispatchContext, DispatchPhase, Element, FocusHandle, GroupStyle,
+    Keystroke, Modifiers, Pixels, Point, SharedString, StatefulInteractivity,
+    StatelessInteractivity, StyleRefinement, ViewContext,
 };
 use std::{
     any::{Any, TypeId},
@@ -147,6 +148,29 @@ pub trait StatelesslyInteractive: Element {
         self
     }
 
+    fn hover(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
+    where
+        Self: Sized,
+    {
+        self.stateless_interactivity().hover_style = f(StyleRefinement::default());
+        self
+    }
+
+    fn group_hover(
+        mut self,
+        group_name: impl Into<SharedString>,
+        f: impl FnOnce(StyleRefinement) -> StyleRefinement,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.stateless_interactivity().group_hover_style = Some(GroupStyle {
+            group: group_name.into(),
+            style: f(StyleRefinement::default()),
+        });
+        self
+    }
+
     fn on_key_down(
         mut self,
         listener: impl Fn(
@@ -217,6 +241,29 @@ pub trait StatelesslyInteractive: Element {
 
 pub trait StatefullyInteractive: StatelesslyInteractive {
     fn stateful_interactivity(&mut self) -> &mut StatefulInteractivity<Self::ViewState>;
+
+    fn active(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
+    where
+        Self: Sized,
+    {
+        self.stateful_interactivity().active_style = f(StyleRefinement::default());
+        self
+    }
+
+    fn group_active(
+        mut self,
+        group_name: impl Into<SharedString>,
+        f: impl FnOnce(StyleRefinement) -> StyleRefinement,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.stateful_interactivity().group_active_style = Some(GroupStyle {
+            group: group_name.into(),
+            style: f(StyleRefinement::default()),
+        });
+        self
+    }
 
     fn on_click(
         mut self,

@@ -1,10 +1,9 @@
 use crate::{
-    Active, AnyElement, BorrowWindow, Bounds, Element, ElementFocusability, ElementId,
+    AnyElement, BorrowWindow, Bounds, Element, ElementFocusability, ElementId,
     ElementInteractivity, Focus, FocusHandle, FocusListeners, Focusable, GlobalElementId,
-    GroupBounds, GroupStyle, Hover, InteractiveElementState, IntoAnyElement, LayoutId,
-    NonFocusable, Overflow, ParentElement, Pixels, Point, SharedString, StatefulInteractivity,
-    StatefullyInteractive, StatelessInteractivity, StatelesslyInteractive, Style, StyleRefinement,
-    Styled, ViewContext,
+    GroupBounds, InteractiveElementState, IntoAnyElement, LayoutId, NonFocusable, Overflow,
+    ParentElement, Pixels, Point, SharedString, StatefulInteractivity, StatefullyInteractive,
+    StatelessInteractivity, StatelesslyInteractive, Style, StyleRefinement, Styled, ViewContext,
 };
 use parking_lot::Mutex;
 use refineable::Refineable;
@@ -332,22 +331,6 @@ where
     }
 }
 
-impl<V, I, F> Hover for Div<V, I, F>
-where
-    I: ElementInteractivity<V>,
-    F: ElementFocusability<V>,
-    V: 'static + Send + Sync,
-{
-    fn set_hover_style(&mut self, group: Option<SharedString>, style: StyleRefinement) {
-        let stateless = self.interactivity.as_stateless_mut();
-        if let Some(group) = group {
-            stateless.group_hover_style = Some(GroupStyle { group, style });
-        } else {
-            stateless.hover_style = style;
-        }
-    }
-}
-
 impl<V, F> StatefullyInteractive for Div<V, StatefulInteractivity<V>, F>
 where
     F: ElementFocusability<V>,
@@ -355,19 +338,5 @@ where
 {
     fn stateful_interactivity(&mut self) -> &mut StatefulInteractivity<Self::ViewState> {
         &mut self.interactivity
-    }
-}
-
-impl<V, F> Active for Div<V, StatefulInteractivity<V>, F>
-where
-    F: ElementFocusability<V>,
-    V: 'static + Send + Sync,
-{
-    fn set_active_style(&mut self, group: Option<SharedString>, style: StyleRefinement) {
-        if let Some(group) = group {
-            self.interactivity.group_active_style = Some(GroupStyle { group, style });
-        } else {
-            self.interactivity.active_style = style;
-        }
     }
 }

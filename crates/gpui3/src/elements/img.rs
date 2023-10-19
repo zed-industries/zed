@@ -1,6 +1,6 @@
 use crate::{
-    div, Active, AnyElement, BorrowWindow, Bounds, Div, Element, ElementFocusability, ElementId,
-    ElementInteractivity, Focus, FocusListeners, Focusable, Hover, InteractiveElementState,
+    div, AnyElement, BorrowWindow, Bounds, Div, Element, ElementFocusability, ElementId,
+    ElementInteractivity, Focus, FocusListeners, Focusable, InteractiveElementState,
     IntoAnyElement, LayoutId, NonFocusable, Pixels, SharedString, StatefulInteractivity,
     StatefullyInteractive, StatelessInteractivity, StatelesslyInteractive, StyleRefinement, Styled,
     ViewContext,
@@ -162,17 +162,6 @@ where
     }
 }
 
-impl<V, I, F> Hover for Img<V, I, F>
-where
-    V: 'static + Send + Sync,
-    I: ElementInteractivity<V>,
-    F: ElementFocusability<V>,
-{
-    fn set_hover_style(&mut self, group: Option<SharedString>, style: StyleRefinement) {
-        self.base.set_hover_style(group, style);
-    }
-}
-
 impl<V, F> StatefullyInteractive for Img<V, StatefulInteractivity<V>, F>
 where
     V: 'static + Send + Sync,
@@ -180,16 +169,6 @@ where
 {
     fn stateful_interactivity(&mut self) -> &mut StatefulInteractivity<Self::ViewState> {
         self.base.stateful_interactivity()
-    }
-}
-
-impl<V, F> Active for Img<V, StatefulInteractivity<V>, F>
-where
-    V: 'static + Send + Sync,
-    F: ElementFocusability<V>,
-{
-    fn set_active_style(&mut self, group: Option<SharedString>, style: StyleRefinement) {
-        self.base.set_active_style(group, style)
     }
 }
 
