@@ -1,7 +1,7 @@
 use crate::{
     div, Active, Anonymous, AnyElement, BorrowWindow, Bounds, Click, Div, DivState, Element,
     ElementFocusability, ElementId, ElementIdentity, Focus, FocusListeners, Focusable, Hover,
-    Identified, Interactive, InteractiveState, IntoAnyElement, LayoutId, NonFocusable, Pixels,
+    Identified, Interactive, Interactivity, IntoAnyElement, LayoutId, NonFocusable, Pixels,
     SharedString, StyleRefinement, Styled, ViewContext,
 };
 use futures::FutureExt;
@@ -156,8 +156,8 @@ where
     I: ElementIdentity,
     F: ElementFocusability<V>,
 {
-    fn interactive_state(&mut self) -> &mut InteractiveState<V> {
-        self.base.interactive_state()
+    fn interactivity(&mut self) -> &mut Interactivity<V> {
+        self.base.interactivity()
     }
 }
 

@@ -1,3 +1,4 @@
+use parking_lot::Mutex;
 use smallvec::SmallVec;
 
 use crate::{
@@ -6,12 +7,13 @@ use crate::{
 };
 use std::{
     any::{Any, TypeId},
+    mem,
     ops::Deref,
     sync::Arc,
 };
 
 pub trait Interactive: Element {
-    fn interactive_state(&mut self) -> &mut InteractiveState<Self::ViewState>;
+    fn interactivity(&mut self) -> &mut Interactivity<Self::ViewState>;
 
     fn on_mouse_down(
         mut self,
@@ -24,16 +26,16 @@ pub trait Interactive: Element {
     where
         Self: Sized,
     {
-        self.interactive_state().mouse_down.push(Arc::new(
-            move |view, event, bounds, phase, cx| {
+        self.interactivity()
+            .mouse_down
+            .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble
                     && event.button == button
                     && bounds.contains_point(&event.position)
                 {
                     handler(view, event, cx)
                 }
-            },
-        ));
+            }));
         self
     }
 
@@ -48,7 +50,7 @@ pub trait Interactive: Element {
     where
         Self: Sized,
     {
-        self.interactive_state()
+        self.interactivity()
             .mouse_up
             .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble
@@ -72,16 +74,16 @@ pub trait Interactive: Element {
     where
         Self: Sized,
     {
-        self.interactive_state().mouse_down.push(Arc::new(
-            move |view, event, bounds, phase, cx| {
+        self.interactivity()
+            .mouse_down
+            .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Capture
                     && event.button == button
                     && !bounds.contains_point(&event.position)
                 {
                     handler(view, event, cx)
                 }
-            },
-        ));
+            }));
         self
     }
 
@@ -96,7 +98,7 @@ pub trait Interactive: Element {
     where
         Self: Sized,
     {
-        self.interactive_state()
+        self.interactivity()
             .mouse_up
             .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Capture
@@ -119,13 +121,13 @@ pub trait Interactive: Element {
     where
         Self: Sized,
     {
-        self.interactive_state().mouse_move.push(Arc::new(
-            move |view, event, bounds, phase, cx| {
+        self.interactivity()
+            .mouse_move
+            .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
                     handler(view, event, cx);
                 }
-            },
-        ));
+            }));
         self
     }
 
@@ -139,13 +141,13 @@ pub trait Interactive: Element {
     where
         Self: Sized,
     {
-        self.interactive_state().scroll_wheel.push(Arc::new(
-            move |view, event, bounds, phase, cx| {
+        self.interactivity()
+            .scroll_wheel
+            .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
                     handler(view, event, cx);
                 }
-            },
-        ));
+            }));
         self
     }
 
@@ -163,7 +165,7 @@ pub trait Interactive: Element {
     where
         Self: Sized,
     {
-        self.interactive_state().key.push((
+        self.interactivity().key.push((
             TypeId::of::<KeyDownEvent>(),
             Arc::new(move |view, event, _, phase, cx| {
                 let event = event.downcast_ref().unwrap();
@@ -184,7 +186,7 @@ pub trait Interactive: Element {
     where
         Self: Sized,
     {
-        self.interactive_state().key.push((
+        self.interactivity().key.push((
             TypeId::of::<KeyUpEvent>(),
             Arc::new(move |view, event, _, phase, cx| {
                 let event = event.downcast_ref().unwrap();
@@ -205,7 +207,7 @@ pub trait Interactive: Element {
     where
         Self: Sized,
     {
-        self.interactive_state().key.push((
+        self.interactivity().key.push((
             TypeId::of::<A>(),
             Arc::new(move |view, event, _, phase, cx| {
                 let event = event.downcast_ref().unwrap();
@@ -228,7 +230,7 @@ pub trait Click: Interactive {
     where
         Self: Sized,
     {
-        self.interactive_state()
+        self.interactivity()
             .mouse_click
             .push(Arc::new(move |view, event, cx| handler(view, event, cx)));
         self
@@ -494,7 +496,7 @@ pub type KeyListener<V> = Arc<
         + 'static,
 >;
 
-pub struct InteractiveState<V: 'static> {
+pub struct Interactivity<V> {
     pub mouse_down: SmallVec<[MouseDownListener<V>; 2]>,
     pub mouse_up: SmallVec<[MouseUpListener<V>; 2]>,
     pub mouse_click: SmallVec<[MouseClickListener<V>; 2]>,
@@ -503,7 +505,7 @@ pub struct InteractiveState<V: 'static> {
     pub key: SmallVec<[(TypeId, KeyListener<V>); 32]>,
 }
 
-impl<V> Default for InteractiveState<V> {
+impl<V> Default for Interactivity<V> {
     fn default() -> Self {
         Self {
             mouse_down: SmallVec::new(),
@@ -512,6 +514,67 @@ impl<V> Default for InteractiveState<V> {
             mouse_move: SmallVec::new(),
             scroll_wheel: SmallVec::new(),
             key: SmallVec::new(),
+        }
+    }
+}
+
+impl<V> Interactivity<V>
+where
+    V: 'static + Send + Sync,
+{
+    pub fn paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        pending_click: Arc<Mutex<Option<MouseDownEvent>>>,
+        cx: &mut ViewContext<V>,
+    ) {
+        let click_listeners = mem::take(&mut self.mouse_click);
+
+        let mouse_down = pending_click.lock().clone();
+        if let Some(mouse_down) = mouse_down {
+            cx.on_mouse_event(move |state, event: &MouseUpEvent, phase, cx| {
+                if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
+                    let mouse_click = MouseClickEvent {
+                        down: mouse_down.clone(),
+                        up: event.clone(),
+                    };
+                    for listener in &click_listeners {
+                        listener(state, &mouse_click, cx);
+                    }
+                }
+
+                *pending_click.lock() = None;
+            });
+        } else {
+            cx.on_mouse_event(move |_state, event: &MouseDownEvent, phase, _cx| {
+                if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
+                    *pending_click.lock() = Some(event.clone());
+                }
+            });
+        }
+
+        for listener in mem::take(&mut self.mouse_down) {
+            cx.on_mouse_event(move |state, event: &MouseDownEvent, phase, cx| {
+                listener(state, event, &bounds, phase, cx);
+            })
+        }
+
+        for listener in mem::take(&mut self.mouse_up) {
+            cx.on_mouse_event(move |state, event: &MouseUpEvent, phase, cx| {
+                listener(state, event, &bounds, phase, cx);
+            })
+        }
+
+        for listener in mem::take(&mut self.mouse_move) {
+            cx.on_mouse_event(move |state, event: &MouseMoveEvent, phase, cx| {
+                listener(state, event, &bounds, phase, cx);
+            })
+        }
+
+        for listener in mem::take(&mut self.scroll_wheel) {
+            cx.on_mouse_event(move |state, event: &ScrollWheelEvent, phase, cx| {
+                listener(state, event, &bounds, phase, cx);
+            })
         }
     }
 }

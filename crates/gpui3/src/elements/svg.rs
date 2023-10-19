@@ -1,8 +1,8 @@
 use crate::{
     div, Active, Anonymous, AnyElement, Bounds, Click, Div, DivState, Element, ElementFocusability,
     ElementId, ElementIdentity, Focus, FocusListeners, Focusable, Hover, Identified, Interactive,
-    InteractiveState, IntoAnyElement, LayoutId, NonFocusable, Pixels, SharedString,
-    StyleRefinement, Styled, ViewContext,
+    Interactivity, IntoAnyElement, LayoutId, NonFocusable, Pixels, SharedString, StyleRefinement,
+    Styled, ViewContext,
 };
 use util::ResultExt;
 
@@ -130,8 +130,8 @@ where
     I: ElementIdentity,
     F: ElementFocusability<V>,
 {
-    fn interactive_state(&mut self) -> &mut InteractiveState<V> {
-        self.base.interactive_state()
+    fn interactivity(&mut self) -> &mut Interactivity<V> {
+        self.base.interactivity()
     }
 }
 

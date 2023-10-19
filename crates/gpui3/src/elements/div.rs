@@ -1,10 +1,9 @@
 use crate::{
     Active, Anonymous, AnyElement, AppContext, BorrowWindow, Bounds, Click, DispatchPhase, Element,
     ElementFocusability, ElementId, ElementIdentity, Focus, FocusHandle, FocusListeners, Focusable,
-    GlobalElementId, Hover, Identified, Interactive, InteractiveState, IntoAnyElement,
-    KeyDownEvent, KeyMatch, LayoutId, MouseClickEvent, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, NonFocusable, Overflow, ParentElement, Pixels, Point, ScrollWheelEvent,
-    SharedString, Style, StyleRefinement, Styled, ViewContext,
+    GlobalElementId, Hover, Identified, Interactive, Interactivity, IntoAnyElement, KeyDownEvent,
+    KeyMatch, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, NonFocusable, Overflow,
+    ParentElement, Pixels, Point, SharedString, Style, StyleRefinement, Styled, ViewContext,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -68,6 +67,7 @@ pub struct Div<
 > {
     identity: I,
     focusability: F,
+    interactivity: Interactivity<V>,
     children: SmallVec<[AnyElement<V>; 2]>,
     group: Option<SharedString>,
     base_style: StyleRefinement,
@@ -75,7 +75,6 @@ pub struct Div<
     group_hover: Option<GroupStyle>,
     active_style: StyleRefinement,
     group_active: Option<GroupStyle>,
-    interactive_state: InteractiveState<V>,
 }
 
 pub fn div<V>() -> Div<V, Anonymous, NonFocusable>
@@ -85,6 +84,7 @@ where
     Div {
         identity: Anonymous,
         focusability: NonFocusable,
+        interactivity: Interactivity::default(),
         children: SmallVec::new(),
         group: None,
         base_style: StyleRefinement::default(),
@@ -92,7 +92,6 @@ where
         group_hover: None,
         active_style: StyleRefinement::default(),
         group_active: None,
-        interactive_state: InteractiveState::default(),
     }
 }
 
@@ -110,6 +109,7 @@ where
         Div {
             identity: Identified(id.into()),
             focusability: self.focusability,
+            interactivity: self.interactivity,
             children: self.children,
             group: self.group,
             base_style: self.base_style,
@@ -117,7 +117,6 @@ where
             group_hover: self.group_hover,
             active_style: self.active_style,
             group_active: self.group_active,
-            interactive_state: self.interactive_state,
         }
     }
 }
@@ -268,62 +267,6 @@ where
             });
         }
     }
-
-    fn paint_event_listeners(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        pending_click: Arc<Mutex<Option<MouseDownEvent>>>,
-        cx: &mut ViewContext<V>,
-    ) {
-        let click_listeners = mem::take(&mut self.interactive_state.mouse_click);
-
-        let mouse_down = pending_click.lock().clone();
-        if let Some(mouse_down) = mouse_down {
-            cx.on_mouse_event(move |state, event: &MouseUpEvent, phase, cx| {
-                if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
-                    let mouse_click = MouseClickEvent {
-                        down: mouse_down.clone(),
-                        up: event.clone(),
-                    };
-                    for listener in &click_listeners {
-                        listener(state, &mouse_click, cx);
-                    }
-                }
-
-                *pending_click.lock() = None;
-            });
-        } else {
-            cx.on_mouse_event(move |_state, event: &MouseDownEvent, phase, _cx| {
-                if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
-                    *pending_click.lock() = Some(event.clone());
-                }
-            });
-        }
-
-        for listener in mem::take(&mut self.interactive_state.mouse_down) {
-            cx.on_mouse_event(move |state, event: &MouseDownEvent, phase, cx| {
-                listener(state, event, &bounds, phase, cx);
-            })
-        }
-
-        for listener in mem::take(&mut self.interactive_state.mouse_up) {
-            cx.on_mouse_event(move |state, event: &MouseUpEvent, phase, cx| {
-                listener(state, event, &bounds, phase, cx);
-            })
-        }
-
-        for listener in mem::take(&mut self.interactive_state.mouse_move) {
-            cx.on_mouse_event(move |state, event: &MouseMoveEvent, phase, cx| {
-                listener(state, event, &bounds, phase, cx);
-            })
-        }
-
-        for listener in mem::take(&mut self.interactive_state.scroll_wheel) {
-            cx.on_mouse_event(move |state, event: &ScrollWheelEvent, phase, cx| {
-                listener(state, event, &bounds, phase, cx);
-            })
-        }
-    }
 }
 
 impl<V, I> Div<V, I, NonFocusable>
@@ -342,7 +285,7 @@ where
             group_hover: self.group_hover,
             active_style: self.active_style,
             group_active: self.group_active,
-            interactive_state: self.interactive_state,
+            interactivity: self.interactivity,
         }
     }
 }
@@ -395,7 +338,7 @@ where
         self.with_element_id(cx, |this, global_id, cx| {
             let element_state = element_state.unwrap_or_default();
 
-            let mut key_listeners = mem::take(&mut this.interactive_state.key);
+            let mut key_listeners = mem::take(&mut this.interactivity.key);
             if let Some(global_id) = global_id {
                 key_listeners.push((
                     TypeId::of::<KeyDownEvent>(),
@@ -421,7 +364,7 @@ where
                     }
                 });
             });
-            this.interactive_state.key = key_listeners;
+            this.interactivity.key = key_listeners;
 
             element_state
         })
@@ -485,7 +428,8 @@ where
                         cx,
                     );
                     this.focusability.paint(bounds, cx);
-                    this.paint_event_listeners(bounds, element_state.pending_click.clone(), cx);
+                    this.interactivity
+                        .paint(bounds, element_state.pending_click.clone(), cx);
                 });
 
                 cx.stack(1, |cx| {
@@ -549,8 +493,8 @@ where
     F: ElementFocusability<V>,
     V: 'static + Send + Sync,
 {
-    fn interactive_state(&mut self) -> &mut InteractiveState<V> {
-        &mut self.interactive_state
+    fn interactivity(&mut self) -> &mut Interactivity<V> {
+        &mut self.interactivity
     }
 }
 
