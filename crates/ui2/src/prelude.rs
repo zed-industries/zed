@@ -1,6 +1,6 @@
 pub use gpui3::{
-    div, Click, Element, Hover, IntoAnyElement, ParentElement, ScrollState, SharedString,
-    StatefullyInteractivee, Styled, ViewContext, WindowContext,
+    div, Element, Hover, IntoAnyElement, ParentElement, ScrollState, SharedString,
+    StatefullyInteractive, Styled, ViewContext, WindowContext,
 };
 
 use crate::settings::user_settings;

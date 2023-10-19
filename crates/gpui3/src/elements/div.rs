@@ -1,12 +1,11 @@
 use crate::{
-    Active, AnyElement, AppContext, BorrowWindow, Bounds, DispatchPhase, Element,
-    ElementFocusability, ElementId, ElementInteractivity, Focus, FocusHandle, FocusListeners,
-    Focusable, GlobalElementId, Hover, IntoAnyElement, LayoutId, MouseDownEvent, MouseMoveEvent,
+    Active, AnyElement, BorrowWindow, Bounds, DispatchPhase, Element, ElementFocusability,
+    ElementId, ElementInteractivity, Focus, FocusHandle, FocusListeners, Focusable,
+    GlobalElementId, GroupBounds, GroupStyle, Hover, IntoAnyElement, LayoutId, MouseDownEvent,
     MouseUpEvent, NonFocusable, Overflow, ParentElement, Pixels, Point, SharedString,
     StatefulInteractivity, StatefullyInteractive, StatelessInteractivity, StatelesslyInteractive,
     Style, StyleRefinement, Styled, ViewContext,
 };
-use collections::HashMap;
 use parking_lot::Mutex;
 use refineable::Refineable;
 use smallvec::SmallVec;
@@ -28,16 +27,6 @@ impl ActiveState {
     pub fn is_none(&self) -> bool {
         !self.group && !self.element
     }
-}
-
-#[derive(Default)]
-struct GroupBounds(HashMap<SharedString, SmallVec<[Bounds<Pixels>; 1]>>);
-
-pub fn group_bounds(name: &SharedString, cx: &mut AppContext) -> Option<Bounds<Pixels>> {
-    cx.default_global::<GroupBounds>()
-        .0
-        .get(name)
-        .and_then(|bounds_stack| bounds_stack.last().cloned())
 }
 
 #[derive(Default, Clone)]
@@ -71,8 +60,6 @@ pub struct Div<
     children: SmallVec<[AnyElement<V>; 2]>,
     group: Option<SharedString>,
     base_style: StyleRefinement,
-    hover_style: StyleRefinement,
-    group_hover: Option<GroupStyle>,
     active_style: StyleRefinement,
     group_active: Option<GroupStyle>,
 }
@@ -87,16 +74,9 @@ where
         children: SmallVec::new(),
         group: None,
         base_style: StyleRefinement::default(),
-        hover_style: StyleRefinement::default(),
-        group_hover: None,
         active_style: StyleRefinement::default(),
         group_active: None,
     }
-}
-
-struct GroupStyle {
-    group: SharedString,
-    style: StyleRefinement,
 }
 
 impl<V, F> Div<V, StatelessInteractivity<V>, F>
@@ -111,8 +91,6 @@ where
             children: self.children,
             group: self.group,
             base_style: self.base_style,
-            hover_style: self.hover_style,
-            group_hover: self.group_hover,
             active_style: self.active_style,
             group_active: self.group_active,
         }
@@ -195,19 +173,8 @@ where
         computed_style.refine(&self.base_style);
 
         self.focusability.refine_style(&mut computed_style, cx);
-
-        let mouse_position = cx.mouse_position();
-
-        if let Some(group_hover) = self.group_hover.as_ref() {
-            if let Some(group_bounds) = group_bounds(&group_hover.group, cx) {
-                if group_bounds.contains_point(&mouse_position) {
-                    computed_style.refine(&group_hover.style);
-                }
-            }
-        }
-        if bounds.contains_point(&mouse_position) {
-            computed_style.refine(&self.hover_style);
-        }
+        self.interactivity
+            .refine_style(&mut computed_style, bounds, cx);
 
         let active_state = *state.active_state.lock();
         if active_state.group {
@@ -220,21 +187,6 @@ where
         }
 
         computed_style
-    }
-
-    fn paint_hover_listeners(
-        &self,
-        bounds: Bounds<Pixels>,
-        group_bounds: Option<Bounds<Pixels>>,
-        cx: &mut ViewContext<V>,
-    ) {
-        if let Some(group_bounds) = group_bounds {
-            paint_hover_listener(group_bounds, cx);
-        }
-
-        if self.hover_style.is_some() {
-            paint_hover_listener(bounds, cx);
-        }
     }
 
     fn paint_active_listener(
@@ -279,8 +231,6 @@ where
             children: self.children,
             group: self.group,
             base_style: self.base_style,
-            hover_style: self.hover_style,
-            group_hover: self.group_hover,
             active_style: self.active_style,
             group_active: self.group_active,
         }
@@ -372,21 +322,13 @@ where
     ) {
         self.with_element_id(cx, |this, _global_id, cx| {
             if let Some(group) = this.group.clone() {
-                cx.default_global::<GroupBounds>()
-                    .0
-                    .entry(group)
-                    .or_default()
-                    .push(bounds);
+                GroupBounds::push(group, bounds, cx);
             }
 
-            let hover_group_bounds = this
-                .group_hover
-                .as_ref()
-                .and_then(|group_hover| group_bounds(&group_hover.group, cx));
             let active_group_bounds = this
                 .group_active
                 .as_ref()
-                .and_then(|group_active| group_bounds(&group_active.group, cx));
+                .and_then(|group_active| GroupBounds::get(&group_active.group, cx));
             let style = this.compute_style(bounds, element_state, cx);
             let z_index = style.z_index.unwrap_or(0);
 
@@ -394,7 +336,6 @@ where
             cx.stack(z_index, |cx| {
                 cx.stack(0, |cx| {
                     style.paint(bounds, cx);
-                    this.paint_hover_listeners(bounds, hover_group_bounds, cx);
                     this.paint_active_listener(
                         bounds,
                         active_group_bounds,
@@ -418,11 +359,7 @@ where
             });
 
             if let Some(group) = this.group.as_ref() {
-                cx.default_global::<GroupBounds>()
-                    .0
-                    .get_mut(group)
-                    .unwrap()
-                    .pop();
+                GroupBounds::pop(group, cx);
             }
         })
     }
@@ -479,10 +416,11 @@ where
     V: 'static + Send + Sync,
 {
     fn set_hover_style(&mut self, group: Option<SharedString>, style: StyleRefinement) {
+        let stateless = self.interactivity.as_stateless_mut();
         if let Some(group) = group {
-            self.group_hover = Some(GroupStyle { group, style });
+            stateless.group_hover = Some(GroupStyle { group, style });
         } else {
-            self.hover_style = style;
+            stateless.hover_style = style;
         }
     }
 }
@@ -509,18 +447,4 @@ where
             self.active_style = style;
         }
     }
-}
-
-fn paint_hover_listener<V>(bounds: Bounds<Pixels>, cx: &mut ViewContext<V>)
-where
-    V: 'static + Send + Sync,
-{
-    let hovered = bounds.contains_point(&cx.mouse_position());
-    cx.on_mouse_event(move |_, event: &MouseMoveEvent, phase, cx| {
-        if phase == DispatchPhase::Capture {
-            if bounds.contains_point(&event.position) != hovered {
-                cx.notify();
-            }
-        }
-    });
 }
