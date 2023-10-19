@@ -78,8 +78,8 @@ impl<S: 'static + Send + Sync> IconButton<S> {
         let mut button = h_stack()
             .justify_center()
             .rounded_md()
-            .py(ui_size(0.25))
-            .px(ui_size(6. / 14.))
+            .py(ui_size(cx, 0.25))
+            .px(ui_size(cx, 6. / 14.))
             .when(self.variant == ButtonVariant::Filled, |this| {
                 this.bg(color.filled_element)
             })

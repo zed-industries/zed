@@ -1,13 +1,12 @@
 use crate::{
     px, size, AnyBox, AnyView, AppContext, AsyncWindowContext, AvailableSpace, BorrowAppContext,
     Bounds, BoxShadow, Context, Corners, DevicePixels, DisplayId, Edges, Effect, Element, EntityId,
-    EventEmitter, FocusEvent, FocusListener, FontId, GlobalElementId, GlyphId, Handle, Hsla,
-    ImageData, InputEvent, IsZero, KeyDownEvent, KeyDownListener, KeyUpEvent, KeyUpListener,
-    LayoutId, MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path, Pixels, Platform,
-    PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
-    Style, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle,
-    WindowOptions, SUBPIXEL_VARIANTS,
+    EventEmitter, FocusEvent, FontId, GlobalElementId, GlyphId, Handle, Hsla, ImageData,
+    InputEvent, IsZero, KeyListener, LayoutId, MainThread, MainThreadOnly, MonochromeSprite,
+    MouseMoveEvent, Path, Pixels, Platform, PlatformAtlas, PlatformWindow, Point, PolychromeSprite,
+    Quad, Reference, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels,
+    SceneBuilder, Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine, Task,
+    Underline, UnderlineStyle, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -45,15 +44,8 @@ pub enum DispatchPhase {
     Capture,
 }
 
-type AnyMouseEventListener =
-    Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
-type AnyKeyboardEventListener =
-    Box<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
-type AnyFocusListener = Box<dyn Fn(&FocusEvent, &mut WindowContext) + Send + Sync + 'static>;
-type AnyKeyDownListener =
-    Box<dyn Fn(&KeyDownEvent, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
-type AnyKeyUpListener =
-    Box<dyn Fn(&KeyUpEvent, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
+type AnyListener = Arc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
+type AnyFocusListener = Arc<dyn Fn(&FocusEvent, &mut WindowContext) + Send + Sync + 'static>;
 
 slotmap::new_key_type! { pub struct FocusId; }
 
@@ -153,9 +145,10 @@ pub struct Window {
     element_states: HashMap<GlobalElementId, AnyBox>,
     z_index_stack: StackingOrder,
     content_mask_stack: Vec<ContentMask<Pixels>>,
-    mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyMouseEventListener)>>,
-    keyboard_listeners: HashMap<TypeId, Vec<AnyKeyboardEventListener>>,
-    focus_stack: Vec<FocusStackFrame>,
+    mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyListener)>>,
+    key_listeners: HashMap<TypeId, Vec<AnyListener>>,
+    key_events_enabled: bool,
+    focus_stack: Vec<FocusId>,
     focus_parents_by_child: HashMap<FocusId, FocusId>,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
@@ -226,7 +219,8 @@ impl Window {
             z_index_stack: StackingOrder(SmallVec::new()),
             content_mask_stack: Vec::new(),
             mouse_listeners: HashMap::default(),
-            keyboard_listeners: HashMap::default(),
+            key_listeners: HashMap::default(),
+            key_events_enabled: true,
             focus_stack: Vec::new(),
             focus_parents_by_child: HashMap::default(),
             focus_listeners: Vec::new(),
@@ -260,12 +254,6 @@ impl ContentMask<Pixels> {
         let bounds = self.bounds.intersect(&other.bounds);
         ContentMask { bounds }
     }
-}
-
-struct FocusStackFrame {
-    handle: FocusHandle,
-    key_down_listeners: SmallVec<[AnyKeyDownListener; 2]>,
-    key_up_listeners: SmallVec<[AnyKeyUpListener; 2]>,
 }
 
 pub struct WindowContext<'a, 'w> {
@@ -468,7 +456,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             .or_default()
             .push((
                 order,
-                Box::new(move |event: &dyn Any, phase, cx| {
+                Arc::new(move |event: &dyn Any, phase, cx| {
                     handler(event.downcast_ref().unwrap(), phase, cx)
                 }),
             ))
@@ -479,10 +467,10 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         handler: impl Fn(&Event, DispatchPhase, &mut WindowContext) + Send + Sync + 'static,
     ) {
         self.window
-            .keyboard_listeners
+            .key_listeners
             .entry(TypeId::of::<Event>())
             .or_default()
-            .push(Box::new(move |event: &dyn Any, phase, cx| {
+            .push(Arc::new(move |event: &dyn Any, phase, cx| {
                 handler(event.downcast_ref().unwrap(), phase, cx)
             }))
     }
@@ -833,8 +821,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         // Clear focus state, because we determine what is focused when the new elements
         // in the upcoming frame are initialized.
         window.focus_listeners.clear();
-        window.keyboard_listeners.values_mut().for_each(Vec::clear);
+        window.key_listeners.values_mut().for_each(Vec::clear);
         window.focus_parents_by_child.clear();
+        window.key_events_enabled = true;
     }
 
     fn end_frame(&mut self) {
@@ -893,7 +882,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         } else if let Some(any_keyboard_event) = event.keyboard_event() {
             if let Some(mut handlers) = self
                 .window
-                .keyboard_listeners
+                .key_listeners
                 .remove(&any_keyboard_event.type_id())
             {
                 for handler in &handlers {
@@ -914,13 +903,13 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
                 handlers.extend(
                     self.window
-                        .keyboard_listeners
+                        .key_listeners
                         .get_mut(&any_keyboard_event.type_id())
                         .into_iter()
                         .flat_map(|handlers| handlers.drain(..)),
                 );
                 self.window
-                    .keyboard_listeners
+                    .key_listeners
                     .insert(any_keyboard_event.type_id(), handlers);
             }
         }
@@ -1218,78 +1207,69 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         });
     }
 
-    pub fn with_focus<R>(
+    pub fn on_focus_changed(
         &mut self,
-        focus_handle: Option<FocusHandle>,
-        key_down: impl IntoIterator<Item = KeyDownListener<V>>,
-        key_up: impl IntoIterator<Item = KeyUpListener<V>>,
-        focus: impl IntoIterator<Item = FocusListener<V>>,
+        listener: impl Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + Sync + 'static,
+    ) {
+        let handle = self.handle();
+        self.window.focus_listeners.push(Arc::new(move |event, cx| {
+            handle
+                .update(cx, |view, cx| listener(view, event, cx))
+                .log_err();
+        }));
+    }
+
+    pub fn with_key_listeners<R>(
+        &mut self,
+        key_listeners: &[(TypeId, KeyListener<V>)],
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        let Some(focus_handle) = focus_handle else {
-            return f(self);
-        };
-
-        let handle = self.handle();
-        let window = &mut *self.window;
-
-        for listener in focus {
-            let handle = handle.clone();
-            window.focus_listeners.push(Box::new(move |event, cx| {
-                handle
-                    .update(cx, |view, cx| listener(view, event, cx))
-                    .log_err();
-            }));
-        }
-
-        let mut focus_stack = mem::take(&mut window.focus_stack);
-        if let Some(parent_frame) = focus_stack.last() {
-            window
-                .focus_parents_by_child
-                .insert(focus_handle.id, parent_frame.handle.id);
-        }
-
-        let mut frame = FocusStackFrame {
-            handle: focus_handle.clone(),
-            key_down_listeners: SmallVec::new(),
-            key_up_listeners: SmallVec::new(),
-        };
-
-        for listener in key_down {
-            let handle = handle.clone();
-            frame
-                .key_down_listeners
-                .push(Box::new(move |event, phase, cx| {
-                    handle
-                        .update(cx, |view, cx| listener(view, event, phase, cx))
-                        .log_err();
-                }));
-        }
-        for listener in key_up {
-            let handle = handle.clone();
-            frame
-                .key_up_listeners
-                .push(Box::new(move |event, phase, cx| {
-                    handle
-                        .update(cx, |view, cx| listener(view, event, phase, cx))
-                        .log_err();
-                }));
-        }
-        focus_stack.push(frame);
-
-        if Some(focus_handle.id) == window.focus {
-            for focus_frame in &mut focus_stack {
-                for listener in focus_frame.key_down_listeners.drain(..) {
-                    self.window_cx.on_keyboard_event(listener);
-                }
-                for listener in focus_frame.key_up_listeners.drain(..) {
-                    self.window_cx.on_keyboard_event(listener);
-                }
+        if self.window.key_events_enabled {
+            let handle = self.handle();
+            for (type_id, listener) in key_listeners {
+                let handle = handle.clone();
+                let listener = listener.clone();
+                self.window
+                    .key_listeners
+                    .entry(*type_id)
+                    .or_default()
+                    .push(Arc::new(move |event, phase, cx| {
+                        handle
+                            .update(cx, |view, cx| listener(view, event, phase, cx))
+                            .log_err();
+                    }));
             }
         }
 
-        self.window.focus_stack = focus_stack;
         let result = f(self);
+
+        if self.window.key_events_enabled {
+            for (type_id, _) in key_listeners {
+                self.window.key_listeners.get_mut(type_id).unwrap().pop();
+            }
+        }
+
+        result
+    }
+
+    pub fn with_focus<R>(
+        &mut self,
+        focus_handle: FocusHandle,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        if let Some(parent_focus_id) = self.window.focus_stack.last().copied() {
+            self.window
+                .focus_parents_by_child
+                .insert(focus_handle.id, parent_focus_id);
+        }
+        self.window.focus_stack.push(focus_handle.id);
+
+        if Some(focus_handle.id) == self.window.focus {
+            self.window.key_events_enabled = false;
+        }
+
+        let result = f(self);
+
         self.window.focus_stack.pop();
         result
     }

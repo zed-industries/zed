@@ -53,15 +53,15 @@ pub struct Panel<S: 'static + Send + Sync> {
 }
 
 impl<S: 'static + Send + Sync> Panel<S> {
-    pub fn new(scroll_state: ScrollState) -> Self {
-        let setting = user_settings();
+    pub fn new(cx: &mut WindowContext) -> Self {
+        let settings = user_settings(cx);
 
         Self {
             state_type: PhantomData,
-            scroll_state,
+            scroll_state: ScrollState::default(),
             current_side: PanelSide::default(),
             allowed_sides: PanelAllowedSides::default(),
-            initial_width: *setting.default_panel_size,
+            initial_width: *settings.default_panel_size,
             width: None,
             children: SmallVec::new(),
         }
@@ -175,7 +175,7 @@ mod stories {
                 .child(Story::title_for::<_, Panel<S>>(cx))
                 .child(Story::label(cx, "Default"))
                 .child(
-                    Panel::new(ScrollState::default()).child(
+                    Panel::new(cx).child(
                         div()
                             .overflow_y_scroll(ScrollState::default())
                             .children((0..100).map(|ix| Label::new(format!("Item {}", ix + 1)))),

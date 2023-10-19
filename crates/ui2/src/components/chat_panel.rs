@@ -138,13 +138,10 @@ mod stories {
             Story::container(cx)
                 .child(Story::title_for::<_, ChatPanel<S>>(cx))
                 .child(Story::label(cx, "Default"))
-                .child(
-                    Panel::new(ScrollState::default())
-                        .child(ChatPanel::new(ScrollState::default())),
-                )
+                .child(Panel::new(cx).child(ChatPanel::new(ScrollState::default())))
                 .child(Story::label(cx, "With Mesages"))
-                .child(Panel::new(ScrollState::default()).child(
-                    ChatPanel::new(ScrollState::default()).messages(vec![
+                .child(
+                    Panel::new(cx).child(ChatPanel::new(ScrollState::default()).messages(vec![
                         ChatMessage::new(
                             "osiewicz".to_string(),
                             "is this thing on?".to_string(),
@@ -159,8 +156,8 @@ mod stories {
                                 .unwrap()
                                 .naive_local(),
                         ),
-                    ]),
-                ))
+                    ])),
+                )
         }
     }
 }

@@ -180,8 +180,8 @@ impl<S: 'static + Send + Sync> IconElement<S> {
         let theme = theme(cx);
         let fill = self.color.color(theme);
         let svg_size = match self.size {
-            IconSize::Small => ui_size(12. / 14.),
-            IconSize::Medium => ui_size(15. / 14.),
+            IconSize::Small => ui_size(cx, 12. / 14.),
+            IconSize::Medium => ui_size(cx, 15. / 14.),
         };
 
         svg()
