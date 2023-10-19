@@ -16,4 +16,7 @@ CREATE TABLE notifications (
     "response" BOOLEAN
 );
 
-CREATE INDEX "index_notifications_on_recipient_id" ON "notifications" ("recipient_id");
+CREATE INDEX
+    "index_notifications_on_recipient_id_is_read_kind_entity_id"
+    ON "notifications"
+    ("recipient_id", "is_read", "kind", "entity_id");
