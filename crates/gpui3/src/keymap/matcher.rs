@@ -1,12 +1,4 @@
-mod binding;
-mod keymap;
-mod keymap_context;
-
-pub use binding::*;
-pub use keymap::*;
-pub use keymap_context::*;
-
-use crate::Keystroke;
+use crate::{Binding, Keymap, KeymapContext, KeymapVersion, Keystroke};
 use smallvec::SmallVec;
 use std::any::{Any, TypeId};
 
@@ -16,13 +8,13 @@ pub trait Action: Any + Send + Sync {
     fn as_any(&self) -> &dyn Any;
 }
 
-pub struct KeymapMatcher {
+pub struct KeyMatcher {
     pending_keystrokes: Vec<Keystroke>,
     keymap: Keymap,
     keymap_version: KeymapVersion,
 }
 
-impl KeymapMatcher {
+impl KeyMatcher {
     pub fn new(keymap: Keymap) -> Self {
         Self {
             pending_keystrokes: Vec::new(),
@@ -106,7 +98,7 @@ impl KeymapMatcher {
     }
 }
 
-impl Default for KeymapMatcher {
+impl Default for KeyMatcher {
     fn default() -> Self {
         Self::new(Keymap::default())
     }
