@@ -2,20 +2,14 @@ use crate::{
     Active, AnyElement, BorrowWindow, Bounds, Element, ElementFocusability, ElementId,
     ElementInteractivity, Focus, FocusHandle, FocusListeners, Focusable, GlobalElementId,
     GroupBounds, GroupStyle, Hover, InteractiveElementState, IntoAnyElement, LayoutId,
-    MouseDownEvent, NonFocusable, Overflow, ParentElement, Pixels, Point, SharedString,
-    StatefulInteractivity, StatefullyInteractive, StatelessInteractivity, StatelesslyInteractive,
-    Style, StyleRefinement, Styled, ViewContext,
+    NonFocusable, Overflow, ParentElement, Pixels, Point, SharedString, StatefulInteractivity,
+    StatefullyInteractive, StatelessInteractivity, StatelesslyInteractive, Style, StyleRefinement,
+    Styled, ViewContext,
 };
 use parking_lot::Mutex;
 use refineable::Refineable;
 use smallvec::SmallVec;
 use std::sync::Arc;
-
-#[derive(Default)]
-pub struct DivState {
-    active_state: Arc<Mutex<InteractiveElementState>>,
-    pending_click: Arc<Mutex<Option<MouseDownEvent>>>,
-}
 
 #[derive(Default, Clone)]
 pub struct ScrollState(Arc<Mutex<Point<Pixels>>>);
@@ -148,14 +142,14 @@ where
     pub fn compute_style(
         &self,
         bounds: Bounds<Pixels>,
-        state: &DivState,
+        state: &InteractiveElementState,
         cx: &mut ViewContext<V>,
     ) -> Style {
         let mut computed_style = Style::default();
         computed_style.refine(&self.base_style);
         self.focusability.refine_style(&mut computed_style, cx);
         self.interactivity
-            .refine_style(&mut computed_style, bounds, &state.active_state, cx);
+            .refine_style(&mut computed_style, bounds, state, cx);
         computed_style
     }
 }
@@ -209,7 +203,7 @@ where
     V: 'static + Send + Sync,
 {
     type ViewState = V;
-    type ElementState = DivState;
+    type ElementState = InteractiveElementState;
 
     fn id(&self) -> Option<ElementId> {
         self.interactivity
@@ -273,12 +267,7 @@ where
                     style.paint(bounds, cx);
 
                     this.focusability.paint(bounds, cx);
-                    this.interactivity.paint(
-                        bounds,
-                        element_state.pending_click.clone(),
-                        element_state.active_state.clone(),
-                        cx,
-                    );
+                    this.interactivity.paint(bounds, element_state, cx);
                 });
 
                 cx.stack(1, |cx| {

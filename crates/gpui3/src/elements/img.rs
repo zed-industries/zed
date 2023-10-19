@@ -1,8 +1,9 @@
 use crate::{
-    div, Active, AnyElement, BorrowWindow, Bounds, Div, DivState, Element, ElementFocusability,
-    ElementId, ElementInteractivity, Focus, FocusListeners, Focusable, Hover, IntoAnyElement,
-    LayoutId, NonFocusable, Pixels, SharedString, StatefulInteractivity, StatefullyInteractive,
-    StatelessInteractivity, StatelesslyInteractive, StyleRefinement, Styled, ViewContext,
+    div, Active, AnyElement, BorrowWindow, Bounds, Div, Element, ElementFocusability, ElementId,
+    ElementInteractivity, Focus, FocusListeners, Focusable, Hover, InteractiveElementState,
+    IntoAnyElement, LayoutId, NonFocusable, Pixels, SharedString, StatefulInteractivity,
+    StatefullyInteractive, StatelessInteractivity, StatelesslyInteractive, StyleRefinement, Styled,
+    ViewContext,
 };
 use futures::FutureExt;
 use util::ResultExt;
@@ -77,7 +78,7 @@ where
     F: ElementFocusability<V>,
 {
     type ViewState = V;
-    type ElementState = DivState;
+    type ElementState = InteractiveElementState;
 
     fn id(&self) -> Option<crate::ElementId> {
         self.base.id()

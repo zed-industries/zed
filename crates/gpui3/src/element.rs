@@ -85,7 +85,7 @@ pub trait ElementInteractivity<V: 'static + Send + Sync>: 'static + Send + Sync 
         &self,
         style: &mut Style,
         bounds: Bounds<Pixels>,
-        active_state: &Mutex<InteractiveElementState>,
+        element_state: &InteractiveElementState,
         cx: &mut ViewContext<V>,
     ) {
         let mouse_position = cx.mouse_position();
@@ -102,7 +102,7 @@ pub trait ElementInteractivity<V: 'static + Send + Sync>: 'static + Send + Sync 
         }
 
         if let Some(stateful) = self.as_stateful() {
-            let active_state = active_state.lock();
+            let active_state = element_state.active_state.lock();
             if active_state.group {
                 if let Some(group_style) = stateful.group_active_style.as_ref() {
                     style.refine(&group_style.style);
@@ -117,8 +117,7 @@ pub trait ElementInteractivity<V: 'static + Send + Sync>: 'static + Send + Sync 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        pending_click: Arc<Mutex<Option<MouseDownEvent>>>,
-        interactive_state: Arc<Mutex<InteractiveElementState>>,
+        element_state: &InteractiveElementState,
         cx: &mut ViewContext<V>,
     ) {
         let stateless = self.as_stateless();
@@ -162,6 +161,7 @@ pub trait ElementInteractivity<V: 'static + Send + Sync>: 'static + Send + Sync 
         if let Some(stateful) = self.as_stateful() {
             let click_listeners = stateful.mouse_click_listeners.clone();
 
+            let pending_click = element_state.pending_click.clone();
             let mouse_down = pending_click.lock().clone();
             if let Some(mouse_down) = mouse_down {
                 cx.on_mouse_event(move |state, event: &MouseUpEvent, phase, cx| {
@@ -185,7 +185,8 @@ pub trait ElementInteractivity<V: 'static + Send + Sync>: 'static + Send + Sync 
                 });
             }
 
-            if interactive_state.lock().is_none() {
+            let active_state = element_state.active_state.clone();
+            if active_state.lock().is_none() {
                 let active_group_bounds = stateful
                     .group_active_style
                     .as_ref()
@@ -196,7 +197,7 @@ pub trait ElementInteractivity<V: 'static + Send + Sync>: 'static + Send + Sync 
                             .map_or(false, |bounds| bounds.contains_point(&down.position));
                         let element = bounds.contains_point(&down.position);
                         if group || element {
-                            *interactive_state.lock() = InteractiveElementState { group, element };
+                            *active_state.lock() = ActiveState { group, element };
                             cx.notify();
                         }
                     }
@@ -204,7 +205,7 @@ pub trait ElementInteractivity<V: 'static + Send + Sync>: 'static + Send + Sync 
             } else {
                 cx.on_mouse_event(move |_, _: &MouseUpEvent, phase, cx| {
                     if phase == DispatchPhase::Capture {
-                        *interactive_state.lock() = InteractiveElementState::default();
+                        *active_state.lock() = ActiveState::default();
                         cx.notify();
                     }
                 });
@@ -319,15 +320,21 @@ impl GroupBounds {
 }
 
 #[derive(Copy, Clone, Default, Eq, PartialEq)]
-pub struct InteractiveElementState {
+struct ActiveState {
     pub group: bool,
     pub element: bool,
 }
 
-impl InteractiveElementState {
+impl ActiveState {
     pub fn is_none(&self) -> bool {
         !self.group && !self.element
     }
+}
+
+#[derive(Default)]
+pub struct InteractiveElementState {
+    active_state: Arc<Mutex<ActiveState>>,
+    pending_click: Arc<Mutex<Option<MouseDownEvent>>>,
 }
 
 impl<V> Default for StatelessInteractivity<V> {
