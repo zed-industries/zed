@@ -14,48 +14,48 @@ use crate::{
 
 pub fn static_tabs_example<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
     vec![
-        Tab::new()
+        Tab::new("wip.rs")
             .title("wip.rs".to_string())
             .icon(Icon::FileRust)
             .current(false)
             .fs_status(FileSystemStatus::Deleted),
-        Tab::new()
+        Tab::new("Cargo.toml")
             .title("Cargo.toml".to_string())
             .icon(Icon::FileToml)
             .current(false)
             .git_status(GitStatus::Modified),
-        Tab::new()
+        Tab::new("Channels Panel")
             .title("Channels Panel".to_string())
             .icon(Icon::Hash)
             .current(false),
-        Tab::new()
+        Tab::new("channels_panel.rs")
             .title("channels_panel.rs".to_string())
             .icon(Icon::FileRust)
             .current(true)
             .git_status(GitStatus::Modified),
-        Tab::new()
+        Tab::new("workspace.rs")
             .title("workspace.rs".to_string())
             .current(false)
             .icon(Icon::FileRust)
             .git_status(GitStatus::Modified),
-        Tab::new()
+        Tab::new("icon_button.rs")
             .title("icon_button.rs".to_string())
             .icon(Icon::FileRust)
             .current(false),
-        Tab::new()
+        Tab::new("storybook.rs")
             .title("storybook.rs".to_string())
             .icon(Icon::FileRust)
             .current(false)
             .git_status(GitStatus::Created),
-        Tab::new()
+        Tab::new("theme.rs")
             .title("theme.rs".to_string())
             .icon(Icon::FileRust)
             .current(false),
-        Tab::new()
+        Tab::new("theme_registry.rs")
             .title("theme_registry.rs".to_string())
             .icon(Icon::FileRust)
             .current(false),
-        Tab::new()
+        Tab::new("styleable_helpers.rs")
             .title("styleable_helpers.rs".to_string())
             .icon(Icon::FileRust)
             .current(false),
@@ -64,21 +64,21 @@ pub fn static_tabs_example<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
 
 pub fn static_tabs_1<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
     vec![
-        Tab::new()
+        Tab::new("project_panel.rs")
             .title("project_panel.rs".to_string())
             .icon(Icon::FileRust)
             .current(false)
             .fs_status(FileSystemStatus::Deleted),
-        Tab::new()
+        Tab::new("tab_bar.rs")
             .title("tab_bar.rs".to_string())
             .icon(Icon::FileRust)
             .current(false)
             .git_status(GitStatus::Modified),
-        Tab::new()
+        Tab::new("workspace.rs")
             .title("workspace.rs".to_string())
             .icon(Icon::FileRust)
             .current(false),
-        Tab::new()
+        Tab::new("tab.rs")
             .title("tab.rs".to_string())
             .icon(Icon::FileRust)
             .current(true)
@@ -88,12 +88,12 @@ pub fn static_tabs_1<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
 
 pub fn static_tabs_2<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
     vec![
-        Tab::new()
+        Tab::new("tab_bar.rs")
             .title("tab_bar.rs".to_string())
             .icon(Icon::FileRust)
             .current(false)
             .fs_status(FileSystemStatus::Deleted),
-        Tab::new()
+        Tab::new("static_data.rs")
             .title("static_data.rs".to_string())
             .icon(Icon::FileRust)
             .current(true)
@@ -102,7 +102,9 @@ pub fn static_tabs_2<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
 }
 
 pub fn static_tabs_3<S: 'static + Send + Sync + Clone>() -> Vec<Tab<S>> {
-    vec![Tab::new().git_status(GitStatus::Created).current(true)]
+    vec![Tab::new("static_tabs_3")
+        .git_status(GitStatus::Created)
+        .current(true)]
 }
 
 pub fn static_players() -> Vec<Player> {

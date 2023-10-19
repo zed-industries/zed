@@ -54,14 +54,14 @@ impl<S: 'static + Send + Sync + Clone> Terminal<S> {
                             div()
                                 .flex()
                                 .child(
-                                    Tab::new()
+                                    Tab::new(1)
                                         .title("zed — fish".to_string())
                                         .icon(Icon::Terminal)
                                         .close_side(IconSide::Right)
                                         .current(true),
                                 )
                                 .child(
-                                    Tab::new()
+                                    Tab::new(2)
                                         .title("zed — fish".to_string())
                                         .icon(Icon::Terminal)
                                         .close_side(IconSide::Right)
