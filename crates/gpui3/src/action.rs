@@ -4,7 +4,7 @@ use collections::{HashMap, HashSet};
 use std::any::Any;
 
 pub trait Action: Any + Send + Sync {
-    fn partial_eq(&self, action: &dyn Action) -> bool;
+    fn eq(&self, action: &dyn Action) -> bool;
     fn boxed_clone(&self) -> Box<dyn Action>;
     fn as_any(&self) -> &dyn Any;
 }

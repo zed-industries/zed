@@ -1,6 +1,45 @@
-use gpui3::{div, view, Context, Focus, ParentElement, Styled, View, WindowContext};
+use std::any::Any;
+
+use gpui3::{
+    div, view, Action, Context, Focus, Interactive, KeyBinding, ParentElement, Styled, View,
+    WindowContext,
+};
 
 use crate::themes::rose_pine;
+
+#[derive(Clone)]
+struct ActionA;
+
+impl Action for ActionA {
+    fn eq(&self, action: &dyn Action) -> bool {
+        action.as_any().downcast_ref::<Self>().is_some()
+    }
+
+    fn boxed_clone(&self) -> Box<dyn Action> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+#[derive(Clone)]
+struct ActionB;
+
+impl Action for ActionB {
+    fn eq(&self, action: &dyn Action) -> bool {
+        action.as_any().downcast_ref::<Self>().is_some()
+    }
+
+    fn boxed_clone(&self) -> Box<dyn Action> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
 
 pub struct FocusStory {
     text: View<()>,
@@ -8,6 +47,10 @@ pub struct FocusStory {
 
 impl FocusStory {
     pub fn view(cx: &mut WindowContext) -> View<()> {
+        cx.bind_keys([
+            KeyBinding::new("cmd-a", ActionA, None),
+            KeyBinding::new("cmd-b", ActionB, None),
+        ]);
         let theme = rose_pine();
 
         let color_1 = theme.lowest.negative.default.foreground;
@@ -22,6 +65,12 @@ impl FocusStory {
         let child_2 = cx.focus_handle();
         view(cx.entity(|cx| ()), move |_, cx| {
             div()
+                .on_action(|_, action: &ActionA, phase, cx| {
+                    println!("Action A dispatched on parent during {:?}", phase);
+                })
+                .on_action(|_, action: &ActionB, phase, cx| {
+                    println!("Action A dispatched on parent during {:?}", phase);
+                })
                 .focusable(&parent)
                 .on_focus(|_, _, _| println!("Parent focused"))
                 .on_blur(|_, _, _| println!("Parent blurred"))
@@ -39,6 +88,10 @@ impl FocusStory {
                 .focus_in(|style| style.bg(color_3))
                 .child(
                     div()
+                        .id("child 1")
+                        .on_action(|_, action: &ActionA, phase, cx| {
+                            println!("Action A dispatched on child 1 during {:?}", phase);
+                        })
                         .focusable(&child_1)
                         .w_full()
                         .h_6()
@@ -59,6 +112,10 @@ impl FocusStory {
                 )
                 .child(
                     div()
+                        .id("child 2")
+                        .on_action(|_, action: &ActionB, phase, cx| {
+                            println!("Action B dispatched on child 2 during {:?}", phase);
+                        })
                         .focusable(&child_2)
                         .w_full()
                         .h_6()

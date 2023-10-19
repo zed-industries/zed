@@ -1035,8 +1035,21 @@ pub trait BorrowWindow: BorrowAppContext {
         id: impl Into<ElementId>,
         f: impl FnOnce(GlobalElementId, &mut Self) -> R,
     ) -> R {
-        self.window_mut().element_id_stack.push(id.into());
-        let global_id = self.window_mut().element_id_stack.clone();
+        let keymap = self.app_mut().keymap.clone();
+        let window = self.window_mut();
+        window.element_id_stack.push(id.into());
+        let global_id = window.element_id_stack.clone();
+
+        if window.key_matchers.get(&global_id).is_none() {
+            window.key_matchers.insert(
+                global_id.clone(),
+                window
+                    .prev_frame_key_matchers
+                    .remove(&global_id)
+                    .unwrap_or_else(|| KeyMatcher::new(keymap)),
+            );
+        }
+
         let result = f(global_id, self);
         self.window_mut().element_id_stack.pop();
         result

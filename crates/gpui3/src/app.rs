@@ -112,7 +112,7 @@ pub struct AppContext {
     pub(crate) unit_entity: Handle<()>,
     pub(crate) entities: EntityMap,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
-    keymap: Arc<RwLock<Keymap>>,
+    pub(crate) keymap: Arc<RwLock<Keymap>>,
     pub(crate) pending_notifications: HashSet<EntityId>,
     pending_effects: VecDeque<Effect>,
     pub(crate) observers: SubscriberSet<EntityId, Handler>,
