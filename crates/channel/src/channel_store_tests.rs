@@ -295,7 +295,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
 
     // Scroll up to view older messages.
     channel.update(cx, |channel, cx| {
-        assert!(channel.load_more_messages(cx));
+        channel.load_more_messages(cx).unwrap().detach();
     });
     let get_messages = server.receive::<proto::GetChannelMessages>().await.unwrap();
     assert_eq!(get_messages.payload.channel_id, 5);

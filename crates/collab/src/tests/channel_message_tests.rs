@@ -332,7 +332,7 @@ async fn test_channel_message_changes(
     chat_panel_b
         .update(cx_b, |chat_panel, cx| {
             chat_panel.set_active(true, cx);
-            chat_panel.select_channel(channel_id, cx)
+            chat_panel.select_channel(channel_id, None, cx)
         })
         .await
         .unwrap();

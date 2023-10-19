@@ -188,7 +188,7 @@ impl ChatPanel {
                     .channel_at(selected_ix)
                     .map(|e| e.id);
                 if let Some(selected_channel_id) = selected_channel_id {
-                    this.select_channel(selected_channel_id, cx)
+                    this.select_channel(selected_channel_id, None, cx)
                         .detach_and_log_err(cx);
                 }
             })
@@ -622,7 +622,9 @@ impl ChatPanel {
     fn load_more_messages(&mut self, _: &LoadMoreMessages, cx: &mut ViewContext<Self>) {
         if let Some((chat, _)) = self.active_chat.as_ref() {
             chat.update(cx, |channel, cx| {
-                channel.load_more_messages(cx);
+                if let Some(task) = channel.load_more_messages(cx) {
+                    task.detach();
+                }
             })
         }
     }
@@ -630,6 +632,7 @@ impl ChatPanel {
     pub fn select_channel(
         &mut self,
         selected_channel_id: u64,
+        scroll_to_message_id: Option<u64>,
         cx: &mut ViewContext<ChatPanel>,
     ) -> Task<Result<()>> {
         if let Some((chat, _)) = &self.active_chat {
@@ -645,8 +648,23 @@ impl ChatPanel {
             let chat = open_chat.await?;
             this.update(&mut cx, |this, cx| {
                 this.markdown_data = Default::default();
-                this.set_active_chat(chat, cx);
-            })
+                this.set_active_chat(chat.clone(), cx);
+            })?;
+
+            if let Some(message_id) = scroll_to_message_id {
+                if let Some(item_ix) =
+                    ChannelChat::load_history_since_message(chat, message_id, cx.clone()).await
+                {
+                    this.update(&mut cx, |this, _| {
+                        this.message_list.scroll_to(ListOffset {
+                            item_ix,
+                            offset_in_item: 0.,
+                        });
+                    })?;
+                }
+            }
+
+            Ok(())
         })
     }
 

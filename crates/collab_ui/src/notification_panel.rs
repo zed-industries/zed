@@ -1,5 +1,6 @@
 use crate::{
-    format_timestamp, is_channels_feature_enabled, render_avatar, NotificationPanelSettings,
+    chat_panel::ChatPanel, format_timestamp, is_channels_feature_enabled, render_avatar,
+    NotificationPanelSettings,
 };
 use anyhow::Result;
 use channel::ChannelStore;
@@ -56,6 +57,14 @@ pub enum Event {
     DockPositionChanged,
     Focus,
     Dismissed,
+}
+
+pub struct NotificationPresenter {
+    pub actor: Option<Arc<client::User>>,
+    pub text: String,
+    pub icon: &'static str,
+    pub needs_response: bool,
+    pub can_navigate: bool,
 }
 
 actions!(notification_panel, [ToggleFocus]);
@@ -178,7 +187,13 @@ impl NotificationPanel {
         let entry = self.notification_store.read(cx).notification_at(ix)?;
         let now = OffsetDateTime::now_utc();
         let timestamp = entry.timestamp;
-        let (actor, text, icon, needs_response) = self.present_notification(entry, cx)?;
+        let NotificationPresenter {
+            actor,
+            text,
+            icon,
+            needs_response,
+            can_navigate,
+        } = self.present_notification(entry, cx)?;
 
         let theme = theme::current(cx);
         let style = &theme.notification_panel;
@@ -280,6 +295,15 @@ impl NotificationPanel {
                     .with_style(container)
                     .into_any()
             })
+            .with_cursor_style(if can_navigate {
+                CursorStyle::PointingHand
+            } else {
+                CursorStyle::default()
+            })
+            .on_click(MouseButton::Left, {
+                let notification = notification.clone();
+                move |_, this, cx| this.did_click_notification(&notification, cx)
+            })
             .into_any(),
         )
     }
@@ -288,27 +312,29 @@ impl NotificationPanel {
         &self,
         entry: &NotificationEntry,
         cx: &AppContext,
-    ) -> Option<(Option<Arc<client::User>>, String, &'static str, bool)> {
+    ) -> Option<NotificationPresenter> {
         let user_store = self.user_store.read(cx);
         let channel_store = self.channel_store.read(cx);
-        let icon;
-        let text;
-        let actor;
-        let needs_response;
         match entry.notification {
             Notification::ContactRequest { sender_id } => {
                 let requester = user_store.get_cached_user(sender_id)?;
-                icon = "icons/plus.svg";
-                text = format!("{} wants to add you as a contact", requester.github_login);
-                needs_response = user_store.is_contact_request_pending(&requester);
-                actor = Some(requester);
+                Some(NotificationPresenter {
+                    icon: "icons/plus.svg",
+                    text: format!("{} wants to add you as a contact", requester.github_login),
+                    needs_response: user_store.is_contact_request_pending(&requester),
+                    actor: Some(requester),
+                    can_navigate: false,
+                })
             }
             Notification::ContactRequestAccepted { responder_id } => {
                 let responder = user_store.get_cached_user(responder_id)?;
-                icon = "icons/plus.svg";
-                text = format!("{} accepted your contact invite", responder.github_login);
-                needs_response = false;
-                actor = Some(responder);
+                Some(NotificationPresenter {
+                    icon: "icons/plus.svg",
+                    text: format!("{} accepted your contact invite", responder.github_login),
+                    needs_response: false,
+                    actor: Some(responder),
+                    can_navigate: false,
+                })
             }
             Notification::ChannelInvitation {
                 ref channel_name,
@@ -316,13 +342,16 @@ impl NotificationPanel {
                 inviter_id,
             } => {
                 let inviter = user_store.get_cached_user(inviter_id)?;
-                icon = "icons/hash.svg";
-                text = format!(
-                    "{} invited you to join the #{channel_name} channel",
-                    inviter.github_login
-                );
-                needs_response = channel_store.has_channel_invitation(channel_id);
-                actor = Some(inviter);
+                Some(NotificationPresenter {
+                    icon: "icons/hash.svg",
+                    text: format!(
+                        "{} invited you to join the #{channel_name} channel",
+                        inviter.github_login
+                    ),
+                    needs_response: channel_store.has_channel_invitation(channel_id),
+                    actor: Some(inviter),
+                    can_navigate: false,
+                })
             }
             Notification::ChannelMessageMention {
                 sender_id,
@@ -335,16 +364,41 @@ impl NotificationPanel {
                     .notification_store
                     .read(cx)
                     .channel_message_for_id(message_id)?;
-                icon = "icons/conversations.svg";
-                text = format!(
-                    "{} mentioned you in the #{} channel:\n{}",
-                    sender.github_login, channel.name, message.body,
-                );
-                needs_response = false;
-                actor = Some(sender);
+                Some(NotificationPresenter {
+                    icon: "icons/conversations.svg",
+                    text: format!(
+                        "{} mentioned you in the #{} channel:\n{}",
+                        sender.github_login, channel.name, message.body,
+                    ),
+                    needs_response: false,
+                    actor: Some(sender),
+                    can_navigate: true,
+                })
             }
         }
-        Some((actor, text, icon, needs_response))
+    }
+
+    fn did_click_notification(&mut self, notification: &Notification, cx: &mut ViewContext<Self>) {
+        if let Notification::ChannelMessageMention {
+            message_id,
+            channel_id,
+            ..
+        } = notification.clone()
+        {
+            if let Some(workspace) = self.workspace.upgrade(cx) {
+                cx.app_context().defer(move |cx| {
+                    workspace.update(cx, |workspace, cx| {
+                        if let Some(panel) = workspace.focus_panel::<ChatPanel>(cx) {
+                            panel.update(cx, |panel, cx| {
+                                panel
+                                    .select_channel(channel_id, Some(message_id), cx)
+                                    .detach_and_log_err(cx);
+                            });
+                        }
+                    });
+                });
+            }
+        }
     }
 
     fn render_sign_in_prompt(
@@ -410,7 +464,8 @@ impl NotificationPanel {
     }
 
     fn add_toast(&mut self, entry: &NotificationEntry, cx: &mut ViewContext<Self>) {
-        let Some((actor, text, _, _)) = self.present_notification(entry, cx) else {
+        let Some(NotificationPresenter { actor, text, .. }) = self.present_notification(entry, cx)
+        else {
             return;
         };
 

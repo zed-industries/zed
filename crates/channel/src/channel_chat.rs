@@ -8,7 +8,12 @@ use client::{
 use futures::lock::Mutex;
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task};
 use rand::prelude::*;
-use std::{collections::HashSet, mem, ops::Range, sync::Arc};
+use std::{
+    collections::HashSet,
+    mem,
+    ops::{ControlFlow, Range},
+    sync::Arc,
+};
 use sum_tree::{Bias, SumTree};
 use time::OffsetDateTime;
 use util::{post_inc, ResultExt as _, TryFutureExt};
@@ -201,41 +206,68 @@ impl ChannelChat {
         })
     }
 
-    pub fn load_more_messages(&mut self, cx: &mut ModelContext<Self>) -> bool {
-        if !self.loaded_all_messages {
-            let rpc = self.rpc.clone();
-            let user_store = self.user_store.clone();
-            let channel_id = self.channel.id;
-            if let Some(before_message_id) =
-                self.messages.first().and_then(|message| match message.id {
-                    ChannelMessageId::Saved(id) => Some(id),
-                    ChannelMessageId::Pending(_) => None,
-                })
-            {
-                cx.spawn(|this, mut cx| {
-                    async move {
-                        let response = rpc
-                            .request(proto::GetChannelMessages {
-                                channel_id,
-                                before_message_id,
-                            })
-                            .await?;
-                        let loaded_all_messages = response.done;
-                        let messages =
-                            messages_from_proto(response.messages, &user_store, &mut cx).await?;
-                        this.update(&mut cx, |this, cx| {
-                            this.loaded_all_messages = loaded_all_messages;
-                            this.insert_messages(messages, cx);
+    pub fn load_more_messages(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<Option<()>>> {
+        if self.loaded_all_messages {
+            return None;
+        }
+
+        let rpc = self.rpc.clone();
+        let user_store = self.user_store.clone();
+        let channel_id = self.channel.id;
+        let before_message_id = self.first_loaded_message_id()?;
+        Some(cx.spawn(|this, mut cx| {
+            async move {
+                let response = rpc
+                    .request(proto::GetChannelMessages {
+                        channel_id,
+                        before_message_id,
+                    })
+                    .await?;
+                let loaded_all_messages = response.done;
+                let messages = messages_from_proto(response.messages, &user_store, &mut cx).await?;
+                this.update(&mut cx, |this, cx| {
+                    this.loaded_all_messages = loaded_all_messages;
+                    this.insert_messages(messages, cx);
+                });
+                anyhow::Ok(())
+            }
+            .log_err()
+        }))
+    }
+
+    pub fn first_loaded_message_id(&mut self) -> Option<u64> {
+        self.messages.first().and_then(|message| match message.id {
+            ChannelMessageId::Saved(id) => Some(id),
+            ChannelMessageId::Pending(_) => None,
+        })
+    }
+
+    pub async fn load_history_since_message(
+        chat: ModelHandle<Self>,
+        message_id: u64,
+        mut cx: AsyncAppContext,
+    ) -> Option<usize> {
+        loop {
+            let step = chat.update(&mut cx, |chat, cx| {
+                if let Some(first_id) = chat.first_loaded_message_id() {
+                    if first_id <= message_id {
+                        let mut cursor = chat.messages.cursor::<(ChannelMessageId, Count)>();
+                        let message_id = ChannelMessageId::Saved(message_id);
+                        cursor.seek(&message_id, Bias::Left, &());
+                        return ControlFlow::Break(if cursor.start().0 == message_id {
+                            Some(cursor.start().1 .0)
+                        } else {
+                            None
                         });
-                        anyhow::Ok(())
                     }
-                    .log_err()
-                })
-                .detach();
-                return true;
+                }
+                ControlFlow::Continue(chat.load_more_messages(cx))
+            });
+            match step {
+                ControlFlow::Break(ix) => return ix,
+                ControlFlow::Continue(task) => task?.await?,
             }
         }
-        false
     }
 
     pub fn acknowledge_last_message(&mut self, cx: &mut ModelContext<Self>) {
