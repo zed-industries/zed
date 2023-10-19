@@ -30,6 +30,7 @@ gpui = { path = "../gpui" }
 install_cli = { path = "../install_cli" }
 language = { path = "../language" }
 menu = { path = "../menu" }
+node_runtime = { path = "../node_runtime" }
 project = { path = "../project" }
 settings = { path = "../settings" }
 terminal = { path = "../terminal" }

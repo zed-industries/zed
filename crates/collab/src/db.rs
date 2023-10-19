@@ -432,6 +432,7 @@ pub struct NewUserResult {
 pub struct Channel {
     pub id: ChannelId,
     pub name: String,
+    pub visibility: ChannelVisibility,
 }
 
 #[derive(Debug, PartialEq)]

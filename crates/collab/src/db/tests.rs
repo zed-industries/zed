@@ -12,6 +12,8 @@ use sea_orm::ConnectionTrait;
 use sqlx::migrate::MigrateDatabase;
 use std::sync::Arc;
 
+const TEST_RELEASE_CHANNEL: &'static str = "test";
+
 pub struct TestDb {
     pub db: Option<Arc<Database>>,
     pub connection: Option<sqlx::AnyConnection>,
@@ -157,6 +159,7 @@ fn graph(channels: &[(ChannelId, &'static str)], edges: &[(ChannelId, ChannelId)
         graph.channels.push(Channel {
             id: *id,
             name: name.to_string(),
+            visibility: ChannelVisibility::Members,
         })
     }
 

@@ -24,6 +24,7 @@ mod rust;
 mod svelte;
 mod tailwind;
 mod typescript;
+mod vue;
 mod yaml;
 
 // 1. Add tree-sitter-{language} parser to zed crate
@@ -190,13 +191,20 @@ pub fn init(
     language(
         "php",
         tree_sitter_php::language(),
-        vec![Arc::new(php::IntelephenseLspAdapter::new(node_runtime))],
+        vec![Arc::new(php::IntelephenseLspAdapter::new(
+            node_runtime.clone(),
+        ))],
     );
 
     language("elm", tree_sitter_elm::language(), vec![]);
     language("glsl", tree_sitter_glsl::language(), vec![]);
     language("nix", tree_sitter_nix::language(), vec![]);
     language("nu", tree_sitter_nu::language(), vec![]);
+    language(
+        "vue",
+        tree_sitter_vue::language(),
+        vec![Arc::new(vue::VueLspAdapter::new(node_runtime))],
+    );
 }
 
 #[cfg(any(test, feature = "test-support"))]

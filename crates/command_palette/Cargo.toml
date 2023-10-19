@@ -19,6 +19,7 @@ settings = { path = "../settings" }
 util = { path = "../util" }
 theme = { path = "../theme" }
 workspace = { path = "../workspace" }
+zed-actions = { path = "../zed-actions" }
 
 [dev-dependencies]
 gpui = { path = "../gpui", features = ["test-support"] }

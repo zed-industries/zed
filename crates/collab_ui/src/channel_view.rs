@@ -24,7 +24,7 @@ use workspace::{
     item::{FollowableItem, Item, ItemHandle},
     register_followable_item,
     searchable::SearchableItemHandle,
-    ItemNavHistory, Pane, ViewId, Workspace, WorkspaceId,
+    ItemNavHistory, Pane, SaveIntent, ViewId, Workspace, WorkspaceId,
 };
 
 actions!(channel_view, [Deploy]);
@@ -93,15 +93,36 @@ impl ChannelView {
             }
 
             pane.update(&mut cx, |pane, cx| {
-                pane.items_of_type::<Self>()
-                    .find(|channel_view| channel_view.read(cx).channel_buffer == channel_buffer)
-                    .unwrap_or_else(|| {
-                        cx.add_view(|cx| {
-                            let mut this = Self::new(project, channel_store, channel_buffer, cx);
-                            this.acknowledge_buffer_version(cx);
-                            this
-                        })
-                    })
+                let buffer_id = channel_buffer.read(cx).remote_id(cx);
+
+                let existing_view = pane
+                    .items_of_type::<Self>()
+                    .find(|view| view.read(cx).channel_buffer.read(cx).remote_id(cx) == buffer_id);
+
+                // If this channel buffer is already open in this pane, just return it.
+                if let Some(existing_view) = existing_view.clone() {
+                    if existing_view.read(cx).channel_buffer == channel_buffer {
+                        return existing_view;
+                    }
+                }
+
+                let view = cx.add_view(|cx| {
+                    let mut this = Self::new(project, channel_store, channel_buffer, cx);
+                    this.acknowledge_buffer_version(cx);
+                    this
+                });
+
+                // If the pane contained a disconnected view for this channel buffer,
+                // replace that.
+                if let Some(existing_item) = existing_view {
+                    if let Some(ix) = pane.index_for_item(&existing_item) {
+                        pane.close_item_by_id(existing_item.id(), SaveIntent::Skip, cx)
+                            .detach();
+                        pane.add_item(Box::new(view.clone()), true, true, Some(ix), cx);
+                    }
+                }
+
+                view
             })
             .ok_or_else(|| anyhow!("pane was dropped"))
         })
@@ -285,10 +306,14 @@ impl FollowableItem for ChannelView {
     }
 
     fn to_state_proto(&self, cx: &AppContext) -> Option<proto::view::Variant> {
-        let channel = self.channel_buffer.read(cx).channel();
+        let channel_buffer = self.channel_buffer.read(cx);
+        if !channel_buffer.is_connected() {
+            return None;
+        }
+
         Some(proto::view::Variant::ChannelView(
             proto::view::ChannelView {
-                channel_id: channel.id,
+                channel_id: channel_buffer.channel().id,
                 editor: if let Some(proto::view::Variant::Editor(proto)) =
                     self.editor.read(cx).to_state_proto(cx)
                 {

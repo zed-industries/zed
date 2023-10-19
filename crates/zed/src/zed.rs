@@ -2,6 +2,7 @@ pub mod assets;
 pub mod languages;
 pub mod menus;
 pub mod only_instance;
+pub mod open_listener;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
@@ -28,6 +29,7 @@ use gpui::{
     AppContext, AsyncAppContext, Task, ViewContext, WeakViewHandle,
 };
 pub use lsp;
+use open_listener::OpenListener;
 pub use project;
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
@@ -87,6 +89,10 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::AppContext) {
         },
     );
     cx.add_global_action(quit);
+    cx.add_global_action(move |action: &OpenZedURL, cx| {
+        cx.global::<Arc<OpenListener>>()
+            .open_urls(vec![action.url.clone()])
+    });
     cx.add_global_action(move |action: &OpenBrowser, cx| cx.platform().open_url(&action.url));
     cx.add_global_action(move |_: &IncreaseBufferFontSize, cx| {
         theme::adjust_font_size(cx, |size| *size += 1.0)

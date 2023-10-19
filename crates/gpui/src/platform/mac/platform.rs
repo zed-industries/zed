@@ -140,6 +140,10 @@ unsafe fn build_classes() {
             sel!(application:openURLs:),
             open_urls as extern "C" fn(&mut Object, Sel, id, id),
         );
+        decl.add_method(
+            sel!(application:continueUserActivity:restorationHandler:),
+            continue_user_activity as extern "C" fn(&mut Object, Sel, id, id, id),
+        );
         decl.register()
     }
 }
@@ -1006,6 +1010,26 @@ extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
     let platform = unsafe { get_foreground_platform(this) };
     if let Some(callback) = platform.0.borrow_mut().open_urls.as_mut() {
         callback(urls);
+    }
+}
+
+extern "C" fn continue_user_activity(this: &mut Object, _: Sel, _: id, user_activity: id, _: id) {
+    let url = unsafe {
+        let url: id = msg_send!(user_activity, webpageURL);
+        if url == nil {
+            log::error!("got unexpected user activity");
+            None
+        } else {
+            Some(
+                CStr::from_ptr(url.absoluteString().UTF8String())
+                    .to_string_lossy()
+                    .to_string(),
+            )
+        }
+    };
+    let platform = unsafe { get_foreground_platform(this) };
+    if let Some(callback) = platform.0.borrow_mut().open_urls.as_mut() {
+        callback(url.into_iter().collect());
     }
 }
 

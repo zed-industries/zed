@@ -709,3 +709,28 @@ async fn test_wrapped_motions(cx: &mut gpui::TestAppContext) {
     })
     .await;
 }
+
+#[gpui::test]
+async fn test_paragraphs_dont_wrap(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state(indoc! {"
+        one
+        ˇ
+        two"})
+        .await;
+
+    cx.simulate_shared_keystrokes(["}", "}"]).await;
+    cx.assert_shared_state(indoc! {"
+        one
+
+        twˇo"})
+        .await;
+
+    cx.simulate_shared_keystrokes(["{", "{", "{"]).await;
+    cx.assert_shared_state(indoc! {"
+        ˇone
+
+        two"})
+        .await;
+}

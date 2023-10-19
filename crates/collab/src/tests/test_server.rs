@@ -15,9 +15,10 @@ use fs::FakeFs;
 use futures::{channel::oneshot, StreamExt as _};
 use gpui::{executor::Deterministic, ModelHandle, Task, TestAppContext, WindowHandle};
 use language::LanguageRegistry;
+use node_runtime::FakeNodeRuntime;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
-use rpc::RECEIVE_TIMEOUT;
+use rpc::{proto::ChannelRole, RECEIVE_TIMEOUT};
 use settings::SettingsStore;
 use std::{
     cell::{Ref, RefCell, RefMut},
@@ -218,6 +219,7 @@ impl TestServer {
             build_window_options: |_, _, _| Default::default(),
             initialize_workspace: |_, _, _, _| Task::ready(Ok(())),
             background_actions: || &[],
+            node_runtime: FakeNodeRuntime::new(),
         });
 
         cx.update(|cx| {
@@ -325,7 +327,7 @@ impl TestServer {
                     channel_store.invite_member(
                         channel_id,
                         member_client.user_id().unwrap(),
-                        false,
+                        ChannelRole::Member,
                         cx,
                     )
                 })
@@ -567,6 +569,7 @@ impl TestClient {
         cx.update(|cx| {
             Project::local(
                 self.client().clone(),
+                self.app_state.node_runtime.clone(),
                 self.app_state.user_store.clone(),
                 self.app_state.languages.clone(),
                 self.app_state.fs.clone(),
@@ -613,7 +616,12 @@ impl TestClient {
         cx_self
             .read(ChannelStore::global)
             .update(cx_self, |channel_store, cx| {
-                channel_store.invite_member(channel, other_client.user_id().unwrap(), true, cx)
+                channel_store.invite_member(
+                    channel,
+                    other_client.user_id().unwrap(),
+                    ChannelRole::Admin,
+                    cx,
+                )
             })
             .await
             .unwrap();

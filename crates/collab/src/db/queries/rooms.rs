@@ -53,7 +53,9 @@ impl Database {
             let (channel_id, room) = self.get_channel_room(room_id, &tx).await?;
             let channel_members;
             if let Some(channel_id) = channel_id {
-                channel_members = self.get_channel_members_internal(channel_id, &tx).await?;
+                channel_members = self
+                    .get_channel_participants_internal(channel_id, &tx)
+                    .await?;
             } else {
                 channel_members = Vec::new();
 
@@ -107,10 +109,12 @@ impl Database {
         user_id: UserId,
         connection: ConnectionId,
         live_kit_room: &str,
+        release_channel: &str,
     ) -> Result<proto::Room> {
         self.transaction(|tx| async move {
             let room = room::ActiveModel {
                 live_kit_room: ActiveValue::set(live_kit_room.into()),
+                enviroment: ActiveValue::set(Some(release_channel.to_string())),
                 ..Default::default()
             }
             .insert(&*tx)
@@ -270,110 +274,163 @@ impl Database {
         room_id: RoomId,
         user_id: UserId,
         connection: ConnectionId,
+        enviroment: &str,
     ) -> Result<RoomGuard<JoinRoom>> {
         self.room_transaction(room_id, |tx| async move {
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-            enum QueryChannelId {
+            enum QueryChannelIdAndEnviroment {
                 ChannelId,
+                Enviroment,
             }
-            let channel_id: Option<ChannelId> = room::Entity::find()
-                .select_only()
-                .column(room::Column::ChannelId)
-                .filter(room::Column::Id.eq(room_id))
-                .into_values::<_, QueryChannelId>()
-                .one(&*tx)
-                .await?
-                .ok_or_else(|| anyhow!("no such room"))?;
 
-            #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-            enum QueryParticipantIndices {
-                ParticipantIndex,
+            let (channel_id, release_channel): (Option<ChannelId>, Option<String>) =
+                room::Entity::find()
+                    .select_only()
+                    .column(room::Column::ChannelId)
+                    .column(room::Column::Enviroment)
+                    .filter(room::Column::Id.eq(room_id))
+                    .into_values::<_, QueryChannelIdAndEnviroment>()
+                    .one(&*tx)
+                    .await?
+                    .ok_or_else(|| anyhow!("no such room"))?;
+
+            if let Some(release_channel) = release_channel {
+                if &release_channel != enviroment {
+                    Err(anyhow!("must join using the {} release", release_channel))?;
+                }
             }
-            let existing_participant_indices: Vec<i32> = room_participant::Entity::find()
-                .filter(
-                    room_participant::Column::RoomId
-                        .eq(room_id)
-                        .and(room_participant::Column::ParticipantIndex.is_not_null()),
-                )
-                .select_only()
-                .column(room_participant::Column::ParticipantIndex)
-                .into_values::<_, QueryParticipantIndices>()
-                .all(&*tx)
+
+            if channel_id.is_some() {
+                Err(anyhow!("tried to join channel call directly"))?
+            }
+
+            let participant_index = self
+                .get_next_participant_index_internal(room_id, &*tx)
                 .await?;
-            let mut participant_index = 0;
-            while existing_participant_indices.contains(&participant_index) {
-                participant_index += 1;
-            }
 
-            if let Some(channel_id) = channel_id {
-                self.check_user_is_channel_member(channel_id, user_id, &*tx)
-                    .await?;
-
-                room_participant::Entity::insert_many([room_participant::ActiveModel {
-                    room_id: ActiveValue::set(room_id),
-                    user_id: ActiveValue::set(user_id),
+            let result = room_participant::Entity::update_many()
+                .filter(
+                    Condition::all()
+                        .add(room_participant::Column::RoomId.eq(room_id))
+                        .add(room_participant::Column::UserId.eq(user_id))
+                        .add(room_participant::Column::AnsweringConnectionId.is_null()),
+                )
+                .set(room_participant::ActiveModel {
+                    participant_index: ActiveValue::Set(Some(participant_index)),
                     answering_connection_id: ActiveValue::set(Some(connection.id as i32)),
                     answering_connection_server_id: ActiveValue::set(Some(ServerId(
                         connection.owner_id as i32,
                     ))),
                     answering_connection_lost: ActiveValue::set(false),
-                    calling_user_id: ActiveValue::set(user_id),
-                    calling_connection_id: ActiveValue::set(connection.id as i32),
-                    calling_connection_server_id: ActiveValue::set(Some(ServerId(
-                        connection.owner_id as i32,
-                    ))),
-                    participant_index: ActiveValue::Set(Some(participant_index)),
                     ..Default::default()
-                }])
-                .on_conflict(
-                    OnConflict::columns([room_participant::Column::UserId])
-                        .update_columns([
-                            room_participant::Column::AnsweringConnectionId,
-                            room_participant::Column::AnsweringConnectionServerId,
-                            room_participant::Column::AnsweringConnectionLost,
-                            room_participant::Column::ParticipantIndex,
-                        ])
-                        .to_owned(),
-                )
+                })
                 .exec(&*tx)
                 .await?;
-            } else {
-                let result = room_participant::Entity::update_many()
-                    .filter(
-                        Condition::all()
-                            .add(room_participant::Column::RoomId.eq(room_id))
-                            .add(room_participant::Column::UserId.eq(user_id))
-                            .add(room_participant::Column::AnsweringConnectionId.is_null()),
-                    )
-                    .set(room_participant::ActiveModel {
-                        participant_index: ActiveValue::Set(Some(participant_index)),
-                        answering_connection_id: ActiveValue::set(Some(connection.id as i32)),
-                        answering_connection_server_id: ActiveValue::set(Some(ServerId(
-                            connection.owner_id as i32,
-                        ))),
-                        answering_connection_lost: ActiveValue::set(false),
-                        ..Default::default()
-                    })
-                    .exec(&*tx)
-                    .await?;
-                if result.rows_affected == 0 {
-                    Err(anyhow!("room does not exist or was already joined"))?;
-                }
+            if result.rows_affected == 0 {
+                Err(anyhow!("room does not exist or was already joined"))?;
             }
 
             let room = self.get_room(room_id, &tx).await?;
-            let channel_members = if let Some(channel_id) = channel_id {
-                self.get_channel_members_internal(channel_id, &tx).await?
-            } else {
-                Vec::new()
-            };
             Ok(JoinRoom {
                 room,
-                channel_id,
-                channel_members,
+                channel_id: None,
+                channel_members: vec![],
             })
         })
         .await
+    }
+
+    async fn get_next_participant_index_internal(
+        &self,
+        room_id: RoomId,
+        tx: &DatabaseTransaction,
+    ) -> Result<i32> {
+        #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+        enum QueryParticipantIndices {
+            ParticipantIndex,
+        }
+        let existing_participant_indices: Vec<i32> = room_participant::Entity::find()
+            .filter(
+                room_participant::Column::RoomId
+                    .eq(room_id)
+                    .and(room_participant::Column::ParticipantIndex.is_not_null()),
+            )
+            .select_only()
+            .column(room_participant::Column::ParticipantIndex)
+            .into_values::<_, QueryParticipantIndices>()
+            .all(&*tx)
+            .await?;
+
+        let mut participant_index = 0;
+        while existing_participant_indices.contains(&participant_index) {
+            participant_index += 1;
+        }
+
+        Ok(participant_index)
+    }
+
+    pub async fn channel_id_for_room(&self, room_id: RoomId) -> Result<Option<ChannelId>> {
+        self.transaction(|tx| async move {
+            let room: Option<room::Model> = room::Entity::find()
+                .filter(room::Column::Id.eq(room_id))
+                .one(&*tx)
+                .await?;
+
+            Ok(room.and_then(|room| room.channel_id))
+        })
+        .await
+    }
+
+    pub(crate) async fn join_channel_room_internal(
+        &self,
+        channel_id: ChannelId,
+        room_id: RoomId,
+        user_id: UserId,
+        connection: ConnectionId,
+        tx: &DatabaseTransaction,
+    ) -> Result<JoinRoom> {
+        let participant_index = self
+            .get_next_participant_index_internal(room_id, &*tx)
+            .await?;
+
+        room_participant::Entity::insert_many([room_participant::ActiveModel {
+            room_id: ActiveValue::set(room_id),
+            user_id: ActiveValue::set(user_id),
+            answering_connection_id: ActiveValue::set(Some(connection.id as i32)),
+            answering_connection_server_id: ActiveValue::set(Some(ServerId(
+                connection.owner_id as i32,
+            ))),
+            answering_connection_lost: ActiveValue::set(false),
+            calling_user_id: ActiveValue::set(user_id),
+            calling_connection_id: ActiveValue::set(connection.id as i32),
+            calling_connection_server_id: ActiveValue::set(Some(ServerId(
+                connection.owner_id as i32,
+            ))),
+            participant_index: ActiveValue::Set(Some(participant_index)),
+            ..Default::default()
+        }])
+        .on_conflict(
+            OnConflict::columns([room_participant::Column::UserId])
+                .update_columns([
+                    room_participant::Column::AnsweringConnectionId,
+                    room_participant::Column::AnsweringConnectionServerId,
+                    room_participant::Column::AnsweringConnectionLost,
+                    room_participant::Column::ParticipantIndex,
+                ])
+                .to_owned(),
+        )
+        .exec(&*tx)
+        .await?;
+
+        let room = self.get_room(room_id, &tx).await?;
+        let channel_members = self
+            .get_channel_participants_internal(channel_id, &tx)
+            .await?;
+        Ok(JoinRoom {
+            room,
+            channel_id: Some(channel_id),
+            channel_members,
+        })
     }
 
     pub async fn rejoin_room(
@@ -667,7 +724,8 @@ impl Database {
 
             let (channel_id, room) = self.get_channel_room(room_id, &tx).await?;
             let channel_members = if let Some(channel_id) = channel_id {
-                self.get_channel_members_internal(channel_id, &tx).await?
+                self.get_channel_participants_internal(channel_id, &tx)
+                    .await?
             } else {
                 Vec::new()
             };
@@ -818,17 +876,15 @@ impl Database {
 
                 let (channel_id, room) = self.get_channel_room(room_id, &tx).await?;
                 let deleted = if room.participants.is_empty() {
-                    let result = room::Entity::delete_by_id(room_id)
-                        .filter(room::Column::ChannelId.is_null())
-                        .exec(&*tx)
-                        .await?;
+                    let result = room::Entity::delete_by_id(room_id).exec(&*tx).await?;
                     result.rows_affected > 0
                 } else {
                     false
                 };
 
                 let channel_members = if let Some(channel_id) = channel_id {
-                    self.get_channel_members_internal(channel_id, &tx).await?
+                    self.get_channel_participants_internal(channel_id, &tx)
+                        .await?
                 } else {
                     Vec::new()
                 };

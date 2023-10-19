@@ -6,7 +6,10 @@ use call::ActiveCall;
 use channel::{ChannelId, ChannelMembership, ChannelStore};
 use client::User;
 use gpui::{executor::Deterministic, ModelHandle, TestAppContext};
-use rpc::{proto, RECEIVE_TIMEOUT};
+use rpc::{
+    proto::{self, ChannelRole},
+    RECEIVE_TIMEOUT,
+};
 use std::sync::Arc;
 
 #[gpui::test]
@@ -68,7 +71,12 @@ async fn test_core_channels(
         .update(cx_a, |store, cx| {
             assert!(!store.has_pending_channel_invite(channel_a_id, client_b.user_id().unwrap()));
 
-            let invite = store.invite_member(channel_a_id, client_b.user_id().unwrap(), false, cx);
+            let invite = store.invite_member(
+                channel_a_id,
+                client_b.user_id().unwrap(),
+                proto::ChannelRole::Member,
+                cx,
+            );
 
             // Make sure we're synchronously storing the pending invite
             assert!(store.has_pending_channel_invite(channel_a_id, client_b.user_id().unwrap()));
@@ -103,12 +111,12 @@ async fn test_core_channels(
         &[
             (
                 client_a.user_id().unwrap(),
-                true,
+                proto::ChannelRole::Admin,
                 proto::channel_member::Kind::Member,
             ),
             (
                 client_b.user_id().unwrap(),
-                false,
+                proto::ChannelRole::Member,
                 proto::channel_member::Kind::Invitee,
             ),
         ],
@@ -183,7 +191,12 @@ async fn test_core_channels(
     client_a
         .channel_store()
         .update(cx_a, |store, cx| {
-            store.set_member_admin(channel_a_id, client_b.user_id().unwrap(), true, cx)
+            store.set_member_role(
+                channel_a_id,
+                client_b.user_id().unwrap(),
+                proto::ChannelRole::Admin,
+                cx,
+            )
         })
         .await
         .unwrap();
@@ -305,12 +318,12 @@ fn assert_participants_eq(participants: &[Arc<User>], expected_partitipants: &[u
 #[track_caller]
 fn assert_members_eq(
     members: &[ChannelMembership],
-    expected_members: &[(u64, bool, proto::channel_member::Kind)],
+    expected_members: &[(u64, proto::ChannelRole, proto::channel_member::Kind)],
 ) {
     assert_eq!(
         members
             .iter()
-            .map(|member| (member.user.id, member.admin, member.kind))
+            .map(|member| (member.user.id, member.role, member.kind))
             .collect::<Vec<_>>(),
         expected_members
     );
@@ -380,6 +393,8 @@ async fn test_channel_room(
 
     // Give everyone a chance to observe user A joining
     deterministic.run_until_parked();
+    let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
+    room_a.read_with(cx_a, |room, _| assert!(room.is_connected()));
 
     client_a.channel_store().read_with(cx_a, |channels, _| {
         assert_participants_eq(
@@ -609,7 +624,12 @@ async fn test_permissions_update_while_invited(
     client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
-            channel_store.invite_member(rust_id, client_b.user_id().unwrap(), false, cx)
+            channel_store.invite_member(
+                rust_id,
+                client_b.user_id().unwrap(),
+                proto::ChannelRole::Member,
+                cx,
+            )
         })
         .await
         .unwrap();
@@ -632,7 +652,12 @@ async fn test_permissions_update_while_invited(
     client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
-            channel_store.set_member_admin(rust_id, client_b.user_id().unwrap(), true, cx)
+            channel_store.set_member_role(
+                rust_id,
+                client_b.user_id().unwrap(),
+                proto::ChannelRole::Admin,
+                cx,
+            )
         })
         .await
         .unwrap();
@@ -801,7 +826,12 @@ async fn test_lost_channel_creation(
     client_a
         .channel_store()
         .update(cx_a, |channel_store, cx| {
-            channel_store.invite_member(channel_id, client_b.user_id().unwrap(), false, cx)
+            channel_store.invite_member(
+                channel_id,
+                client_b.user_id().unwrap(),
+                proto::ChannelRole::Member,
+                cx,
+            )
         })
         .await
         .unwrap();
@@ -881,6 +911,119 @@ async fn test_lost_channel_creation(
             },
         ],
     );
+}
+#[gpui::test]
+async fn test_guest_access(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+
+    let channels = server
+        .make_channel_tree(&[("channel-a", None)], (&client_a, cx_a))
+        .await;
+    let channel_a_id = channels[0];
+
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    // should not be allowed to join
+    assert!(active_call_b
+        .update(cx_b, |call, cx| call.join_channel(channel_a_id, cx))
+        .await
+        .is_err());
+
+    client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.set_channel_visibility(channel_a_id, proto::ChannelVisibility::Public, cx)
+        })
+        .await
+        .unwrap();
+
+    active_call_b
+        .update(cx_b, |call, cx| call.join_channel(channel_a_id, cx))
+        .await
+        .unwrap();
+
+    deterministic.run_until_parked();
+
+    assert!(client_b
+        .channel_store()
+        .update(cx_b, |channel_store, _| channel_store
+            .channel_for_id(channel_a_id)
+            .is_some()));
+
+    client_a.channel_store().update(cx_a, |channel_store, _| {
+        let participants = channel_store.channel_participants(channel_a_id);
+        assert_eq!(participants.len(), 1);
+        assert_eq!(participants[0].id, client_b.user_id().unwrap());
+    })
+}
+
+#[gpui::test]
+async fn test_invite_access(
+    deterministic: Arc<Deterministic>,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    deterministic.forbid_parking();
+
+    let mut server = TestServer::start(&deterministic).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+
+    let channels = server
+        .make_channel_tree(
+            &[("channel-a", None), ("channel-b", Some("channel-a"))],
+            (&client_a, cx_a),
+        )
+        .await;
+    let channel_a_id = channels[0];
+    let channel_b_id = channels[0];
+
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    // should not be allowed to join
+    assert!(active_call_b
+        .update(cx_b, |call, cx| call.join_channel(channel_b_id, cx))
+        .await
+        .is_err());
+
+    client_a
+        .channel_store()
+        .update(cx_a, |channel_store, cx| {
+            channel_store.invite_member(
+                channel_a_id,
+                client_b.user_id().unwrap(),
+                ChannelRole::Member,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    active_call_b
+        .update(cx_b, |call, cx| call.join_channel(channel_b_id, cx))
+        .await
+        .unwrap();
+
+    deterministic.run_until_parked();
+
+    client_b.channel_store().update(cx_b, |channel_store, _| {
+        assert!(channel_store.channel_for_id(channel_b_id).is_some());
+        assert!(channel_store.channel_for_id(channel_a_id).is_some());
+    });
+
+    client_a.channel_store().update(cx_a, |channel_store, _| {
+        let participants = channel_store.channel_participants(channel_b_id);
+        assert_eq!(participants.len(), 1);
+        assert_eq!(participants[0].id, client_b.user_id().unwrap());
+    })
 }
 
 #[gpui::test]
