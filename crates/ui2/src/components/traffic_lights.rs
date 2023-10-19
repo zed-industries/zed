@@ -27,7 +27,7 @@ impl<S: 'static + Send + Sync> TrafficLight<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
         let system_color = SystemColor::new();
 
         let fill = match (self.window_has_focus, self.color) {
@@ -61,7 +61,7 @@ impl<S: 'static + Send + Sync> TrafficLights<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         div()
             .flex()

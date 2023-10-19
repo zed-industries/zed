@@ -93,7 +93,7 @@ impl TitleBar {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
         let color = ThemeColor::new(cx);
         let setting = user_settings();
 

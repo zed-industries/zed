@@ -163,19 +163,19 @@ impl<S: 'static + Send + Sync + Clone> Buffer<S> {
     }
 
     fn render_row(row: BufferRow, cx: &WindowContext) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
         let system_color = SystemColor::new();
+        let color = ThemeColor::new(cx);
 
         let line_background = if row.current {
-            theme.middle.base.default.background
+            color.editor_active_line
         } else {
             system_color.transparent
         };
 
         let line_number_color = if row.current {
-            HighlightColor::Default.hsla(&theme)
+            color.text
         } else {
-            HighlightColor::Comment.hsla(&theme)
+            color.syntax.comment
         };
 
         h_stack()
@@ -225,14 +225,14 @@ impl<S: 'static + Send + Sync + Clone> Buffer<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
         let rows = self.render_rows(cx);
 
         v_stack()
             .flex_1()
             .w_full()
             .h_full()
-            .bg(theme.highest.base.default.background)
+            .bg(color.editor_background)
             .children(rows)
     }
 }
@@ -268,7 +268,7 @@ mod stories {
             _view: &mut S,
             cx: &mut ViewContext<S>,
         ) -> impl Element<ViewState = S> {
-            let theme = theme(cx);
+            let color = ThemeColor::new(cx);
 
             Story::container(cx)
                 .child(Story::title_for::<_, Buffer<S>>(cx))

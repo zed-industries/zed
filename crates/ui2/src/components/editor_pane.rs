@@ -43,7 +43,7 @@ impl EditorPane {
     }
 
     pub fn view(cx: &mut WindowContext) -> View<Self> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         view(
             cx.entity(|cx| hello_world_rust_editor_with_status_example(cx)),

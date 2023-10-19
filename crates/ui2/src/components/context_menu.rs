@@ -44,13 +44,13 @@ impl<S: 'static + Send + Sync + Clone> ContextMenu<S> {
         }
     }
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         v_stack()
             .flex()
-            .bg(theme.lowest.base.default.background)
+            .bg(color.elevated_surface)
             .border()
-            .border_color(theme.lowest.base.default.border)
+            .border_color(color.border)
             .child(
                 List::new(
                     self.items

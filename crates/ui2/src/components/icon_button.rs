@@ -67,7 +67,6 @@ impl<S: 'static + Send + Sync> IconButton<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
         let color = ThemeColor::new(cx);
 
         let icon_color = match (self.state, self.color) {
@@ -75,15 +74,27 @@ impl<S: 'static + Send + Sync> IconButton<S> {
             _ => self.color,
         };
 
+        let (bg_color, bg_hover_color, bg_active_color) = match self.variant {
+            ButtonVariant::Filled => (
+                color.filled_element,
+                color.filled_element_hover,
+                color.filled_element_active,
+            ),
+            ButtonVariant::Ghost => (
+                color.ghost_element,
+                color.ghost_element_hover,
+                color.ghost_element_active,
+            ),
+        };
+
         let mut button = h_stack()
             .justify_center()
             .rounded_md()
             .py(ui_size(0.25))
             .px(ui_size(6. / 14.))
-            .when(self.variant == ButtonVariant::Filled, |this| {
-                this.bg(color.filled_element)
-            })
-            .hover(|style| style.bg(theme.highest.base.hovered.background))
+            .bg(bg_color)
+            .hover(|style| style.bg(bg_hover_color))
+            // .active(|style| style.bg(bg_active_color))
             .child(IconElement::new(self.icon).color(icon_color));
 
         if let Some(click_handler) = self.handlers.click.clone() {

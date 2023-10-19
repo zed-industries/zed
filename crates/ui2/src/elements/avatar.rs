@@ -27,7 +27,7 @@ impl<S: 'static + Send + Sync> Avatar<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         let mut img = img();
 

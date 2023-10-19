@@ -97,7 +97,7 @@ impl<S: 'static + Send + Sync> Panel<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         let panel_base;
         let current_width = self.width.unwrap_or(self.initial_width);

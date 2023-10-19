@@ -16,7 +16,7 @@ impl<S: 'static + Send + Sync> ToolDivider<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         div().w_px().h_3().bg(theme.lowest.base.default.border)
     }

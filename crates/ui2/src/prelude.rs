@@ -36,6 +36,27 @@ impl SystemColor {
 }
 
 #[derive(Clone, Copy)]
+pub struct SyntaxColor {
+    pub comment: Hsla,
+    pub string: Hsla,
+    pub function: Hsla,
+    pub keyword: Hsla,
+}
+
+impl SyntaxColor {
+    pub fn new(cx: &WindowContext) -> Self {
+        let theme = theme(cx);
+
+        Self {
+            comment: theme.syntax.comment,
+            string: theme.syntax.string,
+            function: theme.syntax.function,
+            keyword: theme.syntax.keyword,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 pub struct ThemeColor {
     pub border: Hsla,
     pub border_variant: Hsla,
@@ -63,12 +84,26 @@ pub struct ThemeColor {
     pub filled_element_selected: Hsla,
     pub filled_element_disabled: Hsla,
     pub ghost_element: Hsla,
+    /// The background color of a hovered element with no default background,
+    /// like a ghost-style button or an interactable list item.
     /// - TODO: Map to step 3.
     pub ghost_element_hover: Hsla,
     /// - TODO: Map to step 4.
     pub ghost_element_active: Hsla,
     pub ghost_element_selected: Hsla,
     pub ghost_element_disabled: Hsla,
+    pub text: Hsla,
+    pub text_muted: Hsla,
+    pub text_placeholder: Hsla,
+    pub text_disabled: Hsla,
+    pub icon_muted: Hsla,
+    pub syntax: SyntaxColor,
+
+    pub toolbar_background: Hsla,
+    pub editor_background: Hsla,
+    pub editor_subheader: Hsla,
+    pub editor_active_line: Hsla,
+    pub image_fallback_background: Hsla,
 }
 
 impl ThemeColor {
@@ -94,6 +129,18 @@ impl ThemeColor {
             ghost_element_active: theme.lowest.base.hovered.background,
             ghost_element_selected: theme.lowest.accent.default.background,
             ghost_element_disabled: system_color.transparent,
+            text: theme.lowest.base.default.foreground,
+            text_muted: theme.lowest.variant.default.foreground,
+            /// TODO: map this to a real value
+            text_placeholder: theme.lowest.negative.default.foreground,
+            text_disabled: theme.lowest.base.disabled.foreground,
+            icon_muted: theme.lowest.variant.default.foreground,
+            syntax: SyntaxColor::new(cx),
+            toolbar_background: theme.highest.base.default.background,
+            editor_background: theme.highest.base.default.background,
+            editor_subheader: theme.middle.base.default.background,
+            editor_active_line: theme.highest.on.default.background,
+            image_fallback_background: theme.lowest.base.default.background,
         }
     }
 }
@@ -192,7 +239,7 @@ impl GitStatus {
     }
 
     pub fn hsla(&self, cx: &WindowContext) -> Hsla {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
         let system_color = SystemColor::new();
 
         match self {

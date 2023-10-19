@@ -46,7 +46,7 @@ impl<S: 'static + Send + Sync> Input<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         let text_el;
         let text_color;

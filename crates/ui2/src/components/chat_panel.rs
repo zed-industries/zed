@@ -26,8 +26,6 @@ impl<S: 'static + Send + Sync + Clone> ChatPanel<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
-
         div()
             .flex()
             .flex_col()

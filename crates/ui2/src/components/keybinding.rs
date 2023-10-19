@@ -70,15 +70,15 @@ impl<S: 'static + Send + Sync> Key<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         div()
             .px_2()
             .py_0()
             .rounded_md()
             .text_sm()
-            .text_color(theme.lowest.on.default.foreground)
-            .bg(theme.lowest.on.default.background)
+            .text_color(color.text)
+            .bg(color.filled_element)
             .child(self.key.clone())
     }
 }

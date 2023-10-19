@@ -22,7 +22,7 @@ pub enum LabelColor {
 
 impl LabelColor {
     pub fn hsla(&self, cx: &WindowContext) -> Hsla {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         match self {
             Self::Default => theme.middle.base.default.foreground,
@@ -82,7 +82,7 @@ impl<S: 'static + Send + Sync + Clone> Label<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         div()
             .when(self.strikethrough, |this| {
@@ -136,7 +136,7 @@ impl<S: 'static + Send + Sync + Clone> HighlightedLabel<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         let highlight_color = theme.lowest.accent.default.foreground;
 

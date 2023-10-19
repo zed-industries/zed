@@ -75,7 +75,7 @@ impl<S: 'static + Send + Sync + Clone> Tab<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
         let has_fs_conflict = self.fs_status == FileSystemStatus::Conflict;
         let is_deleted = self.fs_status == FileSystemStatus::Deleted;
 

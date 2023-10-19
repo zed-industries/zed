@@ -91,7 +91,7 @@ impl<S: 'static + Send + Sync + Clone> ListHeader<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
         let system_color = SystemColor::new();
         let color = ThemeColor::new(cx);
 
@@ -158,7 +158,7 @@ impl<S: 'static + Send + Sync + Clone> ListSubHeader<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         h_stack().flex_1().w_full().relative().py_1().child(
             div()
@@ -338,7 +338,7 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
         &mut self,
         cx: &mut ViewContext<S>,
     ) -> Option<impl Element<ViewState = S>> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
 
         let disclosure_control_icon = if let Some(ToggleState::Toggled) = self.toggle {
             IconElement::new(Icon::ChevronDown)
@@ -360,7 +360,7 @@ impl<S: 'static + Send + Sync + Clone> ListEntry<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
         let system_color = SystemColor::new();
         let color = ThemeColor::new(cx);
         let setting = user_settings();
@@ -470,7 +470,7 @@ impl<S: 'static + Send + Sync + Clone> List<S> {
     }
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
-        let theme = theme(cx);
+        let color = ThemeColor::new(cx);
         let is_toggleable = self.toggleable != Toggleable::NotToggleable;
         let is_toggled = Toggleable::is_toggled(&self.toggleable);
 
