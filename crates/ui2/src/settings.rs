@@ -1,9 +1,7 @@
 use std::ops::Deref;
-use std::sync::Arc;
 
 use gpui3::{
-    rems, AbsoluteLength, AnyElement, BorrowAppContext, Bounds, Interactive, LayoutId, Pixels,
-    WindowContext,
+    rems, AbsoluteLength, AnyElement, BorrowAppContext, Bounds, LayoutId, Pixels, WindowContext,
 };
 
 use crate::prelude::*;
@@ -147,34 +145,5 @@ impl<E: Element> Element for WithSettings<E> {
         cx.with_global(self.settings.clone(), |cx| {
             self.child.paint(bounds, view_state, frame_state, cx);
         });
-    }
-}
-
-impl<E: Element + Interactive> Interactive for WithSettings<E> {
-    fn listeners(&mut self) -> &mut gpui3::EventListeners<Self::ViewState> {
-        self.child.listeners()
-    }
-
-    fn on_mouse_down(
-        mut self,
-        button: gpui3::MouseButton,
-        handler: impl Fn(&mut Self::ViewState, &gpui3::MouseDownEvent, &mut ViewContext<Self::ViewState>)
-            + Send
-            + Sync
-            + 'static,
-    ) -> Self
-    where
-        Self: Sized,
-    {
-        println!("WithSettings on_mouse_down");
-
-        let settings = self.settings.clone();
-
-        self.listeners()
-            .mouse_down
-            .push(Arc::new(move |view, event, bounds, phase, cx| {
-                cx.with_global(settings.clone(), |cx| handler(view, event, cx))
-            }));
-        self
     }
 }
