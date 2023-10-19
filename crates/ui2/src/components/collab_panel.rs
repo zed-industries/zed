@@ -3,7 +3,6 @@ use std::marker::PhantomData;
 use gpui3::{img, svg, SharedString};
 
 use crate::prelude::*;
-use crate::theme::{theme, Theme};
 use crate::{
     static_collab_panel_channels, static_collab_panel_current_call, v_stack, Icon, List,
     ListHeader, ToggleState,

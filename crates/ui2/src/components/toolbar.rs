@@ -2,7 +2,6 @@ use gpui3::AnyElement;
 use smallvec::SmallVec;
 
 use crate::prelude::*;
-use crate::theme;
 
 #[derive(Clone)]
 pub struct ToolbarItem {}
@@ -59,7 +58,7 @@ impl<S: 'static + Send + Sync> Toolbar<S> {
         let color = ThemeColor::new(cx);
 
         div()
-            .bg(theme.highest.base.default.background)
+            .bg(color.toolbar)
             .p_2()
             .flex()
             .justify_between()
@@ -111,21 +110,21 @@ mod stories {
                                 Symbol(vec![
                                     HighlightedText {
                                         text: "impl ".to_string(),
-                                        color: HighlightColor::Keyword.hsla(&theme),
+                                        color: color.syntax.keyword,
                                     },
                                     HighlightedText {
                                         text: "ToolbarStory".to_string(),
-                                        color: HighlightColor::Function.hsla(&theme),
+                                        color: color.syntax.function,
                                     },
                                 ]),
                                 Symbol(vec![
                                     HighlightedText {
                                         text: "fn ".to_string(),
-                                        color: HighlightColor::Keyword.hsla(&theme),
+                                        color: color.syntax.keyword,
                                     },
                                     HighlightedText {
                                         text: "render".to_string(),
-                                        color: HighlightColor::Function.hsla(&theme),
+                                        color: color.syntax.function,
                                     },
                                 ]),
                             ],

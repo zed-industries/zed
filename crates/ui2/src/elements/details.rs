@@ -1,7 +1,6 @@
 use std::marker::PhantomData;
 
 use crate::prelude::*;
-use crate::theme;
 
 #[derive(Element, Clone)]
 pub struct Details<S: 'static + Send + Sync + Clone> {
@@ -33,7 +32,7 @@ impl<S: 'static + Send + Sync + Clone> Details<S> {
             .p_1()
             .gap_0p5()
             .text_xs()
-            .text_color(theme.lowest.base.default.foreground)
+            .text_color(color.text)
             .child(self.text)
             .children(self.meta.map(|m| m))
     }

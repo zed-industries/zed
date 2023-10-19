@@ -4,7 +4,6 @@ use std::marker::PhantomData;
 use strum::{EnumIter, IntoEnumIterator};
 
 use crate::prelude::*;
-use crate::theme;
 
 #[derive(Element, Clone)]
 pub struct Keybinding<S: 'static + Send + Sync + Clone> {

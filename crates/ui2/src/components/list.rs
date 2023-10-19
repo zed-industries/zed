@@ -4,7 +4,6 @@ use gpui3::{div, Div};
 
 use crate::prelude::*;
 use crate::settings::user_settings;
-use crate::theme::theme;
 use crate::{h_stack, v_stack, Avatar, Icon, IconColor, IconElement, IconSize, Label, LabelColor};
 
 #[derive(Clone, Copy, Default, Debug, PartialEq)]

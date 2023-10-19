@@ -29,7 +29,7 @@ impl BufferSearch {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
         let color = ThemeColor::new(cx);
 
-        h_stack().bg(color.toolbar_background).p_2().child(
+        h_stack().bg(color.toolbar).p_2().child(
             h_stack().child(Input::new("Search")).child(
                 IconButton::<Self>::new(Icon::Replace)
                     .when(self.is_replace_open, |this| this.color(IconColor::Accent))

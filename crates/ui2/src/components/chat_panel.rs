@@ -3,7 +3,6 @@ use std::marker::PhantomData;
 use chrono::NaiveDateTime;
 
 use crate::prelude::*;
-use crate::theme::theme;
 use crate::{Icon, IconButton, Input, Label, LabelColor};
 
 #[derive(Element)]

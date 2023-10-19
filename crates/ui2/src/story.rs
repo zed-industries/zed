@@ -1,7 +1,6 @@
 use gpui3::Div;
 
 use crate::prelude::*;
-use crate::theme;
 
 pub struct Story {}
 
@@ -16,7 +15,7 @@ impl Story {
             .pt_2()
             .px_4()
             .font("Zed Mono Extended")
-            .bg(theme.lowest.base.default.background)
+            .bg(color.background)
     }
 
     pub fn title<S: 'static + Send + Sync>(
@@ -27,7 +26,7 @@ impl Story {
 
         div()
             .text_xl()
-            .text_color(theme.lowest.base.default.foreground)
+            .text_color(color.text)
             .child(title.to_owned())
     }
 
@@ -47,7 +46,7 @@ impl Story {
             .mt_4()
             .mb_2()
             .text_xs()
-            .text_color(theme.lowest.base.default.foreground)
+            .text_color(color.text)
             .child(label.to_owned())
     }
 }

@@ -4,7 +4,6 @@ use gpui3::{hsla, AnyElement, Hsla, Length, Size};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
-use crate::theme;
 
 #[derive(Default, PartialEq)]
 pub enum SplitDirection {
@@ -99,7 +98,6 @@ impl<S: 'static + Send + Sync> PaneGroup<S> {
                 .gap_px()
                 .w_full()
                 .h_full()
-                .bg(theme.lowest.base.default.background)
                 .children(self.panes.iter_mut().map(|pane| pane.render(view, cx)));
 
             if self.split_direction == SplitDirection::Horizontal {
@@ -116,7 +114,7 @@ impl<S: 'static + Send + Sync> PaneGroup<S> {
                 .gap_px()
                 .w_full()
                 .h_full()
-                .bg(theme.lowest.base.default.background)
+                .bg(color.editor)
                 .children(self.groups.iter_mut().map(|group| group.render(view, cx)));
 
             if self.split_direction == SplitDirection::Horizontal {

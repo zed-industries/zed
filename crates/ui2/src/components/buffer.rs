@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use gpui3::{Hsla, WindowContext};
 
 use crate::prelude::*;
-use crate::{h_stack, theme, v_stack, Icon, IconElement};
+use crate::{h_stack, v_stack, Icon, IconElement};
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub struct PlayerCursor {
@@ -232,7 +232,7 @@ impl<S: 'static + Send + Sync + Clone> Buffer<S> {
             .flex_1()
             .w_full()
             .h_full()
-            .bg(color.editor_background)
+            .bg(color.editor)
             .children(rows)
     }
 }
@@ -279,14 +279,14 @@ mod stories {
                     div()
                         .w(rems(64.))
                         .h_96()
-                        .child(hello_world_rust_buffer_example(&theme)),
+                        .child(hello_world_rust_buffer_example(&color)),
                 )
                 .child(Story::label(cx, "Hello World (Rust) with Status"))
                 .child(
                     div()
                         .w(rems(64.))
                         .h_96()
-                        .child(hello_world_rust_buffer_with_status_example(&theme)),
+                        .child(hello_world_rust_buffer_with_status_example(&color)),
                 )
         }
     }

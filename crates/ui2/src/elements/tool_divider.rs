@@ -1,7 +1,6 @@
 use std::marker::PhantomData;
 
 use crate::prelude::*;
-use crate::theme;
 
 #[derive(Element)]
 pub struct ToolDivider<S: 'static + Send + Sync> {
@@ -18,6 +17,6 @@ impl<S: 'static + Send + Sync> ToolDivider<S> {
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let color = ThemeColor::new(cx);
 
-        div().w_px().h_3().bg(theme.lowest.base.default.border)
+        div().w_px().h_3().bg(color.border)
     }
 }

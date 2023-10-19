@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::prelude::*;
-use crate::{theme, Icon, IconColor, IconElement, Label, LabelColor};
+use crate::{Icon, IconColor, IconElement, Label, LabelColor};
 
 #[derive(Element, Clone)]
 pub struct Tab<S: 'static + Send + Sync + Clone> {
@@ -96,17 +96,28 @@ impl<S: 'static + Send + Sync + Clone> Tab<S> {
 
         let close_icon = IconElement::new(Icon::Close).color(IconColor::Muted);
 
+        let (tab_bg, tab_hover_bg, tab_active_bg) = match self.current {
+            true => (
+                color.ghost_element,
+                color.ghost_element_hover,
+                color.ghost_element_active,
+            ),
+            false => (
+                color.filled_element,
+                color.filled_element_hover,
+                color.filled_element_active,
+            ),
+        };
+
         div()
             .px_2()
             .py_0p5()
             .flex()
             .items_center()
             .justify_center()
-            .bg(if self.current {
-                theme.highest.base.default.background
-            } else {
-                theme.middle.base.default.background
-            })
+            .bg(tab_bg)
+            .hover(|h| h.bg(tab_hover_bg))
+            // .active(|a| a.bg(tab_active_bg))
             .child(
                 div()
                     .px_1()

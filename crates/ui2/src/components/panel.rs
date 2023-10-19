@@ -3,9 +3,9 @@ use std::marker::PhantomData;
 use gpui3::{AbsoluteLength, AnyElement};
 use smallvec::SmallVec;
 
+use crate::prelude::*;
 use crate::settings::user_settings;
 use crate::v_stack;
-use crate::{prelude::*, theme};
 
 #[derive(Default, Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum PanelAllowedSides {
@@ -99,43 +99,24 @@ impl<S: 'static + Send + Sync> Panel<S> {
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let color = ThemeColor::new(cx);
 
-        let panel_base;
-        let current_width = self.width.unwrap_or(self.initial_width);
+        let current_size = self.width.unwrap_or(self.initial_width);
 
-        match self.current_side {
-            PanelSide::Left => {
-                panel_base = v_stack()
-                    .flex_initial()
-                    .h_full()
-                    // .w(current_width)
-                    .w_64()
-                    .bg(theme.middle.base.default.background)
-                    .border_r()
-                    .border_color(theme.middle.base.default.border);
-            }
-            PanelSide::Right => {
-                panel_base = v_stack()
-                    .flex_initial()
-                    .h_full()
-                    // .w(current_width)
-                    .w_64()
-                    .bg(theme.middle.base.default.background)
-                    .border_l()
-                    .border_color(theme.middle.base.default.border);
-            }
-            PanelSide::Bottom => {
-                panel_base = v_stack()
-                    .flex_initial()
-                    .w_full()
-                    // .h(current_width)
-                    .h_64()
-                    .bg(theme.middle.base.default.background)
-                    .border_t()
-                    .border_color(theme.middle.base.default.border);
-            }
-        }
-
-        panel_base.children(self.children.drain(..))
+        v_stack()
+            .flex_initial()
+            .when(
+                self.current_side == PanelSide::Left || self.current_side == PanelSide::Right,
+                |this| this.h_full().w(current_size),
+            )
+            .when(self.current_side == PanelSide::Left, |this| this.border_r())
+            .when(self.current_side == PanelSide::Right, |this| {
+                this.border_l()
+            })
+            .when(self.current_side == PanelSide::Bottom, |this| {
+                this.border_b().w_full().h(current_size)
+            })
+            .bg(color.surface)
+            .border_color(color.border)
+            .children(self.children.drain(..))
     }
 }
 

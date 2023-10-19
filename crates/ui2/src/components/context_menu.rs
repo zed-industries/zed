@@ -1,5 +1,5 @@
 use crate::{prelude::*, ListItemVariant};
-use crate::{theme, v_stack, Label, List, ListEntry, ListItem, ListSeparator, ListSubHeader};
+use crate::{v_stack, Label, List, ListEntry, ListItem, ListSeparator, ListSubHeader};
 
 #[derive(Clone)]
 pub enum ContextMenuItem<S: 'static + Send + Sync + Clone> {

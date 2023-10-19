@@ -1,11 +1,10 @@
 use std::marker::PhantomData;
-use std::sync::Arc;
 
 use gpui3::{svg, Hsla};
 use strum::EnumIter;
 
 use crate::prelude::*;
-use crate::theme::{theme, Theme};
+use crate::theme::theme;
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum IconSize {
@@ -29,7 +28,8 @@ pub enum IconColor {
 }
 
 impl IconColor {
-    pub fn color(self, theme: Arc<Theme>) -> Hsla {
+    pub fn color(self, cx: &WindowContext) -> Hsla {
+        let theme = theme(cx);
         match self {
             IconColor::Default => theme.lowest.base.default.foreground,
             IconColor::Muted => theme.lowest.variant.default.foreground,
@@ -178,7 +178,7 @@ impl<S: 'static + Send + Sync> IconElement<S> {
 
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let color = ThemeColor::new(cx);
-        let fill = self.color.color(theme);
+        let fill = self.color.color(cx);
         let svg_size = match self.size {
             IconSize::Small => ui_size(12. / 14.),
             IconSize::Medium => ui_size(15. / 14.),

@@ -23,16 +23,18 @@ pub enum LabelColor {
 impl LabelColor {
     pub fn hsla(&self, cx: &WindowContext) -> Hsla {
         let color = ThemeColor::new(cx);
+        // TODO: Remove
+        let theme = theme(cx);
 
         match self {
-            Self::Default => theme.middle.base.default.foreground,
-            Self::Muted => theme.middle.variant.default.foreground,
+            Self::Default => color.text,
+            Self::Muted => color.text_muted,
             Self::Created => theme.middle.positive.default.foreground,
             Self::Modified => theme.middle.warning.default.foreground,
             Self::Deleted => theme.middle.negative.default.foreground,
-            Self::Disabled => theme.middle.base.disabled.foreground,
+            Self::Disabled => color.text_disabled,
             Self::Hidden => theme.middle.variant.default.foreground,
-            Self::Placeholder => theme.middle.base.disabled.foreground,
+            Self::Placeholder => color.text_placeholder,
             Self::Accent => theme.middle.accent.default.foreground,
         }
     }
@@ -138,7 +140,7 @@ impl<S: 'static + Send + Sync + Clone> HighlightedLabel<S> {
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let color = ThemeColor::new(cx);
 
-        let highlight_color = theme.lowest.accent.default.foreground;
+        let highlight_color = color.text_accent;
 
         let mut highlight_indices = self.highlight_indices.iter().copied().peekable();
 

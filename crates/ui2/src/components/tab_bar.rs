@@ -1,12 +1,14 @@
 use std::marker::PhantomData;
 
 use crate::prelude::*;
-use crate::{theme, Icon, IconButton, Tab};
+use crate::{Icon, IconButton, Tab};
 
 #[derive(Element)]
 pub struct TabBar<S: 'static + Send + Sync + Clone> {
     state_type: PhantomData<S>,
     scroll_state: ScrollState,
+    /// Backwards, Forwards
+    can_navigate: (bool, bool),
     tabs: Vec<Tab<S>>,
 }
 
@@ -15,6 +17,7 @@ impl<S: 'static + Send + Sync + Clone> TabBar<S> {
         Self {
             state_type: PhantomData,
             scroll_state: ScrollState::default(),
+            can_navigate: (false, false),
             tabs,
         }
     }
@@ -23,15 +26,20 @@ impl<S: 'static + Send + Sync + Clone> TabBar<S> {
         self.scroll_state = scroll_state;
     }
 
+    pub fn can_navigate(mut self, can_navigate: (bool, bool)) -> Self {
+        self.can_navigate = can_navigate;
+        self
+    }
+
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let color = ThemeColor::new(cx);
-        let can_navigate_back = true;
-        let can_navigate_forward = false;
+
+        let (can_navigate_back, can_navigate_forward) = self.can_navigate;
 
         div()
             .w_full()
             .flex()
-            .bg(theme.middle.base.default.background)
+            .bg(color.tab_bar)
             // Left Side
             .child(
                 div()

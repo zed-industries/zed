@@ -1,7 +1,8 @@
 use std::marker::PhantomData;
 
 use crate::prelude::*;
-use crate::theme;
+use crate::Label;
+use crate::LabelColor;
 
 #[derive(Default, PartialEq)]
 pub enum InputVariant {
@@ -17,6 +18,8 @@ pub struct Input<S: 'static + Send + Sync> {
     value: String,
     state: InteractionState,
     variant: InputVariant,
+    disabled: bool,
+    is_active: bool,
 }
 
 impl<S: 'static + Send + Sync> Input<S> {
@@ -27,6 +30,8 @@ impl<S: 'static + Send + Sync> Input<S> {
             value: "".to_string(),
             state: InteractionState::default(),
             variant: InputVariant::default(),
+            disabled: false,
+            is_active: false,
         }
     }
 
@@ -45,55 +50,54 @@ impl<S: 'static + Send + Sync> Input<S> {
         self
     }
 
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    pub fn is_active(mut self, is_active: bool) -> Self {
+        self.is_active = is_active;
+        self
+    }
+
     fn render(&mut self, _view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let color = ThemeColor::new(cx);
+        let system_color = SystemColor::new();
 
-        let text_el;
-        let text_color;
-        let background_color_default;
-        let background_color_active;
-
-        let mut border_color_default = theme.middle.base.default.border;
-        let mut border_color_hover = theme.middle.base.hovered.border;
-        let border_color_focus = theme.middle.base.pressed.background;
-
-        match self.variant {
-            InputVariant::Ghost => {
-                background_color_default = theme.middle.base.default.background;
-                background_color_active = theme.middle.base.active.background;
-            }
-            InputVariant::Filled => {
-                background_color_default = theme.middle.on.default.background;
-                background_color_active = theme.middle.on.active.background;
-            }
+        let (input_bg, input_hover_bg, input_active_bg) = match self.variant {
+            InputVariant::Ghost => (
+                color.ghost_element,
+                color.ghost_element_hover,
+                color.ghost_element_active,
+            ),
+            InputVariant::Filled => (
+                color.filled_element,
+                color.filled_element_hover,
+                color.filled_element_active,
+            ),
         };
 
-        if self.state == InteractionState::Focused {
-            border_color_default = theme.players[0].cursor;
-            border_color_hover = theme.players[0].cursor;
-        }
-
-        if self.state == InteractionState::Focused || self.state == InteractionState::Active {
-            text_el = self.value.clone();
-            text_color = theme.lowest.base.default.foreground;
+        let placeholder_label = Label::new(self.placeholder).color(if self.disabled {
+            LabelColor::Disabled
         } else {
-            text_el = self.placeholder.to_string().clone();
-            text_color = theme.lowest.base.disabled.foreground;
-        }
+            LabelColor::Placeholder
+        });
+
+        let label = Label::new(self.value.clone()).color(if self.disabled {
+            LabelColor::Disabled
+        } else {
+            LabelColor::Default
+        });
 
         div()
             .h_7()
             .w_full()
             .px_2()
             .border()
-            .border_color(border_color_default)
-            .bg(background_color_default)
-            .hover(|style| {
-                style
-                    .border_color(border_color_hover)
-                    .bg(background_color_active)
-            })
-            // .active(|a| .border_color(border_color_active))
+            .border_color(system_color.transparent)
+            .bg(input_bg)
+            .hover(|style| style.bg(input_hover_bg))
+            // .active(|style| style.bg(input_active_bg))
             .flex()
             .items_center()
             .child(
@@ -101,9 +105,8 @@ impl<S: 'static + Send + Sync> Input<S> {
                     .flex()
                     .items_center()
                     .text_sm()
-                    .text_color(text_color)
-                    .child(text_el)
-                    .child(div().text_color(theme.players[0].cursor).child("|")),
+                    .when(self.value.is_empty(), |this| this.child(placeholder_label))
+                    .when(!self.value.is_empty(), |this| this.child(label)),
             )
     }
 }

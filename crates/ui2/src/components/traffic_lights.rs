@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::prelude::*;
-use crate::{theme, SystemColor};
+use crate::SystemColor;
 
 #[derive(Clone, Copy)]
 enum TrafficLightColor {
@@ -34,7 +34,7 @@ impl<S: 'static + Send + Sync> TrafficLight<S> {
             (true, TrafficLightColor::Red) => system_color.mac_os_traffic_light_red,
             (true, TrafficLightColor::Yellow) => system_color.mac_os_traffic_light_yellow,
             (true, TrafficLightColor::Green) => system_color.mac_os_traffic_light_green,
-            (false, _) => theme.lowest.base.active.background,
+            (false, _) => color.filled_element,
         };
 
         div().w_3().h_3().rounded_full().bg(fill)

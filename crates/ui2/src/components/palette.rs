@@ -1,7 +1,6 @@
 use std::marker::PhantomData;
 
 use crate::prelude::*;
-use crate::theme::theme;
 use crate::{h_stack, v_stack, Keybinding, Label, LabelColor};
 
 #[derive(Element)]
