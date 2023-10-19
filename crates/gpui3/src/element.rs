@@ -1,4 +1,7 @@
-use crate::{BorrowWindow, Bounds, ElementId, FocusHandle, LayoutId, Pixels, Point, ViewContext};
+use crate::{
+    BorrowWindow, Bounds, ElementId, FocusHandle, FocusListeners, LayoutId, Pixels, Point,
+    ViewContext,
+};
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
 use std::mem;
@@ -55,34 +58,70 @@ impl ElementIdentity for Anonymous {
     }
 }
 
-pub trait ElementFocusability: 'static + Send + Sync {
+pub trait ElementFocusability<V: 'static + Send + Sync>: 'static + Send + Sync {
     fn focus_handle(&self) -> Option<&FocusHandle>;
-}
+    fn focus_listeners(&self) -> Option<&FocusListeners<V>>;
 
-pub struct Focusable(FocusHandle);
+    fn initialize<R>(
+        &self,
+        cx: &mut ViewContext<V>,
+        f: impl FnOnce(&mut ViewContext<V>) -> R,
+    ) -> R {
+        if let Some(focus_listeners) = self.focus_listeners() {
+            for listener in focus_listeners.iter().cloned() {
+                cx.on_focus_changed(move |view, event, cx| listener(view, event, cx));
+            }
+        }
 
-impl AsRef<FocusHandle> for Focusable {
-    fn as_ref(&self) -> &FocusHandle {
-        &self.0
+        if let Some(focus_handle) = self.focus_handle().cloned() {
+            cx.with_focus(focus_handle, |cx| f(cx))
+        } else {
+            f(cx)
+        }
     }
 }
 
-impl ElementFocusability for Focusable {
+pub struct Focusable<V: 'static + Send + Sync> {
+    pub focus_handle: FocusHandle,
+    pub focus_listeners: FocusListeners<V>,
+}
+
+impl<V> ElementFocusability<V> for Focusable<V>
+where
+    V: 'static + Send + Sync,
+{
     fn focus_handle(&self) -> Option<&FocusHandle> {
-        Some(&self.0)
+        Some(&self.focus_handle)
+    }
+
+    fn focus_listeners(&self) -> Option<&FocusListeners<V>> {
+        Some(&self.focus_listeners)
     }
 }
 
-impl From<FocusHandle> for Focusable {
+impl<V> From<FocusHandle> for Focusable<V>
+where
+    V: 'static + Send + Sync,
+{
     fn from(value: FocusHandle) -> Self {
-        Self(value)
+        Self {
+            focus_handle: value,
+            focus_listeners: Default::default(),
+        }
     }
 }
 
 pub struct NonFocusable;
 
-impl ElementFocusability for NonFocusable {
+impl<V> ElementFocusability<V> for NonFocusable
+where
+    V: 'static + Send + Sync,
+{
     fn focus_handle(&self) -> Option<&FocusHandle> {
+        None
+    }
+
+    fn focus_listeners(&self) -> Option<&FocusListeners<V>> {
         None
     }
 }

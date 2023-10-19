@@ -1,10 +1,10 @@
 use crate::{
     Active, Anonymous, AnyElement, AppContext, BorrowWindow, Bounds, Click, DispatchPhase, Element,
-    ElementFocusability, ElementId, ElementIdentity, EventListeners, Focus, FocusHandle, Focusable,
-    GlobalElementId, Hover, Identified, Interactive, IntoAnyElement, KeyDownEvent, KeyMatch,
-    LayoutId, MouseClickEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, NonFocusable,
-    Overflow, ParentElement, Pixels, Point, ScrollWheelEvent, SharedString, Style, StyleRefinement,
-    Styled, ViewContext,
+    ElementFocusability, ElementId, ElementIdentity, EventListeners, Focus, FocusHandle,
+    FocusListeners, Focusable, GlobalElementId, Hover, Identified, Interactive, IntoAnyElement,
+    KeyDownEvent, KeyMatch, LayoutId, MouseClickEvent, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, NonFocusable, Overflow, ParentElement, Pixels, Point, ScrollWheelEvent,
+    SharedString, Style, StyleRefinement, Styled, ViewContext,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -61,6 +61,26 @@ impl ScrollState {
     }
 }
 
+pub struct Div<
+    V: 'static + Send + Sync,
+    I: ElementIdentity = Anonymous,
+    F: ElementFocusability<V> = NonFocusable,
+> {
+    identity: I,
+    focusability: F,
+    children: SmallVec<[AnyElement<V>; 2]>,
+    group: Option<SharedString>,
+    base_style: StyleRefinement,
+    hover_style: StyleRefinement,
+    group_hover: Option<GroupStyle>,
+    active_style: StyleRefinement,
+    group_active: Option<GroupStyle>,
+    focus_style: StyleRefinement,
+    focus_in_style: StyleRefinement,
+    in_focus_style: StyleRefinement,
+    listeners: EventListeners<V>,
+}
+
 pub fn div<V>() -> Div<V, Anonymous, NonFocusable>
 where
     V: 'static + Send + Sync,
@@ -82,26 +102,6 @@ where
     }
 }
 
-pub struct Div<
-    V: 'static + Send + Sync,
-    I: ElementIdentity = Anonymous,
-    F: ElementFocusability = NonFocusable,
-> {
-    identity: I,
-    focusability: F,
-    children: SmallVec<[AnyElement<V>; 2]>,
-    group: Option<SharedString>,
-    base_style: StyleRefinement,
-    hover_style: StyleRefinement,
-    group_hover: Option<GroupStyle>,
-    active_style: StyleRefinement,
-    group_active: Option<GroupStyle>,
-    focus_style: StyleRefinement,
-    focus_in_style: StyleRefinement,
-    in_focus_style: StyleRefinement,
-    listeners: EventListeners<V>,
-}
-
 struct GroupStyle {
     group: SharedString,
     style: StyleRefinement,
@@ -109,7 +109,7 @@ struct GroupStyle {
 
 impl<V, F> Div<V, Anonymous, F>
 where
-    F: ElementFocusability,
+    F: ElementFocusability<V>,
     V: 'static + Send + Sync,
 {
     pub fn id(self, id: impl Into<ElementId>) -> Div<V, Identified, F> {
@@ -134,7 +134,7 @@ where
 impl<V, I, F> Div<V, I, F>
 where
     I: ElementIdentity,
-    F: ElementFocusability,
+    F: ElementFocusability<V>,
     V: 'static + Send + Sync,
 {
     pub fn group(mut self, group: impl Into<SharedString>) -> Self {
@@ -364,7 +364,7 @@ where
     I: ElementIdentity,
     V: 'static + Send + Sync,
 {
-    pub fn focusable(self, handle: &FocusHandle) -> Div<V, I, Focusable> {
+    pub fn focusable(self, handle: &FocusHandle) -> Div<V, I, Focusable<V>> {
         Div {
             identity: self.identity,
             focusability: handle.clone().into(),
@@ -383,13 +383,17 @@ where
     }
 }
 
-impl<V, I> Focus for Div<V, I, Focusable>
+impl<V, I> Focus for Div<V, I, Focusable<V>>
 where
     I: ElementIdentity,
     V: 'static + Send + Sync,
 {
+    fn focus_listeners(&mut self) -> &mut FocusListeners<V> {
+        &mut self.focusability.focus_listeners
+    }
+
     fn handle(&self) -> &FocusHandle {
-        self.focusability.as_ref()
+        &self.focusability.focus_handle
     }
 
     fn set_focus_style(&mut self, style: StyleRefinement) {
@@ -408,7 +412,7 @@ where
 impl<V, I, F> Element for Div<V, I, F>
 where
     I: ElementIdentity,
-    F: ElementFocusability,
+    F: ElementFocusability<V>,
     V: 'static + Send + Sync,
 {
     type ViewState = V;
@@ -426,12 +430,8 @@ where
     ) -> Self::ElementState {
         self.with_element_id(cx, |this, global_id, cx| {
             let element_state = element_state.unwrap_or_default();
-            for listener in this.listeners.focus.iter().cloned() {
-                cx.on_focus_changed(move |view, event, cx| listener(view, event, cx));
-            }
 
             let mut key_listeners = mem::take(&mut this.listeners.key);
-
             if let Some(global_id) = global_id {
                 key_listeners.push((
                     TypeId::of::<KeyDownEvent>(),
@@ -451,17 +451,11 @@ where
             }
 
             cx.with_key_listeners(&key_listeners, |cx| {
-                if let Some(focus_handle) = this.focusability.focus_handle().cloned() {
-                    cx.with_focus(focus_handle, |cx| {
-                        for child in &mut this.children {
-                            child.initialize(view_state, cx);
-                        }
-                    })
-                } else {
+                this.focusability.initialize(cx, |cx| {
                     for child in &mut this.children {
                         child.initialize(view_state, cx);
                     }
-                }
+                });
             });
             this.listeners.key = key_listeners;
 
@@ -554,7 +548,7 @@ where
 impl<V, I, F> IntoAnyElement<V> for Div<V, I, F>
 where
     I: ElementIdentity,
-    F: ElementFocusability,
+    F: ElementFocusability<V>,
     V: 'static + Send + Sync,
 {
     fn into_any(self) -> AnyElement<V> {
@@ -565,7 +559,7 @@ where
 impl<V, I, F> ParentElement for Div<V, I, F>
 where
     I: ElementIdentity,
-    F: ElementFocusability,
+    F: ElementFocusability<V>,
     V: 'static + Send + Sync,
 {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::ViewState>; 2]> {
@@ -576,7 +570,7 @@ where
 impl<V, I, F> Styled for Div<V, I, F>
 where
     I: ElementIdentity,
-    F: ElementFocusability,
+    F: ElementFocusability<V>,
     V: 'static + Send + Sync,
 {
     fn style(&mut self) -> &mut StyleRefinement {
@@ -587,7 +581,7 @@ where
 impl<V, I, F> Interactive for Div<V, I, F>
 where
     I: ElementIdentity,
-    F: ElementFocusability,
+    F: ElementFocusability<V>,
     V: 'static + Send + Sync,
 {
     fn listeners(&mut self) -> &mut EventListeners<V> {
@@ -598,7 +592,7 @@ where
 impl<V, I, F> Hover for Div<V, I, F>
 where
     I: ElementIdentity,
-    F: ElementFocusability,
+    F: ElementFocusability<V>,
     V: 'static + Send + Sync,
 {
     fn set_hover_style(&mut self, group: Option<SharedString>, style: StyleRefinement) {
@@ -612,14 +606,14 @@ where
 
 impl<V, F> Click for Div<V, Identified, F>
 where
-    F: ElementFocusability,
+    F: ElementFocusability<V>,
     V: 'static + Send + Sync,
 {
 }
 
 impl<V, F> Active for Div<V, Identified, F>
 where
-    F: ElementFocusability,
+    F: ElementFocusability<V>,
     V: 'static + Send + Sync,
 {
     fn set_active_style(&mut self, group: Option<SharedString>, style: StyleRefinement) {

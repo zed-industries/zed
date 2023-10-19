@@ -268,9 +268,6 @@ pub type KeyListener<V> = Arc<
         + 'static,
 >;
 
-pub type FocusListener<V> =
-    Arc<dyn Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + Sync + 'static>;
-
 pub struct EventListeners<V: 'static> {
     pub mouse_down: SmallVec<[MouseDownListener<V>; 2]>,
     pub mouse_up: SmallVec<[MouseUpListener<V>; 2]>,
@@ -278,7 +275,6 @@ pub struct EventListeners<V: 'static> {
     pub mouse_move: SmallVec<[MouseMoveListener<V>; 2]>,
     pub scroll_wheel: SmallVec<[ScrollWheelListener<V>; 2]>,
     pub key: SmallVec<[(TypeId, KeyListener<V>); 32]>,
-    pub focus: SmallVec<[FocusListener<V>; 2]>,
 }
 
 impl<V> Default for EventListeners<V> {
@@ -290,7 +286,6 @@ impl<V> Default for EventListeners<V> {
             mouse_move: SmallVec::new(),
             scroll_wheel: SmallVec::new(),
             key: SmallVec::new(),
-            focus: SmallVec::new(),
         }
     }
 }
