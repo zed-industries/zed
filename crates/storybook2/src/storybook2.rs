@@ -17,7 +17,7 @@ use log::LevelFilter;
 use simplelog::SimpleLogger;
 use story_selector::ComponentStory;
 use ui::prelude::*;
-use ui::{themed, FakeSettings};
+use ui::{themed, with_settings, FakeSettings};
 
 use crate::assets::Assets;
 use crate::story_selector::StorySelector;
@@ -100,7 +100,7 @@ impl StoryWrapper {
     }
 
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
-        cx.with_global(self.settings.clone(), |cx| {
+        with_settings(self.settings.clone(), cx, |cx| {
             themed(self.theme.clone(), cx, |cx| {
                 div()
                     .flex()
