@@ -6,8 +6,8 @@ use gpui3::{view, Context, View};
 use crate::prelude::*;
 use crate::settings::user_settings;
 use crate::{
-    random_players_with_call_status, Avatar, Button, Icon, IconButton, IconColor, MicStatus,
-    PlayerWithCallStatus, ScreenShareStatus, ToolDivider, TrafficLights,
+    Avatar, Button, Icon, IconButton, IconColor, MicStatus, PlayerStack, PlayerWithCallStatus,
+    ScreenShareStatus, ToolDivider, TrafficLights,
 };
 
 #[derive(Clone)]
@@ -80,14 +80,9 @@ impl TitleBar {
         cx.notify();
     }
 
-    pub fn view(cx: &mut WindowContext) -> View<Self> {
+    pub fn view(cx: &mut WindowContext, livestream: Option<Livestream>) -> View<Self> {
         view(
-            cx.entity(|cx| {
-                Self::new(cx).set_livestream(Some(Livestream {
-                    players: random_players_with_call_status(7),
-                    channel: Some("gpui2-ui".to_string()),
-                }))
-            }),
+            cx.entity(|cx| Self::new(cx).set_livestream(livestream)),
             Self::render,
         )
     }
@@ -95,7 +90,7 @@ impl TitleBar {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
         let color = ThemeColor::new(cx);
         let color = ThemeColor::new(cx);
-        let setting = user_settings();
+        let settings = user_settings(cx);
 
         // let has_focus = cx.window_is_active();
         let has_focus = true;
@@ -127,13 +122,13 @@ impl TitleBar {
                             .flex()
                             .items_center()
                             .gap_1()
-                            .when(*setting.titlebar.show_project_owner, |this| {
+                            .when(*settings.titlebar.show_project_owner, |this| {
                                 this.child(Button::new("iamnbutler"))
                             })
                             .child(Button::new("zed"))
                             .child(Button::new("nate/gpui2-ui-components")),
                     )
-                    // .children(player_list.map(|p| PlayerStack::new(p)))
+                    .children(player_list.map(|p| PlayerStack::new(p)))
                     .child(IconButton::new(Icon::Plus)),
             )
             .child(
@@ -204,7 +199,7 @@ mod stories {
         pub fn view(cx: &mut WindowContext) -> View<Self> {
             view(
                 cx.entity(|cx| Self {
-                    title_bar: TitleBar::view(cx),
+                    title_bar: TitleBar::view(cx, None),
                 }),
                 Self::render,
             )

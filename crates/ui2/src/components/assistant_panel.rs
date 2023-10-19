@@ -29,7 +29,7 @@ impl<S: 'static + Send + Sync + Clone> AssistantPanel<S> {
     fn render(&mut self, view: &mut S, cx: &mut ViewContext<S>) -> impl Element<ViewState = S> {
         let color = ThemeColor::new(cx);
 
-        Panel::new(self.scroll_state.clone())
+        Panel::new(cx)
             .children(vec![div()
                 .flex()
                 .flex_col()

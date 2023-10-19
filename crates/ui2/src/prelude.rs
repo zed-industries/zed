@@ -1,6 +1,6 @@
 pub use gpui3::{
-    div, Click, Element, Hover, IntoAnyElement, ParentElement, ScrollState, SharedString, Styled,
-    ViewContext, WindowContext,
+    div, Active, Click, Element, Hover, IntoAnyElement, ParentElement, ScrollState, SharedString,
+    Styled, ViewContext, WindowContext,
 };
 
 use crate::settings::user_settings;
@@ -278,12 +278,12 @@ impl HighlightColor {
     }
 }
 
-pub fn ui_size(size: f32) -> Rems {
+pub fn ui_size(cx: &mut WindowContext, size: f32) -> Rems {
     const UI_SCALE_RATIO: f32 = 0.875;
 
-    let setting = user_settings();
+    let settings = user_settings(cx);
 
-    rems(*setting.ui_scale * UI_SCALE_RATIO * size)
+    rems(*settings.ui_scale * UI_SCALE_RATIO * size)
 }
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, EnumIter)]

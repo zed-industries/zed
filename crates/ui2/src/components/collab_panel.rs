@@ -130,12 +130,13 @@ impl<S: 'static + Send + Sync + Clone> CollabPanel<S> {
         let color = ThemeColor::new(cx);
 
         div()
+            .id("list_item")
             .h_7()
             .px_2()
             .flex()
             .items_center()
             .hover(|style| style.bg(color.ghost_element_hover))
-            // .active(|style| style.fill(theme.lowest.variant.pressed.background))
+            .active(|style| style.bg(color.ghost_element_active))
             .child(
                 div()
                     .flex()

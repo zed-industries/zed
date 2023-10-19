@@ -1,12 +1,32 @@
+use std::sync::Arc;
+
 use chrono::DateTime;
-use gpui3::{px, relative, view, Context, Size, View};
+use gpui3::{px, relative, rems, view, Context, Size, View};
 
 use crate::prelude::*;
 use crate::{
-    theme, v_stack, AssistantPanel, ChatMessage, ChatPanel, CollabPanel, EditorPane, Label,
-    LanguageSelector, Pane, PaneGroup, Panel, PanelAllowedSides, PanelSide, ProjectPanel,
-    SplitDirection, StatusBar, Terminal, TitleBar, Toast, ToastOrigin,
+    static_livestream, theme, user_settings_mut, v_stack, AssistantPanel, Button, ChatMessage,
+    ChatPanel, CollabPanel, EditorPane, FakeSettings, Label, LanguageSelector, Pane, PaneGroup,
+    Panel, PanelAllowedSides, PanelSide, ProjectPanel, SettingValue, SplitDirection, StatusBar,
+    Terminal, TitleBar, Toast, ToastOrigin,
 };
+
+#[derive(Clone)]
+pub struct Gpui2UiDebug {
+    pub in_livestream: bool,
+    pub enable_user_settings: bool,
+    pub show_toast: bool,
+}
+
+impl Default for Gpui2UiDebug {
+    fn default() -> Self {
+        Self {
+            in_livestream: false,
+            enable_user_settings: false,
+            show_toast: false,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct Workspace {
@@ -18,17 +38,19 @@ pub struct Workspace {
     show_assistant_panel: bool,
     show_notifications_panel: bool,
     show_terminal: bool,
+    show_debug: bool,
     show_language_selector: bool,
     left_panel_scroll_state: ScrollState,
     right_panel_scroll_state: ScrollState,
     tab_bar_scroll_state: ScrollState,
     bottom_panel_scroll_state: ScrollState,
+    debug: Gpui2UiDebug,
 }
 
 impl Workspace {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         Self {
-            title_bar: TitleBar::view(cx),
+            title_bar: TitleBar::view(cx, None),
             editor_1: EditorPane::view(cx),
             show_project_panel: true,
             show_collab_panel: false,
@@ -36,11 +58,13 @@ impl Workspace {
             show_assistant_panel: false,
             show_terminal: true,
             show_language_selector: false,
+            show_debug: false,
             show_notifications_panel: true,
             left_panel_scroll_state: ScrollState::default(),
             right_panel_scroll_state: ScrollState::default(),
             tab_bar_scroll_state: ScrollState::default(),
             bottom_panel_scroll_state: ScrollState::default(),
+            debug: Gpui2UiDebug::default(),
         }
     }
 
@@ -84,6 +108,7 @@ impl Workspace {
         self.show_chat_panel = !self.show_chat_panel;
 
         self.show_assistant_panel = false;
+        self.show_notifications_panel = false;
 
         cx.notify();
     }
@@ -95,7 +120,8 @@ impl Workspace {
     pub fn toggle_notifications_panel(&mut self, cx: &mut ViewContext<Self>) {
         self.show_notifications_panel = !self.show_notifications_panel;
 
-        self.show_notifications_panel = false;
+        self.show_chat_panel = false;
+        self.show_assistant_panel = false;
 
         cx.notify();
     }
@@ -108,6 +134,7 @@ impl Workspace {
         self.show_assistant_panel = !self.show_assistant_panel;
 
         self.show_chat_panel = false;
+        self.show_notifications_panel = false;
 
         cx.notify();
     }
@@ -122,12 +149,55 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn toggle_debug(&mut self, cx: &mut ViewContext<Self>) {
+        self.show_debug = !self.show_debug;
+
+        cx.notify();
+    }
+
+    pub fn debug_toggle_user_settings(&mut self, cx: &mut ViewContext<Self>) {
+        self.debug.enable_user_settings = !self.debug.enable_user_settings;
+
+        cx.notify();
+    }
+
+    pub fn debug_toggle_livestream(&mut self, cx: &mut ViewContext<Self>) {
+        self.debug.in_livestream = !self.debug.in_livestream;
+
+        self.title_bar = TitleBar::view(
+            cx,
+            Some(static_livestream()).filter(|_| self.debug.in_livestream),
+        );
+
+        cx.notify();
+    }
+
+    pub fn debug_toggle_toast(&mut self, cx: &mut ViewContext<Self>) {
+        self.debug.show_toast = !self.debug.show_toast;
+
+        cx.notify();
+    }
+
     pub fn view(cx: &mut WindowContext) -> View<Self> {
         view(cx.entity(|cx| Self::new(cx)), Self::render)
     }
 
     pub fn render(&mut self, cx: &mut ViewContext<Self>) -> impl Element<ViewState = Self> {
         let theme = theme(cx).clone();
+
+        // HACK: This should happen inside of `debug_toggle_user_settings`, but
+        // we don't have `cx.global::<FakeSettings>()` in event handlers at the moment.
+        // Need to talk with Nathan/Antonio about this.
+        {
+            let settings = user_settings_mut(cx);
+
+            if self.debug.enable_user_settings {
+                settings.list_indent_depth = SettingValue::UserDefined(rems(0.5).into());
+                settings.ui_scale = SettingValue::UserDefined(1.25);
+            } else {
+                *settings = FakeSettings::default();
+            }
+        }
 
         let root_group = PaneGroup::new_panes(
             vec![Pane::new(
@@ -165,7 +235,7 @@ impl Workspace {
                     .border_color(theme.lowest.base.default.border)
                     .children(
                         Some(
-                            Panel::new(self.left_panel_scroll_state.clone())
+                            Panel::new(cx)
                                 .side(PanelSide::Left)
                                 .child(ProjectPanel::new(ScrollState::default())),
                         )
@@ -173,7 +243,7 @@ impl Workspace {
                     )
                     .children(
                         Some(
-                            Panel::new(self.left_panel_scroll_state.clone())
+                            Panel::new(cx)
                                 .child(CollabPanel::new(ScrollState::default()))
                                 .side(PanelSide::Left),
                         )
@@ -183,20 +253,10 @@ impl Workspace {
                         v_stack()
                             .flex_1()
                             .h_full()
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_1()
-                                    // CSS Hack: Flex 1 has to have a set height to properly fill the space
-                                    // Or it will give you a height of 0
-                                    // Marshall: We may not need this anymore with `gpui3`. It seems to render
-                                    //           fine without it.
-                                    .h_px()
-                                    .child(root_group),
-                            )
+                            .child(div().flex().flex_1().child(root_group))
                             .children(
                                 Some(
-                                    Panel::new(self.bottom_panel_scroll_state.clone())
+                                    Panel::new(cx)
                                         .child(Terminal::new())
                                         .allowed_sides(PanelAllowedSides::BottomOnly)
                                         .side(PanelSide::Bottom),
@@ -205,10 +265,8 @@ impl Workspace {
                             ),
                     )
                     .children(
-                        Some(
-                            Panel::new(self.right_panel_scroll_state.clone())
-                                .side(PanelSide::Right)
-                                .child(ChatPanel::new(ScrollState::default()).messages(vec![
+                        Some(Panel::new(cx).side(PanelSide::Right).child(
+                            ChatPanel::new(ScrollState::default()).messages(vec![
                                     ChatMessage::new(
                                         "osiewicz".to_string(),
                                         "is this thing on?".to_string(),
@@ -223,45 +281,68 @@ impl Workspace {
                                             .unwrap()
                                             .naive_local(),
                                     ),
-                                ])),
-                        )
+                                ]),
+                        ))
                         .filter(|_| self.is_chat_panel_open()),
                     )
                     .children(
                         Some(
-                            Panel::new(self.right_panel_scroll_state.clone())
+                            Panel::new(cx)
                                 .side(PanelSide::Right)
                                 .child(div().w_96().h_full().child("Notifications")),
                         )
                         .filter(|_| self.is_notifications_panel_open()),
                     )
                     .children(
-                        Some(
-                            Panel::new(self.right_panel_scroll_state.clone())
-                                .child(AssistantPanel::new()),
-                        )
-                        .filter(|_| self.is_assistant_panel_open()),
+                        Some(Panel::new(cx).child(AssistantPanel::new()))
+                            .filter(|_| self.is_assistant_panel_open()),
                     ),
             )
             .child(StatusBar::new())
+            .when(self.debug.show_toast, |this| {
+                this.child(Toast::new(ToastOrigin::Bottom).child(Label::new("A toast")))
+            })
             .children(
                 Some(
                     div()
                         .absolute()
                         .top(px(50.))
                         .left(px(640.))
-                        .z_index(999)
+                        .z_index(8)
                         .child(LanguageSelector::new()),
                 )
                 .filter(|_| self.is_language_selector_open()),
             )
-            .child(Toast::new(ToastOrigin::Bottom).child(Label::new("A toast")))
-        // .child(Toast::new(ToastOrigin::BottomRight).child(Label::new("Another toast")))
-        // .child(NotificationToast::new(
-        //     "Can't pull changes from origin",
-        //     "Your local branch is behind the remote branch. Please pull the latest changes before pushing.",
-        //     Button::new("Stash & Switch").variant(ButtonVariant::Filled),
-        // ).secondary_action(Button::new("Cancel")))
+            .z_index(8)
+            // Debug
+            .child(
+                v_stack()
+                    .z_index(9)
+                    .absolute()
+                    .bottom_10()
+                    .left_1_4()
+                    .w_40()
+                    .gap_2()
+                    .when(self.show_debug, |this| {
+                        this.child(Button::<Workspace>::new("Toggle User Settings").on_click(
+                            Arc::new(|workspace, cx| workspace.debug_toggle_user_settings(cx)),
+                        ))
+                        .child(
+                            Button::<Workspace>::new("Toggle Toasts").on_click(Arc::new(
+                                |workspace, cx| workspace.debug_toggle_toast(cx),
+                            )),
+                        )
+                        .child(
+                            Button::<Workspace>::new("Toggle Livestream").on_click(Arc::new(
+                                |workspace, cx| workspace.debug_toggle_livestream(cx),
+                            )),
+                        )
+                    })
+                    .child(
+                        Button::<Workspace>::new("Toggle Debug")
+                            .on_click(Arc::new(|workspace, cx| workspace.toggle_debug(cx))),
+                    ),
+            )
     }
 }
 

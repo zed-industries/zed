@@ -83,14 +83,15 @@ impl<S: 'static + Send + Sync + Clone> Palette<S> {
                                 .into_iter()
                                 .flatten(),
                             )
-                            .children(self.items.iter().map(|item| {
+                            .children(self.items.iter().enumerate().map(|(index, item)| {
                                 h_stack()
+                                    .id(index)
                                     .justify_between()
                                     .px_2()
                                     .py_0p5()
                                     .rounded_lg()
                                     .hover(|style| style.bg(color.ghost_element_hover))
-                                    // .active(|style| style.bg(color.ghost_element_active))
+                                    .active(|style| style.bg(color.ghost_element_active))
                                     .child(item.clone())
                             })),
                     ),

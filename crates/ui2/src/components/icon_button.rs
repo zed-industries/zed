@@ -90,11 +90,11 @@ impl<S: 'static + Send + Sync> IconButton<S> {
         let mut button = h_stack()
             .justify_center()
             .rounded_md()
-            .py(ui_size(0.25))
-            .px(ui_size(6. / 14.))
+            .py(ui_size(cx, 0.25))
+            .px(ui_size(cx, 6. / 14.))
             .bg(bg_color)
             .hover(|style| style.bg(bg_hover_color))
-            // .active(|style| style.bg(bg_active_color))
+            .active(|style| style.bg(bg_active_color))
             .child(IconElement::new(self.icon).color(icon_color));
 
         if let Some(click_handler) = self.handlers.click.clone() {

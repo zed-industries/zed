@@ -90,6 +90,7 @@ impl<S: 'static + Send + Sync + Clone> Input<S> {
         });
 
         div()
+            .id("input")
             .h_7()
             .w_full()
             .px_2()
@@ -97,7 +98,7 @@ impl<S: 'static + Send + Sync + Clone> Input<S> {
             .border_color(system_color.transparent)
             .bg(input_bg)
             .hover(|style| style.bg(input_hover_bg))
-            // .active(|style| style.bg(input_active_bg))
+            .active(|style| style.bg(input_active_bg))
             .flex()
             .items_center()
             .child(

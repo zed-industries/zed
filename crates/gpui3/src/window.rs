@@ -1,12 +1,13 @@
 use crate::{
-    px, size, AnyBox, AnyView, AppContext, AsyncWindowContext, AvailableSpace, BorrowAppContext,
-    Bounds, BoxShadow, Context, Corners, DevicePixels, DisplayId, Edges, Effect, Element, EntityId,
-    EventEmitter, FocusEvent, FontId, GlobalElementId, GlyphId, Handle, Hsla, ImageData,
-    InputEvent, IsZero, KeyListener, LayoutId, MainThread, MainThreadOnly, MonochromeSprite,
-    MouseMoveEvent, Path, Pixels, Platform, PlatformAtlas, PlatformWindow, Point, PolychromeSprite,
-    Quad, Reference, RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels,
-    SceneBuilder, Shadow, SharedString, Size, Style, Subscription, TaffyLayoutEngine, Task,
-    Underline, UnderlineStyle, WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
+    px, size, Action, AnyBox, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
+    BorrowAppContext, Bounds, BoxShadow, Context, Corners, DevicePixels, DisplayId, Edges, Effect,
+    Element, EntityId, EventEmitter, FocusEvent, FontId, GlobalElementId, GlyphId, Handle, Hsla,
+    ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke, LayoutId,
+    MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path, Pixels, Platform,
+    PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams,
+    RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
+    Style, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle,
+    WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -45,6 +46,12 @@ pub enum DispatchPhase {
 }
 
 type AnyListener = Arc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
+type AnyKeyListener = Arc<
+    dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) -> Option<Box<dyn Action>>
+        + Send
+        + Sync
+        + 'static,
+>;
 type AnyFocusListener = Arc<dyn Fn(&FocusEvent, &mut WindowContext) + Send + Sync + 'static>;
 
 slotmap::new_key_type! { pub struct FocusId; }
@@ -141,18 +148,20 @@ pub struct Window {
     layout_engine: TaffyLayoutEngine,
     pub(crate) root_view: Option<AnyView>,
     pub(crate) element_id_stack: GlobalElementId,
-    prev_element_states: HashMap<GlobalElementId, AnyBox>,
+    prev_frame_element_states: HashMap<GlobalElementId, AnyBox>,
     element_states: HashMap<GlobalElementId, AnyBox>,
+    prev_frame_key_matchers: HashMap<GlobalElementId, KeyMatcher>,
+    key_matchers: HashMap<GlobalElementId, KeyMatcher>,
     z_index_stack: StackingOrder,
     content_mask_stack: Vec<ContentMask<Pixels>>,
     mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyListener)>>,
-    key_listeners: HashMap<TypeId, Vec<AnyListener>>,
+    key_listeners: Vec<(TypeId, AnyKeyListener)>,
     key_events_enabled: bool,
     focus_stack: Vec<FocusId>,
     focus_parents_by_child: HashMap<FocusId, FocusId>,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
-    propagate_event: bool,
+    propagate: bool,
     default_prevented: bool,
     mouse_position: Point<Pixels>,
     scale_factor: f32,
@@ -214,17 +223,19 @@ impl Window {
             layout_engine: TaffyLayoutEngine::new(),
             root_view: None,
             element_id_stack: GlobalElementId::default(),
-            prev_element_states: HashMap::default(),
+            prev_frame_element_states: HashMap::default(),
             element_states: HashMap::default(),
+            prev_frame_key_matchers: HashMap::default(),
+            key_matchers: HashMap::default(),
             z_index_stack: StackingOrder(SmallVec::new()),
             content_mask_stack: Vec::new(),
             mouse_listeners: HashMap::default(),
-            key_listeners: HashMap::default(),
+            key_listeners: Vec::new(),
             key_events_enabled: true,
             focus_stack: Vec::new(),
             focus_parents_by_child: HashMap::default(),
             focus_listeners: Vec::new(),
-            propagate_event: true,
+            propagate: true,
             default_prevented: true,
             mouse_position,
             scale_factor,
@@ -434,7 +445,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 
     pub fn stop_propagation(&mut self) {
-        self.window.propagate_event = false;
+        self.window.propagate = false;
     }
 
     pub fn prevent_default(&mut self) {
@@ -460,19 +471,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                     handler(event.downcast_ref().unwrap(), phase, cx)
                 }),
             ))
-    }
-
-    pub fn on_keyboard_event<Event: 'static>(
-        &mut self,
-        handler: impl Fn(&Event, DispatchPhase, &mut WindowContext) + Send + Sync + 'static,
-    ) {
-        self.window
-            .key_listeners
-            .entry(TypeId::of::<Event>())
-            .or_default()
-            .push(Arc::new(move |event: &dyn Any, phase, cx| {
-                handler(event.downcast_ref().unwrap(), phase, cx)
-            }))
     }
 
     pub fn mouse_position(&self) -> Point<Pixels> {
@@ -777,7 +775,6 @@ impl<'a, 'w> WindowContext<'a, 'w> {
 
             cx.window.root_view = Some(root_view);
             let scene = cx.window.scene_builder.build();
-            cx.end_frame();
 
             cx.run_on_main(view, |_, cx| {
                 cx.window
@@ -807,12 +804,27 @@ impl<'a, 'w> WindowContext<'a, 'w> {
     }
 
     fn start_frame(&mut self) {
-        // Make the current element states the previous, and then clear the current.
-        // The empty element states map will be populated for any element states we
-        // reference during the upcoming frame.
+        self.text_system().start_frame();
+
         let window = &mut *self.window;
-        mem::swap(&mut window.element_states, &mut window.prev_element_states);
+
+        // Move the current frame element states to the previous frame.
+        // The new empty element states map will be populated for any element states we
+        // reference during the upcoming frame.
+        mem::swap(
+            &mut window.element_states,
+            &mut window.prev_frame_element_states,
+        );
         window.element_states.clear();
+
+        // Make the current key matchers the previous, and then clear the current.
+        // An empty key matcher map will be created for every identified element in the
+        // upcoming frame.
+        mem::swap(
+            &mut window.key_matchers,
+            &mut window.prev_frame_key_matchers,
+        );
+        window.key_matchers.clear();
 
         // Clear mouse event listeners, because elements add new element listeners
         // when the upcoming frame is painted.
@@ -821,13 +833,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         // Clear focus state, because we determine what is focused when the new elements
         // in the upcoming frame are initialized.
         window.focus_listeners.clear();
-        window.key_listeners.values_mut().for_each(Vec::clear);
+        window.key_listeners.clear();
         window.focus_parents_by_child.clear();
         window.key_events_enabled = true;
-    }
-
-    fn end_frame(&mut self) {
-        self.text_system().end_frame();
     }
 
     fn dispatch_event(&mut self, event: InputEvent) -> bool {
@@ -837,7 +845,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
             }
 
             // Handlers may set this to false by calling `stop_propagation`
-            self.window.propagate_event = true;
+            self.window.propagate = true;
             self.window.default_prevented = false;
 
             if let Some(mut handlers) = self
@@ -852,16 +860,16 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                 // special purposes, such as detecting events outside of a given Bounds.
                 for (_, handler) in &handlers {
                     handler(any_mouse_event, DispatchPhase::Capture, self);
-                    if !self.window.propagate_event {
+                    if !self.window.propagate {
                         break;
                     }
                 }
 
                 // Bubble phase, where most normal handlers do their work.
-                if self.window.propagate_event {
+                if self.window.propagate {
                     for (_, handler) in handlers.iter().rev() {
                         handler(any_mouse_event, DispatchPhase::Bubble, self);
-                        if !self.window.propagate_event {
+                        if !self.window.propagate {
                             break;
                         }
                     }
@@ -879,42 +887,84 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                     .mouse_listeners
                     .insert(any_mouse_event.type_id(), handlers);
             }
-        } else if let Some(any_keyboard_event) = event.keyboard_event() {
-            if let Some(mut handlers) = self
-                .window
-                .key_listeners
-                .remove(&any_keyboard_event.type_id())
-            {
-                for handler in &handlers {
-                    handler(any_keyboard_event, DispatchPhase::Capture, self);
-                    if !self.window.propagate_event {
+        } else if let Some(any_key_event) = event.keyboard_event() {
+            let key_listeners = mem::take(&mut self.window.key_listeners);
+            let key_event_type = any_key_event.type_id();
+
+            for (ix, (listener_event_type, listener)) in key_listeners.iter().enumerate() {
+                if key_event_type == *listener_event_type {
+                    if let Some(action) = listener(any_key_event, DispatchPhase::Capture, self) {
+                        self.dispatch_action(action, &key_listeners[..ix]);
+                    }
+                    if !self.window.propagate {
                         break;
                     }
                 }
+            }
 
-                if self.window.propagate_event {
-                    for handler in handlers.iter().rev() {
-                        handler(any_keyboard_event, DispatchPhase::Bubble, self);
-                        if !self.window.propagate_event {
+            if self.window.propagate {
+                for (ix, (listener_event_type, listener)) in key_listeners.iter().enumerate().rev()
+                {
+                    if key_event_type == *listener_event_type {
+                        if let Some(action) = listener(any_key_event, DispatchPhase::Bubble, self) {
+                            self.dispatch_action(action, &key_listeners[..ix]);
+                        }
+
+                        if !self.window.propagate {
                             break;
                         }
                     }
                 }
-
-                handlers.extend(
-                    self.window
-                        .key_listeners
-                        .get_mut(&any_keyboard_event.type_id())
-                        .into_iter()
-                        .flat_map(|handlers| handlers.drain(..)),
-                );
-                self.window
-                    .key_listeners
-                    .insert(any_keyboard_event.type_id(), handlers);
             }
+
+            self.window.key_listeners = key_listeners;
         }
 
         true
+    }
+
+    pub fn match_keystroke(
+        &mut self,
+        element_id: &GlobalElementId,
+        keystroke: &Keystroke,
+    ) -> KeyMatch {
+        let key_match = self
+            .window
+            .key_matchers
+            .get_mut(element_id)
+            .unwrap()
+            .match_keystroke(keystroke, &[]);
+
+        if key_match.is_some() {
+            for matcher in self.window.key_matchers.values_mut() {
+                matcher.clear_pending();
+            }
+        }
+
+        key_match
+    }
+
+    fn dispatch_action(&mut self, action: Box<dyn Action>, listeners: &[(TypeId, AnyKeyListener)]) {
+        let action_type = action.as_any().type_id();
+        for (event_type, listener) in listeners {
+            if action_type == *event_type {
+                listener(action.as_any(), DispatchPhase::Capture, self);
+                if !self.window.propagate {
+                    break;
+                }
+            }
+        }
+
+        if self.window.propagate {
+            for (event_type, listener) in listeners.iter().rev() {
+                if action_type == *event_type {
+                    listener(action.as_any(), DispatchPhase::Bubble, self);
+                    if !self.window.propagate {
+                        break;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -983,10 +1033,24 @@ pub trait BorrowWindow: BorrowAppContext {
     fn with_element_id<R>(
         &mut self,
         id: impl Into<ElementId>,
-        f: impl FnOnce(&mut Self) -> R,
+        f: impl FnOnce(GlobalElementId, &mut Self) -> R,
     ) -> R {
-        self.window_mut().element_id_stack.push(id.into());
-        let result = f(self);
+        let keymap = self.app_mut().keymap.clone();
+        let window = self.window_mut();
+        window.element_id_stack.push(id.into());
+        let global_id = window.element_id_stack.clone();
+
+        if window.key_matchers.get(&global_id).is_none() {
+            window.key_matchers.insert(
+                global_id.clone(),
+                window
+                    .prev_frame_key_matchers
+                    .remove(&global_id)
+                    .unwrap_or_else(|| KeyMatcher::new(keymap)),
+            );
+        }
+
+        let result = f(global_id, self);
         self.window_mut().element_id_stack.pop();
         result
     }
@@ -1008,13 +1072,12 @@ pub trait BorrowWindow: BorrowAppContext {
         id: ElementId,
         f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
     ) -> R {
-        self.with_element_id(id, |cx| {
-            let global_id = cx.window_mut().element_id_stack.clone();
+        self.with_element_id(id, |global_id, cx| {
             if let Some(any) = cx
                 .window_mut()
                 .element_states
                 .remove(&global_id)
-                .or_else(|| cx.window_mut().prev_element_states.remove(&global_id))
+                .or_else(|| cx.window_mut().prev_frame_element_states.remove(&global_id))
             {
                 // Using the extra inner option to avoid needing to reallocate a new box.
                 let mut state_box = any
@@ -1225,28 +1288,25 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         if self.window.key_events_enabled {
-            let handle = self.handle();
-            for (type_id, listener) in key_listeners {
-                let handle = handle.clone();
-                let listener = listener.clone();
-                self.window
-                    .key_listeners
-                    .entry(*type_id)
-                    .or_default()
-                    .push(Arc::new(move |event, phase, cx| {
+            for (event_type, listener) in key_listeners.iter().cloned() {
+                let handle = self.handle();
+                let listener = Arc::new(
+                    move |event: &dyn Any, phase: DispatchPhase, cx: &mut WindowContext<'_, '_>| {
                         handle
                             .update(cx, |view, cx| listener(view, event, phase, cx))
-                            .log_err();
-                    }));
+                            .log_err()
+                            .flatten()
+                    },
+                );
+                self.window.key_listeners.push((event_type, listener));
             }
         }
 
         let result = f(self);
 
         if self.window.key_events_enabled {
-            for (type_id, _) in key_listeners {
-                self.window.key_listeners.get_mut(type_id).unwrap().pop();
-            }
+            let prev_len = self.window.key_listeners.len() - key_listeners.len();
+            self.window.key_listeners.truncate(prev_len);
         }
 
         result
@@ -1312,18 +1372,6 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
     ) {
         let handle = self.handle().upgrade(self).unwrap();
         self.window_cx.on_mouse_event(move |event, phase, cx| {
-            handle.update(cx, |view, cx| {
-                handler(view, event, phase, cx);
-            })
-        });
-    }
-
-    pub fn on_keyboard_event<Event: 'static>(
-        &mut self,
-        handler: impl Fn(&mut V, &Event, DispatchPhase, &mut ViewContext<V>) + Send + Sync + 'static,
-    ) {
-        let handle = self.handle().upgrade(self).unwrap();
-        self.window_cx.on_keyboard_event(move |event, phase, cx| {
             handle.update(cx, |view, cx| {
                 handler(view, event, phase, cx);
             })

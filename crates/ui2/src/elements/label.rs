@@ -98,7 +98,7 @@ impl<S: 'static + Send + Sync + Clone> Label<S> {
                         .bg(LabelColor::Hidden.hsla(cx)),
                 )
             })
-            .text_size(ui_size(1.))
+            .text_size(ui_size(cx, 1.))
             .when(self.line_height_style == LineHeightStyle::UILabel, |this| {
                 this.line_height(relative(1.))
             })
