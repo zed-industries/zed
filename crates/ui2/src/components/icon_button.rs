@@ -88,6 +88,8 @@ impl<S: 'static + Send + Sync> IconButton<S> {
         };
 
         let mut button = h_stack()
+            // TODO: We need to pass the ID in so that `IconButton`s can be differentiated from one another.
+            .id("icon_button")
             .justify_center()
             .rounded_md()
             .py(ui_size(cx, 0.25))
