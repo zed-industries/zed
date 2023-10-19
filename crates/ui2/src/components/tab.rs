@@ -110,6 +110,7 @@ impl<S: 'static + Send + Sync + Clone> Tab<S> {
         };
 
         div()
+            .id("tab")
             .px_2()
             .py_0p5()
             .flex()
@@ -117,7 +118,7 @@ impl<S: 'static + Send + Sync + Clone> Tab<S> {
             .justify_center()
             .bg(tab_bg)
             .hover(|h| h.bg(tab_hover_bg))
-            // .active(|a| a.bg(tab_active_bg))
+            .active(|a| a.bg(tab_active_bg))
             .child(
                 div()
                     .px_1()
