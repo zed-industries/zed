@@ -1,13 +1,13 @@
 use crate::{
     px, size, Action, AnyBox, AnyView, AppContext, AsyncWindowContext, AvailableSpace,
-    BorrowAppContext, Bounds, BoxShadow, Context, Corners, DevicePixels, DisplayId, Edges, Effect,
-    Element, EntityId, EventEmitter, FocusEvent, FontId, GlobalElementId, GlyphId, Handle, Hsla,
-    ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher, Keystroke, LayoutId,
-    MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path, Pixels, Platform,
-    PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow, SharedString, Size,
-    Style, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle, WeakHandle,
-    WindowOptions, SUBPIXEL_VARIANTS,
+    BorrowAppContext, Bounds, BoxShadow, Context, Corners, DevicePixels, DispatchContext,
+    DisplayId, Edges, Effect, Element, EntityId, EventEmitter, FocusEvent, FontId, GlobalElementId,
+    GlyphId, Handle, Hsla, ImageData, InputEvent, IsZero, KeyListener, KeyMatch, KeyMatcher,
+    Keystroke, LayoutId, MainThread, MainThreadOnly, MonochromeSprite, MouseMoveEvent, Path,
+    Pixels, Platform, PlatformAtlas, PlatformWindow, Point, PolychromeSprite, Quad, Reference,
+    RenderGlyphParams, RenderImageParams, RenderSvgParams, ScaledPixels, SceneBuilder, Shadow,
+    SharedString, Size, Style, Subscription, TaffyLayoutEngine, Task, Underline, UnderlineStyle,
+    WeakHandle, WindowOptions, SUBPIXEL_VARIANTS,
 };
 use anyhow::Result;
 use collections::HashMap;
@@ -47,7 +47,12 @@ pub enum DispatchPhase {
 
 type AnyListener = Arc<dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) + Send + Sync + 'static>;
 type AnyKeyListener = Arc<
-    dyn Fn(&dyn Any, DispatchPhase, &mut WindowContext) -> Option<Box<dyn Action>>
+    dyn Fn(
+            &dyn Any,
+            &[&DispatchContext],
+            DispatchPhase,
+            &mut WindowContext,
+        ) -> Option<Box<dyn Action>>
         + Send
         + Sync
         + 'static,
@@ -155,8 +160,8 @@ pub struct Window {
     z_index_stack: StackingOrder,
     content_mask_stack: Vec<ContentMask<Pixels>>,
     mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyListener)>>,
-    key_listeners: Vec<(TypeId, AnyKeyListener)>,
-    key_events_enabled: bool,
+    key_dispatch_stack: Vec<KeyDispatchStackFrame>,
+    freeze_key_dispatch_stack: bool,
     focus_stack: Vec<FocusId>,
     focus_parents_by_child: HashMap<FocusId, FocusId>,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
@@ -230,22 +235,30 @@ impl Window {
             z_index_stack: StackingOrder(SmallVec::new()),
             content_mask_stack: Vec::new(),
             mouse_listeners: HashMap::default(),
-            key_listeners: Vec::new(),
-            key_events_enabled: true,
+            key_dispatch_stack: Vec::new(),
+            freeze_key_dispatch_stack: false,
             focus_stack: Vec::new(),
             focus_parents_by_child: HashMap::default(),
             focus_listeners: Vec::new(),
+            focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             propagate: true,
             default_prevented: true,
             mouse_position,
             scale_factor,
             scene_builder: SceneBuilder::new(),
             dirty: true,
-            focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             last_blur: None,
             focus: None,
         }
     }
+}
+
+enum KeyDispatchStackFrame {
+    Listener {
+        event_type: TypeId,
+        listener: AnyKeyListener,
+    },
+    Context(DispatchContext),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -833,9 +846,9 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         // Clear focus state, because we determine what is focused when the new elements
         // in the upcoming frame are initialized.
         window.focus_listeners.clear();
-        window.key_listeners.clear();
+        window.key_dispatch_stack.clear();
         window.focus_parents_by_child.clear();
-        window.key_events_enabled = true;
+        window.freeze_key_dispatch_stack = false;
     }
 
     fn dispatch_event(&mut self, event: InputEvent) -> bool {
@@ -888,36 +901,67 @@ impl<'a, 'w> WindowContext<'a, 'w> {
                     .insert(any_mouse_event.type_id(), handlers);
             }
         } else if let Some(any_key_event) = event.keyboard_event() {
-            let key_listeners = mem::take(&mut self.window.key_listeners);
+            let key_dispatch_stack = mem::take(&mut self.window.key_dispatch_stack);
             let key_event_type = any_key_event.type_id();
+            let mut context_stack = SmallVec::<[&DispatchContext; 16]>::new();
 
-            for (ix, (listener_event_type, listener)) in key_listeners.iter().enumerate() {
-                if key_event_type == *listener_event_type {
-                    if let Some(action) = listener(any_key_event, DispatchPhase::Capture, self) {
-                        self.dispatch_action(action, &key_listeners[..ix]);
+            for (ix, frame) in key_dispatch_stack.iter().enumerate() {
+                match frame {
+                    KeyDispatchStackFrame::Listener {
+                        event_type,
+                        listener,
+                    } => {
+                        if key_event_type == *event_type {
+                            if let Some(action) = listener(
+                                any_key_event,
+                                &context_stack,
+                                DispatchPhase::Capture,
+                                self,
+                            ) {
+                                self.dispatch_action(action, &key_dispatch_stack[..ix]);
+                            }
+                            if !self.window.propagate {
+                                break;
+                            }
+                        }
                     }
-                    if !self.window.propagate {
-                        break;
+                    KeyDispatchStackFrame::Context(context) => {
+                        context_stack.push(&context);
                     }
                 }
             }
 
             if self.window.propagate {
-                for (ix, (listener_event_type, listener)) in key_listeners.iter().enumerate().rev()
-                {
-                    if key_event_type == *listener_event_type {
-                        if let Some(action) = listener(any_key_event, DispatchPhase::Bubble, self) {
-                            self.dispatch_action(action, &key_listeners[..ix]);
-                        }
+                for (ix, frame) in key_dispatch_stack.iter().enumerate().rev() {
+                    match frame {
+                        KeyDispatchStackFrame::Listener {
+                            event_type,
+                            listener,
+                        } => {
+                            if key_event_type == *event_type {
+                                if let Some(action) = listener(
+                                    any_key_event,
+                                    &context_stack,
+                                    DispatchPhase::Bubble,
+                                    self,
+                                ) {
+                                    self.dispatch_action(action, &key_dispatch_stack[..ix]);
+                                }
 
-                        if !self.window.propagate {
-                            break;
+                                if !self.window.propagate {
+                                    break;
+                                }
+                            }
+                        }
+                        KeyDispatchStackFrame::Context(_) => {
+                            context_stack.pop();
                         }
                     }
                 }
             }
 
-            self.window.key_listeners = key_listeners;
+            drop(context_stack);
+            self.window.key_dispatch_stack = key_dispatch_stack;
         }
 
         true
@@ -927,13 +971,14 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         &mut self,
         element_id: &GlobalElementId,
         keystroke: &Keystroke,
+        context_stack: &[&DispatchContext],
     ) -> KeyMatch {
         let key_match = self
             .window
             .key_matchers
             .get_mut(element_id)
             .unwrap()
-            .match_keystroke(keystroke, &[]);
+            .match_keystroke(keystroke, context_stack);
 
         if key_match.is_some() {
             for matcher in self.window.key_matchers.values_mut() {
@@ -944,23 +989,39 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         key_match
     }
 
-    fn dispatch_action(&mut self, action: Box<dyn Action>, listeners: &[(TypeId, AnyKeyListener)]) {
+    fn dispatch_action(
+        &mut self,
+        action: Box<dyn Action>,
+        dispatch_stack: &[KeyDispatchStackFrame],
+    ) {
         let action_type = action.as_any().type_id();
-        for (event_type, listener) in listeners {
-            if action_type == *event_type {
-                listener(action.as_any(), DispatchPhase::Capture, self);
-                if !self.window.propagate {
-                    break;
+        for stack_frame in dispatch_stack {
+            if let KeyDispatchStackFrame::Listener {
+                event_type,
+                listener,
+            } = stack_frame
+            {
+                if action_type == *event_type {
+                    listener(action.as_any(), &[], DispatchPhase::Capture, self);
+                    if !self.window.propagate {
+                        break;
+                    }
                 }
             }
         }
 
         if self.window.propagate {
-            for (event_type, listener) in listeners.iter().rev() {
-                if action_type == *event_type {
-                    listener(action.as_any(), DispatchPhase::Bubble, self);
-                    if !self.window.propagate {
-                        break;
+            for stack_frame in dispatch_stack.iter().rev() {
+                if let KeyDispatchStackFrame::Listener {
+                    event_type,
+                    listener,
+                } = stack_frame
+                {
+                    if action_type == *event_type {
+                        listener(action.as_any(), &[], DispatchPhase::Bubble, self);
+                        if !self.window.propagate {
+                            break;
+                        }
                     }
                 }
             }
@@ -1287,26 +1348,56 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         key_listeners: &[(TypeId, KeyListener<V>)],
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        if self.window.key_events_enabled {
+        if !self.window.freeze_key_dispatch_stack {
             for (event_type, listener) in key_listeners.iter().cloned() {
                 let handle = self.handle();
                 let listener = Arc::new(
-                    move |event: &dyn Any, phase: DispatchPhase, cx: &mut WindowContext<'_, '_>| {
+                    move |event: &dyn Any,
+                          context_stack: &[&DispatchContext],
+                          phase: DispatchPhase,
+                          cx: &mut WindowContext<'_, '_>| {
                         handle
-                            .update(cx, |view, cx| listener(view, event, phase, cx))
+                            .update(cx, |view, cx| {
+                                listener(view, event, context_stack, phase, cx)
+                            })
                             .log_err()
                             .flatten()
                     },
                 );
-                self.window.key_listeners.push((event_type, listener));
+                self.window
+                    .key_dispatch_stack
+                    .push(KeyDispatchStackFrame::Listener {
+                        event_type,
+                        listener,
+                    });
             }
         }
 
         let result = f(self);
 
-        if self.window.key_events_enabled {
-            let prev_len = self.window.key_listeners.len() - key_listeners.len();
-            self.window.key_listeners.truncate(prev_len);
+        if !self.window.freeze_key_dispatch_stack {
+            let prev_len = self.window.key_dispatch_stack.len() - key_listeners.len();
+            self.window.key_dispatch_stack.truncate(prev_len);
+        }
+
+        result
+    }
+
+    pub fn with_key_dispatch_context<R>(
+        &mut self,
+        context: DispatchContext,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        if !self.window.freeze_key_dispatch_stack {
+            self.window
+                .key_dispatch_stack
+                .push(KeyDispatchStackFrame::Context(context));
+        }
+
+        let result = f(self);
+
+        if !self.window.freeze_key_dispatch_stack {
+            self.window.key_dispatch_stack.pop();
         }
 
         result
@@ -1325,7 +1416,7 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         self.window.focus_stack.push(focus_handle.id);
 
         if Some(focus_handle.id) == self.window.focus {
-            self.window.key_events_enabled = false;
+            self.window.freeze_key_dispatch_stack = true;
         }
 
         let result = f(self);

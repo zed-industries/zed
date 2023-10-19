@@ -1,7 +1,14 @@
-use crate::{FocusEvent, FocusHandle, Interactive, StyleRefinement, ViewContext};
+use crate::{Element, FocusEvent, FocusHandle, StyleRefinement, ViewContext};
+use smallvec::SmallVec;
 use std::sync::Arc;
 
-pub trait Focus: Interactive {
+pub type FocusListeners<V> = SmallVec<[FocusListener<V>; 2]>;
+
+pub type FocusListener<V> =
+    Arc<dyn Fn(&mut V, &FocusEvent, &mut ViewContext<V>) + Send + Sync + 'static>;
+
+pub trait Focus: Element {
+    fn focus_listeners(&mut self) -> &mut FocusListeners<Self::ViewState>;
     fn set_focus_style(&mut self, style: StyleRefinement);
     fn set_focus_in_style(&mut self, style: StyleRefinement);
     fn set_in_focus_style(&mut self, style: StyleRefinement);
@@ -42,8 +49,7 @@ pub trait Focus: Interactive {
         Self: Sized,
     {
         let handle = self.handle().clone();
-        self.listeners()
-            .focus
+        self.focus_listeners()
             .push(Arc::new(move |view, event, cx| {
                 if event.focused.as_ref() == Some(&handle) {
                     listener(view, event, cx)
@@ -63,8 +69,7 @@ pub trait Focus: Interactive {
         Self: Sized,
     {
         let handle = self.handle().clone();
-        self.listeners()
-            .focus
+        self.focus_listeners()
             .push(Arc::new(move |view, event, cx| {
                 if event.blurred.as_ref() == Some(&handle) {
                     listener(view, event, cx)
@@ -84,8 +89,7 @@ pub trait Focus: Interactive {
         Self: Sized,
     {
         let handle = self.handle().clone();
-        self.listeners()
-            .focus
+        self.focus_listeners()
             .push(Arc::new(move |view, event, cx| {
                 let descendant_blurred = event
                     .blurred
@@ -114,8 +118,7 @@ pub trait Focus: Interactive {
         Self: Sized,
     {
         let handle = self.handle().clone();
-        self.listeners()
-            .focus
+        self.focus_listeners()
             .push(Arc::new(move |view, event, cx| {
                 let descendant_blurred = event
                     .blurred
