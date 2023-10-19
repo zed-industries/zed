@@ -131,6 +131,10 @@ impl PromptTemplate for FileContext {
             )?;
             writeln!(prompt, "```{language_name}\n{context}\n```").unwrap();
 
+            if truncated {
+                writeln!(prompt, "Note the content has been truncated and only represents a portion of the file.").unwrap();
+            }
+
             if let Some(selected_range) = &args.selected_range {
                 let start = selected_range.start.to_offset(buffer);
                 let end = selected_range.end.to_offset(buffer);

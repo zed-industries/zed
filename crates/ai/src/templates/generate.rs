@@ -50,7 +50,8 @@ impl PromptTemplate for GenerateInlineContent {
                 .unwrap();
             } else {
                 writeln!(prompt, "Modify the user's selected {content_type} based upon the users prompt: '{user_prompt}'").unwrap();
-                writeln!(prompt, "You MUST reply with only the adjusted {content_type} (within the '<|START|' and '|END|>' spans), not the entire file.").unwrap();
+                writeln!(prompt, "You must reply with only the adjusted {content_type} (within the '<|START|' and '|END|>' spans) not the entire file.").unwrap();
+                writeln!(prompt, "Double check that you only return code and not the '<|START|' and '|END|'> spans").unwrap();
             }
         } else {
             writeln!(
