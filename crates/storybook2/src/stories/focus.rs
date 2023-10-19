@@ -1,11 +1,9 @@
-use std::any::Any;Focusable
-
-use gpui3::{
-    div, view, Action, Context, Focus, KeyBinding, ParentElement, StatelesslyInteractive, Styled,
-    View, WindowContext,
-};
-
 use crate::themes::rose_pine;
+use gpui3::{
+    div, view, Action, Context, Focusable, KeyBinding, ParentElement, StatelesslyInteractive,
+    Styled, View, WindowContext,
+};
+use std::any::Any;
 
 #[derive(Clone)]
 struct ActionA;
