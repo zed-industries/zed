@@ -107,8 +107,8 @@ impl<S: 'static + Send + Sync> Label<S> {
     }
 }
 
-#[derive(Element, Clone)]
-pub struct HighlightedLabel<S: 'static + Send + Sync + Clone> {
+#[derive(Element)]
+pub struct HighlightedLabel<S: 'static + Send + Sync> {
     state_type: PhantomData<S>,
     label: SharedString,
     color: LabelColor,
@@ -116,7 +116,7 @@ pub struct HighlightedLabel<S: 'static + Send + Sync + Clone> {
     strikethrough: bool,
 }
 
-impl<S: 'static + Send + Sync + Clone> HighlightedLabel<S> {
+impl<S: 'static + Send + Sync> HighlightedLabel<S> {
     pub fn new(label: impl Into<SharedString>, highlight_indices: Vec<usize>) -> Self {
         Self {
             state_type: PhantomData,
@@ -214,11 +214,11 @@ mod stories {
     use super::*;
 
     #[derive(Element)]
-    pub struct LabelStory<S: 'static + Send + Sync + Clone> {
+    pub struct LabelStory<S: 'static + Send + Sync> {
         state_type: PhantomData<S>,
     }
 
-    impl<S: 'static + Send + Sync + Clone> LabelStory<S> {
+    impl<S: 'static + Send + Sync> LabelStory<S> {
         pub fn new() -> Self {
             Self {
                 state_type: PhantomData,
