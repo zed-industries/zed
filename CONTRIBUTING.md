@@ -22,6 +22,7 @@ Zed is made up of several smaller crates - let's go over those you're most likel
 - [collab](/crates/collab) is the collaboration server itself, driving the collaboration features such as project sharing.
 - [rpc](/crates/rpc) defines messages to be exchanged with collaboration server.
 
+If you're just starting out with Zed, it might be worthwhile to look at some of the other crates that implement bits of UI - such as [go to line](/crates/go_to_line) modal that's bound to ctrl-g by default in Zed.
 
 ### Upstreaming your changes
 Here be dragons :)
