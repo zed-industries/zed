@@ -428,15 +428,19 @@ where
         }
 
         let key_listeners = mem::take(&mut self.listeners.key);
-        cx.with_focus(
-            self.focusability.focus_handle().cloned(),
-            &key_listeners,
-            |cx| {
+        cx.with_key_listeners(&key_listeners, |cx| {
+            if let Some(focus_handle) = self.focusability.focus_handle().cloned() {
+                cx.with_focus(focus_handle, |cx| {
+                    for child in &mut self.children {
+                        child.initialize(view_state, cx);
+                    }
+                })
+            } else {
                 for child in &mut self.children {
                     child.initialize(view_state, cx);
                 }
-            },
-        );
+            }
+        });
         self.listeners.key = key_listeners;
 
         element_state.unwrap_or_default()

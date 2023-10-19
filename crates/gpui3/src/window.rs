@@ -147,7 +147,7 @@ pub struct Window {
     content_mask_stack: Vec<ContentMask<Pixels>>,
     mouse_listeners: HashMap<TypeId, Vec<(StackingOrder, AnyListener)>>,
     key_listeners: HashMap<TypeId, Vec<AnyListener>>,
-    push_key_listeners: bool,
+    key_events_enabled: bool,
     focus_stack: Vec<FocusId>,
     focus_parents_by_child: HashMap<FocusId, FocusId>,
     pub(crate) focus_listeners: Vec<AnyFocusListener>,
@@ -220,7 +220,7 @@ impl Window {
             content_mask_stack: Vec::new(),
             mouse_listeners: HashMap::default(),
             key_listeners: HashMap::default(),
-            push_key_listeners: true,
+            key_events_enabled: true,
             focus_stack: Vec::new(),
             focus_parents_by_child: HashMap::default(),
             focus_listeners: Vec::new(),
@@ -823,7 +823,7 @@ impl<'a, 'w> WindowContext<'a, 'w> {
         window.focus_listeners.clear();
         window.key_listeners.values_mut().for_each(Vec::clear);
         window.focus_parents_by_child.clear();
-        window.push_key_listeners = true;
+        window.key_events_enabled = true;
     }
 
     fn end_frame(&mut self) {
@@ -1219,31 +1219,17 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
         }));
     }
 
-    pub fn with_focus<R>(
+    pub fn with_key_listeners<R>(
         &mut self,
-        focus_handle: Option<FocusHandle>,
         key_listeners: &[(TypeId, KeyListener<V>)],
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        let Some(focus_handle) = focus_handle else {
-            return f(self);
-        };
-
-        let handle = self.handle();
-        let window = &mut *self.window;
-
-        if let Some(parent_focus_id) = window.focus_stack.last() {
-            window
-                .focus_parents_by_child
-                .insert(focus_handle.id, *parent_focus_id);
-        }
-        window.focus_stack.push(focus_handle.id);
-
-        if window.push_key_listeners {
+        if self.window.key_events_enabled {
+            let handle = self.handle();
             for (type_id, listener) in key_listeners {
                 let handle = handle.clone();
                 let listener = listener.clone();
-                window
+                self.window
                     .key_listeners
                     .entry(*type_id)
                     .or_default()
@@ -1255,17 +1241,35 @@ impl<'a, 'w, V: Send + Sync + 'static> ViewContext<'a, 'w, V> {
             }
         }
 
-        if Some(focus_handle.id) == window.focus {
-            window.push_key_listeners = false;
-        }
-
         let result = f(self);
 
-        if self.window.push_key_listeners {
+        if self.window.key_events_enabled {
             for (type_id, _) in key_listeners {
                 self.window.key_listeners.get_mut(type_id).unwrap().pop();
             }
         }
+
+        result
+    }
+
+    pub fn with_focus<R>(
+        &mut self,
+        focus_handle: FocusHandle,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        if let Some(parent_focus_id) = self.window.focus_stack.last().copied() {
+            self.window
+                .focus_parents_by_child
+                .insert(focus_handle.id, parent_focus_id);
+        }
+        self.window.focus_stack.push(focus_handle.id);
+
+        if Some(focus_handle.id) == self.window.focus {
+            self.window.key_events_enabled = false;
+        }
+
+        let result = f(self);
+
         self.window.focus_stack.pop();
         result
     }
