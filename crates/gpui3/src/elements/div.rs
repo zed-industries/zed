@@ -1,7 +1,7 @@
 use crate::{
     Active, Anonymous, AnyElement, AppContext, BorrowWindow, Bounds, Click, DispatchPhase, Element,
-    ElementFocusability, ElementId, ElementIdentity, EventListeners, Focus, FocusHandle,
-    FocusListeners, Focusable, GlobalElementId, Hover, Identified, Interactive, IntoAnyElement,
+    ElementFocusability, ElementId, ElementIdentity, Focus, FocusHandle, FocusListeners, Focusable,
+    GlobalElementId, Hover, Identified, Interactive, InteractiveState, IntoAnyElement,
     KeyDownEvent, KeyMatch, LayoutId, MouseClickEvent, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, NonFocusable, Overflow, ParentElement, Pixels, Point, ScrollWheelEvent,
     SharedString, Style, StyleRefinement, Styled, ViewContext,
@@ -78,7 +78,7 @@ pub struct Div<
     focus_style: StyleRefinement,
     focus_in_style: StyleRefinement,
     in_focus_style: StyleRefinement,
-    listeners: EventListeners<V>,
+    interactive_state: InteractiveState<V>,
 }
 
 pub fn div<V>() -> Div<V, Anonymous, NonFocusable>
@@ -98,7 +98,7 @@ where
         focus_style: StyleRefinement::default(),
         focus_in_style: StyleRefinement::default(),
         in_focus_style: StyleRefinement::default(),
-        listeners: EventListeners::default(),
+        interactive_state: InteractiveState::default(),
     }
 }
 
@@ -126,7 +126,7 @@ where
             focus_style: self.focus_style,
             focus_in_style: self.focus_in_style,
             in_focus_style: self.in_focus_style,
-            listeners: self.listeners,
+            interactive_state: self.interactive_state,
         }
     }
 }
@@ -296,7 +296,7 @@ where
         pending_click: Arc<Mutex<Option<MouseDownEvent>>>,
         cx: &mut ViewContext<V>,
     ) {
-        let click_listeners = mem::take(&mut self.listeners.mouse_click);
+        let click_listeners = mem::take(&mut self.interactive_state.mouse_click);
 
         let mouse_down = pending_click.lock().clone();
         if let Some(mouse_down) = mouse_down {
@@ -333,25 +333,25 @@ where
             })
         }
 
-        for listener in mem::take(&mut self.listeners.mouse_down) {
+        for listener in mem::take(&mut self.interactive_state.mouse_down) {
             cx.on_mouse_event(move |state, event: &MouseDownEvent, phase, cx| {
                 listener(state, event, &bounds, phase, cx);
             })
         }
 
-        for listener in mem::take(&mut self.listeners.mouse_up) {
+        for listener in mem::take(&mut self.interactive_state.mouse_up) {
             cx.on_mouse_event(move |state, event: &MouseUpEvent, phase, cx| {
                 listener(state, event, &bounds, phase, cx);
             })
         }
 
-        for listener in mem::take(&mut self.listeners.mouse_move) {
+        for listener in mem::take(&mut self.interactive_state.mouse_move) {
             cx.on_mouse_event(move |state, event: &MouseMoveEvent, phase, cx| {
                 listener(state, event, &bounds, phase, cx);
             })
         }
 
-        for listener in mem::take(&mut self.listeners.scroll_wheel) {
+        for listener in mem::take(&mut self.interactive_state.scroll_wheel) {
             cx.on_mouse_event(move |state, event: &ScrollWheelEvent, phase, cx| {
                 listener(state, event, &bounds, phase, cx);
             })
@@ -378,7 +378,7 @@ where
             focus_style: self.focus_style,
             focus_in_style: self.focus_in_style,
             in_focus_style: self.in_focus_style,
-            listeners: self.listeners,
+            interactive_state: self.interactive_state,
         }
     }
 }
@@ -431,7 +431,7 @@ where
         self.with_element_id(cx, |this, global_id, cx| {
             let element_state = element_state.unwrap_or_default();
 
-            let mut key_listeners = mem::take(&mut this.listeners.key);
+            let mut key_listeners = mem::take(&mut this.interactive_state.key);
             if let Some(global_id) = global_id {
                 key_listeners.push((
                     TypeId::of::<KeyDownEvent>(),
@@ -457,7 +457,7 @@ where
                     }
                 });
             });
-            this.listeners.key = key_listeners;
+            this.interactive_state.key = key_listeners;
 
             element_state
         })
@@ -584,8 +584,8 @@ where
     F: ElementFocusability<V>,
     V: 'static + Send + Sync,
 {
-    fn listeners(&mut self) -> &mut EventListeners<V> {
-        &mut self.listeners
+    fn interactive_state(&mut self) -> &mut InteractiveState<V> {
+        &mut self.interactive_state
     }
 }
 

@@ -1,7 +1,7 @@
 use crate::{
     div, Active, Anonymous, AnyElement, BorrowWindow, Bounds, Click, Div, DivState, Element,
-    ElementFocusability, ElementId, ElementIdentity, EventListeners, Focus, FocusListeners,
-    Focusable, Hover, Identified, Interactive, IntoAnyElement, LayoutId, NonFocusable, Pixels,
+    ElementFocusability, ElementId, ElementIdentity, Focus, FocusListeners, Focusable, Hover,
+    Identified, Interactive, InteractiveState, IntoAnyElement, LayoutId, NonFocusable, Pixels,
     SharedString, StyleRefinement, Styled, ViewContext,
 };
 use futures::FutureExt;
@@ -156,8 +156,8 @@ where
     I: ElementIdentity,
     F: ElementFocusability<V>,
 {
-    fn listeners(&mut self) -> &mut EventListeners<V> {
-        self.base.listeners()
+    fn interactive_state(&mut self) -> &mut InteractiveState<V> {
+        self.base.interactive_state()
     }
 }
 

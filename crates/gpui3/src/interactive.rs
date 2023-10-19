@@ -1,12 +1,17 @@
-use std::{any::TypeId, sync::Arc};
+use smallvec::SmallVec;
 
 use crate::{
-    DispatchPhase, Element, EventListeners, KeyDownEvent, KeyUpEvent, MouseButton, MouseClickEvent,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollWheelEvent, ViewContext,
+    point, Action, Bounds, DispatchContext, DispatchPhase, Element, FocusHandle, Keystroke,
+    Modifiers, Pixels, Point, ViewContext,
+};
+use std::{
+    any::{Any, TypeId},
+    ops::Deref,
+    sync::Arc,
 };
 
 pub trait Interactive: Element {
-    fn listeners(&mut self) -> &mut EventListeners<Self::ViewState>;
+    fn interactive_state(&mut self) -> &mut InteractiveState<Self::ViewState>;
 
     fn on_mouse_down(
         mut self,
@@ -19,16 +24,16 @@ pub trait Interactive: Element {
     where
         Self: Sized,
     {
-        self.listeners()
-            .mouse_down
-            .push(Arc::new(move |view, event, bounds, phase, cx| {
+        self.interactive_state().mouse_down.push(Arc::new(
+            move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble
                     && event.button == button
                     && bounds.contains_point(&event.position)
                 {
                     handler(view, event, cx)
                 }
-            }));
+            },
+        ));
         self
     }
 
@@ -43,7 +48,7 @@ pub trait Interactive: Element {
     where
         Self: Sized,
     {
-        self.listeners()
+        self.interactive_state()
             .mouse_up
             .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble
@@ -67,16 +72,16 @@ pub trait Interactive: Element {
     where
         Self: Sized,
     {
-        self.listeners()
-            .mouse_down
-            .push(Arc::new(move |view, event, bounds, phase, cx| {
+        self.interactive_state().mouse_down.push(Arc::new(
+            move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Capture
                     && event.button == button
                     && !bounds.contains_point(&event.position)
                 {
                     handler(view, event, cx)
                 }
-            }));
+            },
+        ));
         self
     }
 
@@ -91,7 +96,7 @@ pub trait Interactive: Element {
     where
         Self: Sized,
     {
-        self.listeners()
+        self.interactive_state()
             .mouse_up
             .push(Arc::new(move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Capture
@@ -114,13 +119,13 @@ pub trait Interactive: Element {
     where
         Self: Sized,
     {
-        self.listeners()
-            .mouse_move
-            .push(Arc::new(move |view, event, bounds, phase, cx| {
+        self.interactive_state().mouse_move.push(Arc::new(
+            move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
                     handler(view, event, cx);
                 }
-            }));
+            },
+        ));
         self
     }
 
@@ -134,13 +139,13 @@ pub trait Interactive: Element {
     where
         Self: Sized,
     {
-        self.listeners()
-            .scroll_wheel
-            .push(Arc::new(move |view, event, bounds, phase, cx| {
+        self.interactive_state().scroll_wheel.push(Arc::new(
+            move |view, event, bounds, phase, cx| {
                 if phase == DispatchPhase::Bubble && bounds.contains_point(&event.position) {
                     handler(view, event, cx);
                 }
-            }));
+            },
+        ));
         self
     }
 
@@ -158,7 +163,7 @@ pub trait Interactive: Element {
     where
         Self: Sized,
     {
-        self.listeners().key.push((
+        self.interactive_state().key.push((
             TypeId::of::<KeyDownEvent>(),
             Arc::new(move |view, event, _, phase, cx| {
                 let event = event.downcast_ref().unwrap();
@@ -179,7 +184,7 @@ pub trait Interactive: Element {
     where
         Self: Sized,
     {
-        self.listeners().key.push((
+        self.interactive_state().key.push((
             TypeId::of::<KeyUpEvent>(),
             Arc::new(move |view, event, _, phase, cx| {
                 let event = event.downcast_ref().unwrap();
@@ -200,7 +205,7 @@ pub trait Interactive: Element {
     where
         Self: Sized,
     {
-        self.listeners().key.push((
+        self.interactive_state().key.push((
             TypeId::of::<A>(),
             Arc::new(move |view, event, _, phase, cx| {
                 let event = event.downcast_ref().unwrap();
@@ -223,9 +228,290 @@ pub trait Click: Interactive {
     where
         Self: Sized,
     {
-        self.listeners()
+        self.interactive_state()
             .mouse_click
             .push(Arc::new(move |view, event, cx| handler(view, event, cx)));
         self
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KeyDownEvent {
+    pub keystroke: Keystroke,
+    pub is_held: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct KeyUpEvent {
+    pub keystroke: Keystroke,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ModifiersChangedEvent {
+    pub modifiers: Modifiers,
+}
+
+impl Deref for ModifiersChangedEvent {
+    type Target = Modifiers;
+
+    fn deref(&self) -> &Self::Target {
+        &self.modifiers
+    }
+}
+
+/// The phase of a touch motion event.
+/// Based on the winit enum of the same name.
+#[derive(Clone, Copy, Debug)]
+pub enum TouchPhase {
+    Started,
+    Moved,
+    Ended,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MouseDownEvent {
+    pub button: MouseButton,
+    pub position: Point<Pixels>,
+    pub modifiers: Modifiers,
+    pub click_count: usize,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MouseUpEvent {
+    pub button: MouseButton,
+    pub position: Point<Pixels>,
+    pub modifiers: Modifiers,
+    pub click_count: usize,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MouseClickEvent {
+    pub down: MouseDownEvent,
+    pub up: MouseUpEvent,
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+    Navigate(NavigationDirection),
+}
+
+impl MouseButton {
+    pub fn all() -> Vec<Self> {
+        vec![
+            MouseButton::Left,
+            MouseButton::Right,
+            MouseButton::Middle,
+            MouseButton::Navigate(NavigationDirection::Back),
+            MouseButton::Navigate(NavigationDirection::Forward),
+        ]
+    }
+}
+
+impl Default for MouseButton {
+    fn default() -> Self {
+        Self::Left
+    }
+}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
+pub enum NavigationDirection {
+    Back,
+    Forward,
+}
+
+impl Default for NavigationDirection {
+    fn default() -> Self {
+        Self::Back
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MouseMoveEvent {
+    pub position: Point<Pixels>,
+    pub pressed_button: Option<MouseButton>,
+    pub modifiers: Modifiers,
+}
+
+#[derive(Clone, Debug)]
+pub struct ScrollWheelEvent {
+    pub position: Point<Pixels>,
+    pub delta: ScrollDelta,
+    pub modifiers: Modifiers,
+    pub touch_phase: TouchPhase,
+}
+
+impl Deref for ScrollWheelEvent {
+    type Target = Modifiers;
+
+    fn deref(&self) -> &Self::Target {
+        &self.modifiers
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum ScrollDelta {
+    Pixels(Point<Pixels>),
+    Lines(Point<f32>),
+}
+
+impl Default for ScrollDelta {
+    fn default() -> Self {
+        Self::Lines(Default::default())
+    }
+}
+
+impl ScrollDelta {
+    pub fn precise(&self) -> bool {
+        match self {
+            ScrollDelta::Pixels(_) => true,
+            ScrollDelta::Lines(_) => false,
+        }
+    }
+
+    pub fn pixel_delta(&self, line_height: Pixels) -> Point<Pixels> {
+        match self {
+            ScrollDelta::Pixels(delta) => *delta,
+            ScrollDelta::Lines(delta) => point(line_height * delta.x, line_height * delta.y),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MouseExitEvent {
+    pub position: Point<Pixels>,
+    pub pressed_button: Option<MouseButton>,
+    pub modifiers: Modifiers,
+}
+
+impl Deref for MouseExitEvent {
+    type Target = Modifiers;
+
+    fn deref(&self) -> &Self::Target {
+        &self.modifiers
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum InputEvent {
+    KeyDown(KeyDownEvent),
+    KeyUp(KeyUpEvent),
+    ModifiersChanged(ModifiersChangedEvent),
+    MouseDown(MouseDownEvent),
+    MouseUp(MouseUpEvent),
+    MouseMoved(MouseMoveEvent),
+    MouseExited(MouseExitEvent),
+    ScrollWheel(ScrollWheelEvent),
+}
+
+impl InputEvent {
+    pub fn position(&self) -> Option<Point<Pixels>> {
+        match self {
+            InputEvent::KeyDown { .. } => None,
+            InputEvent::KeyUp { .. } => None,
+            InputEvent::ModifiersChanged { .. } => None,
+            InputEvent::MouseDown(event) => Some(event.position),
+            InputEvent::MouseUp(event) => Some(event.position),
+            InputEvent::MouseMoved(event) => Some(event.position),
+            InputEvent::MouseExited(event) => Some(event.position),
+            InputEvent::ScrollWheel(event) => Some(event.position),
+        }
+    }
+
+    pub fn mouse_event<'a>(&'a self) -> Option<&'a dyn Any> {
+        match self {
+            InputEvent::KeyDown { .. } => None,
+            InputEvent::KeyUp { .. } => None,
+            InputEvent::ModifiersChanged { .. } => None,
+            InputEvent::MouseDown(event) => Some(event),
+            InputEvent::MouseUp(event) => Some(event),
+            InputEvent::MouseMoved(event) => Some(event),
+            InputEvent::MouseExited(event) => Some(event),
+            InputEvent::ScrollWheel(event) => Some(event),
+        }
+    }
+
+    pub fn keyboard_event<'a>(&'a self) -> Option<&'a dyn Any> {
+        match self {
+            InputEvent::KeyDown(event) => Some(event),
+            InputEvent::KeyUp(event) => Some(event),
+            InputEvent::ModifiersChanged(event) => Some(event),
+            InputEvent::MouseDown(_) => None,
+            InputEvent::MouseUp(_) => None,
+            InputEvent::MouseMoved(_) => None,
+            InputEvent::MouseExited(_) => None,
+            InputEvent::ScrollWheel(_) => None,
+        }
+    }
+}
+
+pub struct FocusEvent {
+    pub blurred: Option<FocusHandle>,
+    pub focused: Option<FocusHandle>,
+}
+
+pub type MouseDownListener<V> = Arc<
+    dyn Fn(&mut V, &MouseDownEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
+        + Send
+        + Sync
+        + 'static,
+>;
+pub type MouseUpListener<V> = Arc<
+    dyn Fn(&mut V, &MouseUpEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
+        + Send
+        + Sync
+        + 'static,
+>;
+pub type MouseClickListener<V> =
+    Arc<dyn Fn(&mut V, &MouseClickEvent, &mut ViewContext<V>) + Send + Sync + 'static>;
+
+pub type MouseMoveListener<V> = Arc<
+    dyn Fn(&mut V, &MouseMoveEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
+        + Send
+        + Sync
+        + 'static,
+>;
+
+pub type ScrollWheelListener<V> = Arc<
+    dyn Fn(&mut V, &ScrollWheelEvent, &Bounds<Pixels>, DispatchPhase, &mut ViewContext<V>)
+        + Send
+        + Sync
+        + 'static,
+>;
+
+pub type KeyListener<V> = Arc<
+    dyn Fn(
+            &mut V,
+            &dyn Any,
+            &[&DispatchContext],
+            DispatchPhase,
+            &mut ViewContext<V>,
+        ) -> Option<Box<dyn Action>>
+        + Send
+        + Sync
+        + 'static,
+>;
+
+pub struct InteractiveState<V: 'static> {
+    pub mouse_down: SmallVec<[MouseDownListener<V>; 2]>,
+    pub mouse_up: SmallVec<[MouseUpListener<V>; 2]>,
+    pub mouse_click: SmallVec<[MouseClickListener<V>; 2]>,
+    pub mouse_move: SmallVec<[MouseMoveListener<V>; 2]>,
+    pub scroll_wheel: SmallVec<[ScrollWheelListener<V>; 2]>,
+    pub key: SmallVec<[(TypeId, KeyListener<V>); 32]>,
+}
+
+impl<V> Default for InteractiveState<V> {
+    fn default() -> Self {
+        Self {
+            mouse_down: SmallVec::new(),
+            mouse_up: SmallVec::new(),
+            mouse_click: SmallVec::new(),
+            mouse_move: SmallVec::new(),
+            scroll_wheel: SmallVec::new(),
+            key: SmallVec::new(),
+        }
     }
 }
