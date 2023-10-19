@@ -242,6 +242,9 @@ impl ChannelChat {
         })
     }
 
+    /// Load all of the chat messages since a certain message id.
+    ///
+    /// For now, we always maintain a suffix of the channel's messages.
     pub async fn load_history_since_message(
         chat: ModelHandle<Self>,
         message_id: u64,

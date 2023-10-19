@@ -154,7 +154,7 @@ impl NotificationStore {
 
     async fn handle_new_notification(
         this: ModelHandle<Self>,
-        envelope: TypedEnvelope<proto::NewNotification>,
+        envelope: TypedEnvelope<proto::AddNotification>,
         _: Arc<Client>,
         cx: AsyncAppContext,
     ) -> Result<()> {

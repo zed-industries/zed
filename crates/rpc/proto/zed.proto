@@ -176,7 +176,7 @@ message Envelope {
         MoveChannel move_channel = 147;
         SetChannelVisibility set_channel_visibility = 148;
 
-        NewNotification new_notification = 149;
+        AddNotification add_notification = 149;
         GetNotifications get_notifications = 150;
         GetNotificationsResponse get_notifications_response = 151;
         DeleteNotification delete_notification = 152;
@@ -1610,7 +1610,7 @@ message GetNotifications {
     optional uint64 before_id = 1;
 }
 
-message NewNotification {
+message AddNotification {
     Notification notification = 1;
 }
 

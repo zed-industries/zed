@@ -2934,7 +2934,7 @@ fn send_notifications(
         for connection_id in connection_pool.user_connection_ids(user_id) {
             if let Err(error) = peer.send(
                 connection_id,
-                proto::NewNotification {
+                proto::AddNotification {
                     notification: Some(notification.clone()),
                 },
             ) {
