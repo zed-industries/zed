@@ -10,14 +10,14 @@ pub trait Action: Any + Send + Sync {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ActionContext {
+pub struct DispatchContext {
     set: HashSet<SharedString>,
     map: HashMap<SharedString, SharedString>,
 }
 
-impl ActionContext {
+impl DispatchContext {
     pub fn new() -> Self {
-        ActionContext {
+        DispatchContext {
             set: HashSet::default(),
             map: HashMap::default(),
         }
@@ -68,7 +68,7 @@ impl ActionContextPredicate {
         }
     }
 
-    pub fn eval(&self, contexts: &[ActionContext]) -> bool {
+    pub fn eval(&self, contexts: &[&DispatchContext]) -> bool {
         let Some(context) = contexts.first() else {
             return false;
         };

@@ -1,4 +1,4 @@
-use crate::{Action, ActionContext, Keymap, KeymapVersion, Keystroke};
+use crate::{Action, DispatchContext, Keymap, KeymapVersion, Keystroke};
 use parking_lot::RwLock;
 use smallvec::SmallVec;
 use std::sync::Arc;
@@ -44,7 +44,7 @@ impl KeyMatcher {
     pub fn match_keystroke(
         &mut self,
         keystroke: &Keystroke,
-        context_stack: &[ActionContext],
+        context_stack: &[&DispatchContext],
     ) -> KeyMatch {
         let keymap = self.keymap.read();
         // Clear pending keystrokes if the keymap has changed since the last matched keystroke.
@@ -86,7 +86,7 @@ impl KeyMatcher {
     pub fn keystrokes_for_action(
         &self,
         action: &dyn Action,
-        contexts: &[ActionContext],
+        contexts: &[&DispatchContext],
     ) -> Option<SmallVec<[Keystroke; 2]>> {
         self.keymap
             .read()

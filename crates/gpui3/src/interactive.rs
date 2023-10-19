@@ -160,7 +160,7 @@ pub trait Interactive: Element {
     {
         self.listeners().key.push((
             TypeId::of::<KeyDownEvent>(),
-            Arc::new(move |view, event, phase, cx| {
+            Arc::new(move |view, event, _, phase, cx| {
                 let event = event.downcast_ref().unwrap();
                 listener(view, event, phase, cx);
                 None
@@ -181,7 +181,7 @@ pub trait Interactive: Element {
     {
         self.listeners().key.push((
             TypeId::of::<KeyUpEvent>(),
-            Arc::new(move |view, event, phase, cx| {
+            Arc::new(move |view, event, _, phase, cx| {
                 let event = event.downcast_ref().unwrap();
                 listener(view, event, phase, cx);
                 None
@@ -202,7 +202,7 @@ pub trait Interactive: Element {
     {
         self.listeners().key.push((
             TypeId::of::<A>(),
-            Arc::new(move |view, event, phase, cx| {
+            Arc::new(move |view, event, _, phase, cx| {
                 let event = event.downcast_ref().unwrap();
                 listener(view, event, phase, cx);
                 None

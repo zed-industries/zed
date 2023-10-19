@@ -1,6 +1,6 @@
 use crate::{
-    point, Action, Bounds, DispatchPhase, FocusHandle, Keystroke, Modifiers, Pixels, Point,
-    ViewContext,
+    point, Action, Bounds, DispatchContext, DispatchPhase, FocusHandle, Keystroke, Modifiers,
+    Pixels, Point, ViewContext,
 };
 use smallvec::SmallVec;
 use std::{
@@ -256,7 +256,13 @@ pub type ScrollWheelListener<V> = Arc<
 >;
 
 pub type KeyListener<V> = Arc<
-    dyn Fn(&mut V, &dyn Any, DispatchPhase, &mut ViewContext<V>) -> Option<Box<dyn Action>>
+    dyn Fn(
+            &mut V,
+            &dyn Any,
+            &[&DispatchContext],
+            DispatchPhase,
+            &mut ViewContext<V>,
+        ) -> Option<Box<dyn Action>>
         + Send
         + Sync
         + 'static,

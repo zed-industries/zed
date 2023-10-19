@@ -435,11 +435,11 @@ where
             if let Some(global_id) = global_id {
                 key_listeners.push((
                     TypeId::of::<KeyDownEvent>(),
-                    Arc::new(move |_, key_down, phase, cx| {
+                    Arc::new(move |_, key_down, context, phase, cx| {
                         if phase == DispatchPhase::Bubble {
                             let key_down = key_down.downcast_ref::<KeyDownEvent>().unwrap();
                             if let KeyMatch::Some(action) =
-                                cx.match_keystroke(&global_id, &key_down.keystroke)
+                                cx.match_keystroke(&global_id, &key_down.keystroke, context)
                             {
                                 return Some(action);
                             }
