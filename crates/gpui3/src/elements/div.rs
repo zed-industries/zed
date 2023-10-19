@@ -1,9 +1,9 @@
 use crate::{
-    AnyElement, BorrowWindow, Bounds, Element, ElementFocusability, ElementId,
-    ElementInteractivity, Focus, FocusHandle, FocusListeners, Focusable, GlobalElementId,
-    GroupBounds, InteractiveElementState, IntoAnyElement, LayoutId, NonFocusable, Overflow,
-    ParentElement, Pixels, Point, SharedString, StatefulInteractivity, StatefullyInteractive,
-    StatelessInteractivity, StatelesslyInteractive, Style, StyleRefinement, Styled, ViewContext,
+    AnyElement, BorrowWindow, Bounds, Element, ElementFocus, ElementId, ElementInteraction,
+    FocusDisabled, FocusEnabled, FocusHandle, FocusListeners, Focusable, GlobalElementId,
+    GroupBounds, InteractiveElementState, IntoAnyElement, LayoutId, Overflow, ParentElement,
+    Pixels, Point, SharedString, StatefulInteractivity, StatefullyInteractive,
+    StatelessInteraction, StatelesslyInteractive, Style, StyleRefinement, Styled, ViewContext,
 };
 use parking_lot::Mutex;
 use refineable::Refineable;
@@ -33,38 +33,38 @@ impl ScrollState {
 
 pub struct Div<
     V: 'static + Send + Sync,
-    I: ElementInteractivity<V> = StatelessInteractivity<V>,
-    F: ElementFocusability<V> = NonFocusable,
+    I: ElementInteraction<V> = StatelessInteraction<V>,
+    F: ElementFocus<V> = FocusDisabled,
 > {
-    interactivity: I,
-    focusability: F,
+    interaction: I,
+    focus: F,
     children: SmallVec<[AnyElement<V>; 2]>,
     group: Option<SharedString>,
     base_style: StyleRefinement,
 }
 
-pub fn div<V>() -> Div<V, StatelessInteractivity<V>, NonFocusable>
+pub fn div<V>() -> Div<V, StatelessInteraction<V>, FocusDisabled>
 where
     V: 'static + Send + Sync,
 {
     Div {
-        interactivity: StatelessInteractivity::default(),
-        focusability: NonFocusable,
+        interaction: StatelessInteraction::default(),
+        focus: FocusDisabled,
         children: SmallVec::new(),
         group: None,
         base_style: StyleRefinement::default(),
     }
 }
 
-impl<V, F> Div<V, StatelessInteractivity<V>, F>
+impl<V, F> Div<V, StatelessInteraction<V>, F>
 where
-    F: ElementFocusability<V>,
+    F: ElementFocus<V>,
     V: 'static + Send + Sync,
 {
     pub fn id(self, id: impl Into<ElementId>) -> Div<V, StatefulInteractivity<V>, F> {
         Div {
-            interactivity: id.into().into(),
-            focusability: self.focusability,
+            interaction: id.into().into(),
+            focus: self.focus,
             children: self.children,
             group: self.group,
             base_style: self.base_style,
@@ -74,8 +74,8 @@ where
 
 impl<V, I, F> Div<V, I, F>
 where
-    I: ElementInteractivity<V>,
-    F: ElementFocusability<V>,
+    I: ElementInteraction<V>,
+    F: ElementFocus<V>,
     V: 'static + Send + Sync,
 {
     pub fn group(mut self, group: impl Into<SharedString>) -> Self {
@@ -146,22 +146,22 @@ where
     ) -> Style {
         let mut computed_style = Style::default();
         computed_style.refine(&self.base_style);
-        self.focusability.refine_style(&mut computed_style, cx);
-        self.interactivity
+        self.focus.refine_style(&mut computed_style, cx);
+        self.interaction
             .refine_style(&mut computed_style, bounds, state, cx);
         computed_style
     }
 }
 
-impl<V, I> Div<V, I, NonFocusable>
+impl<V, I> Div<V, I, FocusDisabled>
 where
-    I: ElementInteractivity<V>,
+    I: ElementInteraction<V>,
     V: 'static + Send + Sync,
 {
-    pub fn focusable(self, handle: &FocusHandle) -> Div<V, I, Focusable<V>> {
+    pub fn focusable(self, handle: &FocusHandle) -> Div<V, I, FocusEnabled<V>> {
         Div {
-            interactivity: self.interactivity,
-            focusability: handle.clone().into(),
+            interaction: self.interaction,
+            focus: handle.clone().into(),
             children: self.children,
             group: self.group,
             base_style: self.base_style,
@@ -169,43 +169,43 @@ where
     }
 }
 
-impl<V, I> Focus for Div<V, I, Focusable<V>>
+impl<V, I> Focusable for Div<V, I, FocusEnabled<V>>
 where
-    I: ElementInteractivity<V>,
+    I: ElementInteraction<V>,
     V: 'static + Send + Sync,
 {
     fn focus_listeners(&mut self) -> &mut FocusListeners<V> {
-        &mut self.focusability.focus_listeners
+        &mut self.focus.focus_listeners
     }
 
     fn handle(&self) -> &FocusHandle {
-        &self.focusability.focus_handle
+        &self.focus.focus_handle
     }
 
     fn set_focus_style(&mut self, style: StyleRefinement) {
-        self.focusability.focus_style = style;
+        self.focus.focus_style = style;
     }
 
     fn set_focus_in_style(&mut self, style: StyleRefinement) {
-        self.focusability.focus_in_style = style;
+        self.focus.focus_in_style = style;
     }
 
     fn set_in_focus_style(&mut self, style: StyleRefinement) {
-        self.focusability.in_focus_style = style;
+        self.focus.in_focus_style = style;
     }
 }
 
 impl<V, I, F> Element for Div<V, I, F>
 where
-    I: ElementInteractivity<V>,
-    F: ElementFocusability<V>,
+    I: ElementInteraction<V>,
+    F: ElementFocus<V>,
     V: 'static + Send + Sync,
 {
     type ViewState = V;
     type ElementState = InteractiveElementState;
 
     fn id(&self) -> Option<ElementId> {
-        self.interactivity
+        self.interaction
             .as_stateful()
             .map(|identified| identified.id.clone())
     }
@@ -216,8 +216,8 @@ where
         element_state: Option<Self::ElementState>,
         cx: &mut ViewContext<Self::ViewState>,
     ) -> Self::ElementState {
-        self.interactivity.initialize(cx, |cx| {
-            self.focusability.initialize(cx, |cx| {
+        self.interaction.initialize(cx, |cx| {
+            self.focus.initialize(cx, |cx| {
                 for child in &mut self.children {
                     child.initialize(view_state, cx);
                 }
@@ -265,8 +265,8 @@ where
                 cx.stack(0, |cx| {
                     style.paint(bounds, cx);
 
-                    this.focusability.paint(bounds, cx);
-                    this.interactivity.paint(bounds, element_state, cx);
+                    this.focus.paint(bounds, cx);
+                    this.interaction.paint(bounds, element_state, cx);
                 });
 
                 cx.stack(1, |cx| {
@@ -289,8 +289,8 @@ where
 
 impl<V, I, F> IntoAnyElement<V> for Div<V, I, F>
 where
-    I: ElementInteractivity<V>,
-    F: ElementFocusability<V>,
+    I: ElementInteraction<V>,
+    F: ElementFocus<V>,
     V: 'static + Send + Sync,
 {
     fn into_any(self) -> AnyElement<V> {
@@ -300,8 +300,8 @@ where
 
 impl<V, I, F> ParentElement for Div<V, I, F>
 where
-    I: ElementInteractivity<V>,
-    F: ElementFocusability<V>,
+    I: ElementInteraction<V>,
+    F: ElementFocus<V>,
     V: 'static + Send + Sync,
 {
     fn children_mut(&mut self) -> &mut SmallVec<[AnyElement<Self::ViewState>; 2]> {
@@ -311,8 +311,8 @@ where
 
 impl<V, I, F> Styled for Div<V, I, F>
 where
-    I: ElementInteractivity<V>,
-    F: ElementFocusability<V>,
+    I: ElementInteraction<V>,
+    F: ElementFocus<V>,
     V: 'static + Send + Sync,
 {
     fn style(&mut self) -> &mut StyleRefinement {
@@ -322,21 +322,21 @@ where
 
 impl<V, I, F> StatelesslyInteractive for Div<V, I, F>
 where
-    I: ElementInteractivity<V>,
-    F: ElementFocusability<V>,
+    I: ElementInteraction<V>,
+    F: ElementFocus<V>,
     V: 'static + Send + Sync,
 {
-    fn stateless_interactivity(&mut self) -> &mut StatelessInteractivity<V> {
-        self.interactivity.as_stateless_mut()
+    fn stateless_interactivity(&mut self) -> &mut StatelessInteraction<V> {
+        self.interaction.as_stateless_mut()
     }
 }
 
 impl<V, F> StatefullyInteractive for Div<V, StatefulInteractivity<V>, F>
 where
-    F: ElementFocusability<V>,
+    F: ElementFocus<V>,
     V: 'static + Send + Sync,
 {
     fn stateful_interactivity(&mut self) -> &mut StatefulInteractivity<Self::ViewState> {
-        &mut self.interactivity
+        &mut self.interaction
     }
 }

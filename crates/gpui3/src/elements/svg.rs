@@ -1,21 +1,21 @@
 use crate::{
-    div, AnyElement, Bounds, Div, Element, ElementFocusability, ElementId, ElementInteractivity,
-    Focus, FocusListeners, Focusable, InteractiveElementState, IntoAnyElement, LayoutId,
-    NonFocusable, Pixels, SharedString, StatefulInteractivity, StatefullyInteractive,
-    StatelessInteractivity, StatelesslyInteractive, StyleRefinement, Styled, ViewContext,
+    div, AnyElement, Bounds, Div, Element, ElementFocus, ElementId, ElementInteraction,
+    FocusDisabled, FocusEnabled, FocusListeners, Focusable, InteractiveElementState,
+    IntoAnyElement, LayoutId, Pixels, SharedString, StatefulInteractivity, StatefullyInteractive,
+    StatelessInteraction, StatelesslyInteractive, StyleRefinement, Styled, ViewContext,
 };
 use util::ResultExt;
 
 pub struct Svg<
     V: 'static + Send + Sync,
-    I: ElementInteractivity<V> = StatelessInteractivity<V>,
-    F: ElementFocusability<V> = NonFocusable,
+    I: ElementInteraction<V> = StatelessInteraction<V>,
+    F: ElementFocus<V> = FocusDisabled,
 > {
     base: Div<V, I, F>,
     path: Option<SharedString>,
 }
 
-pub fn svg<V>() -> Svg<V, StatelessInteractivity<V>, NonFocusable>
+pub fn svg<V>() -> Svg<V, StatelessInteraction<V>, FocusDisabled>
 where
     V: 'static + Send + Sync,
 {
@@ -28,8 +28,8 @@ where
 impl<V, I, F> Svg<V, I, F>
 where
     V: 'static + Send + Sync,
-    I: ElementInteractivity<V>,
-    F: ElementFocusability<V>,
+    I: ElementInteraction<V>,
+    F: ElementFocus<V>,
 {
     pub fn path(mut self, path: impl Into<SharedString>) -> Self {
         self.path = Some(path.into());
@@ -37,10 +37,10 @@ where
     }
 }
 
-impl<V, F> Svg<V, StatelessInteractivity<V>, F>
+impl<V, F> Svg<V, StatelessInteraction<V>, F>
 where
     V: 'static + Send + Sync,
-    F: ElementFocusability<V>,
+    F: ElementFocus<V>,
 {
     pub fn id(self, id: impl Into<ElementId>) -> Svg<V, StatefulInteractivity<V>, F> {
         Svg {
@@ -53,8 +53,8 @@ where
 impl<V, I, F> IntoAnyElement<V> for Svg<V, I, F>
 where
     V: 'static + Send + Sync,
-    I: ElementInteractivity<V>,
-    F: ElementFocusability<V>,
+    I: ElementInteraction<V>,
+    F: ElementFocus<V>,
 {
     fn into_any(self) -> AnyElement<V> {
         AnyElement::new(self)
@@ -64,8 +64,8 @@ where
 impl<V, I, F> Element for Svg<V, I, F>
 where
     V: 'static + Send + Sync,
-    I: ElementInteractivity<V>,
-    F: ElementFocusability<V>,
+    I: ElementInteraction<V>,
+    F: ElementFocus<V>,
 {
     type ViewState = V;
     type ElementState = InteractiveElementState;
@@ -116,8 +116,8 @@ where
 impl<V, I, F> Styled for Svg<V, I, F>
 where
     V: 'static + Send + Sync,
-    I: ElementInteractivity<V>,
-    F: ElementFocusability<V>,
+    I: ElementInteraction<V>,
+    F: ElementFocus<V>,
 {
     fn style(&mut self) -> &mut StyleRefinement {
         self.base.style()
@@ -127,10 +127,10 @@ where
 impl<V, I, F> StatelesslyInteractive for Svg<V, I, F>
 where
     V: 'static + Send + Sync,
-    I: ElementInteractivity<V>,
-    F: ElementFocusability<V>,
+    I: ElementInteraction<V>,
+    F: ElementFocus<V>,
 {
-    fn stateless_interactivity(&mut self) -> &mut StatelessInteractivity<V> {
+    fn stateless_interactivity(&mut self) -> &mut StatelessInteraction<V> {
         self.base.stateless_interactivity()
     }
 }
@@ -138,17 +138,17 @@ where
 impl<V, F> StatefullyInteractive for Svg<V, StatefulInteractivity<V>, F>
 where
     V: 'static + Send + Sync,
-    F: ElementFocusability<V>,
+    F: ElementFocus<V>,
 {
     fn stateful_interactivity(&mut self) -> &mut StatefulInteractivity<Self::ViewState> {
         self.base.stateful_interactivity()
     }
 }
 
-impl<V, I> Focus for Svg<V, I, Focusable<V>>
+impl<V, I> Focusable for Svg<V, I, FocusEnabled<V>>
 where
     V: 'static + Send + Sync,
-    I: ElementInteractivity<V>,
+    I: ElementInteraction<V>,
 {
     fn focus_listeners(&mut self) -> &mut FocusListeners<Self::ViewState> {
         self.base.focus_listeners()

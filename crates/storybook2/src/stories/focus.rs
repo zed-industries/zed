@@ -1,4 +1,4 @@
-use std::any::Any;
+use std::any::Any;Focusable
 
 use gpui3::{
     div, view, Action, Context, Focus, KeyBinding, ParentElement, StatelesslyInteractive, Styled,

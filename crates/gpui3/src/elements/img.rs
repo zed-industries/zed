@@ -1,8 +1,8 @@
 use crate::{
-    div, AnyElement, BorrowWindow, Bounds, Div, Element, ElementFocusability, ElementId,
-    ElementInteractivity, Focus, FocusListeners, Focusable, InteractiveElementState,
-    IntoAnyElement, LayoutId, NonFocusable, Pixels, SharedString, StatefulInteractivity,
-    StatefullyInteractive, StatelessInteractivity, StatelesslyInteractive, StyleRefinement, Styled,
+    div, AnyElement, BorrowWindow, Bounds, Div, Element, ElementFocus, ElementId,
+    ElementInteraction, FocusDisabled, FocusEnabled, FocusListeners, Focusable,
+    InteractiveElementState, IntoAnyElement, LayoutId, Pixels, SharedString, StatefulInteractivity,
+    StatefullyInteractive, StatelessInteraction, StatelesslyInteractive, StyleRefinement, Styled,
     ViewContext,
 };
 use futures::FutureExt;
@@ -10,15 +10,15 @@ use util::ResultExt;
 
 pub struct Img<
     V: 'static + Send + Sync,
-    I: ElementInteractivity<V> = StatelessInteractivity<V>,
-    F: ElementFocusability<V> = NonFocusable,
+    I: ElementInteraction<V> = StatelessInteraction<V>,
+    F: ElementFocus<V> = FocusDisabled,
 > {
     base: Div<V, I, F>,
     uri: Option<SharedString>,
     grayscale: bool,
 }
 
-pub fn img<V>() -> Img<V, StatelessInteractivity<V>, NonFocusable>
+pub fn img<V>() -> Img<V, StatelessInteraction<V>, FocusDisabled>
 where
     V: 'static + Send + Sync,
 {
@@ -32,8 +32,8 @@ where
 impl<V, I, F> Img<V, I, F>
 where
     V: 'static + Send + Sync,
-    I: ElementInteractivity<V>,
-    F: ElementFocusability<V>,
+    I: ElementInteraction<V>,
+    F: ElementFocus<V>,
 {
     pub fn uri(mut self, uri: impl Into<SharedString>) -> Self {
         self.uri = Some(uri.into());
@@ -46,10 +46,10 @@ where
     }
 }
 
-impl<V, F> Img<V, StatelessInteractivity<V>, F>
+impl<V, F> Img<V, StatelessInteraction<V>, F>
 where
     V: 'static + Send + Sync,
-    F: ElementFocusability<V>,
+    F: ElementFocus<V>,
 {
     pub fn id(self, id: impl Into<ElementId>) -> Img<V, StatefulInteractivity<V>, F> {
         Img {
@@ -63,8 +63,8 @@ where
 impl<V, I, F> IntoAnyElement<V> for Img<V, I, F>
 where
     V: 'static + Send + Sync,
-    I: ElementInteractivity<V>,
-    F: ElementFocusability<V>,
+    I: ElementInteraction<V>,
+    F: ElementFocus<V>,
 {
     fn into_any(self) -> AnyElement<V> {
         AnyElement::new(self)
@@ -74,8 +74,8 @@ where
 impl<V, I, F> Element for Img<V, I, F>
 where
     V: Send + Sync + 'static,
-    I: ElementInteractivity<V>,
-    F: ElementFocusability<V>,
+    I: ElementInteraction<V>,
+    F: ElementFocus<V>,
 {
     type ViewState = V;
     type ElementState = InteractiveElementState;
@@ -143,8 +143,8 @@ where
 impl<V, I, F> Styled for Img<V, I, F>
 where
     V: 'static + Send + Sync,
-    I: ElementInteractivity<V>,
-    F: ElementFocusability<V>,
+    I: ElementInteraction<V>,
+    F: ElementFocus<V>,
 {
     fn style(&mut self) -> &mut StyleRefinement {
         self.base.style()
@@ -154,10 +154,10 @@ where
 impl<V, I, F> StatelesslyInteractive for Img<V, I, F>
 where
     V: 'static + Send + Sync,
-    I: ElementInteractivity<V>,
-    F: ElementFocusability<V>,
+    I: ElementInteraction<V>,
+    F: ElementFocus<V>,
 {
-    fn stateless_interactivity(&mut self) -> &mut StatelessInteractivity<V> {
+    fn stateless_interactivity(&mut self) -> &mut StatelessInteraction<V> {
         self.base.stateless_interactivity()
     }
 }
@@ -165,17 +165,17 @@ where
 impl<V, F> StatefullyInteractive for Img<V, StatefulInteractivity<V>, F>
 where
     V: 'static + Send + Sync,
-    F: ElementFocusability<V>,
+    F: ElementFocus<V>,
 {
     fn stateful_interactivity(&mut self) -> &mut StatefulInteractivity<Self::ViewState> {
         self.base.stateful_interactivity()
     }
 }
 
-impl<V, I> Focus for Img<V, I, Focusable<V>>
+impl<V, I> Focusable for Img<V, I, FocusEnabled<V>>
 where
     V: 'static + Send + Sync,
-    I: ElementInteractivity<V>,
+    I: ElementInteraction<V>,
 {
     fn focus_listeners(&mut self) -> &mut FocusListeners<Self::ViewState> {
         self.base.focus_listeners()

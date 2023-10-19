@@ -1,7 +1,7 @@
 use crate::{
     point, Action, Bounds, DispatchContext, DispatchPhase, Element, FocusHandle, GroupStyle,
-    Keystroke, Modifiers, Pixels, Point, SharedString, StatefulInteractivity,
-    StatelessInteractivity, StyleRefinement, ViewContext,
+    Keystroke, Modifiers, Pixels, Point, SharedString, StatefulInteractivity, StatelessInteraction,
+    StyleRefinement, ViewContext,
 };
 use std::{
     any::{Any, TypeId},
@@ -10,7 +10,7 @@ use std::{
 };
 
 pub trait StatelesslyInteractive: Element {
-    fn stateless_interactivity(&mut self) -> &mut StatelessInteractivity<Self::ViewState>;
+    fn stateless_interactivity(&mut self) -> &mut StatelessInteraction<Self::ViewState>;
 
     fn on_mouse_down(
         mut self,

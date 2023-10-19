@@ -44,9 +44,9 @@ pub trait Element: 'static + Send + Sync + IntoAnyElement<Self::ViewState> {
 #[derive(Deref, DerefMut, Default, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct GlobalElementId(SmallVec<[ElementId; 32]>);
 
-pub trait ElementInteractivity<V: 'static + Send + Sync>: 'static + Send + Sync {
-    fn as_stateless(&self) -> &StatelessInteractivity<V>;
-    fn as_stateless_mut(&mut self) -> &mut StatelessInteractivity<V>;
+pub trait ElementInteraction<V: 'static + Send + Sync>: 'static + Send + Sync {
+    fn as_stateless(&self) -> &StatelessInteraction<V>;
+    fn as_stateless_mut(&mut self) -> &mut StatelessInteraction<V>;
     fn as_stateful(&self) -> Option<&StatefulInteractivity<V>>;
     fn as_stateful_mut(&mut self) -> Option<&mut StatefulInteractivity<V>>;
 
@@ -233,13 +233,13 @@ pub struct StatefulInteractivity<V: 'static + Send + Sync> {
     pub id: ElementId,
     #[deref]
     #[deref_mut]
-    stateless: StatelessInteractivity<V>,
+    stateless: StatelessInteraction<V>,
     pub mouse_click_listeners: SmallVec<[MouseClickListener<V>; 2]>,
     pub active_style: StyleRefinement,
     pub group_active_style: Option<GroupStyle>,
 }
 
-impl<V> ElementInteractivity<V> for StatefulInteractivity<V>
+impl<V> ElementInteraction<V> for StatefulInteractivity<V>
 where
     V: 'static + Send + Sync,
 {
@@ -251,11 +251,11 @@ where
         Some(self)
     }
 
-    fn as_stateless(&self) -> &StatelessInteractivity<V> {
+    fn as_stateless(&self) -> &StatelessInteraction<V> {
         &self.stateless
     }
 
-    fn as_stateless_mut(&mut self) -> &mut StatelessInteractivity<V> {
+    fn as_stateless_mut(&mut self) -> &mut StatelessInteraction<V> {
         &mut self.stateless
     }
 }
@@ -267,7 +267,7 @@ where
     fn from(id: ElementId) -> Self {
         Self {
             id,
-            stateless: StatelessInteractivity::default(),
+            stateless: StatelessInteraction::default(),
             mouse_click_listeners: SmallVec::new(),
             active_style: StyleRefinement::default(),
             group_active_style: None,
@@ -275,7 +275,7 @@ where
     }
 }
 
-pub struct StatelessInteractivity<V> {
+pub struct StatelessInteraction<V> {
     pub mouse_down_listeners: SmallVec<[MouseDownListener<V>; 2]>,
     pub mouse_up_listeners: SmallVec<[MouseUpListener<V>; 2]>,
     pub mouse_move_listeners: SmallVec<[MouseMoveListener<V>; 2]>,
@@ -337,7 +337,7 @@ pub struct InteractiveElementState {
     pending_click: Arc<Mutex<Option<MouseDownEvent>>>,
 }
 
-impl<V> Default for StatelessInteractivity<V> {
+impl<V> Default for StatelessInteraction<V> {
     fn default() -> Self {
         Self {
             mouse_down_listeners: SmallVec::new(),
@@ -351,7 +351,7 @@ impl<V> Default for StatelessInteractivity<V> {
     }
 }
 
-impl<V> ElementInteractivity<V> for StatelessInteractivity<V>
+impl<V> ElementInteraction<V> for StatelessInteraction<V>
 where
     V: 'static + Send + Sync,
 {
@@ -363,17 +363,17 @@ where
         None
     }
 
-    fn as_stateless(&self) -> &StatelessInteractivity<V> {
+    fn as_stateless(&self) -> &StatelessInteraction<V> {
         self
     }
 
-    fn as_stateless_mut(&mut self) -> &mut StatelessInteractivity<V> {
+    fn as_stateless_mut(&mut self) -> &mut StatelessInteraction<V> {
         self
     }
 }
 
-pub trait ElementFocusability<V: 'static + Send + Sync>: 'static + Send + Sync {
-    fn as_focusable(&self) -> Option<&Focusable<V>>;
+pub trait ElementFocus<V: 'static + Send + Sync>: 'static + Send + Sync {
+    fn as_focusable(&self) -> Option<&FocusEnabled<V>>;
 
     fn initialize<R>(
         &self,
@@ -421,7 +421,7 @@ pub trait ElementFocusability<V: 'static + Send + Sync>: 'static + Send + Sync {
     }
 }
 
-pub struct Focusable<V: 'static + Send + Sync> {
+pub struct FocusEnabled<V: 'static + Send + Sync> {
     pub focus_handle: FocusHandle,
     pub focus_listeners: FocusListeners<V>,
     pub focus_style: StyleRefinement,
@@ -429,16 +429,16 @@ pub struct Focusable<V: 'static + Send + Sync> {
     pub in_focus_style: StyleRefinement,
 }
 
-impl<V> ElementFocusability<V> for Focusable<V>
+impl<V> ElementFocus<V> for FocusEnabled<V>
 where
     V: 'static + Send + Sync,
 {
-    fn as_focusable(&self) -> Option<&Focusable<V>> {
+    fn as_focusable(&self) -> Option<&FocusEnabled<V>> {
         Some(self)
     }
 }
 
-impl<V> From<FocusHandle> for Focusable<V>
+impl<V> From<FocusHandle> for FocusEnabled<V>
 where
     V: 'static + Send + Sync,
 {
@@ -453,13 +453,13 @@ where
     }
 }
 
-pub struct NonFocusable;
+pub struct FocusDisabled;
 
-impl<V> ElementFocusability<V> for NonFocusable
+impl<V> ElementFocus<V> for FocusDisabled
 where
     V: 'static + Send + Sync,
 {
-    fn as_focusable(&self) -> Option<&Focusable<V>> {
+    fn as_focusable(&self) -> Option<&FocusEnabled<V>> {
         None
     }
 }
