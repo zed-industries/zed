@@ -44,7 +44,7 @@ impl IconColor {
     }
 }
 
-#[derive(Default, PartialEq, Copy, Clone, EnumIter)]
+#[derive(Debug, Default, PartialEq, Copy, Clone, EnumIter)]
 pub enum Icon {
     Ai,
     ArrowLeft,
