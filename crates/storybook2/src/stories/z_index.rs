@@ -72,8 +72,7 @@ trait Styles: Styled + Sized {
         self.bg(rgb::<Hsla>(0xe5e8fc))
             .border_5()
             .border_color(rgb::<Hsla>(0x112382))
-            // HACK: Simulate `line-height: 55px`.
-            .pt(px(16.))
+            .line_height(px(55.))
             // HACK: Simulate `text-align: center`.
             .pl(px(24.))
     }
@@ -119,8 +118,7 @@ impl<S: 'static + Send + Sync> ZIndexExample<S> {
                     .text_color(rgb::<Hsla>(0x000000))
                     .border_5()
                     .border_color(rgb::<Hsla>(0xe3e0a1))
-                    // HACK: Simulate `line-height: 215px`.
-                    .pt(px(100.))
+                    .line_height(px(215.))
                     // HACK: Simulate `text-align: center`.
                     .pl(px(24.))
                     .z_index(self.z_index)
