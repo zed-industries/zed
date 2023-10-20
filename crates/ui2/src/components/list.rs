@@ -514,9 +514,11 @@ impl<S: 'static + Send + Sync> ListDetailsEntry<S> {
             .w_full()
             .line_height(relative(1.2))
             .child(Label::new(self.label.clone()).color(label_color))
-            .when(self.meta.is_some(), |this| {
-                this.child(Label::new(self.meta.clone().unwrap()).color(LabelColor::Muted))
-            })
+            .children(
+                self.meta
+                    .take()
+                    .map(|meta| Label::new(meta).color(LabelColor::Muted)),
+            )
             .child(
                 h_stack().gap_1().justify_end().children(
                     self.actions
