@@ -9,3 +9,8 @@ brackets = [
     { start = "\"", end = "\"", close = true, newline = false, not_in = ["string", "comment"] },
     { start = "'", end = "'", close = true, newline = false, not_in = ["string", "comment"] },
 ]
+scope_opt_in_language_servers = ["tailwindcss-language-server"]
+
+[overrides.string]
+word_characters = ["-"]
+opt_into_language_servers = ["tailwindcss-language-server"]
